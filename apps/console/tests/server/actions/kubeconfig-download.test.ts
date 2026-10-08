@@ -24,7 +24,7 @@ vi.mock("@/lib/kubeconfig-mint/request", () => ({ requestKubeconfigMint: vi.fn()
 vi.mock("@/lib/kubeconfig-mint/poll", () => ({ pollKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/gates", () => ({
 	takeMintRateLimit: vi.fn(async () => true),
-	mayCollectTier: vi.fn(async () => true),
+	collectGate: vi.fn(() => ({ probe: vi.fn(async () => true), enforce: vi.fn(async () => true) })),
 }));
 vi.mock("@/lib/observability/log", () => {
 	const child = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
@@ -40,7 +40,7 @@ import { getPdp } from "@/lib/authz";
 import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
-import { mayCollectTier, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
+import { collectGate, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
 import { requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
 import { log } from "@/lib/observability/log";
@@ -189,13 +189,14 @@ describe("requestKubeconfigDownload", () => {
 describe("pollKubeconfigDownload", () => {
 	it("checks quietly, collects through the library with the shared tier re-check, and returns the body", async () => {
 		vi.mocked(pollKubeconfigMint).mockImplementation(async (input) => {
-			await input.mayCollect("admin");
+			await input.gate.enforce("admin");
 			return { ok: true, body: { status: "ready", private_endpoint: false, sealed: SEALED } };
 		});
 		const out = await pollKubeconfigDownload({ clusterId: CLUSTER, mintId: MINT });
 		expect(out).toEqual({ ok: true, poll: { status: "ready", private_endpoint: false, sealed: SEALED } });
 		expect(authorizeQuiet).toHaveBeenCalledWith("access_readonly", { type: "cluster", id: CLUSTER });
-		expect(mayCollectTier).toHaveBeenCalledWith(ACTOR, CLUSTER, "admin");
+		expect(collectGate).toHaveBeenCalledWith(ACTOR, CLUSTER);
+		expect(vi.mocked(pollKubeconfigMint).mock.calls[0][0].gate).toBe(vi.mocked(collectGate).mock.results[0].value);
 		expect(pollKubeconfigMint).toHaveBeenCalledWith(
 			expect.objectContaining({ mintId: MINT, client: "console", credential: { kind: "session" } }),
 		);

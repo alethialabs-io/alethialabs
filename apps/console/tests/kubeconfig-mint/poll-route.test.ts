@@ -108,9 +108,10 @@ vi.mock("@/lib/db", () => ({
 		return fn(fakeTx);
 	},
 }));
-vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn(), authorizeCliQuiet: vi.fn() }));
 const enforce = vi.fn();
-vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce }) }));
+const can = vi.fn();
+vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce, can }) }));
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "198.51.100.4") }));
 
 const logged: unknown[] = [];
@@ -126,7 +127,7 @@ vi.mock("@/lib/observability/log", () => {
 });
 
 import { GET } from "@/app/api/cli/clusters/[id]/kubeconfig/[mintId]/route";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, authorizeCliQuiet } from "@/lib/authz/guard";
 
 let role: BuiltInRole = "operator";
 
@@ -158,7 +159,7 @@ beforeEach(() => {
 	logged.length = 0;
 	auditThrows = false;
 	role = "operator";
-	vi.mocked(authorizeCli).mockImplementation(async (_req, action) =>
+	vi.mocked(authorizeCliQuiet).mockImplementation(async (_req, action) =>
 		roleHolds(role, action)
 			? { actor: { userId: USER, orgId: ORG }, credential: "session", orgScope: [ORG, USER] }
 			: { error: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }) },
@@ -166,6 +167,9 @@ beforeEach(() => {
 	enforce.mockImplementation(async (_actor: unknown, action: "access_admin" | "access_readonly") => {
 		if (!roleHolds(role, action)) throw new ForbiddenError(action, { type: "cluster" });
 	});
+	can.mockImplementation(async (_actor: unknown, action: "access_admin" | "access_readonly") => ({
+		allowed: roleHolds(role, action),
+	}));
 });
 
 /** Polls `mintId` on `clusterId`. */
@@ -267,10 +271,21 @@ describe("who may collect", () => {
 		expect(res.status).toBe(200);
 	});
 
-	it("does not re-ask the PDP for a read-only mint (authorizeCli already checked access_readonly)", async () => {
+	it("does not re-ask the PDP for a read-only mint (authorizeCliQuiet already checked access_readonly)", async () => {
 		row = mint("pending");
 		await poll();
-		expect(vi.mocked(authorizeCli).mock.calls.map((c) => c[1])).toEqual(["access_readonly"]);
+		expect(vi.mocked(authorizeCliQuiet).mock.calls.map((c) => c[1])).toEqual(["access_readonly"]);
+		// The poll's entry gate is the NON-recording one (#5670); the recording guard is never asked.
+		expect(authorizeCli).not.toHaveBeenCalled();
+		expect(enforce).not.toHaveBeenCalled();
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("an operator polling a PENDING admin mint is refused by the non-recording probe, not enforce (#5667)", async () => {
+		row = mint("pending", { tier: "admin" });
+		const res = await poll();
+		expect(res.status).toBe(403);
+		expect(can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "access_admin", { type: "cluster", id: CLUSTER });
 		expect(enforce).not.toHaveBeenCalled();
 	});
 

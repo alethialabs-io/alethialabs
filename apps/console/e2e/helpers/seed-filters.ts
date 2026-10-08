@@ -47,6 +47,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import { seedCloudIdentity, seedJob, seedProject, type Owner, type SeededProject } from "./seed";
 import { seedChannel, seedRule } from "./seed-alerts";
+import { seedSupportContact } from "./support-contact";
 
 /** What one seeding pass wrote — the ids `cleanFilterFixtures()` removes, and the project a `[project]` route needs. */
 export interface FilterFixtures {
@@ -180,7 +181,7 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 				status: "open",
 				subject,
 				context: sql.json({}),
-				contact: sql.json({ email: "audit@alethia.test" }),
+				contact: sql.json(seedSupportContact()),
 			})}
 			returning id`;
 		return row.id;

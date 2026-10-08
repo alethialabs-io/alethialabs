@@ -3160,6 +3160,43 @@ jobs:
             fi
           fi
 
+          # ── IMAGER LEAK FILER (#5645): AN UNLABELLED UPLOAD SERVER THAT OUTLIVED ITS BUILD. ────
+          #
+          #    hcloud-cleanup.sh can only REPORT `hcloud-upload-image-*` servers — they carry no label,
+          #    so nothing ties them to a run — and that report was a `::warning::` in a job log.
+          #    Server 168216231 billed six days under it. nightly-rollup.sh now reads each one off the
+          #    hetzner receipt and calls it a LEAK once it is older than IMAGER_LEAK_MIN_AGE_HOURS;
+          #    this posts that. Same placement rule as the residual filer: ABOVE the red filer's
+          #    all-green `exit 0`, because the night this matters is the one where every leg is green.
+          #
+          #    ONE issue for the account, deduped on its TITLE. While it is open its BODY is refreshed,
+          #    so the ids and ages stay current instead of describing the first night only. It never
+          #    deletes anything: deleting by age in an account shared with prod is the maintainer's call.
+          if [ -n "${IMAGER_LEAKS// /}" ]; then
+            echo "::warning::hcloud-upload-image server(s) older than the leak threshold are still BILLING: ${IMAGER_LEAKS}. See the step summary."
+            if [ "$EVENT_NAME" != "schedule" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+              echo "::warning::imager leak (${IMAGER_LEAKS}) but event=${EVENT_NAME} — skipping issue filing (schedule/dispatch only). The step summary still carries the finding."
+            else
+              i_title="$(cat "${OUT_DIR}/issue-imager-leak.title" 2>/dev/null || echo "")"
+              if [ -z "$i_title" ] || [ ! -s "${OUT_DIR}/issue-imager-leak.md" ]; then
+                echo "::warning::the rollup rendered no imager-leak issue body — a billing leak is going unfiled. Check scripts/e2e/nightly-rollup.sh."
+              else
+                i_open="$(gh issue list --state open --limit 200 --json number,title \
+                  --jq "[.[] | select(.title == \"${i_title}\")][0].number // empty" 2>/dev/null || echo "")"
+                if [ -n "$i_open" ]; then
+                  gh issue edit "$i_open" --body-file "${OUT_DIR}/issue-imager-leak.md" \
+                    && echo "::notice::refreshed imager-leak issue #${i_open}" \
+                    || echo "::warning::could not refresh imager-leak issue #${i_open} (continuing)."
+                else
+                  gh issue create --title "$i_title" --body-file "${OUT_DIR}/issue-imager-leak.md" \
+                    --label class:backend --label lane:tests --label wave:hygiene \
+                    && echo "::notice::filed imager-leak issue: ${i_title}" \
+                    || echo "::warning::could not create issue '${i_title}' (continuing) — the leak is REAL and now unfiled; read the step summary."
+                fi
+              fi
+            fi
+          fi
+
           # TEARDOWN_UNVERIFIABLE is ANNOTATED, not filed, and TEARDOWN_UNMEASURED is neither.
           #
           #   UNVERIFIABLE means nobody could LOOK. That is a real ask — go and check by hand — but a

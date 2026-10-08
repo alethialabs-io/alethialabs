@@ -1551,6 +1551,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-go-arch-filenames.mjs --self-test
+      # The console suite runs as `turbo run test` over a restored .turbo/cache, so a test that reads a
+      # file OUTSIDE apps/console (the Go catalog, an infra template, the deploy workflow, a docs/legal
+      # page) was replayed green from cache on a PR that changed only that file (#5638). This derives
+      # every repo file the suite reads from the test sources and fails when one is missing from
+      # console#test's turbo inputs (apps/console/turbo.json), or when an entry there is read by nothing.
+      - name: Every file a console test reads is in its turbo cache key
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:console-test-inputs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-console-test-inputs.mjs --self-test
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-connector-assets.mjs
@@ -2249,6 +2260,12 @@ jobs:
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-guards-independent.mjs --self-test
+      # The production-deploy alert runs only on a red main run, so this is the one place its wording
+      # is exercised before it matters: a green deploy with a red smoke must not say production did
+      # not receive the commit (#5643), and the two cases must not update each other's issue.
+      - name: The deploy-failure alert says what production runs, per case
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/deploy-failure-report.mjs --self-test
       # The level ABOVE the two checks either side of this one. They ask whether a step is shaped
       # so Actions will run it, and whether one failure can skip the rest. This asks whether the
       # command a step names does anything at all: `pnpm -F <pkg> <script>` exits 0 when no

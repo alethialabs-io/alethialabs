@@ -25,7 +25,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import { ACTIONS, RESOURCES } from "@/lib/authz/registry";
-import { type Actor, ForbiddenError } from "@/lib/authz/types";
+import type { Actor } from "@/lib/authz/types";
 import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -141,15 +141,18 @@ export interface ConditionOptions {
 	actions: string[];
 }
 
-/** Non-throwing `manage_alerts` check — surfaces caller capability to the client UI. */
+/**
+ * Non-recording `manage_alerts` probe — surfaces caller capability to the client UI.
+ *
+ * `can()`, never `enforce()` (#5660): `enforce` routes through `enforceDecision`, which writes an
+ * `authz_activity_log` row for every non-read allow AND every deny and emits the action event, so
+ * probing with it put a "managed alerts" row (or, for a non-manager, a DENIAL row) in the org's
+ * audit trail on every overview and alerts-hub load. This answer only shows or hides controls; it
+ * authorizes nothing. Each mutation below re-checks with the recording `authorize("manage_alerts")`.
+ */
 async function canManageAlerts(actor: Actor): Promise<boolean> {
-	try {
-		await getPdp().enforce(actor, "manage_alerts", { type: "alert" });
-		return true;
-	} catch (err) {
-		if (err instanceof ForbiddenError) return false;
-		throw err;
-	}
+	const decision = await getPdp().can(actor, "manage_alerts", { type: "alert" });
+	return decision.allowed;
 }
 
 /** Guards that the org's plan unlocks alerting at all (team+); throws otherwise. */

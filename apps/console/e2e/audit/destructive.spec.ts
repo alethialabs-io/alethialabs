@@ -84,7 +84,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type Browser, type JSHandle, type Locator, type Page, type Request } from "@playwright/test";
 
 import { db, closeDb } from "../helpers/db";
 import { restoreContext, materialize, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
@@ -209,8 +209,9 @@ const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
  * product, not "no fixture yet" — an entry whose fixture is unseedable never reaches this list at
  * all, because `SEEDABLE_FIXTURES` already excludes it.
  *
- * ⚠ NONE OF THE THIRTEEN IS THIS UNIT'S TO FIX. `destructive-actions.yaml` is a shared registry and
- * these are other units' entries, so they are cited here and reported on the PR rather than edited.
+ * ⚠ NONE OF THESE LINES WAS #4458's TO FIX. `destructive-actions.yaml` is a shared registry and
+ * these were other units' entries, so they were cited here and reported on the PR rather than
+ * edited. A unit that fixes an entry deletes its line in the same PR (#5640, #5659 did).
  */
 const UNREACHED: ReadonlyMap<string, string> = new Map([
 	// ── the two alerts switches: reached, and one name for two controls ──────────────────────────
@@ -265,29 +266,14 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 			"is seeded; the entry names a control the DOM does not have.",
 	]),
 
-	// ── the five agent entries: "Ask AI" opens the PANEL, and the panel has none of these ────────
+	// ── the agent entries: none left ─────────────────────────────────────────────────────────────
 	//
-	// Measured: `ask-ai-button.tsx` calls `togglePanel`, which sets `view: "panel"`;
-	// `elench-conversation.tsx` then renders `ElenchPanel`, and `elench-panel.tsx` imports NO
-	// `ThreadRail`, no `WidgetGrid`, no gallery and no knowledge panel — all four are mounted only
-	// by `elench-modal.tsx` (its imports at :10-11). The step between them is the panel header's
-	// `aria-label="Expand to full screen"` (`elench-panel.tsx:83`), which no entry's reach names.
-	...(
-		[
-			"agent.thread.delete",
-			"agent.artifact.delete",
-			"agent.artifact.unshare",
-			"agent.knowledge.delete",
-			"agent.widget.remove",
-		] as const
-	).map((id): [string, string] => [
-		id,
-		'its reach chain starts at {open: "Ask AI"}, which opens the PANEL (`ask-ai-button.tsx` → `togglePanel` → ' +
-			"`view: \"panel\"`). `elench-panel.tsx` mounts no thread rail, no artifact gallery, no knowledge panel and " +
-			"no widget grid — every one of them is imported only by `elench-modal.tsx` (:10-11). The chain is missing " +
-			'the step {open: "Expand to full screen"} (`elench-panel.tsx:83`). The rows are seeded; the chain stops one ' +
-			"click short of the surface that renders them.",
-	]),
+	// There were five, all one click short: "Ask AI" opens the docked PANEL, and the rail, the
+	// gallery, the knowledge panel and the widget grid exist only in `elench-modal.tsx`. #5640 gave
+	// `agent.thread.delete` the panel's {open: "Expand to full screen"} step; #5659 gave it to the
+	// other four, each followed by whatever opens its view (the rail's "Artifacts" / "Knowledge",
+	// or the audit thread then "Open widget grid"), and deleted their lines. Direction 1 of
+	// `owedFindings` is now what fails a chain that stops short again.
 
 	[
 		"env.delete",
@@ -550,6 +536,193 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 	return moved;
 }
 
+// ── settling the snapshot: NARROWING the window the page's own writes can land in (#5639) ──────
+//
+// THE WRITER, INFERRED from the code — not observed in a run (see below). `account.delete` failed on #5636's first
+// gate run (job 112906793672) with "authz_activity_log 15→16". `authz_activity_log` has exactly one
+// insert path, `recordActivity` (lib/authz/activity.ts), and it is FIRE-AND-FORGET: `void
+// getServiceDb().insert(…)`, so the row can commit after the request that caused it has answered. It
+// is reached from `enforceDecision` for every DENIAL and every ALLOW whose action is not in
+// `READ_ONLY` (`view`, `view_activity`, `view_alerts`), and from a handful of explicit governance
+// writes (roles, grants, SSO) that no page load reaches.
+//
+// `account.delete` lives on `/[org]`, whose overview mounts `AlertsCard`
+// (components/overview/alerts-card.tsx), which calls `getAlertsBootstrap()` from a `useEffect` —
+// a client-side server action that starts AFTER `domcontentloaded`, i.e. while the reach chain is
+// already clicking "Account menu" → "Account settings". `getAlertsBootstrap` authorizes `view_alerts`
+// (read-only, not recorded) and then calls `canManageAlerts`, which probes the capability with
+// `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
+// allowed `manage_alerts` on `alert` is recorded on EVERY overview load (`enforceDecision` records an
+// allow whose action is not READ_ONLY). That chain is the INFERRED source of the +1: it is the only
+// path the code offers that writes this table on a plain `/[org]` load, but the row itself was never
+// read. It is a product defect in its own right (a capability probe recorded as if the user had
+// managed alerts) and is #5660; this spec's job is only to stop timing its assertion against it.
+//
+// The gate artifact did not keep the row, so its action/resource are not quoted from a run. The spec
+// now prints the new rows itself (`activityRowsSince`) whenever `authz_activity_log` moves, so the next
+// failure names its writer instead of leaving it to be deduced — and confirms or refutes the inference.
+//
+// THE MECHANISM. The before-snapshot used to be taken when the UI was ready — the reach chain's
+// overlay waits, then a fixed 300 ms floor — which says nothing about the PAGE's own requests. Now
+// both snapshots are taken when the page is quiet: no request the page started is still in flight
+// (`trackInFlight`, installed before `goto`, so page-load requests are counted), and two fingerprints
+// read across a quiet interval agree (`settledFingerprint`). The first half anchors the snapshot on
+// the writer's REQUEST finishing; the second covers the fire-and-forget tail after it.
+//
+// THE RACE IS NARROWED, NOT CLOSED, and every comment that mentions it says so. `recordActivity`'s
+// `void getServiceDb().insert(…)` ties the commit to nothing the browser can see — not to the HTTP
+// response, not to anything after it. Network-idle plus the quiet-interval re-read bound the window;
+// an insert that commits more than one quiet interval plus one full fingerprint scan after its request
+// answered still lands inside it. What changed is what the bound is measured FROM: the writer's
+// response, not an overlay mounting.
+//
+// WHAT THE SETTLE ABSORBS, and why that is this spec's model rather than a hole in it. The before-
+// snapshot settles everything the page did up to the trigger click: page load, and every reach step —
+// including OPENING the surface the trigger lives in (here, the Account settings dialog). A write
+// caused by any of that is never charged to the control. That was already the model — the snapshot
+// was always taken after the reach — the settle only stops a slow one from leaking into the window.
+// What it does NOT absorb: the trigger click, the CONFIRMATION opening, and Cancel all happen after
+// the before-snapshot, and the after-snapshot is settled too, so a fire-and-forget write any of those
+// cause is waited FOR and counted. Opening the confirmation is part of the measured window.
+
+/**
+ * Request types that legitimately never finish, so "nothing in flight" must not wait on them.
+ *
+ * A STREAMING `fetch` is not in this list because it cannot be: at request time it is a `fetch` like
+ * every server action, and excluding `fetch` would exclude the very request that wrote #5639's row.
+ * It is handled by the bound instead — {@link SETTLE_IDLE_MS} is a TOTAL per snapshot, so one stream
+ * that never finishes costs at most that once — and by naming it: whatever is still open is carried
+ * into the Cancel failure (`describeSettle`), never dropped.
+ */
+const LONG_LIVED_REQUESTS: ReadonlySet<string> = new Set(["eventsource", "websocket"]);
+
+/**
+ * The TOTAL time one snapshot spends waiting for the page's requests to finish, across all its
+ * readings — not per reading, so a request that never finishes cannot multiply it by
+ * {@link SETTLE_ROUNDS} and eat the test's budget. Past it, the snapshot proceeds and says so.
+ */
+const SETTLE_IDLE_MS = 5_000;
+
+/** The interval two agreeing fingerprints must span — the bound on the fire-and-forget tail. */
+const SETTLE_QUIET_MS = 250;
+
+/** How many readings a snapshot takes before it reports the database as never having settled. */
+const SETTLE_ROUNDS = 6;
+
+interface InFlight {
+	/** Resolves once nothing tracked is in flight, or after `timeoutMs`; returns what is still open. */
+	idle: (timeoutMs: number) => Promise<string[]>;
+	/** Stops listening. */
+	dispose: () => void;
+}
+
+/**
+ * Track every request the page starts until it finishes or fails. Installed BEFORE navigation, so a
+ * request the page fires on mount — the `getAlertsBootstrap` that wrote #5639's row — is counted even
+ * when it starts while the reach chain is still clicking.
+ */
+function trackInFlight(page: Page): InFlight {
+	const open = new Set<Request>();
+	let waiters: Array<() => void> = [];
+	const onRequest = (req: Request) => {
+		if (LONG_LIVED_REQUESTS.has(req.resourceType())) return;
+		open.add(req);
+	};
+	const onDone = (req: Request) => {
+		if (!open.delete(req) || open.size > 0) return;
+		const wake = waiters;
+		waiters = [];
+		for (const w of wake) w();
+	};
+	const dispose = () => {
+		page.off("request", onRequest);
+		page.off("requestfinished", onDone);
+		page.off("requestfailed", onDone);
+	};
+	page.on("request", onRequest);
+	page.on("requestfinished", onDone);
+	page.on("requestfailed", onDone);
+	// A test that THROWS between `goto` and its last snapshot never reaches an explicit dispose; the
+	// page closing does it instead.
+	page.once("close", dispose);
+	return {
+		idle: async (timeoutMs) => {
+			if (open.size > 0) {
+				await new Promise<void>((resolve) => {
+					const done = () => {
+						clearTimeout(timer);
+						resolve();
+					};
+					const timer = setTimeout(() => {
+						waiters = waiters.filter((w) => w !== done);
+						resolve();
+					}, timeoutMs);
+					waiters.push(done);
+				});
+			}
+			return [...open].map((r) => describeRequests([r]));
+		},
+		dispose,
+	};
+}
+
+interface SettledFingerprint {
+	counts: Map<string, number>;
+	/** Requests still open when the last reading was taken — evidence, never silently dropped. */
+	pending: string[];
+	/** False when no two readings agreed within {@link SETTLE_ROUNDS}: the database never went quiet. */
+	settled: boolean;
+}
+
+/**
+ * A fingerprint taken once the page is QUIET: nothing it started is in flight, and two readings a
+ * quiet interval apart agree (ambient growth excepted, exactly as the verdict excepts it). `read` is
+ * injectable so the self-tests can drive the settle with a write they control.
+ */
+async function settledFingerprint(
+	inFlight: InFlight,
+	read: () => Promise<Map<string, number>> = fingerprint,
+	quietMs = SETTLE_QUIET_MS,
+	idleBudgetMs = SETTLE_IDLE_MS,
+): Promise<SettledFingerprint> {
+	const deadline = Date.now() + idleBudgetMs;
+	const remaining = () => Math.max(0, deadline - Date.now());
+	let pending = await inFlight.idle(remaining());
+	let prev = await read();
+	for (let round = 1; round < SETTLE_ROUNDS; round++) {
+		await new Promise((resolve) => setTimeout(resolve, quietMs));
+		pending = await inFlight.idle(remaining());
+		const now = await read();
+		if (diffFingerprints(prev, now).length === 0) return { counts: now, pending, settled: true };
+		prev = now;
+	}
+	return { counts: prev, pending, settled: false };
+}
+
+/** The highest `authz_activity_log` id right now (0 when empty) — the mark `activityRowsSince` reads from. */
+async function activityHighWater(): Promise<string> {
+	const rows = await db()<{ id: string }[]>`SELECT coalesce(max(id), 0)::text AS id FROM authz_activity_log`;
+	return rows[0]?.id ?? "0";
+}
+
+/** Every activity row written after `mark`, as `action resource → allow|deny` — the writer, named. */
+async function activityRowsSince(mark: string): Promise<string[]> {
+	const rows = await db()<{ action: string; resource_type: string; resource_id: string | null; decision: boolean; reason: string | null }[]>`
+		SELECT action, resource_type, resource_id::text AS resource_id, decision, reason
+		FROM authz_activity_log WHERE id > ${mark}::bigint ORDER BY id`;
+	return rows.map(
+		(r) => `${r.action} ${r.resource_type}${r.resource_id ? `:${r.resource_id}` : ""} → ${r.decision ? "allow" : "deny"}${r.reason ? ` (${r.reason})` : ""}`,
+	);
+}
+
+/** The settle's own account of itself, appended to a Cancel failure so a moved row is never bare. */
+function describeSettle(label: string, s: SettledFingerprint): string {
+	const parts: string[] = [];
+	if (!s.settled) parts.push(`the database never settled across ${SETTLE_ROUNDS} readings`);
+	if (s.pending.length > 0) parts.push(`still in flight after the ${SETTLE_IDLE_MS} ms budget: ${s.pending.join(", ")}`);
+	return parts.length > 0 ? ` [${label}: ${parts.join("; ")}]` : "";
+}
+
 // ── reaching a control ──────────────────────────────────────────────────────────────────────────
 
 /**
@@ -610,6 +783,11 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// resolved `{open: "Prometheus + Grafana"}` to the canvas card BEHIND the palette: an
 			// element the modal overlay covers, so the click waited on actionability until the test
 			// timeout ate it (addons.remove, 118s, no reason recorded).
+			//
+			// The scope is only as good as the PREVIOUS step's wait: `openOverlay` counts without
+			// waiting, so an overlay still opening reads as "none" and the lookup falls back to the
+			// page — the same collision, now clickable because nothing covers the card yet (#5631).
+			// That is why an `open:` step ends by waiting for the overlay it opened, below.
 			const root = await openOverlay(page);
 			const named = new RegExp(escapeRe(name), "i");
 			const opener = root
@@ -619,13 +797,39 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				.or(root.getByLabel(named))
 				.first();
 			await opener.waitFor({ state: "visible", timeout: 8_000 });
+			// What was already up BEFORE the click, so the wait below can tell the overlay this click
+			// opens from the one it was clicked inside.
+			const seen = kind === "open" ? await visibleOverlays(page) : null;
 			// An EXPLICIT timeout, same as the wait above. Without one the click inherits the test's
 			// 120s budget, so a step that resolves to something un-clickable (covered, clipped by an
 			// `overflow: clip` ancestor) hangs, times the test out and records NO verdict — where
 			// the catch below would have withheld it WITH the step that could not be taken.
-			await opener.click({ timeout: 8_000 });
-			if (kind === "menu") await openMenu(page, opener);
-			await page.waitForTimeout(300);
+			try {
+				await opener.click({ timeout: 8_000 });
+				// The step's settle is a POSTCONDITION, not a sleep (#5631). A `menu:` step waits for its
+				// menu (`openMenu` fails the step when none opens); an `open:` step waits, bounded, for
+				// the overlay it opened — see `awaitNewOverlay` for why a fixed 300 ms let the NEXT
+				// step's lookup fall back to the whole page and click the canvas card behind the palette.
+				//
+				// There is NO fixed floor after it any more. #5636 kept a 300 ms one because, without it,
+				// `account.delete` failed on its first gate run (job 112906793672) with "Cancel was pressed
+				// and rows still moved: authz_activity_log 15→16" — the overview's `getAlertsBootstrap`
+				// records a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
+				// it. That race is now NARROWED where it belongs, at the SNAPSHOT (`settledFingerprint`,
+				// #5639: network-idle plus a quiet-interval re-read; a write landing later than that is
+				// still possible, see there), so a step's settle answers only "is the UI ready", and an
+				// overlay that mounted answers that.
+				//
+				// What removing the floor changes, stated: EVERY multi-step reach now takes its next step
+				// as soon as the overlay is up, 300 ms sooner than on dev. One green gate run backs that
+				// (37694683768: 30 measured, 0 errored, the same verdicts as #5651's baseline). If a step
+				// starts failing on an overlay that mounted but is not yet interactive, that is the cause
+				// to suspect first — and the fix is a postcondition on that step, not the floor back.
+				if (kind === "menu") await openMenu(page, opener);
+				else if (seen) await awaitNewOverlay(page, seen);
+			} finally {
+				await seen?.dispose().catch(() => {});
+			}
 		} catch (err) {
 			await attachReachEvidence(page, entry.id, `${kind}: ${name}`);
 			// A step that failed for a reason we MEASURED says it. Everything else — a locator that
@@ -727,15 +931,16 @@ async function openMenu(page: Page, trigger: Locator): Promise<void> {
  * they get different words; the observation comes first and the amendment is appended, never
  * substituted, because what the run SAW is still that the item was not on the page.
  *
- * Evidence is attached on this path for the same reason `attachReachEvidence` exists: a withheld
- * control fails no test, so Playwright keeps nothing, and #4852 spent two PRs on a cause nobody
- * could look at.
+ * Evidence for this path is attached by the caller, `resolveAfterReach`, through
+ * `attachTriggerEvidence` — for every reached control withheld "not rendered", of which a lost menu
+ * is one case (#5631; it used to be attached here, and only here). The reason is unchanged: a
+ * withheld control fails no test, so Playwright keeps nothing, and #4852 spent two PRs on a cause
+ * nobody could look at.
  */
 async function amendForClosedMenu(page: Page, entry: ControlEntry, reason: string): Promise<string> {
 	const step = [...(entry.reach ?? [])].reverse().find((s) => typeof s.menu === "string");
 	if (!step?.menu || !reason.includes("is not rendered")) return reason;
 	if (await openMenuLocator(page).isVisible().catch(() => false)) return reason;
-	await attachReachEvidence(page, entry.id, `menu: ${step.menu}`);
 	return `${reason} — and no menu was open when the item was read, so the menu opened by {menu: "${step.menu}"} was lost between the reach and the count; the item's absence says nothing about the persona`;
 }
 
@@ -782,11 +987,41 @@ async function resolveAfterReach(page: Page, entry: ControlEntry, where: string,
 	}
 	if ("locator" in resolved) return resolved;
 	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
-	if (rewalks === 0) return { withhold: amended };
-	const retried = rewalkFailure
-		? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
-		: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
-	return { withhold: `${amended} (${retried})` };
+	const retried =
+		rewalks === 0
+			? null
+			: rewalkFailure
+				? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
+				: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
+	const withhold = retried ? `${amended} (${retried})` : amended;
+	await attachTriggerEvidence(page, entry, withhold);
+	return { withhold };
+}
+
+/**
+ * Attach what the page looked like when a control was withheld as NOT RENDERED after its reach
+ * chain was walked successfully (#5631).
+ *
+ * {@link attachReachEvidence} covers a reach STEP that failed. This is the other way a reached
+ * control is lost: every step "succeeds" and the trigger count is 0. `addons.remove` withheld
+ * exactly so on run 37640391109, and the artifact held nothing about what had rendered — so whether
+ * the reach had clicked the palette's option or the canvas card behind it could only be inferred.
+ *
+ * Only for an entry WITH a reach chain: a control with none withholds "not rendered" against the
+ * route itself, which is a fixture question its own reason already names. Distinct file names from
+ * `reach-*`, because a failed re-walk attaches those too. Best effort, like its sibling — a capture
+ * that fails never changes the verdict.
+ */
+async function attachTriggerEvidence(page: Page, entry: ControlEntry, reason: string): Promise<void> {
+	if ((entry.reach ?? []).length === 0 || !reason.includes("is not rendered")) return;
+	try {
+		const info = test.info();
+		await info.attach(`trigger-${entry.id}.png`, { body: await page.screenshot({ timeout: 5_000 }), contentType: "image/png" });
+		const tree = await page.locator("body").ariaSnapshot({ timeout: 5_000 });
+		await info.attach(`trigger-${entry.id}.aria.yml`, { body: `# reach taken; withheld: ${reason}\n${tree}`, contentType: "text/plain" });
+	} catch {
+		// No evidence is still a withheld verdict with its reason; the capture is a diagnostic.
+	}
 }
 
 /**
@@ -821,8 +1056,173 @@ async function attachReachEvidence(page: Page, id: string, step: string): Promis
  * overlay opened later is appended later.
  */
 async function openOverlay(page: Page): Promise<Page | Locator> {
-	const overlay = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, [role="menu"]:visible').last();
+	const overlay = page.locator(OVERLAY_ROLES.map((role) => `[role="${role}"]:visible`).join(", ")).last();
 	return (await overlay.count()) > 0 ? overlay : page;
+}
+
+/** The roles that make a surface an OVERLAY for {@link openOverlay} and {@link awaitNewOverlay} — one list, so the two cannot disagree. */
+const OVERLAY_ROLES: readonly string[] = ["dialog", "alertdialog", "menu"];
+
+/**
+ * How long an `open:` step waits for the overlay its click may have opened.
+ *
+ * An `open:` step does not declare what it opens, and the console gives no signal to read: the
+ * canvas toolbar's **Add** is a plain `<Button onClick={() => setPaletteOpen(true)}>` with no
+ * `aria-haspopup`. Some opens raise an overlay (the node palette, a sheet), others expand a section
+ * in place (`{open: "Danger zone"}`) and never will. So the wait is BOUNDED and its expiry is not a
+ * failure — a step that opened no overlay is still taken, and its only cost is this bound, paid
+ * once per such step. 3 s is ten times the 300 ms that was being missed.
+ */
+const OVERLAY_OPEN_WAIT_MS = 3_000;
+
+/** The overlays visible right now, as element handles — the "before" an `open:` click is compared against. */
+async function visibleOverlays(page: Page): Promise<JSHandle<Element[]>> {
+	return page.evaluateHandle((roles) => {
+		const shown = (el: Element): boolean => {
+			const box = el.getBoundingClientRect();
+			return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+		};
+		return [...document.querySelectorAll(roles.map((r) => `[role="${r}"]`).join(", "))].filter(shown);
+	}, [...OVERLAY_ROLES]);
+}
+
+/**
+ * Wait, bounded, for an overlay that was NOT up before the `open:` click — the one the click opened.
+ *
+ * ── WHY (#5631) ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * `addons.remove` reaches through `[{open: "Add"}, {open: "Prometheus + Grafana"}]`. The second
+ * step's lookup is scoped by {@link openOverlay} to the open overlay — but `openOverlay` counts
+ * WITHOUT waiting, and the walker used to give the first click a fixed 300 ms. If the node palette
+ * was not up by then, the scope fell back to the whole page, where `getByLabel` also matches the
+ * canvas add-on card carrying the same label (the collision `walkReach`'s ⚠ describes). That card
+ * is visible and clickable while no modal covers it, so the step was "taken" against the wrong
+ * element; the palette then opened over the page, and `{button: "Remove"}` counted 0 for the full
+ * settle. Run 37640391109 withheld exactly that, in 10.6 s against ~3 s on green runs. That this is
+ * what happened there is INFERRED from the code and the timing — the run attached nothing (which
+ * is the other half of #5631) — but the race is real in the code either way.
+ *
+ * ── WHAT IT ASKS ────────────────────────────────────────────────────────────────────────────────
+ *
+ * Is an overlay visible that is not one of `seen`? IDENTITY, not a count: `{menu: "More"}, {open:
+ * "Environment settings"}` closes one overlay as it opens another, so the count does not move. A
+ * visible overlay that was already up (the step was clicked INSIDE it) is not what this waits for.
+ * Expiry returns quietly — see {@link OVERLAY_OPEN_WAIT_MS} — so the bound costs time, never a
+ * verdict.
+ */
+async function awaitNewOverlay(page: Page, seen: JSHandle<Element[]>, timeout = OVERLAY_OPEN_WAIT_MS): Promise<boolean> {
+	return page
+		.waitForFunction(
+			({ roles, before }) => {
+				const shown = (el: Element): boolean => {
+					const box = el.getBoundingClientRect();
+					return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+				};
+				return [...document.querySelectorAll(roles.map((r) => `[role="${r}"]`).join(", "))].some((el) => shown(el) && !before.includes(el));
+			},
+			{ roles: [...OVERLAY_ROLES], before: seen },
+			{ timeout },
+		)
+		.then(() => true)
+		.catch(() => false);
+}
+
+/** Everything the spec treats as a confirmation dialog — one selector, so the snapshot and the lookup cannot disagree. */
+const DIALOG_SELECTOR = '[data-slot="alert-dialog-content"], [role="alertdialog"], [role="dialog"]';
+
+/** The confirmation-dialog candidates visible right now, as element handles — the "before" a trigger click is compared against. */
+async function visibleDialogs(page: Page): Promise<JSHandle<Element[]>> {
+	return page.evaluateHandle((sel) => {
+		const shown = (el: Element): boolean => {
+			const box = el.getBoundingClientRect();
+			return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+		};
+		return [...document.querySelectorAll(sel)].filter(shown);
+	}, DIALOG_SELECTOR);
+}
+
+/**
+ * The dialog the trigger click OPENED, pinned — or null when the click opened none.
+ *
+ * ── WHY (#5640) ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * The lookup used to be `page.locator(DIALOG_SELECTOR).first()`, and a selector list resolves in
+ * DOCUMENT order, not in the order the selectors are written. `agent.thread.delete`'s trigger sits
+ * in the thread rail INSIDE the assistant modal (`role="dialog"`), and the confirmation it opens is
+ * a portal appended after it. So `.first()` was the modal: the run reached the control, the click
+ * opened "Delete Audit chat?", and the spec then looked for "Delete chat" inside the HOST — which
+ * is `aria-hidden` while the confirmation is up — and failed with no verdict recorded (run
+ * 37678527100).
+ *
+ * The same `.first()` also made "a dialog appeared" TRUE BEFORE THE CLICK whenever the reach chain
+ * left a dialog open (`account.delete`, `teams.member.remove`, `env.destroy`, `addons.remove`, and
+ * now `agent.thread.delete`): a trigger inside a dialog whose click opened nothing would have read
+ * as confirmed. So the old lookup is NOT kept as a fallback. No new dialog means none appeared.
+ *
+ * ── WHAT IT ASKS ────────────────────────────────────────────────────────────────────────────────
+ *
+ * Is a dialog visible that was not one of `before`? IDENTITY, as {@link awaitNewOverlay} asks it.
+ * The LAST new one in document order wins, because a nested confirmation is appended after its
+ * host. It is pinned by id via {@link pinDialog}, and by a marker attribute when it has no id.
+ *
+ * ⚠ A confirmation that re-renders INSIDE its host element (same node, new content) is not new by
+ * identity, so it reads as "none appeared" — a mismatch, loud, never a silent pass. None of the
+ * registry's confirmations has that shape today: each is its own `ConfirmDialog` / dialog root.
+ */
+async function confirmationDialog(page: Page, before: JSHandle<Element[]>): Promise<Locator | null> {
+	const found = await page.evaluate(
+		({ sel, seen, mark }) => {
+			const shown = (el: Element): boolean => {
+				const box = el.getBoundingClientRect();
+				return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+			};
+			document.querySelectorAll(`[${mark}]`).forEach((el) => el.removeAttribute(mark));
+			const fresh = [...document.querySelectorAll(sel)].filter((el) => shown(el) && !seen.includes(el));
+			const last = fresh[fresh.length - 1];
+			if (!last) return false;
+			// Marked rather than addressed by index: an index into the selector list moves when the host
+			// re-opens after Cancel (`manage-team-dialog.tsx` closes while its confirmation is up).
+			last.setAttribute(mark, "");
+			return true;
+		},
+		{ sel: DIALOG_SELECTOR, seen: before, mark: CONFIRMATION_MARK },
+	);
+	return found ? pinDialog(page, page.locator(`[${CONFIRMATION_MARK}]`)) : null;
+}
+
+/** The attribute {@link confirmationDialog} puts on the dialog it chose, so the choice survives DOM changes. */
+const CONFIRMATION_MARK = "data-destructive-audit-confirmation";
+
+/** How long after the trigger click the confirmation is given to mount before it is looked for. */
+const CONFIRMATION_SETTLE_MS = 500;
+
+/**
+ * Click the trigger and return the confirmation the click OPENED, or null — the snapshot, the click
+ * and the lookup as ONE seam, which the control loop calls and the self-tests drive (#5659, A3).
+ *
+ * The ORDER is the function, and each half has a way to be wrong that no other self-test sees:
+ *
+ *  · The snapshot is taken BEFORE the click. Taken after it, the confirmation is already in the
+ *    "before" set, so every confirmation reads as "none appeared" — a mismatch on every entry, or,
+ *    for a `none` control, a dialog that appeared and was never counted.
+ *  · The lookup is {@link confirmationDialog}'s identity rule. `page.locator(DIALOG_SELECTOR).first()`
+ *    answers with whichever dialog comes first in DOCUMENT order — the host the trigger lives in, for
+ *    every entry whose reach leaves a dialog open — and makes "a dialog appeared" true before the
+ *    click has done anything.
+ *
+ * The control loop calls nothing else between the reach and the verdict to click or to look for a
+ * dialog; the self-test "the control loop clicks through `clickForConfirmation`" reads that off the
+ * loop's source, so an inlined sequence that bypasses this seam fails rather than going unexercised.
+ */
+async function clickForConfirmation(page: Page, trigger: Locator, settleMs = CONFIRMATION_SETTLE_MS): Promise<Locator | null> {
+	const before = await visibleDialogs(page);
+	try {
+		await trigger.click();
+		await page.waitForTimeout(settleMs);
+		return await confirmationDialog(page, before);
+	} finally {
+		await before.dispose().catch(() => {});
+	}
 }
 
 /**
@@ -1146,10 +1546,14 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
+		// Installed before `goto`, so the requests the page fires on load are the ones the snapshot waits
+		// out (#5639) — see `settledFingerprint`.
+		const inFlight = trackInFlight(page);
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
 		const reachFailure = await walkReach(page, entry);
 		if (reachFailure) {
+			inFlight.dispose();
 			withholdWithFixture(entry, reachFailure);
 			return;
 		}
@@ -1158,13 +1562,17 @@ for (const entry of CONTROLS) {
 		// withheld — see `resolveAfterReach`.
 		const resolved = await resolveAfterReach(page, entry, url);
 		if ("withhold" in resolved) {
+			inFlight.dispose();
 			withholdWithFixture(entry, resolved.withhold);
 			return;
 		}
 		const trigger = resolved.locator;
 
-		// ── both observations start BEFORE the click.
-		const before = await fingerprint();
+		// ── both observations start BEFORE the click, once the page has gone quiet (#5639) — which
+		// narrows, and does not close, the window a fire-and-forget write of its own can land in.
+		const settledBefore = await settledFingerprint(inFlight);
+		const before = settledBefore.counts;
+		const activityMark = await activityHighWater();
 		// A staged control's save updates in place, which the row counts cannot see; its table is
 		// hashed as well. A registry entry that names no table is a finding, not a skipped check.
 		const stagedTable = entry.confirm === "staged" ? entry.staged?.table : undefined;
@@ -1178,22 +1586,25 @@ for (const entry of CONTROLS) {
 		}
 		const watch = watchMutations(page);
 
-		await trigger.click();
-		await page.waitForTimeout(500);
-
-		const dialog = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"], [role="dialog"]').first();
-		const dialogAppeared = await dialog.isVisible().catch(() => false);
+		// A dialog APPEARED only if the click opened one: a dialog already up (the modal or sheet the
+		// reach chain left open) is the trigger's host, not its confirmation (#5640: the thread rail is
+		// inside the assistant modal). The snapshot, the click and the lookup are ONE seam so the
+		// self-tests drive this exact sequence — see `clickForConfirmation`. There is no fallback
+		// locator: with nothing new, there is no dialog to read.
+		const opened = await clickForConfirmation(page, trigger);
+		const dialogAppeared = opened !== null;
 
 		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog";
 		let observed: Observed;
 
 		if (expectsDialog) {
-			if (!dialogAppeared) {
+			if (!opened) {
 				const requests = watch.stop();
 				record({ id: entry.id, route: entry.route, expected: String(entry.status), observed: "missing", verdict: "mismatch", reason: "no confirmation appeared" });
 				expect(dialogAppeared, `${entry.id}: the registry says this control confirms with a ${entry.confirm}, and no dialog appeared. Requests seen: ${describeRequests(requests) || "none"}`).toBe(true);
 				return;
 			}
+			const dialog = opened;
 			// The destructive button is ASSERTED, never activated.
 			if (entry.confirm_action) {
 				const confirmButton = assertNeverPressed(dialog.getByRole("button", { name: new RegExp(escapeRe(entry.confirm_action), "i") }).first(), entry.id);
@@ -1214,8 +1625,8 @@ for (const entry of CONTROLS) {
 				})
 				.first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
-			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
-			// re-resolved on each poll, so after Cancel it can bind to a DIFFERENT dialog.
+			// Pinned BEFORE the click, so after Cancel it cannot re-resolve to a DIFFERENT dialog.
+			// `confirmationDialog` already pinned it by id; pinning twice is a no-op.
 			const confirmation = await pinDialog(page, dialog);
 			await cancel.click();
 			await expect(confirmation, `${entry.id}: Cancel should close the dialog`).toBeHidden({ timeout: 5_000 });
@@ -1236,7 +1647,11 @@ for (const entry of CONTROLS) {
 		}
 
 		const requests = watch.stop();
-		const after = await fingerprint();
+		// Settled the same way as `before`: a fire-and-forget write the CLICK caused is waited FOR, so it
+		// is counted rather than missed — the settle makes this assertion stricter, never looser.
+		const settledAfter = await settledFingerprint(inFlight);
+		inFlight.dispose();
+		const after = settledAfter.counts;
 		const moved = diffFingerprints(before, after);
 
 		// A staged control's way out was pressed exactly as a dialog's Cancel is. Its "nothing was
@@ -1280,7 +1695,10 @@ for (const entry of CONTROLS) {
 					`${entry.id}: \`${entry.mutation}\` was issued while the confirmation was open and Cancel was pressed — the mutation fired before the user agreed. ${describeRequests(attributable)}`,
 				).toBe(0);
 			}
-			expect(moved, `${entry.id}: Cancel was pressed and rows still moved: ${moved.join(", ")}`).toEqual([]);
+			// A moved activity log names its rows, so the writer is read off the failure, not deduced.
+			const activity = moved.some((m) => m.startsWith("authz_activity_log ")) ? ` — new authz_activity_log rows: ${(await activityRowsSince(activityMark)).join("; ")}` : "";
+			const settle = describeSettle("before", settledBefore) + describeSettle("after", settledAfter);
+			expect(moved, `${entry.id}: Cancel was pressed and rows still moved: ${moved.join(", ")}${activity}${settle}`).toEqual([]);
 		}
 
 		record({
@@ -1478,7 +1896,10 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 // one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
 // ambiguity), a visible control beside a ZERO-BOX duplicate (ambiguity), and a name that is a
 // mid-word PREFIX of another control's (not a candidate). A seventh test drives `walkReach`'s
-// overlay scoping, the step before it, and two more drive `resolveAfterReach`'s bounded re-walk of a
+// overlay scoping, the step before it; three more drive the `open:` step's wait for the overlay it
+// opened (a SLOW palette still scopes the next step; an in-place open is taken within the bound; a
+// replacing overlay is seen by identity — #5631), and two the evidence a reached-but-not-rendered
+// withhold attaches (and does not, with no reach). Two more drive `resolveAfterReach`'s bounded re-walk of a
 // LOST menu in both directions (re-opened → measured; lost for good → still withheld, #5023). Each drives the REAL
 // function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
 //
@@ -1612,6 +2033,260 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Prometheus + Grafana" }] };
 	expect(await walkReach(page, entry), "the step names a real option in the open dialog, so it must be taken").toBeNull();
 	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
+});
+
+test("self-test — an `open:` step waits for the overlay it opened, so a SLOW palette still scopes the next step", async ({ page }) => {
+	// #5631, `addons.remove`'s whole chain: `{open: "Add"}` opens the palette, `{open: "Prometheus +
+	// Grafana"}` names an option inside it, and the canvas card behind carries the same label. Here
+	// the palette mounts 1 s after the click — slower than the fixed 300 ms the walker used to sleep,
+	// well inside `OVERLAY_OPEN_WAIT_MS`. With the sleep, the second lookup ran against the whole
+	// page and clicked the card (data-hit="card"); the step still read as taken.
+	//
+	// This is a TIMED test on purpose, because time is the subject. Both margins are wide — 700 ms
+	// past the old sleep, 2 s inside the new bound — and `waitForFunction` polls on animation frames.
+	await page.setContent(`
+		<main>
+			<div role="group" aria-label="Prometheus + Grafana" onclick="document.body.dataset.hit='card'">card</div>
+			<button onclick="setTimeout(() => {
+				const d = document.createElement('div');
+				d.setAttribute('role', 'dialog');
+				d.setAttribute('aria-label', 'Add a service');
+				d.innerHTML = '<div role=&quot;listbox&quot;><div role=&quot;option&quot; onclick=&quot;document.body.dataset.hit=\\'option\\'&quot;>Prometheus + Grafana</div></div>';
+				document.body.appendChild(d);
+			}, 1000)">Add</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Add" }, { open: "Prometheus + Grafana" }] };
+	expect(await walkReach(page, entry), "both steps name real elements, so both must be taken").toBeNull();
+	await expect(page.locator("body"), "the second step must click the palette's option, not the card behind it").toHaveAttribute("data-hit", "option");
+});
+
+/**
+ * A fake origin the settle self-tests route: `respondAfterMs` delays the answer like a slow server
+ * action, and `onAnswered` runs once the response is sent — where `recordActivity`'s fire-and-forget
+ * insert would still be in flight.
+ */
+async function routeSlowWriter(page: Page, respondAfterMs: number, onAnswered: () => void): Promise<void> {
+	await page.route("https://settle.self-test.invalid/**", async (route) => {
+		await new Promise((resolve) => setTimeout(resolve, respondAfterMs));
+		await route.fulfill({ status: 200, body: "{}", headers: { "access-control-allow-origin": "*" } });
+		onAnswered();
+	});
+}
+
+test("self-test — the snapshot waits out a request the PAGE started, and the fire-and-forget write after it (#5639)", async ({ page }) => {
+	// `account.delete`'s shape: the overview fires `getAlertsBootstrap` on mount, the server answers,
+	// and the activity row commits AFTER the answer. The request here answers at 600 ms — past the
+	// 300 ms floor this replaced — and its "row" lands 150 ms after that, inside one quiet interval,
+	// so a single reading taken the moment the request finished misses it as surely as one taken
+	// when the UI was ready.
+	let rows = 0;
+	await routeSlowWriter(page, 600, () => {
+		setTimeout(() => {
+			rows += 1;
+		}, 150);
+	});
+	const inFlight = trackInFlight(page);
+	// Awaited so the test starts from "the request is in flight", which is where the reach chain
+	// leaves `account.delete`; whether the page has fired it yet is not the subject.
+	const started = page.waitForRequest("https://settle.self-test.invalid/bootstrap");
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/bootstrap", { method: "POST" })</script>`);
+	await started;
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", rows]]));
+	inFlight.dispose();
+	expect(settled.counts.get("authz_activity_log"), "the page's own write must land BEFORE the snapshot, not inside the window").toBe(1);
+	expect(settled.settled, "two readings agreed once it had landed").toBe(true);
+	expect(settled.pending, "and nothing the page started was still open").toEqual([]);
+});
+
+test("self-test — a request that NEVER finishes bounds the wait and is NAMED, not silently dropped", async ({ page }) => {
+	// The other direction: a page with a request that never answers must not hang the snapshot, and
+	// the request must be carried into the failure message rather than forgotten.
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	const fired = page.waitForRequest("https://settle.self-test.invalid/hangs");
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/hangs")</script>`);
+	await fired;
+	const started = Date.now();
+	const pending = await inFlight.idle(300);
+	inFlight.dispose();
+	expect(Date.now() - started, "the wait is bounded").toBeLessThan(5_000);
+	expect(pending).toEqual(["GET /hangs"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — the in-flight wait is a TOTAL per snapshot, so a request that never finishes is paid for once", async ({ page }) => {
+	// A stream that never finishes, on a page whose database never settles either: every round runs.
+	// Per-round, the 300 ms budget would be paid SETTLE_ROUNDS times (~1.8 s here, ~30 s with the real
+	// budget, twice per test); as a total it is paid once.
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	const fired = page.waitForRequest("https://settle.self-test.invalid/stream");
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/stream")</script>`);
+	await fired;
+	let n = 0;
+	const started = Date.now();
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", n++]]), 10, 300);
+	const elapsed = Date.now() - started;
+	inFlight.dispose();
+	expect(elapsed, "one budget for the whole snapshot, not one per reading").toBeLessThan(1_000);
+	expect(settled.pending, "and the request that ate it is named").toEqual(["GET /stream"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — a database that never stops moving is reported UNSETTLED, never as a clean reading", async () => {
+	const inFlight: InFlight = { idle: async () => [], dispose: () => {} };
+	let n = 0;
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", n++]]), 10);
+	expect(settled.settled).toBe(false);
+	expect(describeSettle("before", settled)).toContain(`never settled across ${SETTLE_ROUNDS} readings`);
+});
+
+test("self-test — an `open:` step that opens NO overlay is still taken, within the bound", async ({ page }) => {
+	// The other direction: `{open: "Danger zone"}` expands a section in place and never raises an
+	// overlay. The wait for one must expire quietly — a step is not failed for opening what it opens.
+	await page.setContent(`
+		<main>
+			<button onclick="document.body.dataset.opened='yes'">Danger zone</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ open: "Danger zone" }] };
+	const started = Date.now();
+	expect(await walkReach(page, entry), "an in-place expand is a step taken").toBeNull();
+	expect(Date.now() - started, "and the wait for an overlay that never comes is bounded").toBeLessThan(OVERLAY_OPEN_WAIT_MS + 5_000);
+	await expect(page.locator("body")).toHaveAttribute("data-opened", "yes");
+});
+
+test("self-test — an overlay that REPLACES another counts as opened, by identity not by count", async ({ page }) => {
+	// `{menu: "More"}, {open: "Environment settings"}`'s shape: the click closes the overlay it was
+	// made in and opens another, so the number of overlays never moves. The new one is what the
+	// wait is for.
+	await page.setContent(`
+		<main>
+			<div role="menu" id="old"><div role="menuitem" tabindex="-1">Environment settings</div></div>
+		</main>`);
+	const seen = await visibleOverlays(page);
+	await page.evaluate(() => {
+		setTimeout(() => {
+			document.getElementById("old")?.remove();
+			const d = document.createElement("div");
+			d.setAttribute("role", "dialog");
+			d.textContent = "settings";
+			document.body.appendChild(d);
+		}, 500);
+	});
+	expect(await awaitNewOverlay(page, seen), "a different overlay appeared, so the wait must see it").toBe(true);
+	await seen.dispose();
+	// And one that was ALREADY up is not mistaken for a new one.
+	const again = await visibleOverlays(page);
+	expect(await awaitNewOverlay(page, again, 500), "nothing new opened, so the wait expires").toBe(false);
+	await again.dispose();
+});
+
+/**
+ * A host dialog holding the trigger, whose click appends `opens` new dialogs after it, in order —
+ * SYNCHRONOUSLY, inside the click handler. Synchronous is the point: a snapshot taken after the
+ * click then already contains them, which is the misordering the seam's self-tests must catch.
+ */
+function hostWithTrigger(opens: { id: string; role: string; title: string }[]): string {
+	return `
+		<div role="dialog" aria-label="Host"><button id="t">Delete chat Audit chat</button></div>
+		<script>
+			const opens = ${JSON.stringify(opens)};
+			document.getElementById("t").addEventListener("click", () => {
+				for (const o of opens) {
+					const d = document.createElement("div");
+					d.setAttribute("role", o.role);
+					d.id = o.id;
+					d.innerHTML = "<h2>" + o.title + "</h2><button>Cancel</button><button>Delete chat</button>";
+					document.body.appendChild(d);
+				}
+			});
+		</script>`;
+}
+
+test("self-test — a confirmation NESTED over the dialog holding its trigger is the one measured, not the host", async ({ page }) => {
+	// #5640's shape: the trigger lives inside a modal, and its confirmation is a portal appended
+	// after. Driven through `clickForConfirmation`, the seam the control loop calls (#5659, A3), so
+	// this fails if the snapshot moves after the click (the confirmation is then "already up", and
+	// null comes back) or if the lookup goes back to `.first()` (the HOST comes back).
+	await page.setContent(hostWithTrigger([{ id: "confirm", role: "alertdialog", title: "Delete Audit chat?" }]));
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
+	expect(dialog, "the click opened a confirmation, so one must be found — null here means the snapshot was taken AFTER the click").not.toBeNull();
+	await expect(dialog ?? page.locator("#none"), "the HOST came back — the lookup is reading document order, not identity").toHaveAttribute("id", "confirm");
+	await expect((dialog ?? page.locator("#none")).getByRole("button", { name: /^Delete chat$/ })).toBeVisible();
+	// The hazard it replaces: document order puts the HOST first.
+	await expect(page.locator(DIALOG_SELECTOR).first()).toHaveAttribute("aria-label", "Host");
+});
+
+test("self-test — a trigger INSIDE an open dialog whose click opens nothing has NO confirmation", async ({ page }) => {
+	// The old lookup answered "a dialog appeared" from the HOST, before the click had done anything.
+	await page.setContent(hostWithTrigger([]));
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
+	expect(dialog, "the host dialog was up before the click; it is not this control's confirmation").toBeNull();
+	// What the old `.first().isVisible()` read here — the false "confirmed" this replaces.
+	expect(await page.locator(DIALOG_SELECTOR).first().isVisible()).toBe(true);
+});
+
+test("self-test — when ONE click opens TWO new dialogs, the LAST in document order is the one measured", async ({ page }) => {
+	// #5659, A2. `confirmationDialog` takes the last NEW dialog, because a confirmation nested over a
+	// surface the same click raised is appended after it. Nothing pinned that choice: taking the
+	// first new one passed every other self-test. Here both are new, the confirmation comes second,
+	// and only "last" reaches it — the first is a plain dialog with no such title.
+	await page.setContent(
+		hostWithTrigger([
+			{ id: "sheet", role: "dialog", title: "Chat details" },
+			{ id: "confirm", role: "alertdialog", title: "Delete Audit chat?" },
+		]),
+	);
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
+	expect(dialog, "two dialogs appeared, so one must be found").not.toBeNull();
+	await expect(dialog ?? page.locator("#none"), "the FIRST new dialog came back; the rule is the last").toHaveAttribute("id", "confirm");
+	await expect(dialog ?? page.locator("#none")).toContainText("Delete Audit chat?");
+});
+
+test("self-test — the control loop clicks through `clickForConfirmation`, and through nothing else", async () => {
+	// The seam's self-tests above prove the seam. They prove nothing about a loop that stopped
+	// calling it: an inlined snapshot-click-lookup in the loop body would be exercised only by the
+	// live gate. So the loop's own source is read, from `for (const entry of CONTROLS)` to the end
+	// of that block.
+	//
+	// ⚠ BOUNDARY: this reads TEXT, so it checks the loop body's own statements — not helpers it calls.
+	// `observeUndo` / `observeStaged` act after the verdict's click and are out of its reach by design.
+	const src = readFileSync(__filename, "utf8");
+	const start = src.indexOf("\nfor (const entry of CONTROLS) {");
+	expect(start, "the control loop moved — re-point this test at it").toBeGreaterThan(-1);
+	const end = src.indexOf("\n}\n", start);
+	const loop = src.slice(start, end);
+	expect(loop.match(/\bclickForConfirmation\(page, trigger\)/g)?.length ?? 0, "the loop must click its trigger through the seam, exactly once").toBe(1);
+	expect(loop, "the loop clicks the trigger itself, bypassing the seam's snapshot order").not.toMatch(/\btrigger\.click\(/);
+	expect(loop, "the loop takes its own dialog snapshot, which no self-test drives").not.toMatch(/\bvisibleDialogs\(/);
+	expect(loop, "the loop looks the confirmation up itself, which no self-test drives").not.toMatch(/\bconfirmationDialog\(/);
+	expect(loop, "a document-order dialog lookup in the loop answers with the HOST").not.toMatch(/locator\(DIALOG_SELECTOR\)\.first\(\)/);
+});
+
+test("self-test — a reached control withheld as NOT RENDERED attaches its evidence", async ({ page }, testInfo) => {
+	// #5631's second half. Every reach step succeeds, the trigger count is 0, and the verdict is
+	// withheld — a withhold fails no test, so before this the run kept nothing about what rendered.
+	await page.setContent(`
+		<main>
+			<button onclick="document.body.dataset.opened='yes'">Open card</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), id: "self-test.evidence", reach: [{ open: "Open card" }] };
+	expect(await walkReach(page, entry), "premise: the reach is taken").toBeNull();
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 500);
+	expect("withhold" in resolved && resolved.withhold, "the trigger is absent, so the verdict is withheld").toContain("is not rendered");
+	const names = testInfo.attachments.map((a) => a.name);
+	expect(names, "a screenshot of what rendered").toContain("trigger-self-test.evidence.png");
+	expect(names, "and the accessibility tree").toContain("trigger-self-test.evidence.aria.yml");
+});
+
+test("self-test — a control with NO reach chain attaches nothing on `not rendered`", async ({ page }, testInfo) => {
+	// The bound on the above: with no reach there was nothing to walk, and "not rendered" against the
+	// route is a fixture question its reason already names — 20-odd screenshots a run would bury the
+	// ones that mean something.
+	await page.setContent(`<main><button>Keep</button></main>`);
+	const resolved = await resolveAfterReach(page, selfTestEntry("Remove"), "about:self-test", 500);
+	expect("withhold" in resolved).toBe(true);
+	expect(testInfo.attachments.map((a) => a.name).filter((n) => n.startsWith("trigger-"))).toEqual([]);
 });
 
 test("self-test — a `menu:` step re-clicks a trigger whose first click was LOST, so the item is measured", async ({ page }) => {
@@ -1908,6 +2583,61 @@ test("self-test — the UNREACHED ledger fails in BOTH directions, against the R
 	const owedFail = owedFindings(CONTROLS, dishonest, SEEDABLE_FIXTURES, UNREACHED);
 	expect(owedFail.join("\n")).toContain("owed a measurement");
 	expect(owedFail.join("\n")).toContain(owed[0]);
+});
+
+/**
+ * The agent components the assistant MODAL imports and the docked PANEL does not, as registry
+ * `surface` paths — the controls that exist only after the panel's expand step.
+ *
+ * Read from the two chrome files rather than listed, so a component moved into or out of the panel
+ * changes the answer without anyone editing this file. ⚠ BOUNDARY: DIRECT `@/components/agent/…`
+ * imports only. A control one import deeper (`widget-card.tsx`, inside `widget-grid.tsx`) or one
+ * handed to the modal as a prop (the artifact gallery, the knowledge panel) is not in this set.
+ * Those four entries (`agent.widget.remove`, `agent.artifact.delete`, `agent.artifact.unshare`,
+ * `agent.knowledge.delete`) take the step since #5659, and nothing HERE would notice one dropping
+ * it: what would is direction 1 of `owedFindings` on the gate run, which fails an owed entry that
+ * withholds — loud, but only live.
+ */
+function modalOnlySurfaces(modalSrc: string, panelSrc: string): Set<string> {
+	const imports = (src: string): Set<string> =>
+		new Set([...src.matchAll(/from "@\/components\/agent\/([^"]+)"/g)].map((m) => `apps/console/components/agent/${m[1]}.tsx`));
+	const inPanel = imports(panelSrc);
+	return new Set([...imports(modalSrc)].filter((s) => !inPanel.has(s)));
+}
+
+test("self-test — a control mounted only by the assistant MODAL reaches through the panel's expand step", async () => {
+	// #5640: `agent.thread.delete` reached with `[{open: "Ask AI"}]` alone, which opens the PANEL.
+	// The rail that renders "Delete chat …" is imported only by `elench-modal.tsx`, so every run
+	// withheld "not rendered" — an entry one click short of its control, for as long as it existed.
+	const agentDir = path.resolve(__dirname, "..", "..", "components", "agent", "elench");
+	const modalSrc = readFileSync(path.join(agentDir, "elench-modal.tsx"), "utf8");
+	const panelSrc = readFileSync(path.join(agentDir, "elench-panel.tsx"), "utf8");
+
+	// The step's NAME is read off the button that calls `maximize`, so a relabel fails here rather
+	// than turning every entry below back into a silent withhold.
+	const expand = /aria-label="([^"]+)"\s*onClick=\{maximize\}/.exec(panelSrc)?.[1];
+	expect(expand, "elench-panel.tsx has no `aria-label` on a button whose onClick is `maximize` — the reach step cannot be named").toBeTruthy();
+
+	const modalOnly = modalOnlySurfaces(modalSrc, panelSrc);
+	expect(modalOnly.has("apps/console/components/agent/thread-rail.tsx"), "the thread rail is no longer modal-only — re-read #5640 before trusting this test").toBe(true);
+
+	const subjects = CONTROLS.filter((c) => modalOnly.has(c.surface) && !UNREACHED.has(c.id));
+	expect(subjects.map((c) => c.id), "no measured entry sits on a modal-only surface, so this test asserts nothing").toContain("agent.thread.delete");
+	for (const c of subjects) {
+		expect(
+			(c.reach ?? []).some((step) => step.open === expand),
+			`${c.id} lives on ${c.surface}, which only elench-modal.tsx mounts; its reach must take {open: "${expand}"} or it is withheld "not rendered" on every run`,
+		).toBe(true);
+	}
+
+	// The modal shows the rail only at `lg` and wider (`hidden … lg:flex`). Below that, no reach
+	// step can render it — so the project this suite runs in must be at least that wide.
+	if (/\bhidden\b[^"]*\blg:flex\b/.test(modalSrc)) {
+		// No fallback width: a project with no declared viewport is a finding here, not a 1280 assumed.
+		const width = test.info().project.use.viewport?.width;
+		expect(width, "the project declares no viewport, so whether the `lg:flex` rail can render is unknown").toBeDefined();
+		expect(width ?? 0, "the thread rail is `hidden … lg:flex`; a viewport under 1024px cannot render it").toBeGreaterThanOrEqual(1024);
+	}
 });
 
 test("self-test — SEEDABLE_FIXTURES cannot be EMPTIED to silence the floor", async () => {

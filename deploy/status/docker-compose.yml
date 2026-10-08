@@ -12,7 +12,9 @@
 
 services:
   gatus:
-    image: twinproduction/gatus:latest
+    # Pinned, not :latest — config.yaml uses the `any(...)` condition function,
+    # and a floating tag would make the condition syntax change under it unseen.
+    image: twinproduction/gatus:v5.37.0
     container_name: alethia-status
     restart: unless-stopped
     expose:

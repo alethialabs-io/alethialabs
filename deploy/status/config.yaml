@@ -17,7 +17,10 @@ storage:
   path: /data/data.db
 
 endpoints:
-  - name: Console
+  # Anonymous `/` is the MARKETING landing page, not the console: the edge Caddy
+  # (deploy/prod/Caddyfile.tunnel) sends a cookie-less `/` to the marketing app.
+  # Gatus sends no cookie, so this row is the public website and is named so.
+  - name: Website
     group: Alethia
     url: "https://alethialabs.io"
     interval: 60s
@@ -25,20 +28,52 @@ endpoints:
       - "[STATUS] == 200"
       - "[RESPONSE_TIME] < 800"
 
+  # The console's own public page. `/auth/signin` (what this used to probe) is a
+  # back-compat 307 to `/login` in apps/console/proxy.ts; probe the page itself.
+  - name: Console
+    group: Alethia
+    url: "https://alethialabs.io/login"
+    interval: 120s
+    conditions:
+      - "[STATUS] == 200"
+
+  # /api/health with no query is the READINESS probe
+  # (apps/console/app/api/health/route.ts). Its anonymous body is
+  # {"status": "healthy" | "degraded" | "unhealthy", ...}; it answers 503 only
+  # for `unhealthy` (the database is unreachable, or the health computation
+  # itself failed -- fail-closed). It NEVER returns "ok" -- only
+  # the liveness path (?shallow=1) does.
+  #
+  # The status page shows the readiness answer as TWO rows, because Gatus can
+  # only say up or down and the route has three states:
+  #   API             -- down only when the API cannot serve (unhealthy / 503).
+  #   Background jobs -- down whenever a supervised background loop is stuck
+  #                      (degraded) or the API is down.
+  # A degraded API still serves every request, so painting it red would
+  # overstate the outage; hiding `degraded` entirely would understate it.
+  #
+  # The conditions of the two /api/health rows (API, Background jobs) are checked
+  # against what the route really returns by
+  # apps/console/tests/api/health/status-page-monitors.test.ts, which runs in CI
+  # on a change to THIS file too (apps/console/turbo.json puts it in the test
+  # task's cache key). The other rows (Website, Console, Documentation) assert
+  # only `[STATUS] == 200` (Website also a response time), and nothing checks
+  # those against their routes.
   - name: API
     group: Alethia
     url: "https://alethialabs.io/api/health"
     interval: 60s
     conditions:
       - "[STATUS] == 200"
-      - "[BODY].status == ok"
+      - "[BODY].status == any(healthy, degraded)"
 
-  - name: Sign-in
+  - name: Background jobs
     group: Alethia
-    url: "https://alethialabs.io/auth/signin"
-    interval: 120s
+    url: "https://alethialabs.io/api/health"
+    interval: 60s
     conditions:
       - "[STATUS] == 200"
+      - "[BODY].status == healthy"
 
   - name: Documentation
     group: Alethia

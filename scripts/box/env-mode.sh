@@ -653,8 +653,8 @@ else
   log "Source unchanged since the last boot — keeping the compile cache"
 fi
 
-# Surfaced on /api/health?shallow=1 so the loop is closed at the other end too: `pnpm env:status`
-# prints the tree the served page was compiled from, and it is the same hash env.sh computes for
+# Surfaced on /api/health?shallow=1 so the loop is closed at the other end too: `pnpm env:verify`
+# (scripts/env.sh cmd_verify) reads the tree the served page was compiled from, and it is the same hash env.sh computes for
 # YOUR working tree. Equal means the page in your browser is the tree on your disk.
 touch apps/console/.env.local
 grep -v '^NEXT_PUBLIC_ALETHIA_BUILD_ID=' apps/console/.env.local >apps/console/.env.local.tmp || true

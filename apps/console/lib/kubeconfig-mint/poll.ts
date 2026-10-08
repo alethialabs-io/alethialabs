@@ -37,6 +37,7 @@ import type {
 } from "@/lib/db/schema/enums";
 import type { CliKubeconfigMintPollResponse } from "@/lib/validations/cli-contract";
 import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
+import type { CollectGate } from "./gates";
 import { KUBECONFIG_MINT_UNKNOWN_FAILURE } from "./reasons";
 import type { MintActor } from "./request";
 
@@ -50,11 +51,13 @@ export interface MintPollInput {
 	credential: MintCredential;
 	sourceIp: string | null;
 	/**
-	 * Re-checks the actor's authority for the row's tier BEFORE anything is consumed. Returns false
-	 * to refuse. The route passes a PDP check: a person demoted between the request and the poll does
-	 * not collect an admin credential they could no longer request.
+	 * Re-checks the actor's authority for the row's tier (lib/kubeconfig-mint/gates.ts, #5667). A poll
+	 * that hands nothing over asks `probe` (records nothing); the poll that hands over a `ready` mint
+	 * asks `enforce` (records, and decides afresh) immediately before consuming it. So a person demoted
+	 * between the request and the hand-over does not collect an admin credential they could no longer
+	 * request, and waiting for a mint writes no activity row.
 	 */
-	mayCollect: (tier: KubeconfigMintTier) => Promise<boolean>;
+	gate: CollectGate;
 }
 
 /** The outcome of {@link pollKubeconfigMint}. */
@@ -129,9 +132,19 @@ export async function pollKubeconfigMint(
 		const row: MintRowHead | undefined = head;
 		if (!row) return { ok: false, refusal: "not-found" };
 
-		if (!(await input.mayCollect(row.tier))) {
-			return { ok: false, refusal: "forbidden" };
-		}
+		// THE TIER RE-CHECK, AND WHEN IT RECORDS (#5667). Only a live `ready` row is a hand-over: it is
+		// the one branch below that returns credential material. That branch gets the recording,
+		// enforcing check — decided now, by the PDP, not carried over from an earlier poll's probe — so
+		// one admin hand-over is one activity row, and a person who lost access_admin mid-mint is
+		// refused (and the refusal recorded) before the DELETE can run. Every other branch hands over
+		// nothing, so it only probes: still refusing a demoted person, recording nothing — a poll every
+		// two seconds while a mint is pending is waiting, not access. An expired `ready` row is not a
+		// hand-over either; it is answered `expired` below and never consumed.
+		const handover = row.status === "ready" && !row.expired_now;
+		const allowed = handover
+			? await input.gate.enforce(row.tier)
+			: await input.gate.probe(row.tier);
+		if (!allowed) return { ok: false, refusal: "forbidden" };
 
 		if (row.status === "expired" || row.expired_now) {
 			return {

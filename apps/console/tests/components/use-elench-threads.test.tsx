@@ -2,20 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Hook test for useElenchThreads — the lazy thread orchestration. Mocks the agent server
-// actions, the Elench zustand store (a controlled state object per test), and track().
+// actions and track(); drives the REAL Elench zustand store (reset per test), because the
+// defect class this file guards (#5677) is an interaction between the hook's late resume and
+// state the user changed in the store meanwhile — a store double cannot hold that state.
 // Asserts: org context lists org-level threads → resumes the latest; an EMPTY list resolves
 // to an ephemeral conversation (nothing persisted — no createThread); PROJECT context does
-// the SAME, scoped by projectId; and `ready` flips true only after the initial list→resume
-// settles.
+// the SAME, scoped by projectId; `ready` flips true only after the initial list→resume
+// settles; and the late resume never overrides what the user did while it was in flight.
 
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import type { UIMessage } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createThread,
 	getThread,
 	listThreads,
 } from "@/app/server/actions/agent";
-import type { ElenchCtx } from "@/lib/stores/use-elench-store";
+import type { AgentThread } from "@/lib/db/schema";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useElenchThreads } from "@/components/agent/elench/use-elench-threads";
 
 vi.mock("@/app/server/actions/agent", () => ({
@@ -26,71 +30,74 @@ vi.mock("@/app/server/actions/agent", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-// A controlled Elench store: the hook reads open/ctx/threadId + the selectThread/attachThread/
-// newChat actions via selectors, so the mock applies each selector to a per-test state object.
-const selectThread = vi.fn();
-const attachThread = vi.fn();
-const newChat = vi.fn();
-const storeState: {
-	open: boolean;
-	ctx: ElenchCtx;
-	threadId: string | null;
-	selectThread: (id: string | null) => void;
-	attachThread: (id: string) => void;
-	newChat: () => void;
-} = {
-	open: true,
-	ctx: { kind: "org" },
-	threadId: null,
-	selectThread,
-	attachThread,
-	newChat,
-};
-vi.mock("@/lib/stores/use-elench-store", () => ({
-	useElenchStore: (selector: (s: typeof storeState) => unknown) =>
-		selector(storeState),
-}));
+/** A persisted thread row with the given id (and transcript), every other column filled. */
+function thread(id: string, messages: UIMessage[] = []): AgentThread {
+	const at = new Date("2026-10-08T00:00:00Z");
+	return {
+		id,
+		user_id: "u-1",
+		org_id: "o-1",
+		project_id: null,
+		title: id,
+		status: "active",
+		kind: "agent",
+		messages,
+		created_at: at,
+		updated_at: at,
+	};
+}
+
+/** A promise plus its resolver, so a test can hold a server round trip open. */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+	let resolve: (v: T) => void = () => {};
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+	return { promise, resolve };
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	storeState.open = true;
-	storeState.ctx = { kind: "org" };
-	storeState.threadId = null;
+	useElenchStore.setState({
+		open: true,
+		ctx: { kind: "org" },
+		threadId: null,
+		epoch: 0,
+		mainView: "chat",
+	});
 });
 
 describe("useElenchThreads — org context", () => {
 	it("lists org-level threads (project_id IS NULL) and resumes the most recent", async () => {
-		vi.mocked(listThreads).mockResolvedValue([
-			{ id: "t-newest" },
-			{ id: "t-older" },
-		] as never);
-		vi.mocked(getThread).mockResolvedValue({
-			id: "t-newest",
-			messages: [{ id: "m1", role: "user", parts: [] }],
-		} as never);
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest"), thread("t-older")]);
+		vi.mocked(getThread).mockResolvedValue(
+			thread("t-newest", [{ id: "m1", role: "user", parts: [] }]),
+		);
 
 		const { result } = renderHook(() => useElenchThreads());
 
 		await waitFor(() => expect(result.current.ready).toBe(true));
 		// Org-level listing passes no projectId.
 		expect(listThreads).toHaveBeenCalledWith(undefined);
-		// Resumes the latest (list[0]) — loads its transcript, then selects it. Never creates.
+		// Resumes the latest (list[0]) — loads its transcript, then points at it with a lineage
+		// bump. Never creates.
 		expect(getThread).toHaveBeenCalledWith("t-newest");
-		expect(selectThread).toHaveBeenCalledWith("t-newest");
+		expect(useElenchStore.getState().threadId).toBe("t-newest");
+		expect(useElenchStore.getState().epoch).toBe(1);
 		expect(createThread).not.toHaveBeenCalled();
 		expect(result.current.initialMessages).toHaveLength(1);
 	});
 
 	it("resolves to an ephemeral conversation when the list is empty (persists nothing)", async () => {
-		vi.mocked(listThreads).mockResolvedValue([] as never);
+		vi.mocked(listThreads).mockResolvedValue([]);
 
 		const { result } = renderHook(() => useElenchThreads());
 
 		await waitFor(() => expect(result.current.ready).toBe(true));
 		// Nothing is created until the first send — no empty thread litters the rail.
 		expect(createThread).not.toHaveBeenCalled();
-		expect(selectThread).not.toHaveBeenCalled();
 		expect(getThread).not.toHaveBeenCalled();
+		expect(useElenchStore.getState().epoch).toBe(0);
 		expect(result.current.activeId).toBeNull();
 		expect(result.current.initialMessages).toHaveLength(0);
 	});
@@ -98,12 +105,11 @@ describe("useElenchThreads — org context", () => {
 
 describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 	it("lists + resumes threads scoped to the project id (same as org, not ephemeral)", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
-		vi.mocked(listThreads).mockResolvedValue([{ id: "pt-newest" }] as never);
-		vi.mocked(getThread).mockResolvedValue({
-			id: "pt-newest",
-			messages: [],
-		} as never);
+		useElenchStore.setState({
+			ctx: { kind: "project", projectId: "proj-1", environmentId: null },
+		});
+		vi.mocked(listThreads).mockResolvedValue([thread("pt-newest")]);
+		vi.mocked(getThread).mockResolvedValue(thread("pt-newest"));
 
 		const { result } = renderHook(() => useElenchThreads());
 
@@ -111,38 +117,42 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 		// Scoped by the project id — project conversations persist and resume.
 		expect(listThreads).toHaveBeenCalledWith("proj-1");
 		expect(getThread).toHaveBeenCalledWith("pt-newest");
-		expect(selectThread).toHaveBeenCalledWith("pt-newest");
+		expect(useElenchStore.getState().threadId).toBe("pt-newest");
 		expect(createThread).not.toHaveBeenCalled();
 	});
 
 	it("resolves to an ephemeral conversation when the project has no threads", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
-		vi.mocked(listThreads).mockResolvedValue([] as never);
+		useElenchStore.setState({
+			ctx: { kind: "project", projectId: "proj-1", environmentId: null },
+		});
+		vi.mocked(listThreads).mockResolvedValue([]);
 
 		const { result } = renderHook(() => useElenchThreads());
 
 		await waitFor(() => expect(result.current.ready).toBe(true));
 		// A project thread is created lazily on the first send (via startThread), not on open.
 		expect(createThread).not.toHaveBeenCalled();
-		expect(selectThread).not.toHaveBeenCalled();
+		expect(useElenchStore.getState().epoch).toBe(0);
 		expect(result.current.activeId).toBeNull();
 	});
 
 	it("lazily creates + attaches a project thread on the first send (startThread)", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
-		vi.mocked(listThreads).mockResolvedValue([] as never);
-		vi.mocked(createThread).mockResolvedValue({ id: "pt-fresh" } as never);
+		useElenchStore.setState({
+			ctx: { kind: "project", projectId: "proj-1", environmentId: null },
+		});
+		vi.mocked(listThreads).mockResolvedValue([]);
+		vi.mocked(createThread).mockResolvedValue(thread("pt-fresh"));
 
 		const { result } = renderHook(() => useElenchThreads());
 		await waitFor(() => expect(result.current.ready).toBe(true));
 
 		const turn = { id: "msg-1", text: "scale my cluster" };
-		await result.current.startThread("scale my cluster", turn);
+		await act(() => result.current.startThread("scale my cluster", turn));
 		// createThread carries the title + projectId + the user turn to store with the row; the
 		// id attaches WITHOUT bumping the lineage so the in-flight send is not recreated.
 		expect(createThread).toHaveBeenCalledWith("scale my cluster", "proj-1", turn);
-		expect(attachThread).toHaveBeenCalledWith("pt-fresh");
-		expect(selectThread).not.toHaveBeenCalled();
+		expect(useElenchStore.getState().threadId).toBe("pt-fresh");
+		expect(useElenchStore.getState().epoch).toBe(0);
 	});
 });
 
@@ -151,30 +161,138 @@ describe("useElenchThreads — ready gating", () => {
 	// flipped the store's threadId → the initial-load effect re-ran → its cleanup cancelled
 	// the in-flight resolve → `ready` never landed) is guarded by the e2e suite
 	// (e2e/elench-ai.spec.ts), not here: it needs React's real render flush to interleave
-	// with the resolve, which this hook double can't reproduce faithfully.
+	// with the resolve, which this hook test can't reproduce faithfully.
 	it("keeps ready=false until the initial resolve settles", async () => {
-		let resolveList: (v: unknown) => void = () => {};
-		vi.mocked(listThreads).mockImplementation(
-			() => new Promise((res) => (resolveList = res)) as never,
-		);
+		const list = deferred<AgentThread[]>();
+		vi.mocked(listThreads).mockReturnValue(list.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
 
 		// The list promise is still pending → not ready yet.
 		expect(result.current.ready).toBe(false);
 
-		vi.mocked(getThread).mockResolvedValue({ id: "t-1", messages: [] } as never);
-		resolveList([{ id: "t-1" }]);
+		vi.mocked(getThread).mockResolvedValue(thread("t-1"));
+		list.resolve([thread("t-1")]);
 
 		await waitFor(() => expect(result.current.ready).toBe(true));
 	});
 
 	it("does not run the initial load while the surface is closed", async () => {
-		storeState.open = false;
+		useElenchStore.setState({ open: false });
 		const { result } = renderHook(() => useElenchThreads());
 		// Give any (incorrectly-scheduled) effect a tick to run.
 		await Promise.resolve();
 		expect(listThreads).not.toHaveBeenCalled();
 		expect(result.current.ready).toBe(false);
 	});
+});
+
+// #5677: the rail (Artifacts, Knowledge, the thread list, New chat) is interactive while the
+// initial list → getThread round trips are in flight. The resume that lands afterwards must
+// not undo what the user did in that window.
+describe("useElenchThreads — the late initial resume (#5677)", () => {
+	it("leaves the view the user switched to while the transcript was loading", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
+		const held = deferred<AgentThread | null>();
+		vi.mocked(getThread).mockReturnValue(held.promise);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(getThread).toHaveBeenCalledWith("t-newest"));
+
+		// The user clicks Artifacts in the rail before the transcript arrives.
+		act(() => useElenchStore.getState().setMainView("artifacts"));
+		await act(async () => held.resolve(thread("t-newest")));
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		// The thread is still resumed (the chat underneath is ready for when they go back)…
+		expect(useElenchStore.getState().threadId).toBe("t-newest");
+		// …but the gallery they asked for stays on screen.
+		expect(useElenchStore.getState().mainView).toBe("artifacts");
+	});
+
+	it("stands down when the user picked another thread while the transcript was loading", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest"), thread("t-older")]);
+		const held = deferred<AgentThread | null>();
+		// The resume's round trip (t-newest) is held; the user's pick (t-older) answers at once.
+		vi.mocked(getThread).mockImplementation((id) =>
+			id === "t-newest" ? held.promise : Promise.resolve(thread(id)),
+		);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(getThread).toHaveBeenCalledWith("t-newest"));
+
+		// The user opens an older thread from the rail before the resume lands.
+		await act(async () => result.current.selectThread("t-older"));
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-older"));
+		const afterPick = useElenchStore.getState().epoch;
+
+		await act(async () =>
+			held.resolve(thread("t-newest", [{ id: "m1", role: "user", parts: [] }])),
+		);
+		await waitFor(() => expect(result.current.ready).toBe(true));
+
+		// The late resume of list[0] must not override the user's pick, nor its transcript.
+		expect(useElenchStore.getState().threadId).toBe("t-older");
+		expect(useElenchStore.getState().epoch).toBe(afterPick);
+		expect(result.current.initialMessages).toHaveLength(0);
+	});
+
+	it("stands down when the user started a new chat while the transcript was loading", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
+		const held = deferred<AgentThread | null>();
+		vi.mocked(getThread).mockReturnValue(held.promise);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(getThread).toHaveBeenCalledWith("t-newest"));
+
+		act(() => result.current.newChat());
+		const afterNewChat = useElenchStore.getState().epoch;
+		await act(async () =>
+			held.resolve(thread("t-newest", [{ id: "m1", role: "user", parts: [] }])),
+		);
+		await waitFor(() => expect(result.current.ready).toBe(true));
+
+		// Still the fresh ephemeral conversation: no thread, no lineage bump, no transcript.
+		expect(useElenchStore.getState().threadId).toBeNull();
+		expect(useElenchStore.getState().epoch).toBe(afterNewChat);
+		expect(result.current.initialMessages).toHaveLength(0);
+	});
+
+	it("a user-initiated thread pick still returns to the chat", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest"), thread("t-older")]);
+		vi.mocked(getThread).mockImplementation(async (id) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+
+		act(() => useElenchStore.getState().setMainView("knowledge"));
+		await act(async () => result.current.selectThread("t-older"));
+
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-older"));
+		expect(useElenchStore.getState().mainView).toBe("chat");
+	});
+});
+
+// The initial resume used to be what put a reopened surface back on the chat. Now that it
+// leaves the view alone, opening from closed does it instead — and only from closed.
+const OPENERS: ReadonlyArray<"openPanel" | "openModal"> = ["openPanel", "openModal"];
+
+describe("useElenchStore — opening lands on the chat (#5677)", () => {
+	it.each(OPENERS)(
+		"%s from closed resets the view to the chat",
+		(opener) => {
+			useElenchStore.setState({ open: false, mainView: "knowledge" });
+			useElenchStore.getState()[opener]({ kind: "org" });
+			expect(useElenchStore.getState().mainView).toBe("chat");
+		},
+	);
+
+	it.each(OPENERS)(
+		"%s on an already-open surface keeps what it shows",
+		(opener) => {
+			useElenchStore.setState({ open: true, mainView: "artifacts" });
+			useElenchStore.getState()[opener]({ kind: "org" });
+			expect(useElenchStore.getState().mainView).toBe("artifacts");
+		},
+	);
 });
