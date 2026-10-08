@@ -30,10 +30,15 @@
 //
 // ── WHAT THIS DOES NOT DO ─────────────────────────────────────────────────────────────────────────
 //
-// It REPORTS. It dispatches nothing, re-proves nothing and spends nothing: whether drift should
-// trigger an automatic re-prove (epic #2766 unit 3) is undecided, so the only consumer of a red run
-// is `.github/workflows/template-proof-currency.yml`, which upserts ONE issue. "Moved" is plain sha
-// inequality — not "behind", not "ahead": a force-push that rewinds HEAD is just as unproven.
+// It REPORTS. It dispatches nothing, re-proves nothing and spends nothing, BY RULING: on 2026-10-08
+// the maintainer decided epic #2766 unit 3 (#5686) — drift opens an issue only and never re-proves
+// automatically (https://github.com/alethialabs-io/alethialabs/issues/2766#issuecomment-6055301759).
+// The reason is spend: a re-prove buys a hetzner cluster for the `templates` dimension, and a person
+// decides when that is worth paying for. So the only consumer of a red run is
+// `.github/workflows/template-proof-currency.yml`, which upserts ONE issue whose body is this
+// report — and the drift report carries `REPROVE_COMMAND`, so the human step is one copy. Wiring a
+// dispatch in here is not a gap to fill; it reverses that ruling. "Moved" is plain sha inequality —
+// not "behind", not "ahead": a force-push that rewinds HEAD is just as unproven.
 //
 //   node scripts/check-template-proof-currency.mjs                       # live: asks GitHub (gh + token)
 //   node scripts/check-template-proof-currency.mjs --self-test           # hermetic: fixtures + the mutation control
@@ -60,6 +65,19 @@ const SELF = fileURLToPath(import.meta.url);
 export const EXIT_CURRENT = 0;
 export const EXIT_DRIFT = 1;
 export const EXIT_BLIND = 2;
+
+/**
+ * The one command a person runs to re-prove the starter templates after drift — printed in the drift
+ * report, which the workflow files as the tracker issue body. `templates` is hetzner-only (refused
+ * on any other provider by `e2e-nightly.yml`), and `--ref dev` because a dispatch declares the
+ * `e2e-dev` environment, whose deployment-branch policy admits `dev` only — `--ref main` is refused.
+ * The self-test checks both input values against `e2e-nightly.yml`'s own `workflow_dispatch` choices,
+ * so a renamed dimension or provider reds here rather than in front of the person who copies it.
+ */
+export const REPROVE_COMMAND = "gh workflow run e2e-nightly.yml --ref dev -f provider=hetzner -f dimension=templates";
+
+/** The workflow `REPROVE_COMMAND` dispatches, relative to the repo root. */
+const REPROVE_WORKFLOW = path.join(".github", "workflows", "e2e-nightly.yml");
 
 const SHA = /^[0-9a-f]{40}$/;
 const GITHUB_REPO_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
@@ -199,8 +217,14 @@ export function report(v) {
 		for (const r of v.drifted) lines.push(`| ${r.template} | ${r.repo} | \`${r.provenCommit}\` | \`${r.head}\` | \`${r.bundle}\` |`);
 		lines.push(
 			"",
-			"Re-prove the template at its HEAD (a `workflow_dispatch` of `e2e-nightly.yml` with the `templates` dimension) and commit the new bundle under",
-			`\`${PROOFS_DIR.split(path.sep).join("/")}/<template>/\`; this check reads the newest PASS bundle's \`${SUMMARY_FILE}\`. Nothing re-proves automatically (epic #2766 unit 3 is undecided).`,
+			"Re-prove the templates at their HEADs — this buys a hetzner cluster, so it is a person's call:",
+			"",
+			"```sh",
+			REPROVE_COMMAND,
+			"```",
+			"",
+			`Then commit the proof with \`scripts/e2e/commit-proof.sh <run_id> hetzner\` — CI never pushes, and that script splits the run's bundle into one \`${PROOFS_DIR.split(path.sep).join("/")}/<template>/\` directory per template; this check reads the newest PASS bundle's \`${SUMMARY_FILE}\`.`,
+			"Nothing re-proves automatically, by ruling: drift opens this issue only, because a re-prove costs real spend and a person decides (epic #2766 unit 3, #5686).",
 			"",
 		);
 	}
@@ -294,6 +318,76 @@ export function main(argv) {
 
 // ── --self-test ───────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Whether a tracker body tells its reader how to re-prove: it must carry `REPROVE_COMMAND` verbatim,
+ * because the point is that the human step is one copy, not a reconstruction.
+ *
+ * @param {string} body
+ * @returns {boolean}
+ */
+export function carriesReproveCommand(body) {
+	return body.includes(REPROVE_COMMAND);
+}
+
+/**
+ * The `-f <name>=<value>` inputs a `gh workflow run` command passes, as a map.
+ *
+ * @param {string} command
+ * @returns {Map<string, string>}
+ */
+export function dispatchInputs(command) {
+	return new Map([...command.matchAll(/(?:^|\s)-f\s+([A-Za-z0-9_-]+)=(\S+)/g)].map((m) => [m[1], m[2]]));
+}
+
+/**
+ * The `options:` of one `workflow_dispatch` choice input, read from a workflow's YAML by
+ * indentation. Returns null when the workflow has no `workflow_dispatch.inputs.<name>` with options
+ * — absence is reported as absence, never as an empty list a caller might read as "anything goes".
+ *
+ * @param {string} yaml
+ * @param {string} name
+ * @returns {string[] | null}
+ */
+export function dispatchChoices(yaml, name) {
+	const lines = yaml.split("\n");
+	const indentOf = (/** @type {string} */ l) => l.length - l.trimStart().length;
+	const dispatch = lines.findIndex((l) => /^\s*workflow_dispatch:\s*$/.test(l));
+	if (dispatch < 0) return null;
+	const inputs = lines.findIndex((l, i) => i > dispatch && /^\s*inputs:\s*$/.test(l));
+	if (inputs < 0) return null;
+	const inputsIndent = indentOf(lines[inputs]);
+	let start = -1;
+	for (let i = inputs + 1; i < lines.length; i++) {
+		const l = lines[i];
+		if (l.trim() === "" || l.trim().startsWith("#")) continue;
+		if (indentOf(l) <= inputsIndent) break;
+		if (l.trim() === `${name}:`) {
+			start = i;
+			break;
+		}
+	}
+	if (start < 0) return null;
+	const inputIndent = indentOf(lines[start]);
+	/** @type {string[] | null} */ let options = null;
+	let optionsIndent = -1;
+	for (let i = start + 1; i < lines.length; i++) {
+		const l = lines[i];
+		if (l.trim() === "" || l.trim().startsWith("#")) continue;
+		if (indentOf(l) <= inputIndent) break;
+		if (options === null) {
+			if (l.trim() === "options:") {
+				options = [];
+				optionsIndent = indentOf(l);
+			}
+			continue;
+		}
+		if (indentOf(l) <= optionsIndent && !l.trimStart().startsWith("- ")) break;
+		const m = /^\s*-\s+(.*?)\s*$/.exec(l);
+		if (m) options.push(m[1].replace(/^(["'])(.*)\1$/, "$2"));
+	}
+	return options;
+}
+
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 const SHA_C = "c".repeat(40);
@@ -374,6 +468,38 @@ function selfTest() {
 	const rep = report(moved);
 	ok("the drift report names the repo, both full shas and the bundle", [proofs.chart.repo, SHA_B, SHA_MOVED, "demos/proofs/templates/chart/x"].every((s) => rep.includes(s)));
 
+	// The tracker body carries the re-prove command (#5686), so the human step is one copy.
+	ok("the drift report (the tracker body) carries the re-prove command", carriesReproveCommand(rep));
+	// MUTATION CONTROL: the same report with the command removed must fail the same predicate. Prove
+	// the mutation applied first — a strip that matched nothing would pass for the wrong reason.
+	const stripped = rep.replaceAll(REPROVE_COMMAND, "");
+	ok("mutation applied: stripping the command changed the report", stripped !== rep);
+	ok("MUTATION: a drift report without the re-prove command fails the check", !carriesReproveCommand(stripped));
+	ok("a current report does not tell anyone to re-prove", !carriesReproveCommand(report(decide(proofs, hd(allCurrent)))));
+	// An unanswered-only report (exit 2, nothing drifted) must not send its reader to paid spend: the
+	// fix there is the instrument, and a re-prove does not repair an unread HEAD.
+	const blindOnly = decide(proofs, hd({ ...allCurrent, "o/starter-ai": "" }));
+	ok("an unanswered-only report does not tell anyone to re-prove", blindOnly.code === EXIT_BLIND && blindOnly.drifted.length === 0 && !carriesReproveCommand(report(blindOnly)));
+
+	// The command must be one e2e-nightly.yml accepts: both inputs are choice inputs there, so a
+	// renamed value would make the copied command fail. Read the REAL workflow; no network.
+	const sample = ["on:", "  workflow_dispatch:", "    inputs:", "      provider:", "        type: choice", "        options:", "          - hetzner", "          - aws", "      dimension:", "        options:", '          - ""', "          - floor", "        default: \"\"", "jobs: {}"].join("\n");
+	ok("dispatchChoices reads one input's options and stops at its end", JSON.stringify(dispatchChoices(sample, "provider")) === JSON.stringify(["hetzner", "aws"]));
+	ok("dispatchChoices unquotes an option", JSON.stringify(dispatchChoices(sample, "dimension")) === JSON.stringify(["", "floor"]));
+	ok("dispatchChoices: an absent input is null, not an empty list", dispatchChoices(sample, "region") === null);
+	const inputs = dispatchInputs(REPROVE_COMMAND);
+	ok("the re-prove command names e2e-nightly.yml and passes provider and dimension", REPROVE_COMMAND.includes(` ${path.basename(REPROVE_WORKFLOW)} `) && inputs.has("provider") && inputs.has("dimension"));
+	try {
+		const wf = fs.readFileSync(path.join(path.dirname(SELF), "..", REPROVE_WORKFLOW), "utf8");
+		for (const name of ["provider", "dimension"]) {
+			const choices = dispatchChoices(wf, name);
+			const value = inputs.get(name) ?? "";
+			ok(`${REPROVE_WORKFLOW} accepts ${name}=${value} (choices: ${choices === null ? "none found" : choices.join(", ")})`, choices !== null && choices.includes(value));
+		}
+	} catch (err) {
+		ok(`${REPROVE_WORKFLOW} is readable: ${err instanceof Error ? err.message : String(err)}`, false);
+	}
+
 	// parseArgs
 	ok("an unknown flag is collected, not ignored", parseArgs(["--heads=x"]).unknown.length === 1);
 	ok("an empty --root= is refused", parseArgs(["--root="]).unknown.length === 1);
@@ -400,6 +526,7 @@ function selfTest() {
 		const drift = runChild([`--root=${root}`, `--heads-from=${write("moved.json", mutated)}`]);
 		ok(`CLI MUTATION: one HEAD moved off its proven sha turns the run red → exit 1 (got ${drift.code})`, drift.code === EXIT_DRIFT);
 		ok("…and its report names the repo, both shas and the bundle", [slug("apps"), SHA_A, SHA_MOVED, "demos/proofs/templates/apps/20261001T200301Z"].every((s) => drift.stdout.includes(s)));
+		ok("…and the report the workflow files as the tracker body carries the re-prove command", carriesReproveCommand(drift.stdout));
 
 		ok("CLI: a repo the fixture does not name → exit 2", runChild([`--root=${root}`, `--heads-from=${write("partial.json", { [slug("apps")]: SHA_A })}`]).code === EXIT_BLIND);
 		ok("CLI: a HEAD that is not a sha → exit 2", runChild([`--root=${root}`, `--heads-from=${write("garbage.json", { ...currentHeads, [slug("ai")]: "Not Found" })}`]).code === EXIT_BLIND);
