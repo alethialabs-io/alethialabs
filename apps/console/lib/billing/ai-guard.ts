@@ -5,6 +5,7 @@ import "server-only";
 import { and, eq, gte, sql, sum } from "drizzle-orm";
 import {
 	AI_SESSION_WINDOW_MS,
+	type AiPlanContext,
 	aiTierSpec,
 	effectiveAiTierSpec,
 	resolveAiPlan,
@@ -22,7 +23,7 @@ import {
 	sumCreditsForUser,
 } from "@/lib/billing/ai-quota";
 import { isStripeConfigured } from "@/lib/billing/config";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 
 /**
@@ -143,7 +144,15 @@ async function sessionResetIso(
  * org credits / upgrading doesn't lift a personal cap; it clears as the window rolls).
  */
 function throwPersonalCap(weeklyHit: boolean, resetAt: string | null): never {
-	throw new AiBudgetError(
+	throw personalCapError(weeklyHit, resetAt);
+}
+
+/** The per-seat budget error {@link throwPersonalCap} throws, built without throwing it. */
+function personalCapError(
+	weeklyHit: boolean,
+	resetAt: string | null,
+): AiBudgetError {
+	return new AiBudgetError(
 		weeklyHit
 			? "You've reached your personal AI usage limit for this week. It resets soon — an admin can raise the per-seat limit."
 			: "You've reached your personal AI usage limit for this session. It frees up as usage rolls out of the 5-hour window — an admin can raise the per-seat limit.",
@@ -158,7 +167,12 @@ function throwPersonalCap(weeklyHit: boolean, resetAt: string | null): never {
  * spent (and no purchased top-up covers it). Upgradable: a higher tier lifts it.
  */
 function throwOrgCap(weeklyHit: boolean, resetAt: string | null): never {
-	throw new AiBudgetError(
+	throw orgCapError(weeklyHit, resetAt);
+}
+
+/** The org-level budget error {@link throwOrgCap} throws, built without throwing it. */
+function orgCapError(weeklyHit: boolean, resetAt: string | null): AiBudgetError {
+	return new AiBudgetError(
 		weeklyHit
 			? "You're out of included AI usage for this week. Upgrade your AI plan or wait for the weekly reset."
 			: "You're out of included AI usage for this session. It frees up as usage rolls out of the 5-hour window.",
@@ -233,14 +247,7 @@ export async function assertAiAllowed(
 	// The effective caps fold in any admin org/per-seat spend limits (min(tier, limit)), so
 	// every downstream org + per-seat check below enforces them automatically.
 	const spec = effectiveAiTierSpec(aiTierSpec(tier), plan);
-	if (!spec.enabled) {
-		throw new AiBudgetError(
-			"AI features are not enabled for this workspace.",
-			"not_enabled",
-			null,
-			true,
-		);
-	}
+	if (!spec.enabled) throw notEnabledError();
 
 	const now = Date.now();
 	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
@@ -305,117 +312,220 @@ export async function assertAiAllowed(
 	}
 	const seatId = userId;
 
-	// Decide inside a serialized transaction, then compute reset times / throw OUTSIDE it. Every read
-	// inside the txn uses `tx` (the txn's single connection) — never a second pooled connection — so a
-	// burst of concurrent gate checks (each holding one pool slot while it waits on the advisory lock)
-	// can't deadlock the pool on a nested read. The deny→resetAt reads run after the lock is released.
-	type Decision =
-		| { outcome: "charge"; charge: AiCharge }
-		| { outcome: "personal"; weeklyHit: boolean }
-		| { outcome: "org"; weeklyHit: boolean };
-
-	const decision: Decision = await getServiceDb().transaction(
-		async (tx): Promise<Decision> => {
-			// Serialize every AI-budget gate check for THIS org — auto-released at commit/rollback.
-			// Sub-ms gate checks ⇒ negligible contention; only one org's gate is ever serialized.
-			await tx.execute(
-				sql`select pg_advisory_xact_lock(hashtext('ai_budget'), hashtext(${orgId}))`,
-			);
-
-			/** Σ included credits (org, or one seat) in [since, now) — re-read under the lock. */
-			const usedInWindow = async (
-				since: Date,
-				perSeat: boolean,
-			): Promise<number> => {
-				const [row] = await tx
-					.select({ s: sum(aiUsageLedger.credits) })
-					.from(aiUsageLedger)
-					.where(
-						and(
-							eq(aiUsageLedger.org_id, orgId),
-							eq(aiUsageLedger.source, "included"),
-							gte(aiUsageLedger.created_at, since),
-							perSeat ? eq(aiUsageLedger.user_id, seatId) : undefined,
-						),
-					);
-				return Number(row?.s ?? 0);
-			};
-
-			/** Remaining purchased top-ups, computed on the txn connection (Σ grants − Σ purchased). */
-			const purchasedAvailable = async (): Promise<number> => {
-				const [granted] = await tx
-					.select({ s: sum(aiCreditGrant.credits) })
-					.from(aiCreditGrant)
-					.where(eq(aiCreditGrant.org_id, orgId));
-				const [spent] = await tx
-					.select({ s: sum(aiUsageLedger.credits) })
-					.from(aiUsageLedger)
-					.where(
-						and(
-							eq(aiUsageLedger.org_id, orgId),
-							eq(aiUsageLedger.source, "purchased"),
-						),
-					);
-				return Number(granted?.s ?? 0) - Number(spent?.s ?? 0);
-			};
-
-			const [sUsed, wUsed, uSUsed, uWUsed] = await Promise.all([
-				usedInWindow(sessionSince, false),
-				usedInWindow(weekStart, false),
-				usedInWindow(sessionSince, true),
-				usedInWindow(weekStart, true),
-			]);
-
-			const orgSessionOk = sUsed < spec.sessionCredits;
-			const orgWeekOk = wUsed < spec.weeklyCredits;
-			const userSessionOk = uSUsed < spec.perUserSessionCredits;
-			const userWeekOk = uWUsed < spec.perUserWeeklyCredits;
-
-			/** Write the provisional hold row and return the settle charge that carries its id. */
-			const reserve = async (source: CreditSource): Promise<Decision> => {
-				const [row] = await tx
-					.insert(aiUsageLedger)
-					.values({
-						org_id: orgId,
-						user_id: seatId,
-						kind,
-						credits: METERED_RESERVE_CREDITS,
-						source,
-					})
-					.returning({ id: aiUsageLedger.id });
-				return {
-					outcome: "charge",
-					charge: { source, settle: true, holdId: row.id },
-				};
-			};
-
-			if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
-				return reserve("included");
-			}
-			// Per-seat fairness cap is the binding limit while the ORG still has included headroom:
-			// block THIS seat (don't silently divert to purchased packs). Fail-closed.
-			if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
-				return { outcome: "personal", weeklyHit: !userWeekOk };
-			}
-			// Org included headroom is gone for this window — reserve against purchased top-ups if
-			// any, unless the org's hard-cap policy says to pause at the included allowance instead.
-			if (!hardCap && (await purchasedAvailable()) > 0) {
-				return reserve("purchased");
-			}
-			return { outcome: "org", weeklyHit: !orgWeekOk };
-		},
+	// Decide inside a serialized transaction, then compute reset times / throw OUTSIDE it. The
+	// decision is reserveAiHold's (it takes the per-org lock and re-reads the window on `tx`); this
+	// caller hands it the plan and clock it already read above, so the gate runs exactly as before.
+	const decision = await getServiceDb().transaction((tx) =>
+		reserveAiHold(tx, orgId, kind, seatId, { plan, now }),
 	);
 
 	// Lock released — safe to spend a pooled connection on the reset-time reads before throwing.
 	if (decision.outcome === "charge") return decision.charge;
-	if (decision.outcome === "personal") {
-		throwPersonalCap(
-			decision.weeklyHit,
-			decision.weeklyHit ? weekResetIso : await sessionResetIso(orgId, seatId),
+	throw await aiBudgetRefusalError(orgId, seatId, decision.refusal);
+}
+
+/** The kinds that reserve a hold: metered turns, whose real cost is known only after they run. */
+export type MeteredAiKind = Exclude<AiUsageKind, "scan">;
+
+/** The settle charge a metered hold returns: the hold row's id and the budget it drew on. */
+export type AiHoldCharge = Extract<AiCharge, { settle: true }>;
+
+/**
+ * Why a metered hold was refused, decided under the lock. It carries only what was read there;
+ * the error itself is built by {@link aiBudgetRefusalError} AFTER the transaction ends, because
+ * its session reset time is read on a pooled connection.
+ *  - `not_enabled`: the org's AI tier has AI off.
+ *  - `personal`: this seat's sub-cap binds while the org still has included headroom.
+ *  - `org`: the org's included window is spent and no purchased top-up may cover it.
+ */
+export type AiBudgetRefusal =
+	| { reason: "not_enabled" }
+	| { reason: "personal" | "org"; weeklyHit: boolean; weekResetIso: string };
+
+/** What {@link reserveAiHold} decided: a hold reserved on `tx`, or a refusal with nothing written. */
+export type AiHoldDecision =
+	| { outcome: "charge"; charge: AiHoldCharge }
+	| { outcome: "refused"; refusal: AiBudgetRefusal };
+
+/**
+ * What {@link assertAiAllowed} has already read before it opens the transaction: the org's AI plan
+ * (on a pooled connection) and the clock its windows are anchored to. Passing them keeps that
+ * caller's gate exactly what it was; a caller that has not read them omits this, and the plan is
+ * then read on `tx`, after the lock.
+ */
+export interface AiHoldPreread {
+	plan: AiPlanContext;
+	now: number;
+}
+
+/**
+ * Reserve a metered AI turn's provisional hold ON THE CALLER'S TRANSACTION — the body of
+ * {@link assertAiAllowed}'s metered branch, extracted so a caller that must take the hold in the
+ * same transaction as other writes (ADR 0003 §5.1 step 7: the turn claim) can.
+ *
+ * Takes `pg_advisory_xact_lock(hashtext('ai_budget'), hashtext(orgId))` first. A caller that
+ * already holds it in this transaction (reserveTurn takes it as its step 1) takes it again at no
+ * cost: a transaction-level advisory lock is re-entrant within its session, and both are released
+ * together at commit or rollback. Then, under the lock and on `tx` only: the plan (unless given),
+ * the window sums, and either the `METERED_RESERVE_CREDITS` hold row (→ `charge`) or a refusal.
+ *
+ * **It never throws a budget error and never touches a second connection.** A refusal is returned
+ * as data, the caller rolls back whatever else it wrote, and only then builds the error with
+ * {@link aiBudgetRefusalError}: that reads the session reset time on a pooled connection, and
+ * reading it while this transaction holds its connection and the lock is the pool deadlock the
+ * comment in {@link assertAiAllowed} describes. A refusal writes nothing.
+ *
+ * Hosted billing only — the self-host bypass is the caller's (`isStripeConfigured()`), as it is in
+ * {@link assertAiAllowed}: without hosted billing nothing is reserved.
+ */
+export async function reserveAiHold(
+	tx: Tx,
+	orgId: string,
+	kind: MeteredAiKind,
+	userId: string,
+	preread?: AiHoldPreread,
+): Promise<AiHoldDecision> {
+	// Serialize every AI-budget gate check for THIS org — auto-released at commit/rollback.
+	// Sub-ms gate checks ⇒ negligible contention; only one org's gate is ever serialized.
+	await tx.execute(
+		sql`select pg_advisory_xact_lock(hashtext('ai_budget'), hashtext(${orgId}))`,
+	);
+
+	// The plan, read under the lock on this transaction's connection unless the caller read it.
+	const plan = preread?.plan ?? (await resolveAiPlan(orgId, tx));
+	const { tier, hardCap } = plan;
+	const spec = effectiveAiTierSpec(aiTierSpec(tier), plan);
+	if (!spec.enabled) {
+		return { outcome: "refused", refusal: { reason: "not_enabled" } };
+	}
+
+	const now = preread?.now ?? Date.now();
+	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
+	const weekStart = bucketStart(now, WEEK_MS);
+	const weekResetIso = new Date(weekStart.getTime() + WEEK_MS).toISOString();
+	const seatId = userId;
+
+	/** Σ included credits (org, or one seat) in [since, now) — re-read under the lock. */
+	const usedInWindow = async (
+		since: Date,
+		perSeat: boolean,
+	): Promise<number> => {
+		const [row] = await tx
+			.select({ s: sum(aiUsageLedger.credits) })
+			.from(aiUsageLedger)
+			.where(
+				and(
+					eq(aiUsageLedger.org_id, orgId),
+					eq(aiUsageLedger.source, "included"),
+					gte(aiUsageLedger.created_at, since),
+					perSeat ? eq(aiUsageLedger.user_id, seatId) : undefined,
+				),
+			);
+		return Number(row?.s ?? 0);
+	};
+
+	/** Remaining purchased top-ups, computed on the txn connection (Σ grants − Σ purchased). */
+	const purchasedAvailable = async (): Promise<number> => {
+		const [granted] = await tx
+			.select({ s: sum(aiCreditGrant.credits) })
+			.from(aiCreditGrant)
+			.where(eq(aiCreditGrant.org_id, orgId));
+		const [spent] = await tx
+			.select({ s: sum(aiUsageLedger.credits) })
+			.from(aiUsageLedger)
+			.where(
+				and(
+					eq(aiUsageLedger.org_id, orgId),
+					eq(aiUsageLedger.source, "purchased"),
+				),
+			);
+		return Number(granted?.s ?? 0) - Number(spent?.s ?? 0);
+	};
+
+	const [sUsed, wUsed, uSUsed, uWUsed] = await Promise.all([
+		usedInWindow(sessionSince, false),
+		usedInWindow(weekStart, false),
+		usedInWindow(sessionSince, true),
+		usedInWindow(weekStart, true),
+	]);
+
+	const orgSessionOk = sUsed < spec.sessionCredits;
+	const orgWeekOk = wUsed < spec.weeklyCredits;
+	const userSessionOk = uSUsed < spec.perUserSessionCredits;
+	const userWeekOk = uWUsed < spec.perUserWeeklyCredits;
+
+	/** Write the provisional hold row and return the settle charge that carries its id. */
+	const reserve = async (source: CreditSource): Promise<AiHoldDecision> => {
+		const [row] = await tx
+			.insert(aiUsageLedger)
+			.values({
+				org_id: orgId,
+				user_id: seatId,
+				kind,
+				credits: METERED_RESERVE_CREDITS,
+				source,
+			})
+			.returning({ id: aiUsageLedger.id });
+		return {
+			outcome: "charge",
+			charge: { source, settle: true, holdId: row.id },
+		};
+	};
+
+	if (orgSessionOk && orgWeekOk && userSessionOk && userWeekOk) {
+		return reserve("included");
+	}
+	// Per-seat fairness cap is the binding limit while the ORG still has included headroom:
+	// block THIS seat (don't silently divert to purchased packs). Fail-closed.
+	if (orgSessionOk && orgWeekOk && (!userSessionOk || !userWeekOk)) {
+		return {
+			outcome: "refused",
+			refusal: { reason: "personal", weeklyHit: !userWeekOk, weekResetIso },
+		};
+	}
+	// Org included headroom is gone for this window — reserve against purchased top-ups if
+	// any, unless the org's hard-cap policy says to pause at the included allowance instead.
+	if (!hardCap && (await purchasedAvailable()) > 0) {
+		return reserve("purchased");
+	}
+	return {
+		outcome: "refused",
+		refusal: { reason: "org", weeklyHit: !orgWeekOk, weekResetIso },
+	};
+}
+
+/**
+ * Build the {@link AiBudgetError} for a refusal {@link reserveAiHold} returned. Call it only AFTER
+ * the hold's transaction has ended (committed or rolled back): a session-window refusal reads the
+ * oldest in-window usage on a pooled connection for its reset time. `userId` is the seat the hold
+ * was for — a per-seat refusal reports that seat's reset, an org refusal the org's.
+ */
+export async function aiBudgetRefusalError(
+	orgId: string,
+	userId: string,
+	refusal: AiBudgetRefusal,
+): Promise<AiBudgetError> {
+	if (refusal.reason === "not_enabled") return notEnabledError();
+	if (refusal.reason === "personal") {
+		return personalCapError(
+			refusal.weeklyHit,
+			refusal.weeklyHit
+				? refusal.weekResetIso
+				: await sessionResetIso(orgId, userId),
 		);
 	}
-	throwOrgCap(
-		decision.weeklyHit,
-		decision.weeklyHit ? weekResetIso : await sessionResetIso(orgId),
+	return orgCapError(
+		refusal.weeklyHit,
+		refusal.weeklyHit ? refusal.weekResetIso : await sessionResetIso(orgId),
+	);
+}
+
+/** The error for an org whose AI tier has AI turned off. */
+function notEnabledError(): AiBudgetError {
+	return new AiBudgetError(
+		"AI features are not enabled for this workspace.",
+		"not_enabled",
+		null,
+		true,
 	);
 }

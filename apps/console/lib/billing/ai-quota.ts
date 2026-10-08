@@ -3,7 +3,7 @@
 
 import "server-only";
 import { and, eq, gte, min, sql, sum } from "drizzle-orm";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
 import { aiCostMicros } from "@/lib/billing/model-costs";
 import { costToCredits } from "@/lib/billing/ai-credits";
@@ -230,19 +230,6 @@ export async function grantAiCredits(input: {
 }
 
 /**
- * Append one metered AI action to the ledger. When `credits` is supplied it's booked
- * verbatim (the FIXED path — e.g. a scan's nominal charge, or an explicit 0-credit
- * cost-only row). When `credits` is OMITTED (the metered settle path), the row's
- * cost-weighted credits are DERIVED from its real cost-of-serve — `costToCredits(cost_micros)`
- * — so each model row is priced by its own tokens. Always records the model + tokens +
- * snapshotted USD micros (via `aiCostMicros`) when a model is present. On the INSERT path it
- * no-ops only when there is nothing to record — 0 credits AND no model (e.g. a legacy/self-host
- * call before token capture); a 0-credit call WITH a model is still recorded (cost row) so
- * self-hosters and the FinOps rollup get real cost visibility without affecting the credit budget.
- * When `holdId` is set it RECONCILES that provisional hold row in place (always, even to 0) rather
- * than inserting — see the field doc — so a metered turn's ≈$0.10 hold never leaks.
- */
-/**
  * The handler every fire-and-forget `recordAiUsage(...)` call must carry.
  *
  * Metering is deliberately not awaited — it must never delay a user's response. But
@@ -268,7 +255,8 @@ export function meteringFailed(orgId: string): (err: unknown) => void {
 	};
 }
 
-export async function recordAiUsage(input: {
+/** One ledger write: who, what kind, which budget, and the turn's model usage. */
+export interface AiUsageInput {
 	orgId: string;
 	userId: string;
 	kind: AiUsageKind;
@@ -303,15 +291,74 @@ export async function recordAiUsage(input: {
 	stream?: boolean;
 	temperature?: number;
 	maxTokens?: number;
-}): Promise<void> {
-	const costMicros = input.model
+}
+
+/** The model usage of one ledger row: what its cost-of-serve is priced from. */
+export type AiRowUsage = Pick<
+	AiUsageInput,
+	"model" | "inputTokens" | "outputTokens" | "cachedInputTokens"
+>;
+
+/** One row's real cost-of-serve in USD micros, snapshotted at write time; null without a model. */
+function usageCostMicros(u: AiRowUsage): number | null {
+	return u.model
 		? aiCostMicros({
-				model: input.model,
-				inputTokens: input.inputTokens,
-				outputTokens: input.outputTokens,
-				cachedInputTokens: input.cachedInputTokens,
+				model: u.model,
+				inputTokens: u.inputTokens,
+				outputTokens: u.outputTokens,
+				cachedInputTokens: u.cachedInputTokens,
 			})
 		: null;
+}
+
+/**
+ * The credits {@link recordAiUsage} books for a settle row (`credits` omitted) with this usage —
+ * the same derivation it runs, exported so a caller that must know a turn's total BEFORE writing
+ * it (the partial-answer floor, `recordAgentTurnUsage`) computes the number the ledger will hold.
+ */
+export function settleCredits(u: AiRowUsage): number {
+	const costMicros = usageCostMicros(u);
+	return costMicros != null ? costToCredits(costMicros) : 0;
+}
+
+/**
+ * The side effects of a metering write that was made on a caller's transaction, held back until
+ * that caller has committed: `captureAiGeneration` and `checkAiSpendThreshold`. Call it once,
+ * after the commit, and never on a rollback, so a rolled-back settle reports nothing and the spend
+ * alert reads the settled ledger (ADR 0003 §5.3). It returns at once: both effects are started
+ * fire-and-forget, exactly as on the pooled path. Without a `tx` the effects have already run and
+ * this is a no-op.
+ */
+export type AiUsageAfterCommit = () => void;
+
+/** The {@link AiUsageAfterCommit} of a write whose effects already ran (or that has none). */
+const NOTHING_AFTER_COMMIT: AiUsageAfterCommit = () => {};
+
+/**
+ * Append one metered AI action to the ledger. When `credits` is supplied it's booked
+ * verbatim (the FIXED path — e.g. a scan's nominal charge, or an explicit 0-credit
+ * cost-only row). When `credits` is OMITTED (the metered settle path), the row's
+ * cost-weighted credits are DERIVED from its real cost-of-serve — `costToCredits(cost_micros)`
+ * — so each model row is priced by its own tokens. Always records the model + tokens +
+ * snapshotted USD micros (via `aiCostMicros`) when a model is present. On the INSERT path it
+ * no-ops only when there is nothing to record — 0 credits AND no model (e.g. a legacy/self-host
+ * call before token capture); a 0-credit call WITH a model is still recorded (cost row) so
+ * self-hosters and the FinOps rollup get real cost visibility without affecting the credit budget.
+ * When `holdId` is set it RECONCILES that provisional hold row in place (always, even to 0) rather
+ * than inserting — see the field doc — so a metered turn's ≈$0.10 hold never leaks.
+ *
+ * `tx` writes the row on the caller's transaction (ADR 0003 §5.3: a turn is settled in the
+ * transaction that stores its answer). Then nothing outside the ledger write runs here: the
+ * returned {@link AiUsageAfterCommit} carries the side effects, for the caller to run after its
+ * commit. Without `tx` the write and its side effects run exactly as before, and the returned
+ * function does nothing.
+ */
+export async function recordAiUsage(
+	input: AiUsageInput,
+	tx?: Tx,
+): Promise<AiUsageAfterCommit> {
+	const db = tx ?? getServiceDb();
+	const costMicros = usageCostMicros(input);
 	// Settle path: no explicit credits → cost-weighted from the row's real cost-of-serve.
 	const credits =
 		input.credits ?? (costMicros != null ? costToCredits(costMicros) : 0);
@@ -319,7 +366,7 @@ export async function recordAiUsage(input: {
 		// Reconcile a provisional hold IN PLACE: overwrite the reserved estimate with this turn's
 		// real cost. ALWAYS runs (even 0 credits / no model) so an errored or empty turn RELEASES
 		// the hold instead of leaving the reserve estimate stuck in the window (no leaked headroom).
-		await getServiceDb()
+		await db
 			.update(aiUsageLedger)
 			.set({
 				credits,
@@ -337,8 +384,8 @@ export async function recordAiUsage(input: {
 			})
 			.where(eq(aiUsageLedger.id, input.holdId));
 	} else {
-		if (credits <= 0 && !input.model) return;
-		await getServiceDb()
+		if (credits <= 0 && !input.model) return NOTHING_AFTER_COMMIT;
+		await db
 			.insert(aiUsageLedger)
 			.values({
 				org_id: input.orgId,
@@ -360,6 +407,25 @@ export async function recordAiUsage(input: {
 			});
 	}
 
+	const sideEffects: AiUsageAfterCommit = () => {
+		runSideEffects(input, credits, costMicros);
+	};
+	// On a caller's transaction the row is not committed yet: hand the effects back for after the
+	// commit. Without one, run them now, exactly where they always ran.
+	if (tx) return sideEffects;
+	sideEffects();
+	return NOTHING_AFTER_COMMIT;
+}
+
+/**
+ * The side effects of one booked ledger row: the LLM-analytics generation and the spend-threshold
+ * alert. Both are started fire-and-forget, as they always were, so neither delays the caller.
+ */
+function runSideEffects(
+	input: AiUsageInput,
+	credits: number,
+	costMicros: number | null,
+): void {
 	// Preserve the generation hook at the metering chokepoint, but the server analytics boundary
 	// deliberately no-ops it because a worker cannot prove browser consent. It remains fire-and-forget
 	// so metering and the user response never depend on optional telemetry.
