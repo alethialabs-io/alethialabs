@@ -24,8 +24,9 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
-// The spend alert reads the ledger on a pooled connection: record what it saw, and when.
-const alertSaw = vi.hoisted((): { reads: Promise<void>[]; settled: boolean[] } => ({ reads: [], settled: [] }));
+// The spend alert: one test records, at the moment it is called, whether finalize's transaction had
+// already COMMITTED (its promise resolved), so the ordering is asserted without racing the commit.
+const alertSaw = vi.hoisted((): { committedWhenCalled: boolean[] } => ({ committedWhenCalled: [] }));
 vi.mock("@/lib/billing/ai-spend-alert", () => ({
 	checkAiSpendThreshold: vi.fn(() => Promise.resolve()),
 }));
@@ -201,8 +202,7 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 	});
 
 	beforeEach(() => {
-		alertSaw.reads = [];
-		alertSaw.settled = [];
+		alertSaw.committedWhenCalled = [];
 		vi.mocked(checkAiSpendThreshold).mockClear();
 		vi.mocked(recordAgentTurnUsage).mockClear();
 	});
@@ -492,16 +492,29 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 
 	it("a committed answered claim has a settled hold row, and the spend alert runs only after the commit", async () => {
 		const { org, threadId, u, turn } = await acceptedFirstTurn();
+		// The commit hook: the service db's transaction promise resolves only once COMMIT returned.
+		// The alert reads that flag SYNCHRONOUSLY when it is called, so an `afterCommit()` moved inside
+		// the transaction reads `false` on every run, whatever the timing of any pooled query.
+		const db = getServiceDb();
+		const original = db.transaction.bind(db);
+		let committed = false;
+		const txSpy = vi.spyOn(db, "transaction").mockImplementation((fn, config) =>
+			original(fn, config).then((r) => {
+				committed = true;
+				return r;
+			}),
+		);
 		vi.mocked(checkAiSpendThreshold).mockImplementation(async () => {
-			// A pooled read: it sees only what is COMMITTED.
-			const read = hold(holdIdOf(turn)).then((h) => {
-				alertSaw.settled.push(h.settled_at !== null);
-			});
-			alertSaw.reads.push(read);
-			await read;
+			alertSaw.committedWhenCalled.push(committed);
 		});
 		const answer = answerMsg("a-1", "Two jobs failed.");
-		const result = await finalizeTurn(turn, { answer, steps: STEPS, partial: false });
+		let result: Awaited<ReturnType<typeof finalizeTurn>>;
+		try {
+			result = await finalizeTurn(turn, { answer, steps: STEPS, partial: false });
+		} finally {
+			txSpy.mockRestore();
+			vi.mocked(checkAiSpendThreshold).mockImplementation(() => Promise.resolve());
+		}
 		expect(result).toEqual({ outcome: "won", state: "answered", answerId: "a-1", revision: 3 });
 		const row = await thread(threadId);
 		expect(row.messages).toEqual([u, answer]);
@@ -513,12 +526,10 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 		expect(h.settled_at).not.toBeNull();
 		expect(h.model).toBe(HAIKU);
 		expect(h.credits).toBeGreaterThan(0);
-		// The after-commit ran: exactly once, for the billing org, and it read a settled row.
-		await Promise.all(alertSaw.reads);
+		// The after-commit ran: exactly once, for the billing org, and only after the commit.
 		expect(checkAiSpendThreshold).toHaveBeenCalledTimes(1);
 		expect(checkAiSpendThreshold).toHaveBeenCalledWith(org);
-		expect(alertSaw.settled).toEqual([true]);
-		vi.mocked(checkAiSpendThreshold).mockImplementation(() => Promise.resolve());
+		expect(alertSaw.committedWhenCalled).toEqual([true]);
 	});
 
 	it("a provider error before output: failed, hold 0, turn stored unanswered; a Retry re-arms it (C7, C2)", async () => {
