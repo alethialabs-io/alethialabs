@@ -810,10 +810,11 @@ const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a
 
 /**
  * The open-setup guard's refusal, to anyone but the creator (ADR 0002 §5.5): it names who started the
- * setup and offers support, and never says "finish" — only the creator can.
+ * setup and offers support. It never says "finish" or "finished", in any form — the setup is the
+ * creator's to complete, and this member can do nothing with that word but misread it as an action.
  */
 function openSetupOtherMember(creator: string): string {
-	return `${creator} started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at ${SUPPORT_EMAIL}.`;
+	return `${creator} started paying for this team's plan and it is still being set up, so a plan cannot be started here yet. Ask them, or contact support at ${SUPPORT_EMAIL}.`;
 }
 
 /** The open-setup guard's refusal when its Stripe read failed — it fails closed (ADR 0002 §5.7). */
@@ -845,7 +846,9 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 			return OPEN_SETUP_UNCHECKED;
 		}
 		if (verdict !== "open") continue;
-		if (row.user_id === actor.userId) return OPEN_SETUP_CREATOR;
+		// Message selection, not access control: the purchase is refused either way, and `actor` was
+		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
+		if (row.user_id === actor.userId) return OPEN_SETUP_CREATOR; // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
 		return openSetupOtherMember(await setupCreatorName(actor.orgId, row.user_id));
 	}
 	return null;
@@ -2049,7 +2052,12 @@ export type NewOrgLinkResult =
 	| ({ kind: "linked" } & NewOrgPlanReport)
 	| { kind: "refused"; clause: string };
 
-/** The org's billing row names a subscription other than `subscriptionId` that is live (active or trialing). */
+/**
+ * The org's billing row names a subscription other than `subscriptionId` that still bills: active,
+ * trialing, or past_due. `past_due` is a deliberate widening of "live" for THIS refusal only (#5715
+ * review): the sync's row guard also refuses an X that does not supersede a past_due Y, so without it
+ * the link would mark X linked while X and Y both bill. Refusing here sends both to a person instead.
+ */
 function namesOtherLivePlan(
 	billing: Awaited<ReturnType<typeof getOrgBilling>>,
 	subscriptionId: string,
@@ -2057,7 +2065,7 @@ function namesOtherLivePlan(
 	return (
 		!!billing?.stripeSubscriptionId &&
 		billing.stripeSubscriptionId !== subscriptionId &&
-		(billing.status === "active" || billing.status === "trialing")
+		(billing.status === "active" || billing.status === "trialing" || billing.status === "past_due")
 	);
 }
 
@@ -2066,8 +2074,14 @@ function namesOtherLivePlan(
  * writes nothing to the plan and never marks the setup linked: it closes the setup with
  * `refused_reason = 'org_has_plan'` (one compare-and-set), logs `billing.new_org_link.refused`, and
  * alerts the operator with X as the subject — X is paid or may be, unlinked, and renews until a person
- * refunds it or moves it. The alert is skipped only when this setup was ALREADY closed by an earlier
- * caller, which alerted then; a subscription with no setup record at all is alerted on. The customer is
+ * refunds it or moves it.
+ *
+ * The alert is skipped in exactly one case: this call's compare-and-set closed nothing AND the setup's
+ * `closed_reason` is already `org_has_plan` — an earlier refusal of this same X, which raised this same
+ * alert with this subject. Every other case alerts: the setup closed now; no setup record at all; a
+ * setup closed as `ended` (the closer alerts there only when a payment may have moved, so a `never_paid`
+ * close raised nothing) or as `operator` (`close-setup` never alerts); a setup already linked. A new
+ * closer does NOT inherit the skip — it alerts here unless it writes `org_has_plan`. The customer is
  * told the alert was raised only when it reached a channel (I8).
  */
 async function refuseNewOrgLink(input: {
@@ -2091,8 +2105,10 @@ async function refuseNewOrgLink(input: {
 		org_subscription_id: input.rowSubscriptionId,
 		setup_closed_now: closed ? "true" : "false",
 	});
+	// The one skip: an earlier refusal of this X already raised this alert (see the JSDoc).
+	const alreadyRefused = !closed && record?.closed_reason === "org_has_plan";
 	let alerted = false;
-	if (closed || !record) {
+	if (!alreadyRefused) {
 		alerted = await alertPaymentNeedsSupport({
 			subscriptionId: input.sub.id,
 			customerId: input.customerId,

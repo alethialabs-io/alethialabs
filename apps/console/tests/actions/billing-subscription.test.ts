@@ -3353,11 +3353,11 @@ describe("ADR 0002 S1 (#5714)", () => {
 			const r = await createSubscriptionIntent("team");
 			if (!("error" in r)) throw new Error("expected a refusal");
 			expect(r.error).toBe(
-				"Ada Lovelace started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
+				"Ada Lovelace started paying for this team's plan and it is still being set up, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
 			);
-			// §5.5's copy says the setup "has not finished" — a fact. What it must never do is tell
-			// this member to FINISH it, which only the creator can (the imperative word).
-			expect(r.error).not.toMatch(/\bfinish\b/i);
+			// The co-owner's copy never says "finish" or "finished", in any form (#5715 review): the setup
+			// is the creator's to complete, so the word is only ever misread as something to do here.
+			expect(r.error).not.toMatch(/finish/i);
 			for (const column of ["sub_x", "cus_x", "Acme Cloud", "acme", "user-1"]) {
 				expect(r.error).not.toContain(column);
 			}
@@ -3368,7 +3368,7 @@ describe("ADR 0002 S1 (#5714)", () => {
 			db.queue.push([]);
 			const r = await createSubscriptionIntent("team");
 			expect(r).toEqual({
-				error: expect.stringMatching(/^Another member of this team started a paid setup for this team/),
+				error: expect.stringMatching(/^Another member of this team started paying for this team's plan/),
 			});
 		});
 	});
@@ -3587,15 +3587,55 @@ describe("ADR 0002 S1 (#5714)", () => {
 			});
 		});
 
-		it("a refusal whose setup an earlier caller already closed (and alerted on) does not alert again", async () => {
+		it("a refusal whose setup an earlier org_has_plan refusal already closed (and alerted on) does not alert again", async () => {
 			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
 			vi.mocked(emitAlertEvent).mockResolvedValue(1);
 			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
 			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
 			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
-			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ closed_at: new Date(), refused_reason: "org_has_plan" }));
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(
+				setupRow({ closed_at: new Date(), closed_reason: "org_has_plan", refused_reason: "org_has_plan" }),
+			);
 			await expect(linkSubscriptionToNewOrg(input)).resolves.toMatchObject({ kind: "refused" });
 			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		// Review blocker on #5715: the skip used to cover ANY already-closed setup, on the claim that the
+		// earlier closer "alerted then". Neither of these closers did, so X renewed beside Y unreported.
+		it.each([
+			["an operator's close-setup (which never alerts)", { closed_reason: "operator" as const, closed_by: "op-1" }],
+			["the closer's ended branch on a never_paid X (which raised nothing)", { closed_reason: "ended" as const }],
+		])("a refusal whose setup was already closed by %s still alerts", async (_label, closedBy) => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ closed_at: new Date(), ...closedBy }));
+			const r = await linkSubscriptionToNewOrg(input);
+			expect(r).toMatchObject({ kind: "refused", clause: expect.stringMatching(/We have raised this with support\.$/) });
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_id: "sub_1" }),
+			);
+		});
+
+		it("a past_due Y refuses too — closed, logged and alerted — so X and Y never both bill silently", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "incomplete", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "past_due"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
+			const r = await linkSubscriptionToNewOrg({ ...input, payer });
+			expect(r).toMatchObject({ kind: "refused", clause: expect.stringMatching(/already has an active plan/) });
+			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
+			expect(closePendingOrgSetup).toHaveBeenCalledWith(expect.objectContaining({ reason: "org_has_plan", refusedReason: "org_has_plan" }));
+			expect(events()).toEqual(["billing.new_org_link.refused"]);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 		});
 
 		it("a refused X with no setup record at all is still alerted on", async () => {

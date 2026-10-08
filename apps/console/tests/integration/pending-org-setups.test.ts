@@ -578,7 +578,7 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 		const r = await runWithActor(actorIn(CO_OWNER, ORG), () => createSubscriptionIntent("team"));
 		expect(r).toEqual({
 			error:
-				"Ada Creator started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
+				"Ada Creator started paying for this team's plan and it is still being set up, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
 		});
 		const message = "error" in r ? r.error : "";
 		for (const column of [SUB_OPEN, "cus_it_guard", "Guarded Team", "guarded-team", CREATOR]) {
