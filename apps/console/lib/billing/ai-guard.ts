@@ -328,7 +328,7 @@ export async function assertAiAllowed(
 export type MeteredAiKind = Exclude<AiUsageKind, "scan">;
 
 /** The settle charge a metered hold returns: the hold row's id and the budget it drew on. */
-export type AiHoldCharge = Extract<AiCharge, { settle: true }>;
+type AiHoldCharge = Extract<AiCharge, { settle: true }>;
 
 /**
  * Why a metered hold was refused, decided under the lock. It carries only what was read there;
