@@ -19,7 +19,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
-vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The DB handle is the stand-in `installDb()` builds. Handed out from a hoisted holder rather than via
+// `vi.mocked(getServiceDb).mockReturnValue(...)`, which would need a cast to drizzle's type.
+const dbHolder = vi.hoisted((): { db: unknown } => ({ db: null }));
+vi.mock("@/lib/db", () => ({ getServiceDb: () => dbHolder.db }));
 vi.mock("@/lib/alerts/emit", () => ({ emitActionEvent: vi.fn() }));
 vi.mock("@/lib/alerts/rule-cache", () => ({ invalidateOrgRules: vi.fn() }));
 vi.mock("@/lib/alerts/channels", () => ({ getChannelSender: vi.fn() }));
@@ -48,7 +51,6 @@ import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Actor, Decision } from "@/lib/authz/types";
-import { getServiceDb } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 
@@ -94,7 +96,7 @@ function installDb(): void {
 			return b;
 		},
 	};
-	vi.mocked(getServiceDb).mockReturnValue(db as never);
+	dbHolder.db = db;
 }
 
 /**
