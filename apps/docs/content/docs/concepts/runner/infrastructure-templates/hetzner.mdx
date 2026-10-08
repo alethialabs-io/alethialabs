@@ -39,6 +39,37 @@ the same Talos machine secrets, so a server can only join its own cluster.
 A server type that starts with `cax` is an Ampere arm64 server. The `cx`, `cpx` and `ccx` types are
 amd64. The template builds a Talos image for each architecture that the cluster uses.
 
+## Worker count is fixed
+
+A Hetzner cluster does not scale its workers. The number of default workers and the number of
+servers in each extra pool stay the same until you change them and apply again. The template
+installs no cluster autoscaler. This is a limit of the Hetzner template. The EKS, GKE and AKS
+templates scale their node groups.
+
+The reason is the credential. The cluster autoscaler for Hetzner creates and deletes servers from
+inside the cluster. To do that, it needs two things in the cluster:
+
+- A Hetzner Cloud API token with write access, stored as a Kubernetes Secret. A person who can read
+  that Secret, or run a command in the autoscaler's pod, can create and delete every server in the
+  Hetzner project.
+- The Talos worker machine configuration, which holds the cluster's join secrets. Today only
+  OpenTofu has it, and it goes only to the servers that the template creates.
+
+Alethia keeps both out of the cluster. A Hetzner cluster holds no credential that can change the
+servers of the project.
+
+To change the number of workers:
+
+1. Set the new count. For the default workers, change the cluster's node count (`desired_size`,
+   or `min_size`). For an extra pool, change that pool's `desired_size` or `min_size`.
+2. Run a plan and check it. The plan adds servers at the end of the pool, or removes the servers
+   with the highest index. It does not rename or replace the other servers.
+3. Apply the plan.
+
+Plan for your peak load, because the count does not grow by itself. If a workload needs more
+capacity for a short time, add a pool for it, and set the pool's size to `0` when you no longer
+need it.
+
 ## Worker pools, labels and taints
 
 The Hetzner template accepts the three keys that every cloud accepts: `node_labels`,
@@ -86,9 +117,8 @@ Each entry in `extra_node_pools` is a separate group of servers. The servers are
 smaller, does not rename the servers of another pool.
 
 - **Size.** A pool has a fixed number of servers: `desired_size`, or `min_size` if you leave
-  `desired_size` out. Hetzner has no autoscaler yet. It arrives in
-  [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538). Until then, `min_size` and
-  `max_size` are checked but do not change the number of servers.
+  `desired_size` out. `min_size` and `max_size` are checked but do not change the number of
+  servers. See [Worker count is fixed](#worker-count-is-fixed).
 - **Network.** Each pool has its own `/24` subnet on the cluster's private network. Its servers
   take the addresses from `.101` onward in that subnet. The template chooses the subnet from the
   pool's **name**, not from its position in the list. So you can add, remove or reorder pools, and
