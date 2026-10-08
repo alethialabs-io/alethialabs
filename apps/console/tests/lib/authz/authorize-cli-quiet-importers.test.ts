@@ -20,7 +20,9 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
 
 const CONSOLE = resolve(__dirname, "../../..");
 const REPO = resolve(CONSOLE, "../..");
@@ -53,6 +55,13 @@ function namers(): string[] {
 }
 
 describe("authorizeCliQuiet's production callers are exactly the kubeconfig mint poll (#5670)", () => {
+	it("scans for the name the guard really exports", async () => {
+		// The identifier this file greps for must be the real export, or a rename would leave the scan
+		// matching nothing and the closed list guarding a function that no longer exists.
+		const guard = await import("@/lib/authz/guard");
+		expect(typeof guard.authorizeCliQuiet).toBe("function");
+	});
+
 	it("is named by its definition and the mint poll route, and by nothing else", () => {
 		expect(namers()).toEqual([...ALLOWED, DEFINITION].sort());
 	});
