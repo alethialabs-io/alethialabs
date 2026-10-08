@@ -580,10 +580,9 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 			error:
 				"Ada Creator started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
 		});
-		if ("error" in r) {
-			for (const column of [SUB_OPEN, "cus_it_guard", "Guarded Team", "guarded-team", CREATOR]) {
-				expect(r.error).not.toContain(column);
-			}
+		const message = "error" in r ? r.error : "";
+		for (const column of [SUB_OPEN, "cus_it_guard", "Guarded Team", "guarded-team", CREATOR]) {
+			expect(message).not.toContain(column);
 		}
 		expect(fakeStripe.subscriptions.create).not.toHaveBeenCalled();
 		expect(fakeStripe.customers.create).not.toHaveBeenCalled();

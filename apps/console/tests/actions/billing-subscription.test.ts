@@ -300,7 +300,9 @@ beforeEach(() => {
 	// Default: the caller has no earlier unfinished setup record, so no customer to reuse or sweep.
 	vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue([]);
 	// Default: the org has no billing row. `clearAllMocks` keeps an implementation a test set, and the
-	// link reads the row before it writes (#5714) — a leftover live row would refuse it.
+	// link reads the row before it writes (#5714) — a leftover live row would refuse it. Reset, not
+	// cleared: a `mockResolvedValueOnce` a failed test never consumed would leak into the next one.
+	orgBilling.mockReset();
 	orgBilling.mockResolvedValue(null);
 	vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([]);
 	vi.mocked(settleOpenSetup).mockResolvedValue("open");
