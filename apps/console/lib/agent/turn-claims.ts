@@ -890,18 +890,42 @@ export type FinalizeResult =
 	| { outcome: "deleted"; answerId: string; recoveredThreadId: string }
 	| { outcome: "lost" };
 
+/** What an attempt stores: its message, or null; `mismatch` when a continuation did not continue `a`. */
+interface AnswerToStore {
+	message: UIMessage | null;
+	/**
+	 * A continuation whose answer is not the continued prefix: another message id, or parts that do
+	 * not begin with the prefix's parts (by type). Nothing is stored, but the model ran, so its steps
+	 * are settled (§8.1 as amended for slice 5), never released to 0.
+	 */
+	mismatch: boolean;
+}
+
+/** True when `answer` continues `prefix`: the same id, and its parts begin with the prefix's (by type). */
+function continuesPrefix(answer: UIMessage, prefix: UIMessage): boolean {
+	return (
+		answer.id === prefix.id &&
+		answer.parts.length >= prefix.parts.length &&
+		prefix.parts.every((part, i) => answer.parts[i]?.type === part.type)
+	);
+}
+
 /**
  * The message an attempt stores, or null when it produced no model output. A continuation (and a
  * resume) stores the SERVER's prefix of `a` (the last message of the model input) with only the
- * parts the attempt added after it, so the route's echo of the prefix is never what is stored.
+ * parts the attempt added after it, so the route's echo of the prefix is never what is stored. A
+ * continuation answer that does not continue the prefix is a `mismatch`: stored nowhere.
  */
-function answerToStore(turn: AcceptedTurn, answer: UIMessage | null): UIMessage | null {
-	if (!answer) return null;
-	if (turn.kind !== "continue") return hasModelOutput(answer.parts) ? answer : null;
+function answerToStore(turn: AcceptedTurn, answer: UIMessage | null): AnswerToStore {
+	if (!answer) return { message: null, mismatch: false };
+	if (turn.kind !== "continue") return { message: hasModelOutput(answer.parts) ? answer : null, mismatch: false };
 	const prefix = turn.modelInput.at(-1);
-	if (!prefix || answer.id !== prefix.id) return null;
+	if (!prefix || !continuesPrefix(answer, prefix)) return { message: null, mismatch: true };
 	const added = answer.parts.slice(prefix.parts.length);
-	return hasModelOutput(added) ? { ...prefix, parts: [...prefix.parts, ...added] } : null;
+	return {
+		message: hasModelOutput(added) ? { ...prefix, parts: [...prefix.parts, ...added] } : null,
+		mismatch: false,
+	};
 }
 
 /** Thrown inside finalize's transaction to roll it back with a decided outcome. */
@@ -923,7 +947,16 @@ class FinalizeLost extends Error {
  * `running` until C8 releases its hold), is logged as `finalize-metering-failed`, and is rethrown.
  */
 export async function finalizeTurn(turn: AcceptedTurn, outcome: TurnOutcome): Promise<FinalizeResult> {
-	const message = answerToStore(turn, outcome.answer);
+	const { message, mismatch } = answerToStore(turn, outcome.answer);
+	if (mismatch) {
+		log.warn("finalize-answer-mismatch", {
+			org_id: turn.billingOrgId,
+			thread_id: turn.threadId,
+			claim_id: turn.claimId,
+			answer_id: outcome.answer?.id ?? null,
+			prefix_id: turn.modelInput.at(-1)?.id ?? null,
+		});
+	}
 	let meteringFailed = false;
 	let afterCommit: AiUsageAfterCommit = () => {};
 
@@ -969,7 +1002,12 @@ export async function finalizeTurn(turn: AcceptedTurn, outcome: TurnOutcome): Pr
 						? { state: "answered", answer_id: message.id, partial: outcome.partial, error: null }
 						: {
 								state: "failed",
-								error: message !== null && moved ? "transcript-moved" : (outcome.error ?? "no-output"),
+								error:
+									message !== null && moved
+										? "transcript-moved"
+										: mismatch
+											? "answer-mismatch"
+											: (outcome.error ?? "no-output"),
 							},
 				)
 				.where(
@@ -988,8 +1026,9 @@ export async function finalizeTurn(turn: AcceptedTurn, outcome: TurnOutcome): Pr
 				.where(and(eq(agentTurnClaims.id, turn.claimId), eq(agentTurnClaims.user_id, turn.userId)));
 
 			// C7 (no model output) and C6m (the revision moved): nothing stored, the hold released to 0.
+			// A continuation `mismatch` stores nothing either, but the model ran: its steps are settled.
 			if (!stores) {
-				await meter(tx, [], 0);
+				await meter(tx, mismatch ? outcome.steps : [], 0);
 				return message !== null && moved ? { outcome: "moved" } : { outcome: "won", state: "failed" };
 			}
 

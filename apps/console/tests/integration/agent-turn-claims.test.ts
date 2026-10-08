@@ -831,6 +831,69 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 		).toBe("turn-answered");
 	});
 
+	it("a continuation answer that does not continue a stores nothing, settles what ran, and logs finalize-answer-mismatch", async () => {
+		const TC = "call-plan-m";
+		/** An accepted continuation of a stored proposal, in a fresh thread. */
+		const acceptedContinuation = async () => {
+			const { user, org } = freshUser();
+			const u = userMsg("u-plan-m", "plan the project");
+			const proposal: UIMessage = {
+				id: "a-plan-m",
+				role: "assistant",
+				parts: [
+					{ type: "step-start" },
+					{ type: "tool-propose_operation", toolCallId: TC, state: "input-available", input: { operation: "plan_project" } },
+				],
+			};
+			const threadId = await seedThread(user, [u, proposal], { revision: 3 });
+			const output = { status: "approved", operation: "plan_project", projectId: randomUUID(), environmentId: null, jobId: randomUUID() };
+			const withOutput: UIMessage = {
+				...proposal,
+				parts: [
+					{ type: "step-start" },
+					{ type: "tool-propose_operation", toolCallId: TC, state: "output-available", input: { operation: "plan_project" }, output },
+				],
+			};
+			const cont = accepted(
+				await reserveTurn(
+					submit(user, org, threadId, [u, withOutput], { baseRevision: 3, turnId: u.id, answerId: proposal.id, toolCallIds: [TC] }),
+				),
+			);
+			return { org, threadId, cont };
+		};
+		const tail: UIMessage["parts"] = [{ type: "step-start" }, { type: "text", text: "Planning has started.", state: "done" }];
+		const warnSpy = vi.spyOn(log, "warn");
+		try {
+			// Another message id, and the right id without the prefix's parts: both a mismatch.
+			for (const answer of [
+				(prefix: UIMessage): UIMessage => ({ ...prefix, id: "a-other", parts: [...prefix.parts, ...tail] }),
+				(prefix: UIMessage): UIMessage => ({ ...prefix, parts: tail }),
+			]) {
+				const { org, threadId, cont } = await acceptedContinuation();
+				const prefix = cont.modelInput.at(-1);
+				if (!prefix) throw new Error("no prefix");
+				const storedBefore = (await thread(threadId)).messages;
+				warnSpy.mockClear();
+				const fin = await finalizeTurn(cont, { answer: answer(prefix), steps: STEPS, partial: false });
+				expect(fin).toEqual({ outcome: "won", state: "failed" });
+				expect(warnSpy).toHaveBeenCalledWith(
+					"finalize-answer-mismatch",
+					expect.objectContaining({ thread_id: threadId, claim_id: cont.claimId }),
+				);
+				expect((await thread(threadId)).messages).toEqual(storedBefore);
+				expect((await claims(threadId))[0]).toMatchObject({ state: "failed", error: "answer-mismatch", answer_id: null });
+				// The model ran: the hold is settled at its real cost, never released to 0.
+				const h = await hold(holdIdOf(cont));
+				expect(h.settled_at).not.toBeNull();
+				expect(h.model).toBe(HAIKU);
+				expect(h.credits).toBeGreaterThan(0);
+				expect(await ledger(org)).toHaveLength(1);
+			}
+		} finally {
+			warnSpy.mockRestore();
+		}
+	});
+
 	it("a regenerate answers from T without a, and its finalize replaces a", async () => {
 		const { user, org } = freshUser();
 		const u = userMsg("u-r", "what failed?");
