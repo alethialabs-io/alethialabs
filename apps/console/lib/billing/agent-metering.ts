@@ -4,7 +4,15 @@
 import "server-only";
 import type { AiMessage } from "@/lib/analytics/server";
 import type { AiCharge } from "@/lib/billing/ai-guard";
-import { type AiUsageKind, recordAiUsage } from "@/lib/billing/ai-quota";
+import { costToCredits } from "@/lib/billing/ai-credits";
+import {
+	type AiUsageAfterCommit,
+	type AiUsageInput,
+	type AiUsageKind,
+	recordAiUsage,
+} from "@/lib/billing/ai-quota";
+import { aiCostMicros } from "@/lib/billing/model-costs";
+import type { Tx } from "@/lib/db";
 
 /**
  * Turn-level LLM-observability enrichment (PostHog `$ai_generation`). A turn spans multiple per-model
@@ -71,46 +79,118 @@ export function aggregateUsageByModel(steps: AgentStep[]): ModelUsageRecord[] {
 }
 
 /**
+ * The credits `recordAiUsage` books for a settle row with this model usage (`credits` omitted):
+ * `costToCredits(aiCostMicros(usage))`, the derivation it runs. The floor needs the attempt's total
+ * BEFORE the rows are written. tests/integration/ai-hold-tx.test.ts pins that this number is the
+ * one the ledger then holds.
+ */
+function settleCredits(rec: ModelUsageRecord): number {
+	return costToCredits(
+		aiCostMicros({
+			model: rec.model,
+			inputTokens: rec.inputTokens,
+			outputTokens: rec.outputTokens,
+			cachedInputTokens: rec.cachedInputTokens,
+		}),
+	);
+}
+
+/** The after-commit of a call whose side effects already ran, or that wrote nothing. */
+const NOTHING_AFTER_COMMIT: AiUsageAfterCommit = () => {};
+
+/**
  * Record an agent turn's usage PER MODEL (advisor vs executor visible in the ledger).
  *  - **settle** charge (metered, the norm): each model row books its OWN cost-derived credits
  *    — `credits` is omitted so `recordAiUsage` derives it from that row's `cost_micros`. The
  *    turn's total is the sum of the per-row real cost — correctly priced, no double-charge.
  *  - **fixed** charge (reservation, if ever used here): the credit charge is booked once on the
  *    FIRST model row; the rest are cost-only rows (credits 0).
- * No-ops on an empty turn.
+ * An empty turn (no steps) writes only when there is a hold to settle: it releases the hold to 0,
+ * or settles it at `floorCredits` under a floor. Without a hold (a fixed charge) it writes nothing.
+ *
+ * **`floorCredits`** (ADR 0003 §8.1) is the least the attempt as a WHOLE costs: a partial answer is
+ * billed at least the reserve its hold took, because the step in flight when it stopped is not
+ * observable. It is compared with the SUM of the attempt's rows — row 0 (the hold) plus every
+ * appended model row — and when that sum is below the floor, row 0 alone is raised by the
+ * difference, so the attempt costs `max(floor, total)` however its cost is spread across models.
+ * Row 0 is the one raised because it is the row the hold reserved: an appended row exists only when
+ * a step finished, and with no step at all row 0 is the only row. With no steps and NO hold (a fixed
+ * charge) there is no row to raise, and nothing is written, as before. Omitted or 0, nothing changes.
+ * A fixed charge of 0 credits is never floored: that is `assertAiAllowed`'s self-host bypass (no
+ * hosted billing — the operator pays their own gateway), and a floor must never bill a self-hosted
+ * install.
+ *
+ * **`tx`** writes every row on the caller's transaction (ADR 0003 §5.3: the attempt is settled in
+ * the transaction that stores its answer) and runs none of the side effects; the returned
+ * {@link AiUsageAfterCommit} runs them all, for the caller to call once after its commit and never
+ * after a rollback. Without `tx` the rows and their side effects are written exactly as before and
+ * the returned function does nothing.
  */
-export async function recordAgentTurnUsage(input: {
-	orgId: string;
-	userId: string;
-	kind: AiUsageKind;
-	charge: AiCharge;
-	refId?: string;
-	steps: AgentStep[];
-	/** Optional PostHog LLM-observability enrichment for the turn (content/tools/latency/session). */
-	turn?: AgentTurnObservability;
-}): Promise<void> {
+export async function recordAgentTurnUsage(
+	input: {
+		orgId: string;
+		userId: string;
+		kind: AiUsageKind;
+		charge: AiCharge;
+		refId?: string;
+		steps: AgentStep[];
+		/** Optional PostHog LLM-observability enrichment for the turn (content/tools/latency/session). */
+		turn?: AgentTurnObservability;
+		/** The least the attempt's rows may sum to, in credits (a non-negative integer). */
+		floorCredits?: number;
+	},
+	tx?: Tx,
+): Promise<AiUsageAfterCommit> {
+	const requestedFloor = input.floorCredits ?? 0;
+	if (!Number.isInteger(requestedFloor) || requestedFloor < 0) {
+		throw new Error(
+			`recordAgentTurnUsage: floorCredits must be a non-negative integer (got ${requestedFloor}).`,
+		);
+	}
+	// A fixed charge of 0 is the self-host bypass (`assertAiAllowed` without hosted billing): the
+	// attempt is free by decision, so no floor may raise it.
+	const floor = input.charge.settle || input.charge.credits > 0 ? requestedFloor : 0;
+	/** One ledger write, on `tx` when the caller gave one (the pooled call is left exactly as it was). */
+	const record = (row: AiUsageInput): Promise<AiUsageAfterCommit> =>
+		tx ? recordAiUsage(row, tx) : recordAiUsage(row);
+
 	const records = aggregateUsageByModel(input.steps);
 	const charge = input.charge;
 	const turn = input.turn;
 	// A metered turn RESERVED a provisional hold row (assertAiAllowed) that MUST be reconciled or
 	// released — never left at the ≈$0.10 estimate. The turn's first model row reconciles that hold
 	// in place (holdId → UPDATE); any further model rows append as new ledger rows. An empty turn
-	// (no steps) still releases the hold to 0 so it doesn't permanently reduce the window's headroom.
+	// (no steps) still releases the hold to 0 so it doesn't permanently reduce the window's headroom
+	// — or, under a floor, settles it AT the floor (the attempt's only row is the hold).
 	const holdId = charge.settle ? charge.holdId : undefined;
 	if (records.length === 0) {
-		if (holdId) {
-			await recordAiUsage({
-				orgId: input.orgId,
-				userId: input.userId,
-				kind: input.kind,
-				source: charge.source,
-				refId: input.refId,
-				holdId,
-			});
-		}
-		return;
+		if (!holdId) return NOTHING_AFTER_COMMIT;
+		const after = await record({
+			orgId: input.orgId,
+			userId: input.userId,
+			kind: input.kind,
+			source: charge.source,
+			refId: input.refId,
+			holdId,
+			...(floor > 0 ? { credits: floor } : {}),
+		});
+		return tx ? after : NOTHING_AFTER_COMMIT;
 	}
-	await Promise.all(
+
+	// The credits each row would book without a floor — computed only under one, so the un-floored
+	// call is the one that always ran. Settle rows derive their own (`settleCredits`, the derivation
+	// `recordAiUsage` runs); a fixed charge books once, on row 0.
+	const unfloored =
+		floor > 0
+			? records.map((rec, i) =>
+					charge.settle ? settleCredits(rec) : i === 0 ? charge.credits : 0,
+				)
+			: [];
+	const total = unfloored.reduce((a, b) => a + b, 0);
+	// Raise row 0 by the shortfall of the WHOLE attempt, never of row 0 alone.
+	const row0Credits = floor > total ? unfloored[0] + (floor - total) : undefined;
+
+	const afters = await Promise.all(
 		records.map((rec, i) => {
 			// Enrichment only when the caller supplied turn context — otherwise the metering call stays
 			// byte-identical to the un-enriched contract. sessionId groups the turn's per-model
@@ -129,12 +209,20 @@ export async function recordAgentTurnUsage(input: {
 						error: i === 0 ? turn.error : undefined,
 					}
 				: {};
-			return recordAiUsage({
+			return record({
 				orgId: input.orgId,
 				userId: input.userId,
 				kind: input.kind,
-				// Settle → derive per row from cost_micros (omit); fixed → book once on row 0.
-				credits: charge.settle ? undefined : i === 0 ? charge.credits : 0,
+				// Settle → derive per row from cost_micros (omit); fixed → book once on row 0. Under a
+				// floor the attempt fell short of, row 0 books the raised figure explicitly.
+				credits:
+					i === 0 && row0Credits !== undefined
+						? row0Credits
+						: charge.settle
+							? undefined
+							: i === 0
+								? charge.credits
+								: 0,
 				source: charge.source,
 				refId: input.refId,
 				// Row 0 reconciles the reserved hold IN PLACE; later rows append as new ledger rows.
@@ -147,4 +235,8 @@ export async function recordAgentTurnUsage(input: {
 			});
 		}),
 	);
+	if (!tx) return NOTHING_AFTER_COMMIT;
+	return () => {
+		for (const after of afters) after();
+	};
 }
