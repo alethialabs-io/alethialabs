@@ -117,6 +117,21 @@ describe("recordAgentTurnUsage — floorCredits against the attempt's SUM", () =
 		expect(creditsOfRow(1)).toBe(0);
 	});
 
+	it("never floors the self-host bypass (a fixed charge of 0): every row books 0", async () => {
+		// assertAiAllowed returns { source: "included", credits: 0 } when hosted billing is off.
+		await recordAgentTurnUsage({
+			orgId: "org-1",
+			userId: "user-1",
+			kind: "agent",
+			charge: { source: "included", credits: 0 },
+			steps: TWO_MODEL_STEPS,
+			floorCredits: 100,
+		});
+		expect(recordAiUsage).toHaveBeenCalledTimes(2);
+		expect(creditsOfRow(0)).toBe(0);
+		expect(creditsOfRow(1)).toBe(0);
+	});
+
 	it("a floor of 0 or none changes nothing: settle rows still omit credits", async () => {
 		await recordAgentTurnUsage({
 			orgId: "org-1",

@@ -105,7 +105,8 @@ const NOTHING_AFTER_COMMIT: AiUsageAfterCommit = () => {};
  *    turn's total is the sum of the per-row real cost — correctly priced, no double-charge.
  *  - **fixed** charge (reservation, if ever used here): the credit charge is booked once on the
  *    FIRST model row; the rest are cost-only rows (credits 0).
- * No-ops on an empty turn.
+ * An empty turn (no steps) writes only when there is a hold to settle: it releases the hold to 0,
+ * or settles it at `floorCredits` under a floor. Without a hold (a fixed charge) it writes nothing.
  *
  * **`floorCredits`** (ADR 0003 §8.1) is the least the attempt as a WHOLE costs: a partial answer is
  * billed at least the reserve its hold took, because the step in flight when it stopped is not
@@ -115,6 +116,9 @@ const NOTHING_AFTER_COMMIT: AiUsageAfterCommit = () => {};
  * Row 0 is the one raised because it is the row the hold reserved: an appended row exists only when
  * a step finished, and with no step at all row 0 is the only row. With no steps and NO hold (a fixed
  * charge) there is no row to raise, and nothing is written, as before. Omitted or 0, nothing changes.
+ * A fixed charge of 0 credits is never floored: that is `assertAiAllowed`'s self-host bypass (no
+ * hosted billing — the operator pays their own gateway), and a floor must never bill a self-hosted
+ * install.
  *
  * **`tx`** writes every row on the caller's transaction (ADR 0003 §5.3: the attempt is settled in
  * the transaction that stores its answer) and runs none of the side effects; the returned
@@ -137,12 +141,15 @@ export async function recordAgentTurnUsage(
 	},
 	tx?: Tx,
 ): Promise<AiUsageAfterCommit> {
-	const floor = input.floorCredits ?? 0;
-	if (!Number.isInteger(floor) || floor < 0) {
+	const requestedFloor = input.floorCredits ?? 0;
+	if (!Number.isInteger(requestedFloor) || requestedFloor < 0) {
 		throw new Error(
-			`recordAgentTurnUsage: floorCredits must be a non-negative integer (got ${floor}).`,
+			`recordAgentTurnUsage: floorCredits must be a non-negative integer (got ${requestedFloor}).`,
 		);
 	}
+	// A fixed charge of 0 is the self-host bypass (`assertAiAllowed` without hosted billing): the
+	// attempt is free by decision, so no floor may raise it.
+	const floor = input.charge.settle || input.charge.credits > 0 ? requestedFloor : 0;
 	/** One ledger write, on `tx` when the caller gave one (the pooled call is left exactly as it was). */
 	const record = (row: AiUsageInput): Promise<AiUsageAfterCommit> =>
 		tx ? recordAiUsage(row, tx) : recordAiUsage(row);
