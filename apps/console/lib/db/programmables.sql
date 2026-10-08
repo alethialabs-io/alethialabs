@@ -1176,6 +1176,84 @@ BEGIN
     WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
 END $$;
 
+-- Elench drafts (ADR 0001 §3.3, #5737): USER **AND** ORG — deliberately outside the owner_all OR
+-- loop above. Under that OR, every member of the org named by app.current_org would read every
+-- member's drafts, and a draft is unsent composer text that may hold a pasted kubeconfig or token
+-- (§9). So both columns must match: an org owner or admin cannot read a member's draft, and the
+-- user's own draft in another org is invisible here too. Community/personal: org_id == user id ==
+-- current_owner, so this is the same row set. Unset GUCs are NULL, and NULL denies. ENABLE first —
+-- without it the policy is inert. NOT FORCEd, as no table here is: the two functions below rely on
+-- the table owner bypassing it (and raise if it is ever forced, see their note). Nothing sweeps or
+-- erases drafts yet: the retention sweep and the erasure executor arrive in ADR 0001 slice 6, and
+-- will run on the service role (RLS-bypassing), naming their rows explicitly.
+DO $$
+BEGIN
+  ALTER TABLE public.elench_drafts ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_only ON public.elench_drafts;
+  CREATE POLICY owner_only ON public.elench_drafts FOR ALL
+    USING (user_id = current_setting('app.current_owner', true)::uuid
+           AND org_id = current_setting('app.current_org', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid
+           AND org_id = current_setting('app.current_org', true)::uuid);
+END $$;
+
+-- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). From ADR 0001 slice 5, deleting a
+-- thread calls the purge to remove the caller's drafts of that conversation in EVERY org (the same
+-- conversation id in two orgs is two rows, §3.2), which the policy above cannot do from one org's
+-- scope — so these run with definer rights. Nothing calls either function yet: today `deleteThread`
+-- leaves a conversation's drafts in place. What keeps them safe:
+--   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so
+--     no caller can point either function at another user. Unset → NULL → no row matches.
+--   * The only argument is a conversation id, and the only predicate besides the owner pin is
+--     equality on it: definer rights widen the ORG, never the USER.
+--   * `count_…` returns a number and nothing else, so it reveals no content, and only the caller's
+--     own count (slice 10's delete confirm will read it).
+--   * `SET row_security = off`, as derive_component_org_id and project_environments_require_one_
+--     default above: for an owner that bypasses the policy it is a no-op, but if these functions are
+--     ever owned by a role that IS subject to the policy — not the table owner, or the table gains
+--     FORCE ROW LEVEL SECURITY under a non-BYPASSRLS owner — Postgres RAISES instead of silently
+--     purging only the current org's rows (#5512 review advisory A11). NOTE the boundary: an owner
+--     that is a superuser or BYPASSRLS ignores FORCE entirely, so for such an owner forcing changes
+--     nothing and there is nothing to raise about; the purge still reaches every org.
+--   * `search_path` is pinned so a SECURITY DEFINER body never resolves a name through the caller's
+--     path; every reference is schema-qualified as well.
+--   * EXECUTE is revoked from PUBLIC (a function is executable by PUBLIC by default) and granted to
+--     the app role only.
+CREATE OR REPLACE FUNCTION public.purge_elench_drafts_of_conversation(p_conversation uuid)
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  WITH d AS (
+    DELETE FROM public.elench_drafts
+     WHERE user_id = current_setting('app.current_owner', true)::uuid
+       AND conversation_id = p_conversation
+    RETURNING 1
+  )
+  SELECT count(*)::int FROM d
+$$;
+
+CREATE OR REPLACE FUNCTION public.count_elench_drafts_of_conversation(p_conversation uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  SELECT count(*)::int
+    FROM public.elench_drafts
+   WHERE user_id = current_setting('app.current_owner', true)::uuid
+     AND conversation_id = p_conversation
+$$;
+
+REVOKE ALL ON FUNCTION public.purge_elench_drafts_of_conversation(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.count_elench_drafts_of_conversation(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.purge_elench_drafts_of_conversation(uuid) TO alethia_app;
+GRANT EXECUTE ON FUNCTION public.count_elench_drafts_of_conversation(uuid) TO alethia_app;
+
 -- Kubeconfig mint requests (#5280): a row holds a client's ephemeral PUBLIC key and, once the runner
 -- has posted, a SEALED (HPKE) credential only that client can open. Org-scoped AND actor-scoped:
 -- unlike `owner_all`'s OR, both must hold. A mint request is its requester's alone — a teammate in
