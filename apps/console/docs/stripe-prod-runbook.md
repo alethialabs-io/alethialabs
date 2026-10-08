@@ -91,6 +91,46 @@ We own the billing emails through the configured transactional provider, but rol
    experience. Our emails remain the source of truth for customer comms; Stripe stays the source
    of truth for the invoice data + PDF.
 
+## 6. Close a paid team setup that blocks its organization
+
+A paid create-a-team setup is **open** from the payment until its subscription is linked to the new
+team (`pending_org_setups`, `linked_at IS NULL AND closed_at IS NULL`). While it is open, that team
+cannot start a plan, a Checkout or a trial: the purchase is refused with "… started a paid setup for
+this team that has not finished …" (ADR 0002 §5.7). This stops a second subscription renewing beside
+the first.
+
+Most setups end on their own. The console closes a setup whose subscription is ended, and marks
+linked a setup whose subscription already names the team. Two cases need you:
+
+- The subscription is **live** and its creator will not come back to finish it.
+- Stripe **cannot find** the subscription (`resource_missing`). The console never closes this case
+  itself, because a wrong API key also makes every subscription read as missing.
+
+Do these steps:
+
+1. Find the subscription id in the alert, or in the customer's message.
+2. For a live subscription, cancel it in the Stripe dashboard first. Refund it if it was paid. The
+   command refuses a live or `incomplete` subscription.
+3. For a missing subscription, check that `STRIPE_SECRET_KEY` is the right account's key.
+4. Run the command with the service connection (`ALETHIA_DATABASE_URL`) and the Stripe key:
+
+   ```sh
+   pnpm -C apps/console billing:pending-org-setups close-setup sub_… \
+     --reason "creator unreachable; cancelled and refunded in Stripe" --operator <your user id>
+   ```
+
+The command prints the setup row and what Stripe says about the subscription. It closes the setup
+only when the subscription is ended or not found, and refuses with no `--reason`. Each close writes
+`closed_by` and `closed_note` on the row and logs one `billing.pending_org_setup.closed` line. A second
+run changes nothing.
+
+Two other log lines are worth a search when a customer asks about a paid team:
+
+- `billing.new_org_link.refused`: the link refused a payment because the team already had another
+  live plan. The payment is unlinked and keeps renewing until you refund it or move it. An operator
+  alert names the subscription.
+- `billing.pending_org_setup.adopted`: a setup that Stripe had already linked was marked linked.
+
 ## Rollback
 
 - Set `STRIPE_TAX_ENABLED=false` to drop automatic tax if registrations aren't ready.
