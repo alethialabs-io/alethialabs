@@ -199,6 +199,42 @@ export async function authorizeInOrg(
 }
 
 /**
+ * The actor a chat turn runs and bills as, for the org the REQUEST named (ADR 0003 §6.1). `null`
+ * means refused: the route answers 403 `org-forbidden` before it takes a claim or a hold.
+ *
+ * `orgId` is the org the turn is addressed to — the body's `orgId` for a thread's first turn (the
+ * page's `currentActor().orgId`, so the user id in community), the thread's pinned
+ * `billing_org_id` for every later one. The route chooses between them; this only resolves.
+ *
+ * 1. `orgId === userId` is the personal org. Both editions' resolvers land there for it
+ *    (`lib/auth/scope.ts` always answers the personal org; `ee/src/scope.ts` resolves a named
+ *    personal org as itself), so it goes through the same two-way check below rather than being
+ *    constructed here — which keeps the entitlements `getActiveScope` attaches.
+ * 2. Any other org: {@link resolveNamedOrgScope}, STRICTLY two-way. The enterprise resolver lands on
+ *    a named org only for an ACTIVE member; a suspended or departed member is substituted (another
+ *    org, else their personal org), and a substitution is a refusal here. There is deliberately no
+ *    third arm like {@link currentActor}'s "collapsed to personal" one: that arm would bill a
+ *    suspended member's turn to their personal org, silently. In community the cost is that a real
+ *    team org id is refused — the client names the user id there, so nothing correct is lost.
+ * 3. No `orgId`: refused. There is no session fallback (neither `getOwnerScope` nor an injected
+ *    actor is read): the session's org is a preference, and billing a turn to it is ADR 0003 case 3.
+ *
+ * Then `view` on the org, asked with `can()`: a chat turn is not an activity-log event, so nothing
+ * is recorded, allow or deny (the {@link authorizeQuiet} shape). A failed lookup or PDP error
+ * propagates — it is never reported as `null`, so an outage is a 500, not a refusal.
+ */
+export async function resolveTurnActor(
+	userId: string,
+	orgId: string | undefined,
+): Promise<Actor | null> {
+	if (!orgId) return null;
+	const actor = await resolveNamedOrgScope(userId, orgId);
+	if (!actor) return null;
+	const decision = await getPdp().can(actor, "view", { type: "org" });
+	return decision.allowed ? actor : null;
+}
+
+/**
  * Tenancy guard for CLI routes whose path carries an `[id]` org segment: may THIS CREDENTIAL act in
  * the organization the path names? Returns a 403 Response to return on denial, or null when
  * permitted.
