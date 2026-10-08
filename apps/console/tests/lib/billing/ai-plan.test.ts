@@ -21,6 +21,7 @@ import {
 	SESSION_FRACTION_OF_WEEK,
 } from "@/lib/billing/ai-plan";
 import { getOrgBilling } from "@/lib/billing/queries";
+import type { Tx } from "@/lib/db";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -162,6 +163,20 @@ describe("resolveAiPlan (admin caps)", () => {
 			orgWeeklyCapCredits: 5_000,
 			perUserWeeklyCapCredits: 1_200,
 		});
+	});
+
+	it("reads the billing row on the caller's tx when given one (ADR 0003 §5.1 step 7)", async () => {
+		const tx = {} as unknown as Tx;
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		await resolveAiPlan("org-1", tx);
+		expect(getOrgBilling).toHaveBeenCalledTimes(1);
+		expect(getOrgBilling).toHaveBeenCalledWith("org-1", tx);
+	});
+
+	it("without a tx, reads the billing row exactly as before (one argument)", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		await resolveAiPlan("org-1");
+		expect(vi.mocked(getOrgBilling).mock.calls).toEqual([["org-1"]]);
 	});
 
 	it("has no admin caps with no billing row", async () => {
