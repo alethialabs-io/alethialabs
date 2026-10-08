@@ -80,7 +80,7 @@ export function ThreadRail({
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 	// The thread a delete has been REQUESTED for. A chat carries its whole transcript and there is
-	// no undo, and the trigger is a hover-revealed icon a hand's width from the row you meant to
+	// no undo, and the trigger is a small icon (hover-revealed where a pointer can hover) a hand's width from the row you meant to
 	// open — so the click asks first (#4280).
 	const [pendingDelete, setPendingDelete] = useState<AgentThread | null>(null);
 
@@ -216,11 +216,20 @@ export function ThreadRail({
 									    document order. The three surfaces now say which thing they
 									    delete: "Delete chat …", "Delete artifact …", "Delete
 									    document …". */}
+									{/* Hidden until wanted — but "wanted" is said three ways, and hover is only
+									    one of them. A pointer that can hover reveals it on the row
+									    (`group-hover`, which Tailwind v4 already scopes to
+									    `@media (hover: hover)`); a keyboard reveals it on focus, on the
+									    control itself or anywhere in its row (`group-focus-within`); and a
+									    device that CANNOT hover — a phone, where #5655 made this rail
+									    reachable as a sheet — shows it outright (`@media (hover: none)`),
+									    because there is no gesture there that would ever reveal it (#5657).
+									    The ink is a named tier at full strength; no alpha. */}
 									<button
 										type="button"
 										aria-label={`Delete chat ${t.title}`}
 										onClick={() => setPendingDelete(t)}
-										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
 									>
 										<Trash2 className="h-3 w-3" />
 									</button>
