@@ -28,10 +28,10 @@ import { getServiceDb } from "@/lib/db";
 import { purchaseLeases } from "@/lib/db/schema";
 
 /** How long a lease lasts from its last acquisition or renewal. */
-export const PURCHASE_LEASE_TTL_SECONDS = 120;
+const PURCHASE_LEASE_TTL_SECONDS = 120;
 
 /** How long a purchase waits for another one on the same key before it gives up. */
-export const PURCHASE_LEASE_WAIT_MS = 30_000;
+const PURCHASE_LEASE_WAIT_MS = 30_000;
 
 /** How long a waiter sleeps between two attempts to take a busy lease. */
 const POLL_INTERVAL_MS = 250;

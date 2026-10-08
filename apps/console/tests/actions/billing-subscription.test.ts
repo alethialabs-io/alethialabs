@@ -218,6 +218,7 @@ import { countBillableSeats } from "@/lib/billing/seats";
 import { emitAlertEvent } from "@/lib/alerts/emit";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import {
+	getStripeConfig,
 	isStripeConfigured,
 	isStripeTaxEnabled,
 	meterPriceIdForPlan,
@@ -3797,6 +3798,18 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 	function loseLeaseAfterMint(): void {
 		purchaseLease.renewLease.mockImplementation(async () => stripe.subscriptions.create.mock.calls.length === 0);
 	}
+
+	it("the shared Stripe client is built with a 20s timeout and one retry — the mint's worst case", async () => {
+		vi.mocked(getStripeConfig).mockReturnValueOnce({
+			appUrl: "https://app.test",
+			secretKey: "sk_test_unit_never_used",
+			prices: { team: "price_team" },
+		});
+		const real = await vi.importActual<typeof import("@/lib/billing/stripe")>("@/lib/billing/stripe");
+		const client = real.getStripe();
+		expect(client.getApiField("timeout")).toBe(20_000);
+		expect(client.getMaxNetworkRetries()).toBe(1);
+	});
 
 	it("takes the user: lease and, inside it, the old new-org: advisory key", async () => {
 		stripe.customers.retrieve.mockResolvedValue(ownedCustomer);
