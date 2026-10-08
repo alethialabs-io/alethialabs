@@ -1907,8 +1907,9 @@ const CLOSEOUT_STAMP = "alethia:closeout";
 /**
  * The customer a just-minted create-a-team subscription hangs off, and where it came from — which
  * decides whether any later sweep can find that subscription: `reused` — passed by the browser or named
- * by an unfinished setup record, so the user's next purchase sweeps it; `created` — minted by this
- * request, and named nowhere else until this request records the setup.
+ * by an unfinished setup record, so the user's next purchase sweeps it while a record still names it or
+ * the browser passes it again; `created` — minted by this request, and named nowhere else until this
+ * request records the setup.
  */
 interface MintedCustomer {
 	customerId: string;
@@ -1931,8 +1932,9 @@ interface MintedCustomer {
  *
  * A close-out that did not cancel (`cancelled=false` on the log event) leaves `sub` `incomplete` with no
  * secret anywhere, and raises an operator alert. What finds it afterwards depends on `mintedOn.origin`:
- * on a `reused` customer the user's next purchase sweeps it (after `readFirstPayment` proves it unpaid);
- * on a customer this request `created`, NO sweep can find it — nothing names that customer — so the
+ * on a `reused` customer the user's next purchase sweeps it (after `readFirstPayment` proves it unpaid)
+ * while an unfinished record names that customer or the browser passes it again; on a customer this
+ * request `created`, NO sweep can find it — nothing names that customer — so the
  * alert is its only trace, and Stripe expires it after about 23h.
  */
 async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: MintedCustomer): Promise<void> {
@@ -1974,7 +1976,7 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: Mi
 	await alertOperator({
 		title: "A create-a-team close-out could not cancel the subscription it minted",
 		subject: { type: "stripe_subscription", id: sub.id },
-		summary: `Subscription ${sub.id} (customer ${customerId}) was minted by a create-a-team purchase that then had to close it out without handing out its client secret, but the close-out ${voided ? "could not cancel it after voiding its first invoice" : `could not prove its first invoice ${invoiceId ?? "(none)"} void, so it was not cancelled`}. It stays incomplete. ${mintedOn.origin === "created" ? "Its customer was created by that request and is named nowhere else, so no purchase sweep will find it; Stripe expires it after about 23h unless it is closed by hand." : "Its customer is reused, so the user's next purchase sweeps it once its first payment is proven unpaid."}`,
+		summary: `Subscription ${sub.id} (customer ${customerId}) was minted by a create-a-team purchase that then had to close it out without handing out its client secret, but the close-out ${voided ? "could not cancel it after voiding its first invoice" : `could not prove its first invoice ${invoiceId ?? "(none)"} void, so it was not cancelled`}. It stays incomplete. ${mintedOn.origin === "created" ? "Its customer was created by that request and is named nowhere else, so no purchase sweep will find it; Stripe expires it after about 23h unless it is closed by hand." : "Its customer was reused: the user's next purchase sweeps it only while an unfinished setup record names that customer or the browser passes it again; otherwise nothing does, and Stripe expires it after about 23h unless it is closed by hand."}`,
 	});
 }
 
@@ -2016,6 +2018,9 @@ async function startNewOrgSubscription(
 				message:
 					"Your earlier payment went through, but it is linked to a team you are not an owner of, so it can't be finished here and nothing new was started. Contact support with the time of the payment — you won't be charged again.",
 			};
+		} else if (prior && !isCreateATeamSubscriptionOf(prior, actor.userId)) {
+			// Classification (ADR 0002 §4.2): a prior a link already wrote `organization_id` onto is that
+			// org's subscription now, not this purchase's to cancel, settle or void. It is left alone.
 		} else if (prior && REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
 			let firstPayment: FirstPayment;
 			try {
