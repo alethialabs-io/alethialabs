@@ -54,7 +54,9 @@ import { seedCloudIdentity, type Owner } from "../helpers/seed";
 import { seedChannel, seedRule } from "../helpers/seed-alerts";
 import { seedOrgMember } from "../helpers/seed-rbac";
 import { seedDeployedRunner, seedFleetPool, seedRunner } from "../helpers/seed-runners";
-import { artifactSpecSchema, artifactWidgetSchema } from "@/lib/ai/artifact-spec";
+import { artifactSpecSchema } from "@/lib/ai/artifact-spec";
+import { documentSchema } from "@/lib/ai/knowledge-schema";
+import { widgetDataSchema } from "@/lib/ai/widget-schema";
 import type { ArtifactSpec, KnowledgeDoc, WidgetData } from "@/types/jsonb.types";
 import type { z } from "zod";
 import type { AuditContext } from "./context";
@@ -135,7 +137,8 @@ function unique(): string {
 // the zod schema the app writes them through — the class #5662 found in `support_cases.contact`,
 // where the gate "exercised" a control against a row the product could never produce. Each value
 // below is therefore built as a literal that `satisfies` the column's `$type` (so a wrong or extra
-// key fails to compile) and, where the write path's schema is importable, parsed through it (so a
+// key fails to compile) and parsed through the write path's own schema — all three now live in
+// plain `lib/ai/*` modules rather than `"use server"` files (#5683) — so a
 // constraint the type cannot state — a non-empty title, a position inside the 5-column grid —
 // throws at seed time, which `seedDestructiveFixtures` reports against the fixture by name).
 //
@@ -157,30 +160,30 @@ function validatedBy<T>(schema: z.ZodType, value: T): T {
 /**
  * The knowledge document the `knowledge-doc` fixture pins — an `agent_context.documents` entry.
  *
- * Typed, not parsed: the schema the write path validates with (`documentSchema` in
- * `app/server/actions/agent-context.ts`) lives in a `"use server"` module, which may export only
- * async functions, so it cannot be imported here. `satisfies KnowledgeDoc` holds the four keys
- * (an extra or misspelt one fails to compile); what that schema adds — a non-empty id, a title of
- * 1–200 characters, content under `KNOWLEDGE_LIMIT` — the constant literal below already meets. `updated_at` is an ISO string, as
- * the Knowledge panel writes it (`new Date().toISOString()`).
+ * Parsed through `documentSchema` (`lib/ai/knowledge-schema.ts`), the schema `upsertAgentContext`
+ * validates every document with — so a doc the product would reject (an empty or whitespace-only
+ * title, an empty id, content over `KNOWLEDGE_LIMIT`) throws here, at seed time, instead of being
+ * written. `satisfies KnowledgeDoc` still holds the four keys (an extra or misspelt one fails to
+ * compile). `updated_at` is an ISO string, as the Knowledge panel writes it
+ * (`new Date().toISOString()`).
  */
 function seedKnowledgeDoc(): { id: string; title: string; content: string; updated_at: string } {
-	return {
+	return validatedBy(documentSchema, {
 		id: `audit-doc-${unique()}`,
 		title: "Audit document",
 		content: "Seeded by the destructive-action audit so its Delete control has a document to act on.",
 		updated_at: new Date().toISOString(),
-	} satisfies KnowledgeDoc;
+	} satisfies KnowledgeDoc);
 }
 
 /**
  * A `stat` widget's frozen payload — the `thread_widgets.data` value `WidgetCard` renders when the
- * widget has no `source`. Parsed through `artifactWidgetSchema.shape.data`, which is the same
- * `{ output?, block? }` object `pinWidget`'s (unexportable, `"use server"`) `pinInputSchema.data`
- * declares, and the one an artifact's widgets are copied onto a thread through.
+ * widget has no `source`. Parsed through `widgetDataSchema` (`lib/ai/widget-schema.ts`) — the one
+ * `{ output?, block? }` schema object that both `pinWidget`'s `pinInputSchema.data` and an
+ * artifact widget's `data` are, so the pin path and the artifact path cannot disagree about it.
  */
 function seedStatWidgetData(title: string, value: number) {
-	return validatedBy(artifactWidgetSchema.shape.data, {
+	return validatedBy(widgetDataSchema, {
 		block: { kind: "stat", title, value },
 	} satisfies WidgetData);
 }
@@ -763,8 +766,8 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			writes: "one `KnowledgeDoc` entry in `agent_context.documents` — a JSONB entry, NOT a row of its own",
 			seed: async (scope) => {
 				const sql = db();
-				// The entry is built by `seedKnowledgeDoc`, typed against `KnowledgeDoc` (see there
-				// for why it is not parsed). `updated_at` is an ISO STRING, deliberately — the
+				// The entry is built by `seedKnowledgeDoc`, typed against `KnowledgeDoc` and parsed
+				// through the write path's `documentSchema` (see there). `updated_at` is an ISO STRING, deliberately — the
 				// interface says so, "stored as a string so the JSONB round-trips without a Date
 				// revival step" — so a Date here would round-trip into something the reader does not
 				// expect.
