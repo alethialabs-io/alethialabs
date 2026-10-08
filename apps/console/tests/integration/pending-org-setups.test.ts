@@ -18,16 +18,35 @@
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+
+// Stripe is the one boundary faked here (#5714's cases): the guard and the closer read the
+// subscription from it, and nothing in this file may reach the network. Every other module is real.
+const fakeStripe = vi.hoisted(() => ({
+	subscriptions: { retrieve: vi.fn(), create: vi.fn(), list: vi.fn() },
+	customers: { create: vi.fn(), retrieve: vi.fn(), update: vi.fn() },
+	checkout: { sessions: { create: vi.fn() } },
+	invoicePayments: { list: vi.fn() },
+}));
+vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => fakeStripe }));
+
+import { createSubscriptionIntent } from "@/app/server/actions/billing";
+import { runWithActor } from "@/lib/authz/actor-context";
+import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import type { Actor, Entitlements } from "@/lib/authz/types";
 import { seedAuthz } from "@/lib/authz/seed";
 import {
 	NEW_ORG_SETUP_IN_PROGRESS_CODE,
 	NEW_ORG_SUBSCRIPTION_KEY,
 } from "@/lib/billing/new-org-setup";
 import {
+	closePendingOrgSetup,
 	findSetupOrg,
 	markPendingOrgSetupDeclared,
+	markPendingOrgSetupLinked,
+	openPendingOrgSetupsForOrg,
 	pendingOrgSetupFor,
+	settleOpenSetup,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
 	stampNewOrgMetadata,
@@ -35,8 +54,9 @@ import {
 	unfinishedPendingOrgSetups,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
-import { getServiceDb, withOwnerScope } from "@/lib/db";
+import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
 import {
+	authzActivityLog,
 	grants,
 	member,
 	organization,
@@ -44,7 +64,7 @@ import {
 	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
-import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb, purgeAuthzActivityLog, refusalText } from "./db";
 
 const USER_A = randomUUID();
 const USER_B = randomUUID();
@@ -426,5 +446,216 @@ describeIfDb("pending_org_setups — keyset pages while records are deleted", ()
 		});
 		// The first test left records of both customers; cus_page_old now has the newest one.
 		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual(["cus_page_old", "cus_page_new"]);
+	});
+});
+
+// ── ADR 0002 S1 (#5714): the open-setup guard against real Postgres, RLS and the PDP ────────────────
+//
+// The guard reads the creator's row with the SERVICE role, because the buyer may be a co-owner whom
+// RLS shows nothing of it (C81's co-owner half). It finds the row by `created_org_id` or by the org's
+// own server-stamped marker (C93). And the closer's writes are compare-and-sets whose predicate only
+// SQL can pin: `closed_at IS NULL AND linked_at IS NULL` (C85, C87). None of these functions exists
+// on dev, so each case fails there at the import.
+const ENTITLEMENTS: Entitlements = {
+	organizations: true,
+	teams: true,
+	sso: true,
+	customRoles: true,
+	activityExport: true,
+	alerting: true,
+	advancedAlerting: true,
+	byoRunners: true,
+	managedPools: true,
+	quotas: {
+		maxConcurrentJobs: null,
+		priorityLevel: 30,
+		includedRunnerMinutes: 0,
+		activityRetentionDays: 365,
+	},
+};
+
+describeIfDb("pending_org_setups — the open-setup guard, its closer and their predicates (#5714)", () => {
+	const CREATOR = randomUUID();
+	const CO_OWNER = randomUUID();
+	const ORG = randomUUID(); // created for SUB_OPEN; the link never ran
+	const ORG_MARKED = randomUUID(); // carries SUB_MARKED's marker; created_org_id never written (C93)
+	const ORG_RACE = randomUUID();
+	const SUB_OPEN = `sub_it_open_${randomUUID().slice(0, 8)}`;
+	const SUB_MARKED = `sub_it_mark_${randomUUID().slice(0, 8)}`;
+	const SUB_RACE = `sub_it_race_${randomUUID().slice(0, 8)}`;
+	const SUB_ADOPT = `sub_it_adpt_${randomUUID().slice(0, 8)}`;
+	const ORGS = [ORG, ORG_MARKED, ORG_RACE];
+	let savedStripeKey: string | undefined;
+
+	/** An owner-member actor in `orgId`, as the PDP sees one. */
+	const actorIn = (userId: string, orgId: string): Actor => ({ userId, orgId, entitlements: ENTITLEMENTS });
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const db = getServiceDb();
+		await seedAuthz();
+		await db.insert(user).values([
+			{ id: CREATOR, name: "Ada Creator", email: `it-guard-creator-${CREATOR}@example.test` },
+			{ id: CO_OWNER, name: "Bo Owner", email: `it-guard-coowner-${CO_OWNER}@example.test` },
+		]);
+		await db.insert(organization).values([
+			{ id: ORG, name: "Guarded", slug: `it-guard-${ORG.slice(0, 8)}` },
+			{
+				id: ORG_MARKED,
+				name: "Marked",
+				slug: `it-marked-${ORG_MARKED.slice(0, 8)}`,
+				metadata: stamped(SUB_MARKED, CREATOR),
+			},
+			{ id: ORG_RACE, name: "Race", slug: `it-race-${ORG_RACE.slice(0, 8)}` },
+		]);
+		for (const [orgId, userId] of [
+			[ORG, CREATOR],
+			[ORG, CO_OWNER],
+			[ORG_MARKED, CREATOR],
+		] as const) {
+			await db.insert(member).values({ organizationId: orgId, userId, role: "owner" });
+			await db.insert(grants).values({
+				org_id: orgId,
+				principal_type: "user",
+				principal_id: userId,
+				effect: "allow",
+				role_id: BUILTIN_ROLE_IDS.owner,
+				resource_type: "org",
+				resource_id: null,
+			});
+		}
+		for (const sub of [SUB_OPEN, SUB_MARKED, SUB_RACE, SUB_ADOPT]) {
+			await recordPendingOrgSetup({
+				userId: CREATOR,
+				subscriptionId: sub,
+				customerId: "cus_it_guard",
+				name: "Guarded Team",
+				slug: "guarded-team",
+			});
+		}
+		await db
+			.update(pendingOrgSetups)
+			.set({ created_org_id: ORG })
+			.where(inArray(pendingOrgSetups.subscription_id, [SUB_OPEN, SUB_ADOPT]));
+		await db.update(pendingOrgSetups).set({ created_org_id: ORG_RACE }).where(eq(pendingOrgSetups.subscription_id, SUB_RACE));
+		// X is live and was never linked in Stripe: no reader can close or adopt it.
+		fakeStripe.subscriptions.retrieve.mockImplementation(async (id: string) => ({
+			id,
+			status: "active",
+			customer: "cus_it_guard",
+			latest_invoice: null,
+			currency: "eur",
+			items: { data: [] },
+			metadata: { created_by: CREATOR },
+		}));
+	});
+
+	afterAll(async () => {
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, ORGS));
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, CREATOR));
+		await db.delete(organizationBilling).where(inArray(organizationBilling.organizationId, ORGS));
+		await db.delete(grants).where(inArray(grants.org_id, ORGS));
+		await db.delete(organization).where(inArray(organization.id, ORGS));
+		await db.delete(user).where(inArray(user.id, [CREATOR, CO_OWNER]));
+	});
+
+	it.skipIf(!APP_ROLE_DISTINCT)("C81: the co-owner's own session cannot read the creator's row under RLS", async () => {
+		const seen = await withScope({ ownerId: CO_OWNER, orgId: ORG }, (tx) =>
+			tx
+				.select({ sub: pendingOrgSetups.subscription_id })
+				.from(pendingOrgSetups)
+				.where(eq(pendingOrgSetups.subscription_id, SUB_OPEN)),
+		);
+		expect(seen).toEqual([]);
+	});
+
+	it("C81: a co-owner's plan purchase is refused all the same, naming only the creator — no other column of the row", async () => {
+		fakeStripe.subscriptions.create.mockClear();
+		const r = await runWithActor(actorIn(CO_OWNER, ORG), () => createSubscriptionIntent("team"));
+		expect(r).toEqual({
+			error:
+				"Ada Creator started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
+		});
+		if ("error" in r) {
+			for (const column of [SUB_OPEN, "cus_it_guard", "Guarded Team", "guarded-team", CREATOR]) {
+				expect(r.error).not.toContain(column);
+			}
+		}
+		expect(fakeStripe.subscriptions.create).not.toHaveBeenCalled();
+		expect(fakeStripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("C93: the org's marker alone names the setup — refused although created_org_id was never written", async () => {
+		expect((await pendingOrgSetupFor(CREATOR, SUB_MARKED))?.created_org_id).toBeNull();
+		expect((await openPendingOrgSetupsForOrg(ORG_MARKED)).map((r) => r.subscription_id)).toEqual([SUB_MARKED]);
+		const r = await runWithActor(actorIn(CREATOR, ORG_MARKED), () => createSubscriptionIntent("team"));
+		expect(r).toEqual({ error: expect.stringMatching(/^Your paid setup for this team has not finished/) });
+		expect(fakeStripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("C85: the partial index exists, and the guard's read by created_org_id uses it", async () => {
+		const db = getServiceDb();
+		const idx = await db.execute(
+			sql`select indexdef from pg_indexes where tablename = 'pending_org_setups' and indexname = 'pending_org_setups_open_org_idx'`,
+		);
+		expect(String(idx[0]?.indexdef)).toMatch(/\(created_org_id\) WHERE \(\(linked_at IS NULL\) AND \(closed_at IS NULL\)\)/);
+		const plan = await db.transaction(async (tx) => {
+			await tx.execute(sql`set local enable_seqscan = off`);
+			return tx.execute(
+				sql`explain select * from pending_org_setups where linked_at is null and closed_at is null and created_org_id = ${ORG}::uuid`,
+			);
+		});
+		expect(plan.map((row) => String(Object.values(row)[0])).join("\n")).toMatch(/pending_org_setups_open_org_idx/);
+	});
+
+	it("C87: two closers at once — exactly one compare-and-set returns the row; a closed setup no longer blocks, is not unfinished, and is never marked linked", async () => {
+		const results = await Promise.all([
+			closePendingOrgSetup({ subscriptionId: SUB_RACE, reason: "ended" }),
+			closePendingOrgSetup({ subscriptionId: SUB_RACE, reason: "ended" }),
+		]);
+		expect(results.filter((r) => r !== null)).toHaveLength(1);
+		expect(await closePendingOrgSetup({ subscriptionId: SUB_RACE, reason: "ended" })).toBeNull();
+		const closed = await pendingOrgSetupFor(CREATOR, SUB_RACE);
+		expect(closed?.closed_at).toBeInstanceOf(Date);
+		expect(closed?.closed_reason).toBe("ended");
+
+		expect(await openPendingOrgSetupsForOrg(ORG_RACE)).toEqual([]);
+		const unfinished = (await unfinishedPendingOrgSetups(CREATOR, 50)).rows.map((r) => r.subscription_id);
+		expect(unfinished).not.toContain(SUB_RACE);
+		expect(unfinished).toContain(SUB_OPEN);
+
+		await markPendingOrgSetupLinked(CREATOR, SUB_RACE, ORG_RACE);
+		expect((await pendingOrgSetupFor(CREATOR, SUB_RACE))?.linked_at).toBeNull();
+	});
+
+	it("C96: the closer adopts an X the org's row already names — linked_at set once — and the guard then lets the org buy", async () => {
+		const db = getServiceDb();
+		await db.insert(organizationBilling).values({ organizationId: ORG, stripeSubscriptionId: SUB_ADOPT, status: "active" });
+		const linkedX = {
+			id: SUB_ADOPT,
+			status: "active",
+			customer: "cus_it_guard",
+			latest_invoice: null,
+			currency: "eur",
+			items: { data: [] },
+			metadata: { created_by: CREATOR, organization_id: ORG },
+		};
+		const row = await pendingOrgSetupFor(CREATOR, SUB_ADOPT);
+		if (!row) throw new Error("fixture: the adopt record is missing");
+		await expect(settleOpenSetup(row, { sub: linkedX as never, orgId: ORG })).resolves.toBe("linked");
+		const first = (await pendingOrgSetupFor(CREATOR, SUB_ADOPT))?.linked_at;
+		expect(first).toBeInstanceOf(Date);
+		await expect(settleOpenSetup(row, { sub: linkedX as never, orgId: ORG })).resolves.toBe("linked");
+		expect((await pendingOrgSetupFor(CREATOR, SUB_ADOPT))?.linked_at).toEqual(first);
+		expect((await openPendingOrgSetupsForOrg(ORG)).map((r) => r.subscription_id)).toEqual([SUB_OPEN]);
+	});
+
+	it("C81: once the last open setup is closed, the org's guard reads nothing", async () => {
+		await closePendingOrgSetup({ subscriptionId: SUB_OPEN, reason: "operator", closedBy: CO_OWNER, note: "it" });
+		expect(await openPendingOrgSetupsForOrg(ORG)).toEqual([]);
 	});
 });

@@ -3392,7 +3392,7 @@ describe("ADR 0002 S1 (#5714)", () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
 			vi.mocked(forgetPendingOrgSetup).mockResolvedValue(true); // it deletes nothing: the row has an org
 			db.queue.push([openRow({ closed_at: new Date() })]);
-			stripe.subscriptions.search = vi.fn(async () => ({ data: [] }));
+			Object.assign(stripe.subscriptions, { search: vi.fn().mockResolvedValue({ data: [] }) });
 			await expect(findUnfinishedNewOrgSetup()).resolves.toBeNull();
 			expect(db.sets).toEqual([expect.objectContaining({ closed_reason: "ended" })]);
 		});
