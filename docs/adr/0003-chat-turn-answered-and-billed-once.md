@@ -3,14 +3,32 @@
 
 # A chat turn is answered by the model, and billed, exactly once
 
-**Status:** Accepted (maintainer delegation 2026-10-08; veto window open). Revision 5 (2026-10-08);
-revision 1 was 09021e23f, revision 2 was 4a8e15518, revision 3 was eb4b81a9d, revision 4 was
-76eff803b. Every open question is answered in §13 next to its question text, so a veto names one Q
-number. · **Issue:** #5515 · **Builds on:** ADR 0001 revision 7 (#5512, draft persistence), whose
+**Status:** Accepted (maintainer delegation 2026-10-08; veto window open). Revision 5.1
+(2026-10-08); revision 1 was 09021e23f, revision 2 was 4a8e15518, revision 3 was eb4b81a9d, revision
+4 was 76eff803b, revision 5 was 78e7483e8. Every open question is answered in §13 next to its question text, so a veto names one Q
+number. · **Issue:** #5515 · **Builds on:** ADR 0001 revision 7.1 (#5512, draft persistence), whose
 §5.3 defines the hand-off this ADR takes over and states the same contract and slice order as §9.4
 and §14 here · **Related:**
 ADR 0002 (#5511, payment holds; a different "hold": that one is a Stripe first payment, this one is
 the AI budget hold in `ai_usage_ledger`)
+
+**Revision 5.1 (2026-10-08, delta review of revision 5, and the slice-2 builder's finding).** Two
+inline blockers and seven advisories. (1) No send reads the widget grid's `pendingCellTarget` slot:
+the empty-cell prompt passes its cell in ADR 0001's `SUBMIT_EXTERNAL`, a composer send carries the
+draft content's cell (only a failed cell prompt's Retry has one), and slice 9 deletes the dead slot
+with `takePendingCellTarget`, so a later turn can never carry a stale target (§9.2). (2) Slice 6
+ships `onTurnRefused`'s composer path only; the run-time store check and its `One refusal handler`
+test move to ADR 0001 slice 9, the slice in which the store first owns a send (§9.3, §14). (3)
+`propose_changes` (the project assistant's canvas proposal, `compose.ts:230-236`) is a third client
+tool, with an output schema; its `accepted` is not an accepted approval, because it queues nothing on
+the server (§3, §5.1 step 8, §5.2). The classifier's `invalid` row and a Retry through the submit
+rows are stated; the approval cards truncate their free text to the schemas; slice 6 validates
+`orgId` as a UUID before `resolveTurnActor` and takes `userId` from the session only. Advisories
+taken: C4r clears `answer_id`, `partial` and `finished_at`; a resumed tail stays billed (decision
+6); a stale-revision resume keeps its Retry (§9.1); the recreate runs C8 first (§5.1 step 2); the
+stream's `onError` is a C7 path (§5.3); a new proposal in a partial tail says to approve or reject it
+(§9.1); §8.2 names the `maxDuration` exports correctly. Slices 2-4 are unchanged except slice 2's
+`propose_changes` and its three-tool-set test. Rejected: none.
 
 **Revision 5 (2026-10-08, independent review of revision 4).** Five inline blockers and nine
 advisories. (1) An answer that carries an **accepted approval** is never regenerated wholesale: the
@@ -56,7 +74,10 @@ none.
    by **appending** under a compare-and-set on a new `agent_threads.revision`. A tab that sends from
    an older revision is refused before the hold and loads the transcript (§7).
 6. **An answer is billed if and only if it is stored, and at most one answer is stored per attempt
-   of a key.** (A partial continuation's resume replaces its own tail, §5.2.) The hold is settled **inside** the transaction that wins the `running → answered`
+   of a key.** (A partial continuation's resume replaces its own tail, §5.2. That tail was stored
+   and billed when it ended, and stays billed after the resume replaces it, exactly as a regenerated
+   answer does: "billed if and only if stored" holds at each finalize, not for every later
+   transcript.) The hold is settled **inside** the transaction that wins the `running → answered`
    compare-and-set, so no crash can leave a stored answer with an unsettled hold; a lost or expired
    attempt releases it to 0 (§8).
 7. **The route bounds itself.** `maxDuration` bounds nothing in this deployment, so the route
@@ -242,13 +263,25 @@ Found while reading the code for this ADR:
   - `continue:<answer id>:<tool call ids>`: the continuation of that answer after its **pending
     client tool calls** received outputs. The ids are sorted and joined with `,`.
 - **Client tool**: a tool the route declares without `execute`, so its output can only come from
-  the browser (`addToolOutput`). Today that is `propose_operation` alone
-  (`lib/ai/tools/operations.ts:27-31`, rendered by
-  `components/agent/render-tool-parts/org-tool-parts.tsx:48-66`) on the two Elench routes; every read
-  tool executes on the server (`lib/ai/TOOLS.md`). The support route has a second one,
-  `create_support_case` (`lib/ai/tools/support.ts:21-34`), which Q11 brings under the claim. The list
-  is one exported constant, `CLIENT_TOOL_NAMES` in `lib/ai/client-tools.ts` (a new file), holding
-  both names and imported by every claimed route's tool set and by the transport.
+  the browser (`addToolOutput`). There are three, across the three tool sets the routes build:
+  - `propose_operation` (`lib/ai/tools/operations.ts:27-31`, rendered by
+    `components/agent/render-tool-parts/org-tool-parts.tsx:48-66`), in `buildAgentTools` (the org
+    route) and in `buildProjectAgentTools` (the project assistant route, through `operationTools`,
+    `lib/ai/tools/index.ts:37-48`);
+  - `propose_changes` (`lib/ai/tools/compose.ts:230-236`), in `buildProjectAgentTools` through
+    `composeTools`: the user accepts a canvas change in the browser, which applies it there and
+    sends `{ status: "accepted", label }`
+    (`components/agent/render-tool-parts/project-tool-parts.tsx:119-122`), and `use-agent-chat.ts:75`
+    auto-sends that as a continuation. (Revision 5 said `propose_operation` was the only client tool
+    on the two Elench routes; the slice-2 builder found `propose_changes`.)
+  - `create_support_case` (`lib/ai/tools/support.ts:21-34`), in `buildSupportTools`, which Q11
+    brings under the claim.
+
+  Every read tool executes on the server (`lib/ai/TOOLS.md`). The list is one exported constant,
+  `CLIENT_TOOL_NAMES` in `lib/ai/client-tools.ts` (a new file), holding all three names and imported
+  by every claimed route's tool set and by the transport. A U test pins it against **all three**
+  tool sets: the names equal the tools without `execute` in `buildAgentTools`,
+  `buildProjectAgentTools` and `buildSupportTools`.
 - **Pending client tool calls of an answer `a`**: the tool parts whose tool name is in
   `CLIENT_TOOL_NAMES` and which are not `providerExecuted`, taken from the **last step of `a` that
   holds any such part** (a step is the parts after a `step-start`). For an answer that ends on a
@@ -394,7 +427,7 @@ and waits on nothing else, so it cannot close a cycle.
 | C2 | `failed` or `expired` | accept for the same key | as C1 | `running` | re-arm in place: new `token`, `attempt_no + 1`, new hold **under the thread's pinned org**, `error := null`, `accepted_at := now()`. `billing_org_id` and `project_id` are rewritten from the thread, which equal the first attempt's, because the pin never changes (Q1) |
 | C3 | `running` | accept for the same key | — | unchanged | refuse `turn-in-progress` |
 | C4 | `answered` | accept for the same key | not C4r | unchanged | refuse `turn-answered` |
-| C4r | `answered`, `partial`, key `continue:a:<P>` | accept for the same key: the **resume** of a continuation that ended partial (§5.2) | `a` is still the last message and `revision = baseRevision` | `running` | re-arm in place as C2 (new token, `attempt_no + 1`, new hold under the pin, `accepted_at := now()`). The stored outputs of `P` are kept; nothing is merged |
+| C4r | `answered`, `partial`, key `continue:a:<P>` | accept for the same key: the **resume** of a continuation that ended partial (§5.2) | `a` is still the last message and `revision = baseRevision` | `running` | re-arm in place as C2 (new token, `attempt_no + 1`, new hold under the pin, `accepted_at := now()`, `error := null`), and clear what `answered` set: `answer_id := null`, `partial := false`, `finished_at := null`, so `check ((state = 'answered') = (answer_id is not null))` holds inside the acceptance transaction. The stored outputs of `P` are kept; nothing is merged. The partial tail's hold was settled when it was stored (C6) and stays billed: that model call ran and was shown, as a `regen:a`'s replaced answer is |
 | C5 | `running` | heartbeat (route, every 30 s) | `token` matches, `state = 'running'`, and `accepted_at > now() - (TURN_BUDGET_MS + 90 s)` | `running` | `lease_until = now() + 90 s`. A heartbeat that matches nothing means the claim was expired (C8) or re-armed under another token; the route aborts the model, because its finalize can no longer store. A deleted thread does **not** stop a heartbeat: the claim survives the delete (§4.3), so the route keeps going and its answer reaches the Recovered thread (Q4). The age guard means a heartbeat timer leaked past its attempt (a bug) cannot renew a lease for ever |
 | C6 | `running` | finalize with model output | `token` matches and the thread's revision is `accepted_revision` | `answered` | append the answer (for a continuation, replace `a` with its continued form; for C4r's resume, replace only the steps of `a` after the step that holds `P`'s outputs); `revision + 1`; `answer_id`; `partial`; **settle the hold in the same transaction** (§8.1). On a tombstone, the `deleted` branch of §5.3 instead |
 | C6m | `running` | finalize with model output | `token` matches, the revision moved (§4.2 forbids it) | `failed`, `error = 'transcript-moved'` | nothing stored; the hold is released to 0 in the same transaction |
@@ -418,8 +451,10 @@ the project is checked (§6.2). It is **one** service-role transaction:
 2. Lock the thread: `SELECT id, user_id, kind, project_id, status, billing_org_id, revision,
    messages FROM agent_threads WHERE id = $thread AND user_id = $actor.userId FOR UPDATE`.
    - No row: when `kind = agent` and the id is free, insert an empty row under it (today's recreate,
-     `transcript-save.ts:145-158`), and delete the id's terminal claims (§4.3, "A recreated thread
-     id"); when the id is held by another owner (the insert does nothing), refuse
+     `transcript-save.ts:145-158`), then run step 3's C8 on any running claim of the id **first**,
+     and only then delete the id's terminal claims (§4.3, "A recreated thread id"), so a claim C8
+     ends here is deleted with the rest instead of surviving on the recreated id (§4.3 argues none can
+     still be running; this order makes that not matter); when the id is held by another owner (the insert does nothing), refuse
      `thread-not-found`. For `kind = support` a missing row is always `thread-not-found`: dev never
      recreates a support thread (`transcript-save.ts:145-147`), and this ADR does not start to.
    - A tombstone: refuse `thread-deleted`.
@@ -460,8 +495,14 @@ the project is checked (§6.2). It is **one** service-role transaction:
    | null, jobId: uuid }` · `{ status: "denied", reason: string ≤ 2,000 }` · `{ status: "rejected"
    }`. `create_support_case`'s is the support card's (`support-case-approval-card.tsx:52-63`):
    `{ status: "submitted", caseId: uuid, caseNumber: integer }` · `{ status: "failed", reason: string
-   ≤ 2,000 }` · `{ status: "dismissed" }`. Each output is also capped at 4,096 bytes of JSON. A
-   request whose output fails either is refused 400 before the hold, and nothing is stored.
+   ≤ 2,000 }` · `{ status: "dismissed" }`. `propose_changes`' is the canvas card's
+   (`project-tool-parts.tsx:119-122`): `{ status: "accepted", label: string ≤ 2,000 }`. Each output
+   is also capped at 4,096 bytes of JSON. A request whose output fails either is refused 400 before
+   the hold, and nothing is stored. A card's free text (a `denied` or `failed` reason, which is an
+   error message; a change's `label`, which the model wrote) can exceed either bound, so the three
+   cards **truncate it client-side** at a character boundary until the output passes both (slice 6:
+   `approval-card.tsx`, `support-case-approval-card.tsx`, `project-tool-parts.tsx`); otherwise a long
+   error message would make the approval itself unsendable.
 9. Commit. The route then opens the stream and writes, before anything else,
    `data-turn-accepted { turnId, answerId, revision }`.
 
@@ -484,8 +525,8 @@ The request carries `turn: { trigger, turnId, baseRevision, answerId?, toolCallI
 
 **Which rows apply.** A request whose last message is an **assistant** message (a continuation)
 is classified by the two continuation rows only. The other rows apply only when a **user**
-message is last (a submit or a Retry) or the trigger is `regenerate-message`. Among the submit
-rows, the different-text row is checked first.
+message is last (a submit or a Retry) or the trigger is `regenerate-message`. The `invalid` row is
+checked before every other; among the submit rows, the different-text row is checked first.
 
 **Equal text.** "`u`'s text equals the stored text" is `turnText(u) === turnText(stored)`. There is
 **one** `turnText(message)`, in `lib/agent/turn-key.ts`, owned by slice 2 here; ADR 0001 imports it
@@ -499,8 +540,9 @@ and `CRLF and LF, and a trailing newline, compare equal`.
 
 | Request | Condition on `T` | Attempt key | Outcome |
 |---|---|---|---|
-| submit, `u` is the last request message | `turnId` not in `T`, `revision = baseRevision` | `answer` | accept; step 8 appends `u` |
-| submit | `turnId` not in `T`, `revision ≠ baseRevision` | — | refuse `transcript-stale` (case 6) |
+| submit or Retry (`regenerate` with no `answerId`) whose last request message is **not** `u` | — | — | `invalid`: the route answers 400, as for a malformed body, before the hold (not a `TurnRefusal`; ADR 0001 D9d reads 400 as a certain refusal). `turnOf` (§9.1) always names the last user message, so only a hand-built request reaches it |
+| submit or Retry, `u` is the last request message | `turnId` not in `T`, `revision = baseRevision` | `answer` | accept; step 8 appends `u`. A Retry of a turn that was never stored (its first request was refused before acceptance) is therefore an ordinary first answer |
+| submit or Retry | `turnId` not in `T`, `revision ≠ baseRevision` | — | refuse `transcript-stale` (case 6) |
 | submit or Retry (`regenerate` with no `answerId`) | `last` is `turnId`, unanswered, and `u`'s text equals the stored text | `answer` | accept; answer the **stored** message, append nothing |
 | the same | `turnId` in `T` (answered, unanswered, or being answered), and the text differs | — | refuse `turn-committed-different-text` (case 19, §9.3), with `answered` as stored. The request's text is **not** committed. Checked **before** the two rows around it and before the claim row (§5.1 step 4), so an edited re-send is never read as `turn-answered` or `turn-in-progress`, both of which consume the draft |
 | the same | `turnId` in `T` and answered (any later message exists), the text equal | — | refuse `turn-answered` (case 2) |
@@ -516,7 +558,13 @@ Then the claim row of that key decides (§5.1 step 4, before the busy check): no
 **An accepted approval is never regenerated away (revision 5).** An answer `a` **carries an
 accepted approval** when one of its client-tool parts (§3) has a stored output whose `status` is
 `approved` (`propose_operation`: a plan or deploy was queued, `approval-card.tsx:56-57`) or
-`submitted` (`create_support_case`: a case was opened). Revision 4 let `regen:a` replace such an
+`submitted` (`create_support_case`: a case was opened). `hasAcceptedApproval` reads **only** the
+output's `status`, never its other fields, so a stored output that carries one of those statuses
+refuses the regenerate whatever else it holds: it errs toward refusing a regenerate, never toward
+queuing a second operation. **`propose_changes`' `accepted` is not an accepted approval**: the
+change was applied to the canvas in the browser (`project-tool-parts.tsx:117-118`) and queued
+nothing on the server, so regenerating that answer cannot run anything twice; the regenerated
+answer may propose the change again, and accepting it again is the user's choice. Revision 4 let `regen:a` replace such an
 answer wholesale: the regenerate's model input was `T` without `a`, so the model never saw that the
 operation was approved and queued, could propose it again, and a second Approve queued a second
 provision, while the stored approval output was deleted from the transcript (#5548 review of
@@ -568,6 +616,11 @@ in-memory once-guard, from whichever of these happens first:
   answer is stored and the claim is `answered` (case 17).
 - **The model failed** (`onError`), **the client disconnected**, or **the route's own timeout fired**
   (`onAbort`, §8.2).
+- **The stream's own `onError`**: a throw inside `createUIMessageStream`'s `execute`, after the
+  stream is registered and before `streamText` emits (the heartbeat may already be running), is
+  routed by that stream's `onError` to finalize as C7, which also clears the heartbeat. Without it
+  the claim would stay `running` with a live hold until C8, and a Retry would read
+  `turn-in-progress` for up to the age bound.
 - **The route threw after acceptance and before the stream was registered**: `resolveAiTier`,
   `readAgentContext`, `convertToModelMessages` over the stored transcript, `buildAgentTools`. Dev
   releases the hold in that `catch` (`route.ts:387-391`); here the same `catch` runs finalize as C7
@@ -777,9 +830,10 @@ over several rows (§10 item 3).
 - **The bound.** `streamText` takes `abortSignal: AbortSignal.any([req.signal,
   AbortSignal.timeout(TURN_BUDGET_MS)])`. A timeout fires `onAbort`, so it ends exactly like a
   disconnect (§8.1). Decided: `TURN_BUDGET_MS = 900_000` (Q7): above the six minutes measured
-  for a deep-reasoning turn. All three `maxDuration` exports are deleted (the two chat routes' in
-  slices 6 and 8, `app/api/mcp/route.ts:19`'s in slice 8), so nothing claims a bound it does not
-  have.
+  for a deep-reasoning turn. All three `maxDuration` exports are deleted: the project assistant
+  route's (`app/api/projects/[projectId]/assistant/route.ts`) in slice 6, and `app/api/agent/[agentId]/route.ts`'s
+  and `app/api/mcp/route.ts:19`'s in slice 8. `app/api/agent/route.ts` exports none on dev.
+  (Revision 5 said "the two chat routes'".) So nothing claims a bound it does not have.
 - **The bound holds for the hold too.** An attempt older than `TURN_BUDGET_MS` + 90 s since
   `accepted_at` is past its own timeout, so C5 no longer renews it and C8 expires it whatever its
   lease. A heartbeat timer leaked by a bug therefore cannot keep a hold reserved beyond that age
@@ -885,9 +939,28 @@ over the stored answer, which reads tool names and never output presence; and `b
     would match every plain answer vacuously): the continuation request again (trigger
     `submit-message`, the assistant message last, as `addToolOutput`'s auto-send makes it), which
     §5.2 re-arms (C2) or resumes (C4r) with the stored outputs kept;
+  - an **assistant** message whose pending client tool calls are not empty and **lack** outputs (a
+    partial continuation whose tail proposed something new): no Retry. The card reads "Approve or
+    reject the proposal above to continue." The card is still approvable, and its continuation is
+    the way on; `regen:a` would be refused `turn-has-accepted-approval` when the earlier step holds
+    an approval (#5548 delta review of revision 5, advisory 6);
   - any other **assistant** message (a partial answer after a provider error):
     `regenerate({ messageId })`, a `regen:a` attempt. Revision 2's plain `regenerate()` sliced the
     answer off and was refused `turn-answered`, so Retry became a silent reload.
+- **A resume sent from a stale revision does not dead-end.** A continuation that ended partial on a
+  network drop never delivered `data-turn-finished`, so the tab's `revisionRef` is the acceptance's,
+  one behind, and its Retry is answered C4 `turn-answered` (C4r needs `revision = baseRevision`).
+  The server keeps that answer (it is `committed: true`, before the hold, and costs nothing). The
+  client recovers: when a **continuation** request is refused `turn-answered` and the refusal's
+  `revision` differs from the request's `baseRevision`, `onTurnRefused` loads the transcript (which
+  refreshes `revisionRef`) and **keeps** the error card and its Retry, reading "This conversation
+  changed while the answer was being continued. Retry to continue it." The next Retry carries the
+  current revision: a partial continuation is resumed (C4r), and a finished one is refused
+  `turn-answered` with a matching revision, which clears the card as any `turn-answered` does. So the
+  user is never left without a way to resume, and no request is ever sent without a click.
+  (Revision 5 cleared the card on every `turn-answered`, so after the load the user had no Retry,
+  and Regenerate is not rendered on an answer that carries an accepted approval; #5548 delta review
+  of revision 5, advisory 3.)
 - **The continuation needs no new client id.** Its key is derived from the stored answer and its
   pending client tool calls, so two tabs that approve the same card make the same key and one of
   them is refused (case 7), and a server read tool in the same step does not enter the key (case
@@ -899,10 +972,10 @@ The routes read the mentions and the cell target of the turn's **stored** user m
 validated with `mentionsSchema` and the existing cell schema. Where each comes from depends on what
 the sends carry, and revision 1 overstated that:
 
-| Field | ADR 0001 revision 7 writes it into `metadata` on | Slice 6 reads | Deleted from the body by |
+| Field | ADR 0001 revision 7.1 writes it into `metadata` on | Slice 6 reads | Deleted from the body by |
 |---|---|---|---|
 | `mentions` | the first turn (`startConversation`, its §5.1 step 3), every later composer turn (D9b) and every external send (D10x, D10y) | `metadata.mentions`, else `body.mentions` | slice 9, after ADR 0001 slices 7b and 9 (which ship D9b and D10y and wire them) |
-| `cellTarget` | the first turn and an external start (D10x), an external send into an existing conversation (D10y, which is the empty-cell prompt's path), a composer turn that has one staged (D9b), and the failed-send marker | `metadata.cellTarget`, else `body.cellTarget` | slice 9, after ADR 0001 slices 7b and 9 (§9.4, change 3) |
+| `cellTarget` | an external start (D10x) and an external send into an existing conversation (D10y, the empty-cell prompt's path), both from the `SUBMIT_EXTERNAL` event; and a composer turn (D9b, D10b) whose draft **content** carries one, which only the Retry of a failed cell prompt does (ADR 0001 D10f). Never from the widget grid's `pendingCellTarget` slot | `metadata.cellTarget`, else `body.cellTarget` | slice 9, after ADR 0001 slices 7b and 9 (§9.4, change 3), which also deletes `takePendingCellTarget` and the slot |
 
 The empty-cell prompt sends into the **current** conversation, usually an existing thread with
 widgets (`elench-conversation.tsx:313-324`): it stages the cell and sends the text, an **external**
@@ -910,12 +983,26 @@ send, never a composer one. Until ADR 0001's D10y carries the target (its slices
 `body.cellTarget` (from `takePendingCellTarget()`, `:172`) is the only path for it, and deleting it
 would land the widget by first-fit instead of in the cell the user clicked: the (0,0) regression
 recorded at `:169-172`. (Revision 4 assigned the target to D9b, which a cell prompt never takes.)
+
+**No stale target (revision 5.1).** On dev the slot has one writer, the empty-cell effect
+(`elench-conversation.tsx:322`), and one reader, `takePendingCellTarget()` in `prepareBody`
+(`:55-58`, `:172`), which reads **and clears** it in the same request. Revision 5 had ADR 0001's
+D9b and D10y read the slot without clearing it, and slice 9 here deleted the only take, so every
+later turn would have carried the last clicked cell (#5548 delta review of revision 5, inline at
+line 905). Now no send reads the slot at all: ADR 0001's slice 9 makes the effect pass the cell in
+`SUBMIT_EXTERNAL` and stop staging it, so from then on nothing writes the slot, `prepareBody`'s take
+returns null, and the route reads the target from the message's metadata. Slice 9 here then deletes
+the dead slot (`pendingCellTarget`, `setPendingCellTarget` in `lib/stores/use-widget-grid-store.ts`)
+with `takePendingCellTarget` and `body.cellTarget`. A refused cell prompt keeps its cell in the
+draft's content (ADR 0001 D10f), not in the slot.
 The fallback is read for the **acceptance's** user message only, and §5.1 step 8 writes it into
 that message's `metadata` as it appends, so the stored turn carries its target from then on (a
 Retry of it needs no body). A stored message's metadata always wins. Tests: R › `a later-turn cell
 prompt with body.cellTarget and no metadata lands in the named cell` (slice 6); C › `the empty-cell
 prompt, driven through pendingCellRequest into an existing thread, stores its cell target in the
-user message's metadata and the route reads it with no body field` (slice 9).
+user message's metadata and the route reads it with no body field` (slice 9); C › `after a cell
+prompt, the next composer turn's stored message has no cellTarget` (slice 9; ADR 0001 slice 9's S9
+test is the same sequence before the slot is deleted).
 
 ### 9.3 Refusals (case 12)
 
@@ -978,30 +1065,38 @@ is never lost". So the refusal says the text is not committed, and ADR 0001 keep
 
 **The client half without ADR 0001's store (slice 6).** `useAgentChat` gets a `fetch` wrapper that
 reads the typed body and throws a `TurnRefusedError`. Elench and any surface without ADR 0001's
-store (the support chat, if it adopts this, §12) handle it in one function, `onTurnRefused`:
+store (the support chat, if it adopts this, §12) handle it in one function, `onTurnRefused` (in
+`elench-conversation.tsx`, beside the `restore` handle it calls):
 `loadInto` the thread (which refreshes `revisionRef`), `clearError()`, and, on every refusal whose
 `textCommitted` is false, put the refused text back into the composer through its existing
 `restore` handle (`elench-conversation.tsx:289-292`) with the table's notice. A refused **cell
 prompt** also restores its cell target, which `takePendingCellTarget()` consumed when the body was
 built (`:172`): `onTurnRefused` re-stages it with `setPendingCellTarget`, so the next Enter lands
-the widget in the cell the user clicked. On `turn-in-progress`, the loaded transcript ends on a
+the widget in the cell the user clicked. That re-staging lives only as long as the composer path:
+from ADR 0001's slice 9 on, a cell prompt is a store-owned D10y send, its refusal goes to the store
+(below), and D10f keeps the cell in the draft's content. On `turn-in-progress`, the loaded transcript ends on a
 user turn, so it shows "Being answered in another tab or device" instead of the `unanswered` rule's
 "No reply arrived" (`:223-229`), and polls `getThread` every 5 s until `inFlight` is null, then
 loads again. No error card is shown, and a Retry is never needed to recover, because the reload
 already refreshed the base revision.
 
-**Exactly one handler.** `onTurnRefused` checks for ADR 0001's store **at run time**: when the store
-owns the send (it holds a `sending` entry for this turn id), it dispatches the refusal to the store
-(D9d, D20) and does nothing else. The composer path runs only when no store owns the send. So once
-ADR 0001's store owns the send (its slice 9, which lands after slice 6 here), one refusal never
-reaches both D9d's release and `restore`, whose merge (D11r) would show the text twice. Slice 9 here
-deletes the composer path.
+**Exactly one handler.** Slice 6 here ships the composer path **only**: no ADR 0001 store exists
+when it lands (the store is ADR 0001's slice 8, and first owns a send in its slice 9), so there is
+nothing to check, and a test of the check could only run against a fake. **ADR 0001's slice 9**, the
+slice in which the store first owns a send and which already edits `elench-conversation.tsx`, adds
+the check: when the store holds a `sending` entry for the refused turn id (a composer send, D9d, or
+an external one, D10f), `onTurnRefused` dispatches the refusal to the store (D9d, D10f, D20) and does
+nothing else; the composer path runs only when no store owns the send. So one refusal never reaches
+both D9d's release and `restore`, whose merge (D11r) would show the text twice. Its C test, `One
+refusal handler`, is ADR 0001 slice 9's. Slice 9 here then deletes the composer path. (Revision 5
+put the check and its test in slice 6, which does not wait for the store; #5548 delta review of
+revision 5, inline at line 1451.)
 
-### 9.4 What ADR 0001 carries for this ADR (adopted in its revisions 6 and 7)
+### 9.4 What ADR 0001 carries for this ADR (adopted in its revisions 6, 7 and 7.1)
 
 ADR 0001 revision 5.1 could not carry this ADR's refusals as written. Revision 6 adopted the four
-changes below and revision 7 corrected two of them (the certain list of change 2 and the path of
-change 3). Its §5.3 states the same contract from its side; a change to either side changes both
+changes below; revision 7 corrected two of them (the certain list of change 2 and the path of
+change 3), and revision 7.1 corrected change 3 again (no send reads the pending slot) and gave the external sends failure arms (D10f). Its §5.3 states the same contract from its side; a change to either side changes both
 documents.
 
 1. **An edited re-send releases with a fresh turn id; it is never consumed** (Q3). D9d's arm (d)
@@ -1023,9 +1118,12 @@ documents.
    `transcript-stale` and `client-outdated`, 410, 404 and 403. Without it they release
    `uncertain: true` and D31 says "may already have been sent", which is false.
 3. **The cell target rides the message on the path the cell prompt takes**: ADR 0001's D10y (an
-   external send into an existing conversation) and D10x send `metadata.cellTarget`, read from the
-   pending slot; D9b does too when a composer send has one staged. So the body fallback of §9.2 can
-   go in slice 9.
+   external send into an existing conversation) and D10x send `metadata.cellTarget`, taken from the
+   `SUBMIT_EXTERNAL` event; a composer send (D9b, D10b) sends its draft content's `cellTarget`, which
+   only a failed cell prompt's Retry carries (D10f). No send reads the pending slot, and from ADR
+   0001's slice 9 on nothing writes it (§9.2). So the body fallback of §9.2, and the slot, can go in
+   slice 9. A refused or failed cell prompt lands in the box with its cell (D10f), so nothing is lost
+   once the composer path is deleted.
 4. **`startConversation`'s `created` returns the thread's revision**, read from the inserted row,
    so the transport's base revision is seeded (§9.1). It is never null, because slice 1 here (the
    `revision` column) lands before ADR 0001's slice 1.
@@ -1040,12 +1138,14 @@ the same order):
   on D9d alone is not enough: a tab that re-sends an edit under the old turn id and dies before the
   refusal arrives leaves its draft to the S5 lease, which would otherwise find the old id in the
   transcript and consume the edit.
-- **Slice 9 here** is blocked by **0001/7b** and **0001/9** (the store owns the send, and D10y
-  carries the cell target: change 3).
+- **Slice 9 here** is blocked by **0001/7b** and **0001/9** (the store owns every send, D10f
+  handles an external send's refusal, D10y carries the cell target, change 3, and 0001/9 adds the
+  one-handler check of §9.3).
 - **0001/1** is blocked by slice 1 here (both edit `lib/db/schema/agent.ts`, `programmables.sql` and
   the migrations; change 4 reads slice 1's column). **0001/4** is blocked by slice 2 (`turn-key.ts`)
   and slice 4 (`resolveTurnActor`, which its heartbeat route uses). **0001/9** is blocked by slice 6
-  (the same client files; it wires change 4 through slice 6's `setBaseRevision`).
+  (the same client files; it wires change 4 through slice 6's `setBaseRevision`, and adds §9.3's
+  one-handler check to slice 6's `onTurnRefused`).
 
 ## 10. Migration and rollout (via the db pipeline)
 
@@ -1100,8 +1200,8 @@ holds `mutex:migration` (`.claude/skills/db-pipeline/SKILL.md`).
 **PR 2: the client half on ADR 0001's store.** Needs ADR 0001 slices 7b and 9 (§9.4).
 `onTurnRefused` dispatches to the store (D9d's new arms, D20) and its composer path is deleted, so the
 "Being answered" state (shown by slice 6's composer path since PR 1) becomes the store's D20;
-`body.mentions`, `body.cellTarget` and the `pendingMentions` slot deleted,
-and the routes read metadata only; optionally the transport sends only the last message.
+`body.mentions`, `body.cellTarget`, `takePendingCellTarget`, the `pendingCellTarget` slot and the
+`pendingMentions` slot deleted, and the routes read metadata only; optionally the transport sends only the last message.
 
 **Rollout.**
 - **Open tabs on the old bundle.** After PR 1 deploys, a tab loaded before it sends no `orgId` and no
@@ -1203,7 +1303,17 @@ its exact globs.
 | Lock order | I › `accepts for one thread from orgs A and B do not deadlock`; I › `an acceptance running C8 on a claim whose route is finalizing does not deadlock`; I › `reserveTurn opens one connection` |
 | Continuation rows only when an assistant message is last | U › `a continuation is never classified by the submit rows` |
 | `regen:a` model input | R › `a regenerate sends the model T without a` |
-| One refusal handler | C › `with ADR 0001's store owning the send, onTurnRefused dispatches to the store and does not restore the composer` |
+| One refusal handler (**ADR 0001 slice 9**, §9.3; not slice 6) | C › `with ADR 0001's store owning the send, onTurnRefused dispatches to the store and does not restore the composer` |
+| No stale cell target (slice 9) | C › `after a cell prompt, the next composer turn's stored message has no cellTarget` |
+| C4r clears what `answered` set | U › `a resume re-arms with answer_id null, partial false and finished_at null` (slice 5) |
+| A stale-revision resume (slice 6) | C › `a continuation refused turn-answered with a newer revision loads, keeps the card and Retry, and the next Retry is accepted as a resume` |
+| A new unresolved proposal in a partial tail (slice 6) | C › `a partial continuation whose tail holds an unanswered proposal offers no Retry and says to approve or reject it` |
+| The stream's own `onError` (slice 5) | R › `a throw inside the stream's execute before the model emits: failed, hold 0, heartbeat cleared` |
+| Recreate after C8 (slice 5) | I › `a recreate of a reaped id runs C8 first and leaves no claim of the old thread` |
+| The `invalid` row (slice 2) | U › `a submit whose last message is not the turn classifies invalid` |
+| A Retry of a never-stored turn (slice 2) | U › `a Retry whose turn is not stored, at the current revision, is an answer attempt that appends it` |
+| `propose_changes` (slice 2) | U › `CLIENT_TOOL_NAMES equals the tools without execute in buildAgentTools, buildProjectAgentTools and buildSupportTools`; U › `an accepted propose_changes is not an accepted approval` |
+| Client-side truncation (slice 6) | C › `a denied reason longer than the cap is truncated so the continuation is accepted` |
 | C3 before `thread-busy` | U › `a duplicate of a running turn is turn-in-progress, not thread-busy` |
 | `getThread` | I › `getThread returns revision and inFlight, and no inFlight for a silent claim` |
 | C7 on a pre-stream throw | R › `a throw in buildAgentTools after acceptance: the claim is failed, the hold is 0, no heartbeat keeps running, and a Retry re-arms` |
@@ -1348,7 +1458,7 @@ recreated (§5.1 step 2). The floor of Q8 for a support turn is the hold its kin
   repo has no surface for with a stable log event plus a hand-off item (§8.1), required a
   non-empty pending set for the continuation Retry (§9.1), and named the `onRegenerate` signature
   change (§9.1).
-- **Against ADR 0001** (#5512, revision 7): its §5.3 names the turn claim's key `(thread id, turn
+- **Against ADR 0001** (#5512, revision 7.1): its §5.3 names the turn claim's key `(thread id, turn
   id, attempt key)`, as this ADR does. Revisions 6 and 7 carry §9.4's four changes; §9.4 names the
   slices that gate slices 6 and 9 here. Its `claim_turn_id` is a `uuid`, which `turn_id`'s zod rule
   (§4.1) accepts. (Revision 4 of this ADR still described ADR 0001 revision 5.1 and gated on "ADR
@@ -1360,6 +1470,18 @@ recreated (§5.1 step 2). The floor of Q8 for a support turn is the hold its kin
   wrong one in community (§6.1). The pending-client-tool set is now taken from the approval's step,
   not the last step (§3), which revision 4's Retry rule silently depended on. No advisory was
   rejected.
+- **Revision 5.1** answered the delta review of revision 5 (#5548: two inline blockers, seven
+  advisories) and the slice-2 builder's finding. Blocker 1 (a stale cell target after slice 9): no
+  send reads `pendingCellTarget` any more, and slice 9 deletes the slot (§9.2). Blocker 2 (slice 6's
+  store check had no store): the check and its test moved to ADR 0001's slice 9 (§9.3, §14).
+  Advisories 1-7 were all taken: C4r names the columns it clears; decision 6 says a resumed tail
+  stays billed; a stale-revision resume keeps its Retry (§9.1); the recreate runs C8 first (§5.1
+  step 2); the stream's `onError` is a C7 path (§5.3); a partial tail with a new proposal says to
+  approve or reject it (§9.1); and §8.2 names the three `maxDuration` exports correctly. One fact
+  about the code was false: §3's "`propose_operation` alone" on the Elench routes. The project
+  assistant route's tool set has `propose_changes` with no `execute` (`compose.ts:230-236`). It is
+  now a client tool, with an output schema, and is not an accepted approval (§3, §5.1 step 8,
+  §5.2). Rejected: none.
 
 ## 14. Implementation slices
 
@@ -1382,10 +1504,10 @@ PR 2. **Cross-ADR order** (stated identically in ADR 0001 §5.3 and §14): 0001/
 | 3 | Billing on one transaction | `lib/billing/ai-guard.ts`, `lib/billing/ai-plan.ts`, `lib/billing/queries.ts`, `lib/billing/ai-quota.ts`, `lib/billing/agent-metering.ts`, `tests/lib/billing/**`, `tests/integration/ai-hold-tx.test.ts`, `tests/integration/ai-guard-race.test.ts` | — | no | **yes** (billing) |
 | 4 | The named-org resolver | `lib/authz/guard.ts`, `tests/api/agent-turn-org.test.ts`, `tests/lib/authz/guard.test.ts` | — (0001/4 waits for it) | no | **yes** (authz seam 2) |
 | 5 | The claim state machine | `lib/agent/turn-claims.ts`, `lib/agent/transcript-save.ts`, `lib/agent/thread-transcript.ts`, `tests/lib/agent/turn-claims.test.ts`, `tests/integration/agent-turn-claims.test.ts`, `tests/lib/agent/transcript-save.test.ts`, `tests/lib/agent/thread-transcript.test.ts` | 1, 2, 3 | no (uses Slice 1's) | **yes** (service-role statements with explicit owner predicates, billing) |
-| 6 | The Elench cut-over: routes, transport and the minimum recovery | `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `lib/agent/turn-route.ts`, `components/agent/use-agent-chat.ts`, `components/agent/agent-chat.tsx`, `components/agent/elench/elench-conversation.tsx`, `components/project-assistant/use-project-assistant.ts`, `app/(private)/[org]/layout.tsx`, `components/shell/app-shell.tsx`, `lib/stores/use-elench-store.ts`, `tests/api/agent-turn-routes.test.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-message-limit.test.ts`, `tests/api/projects/assistant-route-env.test.ts`, `tests/components/elench-conversation-retry.test.tsx`, `tests/components/agent-chat-parts.test.tsx` | 4, 5, **0001/4**, **0001/7b** | no | **yes** (route org and project gates, seam 2) |
+| 6 | The Elench cut-over: routes, transport and the minimum recovery | `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `lib/agent/turn-route.ts`, `components/agent/use-agent-chat.ts`, `components/agent/agent-chat.tsx`, `components/agent/elench/elench-conversation.tsx`, `components/agent/approval-card.tsx`, `components/support/ask/support-case-approval-card.tsx`, `components/agent/render-tool-parts/project-tool-parts.tsx`, `components/project-assistant/use-project-assistant.ts`, `app/(private)/[org]/layout.tsx`, `components/shell/app-shell.tsx`, `lib/stores/use-elench-store.ts`, `tests/api/agent-turn-routes.test.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-message-limit.test.ts`, `tests/api/projects/assistant-route-env.test.ts`, `tests/components/elench-conversation-retry.test.tsx`, `tests/components/agent-chat-parts.test.tsx` | 4, 5, **0001/4**, **0001/7b** | no | **yes** (route org and project gates, seam 2) |
 | 7 | The sweep | `lib/reconcile/ai-holds.ts`, `tests/integration/ai-hold-sweep.test.ts`, `tests/lib/reconcile/ai-holds.test.ts` | 5 (parallel with 6) | no | **yes** (money release) |
 | 8 | The support and agent-identity routes (Q11), and the `mcp` route's `maxDuration` | `app/api/support/ask/route.ts`, `app/api/agent/[agentId]/route.ts`, `app/api/mcp/route.ts`, `lib/agent/turn-route-support.ts`, `tests/api/support-turn-routes.test.ts` | 6 (it imports slice 6's `turn-route.ts` and never edits it; a change it needs there is a separate PR ordered against slice 9) | no | **yes** (route org gates) |
-| 9 | The client half on ADR 0001's store (PR 2) | `components/agent/use-agent-chat.ts`, `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/use-elench-send.ts`, `lib/stores/use-elench-store.ts`, `lib/stores/elench-drafts/reducer-sending.ts`, `lib/agent/turn-route.ts`, `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-turn-routes.test.ts`, `tests/lib/stores/elench-drafts-sending.test.ts` | 6, **0001/7b**, **0001/9** (and 9b, if it splits) | no | no |
+| 9 | The client half on ADR 0001's store (PR 2) | `components/agent/use-agent-chat.ts`, `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/use-elench-send.ts`, `lib/stores/use-elench-store.ts`, `lib/stores/use-widget-grid-store.ts`, `lib/stores/elench-drafts/reducer-sending.ts`, `lib/agent/turn-route.ts`, `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/components/widgets/cell-prompt.test.tsx`, `tests/api/agent-turn-routes.test.ts`, `tests/lib/stores/elench-drafts-sending.test.ts` | 6, **0001/7b**, **0001/9** (and 9b, if it splits) | no | no |
 
 **Slice 1. Schema, migration and RLS.** *Done when:* `agent_turn_claims` (§4.1: every column,
 `accepted_at` included, `thread_id` with **no** foreign key, both unique constraints, the three
@@ -1402,10 +1524,13 @@ before 0001/1, which rebases over its schema and migration.
 `turnText` (§5.2's one definition, the one ADR 0001 imports), `pendingClientToolCalls` (§3: the
 approval's step, not the last step), `hasAcceptedApproval` (§5.2) and the pure classifier of §5.2
 (`classifyTurn`, the whole table: the continuation-only rule, the different-text-first order, the
-accepted-approval refusal, the resume), and `lib/ai/client-tools.ts` exports `CLIENT_TOOL_NAMES`
-(`propose_operation`, `create_support_case`) and their output schemas with the 4,096-byte cap
-(§5.1 step 8), with U tests: the names equal the tools without `execute` in `buildAgentTools`' and
-the support route's tool sets; `turnText`'s trim and line-ending pairs; the pending set of a
+accepted-approval refusal, the resume, the `invalid` row, a Retry through the submit rows
+including the append of a turn that was never stored), and `lib/ai/client-tools.ts` exports
+`CLIENT_TOOL_NAMES` (`propose_operation`, `create_support_case`, `propose_changes`) and their
+output schemas with the 4,096-byte cap (§5.1 step 8), with U tests: the names equal the tools
+without `execute` in **all three** tool sets the routes build (`buildAgentTools`,
+`buildProjectAgentTools`, `buildSupportTools`); `hasAcceptedApproval` reads only `status`, and an
+accepted `propose_changes` is not an accepted approval; `turnText`'s trim and line-ending pairs; the pending set of a
 continued answer is the approval's step. No route imports them yet.
 
 **Slice 3. Billing on one transaction.** *Done when:* `reserveAiHold(tx, orgId, kind, userId)` is
@@ -1448,9 +1573,15 @@ until finalize, bound themselves with `TURN_BUDGET_MS`, answer typed refusals, a
 `maxDuration`; the `[org]` layout passes `currentActor().orgId` to `AppShell`, which keeps it for the
 transport's `orgRef`; the transport sends §9.1's fields to opted-in callers only and returns
 `setBaseRevision`; Regenerate is not rendered on an answer with an accepted approval and Retry
-follows §9.1; `onTurnRefused` (§9.3, composer path plus the run-time store check) ships;
+follows §9.1, including the stale-revision resume that keeps its card and the partial tail with a
+new proposal that offers no Retry; `onTurnRefused` (§9.3) ships with its **composer path only** (the
+one-handler store check and its `One refusal handler` test are ADR 0001 slice 9's, which waits for
+this slice); the three approval cards truncate their free text to fit the output schemas (§5.1 step
+8); the request schema validates `orgId` with `z.uuid()` **before** `resolveTurnActor` is called (the
+enterprise resolver casts it `::uuid`, so a malformed id would throw a 500 instead of answering 403),
+and `userId` is taken **only** from the verified session, never from the body (#5720 review);
 `useProjectAssistant` and `projectPrepareBody` are deleted; every R and C test of §11 that is not
-marked PR 2 passes (the route-level org and project tests of cases 3 and 4 and the community
+marked PR 2 or ADR 0001 slice 9 passes (the route-level org and project tests of cases 3 and 4 and the community
 team-org test included), and the existing `agent-message-limit.test.ts`,
 `assistant-route-env.test.ts`, `elench-conversation-retry.test.tsx` and `agent-chat-parts.test.tsx`
 are green or updated here. The shared route body lives in one helper so the two routes stay thin.
@@ -1476,8 +1607,11 @@ support turn (one hold), an approved support-case card continuation, and an unch
 support turn. The support chat's components are not changed.
 
 **Slice 9. The client half on ADR 0001's store (PR 2).** *Done when:* `onTurnRefused` dispatches to
-the store only (D9d's arms, D20) and its composer path is deleted; "Being answered" polls
+the store only (D9d's and D10f's arms, D20) and its composer path is deleted; "Being answered" polls
 `getThread.inFlight`; `body.mentions`, `body.cellTarget` and the `pendingMentions` slot are deleted
 and the routes read the stored message's metadata only, which removes D9b's staging of the slot
-(`reducer-sending.ts`, `use-elench-send.ts`, both in scope); the PR 2 tests of §11 pass, the empty-cell
+(`reducer-sending.ts`, `use-elench-send.ts`, both in scope); `takePendingCellTarget`, and
+`pendingCellTarget` / `setPendingCellTarget` in `use-widget-grid-store.ts`, are deleted (ADR 0001
+slice 9 already stopped writing the slot, §9.2), with `cell-prompt.test.tsx`'s store reset updated;
+C › `after a cell prompt, the next composer turn's stored message has no cellTarget` passes; the PR 2 tests of §11 pass, the empty-cell
 prompt test of §9.2 included.
