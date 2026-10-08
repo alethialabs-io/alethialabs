@@ -63,6 +63,7 @@
     "db:reencrypt": "tsx scripts/reencrypt-secrets.ts",
     "db:studio": "drizzle-kit studio",
     "stripe:setup": "tsx scripts/stripe-setup.ts",
+    "billing:pending-org-setups": "tsx scripts/pending-org-setups.ts",
     "org:set-plan": "node scripts/set-org-plan.mjs",
     "audit:grant-scopes": "node scripts/audit-grant-scopes.mjs",
     "audit:credential-knobs": "tsx scripts/audit-credential-knobs.ts",
