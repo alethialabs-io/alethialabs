@@ -220,30 +220,67 @@ export async function unfinishedPendingOrgSetups(
 	};
 }
 
+/** The most distinct customers `unlinkedPendingOrgSetupCustomers` returns before it refuses (ADR 0002 §4.5). */
+export const UNLINKED_SETUP_CUSTOMER_CAP = 50;
+
+/** How many records one keyset page of `unlinkedPendingOrgSetupCustomers` reads. */
+const UNLINKED_SETUP_PAGE = 100;
+
+/**
+ * What `unlinkedPendingOrgSetupCustomers` found: every customer (`all`), or `over_cap` when the actor's
+ * unlinked records name more than `UNLINKED_SETUP_CUSTOMER_CAP` distinct customers. `over_cap` carries
+ * no list ON PURPOSE: a partial list would let the purchase sweep fewer customers than exist and mint
+ * beside a payment still settling on one it never read, so the caller has nothing to proceed with and
+ * must refuse.
+ */
+export type UnlinkedSetupCustomers = { kind: "all"; customers: string[] } | { kind: "over_cap" };
+
 /**
  * The Stripe customers of the actor's setups that have no organization yet (nothing created, nothing
  * linked, nothing declared), newest record first, each once. The new-org purchase reuses the first when
  * the browser lost its `customerId`, and sweeps all of them for a payment still settling (#5463).
+ *
+ * It reads EVERY such record (ADR 0002 §4.5, C21), in keyset pages of `UNLINKED_SETUP_PAGE` ordered by
+ * `(created_at, id)` descending — a cursor on that position, not a row count, so no record is skipped or
+ * read twice — and stops only at the last page, or as soon as a customer beyond
+ * `UNLINKED_SETUP_CUSTOMER_CAP` appears, which answers `over_cap`. It never answers with a list it
+ * stopped reading early.
  */
-export async function unlinkedPendingOrgSetupCustomers(
-	userId: string,
-	limit = 5,
-): Promise<string[]> {
-	const rows = await getServiceDb()
-		.select({ customerId: pendingOrgSetups.customer_id })
-		.from(pendingOrgSetups)
-		.where(
-			and(
-				eq(pendingOrgSetups.user_id, userId),
-				isNull(pendingOrgSetups.created_org_id),
-				isNull(pendingOrgSetups.linked_at),
-				isNull(pendingOrgSetups.declared_at),
-			),
-		)
-		.groupBy(pendingOrgSetups.customer_id)
-		.orderBy(desc(sql`max(${pendingOrgSetups.created_at})`))
-		.limit(limit);
-	return rows.map((r) => r.customerId);
+export async function unlinkedPendingOrgSetupCustomers(userId: string): Promise<UnlinkedSetupCustomers> {
+	const customers: string[] = [];
+	const seen = new Set<string>();
+	let after: UnfinishedSetupCursor | null = null;
+	for (;;) {
+		const page = await getServiceDb()
+			.select({
+				id: pendingOrgSetups.id,
+				customerId: pendingOrgSetups.customer_id,
+				at: sql<string>`${pendingOrgSetups.created_at}::text`,
+			})
+			.from(pendingOrgSetups)
+			.where(
+				and(
+					eq(pendingOrgSetups.user_id, userId),
+					isNull(pendingOrgSetups.created_org_id),
+					isNull(pendingOrgSetups.linked_at),
+					isNull(pendingOrgSetups.declared_at),
+					after
+						? sql`(${pendingOrgSetups.created_at}, ${pendingOrgSetups.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
+						: undefined,
+				),
+			)
+			.orderBy(desc(pendingOrgSetups.created_at), desc(pendingOrgSetups.id))
+			.limit(UNLINKED_SETUP_PAGE);
+		for (const row of page) {
+			if (seen.has(row.customerId)) continue;
+			if (customers.length === UNLINKED_SETUP_CUSTOMER_CAP) return { kind: "over_cap" };
+			seen.add(row.customerId);
+			customers.push(row.customerId);
+		}
+		const last = page.at(-1);
+		if (page.length < UNLINKED_SETUP_PAGE || !last) return { kind: "all", customers };
+		after = { at: last.at, id: last.id };
+	}
 }
 
 /**

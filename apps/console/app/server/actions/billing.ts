@@ -78,6 +78,7 @@ import {
 	readPaymentAfterCancel,
 } from "@/lib/billing/first-payment";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import { emitAlertEvent } from "@/lib/alerts/emit";
 import {
 	type FirstPaymentRead,
 	type NewOrgPlanReport,
@@ -103,6 +104,7 @@ import {
 	settleOpenSetup,
 	type UnfinishedSetupCursor,
 	unfinishedPendingOrgSetups,
+	UNLINKED_SETUP_CUSTOMER_CAP,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
@@ -739,14 +741,19 @@ function unconfirmed(alerted: boolean): "unconfirmed" | "unconfirmed_alerted" {
 /**
  * What `cancelIncompleteSubscriptions` did: the subscriptions it cancelled as provably unpaid (each
  * with the `readFirstPayment` verdict that allowed it); the `incomplete` ones it KEPT because their
- * first payment is not provably unpaid — in flight, taken, or unreadable; and, for each one it tried
- * to cancel that did not end `cancelled` — a payment found afterwards, or a cancel that could not be
- * proven (#5489) — what became of it. Anything in `kept` or `unsettled` refuses the purchase.
+ * first payment is not provably unpaid — in flight, taken, or unreadable; for each one it tried to
+ * cancel that did not end `cancelled` — a payment found afterwards, or a cancel that could not be
+ * proven (#5489) — what became of it; and the ones it LEFT ALONE because they are not the purchase's
+ * to touch (`foreign`, ADR 0002 §4.2). Anything in `kept` or `unsettled` refuses the purchase; `foreign`
+ * does not. `overCap` means the customer has more `incomplete` subscriptions than the sweep reads
+ * (`SWEEP_SUBSCRIPTION_CAP`): nothing was cancelled, every list is empty, and the purchase refuses.
  */
 interface IncompleteSweep {
 	cancelled: { sub: Stripe.Subscription; firstPayment: FirstPayment }[];
 	kept: Stripe.Subscription[];
 	unsettled: PaymentOutcome[];
+	foreign: Stripe.Subscription[];
+	overCap: boolean;
 }
 
 /**
@@ -802,6 +809,71 @@ const EARLIER_PAYMENT_UNCONFIRMED = `We could not confirm what happened to an ea
  * raised is true.
  */
 const EARLIER_PAYMENT_UNCONFIRMED_ALERTED = `We could not confirm what happened to an earlier payment on this checkout, so nothing new was started. We have raised an alert with our team. Contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/**
+ * What a caller tells the customer when there are more earlier checkouts than the purchase reads before
+ * it refuses (ADR 0002 §4.5): more `incomplete` subscriptions on one customer than
+ * `SWEEP_SUBSCRIPTION_CAP`, or more unfinished create-a-team setups than `UNLINKED_SETUP_CUSTOMER_CAP`
+ * customers. It claims no alert: whether one reached a channel is not threaded through to this copy.
+ */
+const TOO_MANY_EARLIER_CHECKOUTS = `This account has more unfinished checkouts than we can check automatically, so nothing new was started. Contact support at ${SUPPORT_EMAIL} and we will clear them.`;
+
+/** The event the platform operator's alert rules route; the one `alertPaymentNeedsSupport` raises. */
+const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
+
+/**
+ * Logs, and alerts the platform operator about, a create-a-team finding whose wording is NOT
+ * `alertPaymentNeedsSupport`'s — that one always says the subscription is one "which the purchase flow
+ * cancelled or was replacing", which is false here (ADR 0002 §4.2 (1)). `subject` is the alert's
+ * resource, so a rule's throttle collapses repeats for the same one. Raised on the platform operator's
+ * org (`ALETHIA_PLATFORM_ALERT_ORG_ID`); with it unset only the log line is written. Resolves true only
+ * when a delivery was queued to a channel. Never throws.
+ */
+async function alertOperator(input: {
+	title: string;
+	subject: { type: "stripe_subscription" | "stripe_customer" | "user"; id: string };
+	summary: string;
+}): Promise<boolean> {
+	console.error(`[billing] operator alert — ${input.summary}`);
+	const orgId = process.env.ALETHIA_PLATFORM_ALERT_ORG_ID;
+	if (!orgId) return false;
+	try {
+		const queued = await emitAlertEvent(orgId, OPERATOR_ALERT_EVENT, {
+			title: input.title,
+			summary: input.summary,
+			severity: "critical",
+			resource_type: input.subject.type,
+			resource_id: input.subject.id,
+		});
+		return queued > 0;
+	} catch (err) {
+		console.error(`[alerts] emit failed (${OPERATOR_ALERT_EVENT}):`, err);
+		return false;
+	}
+}
+
+/**
+ * ADR 0002 §4.2 (1): the create-a-team sweep met an `incomplete` subscription on one of the user's
+ * customers that is not the user's create-a-team subscription — an org's plan or AI checkout on a shared
+ * customer, or another user's. It was left alone, and the purchase is NOT refused for it (it cannot
+ * double-charge this purchase); this alert is the trace a person acts on.
+ */
+async function alertForeignSubscription(sub: Stripe.Subscription, customerId: string, userId: string): Promise<void> {
+	await alertOperator({
+		title: "A create-a-team purchase left another payer's checkout alone",
+		subject: { type: "stripe_subscription", id: sub.id },
+		summary: `Subscription ${sub.id} (customer ${customerId}) is incomplete on a customer the create-a-team purchase of user ${userId} sweeps, but it is not that user's create-a-team subscription (created_by ${sub.metadata?.created_by ?? "none"}, organization_id ${sub.metadata?.organization_id ?? "none"}). It was not cancelled. Check why the customer is shared.`,
+	});
+}
+
+/** ADR 0002 §4.5: a customer has more `incomplete` subscriptions than the sweep reads, so the purchase refused. */
+async function alertSweepOverCap(customerId: string): Promise<void> {
+	await alertOperator({
+		title: "A purchase refused: too many incomplete subscriptions to sweep",
+		subject: { type: "stripe_customer", id: customerId },
+		summary: `Customer ${customerId} has more than ${SWEEP_SUBSCRIPTION_CAP} incomplete subscriptions, so the purchase sweep read none of them and refused. Clear them by hand.`,
+	});
+}
 
 /** What a caller tells the customer when another purchase for the same payer held the lock too long. */
 const PURCHASE_IN_PROGRESS =
@@ -1172,12 +1244,63 @@ async function cancelNeverPaid(
 	return outcome === "settled" ? "cancelled" : outcome;
 }
 
+/** The most `incomplete` subscriptions the sweep reads on one customer before it refuses (ADR 0002 §4.5). */
+const SWEEP_SUBSCRIPTION_CAP = 1000;
+
+/** One page of the sweep's `subscriptions.list` — Stripe's maximum. */
+const SWEEP_PAGE = 100;
+
+/**
+ * Every `incomplete` subscription of `customerId`, paged to the end with `starting_after` (ADR 0002
+ * §4.5, C20) — or `over_cap` when there are more than `SWEEP_SUBSCRIPTION_CAP`. Never a list it stopped
+ * reading early: one more page beyond the cap is what `over_cap` means, and the caller refuses on it. A
+ * page that fails is thrown.
+ */
+async function listIncompleteSubscriptions(
+	stripe: Stripe,
+	customerId: string,
+): Promise<{ kind: "all"; subs: Stripe.Subscription[] } | { kind: "over_cap" }> {
+	const subs: Stripe.Subscription[] = [];
+	let startingAfter: string | undefined;
+	for (;;) {
+		const page = await stripe.subscriptions.list({
+			customer: customerId,
+			status: "incomplete",
+			limit: SWEEP_PAGE,
+			...(startingAfter ? { starting_after: startingAfter } : {}),
+		});
+		subs.push(...page.data);
+		const last = page.data.at(-1);
+		if (!page.has_more || !last) return { kind: "all", subs };
+		if (subs.length >= SWEEP_SUBSCRIPTION_CAP) return { kind: "over_cap" };
+		startingAfter = last.id;
+	}
+}
+
+/**
+ * CLASSIFICATION (ADR 0002 §2, §4.2): a subscription is user `userId`'s create-a-team subscription when
+ * ITS OWN metadata has `created_by = userId` and no `organization_id`. The customer it hangs off is never
+ * evidence — a customer can be shared with an org whose org-plan or AI checkout sits beside it.
+ */
+function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">, userId: string): boolean {
+	return sub.metadata?.created_by === userId && !sub.metadata?.organization_id;
+}
+
 /**
  * Cancels a customer's dangling `incomplete` subscriptions — the never-paid first-invoice
  * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
  * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
  * DB, so it cleans up even the subs that were never persisted to organization_billing — the
  * exact leak the old DB-only guard missed. A list that fails is thrown, so nothing is minted.
+ *
+ * Every page is read (`listIncompleteSubscriptions`); a customer with more than
+ * `SWEEP_SUBSCRIPTION_CAP` of them is not swept at all and answers `overCap`, which refuses.
+ *
+ * `scope` says which of them this purchase may touch. `{ createATeamOf: userId }` — the create-a-team
+ * purchase — touches only that user's create-a-team subscriptions (`isCreateATeamSubscriptionOf`); any
+ * other `incomplete` subscription on the customer (an org's plan or AI checkout, another user's) is
+ * left alone and returned in `foreign`, for the caller to report. `"customer"` — the org-plan purchase,
+ * whose customer is the org's own — touches every one, as before ADR 0002.
  *
  * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
  * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
@@ -1190,15 +1313,16 @@ async function cancelNeverPaid(
 async function cancelIncompleteSubscriptions(
 	customerId: string,
 	fence: StripeWriteFence,
+	scope: { createATeamOf: string } | "customer",
 ): Promise<IncompleteSweep> {
-	const stripe = getStripe();
-	const subs = await stripe.subscriptions.list({
-		customer: customerId,
-		status: "incomplete",
-		limit: 100,
-	});
-	const sweep: IncompleteSweep = { cancelled: [], kept: [], unsettled: [] };
-	for (const s of subs.data) {
+	const sweep: IncompleteSweep = { cancelled: [], kept: [], unsettled: [], foreign: [], overCap: false };
+	const listed = await listIncompleteSubscriptions(getStripe(), customerId);
+	if (listed.kind === "over_cap") return { ...sweep, overCap: true };
+	for (const s of listed.subs) {
+		if (scope !== "customer" && !isCreateATeamSubscriptionOf(s, scope.createATeamOf)) {
+			sweep.foreign.push(s);
+			continue;
+		}
 		let firstPayment: FirstPayment;
 		try {
 			firstPayment = await readTwice(() => readFirstPayment(s));
@@ -1348,7 +1472,11 @@ async function startOrgSubscription(
 	// re-opening the upgrade sheet can never pile up never-paid subs (and their draft
 	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
 	// which is why the old organization_billing-only guard leaked.
-	const swept = await cancelIncompleteSubscriptions(customerId, UNFENCED);
+	const swept = await cancelIncompleteSubscriptions(customerId, UNFENCED, "customer");
+	if (swept.overCap) {
+		await alertSweepOverCap(customerId);
+		return { error: TOO_MANY_EARLIER_CHECKOUTS };
+	}
 	const sweptRefusal = refusalFor(sweepOutcomes(swept));
 	if (sweptRefusal) return { error: sweptRefusal };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
@@ -1725,22 +1853,20 @@ export async function createNewOrgSubscriptionIntent(
  * or when `fn` lost it (a fence threw `PurchaseLeaseLostError`) — both mean "another purchase of this
  * user is under way". Anything else `fn` throws is thrown.
  *
- * FOR ONE RELEASE it also takes the advisory key the older build takes, `new-org:<userId>`
- * (`withPurchaseLock`), inside the lease, so during a rolling deploy an old pod's purchase and a new
- * pod's exclude each other (ADR 0002 §8 step 1). That half holds a pooled connection for the purchase,
- * as before. S3 will remove it, and S3 deploys only after this release has rolled out to every pod;
- * until then both are taken.
+ * The lease is the only exclusion. S2's build also took the older advisory key, `new-org:<userId>`
+ * (`withPurchaseLock`), for one release so that its pods and the pods before it excluded each other
+ * during a rolling deploy (ADR 0002 §8 step 1). This build takes the lease alone, and so excludes S2's
+ * pods (which take the lease too) but NOT the pods before S2 (which take only the advisory key): it
+ * must deploy only after S2's rollout has completed.
  */
 async function withUserPurchaseLease<T>(
 	userId: string,
 	fn: (lease: PurchaseLease) => Promise<T>,
 ): Promise<{ ran: true; value: T } | { ran: false }> {
 	try {
-		const leased = await withPurchaseLease(`user:${userId}`, (lease) =>
-			withPurchaseLock(`new-org:${userId}`, () => fn(lease)),
-		);
-		if (!leased.acquired || !leased.value.acquired) return { ran: false };
-		return { ran: true, value: leased.value.value };
+		const leased = await withPurchaseLease(`user:${userId}`, fn);
+		if (!leased.acquired) return { ran: false };
+		return { ran: true, value: leased.value };
 	} catch (e) {
 		if (e instanceof PurchaseLeaseLostError) return { ran: false };
 		throw e;
@@ -1768,19 +1894,34 @@ function mintDeadlineMs(): number {
 const CLOSEOUT_STAMP = "alethia:closeout";
 
 /**
- * THE CLOSE-OUT (ADR 0002 §4.4 rule 4). The artifact gate failed after `subscriptions.create`: this
- * request lost its lease, so another may already have minted, and the client secret of `sub` must never
- * leave the server. Exactly the writes that close `sub` follow, and nothing else — no renewal, no hold
- * row: no payment can land on a subscription whose secret was never handed out.
+ * Where the customer of a just-minted create-a-team subscription came from, which decides whether any
+ * later sweep can find that subscription: `reused` — passed by the browser or named by an unfinished
+ * setup record, so the user's next purchase sweeps it; `created` — minted by this request, and named
+ * nowhere else until this request records the setup.
+ */
+type MintedCustomerOrigin = "reused" | "created";
+
+/**
+ * THE CLOSE-OUT (ADR 0002 §4.4 rule 4). The subscription `sub` this request minted must be closed with
+ * its client secret never leaving the server: the artifact gate failed after `subscriptions.create`
+ * (this request lost its lease, so another may already have minted), or Stripe's answer carried no
+ * invoice or no client secret, or the setup record could not be written after a lost lease. Exactly the
+ * writes that close `sub` follow, and nothing else — no renewal, no hold row: no payment can land on a
+ * subscription whose secret was never handed out.
  *
  * VOID FIRST, AND CANCEL ONLY AFTER A PROVEN VOID. Stripe voids only an unpaid invoice, so a void that
  * succeeded — or a re-read that shows `void` — proves the first invoice was not paid, and only then is
  * the subscription cancelled, stamped `alethia:closeout`. When the void cannot be proven, nothing is
- * cancelled: a subscription whose first invoice may be paid is never cancelled here. It stays
- * `incomplete` with no secret anywhere, and the user's next purchase sweeps it (after `readFirstPayment`
- * proves it unpaid), or Stripe expires it. A cancel that fails is logged and left the same way.
+ * cancelled: a subscription whose first invoice may be paid is never cancelled here. A cancel that fails
+ * is logged and left the same way.
+ *
+ * A close-out that did not cancel (`cancelled=false` on the log event) leaves `sub` `incomplete` with no
+ * secret anywhere, and raises an operator alert. What finds it afterwards depends on `customerOrigin`:
+ * on a `reused` customer the user's next purchase sweeps it (after `readFirstPayment` proves it unpaid);
+ * on a customer this request `created`, NO sweep can find it — nothing names that customer — so the
+ * alert is its only trace, and Stripe expires it after about 23h.
  */
-async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<void> {
+async function closeOutMintedSubscription(sub: Stripe.Subscription, customerOrigin: MintedCustomerOrigin): Promise<void> {
 	const stripe = getPurchaseStripe();
 	const invoiceId =
 		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
@@ -1805,7 +1946,7 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<voi
 			await stripe.subscriptions.cancel(sub.id, { cancellation_details: { comment: CLOSEOUT_STAMP } });
 			cancelled = true;
 		} catch (e) {
-			console.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete for the next sweep:`, e);
+			console.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete:`, e);
 		}
 	}
 	logBillingEvent("billing.purchase_lease.closeout", {
@@ -1813,6 +1954,13 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<voi
 		invoice_id: invoiceId,
 		voided: voided ? "true" : "false",
 		cancelled: cancelled ? "true" : "false",
+	});
+	if (cancelled) return;
+	const customerId = subscriptionCustomerId(sub);
+	await alertOperator({
+		title: "A create-a-team close-out could not cancel the subscription it minted",
+		subject: { type: "stripe_subscription", id: sub.id },
+		summary: `Subscription ${sub.id} (customer ${customerId}) was minted by a create-a-team purchase that then had to close it out without handing out its client secret, but the close-out ${voided ? "could not cancel it after voiding its first invoice" : `could not prove its first invoice ${invoiceId ?? "(none)"} void, so it was not cancelled`}. It stays incomplete. ${customerOrigin === "created" ? "Its customer was created by that request and is named nowhere else, so no purchase sweep will find it; Stripe expires it after about 23h unless it is closed by hand." : "Its customer is reused, so the user's next purchase sweeps it once its first payment is proven unpaid."}`,
 	});
 }
 
@@ -1832,7 +1980,17 @@ async function startNewOrgSubscription(
 	const fence = fenceFor(lease);
 	// The Stripe customers of the caller's own unfinished setup records (server-written, keyed on the
 	// session user): reused when the browser lost its `customerId`, and swept below (#5463).
-	const recordedCustomers = await unlinkedPendingOrgSetupCustomers(actor.userId);
+	// Every one of them, or a refusal: a partial list would sweep fewer customers than exist (ADR 0002 §4.5).
+	const recorded = await unlinkedPendingOrgSetupCustomers(actor.userId);
+	if (recorded.kind === "over_cap") {
+		await alertOperator({
+			title: "A create-a-team purchase refused: too many unfinished setups",
+			subject: { type: "user", id: actor.userId },
+			summary: `User ${actor.userId} has unfinished create-a-team setups on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not sweep them all and refused.`,
+		});
+		return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
+	}
+	const recordedCustomers = recorded.customers;
 
 	if (opts.priorSubscriptionId) {
 		const prior = await ownNewOrgSubscription(opts.priorSubscriptionId, actor.userId);
@@ -1886,22 +2044,19 @@ async function startNewOrgSubscription(
 		}
 	}
 
-	// Reuse the customer from a prior attempt only if this user owns it: the one the browser passed,
-	// else the one on the caller's newest unfinished setup record (the browser can lose its copy, #5463).
-	// Otherwise mint a fresh bare customer (no organization_id until the org exists and is linked).
+	// Reuse the customer from a prior attempt only if this user owns it and no org does (ADR 0002 §4.2
+	// (2), `isReusableCreateATeamCustomer`): the one the browser passed, else the one on the caller's
+	// newest unfinished setup record (the browser can lose its copy, #5463). Otherwise mint a fresh bare
+	// customer (no organization_id until the org exists and is linked).
 	let customerId: string | null = null;
 	if (opts.customerId) {
 		const existing = await getPurchaseStripe().customers.retrieve(opts.customerId);
-		if (
-			!existing.deleted &&
-			existing.metadata?.created_by === actor.userId
-		) {
-			customerId = existing.id;
-		}
+		if (isReusableCreateATeamCustomer(existing, actor.userId)) customerId = existing.id;
 	}
 	if (!customerId && recordedCustomers[0]) {
 		customerId = await ownedCustomer(recordedCustomers[0], actor.userId);
 	}
+	const customerOrigin: MintedCustomerOrigin = customerId ? "reused" : "created";
 	if (!customerId) {
 		const [u] = await getServiceDb()
 			.select({ email: user.email, name: user.name })
@@ -1925,9 +2080,17 @@ async function startNewOrgSubscription(
 	// purchase still settling on any of them blocks a second one.
 	// A subscription the sweep cancelled whose payment then turned up is refunded, or refuses this
 	// purchase (`cancelNeverPaid`), and its record is kept.
+	// Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else on these
+	// customers — an org's plan or AI checkout on a shared customer — is left alone and alerted on, and
+	// does not refuse. A customer with more `incomplete` subscriptions than the sweep reads refuses.
 	const sweptOutcomes: PaymentOutcome[] = [];
 	for (const sweepCustomer of new Set([customerId, ...recordedCustomers])) {
-		const swept = await cancelIncompleteSubscriptions(sweepCustomer, fence);
+		const swept = await cancelIncompleteSubscriptions(sweepCustomer, fence, { createATeamOf: actor.userId });
+		if (swept.overCap) {
+			await alertSweepOverCap(sweepCustomer);
+			return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
+		}
+		for (const foreign of swept.foreign) await alertForeignSubscription(foreign, sweepCustomer, actor.userId);
 		for (const { sub: cancelled, firstPayment } of swept.cancelled) {
 			await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
 		}
@@ -1976,16 +2139,20 @@ async function startNewOrgSubscription(
 		console.error(`[billing] the artifact gate could not renew ${lease.key}:`, e);
 	}
 	if (!gateHeld) {
-		await closeOutMintedSubscription(sub);
+		await closeOutMintedSubscription(sub, customerOrigin);
 		return { kind: "refused", message: PURCHASE_IN_PROGRESS };
 	}
 
+	// No invoice, or no client secret: nothing can be handed out to pay `sub`, so it is closed out before
+	// the error is thrown (§4.4 rule 4) — it used to be left minted, `incomplete` and uncancelled.
 	const invoice = sub.latest_invoice;
 	if (!invoice || typeof invoice === "string") {
+		await closeOutMintedSubscription(sub, customerOrigin);
 		throw new Error("Stripe did not return an invoice for the subscription.");
 	}
 	const clientSecret = invoice.confirmation_secret?.client_secret;
 	if (!clientSecret) {
+		await closeOutMintedSubscription(sub, customerOrigin);
 		throw new Error("Stripe did not return a payment client secret.");
 	}
 	// The server-side record of this setup (#5445), written BEFORE the client holds anything it could
@@ -2002,7 +2169,7 @@ async function startNewOrgSubscription(
 			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
 		});
 	} catch (e) {
-		await cancelUnrecordedSubscription(sub, fence);
+		await cancelUnrecordedSubscription(sub, fence, customerOrigin);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
 	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
@@ -2014,12 +2181,16 @@ async function startNewOrgSubscription(
  * lease lost by then — or a renewal that throws — leaves this request a stale holder, and the only writes
  * it may still make are the close-out's (rule 4): void first, cancel only after a proven void.
  */
-async function cancelUnrecordedSubscription(sub: Stripe.Subscription, fence: StripeWriteFence): Promise<void> {
+async function cancelUnrecordedSubscription(
+	sub: Stripe.Subscription,
+	fence: StripeWriteFence,
+	customerOrigin: MintedCustomerOrigin,
+): Promise<void> {
 	try {
 		await fence();
 	} catch (e) {
 		console.error(`[billing] the lease was not held before cancelling ${sub.id}; closing it out instead:`, e);
-		await closeOutMintedSubscription(sub);
+		await closeOutMintedSubscription(sub, customerOrigin);
 		return;
 	}
 	try {
@@ -2030,8 +2201,21 @@ async function cancelUnrecordedSubscription(sub: Stripe.Subscription, fence: Str
 }
 
 /**
- * `customerId` when Stripe has it, it is not deleted, and `userId` minted it; else null. A missing
- * customer is null; any other failure is thrown.
+ * NO NEW SHARING (ADR 0002 §4.2 (2), C55): a customer the create-a-team purchase may reuse — not deleted,
+ * minted by `userId`, and naming NO organization. An org's customer (`ensureCustomer` stamps both
+ * `organization_id` and `created_by`), including one a previous link rewrote, is never reused: its own
+ * org-plan or AI checkout would then sit on the customer this purchase sweeps.
+ */
+function isReusableCreateATeamCustomer(
+	customer: Stripe.Customer | Stripe.DeletedCustomer,
+	userId: string,
+): customer is Stripe.Customer {
+	return !customer.deleted && customer.metadata?.created_by === userId && !customer.metadata?.organization_id;
+}
+
+/**
+ * `customerId` when Stripe has it and the create-a-team purchase of `userId` may reuse it
+ * (`isReusableCreateATeamCustomer`); else null. A missing customer is null; any other failure is thrown.
  */
 async function ownedCustomer(customerId: string, userId: string): Promise<string | null> {
 	let existing: Stripe.Customer | Stripe.DeletedCustomer;
@@ -2041,8 +2225,7 @@ async function ownedCustomer(customerId: string, userId: string): Promise<string
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
 	}
-	if (existing.deleted || existing.metadata?.created_by !== userId) return null;
-	return existing.id;
+	return isReusableCreateATeamCustomer(existing, userId) ? existing.id : null;
 }
 
 /**
