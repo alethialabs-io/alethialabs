@@ -46,6 +46,7 @@ import {
 	authorize,
 	authorizeCli,
 	authorizeCliOrg,
+	authorizeCliQuiet,
 	ensureCliOrgAccess,
 	orgScopeFor,
 	userIdIsTheCaller,
@@ -578,6 +579,49 @@ describe("authorizeCli", () => {
 		await expect(
 			authorizeCli(req, "manage_connectors", { type: "connector" }),
 		).rejects.toBe(boom);
+	});
+});
+
+// #5670: the quiet CLI variant asks the SAME question with can(), and never enforce() — which is the
+// call that records. tests/kubeconfig-mint/cli-poll-entry-recording.test.ts drives both through the
+// real PDP recording path; this pins the wiring.
+describe("authorizeCliQuiet", () => {
+	const req = new Request("https://example.test/api/cli");
+
+	beforeEach(() => {
+		vi.mocked(verifyCliToken).mockResolvedValue({ payload: { sub: "u-cli" }, error: null });
+		vi.mocked(getActiveScope).mockResolvedValue(CLI_ACTOR);
+	});
+
+	it("asks can() with the exact ref, never enforce(), and answers like authorizeCli", async () => {
+		const result = await authorizeCliQuiet(req, "access_readonly", { type: "cluster", id: "k-1" });
+
+		expect(can).toHaveBeenCalledWith(CLI_ACTOR, "access_readonly", { type: "cluster", id: "k-1" });
+		expect(enforce).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			actor: CLI_ACTOR,
+			credential: "session",
+			orgScope: orgScopeFor(CLI_ACTOR, "session"),
+		});
+	});
+
+	it("maps a denied decision to the same 403 Response", async () => {
+		can.mockResolvedValueOnce({ allowed: false, reason: "no_grant" });
+
+		const result = await authorizeCliQuiet(req, "access_readonly", { type: "cluster", id: "k-1" });
+
+		expect("actor" in result).toBe(false);
+		if (!("error" in result)) throw new Error("expected a refusal");
+		expect(result.error.status).toBe(403);
+		await expect(result.error.json()).resolves.toEqual({ error: "Forbidden" });
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	it("propagates a PDP failure instead of turning it into an allow or a denial", async () => {
+		const boom = new Error("pdp down");
+		can.mockRejectedValueOnce(boom);
+
+		await expect(authorizeCliQuiet(req, "access_readonly", { type: "cluster" })).rejects.toBe(boom);
 	});
 });
 

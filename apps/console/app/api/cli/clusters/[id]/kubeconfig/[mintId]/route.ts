@@ -3,7 +3,7 @@
 
 import { z } from "zod";
 import { trustedClientIp } from "@/lib/auth/trusted-ip";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCliQuiet } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { errorName } from "@/lib/errors";
 import { collectGate, mintCredentialOf } from "@/lib/kubeconfig-mint/gates";
@@ -20,7 +20,12 @@ const mlog = log.child({ component: "kubeconfig-mint" });
  * or `expired`, each with `private_endpoint`.
  *
  * - **Who.** The CLI actor is authenticated and must hold `cluster:access_readonly` (every mint
- *   needs at least that). An ADMIN mint is re-checked against `cluster:access_admin` before
+ *   needs at least that), asked on EVERY poll — and recorded on none (#5670). The poll is waiting,
+ *   not access: `authorizeCliQuiet` makes exactly `authorizeCli`'s decision with `can()`, so a
+ *   caller without the permission is still a 403 on every poll, but a download no longer writes one
+ *   `access_readonly` row per poll interval. The mint is on the record once, where it was asked for:
+ *   the POST that started it (`../route.ts`) goes through the recording `authorizeCli`. The console
+ *   poll (`pollKubeconfigDownload`) is the same split, with `authorizeQuiet`. An ADMIN mint is re-checked against `cluster:access_admin` before
  *   anything is answered: somebody demoted after asking does not collect the admin credential. That
  *   re-check records an activity row only at the hand-over of a `ready` mint, where it is a fresh,
  *   enforcing decision; while the mint is pending it is a non-recording probe (#5667,
@@ -41,7 +46,7 @@ export async function GET(
 ): Promise<Response> {
 	const { id, mintId } = await params;
 
-	const auth = await authorizeCli(req, "access_readonly", { type: "cluster", id });
+	const auth = await authorizeCliQuiet(req, "access_readonly", { type: "cluster", id });
 	if ("error" in auth) return noStore(auth.error);
 	const { actor } = auth;
 
