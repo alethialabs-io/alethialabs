@@ -4288,6 +4288,19 @@ describe("ADR 0002 S3 (#5754)", () => {
 		});
 	});
 
+	it("a prior a link already gave an organization_id is not this purchase's: its invoice is not voided, nothing is cancelled", async () => {
+		const linkedPrior = newOrgSub({ created_by: "user-1", organization_id: "org-9" }, "canceled", "sub_linked_prior");
+		stripe.subscriptions.retrieve.mockResolvedValue(linkedPrior);
+		stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+		stripe.subscriptions.create.mockResolvedValue(minted);
+
+		await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own", priorSubscriptionId: "sub_linked_prior" });
+
+		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalledWith("in_sub_linked_prior");
+		expect(stripe.subscriptions.cancel).not.toHaveBeenCalledWith("sub_linked_prior");
+		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
+	});
+
 	describe("the S2 hand-offs", () => {
 		/** The lease holds through the mint, and is found lost at the artifact gate. */
 		function loseLeaseAfterMint(): void {
@@ -4329,7 +4342,7 @@ describe("ADR 0002 S3 (#5754)", () => {
 			expect(emitAlertEvent).toHaveBeenCalledWith(
 				"org-platform",
 				"system.platform.payment_needs_support",
-				expect.objectContaining({ resource_id: "sub_z", summary: expect.stringMatching(/next purchase sweeps it/) }),
+				expect.objectContaining({ resource_id: "sub_z", summary: expect.stringMatching(/next purchase sweeps it only while/) }),
 			);
 		});
 
