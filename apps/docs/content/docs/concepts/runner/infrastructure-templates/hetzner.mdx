@@ -46,25 +46,30 @@ servers in each extra pool stay the same until you change them and apply again. 
 installs no cluster autoscaler. This is a limit of the Hetzner template. The EKS, GKE and AKS
 templates scale their node groups.
 
-The reason is the credential. The cluster autoscaler for Hetzner creates and deletes servers from
-inside the cluster. To do that, it needs two things in the cluster:
+The cluster autoscaler for Hetzner creates and deletes servers from inside the cluster. A server
+that it creates must join the cluster, so the autoscaler must hold the Talos worker machine
+configuration, which contains the cluster's join secrets. Today that configuration stays outside
+the cluster: OpenTofu renders it and gives it only to the servers that the template creates.
 
-- A Hetzner Cloud API token with write access, stored as a Kubernetes Secret. A person who can read
-  that Secret, or run a command in the autoscaler's pod, can create and delete every server in the
-  Hetzner project.
-- The Talos worker machine configuration, which holds the cluster's join secrets. Today only
-  OpenTofu has it, and it goes only to the servers that the template creates.
+The autoscaler also uses the Hetzner Cloud API token to create servers. The cluster already holds
+that token as the Secret `kube-system/hcloud`, because the Hetzner cloud controller manager and the
+volume driver need it. Hetzner has no token narrower than a whole project, so the autoscaler would
+get the right to create and delete every server in the project.
 
-Alethia keeps both out of the cluster. A Hetzner cluster holds no credential that can change the
-servers of the project.
+Alethia does not put the join secrets in the cluster, and does not run a component that creates
+servers on its own, until it decides how to keep them safe. Until then, the count is fixed.
 
 To change the number of workers:
 
-1. Set the new count. For the default workers, change the cluster's node count (`desired_size`,
-   or `min_size`). For an extra pool, change that pool's `desired_size` or `min_size`.
+1. Set the new count. For the default workers, set the cluster's **Desired** node count, or its
+   **Min** count if you leave **Desired** unset. The default workers are never fewer than 1. For
+   an extra pool, set that pool's `desired_size`, or its `min_size` if you leave `desired_size`
+   out.
 2. Run a plan and check it. The plan adds servers at the end of the pool, or removes the servers
    with the highest index. It does not rename or replace the other servers.
-3. Apply the plan.
+3. If the plan removes servers, drain their nodes first (`kubectl drain <node>`). The apply
+   deletes the servers and does not move their pods.
+4. Apply the plan.
 
 Plan for your peak load, because the count does not grow by itself. If a workload needs more
 capacity for a short time, add a pool for it, and set the pool's size to `0` when you no longer
