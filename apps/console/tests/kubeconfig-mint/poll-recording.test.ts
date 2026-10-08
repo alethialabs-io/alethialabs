@@ -7,7 +7,8 @@
 //
 // Before the fix every poll of an admin mint ran the recording `getPdp().enforce(…, "access_admin")`
 // whatever the mint's status, and `enforceDecision` writes an `authz_activity_log` row for every allow
-// of a non-read action — so both clients, which poll every two seconds, wrote one "accessed admin" row
+// of a non-read action — so both clients (the console every 2 s; the CLI backing off from 500 ms to a
+// 5 s cap, apps/cli/cmd/clusters_kubeconfig_mint.go) wrote one "accessed admin" row
 // per poll while the mint was pending.
 //
 // This file keeps the REAL recording path end to end, through BOTH callers (the CLI route and the

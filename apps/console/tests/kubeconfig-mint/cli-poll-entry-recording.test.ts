@@ -8,7 +8,8 @@
 // Before the fix `GET /api/cli/clusters/:id/kubeconfig/:mintId` authorized every poll with the
 // recording `authorizeCli(req, "access_readonly", …)`. `access_readonly` is not a read action
 // (lib/authz/activity.ts READ_ONLY), so `enforceDecision` wrote one `authz_activity_log` row per poll —
-// one every two seconds for as long as `alethia` waited on a mint. #5668 (#5667) fixed the admin
+// and `alethia` polls with a backoff (apps/cli/cmd/clusters_kubeconfig_mint.go: 500 ms doubling to a
+// 5 s cap, inside a 10-minute server window), so a slow mint wrote one row every 5 s, ~120 in all. #5668 (#5667) fixed the admin
 // re-check on the same path; this is the entry gate in front of it.
 //
 // Nothing about authorization is stubbed here that the fix touches: the REAL route, the REAL
@@ -27,6 +28,7 @@ const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
 const USER = "33333333-3333-4333-8333-333333333333";
 const CLUSTER = "44444444-4444-4444-8444-444444444444";
+const OTHER_CLUSTER = "99999999-9999-4999-8999-999999999999";
 const PROJECT = "55555555-5555-4555-8555-555555555555";
 const TOKEN_ID = "66666666-6666-4666-8666-666666666666";
 const MINT = "77777777-7777-4777-8777-777777777777";
@@ -36,8 +38,17 @@ const EXPIRES = new Date("2026-10-01T12:10:00.000Z");
 
 /** Every row handed to `insert(authz_activity_log).values(...)` on the service handle. */
 let activityRows: Record<string, unknown>[] = [];
-/** The `${orgId}:${action}` grants the stubbed `can` allows. */
+/**
+ * The grants the stubbed `can` allows, as `${orgId}:${action}:${resourceId}` (see {@link grant}). The
+ * resource id is part of the key on purpose: a grant on ONE cluster must not answer for another, so a
+ * change that dropped the id from the question would be red here, not silently widened.
+ */
 let grants = new Set<string>();
+
+/** The grant key for `action` on resource `id` (empty for a type-level ref) in `org`. */
+function grant(org: string, action: string, id?: string): string {
+	return `${org}:${action}:${id ?? ""}`;
+}
 /** What the guard's ACTIVE-member lookup answers (the offboarding re-check, the header check). */
 let isMember = true;
 /** Whether scope resolution honours the named org, or falls back to some other org of the user's. */
@@ -170,13 +181,13 @@ function readonlyRows(): Record<string, unknown>[] {
 beforeEach(() => {
 	vi.clearAllMocks();
 	activityRows = [];
-	grants = new Set([`${ORG}:access_readonly`]);
+	grants = new Set([grant(ORG, "access_readonly", CLUSTER)]);
 	isMember = true;
 	resolverHonoursNamedOrg = true;
 	mintReads = 0;
 	const pdp = new PostgresRbacPDP();
-	vi.spyOn(pdp, "can").mockImplementation(async (actor, action) =>
-		grants.has(`${actor.orgId}:${action}`) ? { allowed: true } : { allowed: false, reason: "no_grant" },
+	vi.spyOn(pdp, "can").mockImplementation(async (actor, action, ref) =>
+		grants.has(grant(actor.orgId, action, ref.id)) ? { allowed: true } : { allowed: false, reason: "no_grant" },
 	);
 	vi.mocked(getPdp).mockReturnValue(pdp);
 	vi.mocked(verifyCliToken).mockImplementation(async (req) => verdict(req));
@@ -245,6 +256,18 @@ describe("SECURITY: the quiet poll gate refuses exactly whom the recording gate 
 		expect(mintReads).toBe(0);
 	});
 
+	it.each([
+		["a session", SESSION],
+		["a service token", SERVICE],
+	])("%s holding access_readonly on a DIFFERENT cluster is refused polling this one", async (_who, bearer) => {
+		grants = new Set([grant(ORG, "access_readonly", OTHER_CLUSTER)]);
+		expect((await poll(bearer)).status).toBe(403);
+		expect(mintReads).toBe(0);
+		// The control: the same caller, granted on THIS cluster, is let in.
+		grants.add(grant(ORG, "access_readonly", CLUSTER));
+		expect((await poll(bearer)).status).toBe(200);
+	});
+
 	it("access_readonly revoked between polls: the next poll is refused, decided afresh", async () => {
 		expect((await poll()).status).toBe(200);
 		grants = new Set();
@@ -273,7 +296,7 @@ describe("SECURITY: the quiet poll gate refuses exactly whom the recording gate 
 
 	it("a header naming an org the resolver does not land on is refused, never substituted", async () => {
 		resolverHonoursNamedOrg = false;
-		grants.add(`${OTHER_ORG}:access_readonly`);
+		grants.add(grant(OTHER_ORG, "access_readonly", CLUSTER));
 		expect((await poll(SESSION, OTHER_ORG)).status).toBe(403);
 		expect(mintReads).toBe(0);
 	});
@@ -281,7 +304,7 @@ describe("SECURITY: the quiet poll gate refuses exactly whom the recording gate 
 	it("the permission is asked in the HEADER's org, not the default one", async () => {
 		// Holds access_readonly in ORG only; names OTHER_ORG, where it is a member without the grant.
 		expect((await poll(SESSION, OTHER_ORG)).status).toBe(403);
-		grants.add(`${OTHER_ORG}:access_readonly`);
+		grants.add(grant(OTHER_ORG, "access_readonly", CLUSTER));
 		expect((await poll(SESSION, OTHER_ORG)).status).toBe(200);
 	});
 });
@@ -319,7 +342,7 @@ async function shape(out: Awaited<ReturnType<typeof authorizeCli>>): Promise<unk
 describe("authorizeCliQuiet makes authorizeCli's decision, and only authorizeCli records it", () => {
 	it.each(PARITY)("$name: same answer from both; the recording one alone writes a row", async (c) => {
 		const setUp = () => {
-			grants = new Set(c.granted ? [`${ORG}:access_readonly`, `${OTHER_ORG}:access_readonly`] : []);
+			grants = new Set(c.granted ? [grant(ORG, "access_readonly", CLUSTER), grant(OTHER_ORG, "access_readonly", CLUSTER)] : []);
 			isMember = c.member;
 			resolverHonoursNamedOrg = c.honours;
 		};
@@ -342,7 +365,7 @@ describe("authorizeCliQuiet makes authorizeCli's decision, and only authorizeCli
 	});
 
 	it("every OTHER caller keeps recording: authorizeCli on an action records the allow", async () => {
-		grants.add(`${ORG}:manage_tokens`);
+		grants.add(grant(ORG, "manage_tokens"));
 		const out = await authorizeCli(cliRequest("/api/cli/tokens", SESSION), "manage_tokens", { type: "org" });
 		expect("error" in out).toBe(false);
 		expect(activityRows).toEqual([

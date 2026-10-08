@@ -467,11 +467,25 @@ export async function authorizeCli(
  * the decision is written down.
  *
  * For a request that is WAITING, not acting — today exactly one: the kubeconfig mint poll
- * (`app/api/cli/clusters/[id]/kubeconfig/[mintId]/route.ts`), which the CLI repeats every two
- * seconds until the mint completes. The request that STARTED the mint went through the recording
+ * (`app/api/cli/clusters/[id]/kubeconfig/[mintId]/route.ts`). The CLI repeats it with a backoff
+ * (apps/cli/cmd/clusters_kubeconfig_mint.go: 500 ms, doubling to a 5 s cap, so polls land at
+ * 0.5 s, 1.5 s, 3.5 s, 7.5 s and then every 5 s) until the mint completes, for at most the server's
+ * 10-minute mint window (an 11-minute client ceiling behind it) — on the order of 120 polls for a
+ * mint that never finishes. The request that STARTED the mint went through the recording
  * {@link authorizeCli}, and an admin hand-over is recorded by `collectGate` (#5667), so the mint is
  * on the record once without a row per poll — the console's `pollKubeconfigDownload` does the same
  * with {@link authorizeQuiet}. A request that DOES something must use {@link authorizeCli}.
+ *
+ * WHAT A QUIET DENIAL GIVES UP. `enforce()` records a denial AND emits it as an action event
+ * (`emitActionEvent(…, false)`), which an org's alert rule can match. This does neither: a caller
+ * refused on every poll writes no denial row and fires no alert rule, however many times it polls.
+ * The mint's START still goes through {@link authorizeCli}, so a caller refused there is recorded
+ * and emitted as before; what goes unrecorded is only a refusal of somebody polling a mint they
+ * were allowed to start (their grant revoked while it was pending) — the same trade the console's
+ * {@link authorizeQuiet} poll and #5668's `collectGate.probe` make.
+ *
+ * Its importers are pinned: tests/lib/authz/authorize-cli-quiet-importers.test.ts fails if any file
+ * other than the mint poll route imports it, or if that route stops doing so.
  */
 export async function authorizeCliQuiet(
 	req: Request,
