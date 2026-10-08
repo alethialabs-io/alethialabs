@@ -38,7 +38,12 @@ vi.mock("@/lib/billing/ai-quota", () => ({
 }));
 vi.mock("@/lib/billing/ai-credits", () => ({ creditsFor: vi.fn(() => 5) }));
 
-import { AiBudgetError, assertAiAllowed, isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
+import {
+	AiBudgetError,
+	aiBudgetRefusalError,
+	assertAiAllowed,
+	isAiSurfaceEnabled,
+} from "@/lib/billing/ai-guard";
 import { aiTierSpec, resolveAiPlan, resolveAiTier } from "@/lib/billing/ai-plan";
 import { creditsFor } from "@/lib/billing/ai-credits";
 import {
@@ -233,5 +238,72 @@ describe("assertAiAllowed", () => {
 			expect(err.reason).toBe("session");
 			expect(purchasedBalance).not.toHaveBeenCalled(); // hard cap → packs untouched
 		});
+	});
+});
+
+// reserveAiHold returns a refusal as DATA under its lock; this builds the error the caller throws
+// after the transaction. Its fields must be exactly what assertAiAllowed's metered branch threw
+// before the extraction (the branch itself is proven on real Postgres in ai-guard-race.test.ts).
+describe("aiBudgetRefusalError", () => {
+	const WEEK_RESET = "2026-10-12T00:00:00.000Z";
+
+	it("not_enabled: the upgradable not-enabled error, with no reset", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", { reason: "not_enabled" });
+		expect(err).toBeInstanceOf(AiBudgetError);
+		expect(err.reason).toBe("not_enabled");
+		expect(err.resetAt).toBeNull();
+		expect(err.upgradable).toBe(true);
+	});
+
+	it("personal session: not upgradable, reset = the SEAT's oldest in-window usage + 5h", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", {
+			reason: "personal",
+			weeklyHit: false,
+			weekResetIso: WEEK_RESET,
+		});
+		expect(err.reason).toBe("session");
+		expect(err.upgradable).toBe(false);
+		expect(err.resetAt).toBe(new Date(OLDEST.getTime() + SESSION_MS).toISOString());
+		expect(oldestUsageForUserSince).toHaveBeenCalledWith(
+			"org-1",
+			"user-1",
+			"included",
+			expect.any(Date),
+		);
+		expect(oldestUsageSince).not.toHaveBeenCalled();
+	});
+
+	it("personal weekly: the week's reset, no ledger read", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", {
+			reason: "personal",
+			weeklyHit: true,
+			weekResetIso: WEEK_RESET,
+		});
+		expect(err.reason).toBe("weekly");
+		expect(err.resetAt).toBe(WEEK_RESET);
+		expect(oldestUsageForUserSince).not.toHaveBeenCalled();
+	});
+
+	it("org session: upgradable, reset = the ORG's oldest in-window usage + 5h", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", {
+			reason: "org",
+			weeklyHit: false,
+			weekResetIso: WEEK_RESET,
+		});
+		expect(err.reason).toBe("session");
+		expect(err.upgradable).toBe(true);
+		expect(oldestUsageSince).toHaveBeenCalledWith("org-1", "included", expect.any(Date));
+		expect(oldestUsageForUserSince).not.toHaveBeenCalled();
+	});
+
+	it("org weekly: upgradable, the week's reset", async () => {
+		const err = await aiBudgetRefusalError("org-1", "user-1", {
+			reason: "org",
+			weeklyHit: true,
+			weekResetIso: WEEK_RESET,
+		});
+		expect(err.reason).toBe("weekly");
+		expect(err.upgradable).toBe(true);
+		expect(err.resetAt).toBe(WEEK_RESET);
 	});
 });
