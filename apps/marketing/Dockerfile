@@ -29,7 +29,16 @@ RUN pnpm --filter marketing build
 # ---- runner: slim standalone runtime ----
 FROM node:22-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
+# Build args are scoped per stage, so VERSION is redeclared here. NEXT_PUBLIC_APP_VERSION must be set
+# in THIS stage: next-runtime-env's <PublicEnvScript /> (app/layout.tsx) serialises the RUNNING
+# server's process.env into window.__ENV, and the post-deploy smoke's `marketing-build-id` check reads
+# it there (#5697, mirroring the console's runner stage, #5621). ALETHIA_SOURCE_COMMIT is repeated so
+# the running container — not just the build stage — names the commit it was built from.
+# apps/console/tests/unit/dockerfile-runtime-public-env.test.ts fails if either line goes.
+ARG VERSION=development
+ENV NODE_ENV=production \
+    ALETHIA_SOURCE_COMMIT=$VERSION \
+    NEXT_PUBLIC_APP_VERSION=$VERSION
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 COPY --from=build --chown=nextjs:nodejs /app/apps/marketing/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/apps/marketing/.next/static ./apps/marketing/.next/static
