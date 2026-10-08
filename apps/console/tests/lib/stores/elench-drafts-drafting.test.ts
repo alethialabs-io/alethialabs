@@ -742,7 +742,11 @@ function runSeed(seed: number, steps: number): void {
 	for (const k of KEYS) state = { ...state, entries: { ...state.entries, [keyId(k)]: newEntry(k, "none") } };
 	for (let i = 0; i < steps; i += 1) {
 		const ev = randomEvent(r, state, seq);
-		const where = `seed ${seed} step ${i} ${JSON.stringify(ev)}`;
+		// A failure names its seed, step and event; the label is built only when a check fails, so a
+		// green run pays for no JSON (this loop runs 45,000 steps under coverage on a shared CI runner).
+		const check = (ok: boolean, what: string): void => {
+			if (!ok) throw new Error(`seed ${seed} step ${i} ${JSON.stringify(ev)}: ${what}`);
+		};
 		const t = reduceDrafts(state, ev, ENV);
 		const x = entryEvent(ev);
 		// I5, model-based: what the box shows is the last applied EDIT, unless a listed event replaced
@@ -758,40 +762,40 @@ function runSeed(seed: number, steps: number): void {
 			}
 			if (own && x?.type === "EDIT" && x.epoch === before.epoch && before.claiming === null) {
 				const typed = normalizeDraftText(x.content.text);
-				expect(shown, `${where}: box is not the edit just applied`).toBe(typed);
+				check(shown === typed, `box is not the edit just applied: ${JSON.stringify(shown)}`);
 				boxModel.set(id, typed);
 				continue;
 			}
-			expect(shown, `${where}: box changed without an outside replacement`).toBe(model);
+			check(shown === model, `box changed without an outside replacement: ${JSON.stringify(shown)} ≠ ${JSON.stringify(model)}`);
 		}
 		for (const id of [...boxModel.keys()]) if (t.state.entries[id] === undefined) boxModel.delete(id);
 		for (const [id, before] of Object.entries(state.entries)) {
 			const after = t.state.entries[id];
 			const own = ev.type === "ENTRY" && keyId(ev.key) === id;
 			// U › no event writes a key other than its own (AC17).
-			if (ev.type === "ENTRY" && !own) expect(after, `${where}: another key written`).toBe(before);
+			if (ev.type === "ENTRY" && !own) check(after === before, "another key written");
 			const listed = isListedRemoval(ev, before.key);
 			const userEdit = own && x?.type === "EDIT";
 			// I3: no event removes words except the listed ones.
 			if (after === undefined) {
 				reached.removed += 1;
-				expect(listed, `${where}: entry removed`).toBe(true);
+				check(listed, "entry removed");
 				continue;
 			}
 			if (!listed && !userEdit) {
 				if (before.local !== null)
-					expect(heldTexts(after), `${where}: unsaved words lost`).toContain(before.local.text);
+					check(heldTexts(after).includes(before.local.text), "unsaved words lost");
 				// Only a server answer (or the user's choice of one) may replace the acknowledged row.
 				const answer =
 					x !== null &&
 					(x.type === "SAVE_RESULT" || x.type === "RESTORE_RESULT" || x.type === "CONFLICT_KEEP_MINE" || x.type === "CONFLICT_RESTORE");
-				if (!(own && answer)) expect(after.server, `${where}: saved row replaced`).toBe(before.server);
+				if (!(own && answer)) check(after.server === before.server, "saved row replaced");
 			}
 			// I5: unsaved edits are never overwritten (only acknowledged, or replaced by the user's choice).
 			if (before.local !== null && !listed && !userEdit) {
 				const kept = after.local !== null && after.local.text === before.local.text;
 				const acked = after.local === null && after.server?.content.text === before.local.text;
-				expect(kept || acked, `${where}: unsaved edit overwritten`).toBe(true);
+				check(kept || acked, "unsaved edit overwritten");
 			}
 			if (before.local !== null && own && x !== null && x.type !== "EDIT") reached.unsavedKept += 1;
 			if (before.inflight !== null && after.inflight === null && after.server !== before.server) reached.ack += 1;
@@ -800,25 +804,34 @@ function runSeed(seed: number, steps: number): void {
 			// I6: an EDIT with a stale epoch changes nothing; the epoch moves only on a listed replacement.
 			if (own && x?.type === "EDIT" && x.epoch !== before.epoch) {
 				reached.staleEdit += 1;
-				expect(after, `${where}: stale edit applied`).toBe(before);
-				expect(t.effects, `${where}: stale edit had effects`).toEqual([]);
+				check(after === before, "stale edit applied");
+				check(t.effects.length === 0, "stale edit had effects");
 			}
 			const restore = own && x?.type === "CONFLICT_RESTORE"; // D16, in D6's list
-			if (after.epoch !== before.epoch) expect(listed || restore, `${where}: epoch moved`).toBe(true);
+			if (after.epoch !== before.epoch) check(listed || restore, "epoch moved");
 		}
 		// D36: no save ever carries a credential the key has not acknowledged.
 		for (const fx of ofType(t.effects, "save")) {
 			const e = t.state.entries[keyId(fx.key)];
 			if (looksLikeCredential(fx.content.text))
-				expect(e?.credentialAck, `${where}: credential saved unasked`).toBe(true);
+				check(e?.credentialAck === true, "credential saved unasked");
 		}
 		state = t.state;
 	}
 }
 
 describe("properties over the drafting events (seeded)", () => {
-	it("no event removes words except the listed ones (I3); unsaved edits are never overwritten (I5); a stale-epoch edit is dropped (I6)", () => {
-		for (let seed = 1; seed <= 300; seed += 1) runSeed(seed, 150);
+	// 300 seeds × 150 steps, in six batches so no single test carries the whole budget.
+	for (let batch = 0; batch < 6; batch += 1) {
+		const first = batch * 50 + 1;
+		it(`no event removes words except the listed ones (I3); unsaved edits are never overwritten (I5); a stale-epoch edit is dropped (I6) — seeds ${first}-${first + 49}`, () => {
+			expect(() => {
+				for (let seed = first; seed < first + 50; seed += 1) runSeed(seed, 150);
+			}).not.toThrow();
+		});
+	}
+
+	it("the generator reached every case it checks (the batches above ran first)", () => {
 		for (const [name, count] of Object.entries(reached)) expect(count, `reached ${name}`).toBeGreaterThan(20);
 	});
 });
