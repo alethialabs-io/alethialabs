@@ -160,3 +160,36 @@ describe("canEditAgentContext — the read-only-panel gate", () => {
 		expect(await canEditAgentContext(null)).toBe(false);
 	});
 });
+
+describe("upsertAgentContext — document validation (documentSchema, lib/ai/knowledge-schema.ts)", () => {
+	const DOC = {
+		id: "doc-1",
+		title: "Runbook",
+		content: "Restart the ingress first.",
+		updated_at: "2026-10-08T00:00:00.000Z",
+	};
+
+	beforeEach(() => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(false);
+		vi.mocked(requireOwner).mockResolvedValue("user-1");
+	});
+
+	it("writes a well-formed document", async () => {
+		await upsertAgentContext({ ...INPUT, projectId: null, documents: [DOC] });
+		expect(captured.values).toMatchObject({ documents: [DOC] });
+	});
+
+	it.each([
+		["an empty title", { ...DOC, title: "" }],
+		["a whitespace-only title", { ...DOC, title: "   " }],
+		["an empty id", { ...DOC, id: "" }],
+	])("rejects a document with %s before resolving the owner or writing", async (_label, doc) => {
+		await expect(
+			upsertAgentContext({ ...INPUT, projectId: null, documents: [doc] }),
+		).rejects.toThrow();
+		expect(requireOwner).not.toHaveBeenCalled();
+		expect(authorize).not.toHaveBeenCalled();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(captured.values).toBeUndefined();
+	});
+});
