@@ -27,7 +27,6 @@ import {
 	type RowClaim,
 	settleIfSilent,
 	settleScope,
-	storedTurn,
 } from "@/lib/elench/draft-claims";
 import { contentSchema } from "@/lib/elench/draft-content";
 import {
@@ -36,6 +35,7 @@ import {
 	readThread,
 	readThreadSummaries,
 	runDraftGate,
+	storedTurn,
 	threadStatusOf,
 	toServerDraft,
 } from "@/lib/elench/draft-gate";
@@ -104,7 +104,10 @@ const saveDraftSchema = keySchema.extend({
 
 const casSchema = keySchema.extend({ baseRevision: baseRevisionSchema });
 
-/** A claim token: minted by the claiming tab per attempt, a 122-bit random UUID. */
+/**
+ * A claim token: a random UUID that, from slices 7b and 8, the claiming tab will mint per attempt
+ * and send with every request of that claim.
+ */
 const tokenSchema = z.uuid();
 
 const claimDraftSchema = keySchema.extend({

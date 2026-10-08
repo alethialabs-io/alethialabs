@@ -34,11 +34,12 @@ const CONV = "00000000-0000-4000-8000-0000000c0001";
 const TOKEN = "00000000-0000-4000-8000-0000000e0001";
 const TX = { fake: "tx" };
 
-/** POSTs `body` (JSON-encoded unless it is already a string) to the heartbeat. */
-const beat = (body: unknown) =>
+/** POSTs `body` (JSON-encoded unless it is already a string) to the heartbeat, as `type`. */
+const beat = (body: unknown, type = "application/json") =>
 	POST(
 		new Request("http://localhost/api/elench/drafts/heartbeat", {
 			method: "POST",
+			headers: { "content-type": type },
 			body: typeof body === "string" ? body : JSON.stringify(body),
 		}),
 	);
@@ -105,6 +106,24 @@ describe("POST /api/elench/drafts/heartbeat", () => {
 		expect(resolveTurnActor).toHaveBeenCalledWith(USER, ORG_B);
 		expect(withActorScope).not.toHaveBeenCalled();
 		expect(touchClaim).not.toHaveBeenCalled();
+	});
+
+	it("is 415 for a body not declared as JSON (a simple cross-site POST), and reads nothing", async () => {
+		for (const type of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", ""]) {
+			expect((await beat(valid, type)).status).toBe(415);
+		}
+		expect((await beat(valid, "application/json; charset=utf-8")).status).toBe(200);
+		expect(checkRateLimit).toHaveBeenCalledTimes(1);
+		expect(touchClaim).toHaveBeenCalledTimes(1);
+	});
+
+	it("a database error resolving the org is 503, not a 500", async () => {
+		const driver = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+		vi.mocked(resolveTurnActor).mockRejectedValueOnce(
+			Object.assign(new Error("Failed query"), { name: "DrizzleQueryError", cause: driver }),
+		);
+		expect((await beat(valid)).status).toBe(503);
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
 	it("a database error is 503 and logs no parameter; any other throw propagates", async () => {

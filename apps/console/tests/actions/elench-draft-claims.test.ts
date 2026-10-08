@@ -40,7 +40,9 @@ import { getOwner, getOwnerScope } from "@/lib/auth/owner";
 import { authorizeQuiet, currentActor, resolveTurnActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { getServiceDb, withActorScope } from "@/lib/db";
+import { claimOf, endClaim } from "@/lib/elench/draft-claims";
 import type { DraftContent } from "@/lib/elench/draft-content";
+import type { ElenchDraft } from "@/lib/db/schema";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const USER = "00000000-0000-4000-8000-000000000001";
@@ -502,6 +504,59 @@ describe("releaseClaim (S4)", () => {
 	});
 });
 
+// ── the token fence: a claim's end needs that claim's token, not only the lock ─────────────────
+
+describe("endClaim's token fence", () => {
+	it("ending a claim that was consumed and re-claimed under another token writes nothing", async () => {
+		const id = crypto.randomUUID();
+		const snapshot: ElenchDraft = {
+			id,
+			user_id: USER,
+			org_id: ORG_A,
+			project_id: null,
+			conversation_id: CONV,
+			revision: 4,
+			status: "sending",
+			discarded_at: null,
+			text: "send this",
+			mentions: [],
+			artifacts: [],
+			cell_target: null,
+			claim_token: TOKEN,
+			claim_turn_id: TURN,
+			claim_kind: "later",
+			claimed_at: new Date(),
+			failed_send: null,
+			last_sent: null,
+			thread_seen: false,
+			title: null,
+			last_writer: null,
+			created_at: new Date(),
+			updated_at: new Date(),
+		};
+		tables.elench_drafts?.push(sendingRow({ id }));
+		tables.agent_threads?.push(threadRow([userTurn("first", "hi")]));
+		// The claim is consumed, then the row is claimed again under another token: the snapshot is
+		// what a path that skipped the row lock would still hold.
+		expect(await consumeDraft({ ...key, token: TOKEN })).toMatchObject({ outcome: "consumed" });
+		expect(
+			await claim({ baseRevision: 5, token: OTHER_TOKEN, kind: "later", content: content("next") }),
+		).toMatchObject({ outcome: "claimed-by-you" });
+		const staleClaim = claimOf(snapshot);
+		if (staleClaim === null) throw new Error("the snapshot holds no claim");
+
+		// The fake implements only the builder surface endClaim uses, as in the mocks above.
+		const out = await endClaim(fakeTx() as never, actor, snapshot, staleClaim, {
+			end: "release",
+			turnId: TURN,
+			error: "502",
+			uncertain: false,
+		});
+		expect(out).toBeNull();
+		expect(stored()).toMatchObject({ status: "sending", claim_token: OTHER_TOKEN, text: "next" });
+	});
+});
+
 // ── S5: the lease settle ────────────────────────────────────────────────────────────────────────
 
 describe("the lease settle (S5)", () => {
@@ -588,6 +643,7 @@ describe("the heartbeat route (S7)", () => {
 		heartbeat(
 			new Request("http://localhost/api/elench/drafts/heartbeat", {
 				method: "POST",
+				headers: { "content-type": "application/json" },
 				body: JSON.stringify(body),
 			}),
 		);

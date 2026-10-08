@@ -17,14 +17,11 @@
 // the `owner_only` policy; every `agent_threads` read names `user_id = actor.userId`, because
 // `owner_all` there also admits every row of the page's org (§4 step 5).
 
-import type { UIMessage } from "ai";
-import { and, eq, getTableColumns, isNull, ne, type SQL, sql } from "drizzle-orm";
-import { THREAD_DELETED } from "@/lib/agent/transcript-save";
-import { turnText } from "@/lib/agent/turn-key";
+import { and, eq, getTableColumns, isNull, type SQL, sql } from "drizzle-orm";
 import type { Actor } from "@/lib/authz/types";
 import type { Tx } from "@/lib/db";
-import { agentThreads, type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
-import { readThread, toServerDraft } from "@/lib/elench/draft-gate";
+import { type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
+import { readThread, storedTurn, toServerDraft } from "@/lib/elench/draft-gate";
 import type {
 	DraftGone,
 	DraftNotClaimed,
@@ -81,38 +78,6 @@ export async function notClaimedOf(
 export async function goneOf(tx: Tx, actor: Actor, conversationId: string): Promise<DraftGone> {
 	const t = await readThread(tx, actor, conversationId, null, "");
 	return { outcome: "gone", thread: { status: t.status, firstTurnId: t.firstTurnId, hasTurn: t.hasTurn } };
-}
-
-/**
- * Whether the caller's live thread stores `turnId`, and with which text (§4.2's `hasTurn`, split
- * three ways): `same` when a message with that id has the same `turnText` as `text`, `different`
- * when the id is stored only with another text, `absent` when the id is not stored. `turnText` is
- * applied to BOTH sides, so a turn sent trimmed equals its untrimmed draft (B3).
- */
-export async function storedTurn(
-	tx: Tx,
-	actor: Actor,
-	conversationId: string,
-	turnId: string,
-	text: string,
-): Promise<"same" | "different" | "absent"> {
-	const [thread] = await tx
-		.select({ messages: agentThreads.messages })
-		.from(agentThreads)
-		.where(
-			and(
-				eq(agentThreads.id, conversationId),
-				eq(agentThreads.user_id, actor.userId), // authz-scope-ok: the caller's own threads only (ADR 0001 §4 step 5); owner_all alone admits the page org's rows
-				ne(agentThreads.status, THREAD_DELETED),
-			),
-		)
-		.limit(1);
-	if (!thread) return "absent";
-	const drafted: UIMessage = { id: turnId, role: "user", parts: [{ type: "text", text }] };
-	const want = turnText(drafted);
-	const withId = thread.messages.filter((m) => m.id === turnId);
-	if (withId.length === 0) return "absent";
-	return withId.some((m) => turnText(m) === want) ? "same" : "different";
 }
 
 /** What a claim's end writes besides clearing the claim: a release keeps the content, a consume empties it. */
