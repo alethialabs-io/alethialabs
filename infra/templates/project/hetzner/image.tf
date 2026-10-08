@@ -10,7 +10,8 @@
 #    entirely.
 # 2. On a miss: create a schematic that bakes in the qemu-guest-agent extension
 #    (needed on Hetzner so the VM reports its status / can be gracefully shut
-#    down).
+#    down). Nothing here calls the Image Factory at PLAN (#5618); on a hit,
+#    nothing calls it at all.
 # 3. Ask the factory for the hcloud disk-image (raw.xz) URL per architecture.
 # 4. Upload that raw.xz into Hetzner and snapshot it with the imager provider —
 #    the resulting snapshot id is what the servers boot from — and stamp it with
@@ -242,24 +243,50 @@ locals {
   }
 }
 
-# Pin the exact qemu-guest-agent extension ref for the requested Talos version. `filters.names` is
-# `local.talos_image_extensions` — the same list the cache key hashes, so a change to the requested
-# set moves the key and supersedes every cached entry in one edit.
-data "talos_image_factory_extensions_versions" "this" {
-  talos_version = var.talos_version
-  filters = {
-    names = local.talos_image_extensions
-  }
+# ── THE SCHEMATIC — built from the REQUESTED list, with no factory lookup at plan (#5618). ──
+#
+# This used to read `data "talos_image_factory_extensions_versions"` and feed its
+# `extensions_info.*.name` into the schematic. That data source is a live GET of
+# `https://factory.talos.dev/version/<talos_version>/extensions/official`, and a data source is read
+# at PLAN — on EVERY plan, including every cache HIT that builds nothing. It was the whole of the
+# floor nightly's planning-stage flake: runs 37605979423 (2026-10-07) and 37764131288 (2026-10-08)
+# both died there on `net/http: TLS handshake timeout`, the second after #5644's one retry.
+#
+# And the lookup bought nothing. In terraform-provider-talos v0.11 its `filters.names` is a SUBSTRING
+# filter over the factory's list, and the only attribute used was `name` — so for an exact official
+# name it returned the very string it was given. A schematic's `officialExtensions` takes bare NAMES:
+# the factory resolves each name to that Talos release's extension version when it BUILDS the image.
+# There is no per-version ref to pin, so there is nothing for a checked-in value to drift from.
+#
+# It was also worse than nothing on the one input where it differed: a name the factory does not
+# publish was silently FILTERED OUT, so a typo built an image WITHOUT the extension while the cache
+# key (which hashes the requested list) still claimed it was there. Passing the requested list
+# straight through hands the factory exactly the name that was asked for, so a wrong one fails at
+# the factory instead of being quietly dropped before it gets there.
+#
+# Gated on the build decision, like the URL lookups below: creating a schematic is a POST to the
+# factory at apply, and a cache hit should not depend on the factory being reachable at all. The
+# provider's Read and Delete are no-ops (schematic ids are content-addressed and never expire), so
+# dropping the resource from state on a hit deletes nothing anywhere.
+locals {
+  talos_image_build_any = anytrue(values(local.talos_image_build))
 }
 
 resource "talos_image_factory_schematic" "this" {
+  count = local.talos_image_build_any ? 1 : 0
   schematic = yamlencode({
     customization = {
       systemExtensions = {
-        officialExtensions = data.talos_image_factory_extensions_versions.this.extensions_info.*.name
+        officialExtensions = local.talos_image_extensions
       }
     }
   })
+}
+
+# Existing clusters hold the un-counted address in state; carry it across rather than re-create it.
+moved {
+  from = talos_image_factory_schematic.this
+  to   = talos_image_factory_schematic.this[0]
 }
 
 # Factory URLs for the hcloud platform, one per architecture we actually BUILD. Gated on the build
@@ -267,7 +294,7 @@ resource "talos_image_factory_schematic" "this" {
 data "talos_image_factory_urls" "arm64" {
   count         = local.talos_image_build.arm64 ? 1 : 0
   talos_version = var.talos_version
-  schematic_id  = talos_image_factory_schematic.this.id
+  schematic_id  = one(talos_image_factory_schematic.this[*].id)
   platform      = "hcloud"
   architecture  = "arm64"
 }
@@ -275,7 +302,7 @@ data "talos_image_factory_urls" "arm64" {
 data "talos_image_factory_urls" "amd64" {
   count         = local.talos_image_build.amd64 ? 1 : 0
   talos_version = var.talos_version
-  schematic_id  = talos_image_factory_schematic.this.id
+  schematic_id  = one(talos_image_factory_schematic.this[*].id)
   platform      = "hcloud"
   architecture  = "amd64"
 }
