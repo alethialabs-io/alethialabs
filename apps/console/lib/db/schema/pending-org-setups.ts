@@ -14,9 +14,14 @@
 //   - `created_org_id` — by the organization plugin's create hooks (the org's creator owns this row,
 //     checked server-side), or by the resume when it finds the org by its server-stamped marker;
 //   - `linked_at` — by `linkSubscriptionToNewOrg`, once the subscription names the org;
-//   - `declared_at` — by `declarePayer` for that org, the last step. `billing` is nulled then.
-// "Unfinished" is `declared_at IS NULL`; recovery reads it by `user_id`, so it needs no browser
-// record and no search index.
+//   - `declared_at` — by `declarePayer` for that org, the last step. `billing` is nulled then;
+//   - `closed_at` (+ `closed_reason`, and `closed_by` / `closed_note` for an operator) — by the setup
+//     closer, the link's refusal, or `scripts/pending-org-setups.ts close-setup` (ADR 0002 §5.7, #5714).
+//     A closed setup is finished for good: it never blocks the org's purchases again and is never
+//     offered for resume. `refused_reason` records why the link refused, beside it.
+// "Unfinished" is `declared_at IS NULL AND closed_at IS NULL`; recovery reads it by `user_id`, so it
+// needs no browser record and no search index. "Open" — what blocks the org's own plan purchases
+// (ADR 0002 §5.7) — is `linked_at IS NULL AND closed_at IS NULL`.
 //
 // `billing` carries what the customer typed at checkout (address, tax id, the "use as the team's
 // address" choice) so a resume from any tab restores it. It is written BEFORE the card is confirmed (the
@@ -28,10 +33,20 @@
 // every server read filters on the actor's own id. No `org_id`: the organization does not exist when
 // the row is written, and a row must not become visible to an org's other members once it does.
 
+import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 import { user } from "./auth";
 import { organization } from "./organizations";
+
+/**
+ * Why a setup was closed (ADR 0002 §5.7): its subscription read ended (`ended`), the link refused it
+ * beside another live plan (`org_has_plan`), or an operator closed it (`operator`).
+ */
+export type PendingOrgSetupClosedReason = "ended" | "org_has_plan" | "operator";
+
+/** Why the link refused a setup (ADR 0002 §5.6). S1 writes only `org_has_plan`. */
+export type PendingOrgSetupRefusedReason = "ended" | "held" | "org_has_plan";
 
 export const pendingOrgSetups = pgTable(
 	"pending_org_setups",
@@ -54,8 +69,20 @@ export const pendingOrgSetups = pgTable(
 		creating_at: timestamp({ withTimezone: true }),
 		linked_at: timestamp({ withTimezone: true }),
 		declared_at: timestamp({ withTimezone: true }),
+		closed_at: timestamp({ withTimezone: true }),
+		closed_reason: text().$type<PendingOrgSetupClosedReason>(),
+		// The operator's user id and note, for `closed_reason = 'operator'` only.
+		closed_by: text(),
+		closed_note: text(),
+		refused_reason: text().$type<PendingOrgSetupRefusedReason>(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
-	(t) => [index("pending_org_setups_user_idx").on(t.user_id, t.created_at)],
+	(t) => [
+		index("pending_org_setups_user_idx").on(t.user_id, t.created_at),
+		// The §5.7 guard reads the OPEN setups naming an org by `created_org_id`.
+		index("pending_org_setups_open_org_idx")
+			.on(t.created_org_id)
+			.where(sql`linked_at IS NULL AND closed_at IS NULL`),
+	],
 );
