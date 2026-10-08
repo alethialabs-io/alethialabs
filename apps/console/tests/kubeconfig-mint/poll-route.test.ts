@@ -110,7 +110,8 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 const enforce = vi.fn();
-vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce }) }));
+const can = vi.fn();
+vi.mock("@/lib/authz", () => ({ getPdp: () => ({ enforce, can }) }));
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "198.51.100.4") }));
 
 const logged: unknown[] = [];
@@ -166,6 +167,9 @@ beforeEach(() => {
 	enforce.mockImplementation(async (_actor: unknown, action: "access_admin" | "access_readonly") => {
 		if (!roleHolds(role, action)) throw new ForbiddenError(action, { type: "cluster" });
 	});
+	can.mockImplementation(async (_actor: unknown, action: "access_admin" | "access_readonly") => ({
+		allowed: roleHolds(role, action),
+	}));
 });
 
 /** Polls `mintId` on `clusterId`. */
@@ -271,6 +275,15 @@ describe("who may collect", () => {
 		row = mint("pending");
 		await poll();
 		expect(vi.mocked(authorizeCli).mock.calls.map((c) => c[1])).toEqual(["access_readonly"]);
+		expect(enforce).not.toHaveBeenCalled();
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("an operator polling a PENDING admin mint is refused by the non-recording probe, not enforce (#5667)", async () => {
+		row = mint("pending", { tier: "admin" });
+		const res = await poll();
+		expect(res.status).toBe(403);
+		expect(can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "access_admin", { type: "cluster", id: CLUSTER });
 		expect(enforce).not.toHaveBeenCalled();
 	});
 
