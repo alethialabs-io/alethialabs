@@ -39,7 +39,6 @@ export function useElenchThreads() {
 	const projectId = ctx.kind === "project" ? ctx.projectId : undefined;
 	const [threads, setThreads] = useState<AgentThread[]>([]);
 	const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
-	const initialized = useRef(false);
 	// Whether the initial resolution (list → resume/create) has settled. Until it has,
 	// the surface must NOT mount the keyed conversation: threadId is still null, so mounting
 	// now and flipping it to the resumed thread would remount the whole chat (the open flash).
@@ -80,13 +79,28 @@ export function useElenchThreads() {
 	// window allows a user-initiated thread pick or "New chat", both of which bump `epoch`; the
 	// epoch captured before the list is compared after EACH round trip, and a changed one means
 	// the user has already chosen, so the resume stands down rather than overriding them.
+	//
+	// The effect runs once per (open, context) — there is deliberately no "already loaded" flag.
+	// A context switch on an OPEN surface (`openPanel`/`openModal` with another project, or org ↔
+	// project) changes `projectId`; the cleanup stands the old context's load down and this body
+	// runs again for the new one, exactly as opening from closed in that context would: skeleton,
+	// list, resume the newest, else the empty landing (#5680). A once-per-open flag used to make
+	// that re-run return early, so a switch mid-load left the body on its skeleton forever, and a
+	// switch after the load kept the previous context's threads in the rail.
+	//
+	// `cancelled` is checked after EACH round trip, not only the first: closing the surface also
+	// runs the cleanup, and a transcript that arrives after the close must not write the resume
+	// into a store nobody is looking at (#5680). Closing does not bump `epoch`, so the user-acted
+	// guard alone let it through.
 	useEffect(() => {
-		if (!open || initialized.current) return;
-		initialized.current = true;
+		if (!open) return;
 		let cancelled = false;
 		const startEpoch = useElenchStore.getState().epoch;
 		/** True once the user has picked a thread or started a new chat since the load began. */
 		const userActed = () => useElenchStore.getState().epoch !== startEpoch;
+		// A no-op on a first open (it is already false); on a context switch it puts the body
+		// back on its skeleton until the new context resolves, as a fresh open shows it.
+		setInitialResolved(false);
 		(async () => {
 			const list = await listThreads(projectId);
 			if (cancelled) return;
@@ -94,25 +108,26 @@ export function useElenchThreads() {
 			const resume = resumeIdRef.current ?? list[0]?.id;
 			if (resume && !userActed()) {
 				const full = await getThread(resume);
+				if (cancelled) return;
 				if (!userActed()) {
 					setInitialMessages(full?.messages ?? []);
 					resumeStore(resume);
 				}
+			} else if (!resume && !userActed()) {
+				// Nothing to resume → the empty landing. Clear the transcript a previous context (or
+				// a previous open) staged, or the new conversation would be seeded with it.
+				setInitialMessages([]);
 			}
-			// else: leave threadId null + initialMessages empty → the ephemeral landing.
-			if (!cancelled) setInitialResolved(true);
+			setInitialResolved(true);
 		})();
 		return () => {
 			cancelled = true;
 		};
 	}, [open, projectId, resumeStore]);
 
-	// Reset when the surface closes so reopening re-resumes cleanly.
+	// Reset when the surface closes so reopening shows the skeleton until it re-resumes.
 	useEffect(() => {
-		if (!open) {
-			initialized.current = false;
-			setInitialResolved(false);
-		}
+		if (!open) setInitialResolved(false);
 	}, [open]);
 
 	/** Resume a persisted thread (loads its transcript first). */
