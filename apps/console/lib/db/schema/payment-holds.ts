@@ -5,7 +5,8 @@
 // the flow touched, is not yet proven settled. While a row is open (any state but `released`) it is
 // meant to block its payer's next create-a-team purchase. This slice adds the table and its store
 // (lib/billing/payment-holds/store.ts) only: NOTHING writes or reads a hold yet. From S5 the
-// create-a-team flow opens and advances holds; the webhook nudge and the sweeper come in later slices.
+// create-a-team flow will open and advance holds; the webhook nudge and the sweeper will come in later
+// slices.
 //
 // Rows are never deleted (I6): `released` is terminal for a row and kept for audit, and a later open on
 // the same subscription writes a NEW row. That is why `subscription_id` is unique among OPEN rows only
@@ -83,11 +84,13 @@ export const paymentHolds = pgTable(
 		// The create-a-team subscription this hold is about (`sub_…`). Unique among OPEN rows only.
 		subscription_id: text().notNull(),
 		customer_id: text().notNull(),
-		// The payer: the user id (I12). Written once, at open, and never changed — a hold keeps blocking
-		// its payer after the subscription is linked to an org.
+		// The payer: the user id (I12). Written once, at open, and never changed. Nothing reads it to block
+		// a purchase yet: from S5/S8 an open hold will block its payer, including after the subscription is
+		// linked to an org.
 		payer_key: text().notNull(),
-		// The held invoice (I2): `latest_invoice` when the hold was opened. The only invoice a hold reads,
-		// voids or refunds — never the subscription's later invoices.
+		// The held invoice (I2): `latest_invoice` when the hold was opened. Nothing voids or refunds
+		// through it yet: from S5/S6 it will be the only invoice a hold reads, voids or refunds — never the
+		// subscription's later invoices.
 		invoice_id: text().notNull(),
 		payment_intent_id: text(),
 		state: text().$type<PaymentHoldState>().notNull(),
@@ -130,7 +133,8 @@ export const paymentHolds = pgTable(
 		uniqueIndex("payment_holds_open_subscription_uidx")
 			.on(t.subscription_id)
 			.where(sql`state <> 'released'`),
-		// The create-a-team flow reads its payer's open holds.
+		// For the lookup of a payer's open holds. Nothing reads by payer yet: from S8 the create-a-team
+		// flow will.
 		index("payment_holds_open_payer_idx")
 			.on(t.payer_key)
 			.where(sql`state <> 'released'`),

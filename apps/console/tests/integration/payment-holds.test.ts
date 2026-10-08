@@ -395,38 +395,45 @@ describeIfDb("payment_holds — C92, the release half: a release decides the set
 		await releasePurchaseLease(lease);
 	});
 
-	it("SAME transaction: when the setup's close fails, the release is rolled back with it", async () => {
+	it("SAME transaction: a failure AFTER the setup's close, at COMMIT, rolls the close back with the release", async () => {
 		const lease = await userLease();
 		const sub = newSubscription();
 		const setup = await openSetup(sub);
 		const hold = await opened(lease, e0(USER, sub));
 
-		// Make the setup's close, and only this setup's, fail. The suite runs files serially
-		// (vitest.integration.config.ts), and the trigger is scoped to this one subscription by its WHEN.
+		// The failure is injected at COMMIT of the release's transaction, i.e. AFTER the setup's close has
+		// run: a test-only DEFERRED constraint trigger on payment_holds, fired by this subscription's
+		// release only (its WHEN), raises when that transaction commits. If the close ran in the same
+		// transaction it is rolled back with the release and the setup is still open below. A close made
+		// on any other connection has already committed by then, and the setup is found closed. (Failing
+		// the close itself cannot tell the two apart: either way nothing after it commits.) The suite runs
+		// files serially (vitest.integration.config.ts), and the trigger is dropped in the finally.
 		const fn = `it_hold_fail_${randomUUID().replaceAll("-", "")}`;
 		const db = getServiceDb();
 		await db.execute(
 			sql.raw(`CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $$
-				BEGIN RAISE EXCEPTION 'it: the setup close failed'; END $$`),
+				BEGIN RAISE EXCEPTION 'it: the release failed at commit'; END $$`),
 		);
 		await db.execute(
-			sql.raw(`CREATE TRIGGER ${fn} BEFORE UPDATE ON pending_org_setups FOR EACH ROW
-				WHEN (OLD.subscription_id = '${sub}') EXECUTE FUNCTION ${fn}()`),
+			sql.raw(`CREATE CONSTRAINT TRIGGER ${fn} AFTER UPDATE ON payment_holds
+				DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+				WHEN (NEW.subscription_id = '${sub}' AND NEW.state = 'released') EXECUTE FUNCTION ${fn}()`),
 		);
 		try {
 			const failed = await refusalText(() => releaseHold(lease, refOf(hold), { reason: "voided_unpaid" }));
-			expect(failed).toMatch(/the setup close failed/);
+			expect(failed).toMatch(/the release failed at commit/);
 		} finally {
-			await db.execute(sql.raw(`DROP TRIGGER ${fn} ON pending_org_setups`));
+			await db.execute(sql.raw(`DROP TRIGGER ${fn} ON payment_holds`));
 			await db.execute(sql.raw(`DROP FUNCTION ${fn}()`));
 		}
-		// The hold is still open, at the version the failed release was prepared on: no released hold
-		// with an open setup ever committed.
+		// The hold is still open, at the version the failed release was prepared on, and the setup's close
+		// — which DID run before the commit failed — was rolled back with it.
 		expect(await readHold(hold.id)).toMatchObject({ state: "closing", version: 0, release_reason: null });
-		expect((await readSetup(setup)).closed_at).toBeNull();
+		expect(await readSetup(setup)).toMatchObject({ closed_at: null, closed_reason: null });
 
-		// And the retry, with the close working again, does both.
+		// And the retry, with the commit working again, does both.
 		expect((await releaseHold(lease, refOf(hold), { reason: "voided_unpaid" }))?.closedSetupId).toBe(setup);
+		expect((await readSetup(setup)).closed_reason).toBe("hold_released");
 		await releasePurchaseLease(lease);
 	});
 });

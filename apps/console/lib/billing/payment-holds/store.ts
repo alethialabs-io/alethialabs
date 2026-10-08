@@ -93,6 +93,9 @@ export interface OpenHoldInput {
  * What an open did: wrote the row; found an OPEN hold on the same subscription already (T0h — `hold` is
  * that row, or null when it was released between the conflict and the read); or wrote nothing because
  * the caller's lease is no longer live (the purchase must then void and cancel nothing, T0f).
+ *
+ * WARNING — `already_open.hold` may belong to ANOTHER payer: it is whatever open row holds the
+ * subscription, read without a payer filter. Callers must not show it, or anything from it, to the user.
  */
 export type OpenHoldResult =
 	| { kind: "opened"; hold: PaymentHoldRow }
