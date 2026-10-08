@@ -224,6 +224,9 @@ export function ThreadRail({
 									    device that CANNOT hover — a phone, where #5655 made this rail
 									    reachable as a sheet — shows it outright (`@media (hover: none)`),
 									    because there is no gesture there that would ever reveal it (#5657).
+									    `(hover: none)` reads only the PRIMARY pointer, so a touchscreen
+									    laptop (mouse primary) would still hide it from a tap; any coarse
+									    pointer shows it too (`@media (any-pointer: coarse)`).
 									    The ink is a named tier at full strength; no alpha. */}
 									<button
 										type="button"
