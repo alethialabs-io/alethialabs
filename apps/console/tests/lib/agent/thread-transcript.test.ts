@@ -17,8 +17,9 @@ interface FakeDb {
 	owners: string[];
 	where: unknown[];
 	values: Record<string, unknown>[];
+	sets: Record<string, unknown>[];
 }
-const db = vi.hoisted((): FakeDb => ({ results: [], owners: [], where: [], values: [] }));
+const db = vi.hoisted((): FakeDb => ({ results: [], owners: [], where: [], values: [], sets: [] }));
 
 vi.mock("@/lib/db", () => {
 	/** A chain whose every builder returns itself and whose awaited query takes the next result. */
@@ -26,7 +27,10 @@ vi.mock("@/lib/db", () => {
 	const self = () => chain;
 	Object.assign(chain, {
 		update: self,
-		set: self,
+		set: (v: Record<string, unknown>) => {
+			db.sets.push(v);
+			return chain;
+		},
 		select: self,
 		from: self,
 		limit: self,
@@ -52,7 +56,7 @@ vi.mock("@/lib/db", () => {
 });
 vi.mock("@/lib/observability/log", () => ({ log: { warn: vi.fn(), error: vi.fn() } }));
 
-import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { saveThreadTranscript, transcriptRows } from "@/lib/agent/thread-transcript";
 import { transcriptTargetSchema } from "@/lib/agent/transcript-save";
 import { withOwnerScope } from "@/lib/db";
 import { log } from "@/lib/observability/log";
@@ -63,6 +67,7 @@ function useChain(results: unknown[][]) {
 	db.owners = [];
 	db.where = [];
 	db.values = [];
+	db.sets = [];
 }
 
 /** A recorded predicate as Postgres would receive it. */
@@ -92,9 +97,11 @@ describe("saveThreadTranscript", () => {
 		expect(db.owners).toEqual(["user-1"]);
 		const q = compiled(db.where[0]);
 		expect(q.sql).toMatch(
-			/"id" = \$1 and "agent_threads"\."kind" = \$2 and "agent_threads"\."project_id" is null and "agent_threads"\."status" <> \$3/,
+			/"id" = \$1 and "agent_threads"\."user_id" = \$2 and "agent_threads"\."kind" = \$3 and "agent_threads"\."project_id" is null and "agent_threads"\."status" <> \$4/,
 		);
-		expect(q.params).toEqual([T, "agent", "deleted"]);
+		expect(q.params).toEqual([T, "user-1", "agent", "deleted"]);
+		// A write of `messages` is a new revision (ADR 0003 §4.2).
+		expect(compiled(db.sets[0].revision).sql).toBe('"agent_threads"."revision" + 1');
 	});
 
 	it("a project route's update and recovery lookup match only that project's threads", async () => {
@@ -104,10 +111,11 @@ describe("saveThreadTranscript", () => {
 		useChain([[], [{ status: "deleted" }], [], [{ id: NEW }]]);
 		await saveThreadTranscript({ owner: "user-1", threadId: T, kind: "agent", projectId: P }, messages);
 		const update = compiled(db.where[0]);
-		expect(update.sql).toMatch(/"agent_threads"\."project_id" = \$3/);
-		expect(update.params).toEqual([T, "agent", P, "deleted"]);
+		expect(update.sql).toMatch(/"agent_threads"\."project_id" = \$4/);
+		expect(update.params).toEqual([T, "user-1", "agent", P, "deleted"]);
 		const recovered = compiled(db.where[2]);
-		expect(recovered.sql).toMatch(/"agent_threads"\."project_id" = \$3/);
+		expect(recovered.sql).toMatch(/"agent_threads"\."user_id" = \$2/);
+		expect(recovered.sql).toMatch(/"agent_threads"\."project_id" = \$4/);
 		expect(recovered.params).toContain(P);
 	});
 
@@ -155,5 +163,62 @@ describe("saveThreadTranscript", () => {
 				.success,
 		).toBe(false);
 		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+});
+
+// ADR 0003 §7: the claim's two transcript writes. Both hold only at the caller's base revision, add
+// one to it, and name the owner explicitly, because the claim runs them on the service role where RLS
+// does not apply (§4.3).
+describe("transcriptRows: appendLive and replaceLast", () => {
+	const answer: UIMessage = { id: "m-3", role: "assistant", parts: [{ type: "text", text: "Done." }] };
+
+	it("appendLive never writes a client list: the database appends only the new messages", async () => {
+		useChain([[{ revision: 8 }]]);
+		const revision = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").appendLive(T, "agent", null, 7, [answer]),
+		);
+		expect(revision).toBe(8);
+		const set = db.sets[0];
+		const appended = compiled(set.messages);
+		expect(appended.sql).toBe('"agent_threads"."messages" || $1::jsonb');
+		// Only the appended message travels: the stored transcript is never re-sent.
+		expect(appended.params).toEqual([JSON.stringify([answer])]);
+		expect(compiled(set.revision).sql).toBe('"agent_threads"."revision" + 1');
+		const where = compiled(db.where[0]);
+		expect(where.sql).toMatch(/"agent_threads"\."user_id" = \$2/);
+		expect(where.sql).toMatch(/"agent_threads"\."status" <> \$4\) and "agent_threads"\."revision" = \$5/);
+		expect(where.params).toEqual([T, "user-1", "agent", "deleted", 7]);
+	});
+
+	it("appendLive answers null when no row matched (a moved revision, or not live)", async () => {
+		useChain([[]]);
+		const revision = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").appendLive(T, "agent", null, 7, [answer]),
+		);
+		expect(revision).toBeNull();
+	});
+
+	it("replaceLast drops only the stored last element and appends the one message", async () => {
+		useChain([[{ revision: 4 }]]);
+		const revision = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").replaceLast(T, "agent", null, 3, answer),
+		);
+		expect(revision).toBe(4);
+		const replaced = compiled(db.sets[0].messages);
+		expect(replaced.sql).toBe(
+			'("agent_threads"."messages" - (-1)) || jsonb_build_array($1::jsonb)',
+		);
+		expect(replaced.params).toEqual([JSON.stringify(answer)]);
+		const where = compiled(db.where[0]);
+		expect(where.sql).toMatch(/"agent_threads"\."revision" = \$5 and jsonb_array_length\("agent_threads"\."messages"\) > 0/);
+		expect(where.params).toEqual([T, "user-1", "agent", "deleted", 3]);
+	});
+
+	it("replaceLast answers null when no row matched", async () => {
+		useChain([[]]);
+		const revision = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").replaceLast(T, "agent", null, 3, answer),
+		);
+		expect(revision).toBeNull();
 	});
 });

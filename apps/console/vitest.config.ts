@@ -170,6 +170,11 @@ export default defineConfig({
 				// they are shrink-only. (Three, not two: "gc.ts's three exports" was itself an
 				// off-by-one in the first draft of this correction.)
 				"lib/reconcile/gc.ts",
+				// ADR 0003 slice 5's claim state machine: four service-role transactions (acceptance,
+				// heartbeat, finalize, expiry) whose locks and compare-and-sets only real Postgres can
+				// race — tests/integration/agent-turn-claims.test.ts. Its pure guards are unit-tested
+				// (tests/lib/agent/turn-claims.test.ts), and are excluded with the file they live in.
+				"lib/agent/turn-claims.ts",
 				// BYOC B2.3 probe dispatch + ingest/query: real-SQL, verified by tests/integration/
 				// probes-b23.test.ts. The pure scheduler (lib/probes/schedule.ts) stays in scope,
 				// unit-covered by tests/lib/probes/schedule.test.ts.
