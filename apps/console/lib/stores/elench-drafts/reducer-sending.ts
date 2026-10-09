@@ -149,7 +149,7 @@ export type DraftSendEvent =
 	| { type: "RELEASE_RESULT"; token: string; seq: number; retry: number; result: ReleaseClaimResult }
 	/** D11t: a release was rejected or timed out. */
 	| { type: "RELEASE_FAILED"; token: string; seq: number; retry: number; failure: WriteFailure }
-	/** D34: the heartbeat's 200 body. Its 401/403 stop the timer (slice 8) and never reach here. */
+	/** D34: the heartbeat's 200 body. Its 401/403 will stop slice 8's timer and never reach here. */
 	| { type: "HEARTBEAT_RESULT"; token: string; result: TouchClaimResult }
 	/** D21: Discard. */
 	| { type: "DISCARD" }
@@ -187,7 +187,7 @@ export type DraftSendNotice =
 	| "discard-conflict"
 	| "discard-failed";
 
-/** What the sending half asks the effects layer (slice 8) and the conversation (slice 9) to do. */
+/** What the sending half asks for; the effects layer (slice 8) and the conversation (slice 9) will do it. */
 export type SendEffect =
 	| Exclude<DraftEffect, { type: "notice" }>
 	| { type: "notice"; key: DraftKey; notice: DraftNotice | DraftSendNotice }
@@ -246,7 +246,7 @@ export type SendEffect =
 	| { type: "offer-undo-discard"; key: DraftKey; revision: number; content: DraftContent }
 	/** D31 / D9c: `saveDraft(base, content, dismissFailedSend: true)`, answered as a save. */
 	| { type: "dismiss-failed-send"; key: DraftKey; base: number; content: DraftContent }
-	/** D12: seed the transport's base revision (slice 9 wires 0003/6's setter). */
+	/** D12: seed the transport's base revision (slice 9 will wire it to 0003/6's setter). */
 	| { type: "thread-revision"; key: DraftKey; revision: number }
 	/** D12: place the pending Open-in-new-chat artifacts into the new conversation. */
 	| { type: "place-artifacts"; key: DraftKey; artifacts: string[] }
@@ -534,7 +534,9 @@ function loadFirst(entry: DraftEntry, ctx: SendContext): SendEntryTransition {
 function submit(entry: DraftEntry, chatReady: boolean, ctx: SendContext): SendEntryTransition {
 	if (entry.claiming !== null || entry.sending !== null)
 		return { entry, effects: [notice(entry.key, "wait-for-send")] }; // D10z
-	if (entry.conflict !== null && entry.conflict.kind !== "uncertain") return none(entry); // D31 allows
+	// Every bar stops Enter (D9: no conflict) except D31's card (no row); D9c's copy bar has a row.
+	const card = entry.conflict;
+	if (card !== null && (card.kind !== "uncertain" || card.row !== null)) return none(entry);
 	if (ctx.pageOrg !== entry.key.orgId) return none(entry); // D29, I8: never from another org's page
 	const content = shownContent(entry);
 	if (content.text.trim() === "") return { entry, effects: [notice(entry.key, "empty-box")] };
@@ -838,7 +840,21 @@ function releasedBack(
 	const base = sending.token === null ? entry : forget(entry, sending.token);
 	if (sending.kind === "later" && entry.thread === "deleted")
 		return fork(base, sendingWords(base, sending), row.revision, "kept-in-new-deleted");
-	const merged = entry.local === null ? null : appendContent(row.content, entry.local);
+	// After a release the row holds the claimed words (S4 keeps the content). After D11n it may not:
+	// a claim that never landed (a reload during claimDraft, D26) leaves the row as it was, and the
+	// claimed words exist only in this send. They come back from the send, then any later text.
+	const held = row.content.text === sending.text;
+	const claimed: DraftContent = {
+		text: sending.text,
+		mentions: sending.mentions,
+		artifacts: row.content.artifacts,
+		cellTarget: sending.cellTarget,
+	};
+	const merged = held
+		? entry.local === null
+			? null
+			: appendContent(row.content, entry.local)
+		: appendContent(claimed, entry.local);
 	const uncertain = row.failedSend?.uncertain === true;
 	const next: DraftEntry = {
 		...base,
@@ -870,11 +886,20 @@ function readNotClaimed(
 				: consumedArm(t.entry, sending, row, row.revision, ctx),
 		);
 	if (row.state === "sending") {
-		// The lease released this claim and another tab claimed the words: they are being sent there.
-		const freed = sending.token === null ? t.entry : forget(t.entry, sending.token);
-		return prepend(t.effects, claimedElsewhere({ ...freed, sending: null }, row, thread, ctx));
+		// The lease released this claim and another tab claimed the row (D30).
+		return prepend(t.effects, claimedElsewhere(handOver(t.entry, sending, row), row, thread, ctx));
 	}
 	return prepend(t.effects, releasedBack(t.entry, sending, row, ctx)); // D11n
+}
+
+/**
+ * D30 from a live send: the lease released this claim and another sender froze the row. When the
+ * frozen row does not hold this send's words, they stay in the box (read-only while D30 lasts, I3).
+ */
+function handOver(entry: DraftEntry, sending: DraftSending, row: ServerDraft): DraftEntry {
+	const freed = sending.token === null ? entry : forget(entry, sending.token);
+	const local = row.content.text === sending.text ? freed.local : sendingWords(freed, sending);
+	return { ...freed, sending: null, local };
 }
 
 /** D11: the start (or the route) failed; release by token and wait for a definitive answer. */
@@ -970,7 +995,9 @@ function started(
 				turnId: sending.turnId,
 				text: sent.text,
 				mentions: sent.mentions,
-				cellTarget: sending.cellTarget,
+				// D12's metadata is `{ mentions }` only: the stored first turn already carries its cell
+				// target, written by startConversation from the row or the external prompt (§5.1 step 3).
+				cellTarget: null,
 			});
 		}
 	}
@@ -1006,10 +1033,12 @@ function startResult(
 				n);
 		}
 		case "not-claimed":
+			// An external start has no claim: read defensively as a failure, so the prompt is kept (D10f).
+			if (sending.token === null) return failExternal(e, sending, "not-claimed", false, ctx);
 			return readNotClaimed(e, sending, r.row, r.thread, ctx);
 		case "claimed":
 			if (sending.token === null) return failExternal(e, sending, "claimed", false, ctx);
-			return claimedElsewhere({ ...forget(e, sending.token), sending: null }, r.row, r.thread, ctx);
+			return claimedElsewhere(handOver(e, sending, r.row), r.row, r.thread, ctx);
 		default:
 			// A refusal, `draft-conflict` or `unavailable`: D11 (composer) or D10f (external).
 			if (sending.token === null) return failExternal(e, sending, r.outcome, false, ctx);

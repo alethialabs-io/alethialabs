@@ -352,6 +352,15 @@ describe("D9c the hand-off", () => {
 		expect(ofType(d.effects, "dismiss-failed-send")).toEqual([{ type: "dismiss-failed-send", key: K, base: 6, content: EMPTY_CONTENT }]);
 	});
 
+	it("D9 › Enter while D9c's copy-came-back bar is open claims nothing: only D31's card (no row) allows Enter", () => {
+		const consuming = { ...sending, sending: sendingOf({ phase: "consuming" }) };
+		const copy = row(c("deploy"), 6, { failedSend: { turnId: "turn-1", kind: "later", error: "lease", at: NOW, uncertain: true } });
+		const bar = stay(consuming, { type: "CONSUME_RESULT", token: "tok-1", seq: 3, retry: 0, result: { outcome: "not-claimed", row: copy, thread: thread() } });
+		const t = step(bar, { type: "SUBMIT", chatReady: true });
+		expect(ofType(t.effects, "claim")).toEqual([]);
+		expect(t.entry?.claiming).toBeNull();
+	});
+
 	it("D9c › not-claimed whose last_sent names this turn is the consumed arm", () => {
 		const consuming = { ...sending, sending: sendingOf({ phase: "consuming" }) };
 		const sent = row(EMPTY_CONTENT, 6, { lastSent: { turnId: "turn-1", kind: "later", at: NOW } });
@@ -463,14 +472,15 @@ describe("D9d a later turn fails before streaming", () => {
 // ── D11 / D11r / D11c / D11n / D11t / D12 / D13 / D17 ───────────────────────────────────────────
 
 describe("D11 / D12 / D13 / D17 a first send", () => {
-	const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting" }), server: row({ ...c("hello"), artifacts: ["art"] }, 1, { state: "sending" }) });
+	const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting", text: "hello" }), server: row({ ...c("hello"), artifacts: ["art"] }, 1, { state: "sending" }) });
 
 	it("D12 › created: the row empties, the thread is listed and loaded, threadRevision seeds the transport, and the one turn is pushed", () => {
 		const t = step(starting, { type: "START_RESULT", attempt: "att-1", seq: 2, result: { outcome: "created", revision: 2, threadRevision: 1 } });
 		expect(t.entry).toMatchObject({ sending: null, thread: "listed", transcript: "loaded" });
 		expect(t.entry?.server).toMatchObject({ revision: 2, content: EMPTY_CONTENT, state: "active" });
 		expect(ofType(t.effects, "thread-revision")).toEqual([{ type: "thread-revision", key: K, revision: 1 }]);
-		expect(ofType(t.effects, "send-message").map((x) => x.turnId)).toEqual(["turn-1"]);
+		// D12's metadata is `{ mentions }` only: the stored first turn already carries its cell target.
+		expect(ofType(t.effects, "send-message").map((x) => [x.turnId, x.cellTarget])).toEqual([["turn-1", null]]);
 		expect(ofType(t.effects, "place-artifacts")).toEqual([{ type: "place-artifacts", key: K, artifacts: ["art"] }]);
 	});
 
@@ -502,7 +512,7 @@ describe("D11 / D12 / D13 / D17 a first send", () => {
 	});
 
 	it("D11r › released: the words come back, followed by text typed after the claim, saved at the row's revision", () => {
-		const releasing = { ...starting, local: c("more"), sending: sendingOf({ kind: "first", phase: "releasing" }) };
+		const releasing = { ...starting, local: c("more"), sending: sendingOf({ kind: "first", phase: "releasing", text: "hello" }) };
 		const t = step(releasing, { type: "RELEASE_RESULT", token: "tok-1", seq: 3, retry: 0, result: { outcome: "released", row: row(c("hello"), 2) } });
 		expect(t.entry?.local?.text).toBe("hello\n\nmore");
 		expect(t.entry?.epoch).toBe(releasing.epoch + 1);
@@ -511,7 +521,7 @@ describe("D11 / D12 / D13 / D17 a first send", () => {
 	});
 
 	it("D11c / D17 › not-claimed proving the start committed: the box holds only the later text, the transcript loads", () => {
-		const releasing = { ...starting, local: c("more"), sending: sendingOf({ kind: "first", phase: "releasing" }) };
+		const releasing = { ...starting, local: c("more"), sending: sendingOf({ kind: "first", phase: "releasing", text: "hello" }) };
 		const t = step(releasing, { type: "RELEASE_RESULT", token: "tok-1", seq: 3, retry: 0, result: {
 			outcome: "not-claimed", row: row(EMPTY_CONTENT, 2), thread: thread({ firstTurnId: "turn-1" }),
 		} });
@@ -523,14 +533,14 @@ describe("D11 / D12 / D13 / D17 a first send", () => {
 	});
 
 	it("D11n › not-claimed that proves nothing is as D11r with the returned row", () => {
-		const releasing = { ...starting, sending: sendingOf({ kind: "first", phase: "releasing" }) };
+		const releasing = { ...starting, sending: sendingOf({ kind: "first", phase: "releasing", text: "hello" }) };
 		const t = step(releasing, { type: "RELEASE_RESULT", token: "tok-1", seq: 3, retry: 0, result: { outcome: "not-claimed", row: row(c("hello"), 2), thread: thread({ status: "none" }) } });
 		if (t.entry === null) throw new Error("removed");
 		expect(shownContent(t.entry).text).toBe("hello");
 	});
 
 	it("a release that keeps failing retries with backoff and the cache keeps the token (D11t)", () => {
-		const releasing = { ...starting, sending: sendingOf({ kind: "first", phase: "releasing" }) };
+		const releasing = { ...starting, sending: sendingOf({ kind: "first", phase: "releasing", text: "hello" }) };
 		const t1 = step(releasing, { type: "RELEASE_FAILED", token: "tok-1", seq: 3, retry: 0, failure: { kind: "timeout" } });
 		expect(t1.entry?.abandoned).toEqual(["tok-1"]);
 		expect(ofType(t1.effects, "release")).toMatchObject([{ retry: 1, delayMs: 1000 }]);
@@ -577,7 +587,7 @@ describe("D34 / D35 the heartbeat's answer", () => {
 	});
 
 	it("a heartbeat not-claimed that arrives while the start is in flight is dropped, and created sends the first turn once (B1')", () => {
-		const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting" }), server: row(c("hello"), 1, { state: "sending" }) });
+		const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting", text: "hello" }), server: row(c("hello"), 1, { state: "sending" }) });
 		const hb = step(starting, { type: "HEARTBEAT_RESULT", token: "tok-1", result: { outcome: "not-claimed", row: row(EMPTY_CONTENT, 2), thread: thread({ firstTurnId: "turn-1" }) } });
 		expect(hb.entry).toBe(starting);
 		expect(hb.effects).toEqual([]);
@@ -673,6 +683,13 @@ describe("D10x / D10y / D10f external sends", () => {
 		expect(shownContent(t.entry).cellTarget).toEqual({ x: 2, y: 0 });
 	});
 
+	it("D10f › an external start answered not-claimed (no claim to read) keeps the prompt in the box", () => {
+		const x = stay(entry({ server: row(c("mine"), 2) }), ext());
+		const t = step(x, { type: "START_RESULT", attempt: "att-new", seq: 2, result: { outcome: "not-claimed", row: row(c("mine"), 2), thread: thread({ status: "none" }) } });
+		expect(t.entry?.local?.text).toBe("  add a node chart \n\nmine");
+		expect(t.entry?.pendingFailedSend?.turnId).toBe("turn-new");
+	});
+
 	it("D10f (c) › an external turn the route says is committed is not put back; D20 loads it", () => {
 		const y = stay(listedEntry("mine"), ext());
 		const t = step(y, { type: "ROUTE_FAILED", turnId: "turn-new", failure: refusal("turn-answered", true) });
@@ -709,12 +726,12 @@ describe("D10x / D10y / D10f external sends", () => {
 
 describe("D18 FORK", () => {
 	it("D18 › a start answered deleted moves the words to a new key, saves them, and discards the old row once saved", () => {
-		const e = entry({ local: c("more"), sending: sendingOf({ kind: "first", phase: "starting" }), server: row(c("hello"), 1, { state: "sending" }) });
+		const e = entry({ local: c("more"), sending: sendingOf({ kind: "first", phase: "starting", text: "hello" }), server: row(c("hello"), 1, { state: "sending" }) });
 		const s = storeWith(e);
 		const t = reduce(s, { type: "ENTRY", key: K, event: { type: "START_RESULT", attempt: "att-1", seq: 2, result: { outcome: "deleted", revision: 2 } } }, ENV);
 		const k2: DraftKey = { ...SCOPE_A, conversationId: "fork-1" };
 		expect(t.state.entries[keyId(K)]).toBeUndefined();
-		expect(t.state.entries[keyId(k2)]?.local?.text).toBe("deploy\n\nmore");
+		expect(t.state.entries[keyId(k2)]?.local?.text).toBe("hello\n\nmore");
 		expect(t.state.activeKey[scopeId(SCOPE_A)]).toBe("fork-1");
 		expect(ofType(t.effects, "save")).toMatchObject([{ key: k2, base: 0 }]);
 		expect(notices(t.effects)).toContain("kept-in-new-deleted");
@@ -798,7 +815,7 @@ describe("D22 / D30 / D31 / D33 listed rows", () => {
 		const s = reduce(storeWith(routing), rows(9, { row: consumed, thread: thread({ hasTurn: true }), threadTitle: null }), ENV).state;
 		expect(s.entries[keyId(K)]?.sending).toBeNull();
 		expect(s.entries[keyId(K)]?.server).toEqual(consumed);
-		const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting" }), server: row(c("hello"), 1, { state: "sending" }) });
+		const starting = entry({ sending: sendingOf({ kind: "first", phase: "starting", text: "hello" }), server: row(c("hello"), 1, { state: "sending" }) });
 		const kept = reduce(storeWith(starting), rows(9, { row: row(EMPTY_CONTENT, 2), thread: thread({ firstTurnId: "turn-1" }), threadTitle: null }), ENV).state;
 		expect(kept.entries[keyId(K)]?.sending).toEqual(starting.sending);
 	});
@@ -865,6 +882,20 @@ describe("D26 restoring the cache", () => {
 		const back = step(t.entry, { type: "RELEASE_RESULT", token: "tok-1", seq: 1, retry: 0, result: { outcome: "released", row: row(c("hello"), 4) } });
 		if (back.entry === null) throw new Error("removed");
 		expect(shownContent(back.entry).text).toBe("hello");
+	});
+
+	it("D26 / D11n › a reload during a claim that never landed: not-claimed restores the CLAIMED words, and the cache keeps them", () => {
+		const claimed = claimingOf("first", c("hello world"));
+		const t = restoreFromCache(cached({ claiming: claimed }), item(row(c("hello"), 3)), CTX);
+		if (t.entry === null) throw new Error("removed");
+		const back = step(t.entry, { type: "RELEASE_RESULT", token: "tok-1", seq: 1, retry: 0, result: {
+			outcome: "not-claimed", row: row(c("hello"), 3), thread: thread({ status: "none" }),
+		} });
+		if (back.entry === null) throw new Error("removed");
+		expect(shownContent(back.entry).text).toBe("hello world");
+		expect(back.entry.local?.text).toBe("hello world");
+		expect(ofType(back.effects, "cache-remove")).toEqual([]);
+		expect(ofType(back.effects, "save").map((x) => [x.base, x.content.text])).toEqual([[3, "hello world"]]);
 	});
 
 	it("D26 › a restored later send that was routing is released uncertain; an external one is D10f", () => {
@@ -1042,54 +1073,72 @@ function heldTexts(e: DraftEntry): string[] {
 }
 
 /** The words a key holds that only a listed event may remove: unsaved, claimed, or a claimed send's. */
-function guardedWords(e: DraftEntry): string[] {
-	const out: string[] = [];
-	if (e.local !== null && e.local.text !== "") out.push(e.local.text);
+function guardedWords(e: DraftEntry): { kind: "local" | "claim" | "send"; text: string }[] {
+	const out: { kind: "local" | "claim" | "send"; text: string }[] = [];
+	if (e.local !== null && e.local.text !== "") out.push({ kind: "local", text: e.local.text });
 	// Claimed words equal to the acknowledged row are not unsaved: a newer row may supersede them.
 	const acked = e.server?.content.text;
-	if (e.claiming !== null && e.claiming.content.text !== acked) out.push(e.claiming.content.text);
-	if (e.sending !== null && e.sending.token !== null) out.push(e.sending.text);
+	if (e.claiming !== null && e.claiming.content.text !== acked) out.push({ kind: "claim", text: e.claiming.content.text });
+	if (e.sending !== null && e.sending.token !== null) out.push({ kind: "send", text: e.sending.text });
 	return out;
 }
 
+/** The claim-outcome table's proof that a send was consumed (§7.2). */
+function proven(row: ServerDraft, t: DraftThread, turnId: string): boolean {
+	return row.lastSent?.turnId === turnId || t.firstTurnId === turnId || t.hasTurn;
+}
+
+/** This key's listed row in a store event, if the event lists one. */
+function listedFor(ev: DraftsStoreEvent, key: DraftKey): DraftListEntry | null {
+	if (ev.type === "SERVER_ROWS")
+		return ev.result.drafts.find((d) => d.row.conversationId === key.conversationId && d.row.orgId === key.orgId) ?? null;
+	if (ev.type === "ENTRY" && keyId(ev.key) === keyId(key) && ev.event.type === "LISTED") return ev.event.listed;
+	return null;
+}
+
 /**
- * I3's list, for one key's event: the transitions allowed to remove words. Drafting: D15 Use theirs,
- * D16 Let it go, D19/D19L. Sending: a consume (D9c, D12, D13, D17, D20 through the consume's or the
- * table's answer), D21's discard, D9c's Discard the copy, D30's adoption of a row sent elsewhere,
- * D35's gone after the hand-off, and D10f (c) (the prompt is stored).
+ * I3's list, per word and per event, with no blanket exemption for any event type. A user's choice
+ * removes words (D15 Use theirs, D16 Let it go, D21's discard, D9c's Discard the copy, D25); a send's
+ * words leave only with the server's proof that the send was consumed (D9c, D12, D13, D17, D20, R9,
+ * D35 after the hand-off); and D30 ends by adopting a row whose send is proven sent elsewhere.
  */
-function isListedRemoval(ev: DraftsStoreEvent, key: DraftKey): boolean {
+function mayRemove(ev: DraftsStoreEvent, before: DraftEntry, kind: "local" | "claim" | "send"): boolean {
 	if (ev.type === "VIEWER_CHANGE") return true; // D25
-	if (ev.type === "SERVER_ROWS") return true; // D22 adopts, D19L, D30's end, R9 through the table
-	if (ev.type !== "ENTRY" || keyId(ev.key) !== keyId(key)) return false;
-	const x = ev.event;
-	switch (x.type) {
-		case "CONFLICT_USE_THEIRS":
-		case "CONFLICT_LET_GO":
-		case "NOT_LISTED":
-		case "COPY_DISCARD":
-		case "LISTED":
-		case "CONSUME_RESULT":
-		case "START_RESULT":
-		case "HEARTBEAT_RESULT":
-		case "ROUTE_HANDOFF":
-			return true;
-		case "SAVE_RESULT":
-		case "RESTORE_RESULT":
-			return x.result.outcome === "gone";
-		case "RELEASE_RESULT":
-			return x.result.outcome === "consumed" || x.result.outcome === "not-claimed";
-		case "DISCARD_RESULT":
-			return x.result.outcome === "discarded" || x.result.outcome === "gone";
-		case "ROUTE_FAILED":
-			return classifyRouteFailure(x.failure) === "committed";
-		default:
-			return false;
+	const own = ev.type === "ENTRY" && keyId(ev.key) === keyId(before.key);
+	const item = listedFor(ev, before.key);
+	const former = before.conflict?.kind === "claimed" ? (before.conflict.row?.claim?.turnId ?? null) : null;
+	if (kind === "local" && item !== null && former !== null && item.row.lastSent?.turnId === former) return true; // D30 ends
+	if (own && ev.type === "ENTRY") {
+		const x = ev.event;
+		if (kind === "local" && ["CONFLICT_USE_THEIRS", "CONFLICT_LET_GO", "COPY_DISCARD", "EDIT"].includes(x.type)) return true;
+		if (x.type === "DISCARD_RESULT" && (x.result.outcome === "discarded" || x.result.outcome === "gone")) return true; // D21
 	}
+	if (kind !== "send" || before.sending === null) return false;
+	const turnId = before.sending.turnId;
+	if (item !== null && proven(item.row, item.thread, turnId)) return true; // R9 through the table
+	if (!own || ev.type !== "ENTRY") return false;
+	const x = ev.event;
+	// A consume runs only after the hand-off: the route accepted the turn, so the text is the sent
+	// turn whatever the consume answers (D9c; D35 after the hand-off). D9c's copy is the row's own.
+	if (x.type === "CONSUME_RESULT") return before.sending.phase === "consuming";
+	if (x.type === "RELEASE_RESULT" || x.type === "HEARTBEAT_RESULT")
+		return x.result.outcome === "consumed" || (x.result.outcome === "not-claimed" && proven(x.result.row, x.result.thread, turnId));
+	if (x.type === "START_RESULT")
+		return x.result.outcome === "created" || x.result.outcome === "already-stored" || (x.result.outcome === "not-claimed" && proven(x.result.row, x.result.thread, turnId));
+	return false;
+}
+
+/** The words a restored cache item carries, which D26 must keep. */
+function cachedWords(c0: CachedDraft): string[] {
+	const out: string[] = [];
+	if (c0.local !== null && c0.local.text !== "") out.push(c0.local.text);
+	if (c0.claiming !== null) out.push(c0.claiming.content.text);
+	if (c0.sending !== null) out.push(c0.sending.text);
+	return out;
 }
 
 /** How often the generator reached each interesting case, so a vacuous run cannot pass. */
-const reached = { granted: 0, released: 0, consumed: 0, forked: 0, claimedElsewhere: 0, external: 0, staleEdit: 0, uncertain: 0 };
+const reached = { restored: 0, granted: 0, released: 0, consumed: 0, forked: 0, claimedElsewhere: 0, external: 0, staleEdit: 0, uncertain: 0 };
 
 /** Runs the generator for `seed` and checks every property at every step. */
 function runSeed(seed: number, steps: number): void {
@@ -1122,7 +1171,26 @@ function runSeed(seed: number, steps: number): void {
 				const ev2 = randomEntryEvent(r, state.entries[keyId(k)], seq);
 				if (ev2.type === "LISTED") drafts.push({ ...ev2.listed, row: { ...ev2.listed.row, ...k } });
 			}
-			ev = { type: "SERVER_ROWS", seq: seq(), generation: state.generation, result: { outcome: "ok", orgId: state.scope?.orgId ?? ORG_A, drafts }, restored: [] };
+			// D26: a cache item for a key this tab does not hold yet, listed or not.
+			const restored: CachedDraft[] = [];
+			const scope = state.scope ?? SCOPE_A;
+			if (r() < 0.6) {
+				const rk: DraftKey = { ...scope, conversationId: `r-${ids}` };
+				const words = c(["hello world", "deploy now", "scale web"][Math.floor(r() * 3)]);
+				const which = Math.floor(r() * 4);
+				const turnId = `turn-r${ids}`;
+				restored.push({
+					key: rk, base: Math.floor(r() * 3), epoch: 0, abandoned: [],
+					local: which === 0 ? words : null,
+					claiming: which === 1 ? { attempt: `att-r${ids}`, token: `tok-r${ids}`, turnId, kind: r() < 0.5 ? "first" : "later", content: words } : null,
+					sending: which >= 2 ? sendingOf({ attempt: `att-r${ids}`, token: which === 2 ? `tok-r${ids}` : null, turnId, text: words.text, phase: r() < 0.5 ? "starting" : "routing", kind: r() < 0.5 ? "first" : "later" }) : null,
+				});
+				if (r() < 0.6) {
+					const ev2 = randomEntryEvent(r, undefined, seq);
+					if (ev2.type === "LISTED") drafts.push({ ...ev2.listed, row: { ...ev2.listed.row, ...rk } });
+				}
+			}
+			ev = { type: "SERVER_ROWS", seq: seq(), generation: state.generation, result: { outcome: "ok", orgId: scope.orgId, drafts }, restored };
 		} else ev = { type: "ENTRY", key, event: randomEntryEvent(r, state.entries[keyId(key)], seq) };
 		const check = (ok: boolean, what: string): void => {
 			if (!ok) throw new Error(`seed ${seed} step ${i} ${JSON.stringify(ev)}: ${what}`);
@@ -1164,12 +1232,19 @@ function runSeed(seed: number, steps: number): void {
 			if (before.conflict?.kind !== "claimed" && after?.conflict?.kind === "claimed") reached.claimedElsewhere += 1;
 			if (after?.sending?.token === null && before.sending === null) reached.external += 1;
 			if (after?.conflict?.kind === "uncertain") reached.uncertain += 1;
-			// I3 / I5: unsaved, claimed or claimed-and-sending words survive, here or in a fork,
-			// unless a listed transition removed them (or the user edited them).
-			if (isListedRemoval(ev, before.key) || (own && x?.type === "EDIT")) continue;
-			for (const words of guardedWords(before))
-				check(all.some((h) => h.includes(words)), `words lost: ${JSON.stringify(words)}`);
+			// I3 / I5, on EVERY event: unsaved, claimed or claimed-and-sending words survive, here or in
+			// a fork, unless the user chose to remove them or the server proved the send consumed.
+			for (const w of guardedWords(before))
+				if (!mayRemove(ev, before, w.kind))
+					check(all.some((h) => h.includes(w.text)), `words lost (${w.kind}): ${JSON.stringify(w.text)}`);
 		}
+		// D26: a restored cache item's words are never dropped by the restore.
+		if (ev.type === "SERVER_ROWS")
+			for (const c0 of ev.restored) {
+				if (state.entries[keyId(c0.key)] !== undefined) continue;
+				reached.restored += 1;
+				for (const w of cachedWords(c0)) check(all.some((h) => h.includes(w)), `restored words lost: ${JSON.stringify(w)}`);
+			}
 		state = t.state;
 	}
 }
