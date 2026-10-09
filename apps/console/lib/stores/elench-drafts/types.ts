@@ -5,8 +5,8 @@
 // the events and effects of the drafting half of the reducer (reducer-drafting.ts). Types only.
 //
 // The entry carries every field of §7.1, including the send fields (`claiming`, `sending`,
-// `abandoned`, `pendingFailedSend`). Nothing in this slice sets them: the transitions that do
-// (D9-D13, D17, D18, D20-D22, D26, D30-D35) will be slice 7b's. The drafting reducer reads them only
+// `abandoned`, `pendingFailedSend`). The drafting reducer never sets them: the transitions that do
+// (D9-D13, D17, D18, D20-D22, D26, D30-D35) are in reducer-sending.ts. The drafting reducer reads them only
 // as guards (a frozen key is never autosaved, D7; the box is read-only while claiming, D5) and
 // passes `pendingFailedSend` along with a save (D7, D8).
 
@@ -35,7 +35,7 @@ export interface DraftKey extends DraftScope {
 
 /**
  * A failed-send marker as the client sends it with `saveDraft` (§4.2): the server stamps `at`.
- * Only D10f (slice 7b) will create one.
+ * Only D10f (reducer-sending.ts) creates one.
  */
 export interface PendingFailedSend {
 	turnId: string | null;
@@ -44,7 +44,7 @@ export interface PendingFailedSend {
 	uncertain: boolean;
 }
 
-/** A claim this tab asked for and has no answer to yet (§7.1). Set only by slice 7b (D9, D10). */
+/** A claim this tab asked for and has no answer to yet (§7.1). Set only by reducer-sending.ts (D9, D10). */
 export interface DraftClaiming {
 	attempt: string;
 	token: string;
@@ -53,7 +53,7 @@ export interface DraftClaiming {
 	content: DraftContent;
 }
 
-/** Where a send of this tab is (§7.1). Set only by slice 7b. */
+/** Where a send of this tab is (§7.1). Set only by reducer-sending.ts. */
 export type DraftSendPhase = "starting" | "routing" | "consuming" | "releasing";
 
 /** A send this tab owns (§7.1). `token` is null for an external send, which takes no claim. */
