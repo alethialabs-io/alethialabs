@@ -401,12 +401,18 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 	});
 
 	test("picking a window writes `from`, `to` and `rangeLabel` to the URL", async ({ owner }) => {
-		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE (#5849): `waitUntil: "commit"` returns as
-		// soon as the response starts, and nothing here waits for hydration. This used to need
-		// `untilFilterBarHydrated`: the click went to server HTML React could not hydrate yet, or to
-		// where the trigger had been before the date-range label grew at mount and slid it 136 px
-		// left. #5849 removed both causes, and this test is what says so.
-		await owner.page.goto(activityPath(owner.orgSlug), { waitUntil: "commit" });
+		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE after `load` — no hydration wait (#5849).
+		// This used to need `untilFilterBarHydrated`: the click went to server HTML that React could
+		// not hydrate yet because the shell's modules were still evaluating, or to where the trigger
+		// had been before the date-range label grew at mount and slid it 136 px left. #5849 removed
+		// both causes, and this test is what says so.
+		//
+		// `load`, not `commit`: before the page's scripts have run there is no React listener at all,
+		// and no product change can answer a click made then — one cold `commit`-and-click in four
+		// lost its click (run 37924269448). By `load` the scripts have run; React hydrates a boundary
+		// synchronously when a click lands on it, and the cold-load probe's clicks after that point
+		// were delivered 8 of 8 (run 37921891867).
+		await owner.page.goto(activityPath(owner.orgSlug));
 		const trigger = owner.page.getByRole("button", { name: /^Last 7 days$/i });
 		await expect(trigger).toBeVisible({ timeout: 30_000 });
 		await trigger.click();
