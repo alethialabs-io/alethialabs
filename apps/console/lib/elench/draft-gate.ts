@@ -269,16 +269,19 @@ export const threadSummaryColumns = {
 };
 
 /**
- * Whether the caller's live thread holds `turnId` with the same `turnText` as `text` (§4.2's
- * `hasTurn`): the same function on both sides, so a turn sent trimmed equals its untrimmed draft.
+ * Whether the caller's live thread stores `turnId`, and with which text (§4.2's `hasTurn`, split
+ * three ways): `same` when a message with that id has the same `turnText` as `text`, `different`
+ * when the id is stored only with another text, `absent` when the id is not stored. `turnText` is
+ * applied to BOTH sides, so a turn sent trimmed equals its untrimmed draft (B3). This is the one
+ * implementation of the rule: `hasTurn` is `same`, and the claim's settle and release read all three.
  */
-async function threadHasTurn(
+export async function storedTurn(
 	tx: Tx,
 	actor: Actor,
 	conversationId: string,
 	turnId: string,
 	text: string,
-): Promise<boolean> {
+): Promise<"same" | "different" | "absent"> {
 	const [thread] = await tx
 		.select({ messages: agentThreads.messages })
 		.from(agentThreads)
@@ -290,10 +293,12 @@ async function threadHasTurn(
 			),
 		)
 		.limit(1);
-	if (!thread) return false;
+	if (!thread) return "absent";
 	const drafted: UIMessage = { id: turnId, role: "user", parts: [{ type: "text", text }] };
 	const want = turnText(drafted);
-	return thread.messages.some((m) => m.id === turnId && turnText(m) === want);
+	const withId = thread.messages.filter((m) => m.id === turnId);
+	if (withId.length === 0) return "absent";
+	return withId.some((m) => turnText(m) === want) ? "same" : "different";
 }
 
 /**
@@ -321,7 +326,7 @@ export async function readThread(
 		firstTurnId: live ? (thread?.firstTurnId ?? null) : null,
 		hasTurn:
 			status === "listed" && turnId !== null
-				? await threadHasTurn(tx, actor, conversationId, turnId, text)
+				? (await storedTurn(tx, actor, conversationId, turnId, text)) === "same"
 				: false,
 		title: live ? (thread?.title ?? null) : null,
 	};

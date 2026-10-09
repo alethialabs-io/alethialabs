@@ -2,20 +2,32 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Elench draft actions (ADR 0001 §4.2): `listDrafts`, `saveDraft`, `discardDraft` and
-// `restoreDraft`. Each parses its input with zod (§4 step 1), then runs behind the preamble in
-// lib/elench/draft-gate.ts, and answers an outcome of lib/elench/draft-outcomes.ts. Every write is a
-// compare-and-set on `revision`, under a `FOR UPDATE` lock of the key's row.
+// The Elench draft actions (ADR 0001 §4.2): `listDrafts`, `saveDraft`, `discardDraft`,
+// `restoreDraft`, and the claim (§3.4): `claimDraft`, `consumeDraft` and `releaseClaim`. Each parses
+// its input with zod (§4 step 1), then runs behind the preamble in lib/elench/draft-gate.ts, and
+// answers an outcome of lib/elench/draft-outcomes.ts. Every write is a compare-and-set on
+// `revision`, or on the claim token, under a `FOR UPDATE` lock of the key's row.
 //
-// No claim exists yet: `claimDraft`, `consumeDraft`, `releaseClaim` and the lease settle (S5) are
-// slice 4's, so until slice 4 lands no row is ever `sending`. From slice 4, every action here that
-// locks or lists a row will first settle a claim that has been silent for 120 s.
+// The lease settle (S5, lib/elench/draft-claims.ts) runs first inside every action here that locks
+// or lists a row, EXCEPT for a claim whose token the request itself presents: `consumeDraft` and
+// `releaseClaim` act on their own claim whatever its age, and a `claimDraft` retried with its own
+// token (S1r) answers that claim again. The claim's heartbeat (S7) is not an action: it is the route
+// handler app/api/elench/drafts/heartbeat/route.ts, so Next's action queue cannot starve it (B1).
 
 import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Actor } from "@/lib/authz/types";
 import type { Tx } from "@/lib/db";
 import { type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
+import {
+	claimOf,
+	endClaim,
+	goneOf,
+	notClaimedOf,
+	type RowClaim,
+	settleIfSilent,
+	settleScope,
+} from "@/lib/elench/draft-claims";
 import { contentSchema } from "@/lib/elench/draft-content";
 import {
 	lockDraft,
@@ -23,17 +35,23 @@ import {
 	readThread,
 	readThreadSummaries,
 	runDraftGate,
+	storedTurn,
 	threadStatusOf,
 	toServerDraft,
 } from "@/lib/elench/draft-gate";
 import type {
+	ClaimDraftResult,
+	ConsumeDraftResult,
 	DiscardDraftResult,
 	DraftClaimed,
 	DraftConflict,
 	DraftDiscardedRefusal,
 	DraftGone,
+	DraftInvalid,
 	DraftListEntry,
+	DraftNotClaimed,
 	ListDraftsResult,
+	ReleaseClaimResult,
 	RestoreDraftResult,
 	SaveDraftResult,
 } from "@/lib/elench/draft-outcomes";
@@ -48,6 +66,9 @@ const keySchema = z.object({
 	projectId: z.uuid().nullable(),
 	conversationId: z.uuid(),
 });
+
+/** The state a claim moves a row to (§3.4). */
+const SENDING: ElenchDraft["status"] = "sending";
 
 /** A compare-and-set base: 0 means "no row yet". */
 const baseRevisionSchema = z.number().int().min(0).max(2_147_483_647);
@@ -83,12 +104,76 @@ const saveDraftSchema = keySchema.extend({
 
 const casSchema = keySchema.extend({ baseRevision: baseRevisionSchema });
 
+/**
+ * A claim token: a random UUID that, from slices 7b and 8, the claiming tab will mint per attempt
+ * and send with every request of that claim.
+ */
+const tokenSchema = z.uuid();
+
+const claimDraftSchema = keySchema.extend({
+	baseRevision: baseRevisionSchema,
+	content: contentSchema,
+	turnId: z.uuid(),
+	token: tokenSchema,
+	kind: z.enum(["first", "later"]),
+	tabId: tabIdSchema,
+});
+
+const consumeDraftSchema = keySchema.extend({ token: tokenSchema });
+
+const releaseClaimSchema = keySchema.extend({
+	token: tokenSchema,
+	error: failedSendSchema.shape.error,
+	uncertain: z.boolean().optional(),
+	freshTurnId: z.uuid().optional(),
+});
+
 /** `listDrafts`' input: the anchor, and the org id of the scope this tab last listed (A12). */
 export type ListDraftsInput = z.input<typeof listDraftsSchema>;
 /** `saveDraft`'s input (§4.2). */
 export type SaveDraftInput = z.input<typeof saveDraftSchema>;
 /** `discardDraft`'s and `restoreDraft`'s input: a key and a base revision. */
 export type DraftCasInput = z.input<typeof casSchema>;
+/** `claimDraft`'s input (§4.2): the box's content at its base revision, and the attempt's claim. */
+export type ClaimDraftInput = z.input<typeof claimDraftSchema>;
+/** `consumeDraft`'s input: a key and the claim's token. */
+export type ConsumeDraftInput = z.input<typeof consumeDraftSchema>;
+/** `releaseClaim`'s input (§4.2): a key, the claim's token, and why the send failed. */
+export type ReleaseClaimInput = z.input<typeof releaseClaimSchema>;
+
+/**
+ * Locks the caller's row for a key and settles its claim first when that claim has been silent past
+ * the lease (S5). For an action that presents no claim token, so it may settle any claim.
+ */
+async function lockAndSettle(
+	tx: Tx,
+	actor: Actor,
+	conversationId: string,
+): Promise<ElenchDraft | null> {
+	const row = await lockDraft(tx, actor, conversationId);
+	return row === null ? null : settleIfSilent(tx, actor, row, null);
+}
+
+/**
+ * §4.3: whether the scope already holds the bound of active drafts, so a NEW row must be refused.
+ * A count, then an insert: serialized per scope by an advisory lock, so a concurrent base-0 write
+ * of another conversation cannot read the same count and land the 201st row.
+ */
+async function scopeIsFull(tx: Tx, actor: Actor, projectId: string | null): Promise<boolean> {
+	await lockDraftScope(tx, actor, projectId);
+	const [count] = await tx
+		.select({ n: sql<number>`count(*)`.mapWith(Number) })
+		.from(elenchDrafts)
+		.where(
+			and(
+				eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
+				eq(elenchDrafts.org_id, actor.orgId),
+				projectId === null ? isNull(elenchDrafts.project_id) : eq(elenchDrafts.project_id, projectId),
+				eq(elenchDrafts.status, "active"),
+			),
+		);
+	return (count?.n ?? 0) >= MAX_ACTIVE_DRAFTS_PER_SCOPE;
+}
 
 /** True when a row's anchor is the request's: the anchor is immutable after insert (§3.1). */
 function sameAnchor(row: ElenchDraft, projectId: string | null): boolean {
@@ -121,15 +206,6 @@ async function conflictOf(tx: Tx, actor: Actor, row: ElenchDraft): Promise<Draft
 	return { outcome: "conflict", row: refusal.row, thread: refusal.thread };
 }
 
-/** The `gone(thread)` answer: there is no row for the key. */
-async function goneOf(tx: Tx, actor: Actor, conversationId: string): Promise<DraftGone> {
-	const thread = await readThread(tx, actor, conversationId, null, "");
-	return {
-		outcome: "gone",
-		thread: { status: thread.status, firstTurnId: thread.firstTurnId, hasTurn: thread.hasTurn },
-	};
-}
-
 /**
  * Lists the caller's drafts of one scope (§4.2): the active and sending drafts, plus the drafts
  * discarded in the last 24 hours, newest first, each with its thread's status and title. The org is
@@ -142,6 +218,7 @@ export async function listDrafts(input: ListDraftsInput): Promise<ListDraftsResu
 	return runDraftGate(
 		{ keyOrgId: null, orgHint: orgHint ?? null, projectId },
 		async (actor, tx): Promise<ListDraftsResult> => {
+			await settleScope(tx, actor, projectId);
 			const rows = await tx
 				.select()
 				.from(elenchDrafts)
@@ -217,7 +294,7 @@ export async function saveDraft(input: SaveDraftInput): Promise<SaveDraftResult>
 	return runDraftGate(
 		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
 		async (actor, tx): Promise<SaveDraftResult> => {
-			const row = await lockDraft(tx, actor, req.conversationId);
+			const row = await lockAndSettle(tx, actor, req.conversationId);
 			const seen =
 				req.threadSeen === true && !row?.thread_seen
 					? await readThread(tx, actor, req.conversationId, null, "")
@@ -226,23 +303,7 @@ export async function saveDraft(input: SaveDraftInput): Promise<SaveDraftResult>
 
 			if (row === null) {
 				if (req.baseRevision > 0) return goneOf(tx, actor, req.conversationId);
-				// §4.3 is a count, then an insert: serialized per scope so a concurrent base-0 save of
-				// another conversation cannot read the same count and land the 201st row.
-				await lockDraftScope(tx, actor, req.projectId);
-				const [count] = await tx
-					.select({ n: sql<number>`count(*)`.mapWith(Number) })
-					.from(elenchDrafts)
-					.where(
-						and(
-							eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
-							eq(elenchDrafts.org_id, actor.orgId),
-							req.projectId === null
-								? isNull(elenchDrafts.project_id)
-								: eq(elenchDrafts.project_id, req.projectId),
-							eq(elenchDrafts.status, "active"),
-						),
-					);
-				if ((count?.n ?? 0) >= MAX_ACTIVE_DRAFTS_PER_SCOPE) return { outcome: "limit" };
+				if (await scopeIsFull(tx, actor, req.projectId)) return { outcome: "limit" };
 				const [inserted] = await tx
 					.insert(elenchDrafts)
 					.values({
@@ -331,7 +392,7 @@ export async function discardDraft(input: DraftCasInput): Promise<DiscardDraftRe
 	return runDraftGate(
 		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
 		async (actor, tx): Promise<DiscardDraftResult> => {
-			const row = await lockDraft(tx, actor, req.conversationId);
+			const row = await lockAndSettle(tx, actor, req.conversationId);
 			if (row === null) return goneOf(tx, actor, req.conversationId);
 			if (!sameAnchor(row, req.projectId)) return { outcome: "invalid" };
 			if (row.status === "sending") {
@@ -365,7 +426,7 @@ export async function restoreDraft(input: DraftCasInput): Promise<RestoreDraftRe
 	return runDraftGate(
 		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
 		async (actor, tx): Promise<RestoreDraftResult> => {
-			const row = await lockDraft(tx, actor, req.conversationId);
+			const row = await lockAndSettle(tx, actor, req.conversationId);
 			if (row === null) return goneOf(tx, actor, req.conversationId);
 			if (!sameAnchor(row, req.projectId)) return { outcome: "invalid" };
 			if (row.status !== "discarded" || row.revision !== req.baseRevision) {
@@ -383,6 +444,193 @@ export async function restoreDraft(input: DraftCasInput): Promise<RestoreDraftRe
 				.returning({ revision: elenchDrafts.revision });
 			if (!updated) return conflictOf(tx, actor, row);
 			return { outcome: "saved", revision: updated.revision };
+		},
+	);
+}
+
+/**
+ * Claims a draft for one send (S1, §3.4): saves the box's content and moves the row to `sending`
+ * in one compare-and-set at `baseRevision` (0 = no row yet), with the attempt's token, turn id and
+ * kind, and clears the failed-send marker. A retry with the same token answers the claim again and
+ * writes nothing (S1r). A silent claim of another token is settled first (S5).
+ */
+export async function claimDraft(input: ClaimDraftInput): Promise<ClaimDraftResult> {
+	const parsed = claimDraftSchema.safeParse(input);
+	if (!parsed.success) return { outcome: "invalid" };
+	const req = parsed.data;
+	return runDraftGate(
+		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
+		async (actor, tx): Promise<ClaimDraftResult> => {
+			const locked = await lockDraft(tx, actor, req.conversationId);
+			if (locked !== null && !sameAnchor(locked, req.projectId)) return { outcome: "invalid" };
+			if (locked !== null && claimOf(locked)?.token === req.token) return claimedByYou(locked);
+			const row = locked === null ? null : await settleIfSilent(tx, actor, locked, req.token);
+			if (req.content.text.trim() === "") return { outcome: "empty" };
+
+			if (row === null && req.baseRevision > 0) return goneOf(tx, actor, req.conversationId);
+			if (row !== null && (row.status !== "active" || row.revision !== req.baseRevision)) {
+				return refuseRow(tx, actor, row);
+			}
+			const seen = await readThread(tx, actor, req.conversationId, null, "");
+			const live = seen.status === "listed" || seen.status === "unlisted";
+			if (live !== (req.kind === "later")) {
+				return {
+					outcome: "wrong-kind",
+					thread: { status: seen.status, firstTurnId: seen.firstTurnId, hasTurn: seen.hasTurn },
+				};
+			}
+			const claim = {
+				text: req.content.text,
+				mentions: req.content.mentions,
+				artifacts: req.content.artifacts,
+				cell_target: req.content.cellTarget,
+				status: SENDING,
+				claim_token: req.token,
+				claim_turn_id: req.turnId,
+				claim_kind: req.kind,
+				claimed_at: sql`now()`,
+				failed_send: null,
+				last_writer: req.tabId,
+				updated_at: sql`now()`,
+			};
+
+			if (row === null) {
+				if (await scopeIsFull(tx, actor, req.projectId)) return { outcome: "limit" };
+				const [inserted] = await tx
+					.insert(elenchDrafts)
+					.values({
+						...claim,
+						user_id: actor.userId,
+						org_id: actor.orgId,
+						project_id: req.projectId,
+						conversation_id: req.conversationId,
+						revision: 1,
+					})
+					.onConflictDoNothing({
+						target: [elenchDrafts.user_id, elenchDrafts.org_id, elenchDrafts.conversation_id],
+					})
+					.returning({ revision: elenchDrafts.revision });
+				if (inserted) {
+					return { outcome: "claimed-by-you", revision: inserted.revision, content: req.content };
+				}
+				// A concurrent write inserted the key first: answer what it holds.
+				const winner = await lockDraft(tx, actor, req.conversationId);
+				if (winner === null) return goneOf(tx, actor, req.conversationId);
+				if (claimOf(winner)?.token === req.token) return claimedByYou(winner);
+				return refuseRow(tx, actor, winner);
+			}
+
+			const [updated] = await tx
+				.update(elenchDrafts)
+				.set({ ...claim, revision: row.revision + 1 })
+				.where(casPredicate(actor, row, req.baseRevision, "active"))
+				.returning({ revision: elenchDrafts.revision });
+			if (!updated) return conflictOf(tx, actor, row);
+			return { outcome: "claimed-by-you", revision: updated.revision, content: req.content };
+		},
+	);
+}
+
+/** `claimed-by-you` for a row this request's token already holds (S1r): its revision and content. */
+function claimedByYou(row: ElenchDraft): ClaimDraftResult {
+	return {
+		outcome: "claimed-by-you",
+		revision: row.revision,
+		content: {
+			text: row.text,
+			mentions: row.mentions,
+			artifacts: row.artifacts,
+			cellTarget: row.cell_target,
+		},
+	};
+}
+
+/**
+ * The start of `consumeDraft` and `releaseClaim`: the locked row and its claim when the request's
+ * token is still that claim, or the answer when it is not (`gone`, or `not-claimed` with the row as
+ * it now stands). A row held by ANOTHER token may be settled by the lease first (S5); a row held by
+ * this token never is, whatever its age (R0).
+ */
+async function lockOwnClaim(
+	tx: Tx,
+	actor: Actor,
+	req: { projectId: string | null; conversationId: string; token: string },
+): Promise<{ row: ElenchDraft; claim: RowClaim } | { answer: DraftGone | DraftInvalid | DraftNotClaimed }> {
+	const row = await lockDraft(tx, actor, req.conversationId);
+	if (row === null) return { answer: await goneOf(tx, actor, req.conversationId) };
+	if (!sameAnchor(row, req.projectId)) return { answer: { outcome: "invalid" } };
+	const claim = claimOf(row);
+	if (claim === null || claim.token !== req.token) {
+		const settled = await settleIfSilent(tx, actor, row, req.token);
+		return { answer: await notClaimedOf(tx, actor, settled) };
+	}
+	return { row, claim };
+}
+
+/**
+ * Consumes a later turn's claim at the hand-off (S3): the chat route accepted the turn, so the
+ * draft's content is emptied, the claim cleared and `last_sent` recorded. Only this claim's token
+ * may consume it. A first turn's claim is not consumed here: it becomes a turn only inside the
+ * transaction that stores it (S2), so consuming it here would drop words no thread holds; that
+ * request is `invalid`.
+ */
+export async function consumeDraft(input: ConsumeDraftInput): Promise<ConsumeDraftResult> {
+	const parsed = consumeDraftSchema.safeParse(input);
+	if (!parsed.success) return { outcome: "invalid" };
+	const req = parsed.data;
+	return runDraftGate(
+		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
+		async (actor, tx): Promise<ConsumeDraftResult> => {
+			const own = await lockOwnClaim(tx, actor, req);
+			if ("answer" in own) return own.answer;
+			if (own.claim.kind !== "later") return { outcome: "invalid" };
+			const updated = await endClaim(tx, actor, own.row, own.claim, { end: "consume" });
+			if (updated === null) return notClaimedOf(tx, actor, own.row);
+			return { outcome: "consumed", revision: updated.revision };
+		},
+	);
+}
+
+/**
+ * Releases a claim with its text intact (S4): the row goes back to `active` with the failed-send
+ * marker. With `freshTurnId` (the route refused the turn as `turn-committed-different-text`) it is
+ * always a release under that fresh id, never a consume, and never `uncertain`. Without it, a later
+ * turn that the thread already stores with this text is consumed instead (S3, answered `consumed`),
+ * and one whose id the thread stores with ANOTHER text is released with no turn id, so the next
+ * claim mints a fresh one. `uncertain` is otherwise the caller's.
+ */
+export async function releaseClaim(input: ReleaseClaimInput): Promise<ReleaseClaimResult> {
+	const parsed = releaseClaimSchema.safeParse(input);
+	if (!parsed.success) return { outcome: "invalid" };
+	const req = parsed.data;
+	return runDraftGate(
+		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
+		async (actor, tx): Promise<ReleaseClaimResult> => {
+			const own = await lockOwnClaim(tx, actor, req);
+			if ("answer" in own) return own.answer;
+			const { row, claim } = own;
+			let turnId: string | null = req.freshTurnId ?? claim.turnId;
+			let uncertain = req.freshTurnId === undefined && req.uncertain === true;
+			if (req.freshTurnId === undefined && claim.kind === "later") {
+				const stored = await storedTurn(tx, actor, row.conversation_id, claim.turnId, row.text);
+				if (stored === "same") {
+					const consumed = await endClaim(tx, actor, row, claim, { end: "consume" });
+					if (consumed === null) return notClaimedOf(tx, actor, row);
+					return { outcome: "consumed", revision: consumed.revision };
+				}
+				if (stored === "different") {
+					turnId = null;
+					uncertain = false;
+				}
+			}
+			const released = await endClaim(tx, actor, row, claim, {
+				end: "release",
+				turnId,
+				error: req.error,
+				uncertain,
+			});
+			if (released === null) return notClaimedOf(tx, actor, row);
+			return { outcome: "released", row: toServerDraft(released) };
 		},
 	);
 }
