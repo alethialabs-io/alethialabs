@@ -882,6 +882,19 @@ async function refusalOf(res: Response) {
 	return refusalSchema.parse(await res.json());
 }
 
+/**
+ * The agent-identity route's own check (its `gate`) refused: its plain-text 404, which is NOT the
+ * shared body's typed `project-not-found` 404. Asserting the body, not only the status, is what tells
+ * the two apart: a gate refusal the shared body ignored falls through to the project check, whose
+ * 404 a status-only assertion cannot distinguish. Returns the body for further assertions.
+ */
+async function expectGateRefused(res: Response): Promise<string> {
+	expect(res.status).toBe(404);
+	const text = await res.text();
+	expect(text).toBe("Agent not found");
+	return text;
+}
+
 /** A stored thread, seeded. */
 function seedThread(messages: UIMessage[], over: Partial<FThread> = {}): FThread {
 	const t: FThread = {
@@ -1111,6 +1124,7 @@ describe("the support route, for a request that names a thread (slice 8)", () =>
 		seedSupportThread([]);
 		const res = await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }, { orgId: ORG_C }));
 		expect(res.status).toBe(403);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "org-forbidden" });
 		expect(world.reserveCalls).toBe(0);
 		expect(holdList()).toHaveLength(0);
 	});
@@ -1254,8 +1268,7 @@ describe("the agent-identity route (slice 8)", () => {
 
 	it("another org's agent is 404 before the hold, and its persona never reaches the response", async () => {
 		const res = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }), AGENT_B);
-		expect(res.status).toBe(404);
-		expect(await res.text()).not.toContain(PERSONA_B);
+		expect(await expectGateRefused(res)).not.toContain(PERSONA_B);
 		expect(world.reserveCalls).toBe(0);
 		expect(holdList()).toHaveLength(0);
 		expect(model.prompts).toHaveLength(0);
@@ -1263,7 +1276,7 @@ describe("the agent-identity route (slice 8)", () => {
 
 	it("a non-uuid agent id is the same 404", async () => {
 		const res = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }), "agent-1");
-		expect(res.status).toBe(404);
+		await expectGateRefused(res);
 		expect(world.reserveCalls).toBe(0);
 	});
 
@@ -1271,7 +1284,7 @@ describe("the agent-identity route (slice 8)", () => {
 		world.agents.set(AGENT, { id: AGENT, user_id: OTHER_USER, org_id: ORG_A, project_id: null, persona: PERSONA, mission: "m", tool_scope: [] });
 		seedThread([], { billingOrgId: ORG_B });
 		const res = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
-		expect(res.status).toBe(404);
+		await expectGateRefused(res);
 		expect(world.reserveCalls).toBe(0);
 	});
 
@@ -1299,6 +1312,7 @@ describe("the agent-identity route (slice 8)", () => {
 	it("a request without orgId or turn is 409 client-outdated; one without a threadId is a 400", async () => {
 		const outdated = await postAgent(JSON.stringify({ messages: [userMsg("u1", "hi")], threadId: THREAD }));
 		expect(outdated.status).toBe(409);
+		expect(await refusalOf(outdated)).toMatchObject({ refusal: "client-outdated" });
 		const noThread = await postAgent(JSON.stringify({ messages: [userMsg("u1", "hi")], orgId: ORG_A, turn: { trigger: "submit-message", turnId: "u1", baseRevision: 1 } }));
 		expect(noThread.status).toBe(400);
 		expect(world.reserveCalls).toBe(0);
@@ -1399,6 +1413,7 @@ describe("the shared route body's remaining arms, through the slice 8 routes", (
 		expect(world.reserveCalls).toBe(0);
 		const agent = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
 		expect(agent.status).toBe(403);
+		expect(await refusalOf(agent)).toMatchObject({ refusal: "org-forbidden" });
 		expect(world.reserveCalls).toBe(0);
 	});
 
@@ -1425,7 +1440,7 @@ describe("the shared route body's remaining arms, through the slice 8 routes", (
 		// An identity that is only ORG_A's (another user's row) is not readable under the pinned ORG_C.
 		world.agents.set(AGENT, { id: AGENT, user_id: OTHER_USER, org_id: ORG_A, project_id: null, persona: PERSONA, mission: "m", tool_scope: [] });
 		const again = await postAgent(body([userMsg("u1", "hi"), { id: "a", role: "assistant", parts: [{ type: "text", text: "ok" }] }, userMsg("u2", "more")], { turnId: "u2", baseRevision: 3 }));
-		expect(again.status).toBe(404);
+		await expectGateRefused(again);
 		expect(holdList()).toHaveLength(1);
 	});
 
