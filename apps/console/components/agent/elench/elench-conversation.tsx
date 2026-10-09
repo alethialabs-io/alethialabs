@@ -188,13 +188,19 @@ function subscribeNothing(): () => void {
 	return () => undefined;
 }
 
-/** The scope the tab's drafts store shows, re-rendering when it changes (SELECT waits for it). */
-function useDraftsScope(tab: DraftsTab | null): DraftScope | null {
+/**
+ * The scope the tab's drafts store shows, once its first list has settled (SELECT waits for both:
+ * D26 restores a reloaded tab's cached words only into a key the store does not hold yet).
+ */
+function useListedScope(tab: DraftsTab | null): DraftScope | null {
 	const subscribe = useCallback(
 		(onChange: () => void) => (tab === null ? subscribeNothing() : tab.store.view.subscribe(onChange)),
 		[tab],
 	);
-	const snapshot = useCallback(() => (tab === null ? null : tab.store.view.getState().drafts.scope), [tab]);
+	const snapshot = useCallback(() => {
+		const scope = tab?.store.view.getState().drafts.scope ?? null;
+		return tab !== null && scope !== null && tab.hasListed(scope) ? scope : null;
+	}, [tab]);
 	return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
@@ -382,7 +388,7 @@ export function ElenchConversation({
 	);
 	const entry = useDraftEntry(binding);
 	const send = useElenchSend(binding, status);
-	const draftsScope = useDraftsScope(tab);
+	const draftsScope = useListedScope(tab);
 
 	// The words of a refused send the store does not own, put back once the reloaded transcript (and
 	// its composer) has mounted (ADR 0003 §9.3's composer path).
@@ -559,6 +565,22 @@ export function ElenchConversation({
 		tab.store.dispatch({ type: "SELECT", key, thread: stored ? "listed" : "none" });
 		selecting.current = null;
 	}, [tab, key, draftsScope, activeId]);
+
+	// D18: when the store forks a send's words into a new conversation, the screen follows them. Only
+	// a move of the store's own (a selection here sets it to the conversation already on screen).
+	const scopeOfKey = key === null ? null : scopeId(key);
+	useEffect(() => {
+		if (tab === null || scopeOfKey === null) return;
+		let before = tab.store.view.getState().drafts.activeKey[scopeOfKey];
+		return tab.store.view.subscribe((s) => {
+			const now = s.drafts.activeKey[scopeOfKey];
+			if (now === before) return;
+			before = now;
+			if (now === undefined || now === useElenchStore.getState().conversationId) return;
+			newChat();
+			useElenchStore.getState().followConversation(now);
+		});
+	}, [tab, scopeOfKey, newChat]);
 
 	// ── The hand-off of a store-owned turn (D9c, D9d) ──────────────────────────────────────────
 	const sending = entry?.sending ?? null;

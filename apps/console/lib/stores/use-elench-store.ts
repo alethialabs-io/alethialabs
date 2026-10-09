@@ -209,6 +209,11 @@ interface ElenchState {
 	 * persisted until its draft is saved or its first message sent).
 	 */
 	newChat: () => void;
+	/**
+	 * Show `id` as the conversation on screen, right after `newChat`: the drafts store moved the
+	 * words of a send it could not deliver into this new conversation (ADR 0001 D18).
+	 */
+	followConversation: (id: string) => void;
 	/** Stage a prompt to auto-send once into the next conversation. */
 	setSeedPrompt: (prompt: string | null) => void;
 	/** Record the resources @-referenced in the message about to be sent. */
@@ -328,6 +333,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 			epoch: s.epoch + 1,
 			mainView: "chat" as const,
 		})),
+	followConversation: (id) => set({ conversationId: id }),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 	setPageOrgId: (pageOrgId) => set({ pageOrgId }),

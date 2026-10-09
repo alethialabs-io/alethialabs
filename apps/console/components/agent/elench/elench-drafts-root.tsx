@@ -12,8 +12,8 @@
 //
 // What it runs, mounted once in `AppShell`:
 // - `LOAD` of the page's scope (D26), at first mount and on every scope change (D23);
-// - `PAGE_ORG(null)` at once on Back/Forward (`popstate`, D29), and a fresh list once the page has
-//   rendered, whose answer names the page's org again;
+// - `PAGE_ORG(null)` at once on Back/Forward (`popstate`, D29), and `PAGE_ORG` of the page's org
+//   once each page has rendered;
 // - `VIEWER_CHANGE` from `useViewer()` (D25), so a session that ends any way at all clears the tab;
 // - the window and document listeners (focus, online, visibility, pagehide) and whether the surface
 //   is open (D12's `mounted`, the 60 s poll).
@@ -22,7 +22,7 @@
 // switch that remounts the shell keeps every word in memory. A test passes its own `tab`.
 
 import { usePathname } from "next/navigation";
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import {
 	claimDraft,
 	consumeDraft,
@@ -66,13 +66,42 @@ export interface DraftsTab {
 	store: DraftsStoreHandle;
 	/** Adds a listener for the store's UI effects; returns its removal. */
 	subscribeUi(listener: DraftUiListener): () => void;
+	/**
+	 * True once a `listDrafts` of `scope` has settled in this tab. Until then a conversation of the
+	 * scope selects no key: D26 restores a reloaded tab's cached words (and its claim's token) only
+	 * into a key the store does not hold yet, so a selection made first would lose them.
+	 */
+	hasListed(scope: DraftScope): boolean;
 }
 
 /** Creates a tab's drafts over `deps`; the UI effects go to whichever conversation listens. */
 export function createDraftsTab(deps: Omit<DraftsStoreDeps, "ui">): DraftsTab {
 	const listeners = new Set<DraftUiListener>();
+	const listed = new Set<string>();
+	const transport: DraftsTransport = {
+		...deps.transport,
+		listDrafts: (input) => {
+			// The page's org is the answer's; a refusal or a rejection settles the scope all the same,
+			// so a tab whose lists fail can still type (its words then stay in memory and the cache).
+			const settled = (orgId: string | null): void => {
+				const org = orgId ?? store.view.getState().drafts.scope?.orgId ?? null;
+				if (org !== null) listed.add(scopeId({ orgId: org, projectId: input.projectId }));
+			};
+			return deps.transport.listDrafts(input).then(
+				(result) => {
+					settled(result.outcome === "ok" ? result.orgId : null);
+					return result;
+				},
+				(e: unknown) => {
+					settled(null);
+					throw e;
+				},
+			);
+		},
+	};
 	const store = createDraftsStore({
 		...deps,
+		transport,
 		ui: (effect) => {
 			for (const listener of [...listeners]) listener(effect);
 		},
@@ -85,6 +114,7 @@ export function createDraftsTab(deps: Omit<DraftsStoreDeps, "ui">): DraftsTab {
 				listeners.delete(listener);
 			};
 		},
+		hasListed: (scope) => listed.has(scopeId(scope)),
 	};
 }
 
@@ -131,8 +161,6 @@ export function ElenchDraftsRoot({
 	const open = useElenchStore((s) => s.open);
 	const projectId = useElenchStore((s) => (s.ctx.kind === "project" ? s.ctx.projectId : null));
 	const pathname = usePathname();
-	// Set by Back/Forward, cleared once the page it lands on has asked for its org again.
-	const popped = useRef(false);
 
 	// The store exists once a viewer is known (never on the server); a later viewer is D25.
 	useEffect(() => {
@@ -159,25 +187,23 @@ export function ElenchDraftsRoot({
 		tab.store.load(scope);
 	}, [tab, pageOrgId, projectId]);
 
-	// D29: Back/Forward may land on another org's page, so nothing is POSTed until a list names it.
+	// D29: Back/Forward may land on another org's page, so nothing is POSTed until the page it lands
+	// on has rendered and named its org.
 	useEffect(() => {
 		if (tab === null) return;
-		const onPop = (): void => {
-			popped.current = true;
-			tab.store.dispatch({ type: "PAGE_ORG", orgId: null });
-		};
+		const onPop = (): void => tab.store.dispatch({ type: "PAGE_ORG", orgId: null });
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);
 	}, [tab]);
 
-	// …and once the page it lands on has rendered, a list of that page's scope answers its org. A
-	// scope change already listed (the LOAD above); a page of the same scope lists here.
+	// …which it does here, once per rendered page: `pageOrgId` is the server's `currentActor()` org of
+	// the page on screen. It resumes that org's held writes, and a key blocked for its old address
+	// once the user has followed the link to the new one (D24).
 	useEffect(() => {
-		if (tab === null || pageOrgId === null || !popped.current) return;
-		popped.current = false;
-		const drafts = tab.store.view.getState().drafts;
-		if (drafts.pageOrg !== null || drafts.scope === null) return;
-		tab.store.load(drafts.scope);
+		if (tab === null || pageOrgId === null) return;
+		const scope = tab.store.view.getState().drafts.scope;
+		if (scope === null || scope.orgId !== pageOrgId) return;
+		tab.store.dispatch({ type: "PAGE_ORG", orgId: pageOrgId });
 	}, [tab, pageOrgId, projectId, pathname]);
 
 	return <DraftsTabContext.Provider value={tab}>{children}</DraftsTabContext.Provider>;
