@@ -1206,10 +1206,13 @@ END $$;
 -- What keeps them safe:
 --   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so
 --     no caller can point either function at another user. Unset → NULL → no row matches.
---   * The only argument is a conversation id, and the only predicate besides the owner pin is
---     equality on it: definer rights widen the ORG, never the USER.
+--   * The only argument is a conversation id, and the only predicates besides the owner pin are
+--     equality on it and, in `count_…`, a constant filter on the row's own status: definer rights
+--     widen the ORG, never the USER.
 --   * `count_…` returns a number and nothing else, so it reveals no content, and only the caller's
---     own count.
+--     own count. It skips `status = 'discarded'` (#5855): the delete confirm it feeds says "your
+--     unsent draft", and a discarded draft is not unsent. The purge does NOT skip them — deleting the
+--     thread removes the caller's drafts of it in every status.
 --   * `SET row_security = off`, as derive_component_org_id and project_environments_require_one_
 --     default above: for an owner that bypasses the policy it is a no-op, but if these functions are
 --     ever owned by a role that IS subject to the policy — not the table owner, or the table gains
@@ -1249,6 +1252,7 @@ AS $$
     FROM public.elench_drafts
    WHERE user_id = current_setting('app.current_owner', true)::uuid
      AND conversation_id = p_conversation
+     AND status <> 'discarded'
 $$;
 
 REVOKE ALL ON FUNCTION public.purge_elench_drafts_of_conversation(uuid) FROM PUBLIC;
