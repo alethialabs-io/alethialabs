@@ -23,9 +23,11 @@ import "server-only";
 // stream's own `onError`, and as C7 from the pre-stream `catch`. A lost finalize settles nothing.
 //
 // TENANCY. `userId` is the verified session's, never the body's. `orgId` is validated as a uuid before
-// `resolveTurnActor` (whose enterprise resolver casts it `::uuid`), the thread's pin wins over it, and
-// from the org gate on everything runs inside `runWithActor`, so the route's own check, the tools and
-// every nested `currentActor()` resolve the billing org, not the session's.
+// `resolveTurnActor` (whose enterprise resolver casts it `::uuid`), and the thread's pin wins over it.
+// After the org gate, the route's own check, `reserveTurn`, `prepare`, the model stream and its tools
+// run inside `runWithActor`, so every nested `currentActor()` resolves the billing org, not the
+// session's. The project check (`projectVisible`) runs between them, outside `runWithActor`: it is
+// handed the resolved actor as an argument and reads no ambient one.
 
 import {
 	type AsyncIterableStream,
