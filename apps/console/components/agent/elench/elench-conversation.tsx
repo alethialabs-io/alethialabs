@@ -59,6 +59,7 @@ import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
 } from "./elench-empty-landing";
+import { type DraftConversationFacts, DraftConversationContext } from "./draft-status/conversation";
 import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { ElenchModal } from "./elench-modal";
 import { ElenchPanel } from "./elench-panel";
@@ -68,6 +69,7 @@ import {
 	useDraftEntry,
 	useElenchSend,
 } from "./use-elench-send";
+import type { ElenchThreadsLoadError } from "./use-elench-threads";
 import {
 	ORG_SUGGESTIONS,
 	PROJECT_SUGGESTIONS,
@@ -202,6 +204,10 @@ export interface ElenchThreadApi {
 	/** Persist an empty conversation (an artifact opened in a new chat); returns the new thread. */
 	startThread: (title: string) => Promise<AgentThread>;
 	deleteThread: (id: string) => void;
+	/** Why listing the conversations or loading one failed, or null (G10). */
+	loadError?: ElenchThreadsLoadError | null;
+	/** Tries again what `loadError` names. */
+	retryLoad?: () => void;
 }
 
 /**
@@ -230,6 +236,8 @@ export function ElenchConversation({
 	newChat,
 	startThread,
 	deleteThread,
+	loadError = null,
+	retryLoad,
 }: ElenchThreadApi) {
 	const ctx = useElenchStore((s) => s.ctx);
 	const view = useElenchStore((s) => s.view);
@@ -730,6 +738,25 @@ export function ElenchConversation({
 		setOrgNotReady(!send.submit());
 	}, [send]);
 
+	// What the draft status reads from this conversation (slice 11): D15 names a message another tab
+	// or device sent from the transcript.
+	const sentText = useCallback(
+		(turnId: string): string | null => {
+			const turn = messages.find((m) => m.role === "user" && m.id === turnId);
+			return turn === undefined ? null : turn.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("");
+		},
+		[messages],
+	);
+	// G10: a failed list or load renders the draft, and the bar says what failed, with a Retry.
+	const draftFacts = useMemo<DraftConversationFacts>(
+		() => ({
+			loadError:
+				loadError === null || retryLoad === undefined ? null : { step: loadError.step, retry: retryLoad },
+			sentText,
+		}),
+		[loadError, retryLoad, sentText],
+	);
+
 	// The transcript's Retry, chosen by what is last (§9.1); undefined when there is none.
 	const retry = retryKind(messages);
 	const retryTurn =
@@ -970,5 +997,9 @@ export function ElenchConversation({
 			</ElenchPanel>
 		);
 
-	return <ElenchDraftContext.Provider value={binding}>{chrome}</ElenchDraftContext.Provider>;
+	return (
+		<ElenchDraftContext.Provider value={binding}>
+			<DraftConversationContext.Provider value={draftFacts}>{chrome}</DraftConversationContext.Provider>
+		</ElenchDraftContext.Provider>
+	);
 }
