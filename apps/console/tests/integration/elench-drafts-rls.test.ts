@@ -9,7 +9,8 @@
 //   2. a member never reads, edits, deletes or writes as another member's draft in one org;
 //   3. the org wall holds for the user's OWN drafts too;
 //   4. one conversation in two orgs is two rows, both insertable (§3.2);
-//   5. the purge and the count reach the caller's rows in every org and never another user's;
+//   5. the purge and the count reach the caller's rows in every org and never another user's, and
+//      the count skips a discarded draft (which is not unsent) while the purge still removes it;
 //   6. EXECUTE is not PUBLIC's: a role with no grant cannot call either function;
 //   7. A11: with the policy FORCEd under a non-BYPASSRLS owner, the purge RAISES instead of
 //      silently purging only the current org's rows.
@@ -320,6 +321,31 @@ describeIfDb("elench_drafts: RLS and the owner-pinned functions (ADR 0001 slice 
 			expect(await rowsOf(conversation)).toEqual([`${MATE}/${ORG_A}`]);
 			expect(await callAs("purge", USER, ORG_B, conversation)).toBe(0);
 			expect(await callAs("count", MATE, ORG_A, conversation)).toBe(1);
+		},
+	);
+
+	it.skipIf(!APP_ROLE_DISTINCT)(
+		"the count skips a discarded draft in another org, and the purge still removes it (#5855)",
+		async () => {
+			const conversation = randomUUID();
+			await insertAs(USER, ORG_A, draft(USER, ORG_A, conversation));
+			// The caller's draft of the same conversation in a SECOND org, discarded: not unsent.
+			await insertAs(USER, ORG_B, {
+				...draft(USER, ORG_B, conversation),
+				status: "discarded",
+				discarded_at: new Date(),
+			});
+			expect(await rowsOf(conversation)).toEqual(
+				[`${USER}/${ORG_A}`, `${USER}/${ORG_B}`].sort(),
+			);
+
+			// From either org's scope, only the active draft in org A is counted.
+			expect(await callAs("count", USER, ORG_A, conversation)).toBe(1);
+			expect(await callAs("count", USER, ORG_B, conversation)).toBe(1);
+
+			// Deleting the thread still removes the discarded row along with the active one.
+			expect(await callAs("purge", USER, ORG_A, conversation)).toBe(2);
+			expect(await rowsOf(conversation)).toEqual([]);
 		},
 	);
 
