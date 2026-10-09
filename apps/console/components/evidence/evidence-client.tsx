@@ -39,8 +39,8 @@ export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
 	const filters = useEvidenceFilters((s) => s.filters);
 	const reset = useEvidenceFilters((s) => s.reset);
-	useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
-	const { data: result, isPlaceholderData, isError, refetch } = useEvidenceQuery();
+	const urlRead = useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
+	const { data: result, isPlaceholderData, isError, refetch } = useEvidenceQuery(urlRead);
 
 	// Row interaction.
 	const [drawerId, setDrawerId] = useState<string | null>(null);
