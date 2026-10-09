@@ -127,8 +127,14 @@ export function ApprovalCard({
 				undefined;
 			const res =
 				op.operation === "plan_project"
-					? await tryPlanProject(op.projectId, undefined, envId)
-					: await tryProvisionProject(op.projectId, op.planJobId, undefined, envId);
+					? await tryPlanProject(op.projectId, undefined, envId, approvalKey)
+					: await tryProvisionProject(
+							op.projectId,
+							op.planJobId,
+							undefined,
+							envId,
+							approvalKey,
+						);
 			if (!res.ok) {
 				// The gate's own sentence (#5445) — thrown, a production build reduced it to a digest.
 				setPhase("denied");
