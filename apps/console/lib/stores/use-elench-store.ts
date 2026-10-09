@@ -97,7 +97,11 @@ function sameCtx(a: ElenchCtx, b: ElenchCtxRequest): boolean {
 interface ElenchState {
 	/** Whether the surface is on screen at all. */
 	open: boolean;
-	/** Modal (fullscreen) vs panel (docked drawer). Flipping never remounts the chat. */
+	/**
+	 * Modal (fullscreen) vs panel (docked drawer). Flipping keeps the transcript (the one `useChat`
+	 * instance of the conversation); it DOES remount the composer, whose words live in the drafts
+	 * store (ADR 0001), so a flip loses none of them.
+	 */
 	view: ElenchView;
 	/** Org vs project anchor. Selects transport + tools. */
 	ctx: ElenchCtx;
@@ -112,6 +116,13 @@ interface ElenchState {
 	deepReasoning: boolean;
 	/** Active org thread id; null = a fresh (not-yet-persisted) conversation. */
 	threadId: string | null;
+	/**
+	 * The conversation on screen (ADR 0001 §2): minted here by the client at New chat and whenever
+	 * the context changes, and the thread id itself once a thread is selected or resumed. From the
+	 * first send it IS the thread's id (`startConversation` stores the thread under it), and it keys
+	 * the conversation's draft.
+	 */
+	conversationId: string;
 	/**
 	 * Bumped on every "new chat" so the conversation key changes even when
 	 * `threadId` stays null (project conversations are ephemeral, keyed by epoch).
@@ -187,12 +198,16 @@ interface ElenchState {
 	 */
 	resumeThread: (id: string) => void;
 	/**
-	 * Attach a lazily-created thread id WITHOUT bumping `epoch` — used on the first send of an
-	 * ephemeral conversation so the new id rides subsequent requests while the in-flight chat
-	 * (and its just-sent message) survives intact.
+	 * Attach a lazily-created thread id WITHOUT bumping `epoch` — used once a conversation's first
+	 * turn is stored, so the id rides subsequent requests while the in-flight chat (and its
+	 * just-sent message) survives intact. The id becomes the conversation id too: it is already,
+	 * for a thread `startConversation` stored under it.
 	 */
 	attachThread: (id: string) => void;
-	/** Start a fresh conversation (ephemeral — nothing is persisted until the first send). */
+	/**
+	 * Start a fresh conversation under a newly minted conversation id (ephemeral: nothing is
+	 * persisted until its draft is saved or its first message sent).
+	 */
 	newChat: () => void;
 	/** Stage a prompt to auto-send once into the next conversation. */
 	setSeedPrompt: (prompt: string | null) => void;
@@ -200,6 +215,14 @@ interface ElenchState {
 	setPendingMentions: (mentions: Mention[]) => void;
 	/** Record the page's org (the `[org]` layout's `currentActor().orgId`). */
 	setPageOrgId: (orgId: string | null) => void;
+}
+
+/**
+ * A fresh conversation id (ADR 0001 §2): 122 random bits, never put in a URL, a log line or an
+ * analytics event before its first send commits (ADR 0001 Q1's security note).
+ */
+function mintConversationId(): string {
+	return crypto.randomUUID();
 }
 
 /**
@@ -217,6 +240,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	model: AI_MODELS[0].id,
 	deepReasoning: false,
 	threadId: null,
+	conversationId: mintConversationId(),
 	epoch: 0,
 	seedPrompt: null,
 	pendingMentions: [],
@@ -236,6 +260,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 			view: "panel",
 			ctx,
 			threadId: fresh ? null : cur.threadId,
+			conversationId: fresh ? mintConversationId() : cur.conversationId,
 			epoch: fresh ? cur.epoch + 1 : cur.epoch,
 			// Opening from closed lands on the conversation (the initial resume no longer resets
 			// the view — see `resumeThread`); an already-open surface keeps what it shows.
@@ -253,6 +278,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 			view: "modal",
 			ctx,
 			threadId: fresh ? null : cur.threadId,
+			conversationId: fresh ? mintConversationId() : cur.conversationId,
 			epoch: fresh ? cur.epoch + 1 : cur.epoch,
 			// Opening from closed lands on the conversation (the initial resume no longer resets
 			// the view — see `resumeThread`); an already-open surface keeps what it shows.
@@ -286,13 +312,19 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	setMainView: (mainView) => set({ mainView }),
 	// Selecting a thread / starting a new chat returns to the conversation view.
 	selectThread: (id) =>
-		set((s) => ({ threadId: id, epoch: s.epoch + 1, mainView: "chat" as const })),
+		set((s) => ({
+			threadId: id,
+			conversationId: id ?? mintConversationId(),
+			epoch: s.epoch + 1,
+			mainView: "chat" as const,
+		})),
 	// The initial resume: same lineage bump as `selectThread`, but the view is left as it is.
-	resumeThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
-	attachThread: (id) => set({ threadId: id }),
+	resumeThread: (id) => set((s) => ({ threadId: id, conversationId: id, epoch: s.epoch + 1 })),
+	attachThread: (id) => set({ threadId: id, conversationId: id }),
 	newChat: () =>
 		set((s) => ({
 			threadId: null,
+			conversationId: mintConversationId(),
 			epoch: s.epoch + 1,
 			mainView: "chat" as const,
 		})),

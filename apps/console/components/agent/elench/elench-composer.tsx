@@ -11,31 +11,30 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import {
-	$getRoot,
-	$nodesOfType,
+	BLUR_COMMAND,
 	COMMAND_PRIORITY_LOW,
 	type EditorState,
 	KEY_ENTER_COMMAND,
+	TextNode,
 } from "lexical";
 import { ArrowUp, Square } from "lucide-react";
-import {
-	type Ref,
-	useCallback,
-	useEffect,
-	useImperativeHandle,
-	useRef,
-	useState,
-} from "react";
-import type { Mention } from "@/lib/ai/mentions";
+import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { type DraftEditorContent, normalizeDraftText } from "@/lib/elench/draft-content";
 import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+import { EMPTY_CONTENT, shownContent } from "@/lib/stores/elench-drafts/reducer-drafting";
+import { appendContent } from "@/lib/stores/elench-drafts/reducer-sending";
+import type { DraftEntry } from "@/lib/stores/elench-drafts/types";
 import { cn } from "@repo/ui/utils";
+import { DraftBarSlot, DraftFooterSlot } from "./draft-status/slots";
+import { contentToEditor, editorToContent } from "./draft-editor";
 import {
 	ElenchAskMode,
 	ElenchDeepReasoning,
 	ElenchModelButton,
 } from "./elench-controls";
-import { $isMentionNode, MentionNode } from "./mention-node";
+import { MentionNode } from "./mention-node";
 import { MentionTypeaheadPlugin } from "./mention-typeahead";
+import { type ElenchDraftBinding, useDraftEntry, useElenchDraft, useElenchSend } from "./use-elench-send";
 
 /** Stable Lexical config — registers the mention pill node; a render error rethrows to the boundary. */
 const EDITOR_CONFIG = {
@@ -47,16 +46,23 @@ const EDITOR_CONFIG = {
 	},
 };
 
+/** The tag of an update that reseeds the editor from the store: it is not the user's edit. */
+const RESEED_TAG = "elench-draft-reseed";
+
 /**
- * The Elench composer — a Lexical plain-text editor with Discord-style `@mention` pills. Typing
- * `@` opens a scrollable typeahead ({@link MentionTypeaheadPlugin}); picking a resource drops an
- * atomic pill (one Backspace removes it). On send, the editor state is read into plain text +
- * the resolved `{id, type, label}` references and handed to `onSend` — the same contract the
- * previous textarea used, so callers are unchanged. Ask-mode pill on the left; model settings
- * (org) + send on the right. Used in the modal hero and (via the shared chat) the docked composer.
+ * The Elench composer — a Lexical plain-text editor with Discord-style `@mention` pills, and a
+ * VIEW of the conversation's draft in the drafts store (ADR 0001 §7.1): it seeds from the draft
+ * when it mounts, reseeds whenever the draft's `epoch` moves (the box was replaced from outside,
+ * I6), and reports every edit back as `EDIT` stamped with the epoch it was seeded at, so a stale
+ * edit is dropped by the store. Nothing typed lives only here, so a minimize, a maximize, the
+ * landing giving way to the transcript, a close or a reload loses none of it.
+ *
+ * Enter is `SUBMIT` (D9 / D10): the store claims exactly what the box shows, trims it and sends it,
+ * and a refused or failed send puts the words back here. The box is read-only while the claim is
+ * pending (one round trip) and while another tab or device is sending the same draft (D30).
+ * Rendered inside a conversation, which provides the draft; without one it is read-only.
  */
 export function ElenchComposer(props: {
-	onSend: ElenchComposerSend;
 	/** Abort the in-flight stream — wired to the Square button while generating. */
 	onStop?: () => void;
 	placeholder?: string;
@@ -64,138 +70,150 @@ export function ElenchComposer(props: {
 	showModel?: boolean;
 	status?: ChatStatus;
 	autoFocus?: boolean;
-	/** Lets the caller submit the editor's CURRENT content — the error card's Retry. */
+	/** Lets the caller drive the box: Enter (`submit`), and words put back (`restore`). */
 	handleRef?: Ref<ElenchComposerHandle>;
-	/**
-	 * A serialized editor state to start from, read ONCE at mount (a later change is ignored: a
-	 * mounted composer already holds what the user typed). Elench passes a failed first turn's
-	 * state here, so a composer remounted by a minimize or maximize shows what Retry would send.
-	 */
-	seed?: string | null;
 }) {
-	// Frozen at mount — `initialConfig` is read once by LexicalComposer anyway.
-	const [seed] = useState(() => props.seed ?? null);
+	const draft = useElenchDraft();
+	const entry = useDraftEntry(draft);
+	// Read once: LexicalComposer reads `initialConfig` at mount; later content arrives by reseeding.
+	const [seed] = useState(() => (entry === null ? EMPTY_CONTENT : shownContent(entry)));
 	return (
 		<LexicalComposer
-			initialConfig={seed ? { ...EDITOR_CONFIG, editorState: seed } : EDITOR_CONFIG}
+			initialConfig={{ ...EDITOR_CONFIG, editorState: contentToEditor(seed) }}
 		>
-			<ComposerBody {...props} />
+			<ComposerBody {...props} draft={draft} entry={entry} seededAt={entry?.epoch ?? null} />
 		</LexicalComposer>
 	);
 }
 
-/**
- * What the composer hands a message to. Resolving `false` means the message did NOT go out (its
- * conversation could not be started, say): the composer then keeps the text instead of clearing
- * it, so a failed send never loses what the user typed. Anything else clears the editor.
- */
-export type ElenchComposerSend = (
-	text: string,
-	mentions: Mention[],
-	/** The editor's serialized state at send time, so a send that fails can be put back as typed. */
-	state: string,
-) => void | boolean | Promise<boolean>;
-
-/** What a {@link ElenchComposerHandle.submit} did: nothing to send, sent, or not sent (kept). */
-export type ElenchComposerSubmit = "empty" | "sent" | "not-sent";
-
-/**
- * The composer, driven from outside. `submit` is EXACTLY what Enter does — read the editor's
- * current text and mentions, send them, clear only when the send went out — so a Retry sends
- * what the user is looking at, edits included, and never discards it.
- */
+/** The composer, driven from outside. */
 export interface ElenchComposerHandle {
-	submit: () => Promise<ElenchComposerSubmit>;
-	/** Replace the editor's content with a serialized state (one `ElenchComposerSend` handed out). */
-	restore: (state: string) => void;
+	/** EXACTLY what Enter does: `SUBMIT` of what the box shows. False when there is no draft. */
+	submit: () => boolean;
+	/**
+	 * Puts words back into the box after what it holds, as if typed there, so the store saves them
+	 * like any edit. Only ADR 0003 slice 6's composer path calls it, for a refused send the drafts
+	 * store does not own; a store-owned send's words come back through the store (D11r, D10f).
+	 */
+	restore: (content: DraftEditorContent) => void;
 }
 
-/** Inner body — lives inside the Lexical context so send/Enter can read + clear the editor. */
+/** True when the box may be typed into: a draft exists, no claim is pending, no other tab sends it. */
+function editableEntry(entry: DraftEntry | null): boolean {
+	return entry !== null && entry.claiming === null && entry.conflict?.kind !== "claimed";
+}
+
+/** True when two editor contents are the same text and the same pills at the same places. */
+function sameEditorContent(a: DraftEditorContent, b: DraftEditorContent): boolean {
+	return (
+		a.text === b.text &&
+		a.mentions.length === b.mentions.length &&
+		a.mentions.every(
+			(m, i) =>
+				m.id === b.mentions[i].id &&
+				m.type === b.mentions[i].type &&
+				m.label === b.mentions[i].label &&
+				m.start === b.mentions[i].start &&
+				m.end === b.mentions[i].end,
+		)
+	);
+}
+
+/** Inner body — lives inside the Lexical context so it can read, reseed and lock the editor. */
 function ComposerBody({
-	onSend,
 	onStop,
 	placeholder = "Ask Elench, or type @ to tag a resource",
 	showModel = false,
 	status,
 	autoFocus = false,
 	handleRef,
+	draft,
+	entry,
+	seededAt,
 }: {
-	onSend: ElenchComposerSend;
 	onStop?: () => void;
 	placeholder?: string;
 	showModel?: boolean;
 	status?: ChatStatus;
 	autoFocus?: boolean;
 	handleRef?: Ref<ElenchComposerHandle>;
+	draft: ElenchDraftBinding | null;
+	entry: DraftEntry | null;
+	seededAt: number | null;
 }) {
 	const [editor] = useLexicalComposerContext();
-	const [empty, setEmpty] = useState(true);
-	// Over the per-message limit the routes and `createThread` enforce: Send is disabled and the
-	// reason is shown under the editor, and the text STAYS so the user can shorten it. Without
-	// this an over-limit first message threw inside `startThread` and vanished with no word.
-	const [tooLong, setTooLong] = useState(false);
-	// A send in progress (its conversation is being created): a second Enter must not send twice.
-	const sendingRef = useRef(false);
+	const send = useElenchSend(draft, status);
+	const shown = entry === null ? EMPTY_CONTENT : shownContent(entry);
+	const empty = shown.text.trim().length === 0;
+	// The ONE string capped everywhere (§4.1, R6): the box as typed, untrimmed. A message the box
+	// allows always saves and is never refused by the routes' 413; trimming at send only shortens it.
+	const tooLong = isMessageTooLong(shown.text);
+	const editable = editableEntry(entry);
 	const pending = status === "submitted" || status === "streaming";
 	/** The composer box — the mention menu portals into it and opens above it. */
 	const boxRef = useRef<HTMLDivElement>(null);
+	// The epoch the editor was last seeded at (I6): every EDIT is stamped with it, so an edit made
+	// against content the store has since replaced is dropped instead of overwriting it.
+	const epochRef = useRef<number | null>(seededAt);
+	// What the editor last held as the store knows it, so a reseed or a selection move is no edit.
+	const lastRef = useRef<DraftEditorContent>({ text: shown.text, mentions: shown.mentions });
 
 	useEffect(() => {
 		if (autoFocus) editor.focus();
 	}, [autoFocus, editor]);
 
-	/** Read the editor → plain text + resolved mentions, send, then clear — unless the send
-	 * reports it did not go out, in which case the text stays for the user to retry. Enter, the
-	 * Send button and the caller's {@link ElenchComposerHandle} all come through here. */
-	const submit = useCallback(async (): Promise<ElenchComposerSubmit> => {
-		// Busy is "not sent": the text stays, and the caller must not treat it as empty.
-		if (pending || sendingRef.current) return "not-sent";
-		let text = "";
-		const state = editor.getEditorState();
-		const seen = new Set<string>();
-		const mentions: Mention[] = [];
-		state.read(() => {
-			text = $getRoot().getTextContent();
-			for (const node of $nodesOfType(MentionNode)) {
-				if (!$isMentionNode(node)) continue;
-				const key = `${node.__mentionType}:${node.__mentionId}`;
-				if (seen.has(key)) continue;
-				seen.add(key);
-				mentions.push({
-					id: node.__mentionId,
-					type: node.__mentionType,
-					label: node.getTextContent().replace(/^@/, ""),
-				});
-			}
-		});
-		const trimmed = text.trim();
-		if (!trimmed) return "empty";
-		// Refused here (Enter reaches this even while the button is disabled); the editor is
-		// NOT cleared, and the alert below is already on screen.
-		if (isMessageTooLong(trimmed)) {
-			setTooLong(true);
-			return "not-sent";
-		}
-		sendingRef.current = true;
-		let notSent = false;
-		try {
-			notSent =
-				(await onSend(trimmed, mentions, JSON.stringify(state.toJSON()))) === false;
-		} finally {
-			sendingRef.current = false;
-		}
-		if (notSent) return "not-sent";
-		// Clear only what was sent. A first send awaits its thread, and the editor stays editable
-		// meanwhile: text typed in that window is not in the message, so it must not be erased.
-		editor.update(() => {
-			const root = $getRoot();
-			if (root.getTextContent().trim() === trimmed) root.clear();
-		});
-		return "sent";
-	}, [editor, onSend, pending]);
+	// Reseed whenever the store replaced the box from outside (its epoch moved), or once the draft
+	// first exists. Never on the user's own edits, which never move the epoch.
+	const epoch = entry?.epoch ?? null;
+	useEffect(() => {
+		if (entry === null || epochRef.current === entry.epoch) return;
+		const content = shownContent(entry);
+		epochRef.current = entry.epoch;
+		lastRef.current = { text: content.text, mentions: content.mentions };
+		editor.update(contentToEditor(content), { tag: RESEED_TAG });
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- `entry` changes on every keystroke; only an epoch move reseeds
+	}, [editor, epoch]);
+
+	useEffect(() => {
+		editor.setEditable(editable);
+	}, [editor, editable]);
+
+	// §4.1: the box never shows a character Postgres would refuse (U+0000) or change (a lone
+	// surrogate). Normalized on input and paste, in the editor, before any span is read.
+	useEffect(
+		() =>
+			editor.registerNodeTransform(TextNode, (node) => {
+				const text = node.getTextContent();
+				const normalized = normalizeDraftText(text);
+				if (normalized !== text) node.setTextContent(normalized);
+			}),
+		[editor],
+	);
+
+	/** D5: the user's edit, stamped with the epoch the editor was seeded at. */
+	const onChange = useCallback(
+		(state: EditorState, _editor: unknown, tags: Set<string>) => {
+			if (tags.has(RESEED_TAG) || draft === null || epochRef.current === null) return;
+			const content = editorToContent(state);
+			if (sameEditorContent(content, lastRef.current)) return;
+			lastRef.current = content;
+			draft.store.dispatch({
+				type: "ENTRY",
+				key: draft.key,
+				event: { type: "EDIT", epoch: epochRef.current, content },
+			});
+		},
+		[draft],
+	);
+
+	const submit = useCallback((): boolean => send.submit(), [send]);
 	const restore = useCallback(
-		(serialized: string) => {
-			editor.setEditorState(editor.parseEditorState(serialized));
+		(content: DraftEditorContent) => {
+			const merged = appendContent(
+				{ ...EMPTY_CONTENT, ...editorToContent(editor.getEditorState()) },
+				{ ...EMPTY_CONTENT, ...content },
+			);
+			editor.update(contentToEditor(merged));
 		},
 		[editor],
 	);
@@ -214,7 +232,7 @@ function ComposerBody({
 				(event) => {
 					if (event?.shiftKey) return false;
 					event?.preventDefault();
-					void submit();
+					submit();
 					return true;
 				},
 				COMMAND_PRIORITY_LOW,
@@ -222,23 +240,30 @@ function ComposerBody({
 		[editor, submit],
 	);
 
-	const onChange = useCallback((state: EditorState) => {
-		state.read(() => {
-			const text = $getRoot().getTextContent().trim();
-			setEmpty(text.length === 0);
-			setTooLong(isMessageTooLong(text));
-		});
-	}, []);
-	// `OnChangePlugin` skips the initial state, so a composer that mounts seeded (see `seed`)
-	// reads it once here — otherwise Send would stay disabled over a box that holds text.
-	useEffect(() => {
-		onChange(editor.getEditorState());
-	}, [editor, onChange]);
+	// D7: a blur saves at once instead of waiting out the debounce.
+	useEffect(
+		() =>
+			editor.registerCommand(
+				BLUR_COMMAND,
+				() => {
+					if (draft !== null)
+						draft.store.dispatch({
+							type: "ENTRY",
+							key: draft.key,
+							event: { type: "SAVE_TRIGGER", reason: "blur" },
+						});
+					return false;
+				},
+				COMMAND_PRIORITY_LOW,
+			),
+		[editor, draft],
+	);
 
 	return (
 		// The mention menu is portaled in here and opens UPWARD from the top of this box, so it
 		// never covers the text you're typing (it used to be anchored at the caret).
 		<div ref={boxRef} className="relative">
+			{draft !== null && <DraftBarSlot draftKey={draft.key} />}
 			<div className="border border-border bg-background shadow-sm focus-within:ring-3 focus-within:ring-ring/25">
 				<div className="relative">
 					<PlainTextPlugin
@@ -247,17 +272,21 @@ function ComposerBody({
 								data-testid="elench-composer"
 								aria-label="Message Elench"
 								aria-placeholder={placeholder}
+								aria-readonly={!editable}
 								placeholder={
 									<div className="pointer-events-none absolute left-3.5 top-3 text-sm text-muted-foreground">
 										{placeholder}
 									</div>
 								}
-								className="max-h-56 min-h-[72px] w-full overflow-y-auto whitespace-pre-wrap break-words px-3.5 py-3 text-sm text-foreground outline-none"
+								className={cn(
+									"max-h-56 min-h-[72px] w-full overflow-y-auto whitespace-pre-wrap break-words px-3.5 py-3 text-sm text-foreground outline-none",
+									!editable && "cursor-default",
+								)}
 							/>
 						}
 						ErrorBoundary={LexicalErrorBoundary}
 					/>
-					<OnChangePlugin onChange={onChange} />
+					<OnChangePlugin onChange={onChange} ignoreSelectionChange />
 					<HistoryPlugin />
 					<MentionTypeaheadPlugin boxRef={boxRef} />
 				</div>
@@ -282,7 +311,7 @@ function ComposerBody({
 							type="button"
 							aria-label={pending && onStop ? "Stop" : "Send"}
 							onClick={pending ? onStop : () => void submit()}
-							disabled={pending ? !onStop : empty || tooLong}
+							disabled={pending ? !onStop : empty || tooLong || !editable}
 							className="flex size-8 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
 						>
 							{pending ? (
@@ -294,6 +323,7 @@ function ComposerBody({
 					</div>
 				</div>
 			</div>
+			{draft !== null && <DraftFooterSlot draftKey={draft.key} />}
 		</div>
 	);
 }
