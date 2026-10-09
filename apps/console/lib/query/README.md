@@ -121,7 +121,12 @@ zustand store  →  debounce  →  normalize  →  TanStack key  →  server act
    views are shareable. On mount, URL params win over persisted session state; the
    page's RSC should parse the same params and prefetch the matching key.
 3. **Debounce** — free-text goes through `useDebouncedValue` (`hooks/use-debounced-value.ts`)
-   before it reaches the key.
+   before it reaches the key, handed what `useFilterUrlSync` returned:
+   `useDebouncedValue(filters.search, 250, { urlRead })`. Only TYPING is debounced; a search the
+   link carried lands in the key at once. Without `urlRead` the debounce starts from the store's
+   default `""`, so a filtered link fetches — and, under `keepPreviousData`, shows — the
+   unfiltered list for the whole delay (#5861). `pnpm check:filter-standard` fails F3 on a
+   search debounce that is not handed it.
 4. **Normalize** — build a stable query object (trim strings, sort arrays, drop empty
    keys) in a pure `normalize*Query()` helper, and put **that object in the query key**
    (precedent: `qk.roles(org, search)`). Unsorted arrays fragment the cache.

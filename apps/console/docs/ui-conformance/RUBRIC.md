@@ -257,7 +257,7 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks. F
 |---|---|---|
 | **F1** | a `createFilterStore` store exists for the page |
 | **F2** | `useFilterUrlSync` is wired, so a filtered view is linkable |
-| **F3** | search is debounced and the **normalized** query object is the TanStack key |
+| **F3** | search is debounced — typing only; a search the link carried lands at once (`{ urlRead }`, #5861) — and the **normalized** query object is the TanStack key |
 | **F4** | the bar is built from `FilterBar` / `FilterSearch` / `FacetFilter` / `FilterChipGroup` / `FilterBarReset` |
 | **F5** | the result count is a `CountPill` beside the heading — never "N of M" prose in the bar |
 | **F6** | `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData` |
