@@ -46,6 +46,7 @@ import { AGENT_STEP_PART_TYPE, type AgentStepData, agentStepMarker } from "@/lib
 import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import { type Mention, mentionsSchema } from "@/lib/ai/mentions";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
+import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { getOwner } from "@/lib/auth/owner";
 import { getPdp } from "@/lib/authz";
@@ -376,14 +377,29 @@ export async function serveTurn<R>(req: Request, spec: TurnRouteSpec<R>): Promis
 interface StreamFlags {
 	aborted: boolean;
 	errored: boolean;
+	/** The model's stream reached its end (the transform flushed). */
+	ended: boolean;
 }
 
 /**
- * Pass the model's UI stream through, recording whether it aborted or errored, and writing each
- * queued step marker immediately before the `start-step` it announces, so the markers are part of
- * the answer that is stored (the PLAN/EXECUTE separators survive a reload).
+ * The id of a step marker: unique per ATTEMPT, never `step-<n>` alone. ai merges a data part into
+ * an existing part of the same type and id, and a continuation streams into the stored answer it
+ * continues, whose own markers (from the first answer's steps 0 and 1) would otherwise be
+ * overwritten in place, so the earlier PLAN/EXECUTE separators would be lost on reload.
+ */
+function stepMarkerId(turn: Pick<AcceptedTurn, "claimId" | "attemptNo">, step: number): string {
+	return `step-${turn.claimId}-${turn.attemptNo}-${step}`;
+}
+
+/**
+ * Pass the model's UI stream through, recording whether it aborted, errored or ended, and writing
+ * each queued step marker immediately before the `start-step` it announces, so the markers are part
+ * of the answer that is stored (the PLAN/EXECUTE separators survive a reload). Each marker's id is
+ * unique to this attempt ({@link stepMarkerId}), so a continuation's markers are appended to the
+ * stored answer rather than replacing the ones its earlier steps wrote.
  */
 function answerStreamTransform(
+	turn: Pick<AcceptedTurn, "claimId" | "attemptNo">,
 	markers: AgentStepData[],
 	flags: StreamFlags,
 ): TransformStream<UIMessageChunk, UIMessageChunk> {
@@ -393,12 +409,20 @@ function answerStreamTransform(
 			if (chunk.type === "error") flags.errored = true;
 			if (chunk.type === "start-step") {
 				for (const marker of markers.splice(0)) {
-					controller.enqueue({ type: AGENT_STEP_PART_TYPE, id: `step-${marker.step}`, data: marker });
+					controller.enqueue({ type: AGENT_STEP_PART_TYPE, id: stepMarkerId(turn, marker.step), data: marker });
 				}
 			}
 			controller.enqueue(chunk);
 		},
+		flush() {
+			flags.ended = true;
+		},
 	});
+}
+
+/** The text of an answer, for the turn's observability enrichment. */
+function answerText(answer: UIMessage | null): string {
+	return (answer?.parts ?? []).map((p) => (p.type === "text" ? p.text : "")).join("");
 }
 
 /** The answer as it has streamed so far: updated with every snapshot, final when the stream ends. */
@@ -443,10 +467,11 @@ async function streamAcceptedTurn<R>(
 		return finalizing;
 	};
 
-	// The route's own bound, the client's disconnect, and a lease the heartbeat found lost.
-	const leaseLost = new AbortController();
+	// The route's own bound, the client's disconnect, and the route stopping the model itself: a lease
+	// the heartbeat found lost, or a stored copy of the answer that ended before the model did.
+	const stop = new AbortController();
 	const timeout = AbortSignal.timeout(TURN_BUDGET_MS);
-	const abortSignal = AbortSignal.any([req.signal, timeout, leaseLost.signal]);
+	const abortSignal = AbortSignal.any([req.signal, timeout, stop.signal]);
 
 	/** Renew the lease every TURN_HEARTBEAT_MS until finalize; a lost lease aborts the model (C5). */
 	const startHeartbeat = (): void => {
@@ -454,7 +479,7 @@ async function streamAcceptedTurn<R>(
 		heartbeat = setInterval(() => {
 			heartbeatTurn(turn)
 				.then((renewed) => {
-					if (!renewed && !finalizing) leaseLost.abort(new Error("turn lease lost"));
+					if (!renewed && !finalizing) stop.abort(new Error("turn lease lost"));
 				})
 				.catch((err: unknown) => {
 					log.warn("turn heartbeat failed", { thread_id: turn.threadId, claim_id: turn.claimId, err });
@@ -488,7 +513,8 @@ async function streamAcceptedTurn<R>(
 					transient: true,
 				});
 				const markers: AgentStepData[] = [];
-				const flags: StreamFlags = { aborted: false, errored: false };
+				const flags: StreamFlags = { aborted: false, errored: false, ended: false };
+				const startedAt = Date.now();
 				const result = streamText({
 					model: base.model,
 					// Our own system prompt (cached) is intentionally a system message; user turns are never
@@ -535,22 +561,32 @@ async function streamAcceptedTurn<R>(
 						originalMessages: turn.modelInput,
 						generateMessageId: () => answerId,
 					})
-					.pipeThrough(answerStreamTransform(markers, flags));
+					.pipeThrough(answerStreamTransform(turn, markers, flags));
 				// One copy to the client, one to the answer that is stored. `merge` reads its copy
 				// whether or not the client is still connected, so a disconnect still reaches finalize.
 				const [toClient, toStore] = answerStream.tee();
 				writer.merge(toClient);
+				let storeFailed = false;
 				const answer = await readAnswer(
 					readUIMessageStream({
 						message: continued ? structuredClone(continued) : undefined,
 						stream: toStore,
+						onError: (err: unknown) => {
+							storeFailed = true;
+							log.warn("chat turn answer could not be read", { thread_id: turn.threadId, err });
+						},
 					}),
 					soFar,
 				);
-				const partial = flags.aborted || flags.errored;
+				// The stored copy ended before the model's stream did (a processing error stops it while the
+				// client's copy keeps flowing): stop the model, so nothing reaches the client that is not in
+				// the answer this attempt stores and bills, and store what was read as a partial answer.
+				const endedEarly = storeFailed || !flags.ended;
+				if (endedEarly) stop.abort(new Error("the stored answer ended early"));
+				const partial = flags.aborted || flags.errored || endedEarly;
 				const error = timeout.aborted
 					? "timeout"
-					: flags.aborted
+					: flags.aborted || endedEarly
 						? "aborted"
 						: flags.errored
 							? "provider-error"
@@ -560,6 +596,14 @@ async function streamAcceptedTurn<R>(
 					steps: [...steps],
 					partial,
 					...(error ? { error } : {}),
+					observability: {
+						sessionId: turn.threadId,
+						input: uiMessagesToAiInput(turn.modelInput),
+						outputChoices: textToAiOutput(answerText(answer)),
+						tools: Object.keys(prepared.tools),
+						latencyMs: Date.now() - startedAt,
+						...(error === "provider-error" ? { isError: true, error } : {}),
+					},
 				});
 				// Stored and settled: tell the client the revision it now holds, and only then finish.
 				if (finalized?.outcome === "won" && finalized.state === "answered") {

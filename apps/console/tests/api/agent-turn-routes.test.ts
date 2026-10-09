@@ -19,6 +19,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 vi.mock("server-only", () => ({}));
+// The real ai, except that one test makes the route's stored copy of the answer end early.
+vi.mock("ai", async (importOriginal) => {
+	const real = await importOriginal<typeof import("ai")>();
+	return {
+		...real,
+		readUIMessageStream: (options: Parameters<typeof real.readUIMessageStream>[0]) => {
+			const stream = real.readUIMessageStream(options);
+			if (!world.storeEndsEarly) return stream;
+			return (async function* () {
+				for await (const message of stream) {
+					yield message;
+					if (!message.parts.some((p) => p.type === "text")) continue;
+					options.onError?.(new Error("the answer could not be read"));
+					return;
+				}
+			})();
+		},
+	};
+});
 
 /** A tool part of a UI message, static or dynamic. */
 type ToolPart = Extract<UIMessage["parts"][number], { toolCallId: string }>;
@@ -98,6 +117,10 @@ interface World {
 	toolActors: string[];
 	throwInTools: boolean;
 	throwInStream: boolean;
+	/** The resolver answers an actor of ANOTHER user (a resolver bug the route must not trust). */
+	foreignActor: boolean;
+	/** The stored copy of the answer stream ends after its first text, as a processing error leaves it. */
+	storeEndsEarly: boolean;
 }
 
 const world = vi.hoisted(
@@ -122,6 +145,8 @@ const world = vi.hoisted(
 		toolActors: [],
 		throwInTools: false,
 		throwInStream: false,
+		foreignActor: false,
+		storeEndsEarly: false,
 	}),
 );
 
@@ -142,6 +167,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	// What the SESSION would say. The routes must never ask it: a test asserts it is not called.
 	currentActor: vi.fn(async () => ({ userId: world.sessionUser, orgId: world.sessionOrg })),
 	resolveTurnActor: vi.fn(async (userId: string, orgId: string) => {
+		if (world.foreignActor) return { userId: "99999999-9999-4999-8999-999999999999", orgId };
 		if (orgId === userId) return { userId, orgId };
 		return world.memberships.get(userId)?.has(orgId) ? { userId, orgId } : null;
 	}),
@@ -829,6 +855,8 @@ beforeEach(() => {
 	world.toolActors = [];
 	world.throwInTools = false;
 	world.throwInStream = false;
+	world.foreignActor = false;
+	world.storeEndsEarly = false;
 	model.scripts = [];
 	model.prompts = [];
 });
@@ -1467,5 +1495,60 @@ describe("failures after acceptance (§5.3)", () => {
 		const stored = threads().get(THREAD)?.messages[1];
 		expect(stored?.id).toBe("a1");
 		expect(stored?.parts.slice(0, a1.parts.length).map((p) => p.type)).toEqual(a1.parts.map((p) => p.type));
+	});
+});
+
+describe("review fixes (#5796)", () => {
+	it("an actor the resolver answers for another user is refused 403, and nothing is reserved", async () => {
+		world.foreignActor = true;
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		expect(res.status).toBe(403);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "org-forbidden" });
+		expect(world.reserveCalls).toBe(0);
+	});
+
+	it("a continuation's step markers are appended to the stored answer, never written over the first answer's", async () => {
+		model.scripts.push(callParts("propose_operation", "p1", { operation: "plan_project" }));
+		await chunksOf(await postOrg(body([userMsg("u1", "plan it")], { turnId: "u1", baseRevision: 1 })));
+		const first = threads().get(THREAD)?.messages[1];
+		if (!first) throw new Error("the first answer was not stored");
+		const markers = (m: UIMessage | undefined) => (m?.parts ?? []).filter((p) => p.type === "data-agent-step");
+		expect(markers(first)).toHaveLength(1);
+		model.scripts.push(speakParts("Plan queued."));
+		const rev = threads().get(THREAD)?.revision ?? 0;
+		const res = await postOrg(
+			body([userMsg("u1", "plan it"), withOutput(first, "p1", APPROVED)], {
+				turnId: "u1",
+				baseRevision: rev,
+				answerId: first.id,
+				toolCallIds: ["p1"],
+			}),
+		);
+		await chunksOf(res);
+		const continued = threads().get(THREAD)?.messages[1];
+		expect(continued?.id).toBe(first.id);
+		expect(markers(continued)).toHaveLength(2);
+		expect(markers(continued)[0]).toEqual(markers(first)[0]);
+	});
+
+	it("a stored copy that ends before the model does: the model is stopped, and the turn is stored partial and billed at least the reserve", async () => {
+		world.storeEndsEarly = true;
+		const gate = deferred();
+		let aborted = false;
+		model.scripts.push((options) => {
+			options.abortSignal?.addEventListener("abort", () => {
+				aborted = true;
+			});
+			const inner = gatedParts("Streaming", gate.promise);
+			return typeof inner === "function" ? inner(options) : new ReadableStream();
+		});
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		const chunks = await chunksOf(res).catch(() => []);
+		await vi.waitFor(() => expect(world.finalizeCalls).toBe(1));
+		expect(aborted).toBe(true);
+		expect(claims()[0]).toMatchObject({ state: "answered", partial: true });
+		expect(holdList()[0]?.credits).toBeGreaterThanOrEqual(100);
+		expect(chunks.some((c) => c.type === "finish")).toBe(true);
+		gate.resolve();
 	});
 });
