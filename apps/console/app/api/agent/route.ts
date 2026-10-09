@@ -23,7 +23,7 @@ import {
  */
 const agentBodySchema = z.looseObject({
 	messages: z.array(z.custom<UIMessage>()),
-	threadId: z.unknown(),
+	threadId: z.unknown().optional(),
 	mode: z.enum(["ask", "act"]).optional(),
 	model: z.string().optional().catch(undefined),
 	mentions: mentionsSchema.catch(undefined),
