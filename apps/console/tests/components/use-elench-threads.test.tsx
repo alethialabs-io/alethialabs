@@ -414,3 +414,59 @@ describe("useElenchThreads — a context switch or close mid-load (#5680)", () =
 		expect(result.current.ready).toBe(false);
 	});
 });
+
+// G10 (ADR 0001 slice 10): a rejected list or resume used to leave the body on its skeleton for
+// good — the rejection escaped the effect and `ready` never flipped. Both are caught into `loadError`.
+describe("useElenchThreads — a load that fails (G10)", () => {
+	it("a rejected listThreads resolves with loadError, and retryLoad lists again", async () => {
+		vi.mocked(listThreads).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		vi.mocked(listThreads).mockResolvedValueOnce([thread("t-1")]);
+		vi.mocked(getThread).mockResolvedValue(thread("t-1"));
+
+		const { result } = renderHook(() => useElenchThreads());
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toEqual({ step: "list", conversationId: null });
+		expect(result.current.threads).toEqual([]);
+
+		act(() => result.current.retryLoad());
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-1"));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toBeNull();
+		expect(result.current.threads.map((t) => t.id)).toEqual(["t-1"]);
+	});
+
+	it("a rejected resume getThread resolves with loadError and leaves the conversation as it was", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-1")]);
+		vi.mocked(getThread).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+		const { result } = renderHook(() => useElenchThreads());
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toEqual({ step: "resume", conversationId: "t-1" });
+		// Nothing was resumed: a thread selected with an empty transcript would read as loaded.
+		expect(useElenchStore.getState().threadId).toBeNull();
+		expect(useElenchStore.getState().epoch).toBe(0);
+	});
+
+	it("retryLoad after a failed pick retries THAT conversation, not the open-time resume", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-1"), thread("t-2"), thread("t-3")]);
+		vi.mocked(getThread).mockImplementation(async (id: string) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(useElenchStore.getState().threadId).toBe("t-1");
+
+		act(() => result.current.selectThread("t-3"));
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-3"));
+
+		vi.mocked(getThread).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		act(() => result.current.selectThread("t-2"));
+		await waitFor(() => expect(result.current.loadError).toEqual({ step: "select", conversationId: "t-2" }));
+		expect(useElenchStore.getState().threadId).toBe("t-3");
+
+		act(() => result.current.retryLoad());
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-2"));
+		expect(result.current.loadError).toBeNull();
+	});
+});
