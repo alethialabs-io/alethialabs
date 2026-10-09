@@ -112,6 +112,18 @@ describe("PhoneInput", () => {
 		expect(lastValue(onChange)).not.toMatch(/^\+1\d/);
 	});
 
+	it("names the country search, so it can be found by role (#5803)", async () => {
+		const user = userEvent.setup({ delay: null });
+		const { trigger } = renderPhone("US");
+
+		await user.click(trigger);
+		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
+		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		expect(
+			await screen.findByRole("combobox", { name: "Search country" }),
+		).toHaveAttribute("placeholder", "Search country…");
+	});
+
 	it("opens a searchable list and filters out non-matching countries", async () => {
 		const user = userEvent.setup({ delay: null });
 		const { trigger } = renderPhone("US");
