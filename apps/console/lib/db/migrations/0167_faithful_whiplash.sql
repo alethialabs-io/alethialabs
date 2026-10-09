@@ -1,0 +1,2 @@
+ALTER TABLE "jobs" ADD COLUMN "idempotency_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_jobs_idempotency_key" ON "jobs" USING btree ("org_id","project_id","user_id","idempotency_key") WHERE idempotency_key IS NOT NULL;

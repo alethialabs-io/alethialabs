@@ -57,6 +57,7 @@ vi.mock("@/app/server/actions/agent", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 vi.mock("@/app/server/actions/projects", () => ({
+	getApprovedJob: vi.fn(async () => null),
 	tryPlanProject: vi.fn(),
 	tryProvisionProject: vi.fn(),
 }));
