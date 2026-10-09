@@ -30,7 +30,7 @@ vi.mock("ai", async (importOriginal) => {
 			return (async function* () {
 				for await (const message of stream) {
 					yield message;
-					if (!message.parts.some((p) => p.type === "text")) continue;
+					if (!message.parts.some((p) => p.type === "text" && p.text.length > 0)) continue;
 					options.onError?.(new Error("the answer could not be read"));
 					return;
 				}
