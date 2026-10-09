@@ -15,7 +15,6 @@ import { test as base, type BrowserContext, type Page } from "@playwright/test";
 import fs from "node:fs";
 import { needsTags, requireCapability } from "../helpers/capabilities";
 import { attachConsoleGuard, type ConsoleGuard } from "../helpers/console-errors";
-import { waitForHydrationOnNavigation } from "../helpers/hydration";
 import { attachPerf, type PerfCollector } from "../helpers/perf";
 import { personaMetaPath, type PersonaName, type PersonaRecord } from "../helpers/personas";
 
@@ -47,12 +46,10 @@ async function makePersona(
 	browser: import("@playwright/test").Browser,
 	registry: Registry,
 	name: PersonaName,
-	hydrationWait: boolean,
 ): Promise<PersonaSession> {
 	const record = loadPersona(name);
 	const context = await browser.newContext({ storageState: record.storageState });
 	const page = await context.newPage();
-	if (hydrationWait) waitForHydrationOnNavigation(page);
 	const guard = attachConsoleGuard(page);
 	const perf = attachPerf(page);
 	registry.guards.push({ name, guard });
@@ -61,21 +58,12 @@ async function makePersona(
 }
 
 export const test = base.extend<{
-	hydrationWait: boolean;
 	qa: Registry;
 	capabilities: void;
 	owner: PersonaSession;
 	team: PersonaSession;
 	member: PersonaSession;
 }>({
-	// EVERY `goto`/`reload` WAITS FOR THE PAGE TO HYDRATE (#5849) — see `untilPageHydrated`. Since
-	// #5786 a full load hydrates the server's HTML in passes, and a spec that acts on the first paint
-	// races them: six qa specs went red that way on unrelated PRs (deploy-jobs, projects, runners,
-	// connectors). A test that measures the product's own first-interaction behaviour — a click the
-	// moment the content appears — opts out, because this wait would otherwise hide exactly the
-	// defect it is there to catch: per navigation with `goto(url, { waitUntil: "commit" })`, or for a
-	// whole describe with `test.use({ hydrationWait: false })`.
-	hydrationWait: [true, { option: true }],
 	// THE CAPABILITY GATE. A test tagged `@needs:<capability>` runs only on a leg that PROMISED it
 	// (`ALETHIA_E2E_CAPABILITIES`). In CI an unmet need throws — the tag and the workflow disagree
 	// and a red test is the honest report; locally it skips with a reason that says NOT MEASURED.
@@ -104,24 +92,23 @@ export const test = base.extend<{
 		{ auto: true },
 	],
 	// Attach guards to the default page too (public/onboarding specs use it directly).
-	page: async ({ page, qa, hydrationWait }, use) => {
-		if (hydrationWait) waitForHydrationOnNavigation(page);
+	page: async ({ page, qa }, use) => {
 		qa.guards.push({ name: "page", guard: attachConsoleGuard(page) });
 		qa.perfs.push({ name: "page", perf: attachPerf(page) });
 		await use(page);
 	},
-	owner: async ({ browser, qa, hydrationWait }, use) => {
-		const s = await makePersona(browser, qa, "ownerHobby", hydrationWait);
+	owner: async ({ browser, qa }, use) => {
+		const s = await makePersona(browser, qa, "ownerHobby");
 		await use(s);
 		await s.context.close();
 	},
-	team: async ({ browser, qa, hydrationWait }, use) => {
-		const s = await makePersona(browser, qa, "ownerTeam", hydrationWait);
+	team: async ({ browser, qa }, use) => {
+		const s = await makePersona(browser, qa, "ownerTeam");
 		await use(s);
 		await s.context.close();
 	},
-	member: async ({ browser, qa, hydrationWait }, use) => {
-		const s = await makePersona(browser, qa, "member", hydrationWait);
+	member: async ({ browser, qa }, use) => {
+		const s = await makePersona(browser, qa, "member");
 		await use(s);
 		await s.context.close();
 	},

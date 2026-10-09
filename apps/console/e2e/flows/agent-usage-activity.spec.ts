@@ -401,12 +401,11 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 	});
 
 	test("picking a window writes `from`, `to` and `rangeLabel` to the URL", async ({ owner }) => {
-		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE (#5849). `waitUntil: "commit"` returns as
-		// soon as the response starts, and it is also what turns off the qa fixture's
-		// wait-for-hydration on `goto` — that wait would hide exactly the regression this guards. This
-		// used to need `untilFilterBarHydrated`: the click went to server HTML React had not hydrated,
-		// or to where the trigger had been before the date-range label grew at mount and slid it
-		// 136 px left. #5849 removed both causes, and this test is what says so.
+		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE (#5849): `waitUntil: "commit"` returns as
+		// soon as the response starts, and nothing here waits for hydration. This used to need
+		// `untilFilterBarHydrated`: the click went to server HTML React could not hydrate yet, or to
+		// where the trigger had been before the date-range label grew at mount and slid it 136 px
+		// left. #5849 removed both causes, and this test is what says so.
 		await owner.page.goto(activityPath(owner.orgSlug), { waitUntil: "commit" });
 		const trigger = owner.page.getByRole("button", { name: /^Last 7 days$/i });
 		await expect(trigger).toBeVisible({ timeout: 30_000 });
