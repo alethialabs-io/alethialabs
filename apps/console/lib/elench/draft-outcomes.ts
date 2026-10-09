@@ -5,18 +5,17 @@
 // will be able to import without importing a `"use server"` file. Every action returns a
 // discriminated union on `outcome` and never throws for an expected answer (§4 step 6).
 //
-// This file names every outcome of §4.2's draft actions, including those a later slice adds. The
-// claim outcomes (`claimDraft`, `consumeDraft`, `releaseClaim`, the heartbeat route) are answered
-// today; the `startConversation` outcomes (§5.1) are slice 5's, and nothing returns them until it
-// lands. Types only: nothing here runs.
+// This file names every outcome of §4.2's draft actions: the claim outcomes (`claimDraft`,
+// `consumeDraft`, `releaseClaim`, the heartbeat route) and the `startConversation` outcomes (§5.1).
+// Types only: nothing here runs.
 //
 // No client imports this module yet: the store that reads these outcomes is slice 7's. Where a
 // comment below cites a D-transition, it says what that transition WILL do once slice 7 lands;
 // what the outcome means is true today.
 //
-// Not here: `deleteThread`'s changed answer (`{ purged }`) and the new `countDraftsOfConversation`'s
-// (`{ count, orgs }`). Both are slice 5's, which will type them beside those actions when it adds
-// the purge and the count.
+// Not here: `deleteThread`'s answer (`{ purged }`, typed beside it in app/server/actions/agent.ts)
+// and `countDraftsOfConversation`'s (`{ count, orgs }`, typed beside it in
+// app/server/actions/elench-drafts.ts).
 
 import type { DraftContent } from "@/lib/elench/draft-content";
 import type {
@@ -243,7 +242,7 @@ export interface DraftTouched {
 	outcome: "touched";
 }
 
-// ── startConversation outcomes (§5.1): slice 5's action answers these ────────────────────────────
+// ── startConversation outcomes (§5.1) ───────────────────────────────────────────────────────────
 
 /** The thread was inserted with the first turn; the draft's and the thread's new revisions. */
 export interface DraftStartCreated {
@@ -337,7 +336,10 @@ export type ReleaseClaimResult =
 /** The body of a 200 from the heartbeat route (§4.2); its refusals are HTTP statuses. */
 export type TouchClaimResult = DraftTouched | DraftNotClaimed | DraftGone;
 
-/** What slice 5's `startConversation` will answer (§5.1). */
+/**
+ * What `startConversation` answers (§5.1). `gone(thread)` is a composer start whose draft row no
+ * longer exists: a delete elsewhere purged the frozen row (§6.3, D35).
+ */
 export type StartConversationResult =
 	| DraftStartCreated
 	| DraftStartAlreadyStored
@@ -346,4 +348,5 @@ export type StartConversationResult =
 	| DraftStartDraftConflict
 	| DraftNotClaimed
 	| DraftClaimed
+	| DraftGone
 	| DraftGateRefusal;
