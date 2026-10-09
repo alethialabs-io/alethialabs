@@ -79,12 +79,13 @@ vi.mock("@/components/agent/elench/elench-panel", () => ({
 interface ChatHarness {
 	sent: UIMessage[];
 	transportError: Error | undefined;
-	regenerate: () => void;
+	regenerate: (options?: { messageId?: string }) => void;
 }
 const chat = vi.hoisted(
 	(): ChatHarness => ({ sent: [], transportError: undefined, regenerate: () => undefined }),
 );
-vi.mock("@/components/agent/use-agent-chat", () => ({
+vi.mock("@/components/agent/use-agent-chat", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/agent/use-agent-chat")>()),
 	useAgentChat: ({ initialMessages }: { initialMessages: UIMessage[] }) => {
 		const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
 		return {
@@ -95,9 +96,11 @@ vi.mock("@/components/agent/use-agent-chat", () => ({
 				chat.sent.push(m);
 				setMessages((prev) => [...prev, m]);
 			},
-			regenerate: () => chat.regenerate(),
+			regenerate: (options?: { messageId?: string }) => chat.regenerate(options),
 			stop: () => undefined,
 			addToolResult: () => undefined,
+			clearError: () => undefined,
+			setBaseRevision: () => undefined,
 		};
 	},
 }));
@@ -197,7 +200,13 @@ function renderConversation(opts: {
 			updated_at: now,
 		} satisfies AgentThread;
 	});
-	useElenchStore.setState({ view: opts.view, ctx: { kind: "org" }, threadId: null });
+	// The shell has told the conversation its page org (a send without one is refused locally).
+	useElenchStore.setState({
+		view: opts.view,
+		ctx: { kind: "org" },
+		threadId: null,
+		pageOrgId: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+	});
 	const api: ElenchThreadApi = {
 		ready: true,
 		threads: [],
@@ -344,6 +353,7 @@ describe.each([
 
 describe("ElenchConversation — which error the transcript shows", () => {
 	it("a failed send takes precedence over the transcript's error, and its Retry is the thread re-attempt", async () => {
+		// The transcript ends on a plain answer, so its own Retry regenerates THAT answer (§9.1).
 		const regenerate = vi.fn();
 		chat.regenerate = regenerate;
 		chat.transportError = new TypeError("Failed to fetch");
@@ -360,6 +370,7 @@ describe("ElenchConversation — which error the transcript shows", () => {
 		expect(screen.getByText("The assistant hit an error")).toBeTruthy();
 		await clickRetry();
 		expect(regenerate).toHaveBeenCalledTimes(1);
+		expect(regenerate).toHaveBeenCalledWith({ messageId: "a0" });
 
 		fill("next question");
 		await pressEnter();

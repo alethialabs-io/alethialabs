@@ -2,8 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useMemo } from "react";
-import { useAgentChat } from "@/components/agent/use-agent-chat";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import type { AssistantView } from "@/lib/ai/project-assistant-body";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
@@ -102,30 +100,4 @@ export function snapshotView(): AssistantView {
 			...(node ? { name: configName(node.data) } : {}),
 		},
 	};
-}
-
-/**
- * Stable `prepareBody` factory for a project's assistant transport — injects the
- * project id + a live canvas snapshot (read fresh at send time). A plain factory (not
- * a hook) so the shared Elench conversation can select it by context without breaking
- * the rules of hooks.
- */
-export function projectPrepareBody(projectId: string) {
-	return () => ({ projectId, canvas: snapshotCanvas() });
-}
-
-/**
- * The project-page assistant — the shared `useAgentChat` wired to the project's
- * assistant route. Each request injects the project id + a live canvas snapshot so
- * the model can read the design, scan repos, propose changes, and propose plan/deploy.
- */
-export function useProjectAssistant(projectId: string) {
-	const prepareBody = useMemo(
-		() => () => ({ projectId, canvas: snapshotCanvas() }),
-		[projectId],
-	);
-	return useAgentChat({
-		api: `/api/projects/${projectId}/assistant`,
-		prepareBody,
-	});
 }
