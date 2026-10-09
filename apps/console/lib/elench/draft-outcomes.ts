@@ -5,10 +5,10 @@
 // will be able to import without importing a `"use server"` file. Every action returns a
 // discriminated union on `outcome` and never throws for an expected answer (§4 step 6).
 //
-// This file names every outcome of §4.2's draft actions, including those a later slice adds: the
-// claim outcomes (`claimDraft`, `consumeDraft`, `releaseClaim`, the heartbeat route) are slice 4's,
-// and the `startConversation` outcomes (§5.1) are slice 5's. Until those slices land, nothing
-// returns them. Types only: nothing here runs.
+// This file names every outcome of §4.2's draft actions, including those a later slice adds. The
+// claim outcomes (`claimDraft`, `consumeDraft`, `releaseClaim`, the heartbeat route) are answered
+// today; the `startConversation` outcomes (§5.1) are slice 5's, and nothing returns them until it
+// lands. Types only: nothing here runs.
 //
 // No client imports this module yet: the store that reads these outcomes is slice 7's. Where a
 // comment below cites a D-transition, it says what that transition WILL do once slice 7 lands;
@@ -199,7 +199,7 @@ export interface DraftListOk {
 	drafts: DraftListEntry[];
 }
 
-// ── Claim outcomes (§3.4, §4.2): slice 4's actions answer these ──────────────────────────────────
+// ── Claim outcomes (§3.4, §4.2): the claim actions and the heartbeat route answer these ──────────
 
 /** S1 / S1r: this request's token holds the claim, at `revision`, on exactly `content`. */
 export interface DraftClaimedByYou {
@@ -307,7 +307,7 @@ export type RestoreDraftResult =
 	| DraftGone
 	| DraftGateRefusal;
 
-/** What slice 4's `claimDraft` will answer (§4.2): its own outcomes plus the refusals of `saveDraft`. */
+/** What `claimDraft` answers (§4.2): its own outcomes plus the refusals of `saveDraft`. */
 export type ClaimDraftResult =
 	| DraftClaimedByYou
 	| DraftClaimed
@@ -319,14 +319,14 @@ export type ClaimDraftResult =
 	| DraftLimit
 	| DraftGateRefusal;
 
-/** What slice 4's `consumeDraft` will answer (§4.2). */
+/** What `consumeDraft` answers (§4.2). */
 export type ConsumeDraftResult =
 	| DraftConsumed
 	| DraftNotClaimed
 	| DraftGone
 	| DraftGateRefusal;
 
-/** What slice 4's `releaseClaim` will answer (§4.2). */
+/** What `releaseClaim` answers (§4.2). */
 export type ReleaseClaimResult =
 	| DraftReleased
 	| DraftConsumed
@@ -334,7 +334,7 @@ export type ReleaseClaimResult =
 	| DraftGone
 	| DraftGateRefusal;
 
-/** The body of a 200 from slice 4's heartbeat route (§4.2); its refusals are HTTP statuses. */
+/** The body of a 200 from the heartbeat route (§4.2); its refusals are HTTP statuses. */
 export type TouchClaimResult = DraftTouched | DraftNotClaimed | DraftGone;
 
 /** What slice 5's `startConversation` will answer (§5.1). */
