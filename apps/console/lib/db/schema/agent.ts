@@ -157,8 +157,8 @@ export type ElenchDraftStatus = "active" | "sending" | "discarded";
 // first send, so there is deliberately NO foreign key to `agent_threads` (§3.2): a draft exists before
 // its thread, and the thread's org is its user while the draft's is the page org. Removal with a
 // thread is the owner-pinned purge function in programmables.sql, not a cascade: `deleteThread`
-// calls it in its own transaction, and it removes the caller's drafts of that conversation in every
-// org.
+// calls it in its own transaction, together with the thread's tombstone, and it removes the caller's
+// drafts of that conversation in every org.
 //
 // RLS: its own `owner_only` policy in programmables.sql, an AND of `user_id = app.current_owner` and
 // `org_id = app.current_org` — NOT the `owner_all` OR loop, under which every member of an org would

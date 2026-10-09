@@ -12,7 +12,8 @@
 //   4. an external start racing a base-0 save of the same key loses, and its thread insert rolls back
 //      with it (D10f's fence);
 //   5. `deleteThread` purges the caller's drafts of the conversation in EVERY org, in its own
-//      transaction, and never another user's; `countDraftsOfConversation` counts the same rows.
+//      transaction, and never another user's; `countDraftsOfConversation` counts the same rows;
+//   6. a start and a delete of one conversation share one lock order, so they never deadlock.
 //
 // The actions run under an injected actor (`runWithActor`). Each case uses fresh users and orgs; the
 // PDP authorizes from `grants`, so each actor holds an org-wide viewer grant in each org it acts in,
@@ -364,6 +365,57 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 			thread: { status: "none", firstTurnId: null },
 		});
 		expect(await threadsAt(conversation)).toEqual([]);
+	});
+
+	// #5772 review: one lock order. `startConversation` locks the draft row, then inserts under the
+	// thread id; `deleteThread` purges the drafts, then deletes the thread and writes its tombstone.
+	// Made deterministic as the claim race is: a service-role transaction holds the draft row while
+	// the START queues on it first and the DELETE second. On release the start holds the draft row
+	// and goes for the thread id. With the delete's old order (thread first) the delete would already
+	// hold the thread row and its tombstone, the start would wait on them, the delete would wait on the
+	// draft row: a deadlock, which Postgres breaks by aborting one of them. With one order the delete
+	// has touched nothing but its queue slot, so the start finishes (`conflict`: the live thread's
+	// first turn is another) and the delete then purges and tombstones.
+	it("a start and a delete of one conversation take the same lock order and both complete", async () => {
+		const user = freshUser();
+		await grantViewer(user, user);
+		const conversation = randomUUID();
+		const token = randomUUID();
+		const turnId = randomUUID();
+		await getServiceDb()
+			.insert(agentThreads)
+			.values(threadOf(conversation, user, user, randomUUID(), { title: "mine" }));
+		const [claimRow] = await getServiceDb()
+			.insert(elenchDrafts)
+			.values(firstClaim(user, user, conversation, token, turnId))
+			.returning();
+		if (!claimRow) throw new Error("no draft inserted");
+		const actor = { userId: user, orgId: user };
+
+		const { racers } = await getServiceDb().transaction(async (tx) => {
+			await tx.execute(sql`select 1 from public.elench_drafts where id = ${claimRow.id} for update`);
+			const start = runWithActor(actor, () =>
+				startConversation({
+					orgId: user,
+					projectId: null,
+					conversationId: conversation,
+					origin: "composer",
+					turnId,
+					token,
+					title: "",
+				}),
+			);
+			await untilWaiting(1);
+			const del = runWithActor(actor, () => deleteThread(conversation));
+			await untilWaiting(2);
+			return { racers: Promise.allSettled([start, del]) };
+		});
+		const [started, deleted] = await racers;
+		expect(started).toEqual({ status: "fulfilled", value: { outcome: "conflict", revision: 3 } });
+		expect(deleted).toEqual({ status: "fulfilled", value: { purged: 1 } });
+		expect(await draftsOf(conversation)).toEqual([]);
+		const [tombstone] = await threadsAt(conversation);
+		expect(tombstone).toMatchObject({ user_id: user, status: "deleted" });
 	});
 
 	// §6.3, #5464 AC16, G6: one conversation id is a draft per org; deleting the thread removes all

@@ -852,9 +852,10 @@ async function draftConflictOf(
 
 /**
  * A composer start (§5.1, D10b): the locked row must hold exactly this claim, a first-turn claim
- * under `token` for `turnId`, or the start writes nothing and answers `not-claimed` (`gone` when a
- * delete purged the row). The first turn is read from the row, never from the input. Every outcome
- * but `created` and `already-stored` releases the claim with its text intact (S4).
+ * under `token` for `turnId`. Otherwise the start writes nothing and answers `not-claimed`, or
+ * `gone` when a delete purged the row. The first turn is read from the row, never from the input.
+ * Once the claim matches, `created` and `already-stored` consume it (S2), and `conflict` and
+ * `deleted` release it with its text intact (S4).
  */
 async function startComposer(
 	tx: Tx,
@@ -974,6 +975,11 @@ async function startExternal(
  * Step 1 locks the caller's draft row and runs the lease settle (S5), EXCEPT for a composer start
  * that presents the row's live token: it acts on its own claim whatever its age (B2). `created`
  * carries the draft's new revision and the inserted thread's `revision`.
+ *
+ * LOCK ORDER: the draft row first (step 1), then the thread row (the insert of step 3, which waits
+ * on any uncommitted row under the same id). `deleteThread` takes them in the same order (its purge
+ * runs before its tombstone), so a start and a delete of one conversation queue on the draft row
+ * instead of deadlocking.
  */
 export async function startConversation(
 	input: StartConversationInput,

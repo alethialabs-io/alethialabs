@@ -437,7 +437,7 @@ describe("deleteThread", () => {
 	// the reap of an empty row, or it recreates the thread the user just deleted (#5423 review).
 	it("replaces the row with a tombstone under the same id, carrying no title and no messages", async () => {
 		const removed = { user_id: "user-1", org_id: "org-1", project_id: "proj-3", kind: "agent" };
-		const { calls } = useChain([], [[removed], [], [{ n: 0 }]]);
+		const { calls } = useChain([], [[{ n: 0 }], [removed], []]);
 		await deleteThread(T1);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).toHaveBeenCalledWith(agentThreads);
@@ -455,7 +455,7 @@ describe("deleteThread", () => {
 	});
 
 	it("writes no tombstone when there was no live thread to delete", async () => {
-		const { calls } = useChain([], [[], [{ n: 0 }]]);
+		const { calls } = useChain([], [[{ n: 0 }], []]);
 		await deleteThread(NONE);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).not.toHaveBeenCalled();
@@ -467,7 +467,7 @@ describe("deleteThread", () => {
 	// tests/integration/elench-drafts-threads.test.ts; this pins the call and its answer.
 	it("deleteThread purges the user's drafts of that conversation in every org, in the delete's transaction", async () => {
 		const removed = { user_id: "user-1", org_id: "user-1", project_id: null, kind: "agent" };
-		const { calls } = useChain([], [[removed], [], [{ n: 2 }]]);
+		const { calls } = useChain([], [[{ n: 2 }], [removed], []]);
 		expect(await deleteThread(T1)).toEqual({ purged: 2 });
 		expect(vi.mocked(withOwnerScope)).toHaveBeenCalledTimes(1);
 		expect(calls.execute).toHaveBeenCalledTimes(1);
@@ -476,8 +476,19 @@ describe("deleteThread", () => {
 		expect(purge.params).toEqual([T1]);
 	});
 
+	// The lock order `startConversation` shares: drafts first, then the thread. A delete that took
+	// the thread first would deadlock against a start holding the draft row (#5772 review).
+	it("purges the drafts BEFORE it deletes the thread and writes the tombstone", async () => {
+		const removed = { user_id: "user-1", org_id: "user-1", project_id: null, kind: "agent" };
+		const { calls } = useChain([], [[{ n: 1 }], [removed], []]);
+		await deleteThread(T1);
+		const purgedAt = calls.execute.mock.invocationCallOrder[0] ?? Infinity;
+		expect(purgedAt).toBeLessThan(calls.delete.mock.invocationCallOrder[0] ?? -1);
+		expect(purgedAt).toBeLessThan(calls.insert.mock.invocationCallOrder[0] ?? -1);
+	});
+
 	it("purges the drafts even when the thread was already gone", async () => {
-		const { calls } = useChain([], [[], [{ n: 1 }]]);
+		const { calls } = useChain([], [[{ n: 1 }], []]);
 		expect(await deleteThread(NONE)).toEqual({ purged: 1 });
 		expect(calls.insert).not.toHaveBeenCalled();
 		expect(executed(calls.execute.mock.calls[0]?.[0]).params).toEqual([NONE]);

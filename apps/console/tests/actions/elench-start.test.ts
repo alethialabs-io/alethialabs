@@ -450,6 +450,18 @@ describe("startConversation, composer origin (S2)", () => {
 		expect(thread()?.project_id).toBe(PROJECT);
 	});
 
+	// Step 1: the anchor is immutable (§3.1), so a key naming another project than the locked row's
+	// is refused before anything is read or written for it.
+	it("refuses a start whose locked draft belongs to another project: invalid, and nothing is written", async () => {
+		tables.projects?.push({ id: PROJECT, org_id: ORG_A });
+		tables.elench_drafts?.push(claimedRow({ project_id: null }));
+		expect(await composer({ projectId: PROJECT })).toEqual({ outcome: "invalid" });
+		tables.elench_drafts = [draftRow({ project_id: PROJECT, revision: 2 })];
+		expect(await external({ revision: 2 })).toEqual({ outcome: "invalid" });
+		expect(writes()).toEqual([]);
+		expect(thread()).toBeUndefined();
+	});
+
 	it("refuses a token that is not the claim's: not-claimed, and nothing is written", async () => {
 		tables.elench_drafts?.push(claimedRow());
 		expect(await composer({ token: OTHER_TOKEN })).toMatchObject({

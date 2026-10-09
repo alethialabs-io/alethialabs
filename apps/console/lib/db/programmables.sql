@@ -1198,9 +1198,10 @@ BEGIN
 END $$;
 
 -- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). Deleting a thread (`deleteThread`,
--- app/server/actions/agent.ts) calls the purge in its own transaction to remove the caller's drafts
--- of that conversation in EVERY org (the same conversation id in two orgs is two rows, §3.2), which
--- the policy above cannot do from one org's scope — so these run with definer rights. The count is
+-- app/server/actions/agent.ts) calls the purge in its own transaction, together with the thread's
+-- tombstone (purge first, then tombstone), to remove the caller's drafts of that conversation in
+-- EVERY org (the same conversation id in two orgs is two rows, §3.2), which the policy above cannot
+-- do from one org's scope — so these run with definer rights. The count is
 -- read by `countDraftsOfConversation` (app/server/actions/elench-drafts.ts) for the delete confirm.
 -- What keeps them safe:
 --   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so

@@ -261,18 +261,26 @@ const purgedRowsSchema = z.array(z.object({ n: z.number().int().min(0) }));
  * — undoing the user's delete. Finding the tombstone, it puts the transcript in a new thread instead
  * (`saveTranscript`). Every other read treats a tombstone as no thread; `listThreads` reaps it.
  *
- * In the same transaction it purges the caller's Elench drafts of this conversation in EVERY org
- * (ADR 0001 §6.3): an org-level thread is listed in every org, so a draft of it may exist in each.
- * The purge is `purge_elench_drafts_of_conversation`, the owner-pinned SECURITY DEFINER function in
+ * In the same transaction, and FIRST, it purges the caller's Elench drafts of this conversation in
+ * EVERY org (ADR 0001 §6.3): an org-level thread is listed in every org, so a draft of it may
+ * exist in each. The purge is `purge_elench_drafts_of_conversation`, the owner-pinned SECURITY DEFINER function in
  * programmables.sql: it crosses orgs, which the drafts policy cannot from one org's scope, and it
  * reads the owner from the GUC `withOwnerScope` sets, so it never reaches another user's drafts. It
  * runs whether or not a live row was deleted, so a conversation's drafts go with it even when its
  * thread was already gone. The answer counts the drafts purged.
+ *
+ * LOCK ORDER: the purge (which locks the draft rows) runs BEFORE the thread's delete and tombstone,
+ * because `startConversation` locks the draft row first and the thread second. The opposite order
+ * deadlocks: a delete holding the thread waits on the draft row while a start holding the draft row
+ * waits on the thread id.
  */
 export async function deleteThread(id: string): Promise<DeleteThreadResult> {
 	const threadId = z.uuid().parse(id);
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
+		const purged = await tx.execute(
+			sql`select public.purge_elench_drafts_of_conversation(${threadId}::uuid) as n`,
+		);
 		const [deleted] = await tx
 			.delete(agentThreads)
 			.where(and(eq(agentThreads.id, threadId), live))
@@ -293,9 +301,6 @@ export async function deleteThread(id: string): Promise<DeleteThreadResult> {
 				status: THREAD_DELETED,
 			});
 		}
-		const purged = await tx.execute(
-			sql`select public.purge_elench_drafts_of_conversation(${threadId}::uuid) as n`,
-		);
 		return { purged: purgedRowsSchema.parse(purged)[0]?.n ?? 0 };
 	});
 }
