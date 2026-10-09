@@ -24,16 +24,11 @@ interface FakeTransport {
 const state = vi.hoisted(() => {
 	/** A fresh fake transport. */
 	const transport = (): FakeTransport => ({ listeners: new Map(), unsubscribed: [] });
-	return {
-		realtime: transport(),
-		support: transport(),
-		wake: transport(),
-		cancel: transport(),
-		/** Every query the routes issued, by a short label. */
-		queries: [] as string[],
-		/** The SQL text of every `execute` call (runner presence). */
-		executed: [] as string[],
-	};
+	/** Every query the routes issued, by a short label. */
+	const queries: string[] = [];
+	/** The SQL text of every `execute` call (runner presence). */
+	const executed: string[] = [];
+	return { realtime: transport(), support: transport(), wake: transport(), cancel: transport(), queries, executed };
 });
 
 /** Subscribe `fn` on `t` under `key`; the returned function records the unsubscribe. */
@@ -157,14 +152,16 @@ describe("a client disconnect after a GC still stops the stream's work", () => {
 		expect(res.status).toBe(200);
 		const reading = drain(res);
 		await vi.waitFor(() => expect(state.realtime.listeners.has("job-1")).toBe(true));
+		const notify = state.realtime.listeners.get("job-1");
 		await nextTask();
 		collectGarbage();
 		ctl.abort();
 		await vi.waitFor(() => expect(state.realtime.unsubscribed).toEqual(["job-1"]));
 		await reading;
-		// The log poll is over: nothing is subscribed, so a runner's next log line reads no rows.
+		// The log poll is over: a notify that was already in flight when the client left reads no rows.
 		const before = state.queries.length;
-		state.realtime.listeners.get("job-1")?.("");
+		notify?.("");
+		await nextTask();
 		expect(state.queries.length).toBe(before);
 	});
 
