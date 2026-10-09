@@ -4,7 +4,6 @@
 
 import { create } from "zustand";
 import type { AgentMode } from "@/lib/ai/tools";
-import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
 import { AI_MODELS } from "@/lib/config/ai";
 
@@ -133,8 +132,6 @@ interface ElenchState {
 	 * auto-sent once into a fresh conversation then cleared.
 	 */
 	seedPrompt: string | null;
-	/** Resources @-referenced in the latest sent message (ride with the request). */
-	pendingMentions: Mention[];
 	/**
 	 * Whether the modal's thread rail is expanded. Lives here (not in `ElenchModal`'s local
 	 * state) so it survives a minimize→maximize round-trip — the modal remounts on every view
@@ -216,8 +213,6 @@ interface ElenchState {
 	followConversation: (id: string) => void;
 	/** Stage a prompt to auto-send once into the next conversation. */
 	setSeedPrompt: (prompt: string | null) => void;
-	/** Record the resources @-referenced in the message about to be sent. */
-	setPendingMentions: (mentions: Mention[]) => void;
 	/** Record the page's org (the `[org]` layout's `currentActor().orgId`). */
 	setPageOrgId: (orgId: string | null) => void;
 }
@@ -248,7 +243,6 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	conversationId: mintConversationId(),
 	epoch: 0,
 	seedPrompt: null,
-	pendingMentions: [],
 	railOpen: true,
 	mainView: "chat",
 	pageOrgId: null,
@@ -335,7 +329,6 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		})),
 	followConversation: (id) => set({ conversationId: id }),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
-	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
 	setPageOrgId: (pageOrgId) => set({ pageOrgId }),
 }));
 

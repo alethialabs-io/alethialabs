@@ -46,7 +46,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { AGENT_STEP_PART_TYPE, type AgentStepData, agentStepMarker } from "@/lib/ai/agent-steps";
 import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
-import { type Mention, mentionsSchema } from "@/lib/ai/mentions";
+import { type Mention, mentionSchema, mentionsSchema } from "@/lib/ai/mentions";
+import { MAX_DRAFT_MENTION_SPANS } from "@/lib/elench/draft-content";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
@@ -96,11 +97,33 @@ export const cellTargetSchema = z.object({
 type CellTarget = z.infer<typeof cellTargetSchema>;
 
 /**
- * What a stored user message carries in `metadata` (§9.2): its mentions and its cell target. Read
- * leniently, so a stored value that predates the schema degrades to "none" rather than failing a turn.
+ * The distinct mentions of `spans`, by type and id, in order of first appearance. A user message's
+ * `metadata.mentions` holds one entry per pill, repeats included (ADR 0001 §4.1), and the cap of
+ * `mentionsSchema` applies to the distinct resources, as it did when the composer deduped them.
+ */
+function distinctResources(spans: readonly Mention[]): Mention[] {
+	const seen = new Set<string>();
+	return spans.flatMap((m) => {
+		const key = `${m.type}:${m.id}`;
+		if (seen.has(key)) return [];
+		seen.add(key);
+		return [{ id: m.id, type: m.type, label: m.label }];
+	});
+}
+
+/**
+ * What a user message carries in `metadata` (§9.2): its mentions and its cell target. Read
+ * leniently, so a value that predates the schema degrades to "none" rather than failing a turn, and
+ * `z.object` keeps these two fields and nothing else of it.
  */
 const turnMetadataSchema = z.object({
-	mentions: mentionsSchema.catch(undefined),
+	mentions: z
+		.array(mentionSchema)
+		.max(MAX_DRAFT_MENTION_SPANS)
+		.transform(distinctResources)
+		.pipe(mentionsSchema)
+		.optional()
+		.catch(undefined),
 	cellTarget: cellTargetSchema.nullish().catch(null),
 });
 
@@ -118,10 +141,6 @@ export interface TurnRouteBody<R> {
 	messages: UIMessage[];
 	/** The thread the turn belongs to. Required; validated as a uuid here. */
 	threadId: unknown;
-	/** The body's mentions: read only for a first answer whose stored message carries none (§9.2). */
-	mentions: Mention[] | undefined;
-	/** The body's cell target: read only for a first answer whose stored message carries none. */
-	cellTarget: CellTarget | null;
 	/** The route's own fields. */
 	route: R;
 }
@@ -130,9 +149,9 @@ export interface TurnRouteBody<R> {
 export interface PrepareTurnInput<R> {
 	actor: Actor;
 	turn: AcceptedTurn;
-	/** The turn's mentions: the stored message's, else (a first answer only) the body's. */
+	/** The turn's mentions: its stored user message's `metadata.mentions` (§9.2). */
 	mentions: Mention[] | undefined;
-	/** The turn's cell target, read the same way. */
+	/** The turn's cell target: its stored user message's `metadata.cellTarget` (§9.2). */
 	cellTarget: CellTarget | null;
 	route: R;
 }
@@ -172,6 +191,12 @@ export interface TurnRouteSpec<R> {
 	threadKind?: "agent" | "support";
 	/** The ledger kind of the turn's hold. Default `agent`. */
 	aiKind?: MeteredAiKind;
+	/**
+	 * Which of a turn's `metadata` fields this route stores when it appends the turn (§9.2): the
+	 * Elench routes' mentions, and the org route's cell target. A field the route does not name is
+	 * never stored from a request, so a route with no use for it cannot be handed one. Default none.
+	 */
+	turnMetadata?: { mentions?: boolean; cellTarget?: boolean };
 	/**
 	 * The route's own check, under the resolved actor, after the org gate and before the project check
 	 * and the hold: the thread's project (replacing `projectId`), or the refusal to answer. It runs
@@ -282,35 +307,36 @@ async function resolveActor<R>(
 }
 
 /**
- * The turn's mentions and cell target (§9.2): the stored user message's `metadata` wins; the body's
- * fields are read only for a first answer, whose stored message (a first turn stored with its thread)
- * may carry none. A regenerate or a continuation never takes the body's, which describe whatever the
- * composer last sent.
+ * The turn's mentions and cell target (§9.2): read from the turn's STORED user message's `metadata`
+ * only, never from the request. A turn appended by this acceptance was stored with its request
+ * message's validated fields (`appendedTurnMetadata`); a stored turn keeps what it was stored with, so a
+ * regenerate, a continuation or a Retry cannot change them.
  */
-function turnContext(
-	turn: AcceptedTurn,
-	body: Pick<TurnRouteBody<unknown>, "mentions" | "cellTarget">,
-): { mentions: Mention[] | undefined; cellTarget: CellTarget | null } {
+function turnContext(turn: AcceptedTurn): { mentions: Mention[] | undefined; cellTarget: CellTarget | null } {
 	const stored = turn.modelInput.find((m) => m.id === turn.turnId && m.role === "user");
 	const meta = turnMetadataSchema.safeParse(stored?.metadata ?? {});
-	const fromStore = meta.success ? meta.data : { mentions: undefined, cellTarget: null };
-	const fallback = turn.kind === "answer";
-	return {
-		mentions: fromStore.mentions ?? (fallback ? body.mentions : undefined),
-		cellTarget: fromStore.cellTarget ?? (fallback ? body.cellTarget : null),
-	};
+	if (!meta.success) return { mentions: undefined, cellTarget: null };
+	return { mentions: meta.data.mentions, cellTarget: meta.data.cellTarget ?? null };
 }
 
 /**
- * The `metadata` an appended user turn is stored with (§5.1 step 8): the body's mentions and cell
- * target, validated by the route's parse. Undefined when it carries neither.
+ * The `metadata` the turn's user message is stored with when this acceptance appends it (§5.1 step
+ * 8): the request message's mentions and cell target, each validated by its schema and nothing else
+ * of it kept. `reserveTurn` stores it only for an append; a turn already stored keeps its own.
+ * Undefined when it carries neither.
  */
 function appendedTurnMetadata(
-	body: Pick<TurnRouteBody<unknown>, "mentions" | "cellTarget">,
+	messages: readonly UIMessage[],
+	turnId: string,
+	accepts: TurnRouteSpec<unknown>["turnMetadata"],
 ): UIMessage["metadata"] {
+	const requested = messages.findLast((m) => m.role === "user" && m.id === turnId);
+	const parsed = turnMetadataSchema.safeParse(requested?.metadata ?? {});
+	if (!parsed.success) return undefined;
 	const meta: { mentions?: Mention[]; cellTarget?: CellTarget } = {};
-	if (body.mentions && body.mentions.length > 0) meta.mentions = body.mentions;
-	if (body.cellTarget) meta.cellTarget = body.cellTarget;
+	if (accepts?.mentions && parsed.data.mentions && parsed.data.mentions.length > 0)
+		meta.mentions = parsed.data.mentions;
+	if (accepts?.cellTarget && parsed.data.cellTarget) meta.cellTarget = parsed.data.cellTarget;
 	return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
@@ -401,7 +427,7 @@ export async function serveTurnBody<R>(
 				aiKind: spec.aiKind ?? "agent",
 				turn,
 				messages: body.messages,
-				turnMetadata: appendedTurnMetadata(body),
+				turnMetadata: appendedTurnMetadata(body.messages, turn.turnId, spec.turnMetadata),
 			});
 			switch (reserved.outcome) {
 				case "accepted":
@@ -554,7 +580,7 @@ async function streamAcceptedTurn<R>(
 	};
 
 	try {
-		const { mentions, cellTarget } = turnContext(turn, body);
+		const { mentions, cellTarget } = turnContext(turn);
 		const prepared = await spec.prepare({ actor, turn, mentions, cellTarget, route: body.route });
 		const { advisor, executor, base, clientPick } = prepared.models;
 		const thinkEveryStep = clientPick && prepared.models.thinking !== false;

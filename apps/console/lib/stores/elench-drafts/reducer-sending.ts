@@ -214,8 +214,9 @@ export type SendEffect =
 			prompt: { text: string; mentions: DraftMention[]; cellTarget: ElenchCellTarget | null } | null;
 	  }
 	/**
-	 * D9b / D10y / D12: stage `mentions` in the `pendingMentions` slot, then `sendMessage({ id: turnId,
-	 * parts: [{ type: "text", text }], metadata: { mentions, cellTarget } })`. `text` is trimmed.
+	 * D9b / D10y / D12: `sendMessage({ id: turnId, parts: [{ type: "text", text }], metadata: {
+	 * mentions, cellTarget } })`. `text` is trimmed. The message's own `metadata` is the only place the
+	 * turn's mentions and cell target travel: the routes store and read them there (ADR 0003 §9.2).
 	 */
 	| {
 			type: "send-message";

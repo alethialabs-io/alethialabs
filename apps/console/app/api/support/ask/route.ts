@@ -75,8 +75,6 @@ export async function POST(req: Request): Promise<Response> {
 				value: {
 					messages: parsed.data.messages,
 					threadId: parsed.data.threadId,
-					mentions: undefined,
-					cellTarget: null,
 					route: { model: parsed.data.model },
 				},
 			};
