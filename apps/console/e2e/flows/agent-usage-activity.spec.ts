@@ -256,14 +256,14 @@ test.describe("Activity — org feed (owner)", () => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(owner.page).not.toHaveURL(/\/login/);
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
 	});
 
 	test("the reusable filter bar renders all facets", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
 		await expect(owner.page.getByRole("button", { name: /^user$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^project$/i })).toBeVisible();
@@ -334,7 +334,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		await owner.page.goto(`${activityPath(owner.orgSlug)}?${params}`);
 
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toHaveValue("grant", { timeout: 30_000 });
 		// A facet trigger renders a count badge only when something is selected, so "User 1" is
 		// a name that exists ONLY once the URL has been decoded into the store.
@@ -375,7 +375,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 	test("typing a search writes `search` to the URL", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		const search = owner.page.getByPlaceholder(/search actor, action or resource/i);
+		const search = owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true });
 		await expect(search).toBeVisible({ timeout: 30_000 });
 		await search.fill("connector");
 		// `toHaveURL` polls, which is what absorbs the 300ms debounce without a sleep.
