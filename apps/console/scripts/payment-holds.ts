@@ -33,13 +33,15 @@
 //      `status_transitions.paid_at` after `ended_at`; or it has a PaymentIntent `processing` or
 //      `requires_capture`;
 //   B5 a card: every PaymentIntent on it used a card (one with no payment method attached and nothing
-//      taken counts: nothing was paid by any other method);
+//      taken counts: nothing was paid by any other method). An invoice with NO PaymentIntent proves
+//      nothing either way: it is held in `needs_operator` and alerted, never advanced;
 //   B6 not a withdrawal: no `commerce_order` names it as `withdrawn` or `refunded`.
 // Each hit is opened as a hold (`opened_by = backfill`, `open_note` naming the evidence) under its payer's
 // lease and advanced at once; one the machine cannot settle reaches `needs_operator`. Everything else is
 // LISTED with the failed test named, and nothing is written for it (Q12: each is a support decision, with
-// `show` as the evidence). Safe to re-run: a subscription any hold has ever named — open or released — is
-// skipped, so a second run writes nothing for it.
+// `show` as the evidence). Safe to re-run, and to run twice at once: a subscription any hold has ever
+// named — open or released — is skipped, and that check is made again under the payer's lease before a
+// hold is opened.
 //
 // Nothing printed carries an amount, a card, or a customer's email.
 //
@@ -72,7 +74,7 @@ declare module "node:module" {
 
 /** The server modules the commands use, loaded by `main` (they import `server-only`). */
 export interface ServerDeps {
-	store: Pick<typeof StoreModule, "payerLeaseKey" | "openHold">;
+	store: Pick<typeof StoreModule, "payerLeaseKey" | "openHold" | "writeHoldState">;
 	lease: Pick<typeof LeaseModule, "acquirePurchaseLease" | "releasePurchaseLease">;
 	sweeper: Pick<typeof SweeperModule, "runPaymentHoldSweep" | "machineDepsFor">;
 	/** The sweeper's Stripe client, alert and email sender (`liveSweepDeps()`, or a test's). */
@@ -325,7 +327,18 @@ export interface BackfillSubscription {
 export type BackfillVerdict =
 	| { kind: "not_create_a_team" }
 	| { kind: "listed"; failed: string }
-	| { kind: "hold"; payer: string; customerId: string; invoiceId: string; evidence: string };
+	| {
+			kind: "hold";
+			payer: string;
+			customerId: string;
+			invoiceId: string;
+			evidence: string;
+			/**
+			 * B5 passed only on ABSENCE: the invoice carries no PaymentIntent, so nothing proves the method was
+			 * a card. Held for an operator (`needs_operator`, alerted), never advanced by the machine.
+			 */
+			toOperator: boolean;
+		};
 
 /** The PaymentIntent statuses under which nothing was ever taken on it. */
 const NOTHING_TAKEN: ReadonlySet<string> = new Set(["requires_payment_method", "canceled"]);
@@ -405,18 +418,24 @@ export async function backfillVerdict(sub: BackfillSubscription, stripe: Backfil
 	if (withdrawn) return { kind: "listed", failed: `B6: commerce order ${withdrawn.id} is withdrawn or refunded` };
 
 	const ended = sub.status === "canceled" ? "canceled(cancellation_requested)" : "incomplete_expired";
+	const toOperator = intents.length === 0;
+	const b5 = toOperator ? "B5 unproven (no PaymentIntent on the invoice; held for an operator)" : "B5 card";
 	return {
 		kind: "hold",
 		payer,
 		customerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
 		invoiceId: invoice.id,
-		evidence: `backfill: B2 ${ended}; B3 one subscription_create invoice ${invoice.id}; B4 ${b4}; B5 card; B6 no withdrawal`,
+		evidence: `backfill: B2 ${ended}; B3 one subscription_create invoice ${invoice.id}; B4 ${b4}; ${b5}; B6 no withdrawal`,
+		toOperator,
 	};
 }
 
 /** What the backfill did, by count. */
 export interface BackfillSummary {
+	/** Held and advanced by the machine. */
 	held: number;
+	/** Held in `needs_operator` and alerted: B5 had no PaymentIntent to prove a card. */
+	toOperator: number;
 	listed: number;
 	alreadyHeld: number;
 	notCreateATeam: number;
@@ -428,7 +447,7 @@ export interface BackfillSummary {
  * subscription any hold has ever named, so a re-run is safe.
  */
 export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, print: Print): Promise<BackfillSummary> {
-	const summary: BackfillSummary = { held: 0, listed: 0, alreadyHeld: 0, notCreateATeam: 0 };
+	const summary: BackfillSummary = { held: 0, toOperator: 0, listed: 0, alreadyHeld: 0, notCreateATeam: 0 };
 	for (const status of ["canceled", "incomplete_expired"] as const) {
 		for await (const sub of stripe.subscriptions.list({ status, limit: 100 })) {
 			let verdict: BackfillVerdict;
@@ -443,11 +462,8 @@ export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, prin
 				summary.notCreateATeam += 1;
 				continue;
 			}
-			const [known] = await getServiceDb()
-				.select({ id: paymentHolds.id, state: paymentHolds.state })
-				.from(paymentHolds)
-				.where(eq(paymentHolds.subscription_id, sub.id))
-				.limit(1);
+			// A cheap first look; `holdFromBackfill` asks again under the payer's lease.
+			const known = await knownHold(sub.id);
 			if (known) {
 				summary.alreadyHeld += 1;
 				print(`SKIPPED ${sub.id}: a hold already names it (${known.id}, ${known.state}).`);
@@ -458,50 +474,89 @@ export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, prin
 				print(`LISTED ${sub.id}: ${verdict.failed}`);
 				continue;
 			}
-			if (await holdFromBackfill(sub.id, verdict, deps, print)) summary.held += 1;
+			const outcome = await holdFromBackfill(sub.id, verdict, deps, print);
+			if (outcome === "held") summary.held += 1;
+			else if (outcome === "to_operator") summary.toOperator += 1;
+			else if (outcome === "already") summary.alreadyHeld += 1;
 			else summary.listed += 1;
 		}
 	}
 	print(
-		`Backfill: ${summary.held} held, ${summary.listed} listed for review, ${summary.alreadyHeld} already held, ` +
+		`Backfill: ${summary.held} held, ${summary.toOperator} held for an operator, ${summary.listed} listed for review, ${summary.alreadyHeld} already held, ` +
 			`${summary.notCreateATeam} not create-a-team subscriptions.`,
 	);
 	return summary;
 }
 
-/** Opens and advances one backfill hold under its payer's lease. True when this run opened it. */
+/** What one backfill hit came to. */
+type BackfillOutcome = "held" | "to_operator" | "already" | "listed";
+
+/** Whether any hold, open or released, has ever named `subscriptionId`; the hold's id and state if so. */
+async function knownHold(subscriptionId: string): Promise<{ id: string; state: string } | null> {
+	const [known] = await getServiceDb()
+		.select({ id: paymentHolds.id, state: paymentHolds.state })
+		.from(paymentHolds)
+		.where(eq(paymentHolds.subscription_id, subscriptionId))
+		.limit(1);
+	return known ?? null;
+}
+
+/**
+ * Opens one backfill hold under its payer's lease, and advances it — or, when B5 rested on no
+ * PaymentIntent at all, opens it in `needs_operator` and alerts instead. The "a hold already names it"
+ * check is made again UNDER the lease, so two backfills running at once cannot both open one.
+ */
 async function holdFromBackfill(
 	subscriptionId: string,
 	verdict: Extract<BackfillVerdict, { kind: "hold" }>,
 	deps: ServerDeps,
 	print: Print,
-): Promise<boolean> {
+): Promise<BackfillOutcome> {
 	const lease = await deps.lease.acquirePurchaseLease(deps.store.payerLeaseKey(verdict.payer), LEASE_WAIT_MS);
 	if (!lease) {
 		print(`LISTED ${subscriptionId}: its payer's lease stayed busy; re-run the backfill.`);
-		return false;
+		return "listed";
 	}
 	try {
+		const known = await knownHold(subscriptionId);
+		if (known) {
+			print(`SKIPPED ${subscriptionId}: a hold already names it (${known.id}, ${known.state}).`);
+			return "already";
+		}
+		const now = new Date();
 		const opened = await deps.store.openHold(lease, {
 			subscriptionId,
 			customerId: verdict.customerId,
 			payerKey: verdict.payer,
 			invoiceId: verdict.invoiceId,
-			state: "closing",
-			nextCheckAt: new Date(),
+			state: verdict.toOperator ? "needs_operator" : "closing",
+			nextCheckAt: verdict.toOperator ? new Date(now.getTime() + 24 * 60 * 60_000) : now,
 			openedBy: "backfill",
 			openNote: verdict.evidence,
 		});
 		if (opened.kind !== "opened") {
 			print(`LISTED ${subscriptionId}: the hold was not written (${opened.kind}).`);
-			return false;
+			return "listed";
+		}
+		if (verdict.toOperator) {
+			const alerted = await deps.sweepDeps.alert({
+				subscriptionId,
+				customerId: verdict.customerId,
+				paymentIntentId: null,
+				detail: `backfill held it for an operator: its invoice ${verdict.invoiceId} carries no PaymentIntent, so nothing proves it was paid by card (B5)`,
+			});
+			if (alerted) {
+				await deps.store.writeHoldState(lease, { id: opened.hold.id, version: opened.hold.version }, { alertedAt: now });
+			}
+			print(`HELD ${subscriptionId}: hold ${opened.hold.id}, needs_operator (B5 unproven: no PaymentIntent)${alerted ? ", alerted" : ""}.`);
+			return "to_operator";
 		}
 		const advanced = await advanceHold(opened.hold, deps.sweeper.machineDepsFor(lease, deps.sweepDeps));
 		print(
 			`HELD ${subscriptionId}: hold ${opened.hold.id}, ${advanced.hold.state}` +
 				`${advanced.hold.release_reason ? `(${advanced.hold.release_reason})` : ""} after ${advanced.rows.join(" → ") || "no row"}.`,
 		);
-		return true;
+		return "held";
 	} finally {
 		await deps.lease.releasePurchaseLease(lease);
 	}

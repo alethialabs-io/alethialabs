@@ -656,7 +656,7 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		};
 
 		const first = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(first).toEqual({ held: 2, listed: 2, alreadyHeld: 0, notCreateATeam: 1 });
+		expect(first).toEqual({ held: 2, toOperator: 0, listed: 2, alreadyHeld: 0, notCreateATeam: 1 });
 
 		const rows = await getServiceDb()
 			.select()
@@ -687,12 +687,43 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		// A second run writes nothing: every subscription a hold has named is skipped.
 		const writesBefore = stripe.log.length;
 		const second = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(second).toEqual({ held: 0, listed: 2, alreadyHeld: 2, notCreateATeam: 1 });
+		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 2, notCreateATeam: 1 });
 		expect(stripe.log.length).toBe(writesBefore);
 		const [after] = await getServiceDb()
 			.select({ count: sql<number>`count(*)::int` })
 			.from(paymentHolds)
 			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
 		expect(after?.count).toBe(2);
+	});
+
+	it("two backfills at once open ONE hold per subscription; an invoice with no PaymentIntent is held for an operator and alerted", async () => {
+		const stripe = new FakeStripe();
+		const payer = newPayer();
+		const mine = { created_by: payer };
+		const requested = { reason: "cancellation_requested" };
+		const neverPaid = newSub();
+		const noPi = newSub();
+		stripe.add(
+			{ id: neverPaid, status: "canceled", ended_at: 1000, metadata: mine, cancellation_details: requested },
+			{ pis: [{ id: `pi_${neverPaid}`, status: "requires_payment_method", amount: 1000, pm: null, refunds: [] }] },
+		);
+		stripe.add({ id: noPi, status: "canceled", ended_at: 1000, metadata: mine, cancellation_details: requested });
+		const quiet = () => undefined;
+		const [a, b] = await Promise.all([
+			runBackfill(serverDeps(stripe), stripe, quiet),
+			runBackfill(serverDeps(stripe), stripe, quiet),
+		]);
+		expect(a.held + b.held).toBe(1);
+		expect(a.toOperator + b.toOperator).toBe(1);
+
+		const rows = await getServiceDb().select().from(paymentHolds).where(inArray(paymentHolds.subscription_id, [neverPaid, noPi]));
+		expect(rows).toHaveLength(2);
+		const bySub = new Map(rows.map((r) => [r.subscription_id, r]));
+		expect(bySub.get(neverPaid)).toMatchObject({ state: "released", release_reason: "voided_unpaid" });
+		expect(bySub.get(noPi)).toMatchObject({ state: "needs_operator", open_note: expect.stringMatching(/B5 unproven/) });
+		expect(bySub.get(noPi)?.alerted_at).not.toBeNull();
+		expect(alert.mock.calls.filter((c) => c[0].subscriptionId === noPi)).toHaveLength(1);
+		expect(stripe.writesFor(noPi)).toEqual([]);
+		expect(stripe.writesFor(neverPaid).filter((w) => w.startsWith("invoices.voidInvoice"))).toHaveLength(1);
 	});
 });

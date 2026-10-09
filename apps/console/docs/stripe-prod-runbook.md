@@ -179,8 +179,11 @@ has sat in one state longer than its bound:
 | `payment_in_flight` | 8 days if authorised, else 14 days |
 | `invoice_payable` | 24h |
 | `refund_due` | 48h (the refund budget itself sends it to `needs_operator` after about 8h35m of failed attempts) |
-| `refund_pending` | 24h after a refund went `requires_action`, else 14 days |
+| `refund_pending` | 24h after a refund went `requires_action`, and again at 14 days |
 | `needs_operator` | 24h, then every 7 days, only when its first alert did not reach a channel |
+
+Each age alert is raised once per state and bound, whether or not it reached a channel. Only
+`needs_operator` re-alerts on its own.
 
 ### The command
 
@@ -200,10 +203,13 @@ pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--payer <user
   refuses with no `--reason`. It waits up to 30s for the payer's lease and refuses while it is still
   busy. It prints the live read, then releases the hold with `released_by` and `release_note` and logs
   one `billing.payment_hold.released` line. A second run finds no open hold and changes nothing.
+  `--operator` is free text: the command does not check that it names a real user. It is recorded as
+  `released_by` and in the log line, so type your own user id exactly.
   A release also closes the subscription's unfinished setup. So while a setup is open, `release`
   refuses unless Stripe reads the subscription ended or not found: cancel it in the Stripe dashboard
   first, and refund it if it was paid.
-- `reconcile` runs one sweeper tick now. With `--backfill` it first runs the backfill below.
+- `reconcile` runs one sweeper tick now, so it can also send the customer emails above. With
+  `--backfill` it first runs the backfill below.
 
 ### The backfill
 
@@ -227,7 +233,9 @@ only when all six tests pass:
 6. **B6:** no order names it as withdrawn or refunded.
 
 Each hold is advanced at once: an unpaid invoice is voided, and a payment that landed after the end is
-refunded. Every other create-a-team subscription is printed as `LISTED <sub>: <the failed test>`, and
+refunded. One case is held but not advanced: an invoice with **no** PaymentIntent proves nothing about how
+it would be paid (B5). That hold opens in `needs_operator`, the alert names the subscription, and you
+decide it with `show` and `release`. Every other create-a-team subscription is printed as `LISTED <sub>: <the failed test>`, and
 nothing is written for it. Each one is a support decision: use `show` as the evidence, and refund in the
 Stripe dashboard only when the customer did not mean to keep it. A second run skips every subscription a
 hold has named, so it writes nothing new.

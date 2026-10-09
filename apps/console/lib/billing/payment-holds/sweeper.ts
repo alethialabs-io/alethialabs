@@ -74,7 +74,8 @@ export interface SweepDeps {
 export function liveSweepDeps(): SweepDeps {
 	return {
 		stripe: () => getPurchaseStripe(),
-		alert: (input) => alertPaymentNeedsSupport(input),
+		// Every hold alert names the hold, not the purchase flow: the backfill opens holds too.
+		alert: (input) => alertPaymentNeedsSupport({ ...input, context: "payment_hold" }),
 		deliver: deliverHoldNotice,
 		now: () => new Date(),
 	};
@@ -136,10 +137,8 @@ function ageBoundOf(hold: PaymentHoldRow): AgeBound | null {
 		case "refund_due":
 			return { since: entered, ms: 2 * DAY, what: "a refund owed and not issued" };
 		case "refund_pending":
-			if (hold.refund_action_since !== null) {
-				return { since: hold.refund_action_since, ms: DAY, what: "a refund waiting on requires_action" };
-			}
-			return { since: entered, ms: 14 * DAY, what: "a refund not yet settled" };
+			// Two bounds in one state entry, each alerting once: `refundPendingAlert`.
+			return null;
 		default:
 			return null;
 	}
@@ -162,10 +161,34 @@ export function ageAlertFor(hold: PaymentHoldRow, now: Date): string | null {
 			? `payment hold ${hold.id} has waited for an operator since ${hold.state_since.toISOString()}, and its alert did not reach a channel`
 			: null;
 	}
+	if (hold.state === "refund_pending") return refundPendingAlert(hold, now);
 	if (alertedThisEntry) return null;
 	const bound = ageBoundOf(hold);
 	if (!bound || now.getTime() - bound.since.getTime() < bound.ms) return null;
 	return `payment hold ${hold.id} has been ${hold.state} since ${hold.state_since.toISOString()} (${bound.what}; last observation ${hold.last_pay ?? "none"})`;
+}
+
+/**
+ * `refund_pending`'s two §5.4 rows, each alerting once in a state entry: 24h after a covering refund
+ * went `requires_action` (from `refund_action_since`), and 14 days after the entry whatever the refunds
+ * read. The 14-day alert still fires after the 24h one: it is due unless an age alert was already raised
+ * at or past the 14-day mark. Pure.
+ */
+function refundPendingAlert(hold: PaymentHoldRow, now: Date): string | null {
+	const t = now.getTime();
+	const last = hold.age_alerted_at?.getTime() ?? null;
+	const actionSince = hold.refund_action_since;
+	if (actionSince !== null) {
+		const due = Math.max(actionSince.getTime(), hold.state_since.getTime()) + DAY;
+		if (t >= due && (last === null || last < due)) {
+			return `payment hold ${hold.id} has a refund waiting on requires_action since ${actionSince.toISOString()}`;
+		}
+	}
+	const due = hold.state_since.getTime() + 14 * DAY;
+	if (t >= due && (last === null || last < due)) {
+		return `payment hold ${hold.id} has been refund_pending since ${hold.state_since.toISOString()} (a refund not yet settled; last observation ${hold.last_pay ?? "none"})`;
+	}
+	return null;
 }
 
 /** The machine's dependencies for one hold under `lease`: the store's writes bound to it, and its fence. */

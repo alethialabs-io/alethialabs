@@ -12,12 +12,15 @@
 //                       only while the hold's setup has NO org (§5.6 "When a hold ends"). A setup with an
 //                       org is re-linked from slice 9 on, and is the creator's to link until then.
 //
-// ONE SENDER. Only the sweeper calls `sendDueHoldNotices`. The operator command moves holds but never
-// mails, and neither will the purchase flow and the link when they move holds (slices 8 and 9), so
-// whichever caller moved a hold, its email goes out within one tick.
+// ONE SENDER. Only a sweeper tick calls `sendDueHoldNotices` — the in-process loop, its cron twin, and
+// the operator command's `reconcile`, which runs one tick and so CAN send these emails. The command's
+// `release` and the backfill move holds but never mail; neither will the purchase flow and the link when
+// they move holds (slices 8 and 9). Whichever caller moved a hold, its email goes out within one tick.
 //
-// AT MOST ONCE. Before a send, the notice claim (store.ts `claimHoldNotice`) sets `notified_state` with a
-// compare-and-set; only the caller whose claim wrote the row sends. Two overlapping ticks — in one
+// AT MOST ONCE, AND ONLY WHILE TRUE. Before a send, the notice claim (store.ts `claimHoldNotice`) sets
+// `notified_state` with a compare-and-set that ALSO requires the hold to be in the email's state now, in
+// the same statement — so a refund that failed between the selection and the claim (`refund_due`) is
+// never told "your refund is on its way". Only the caller whose claim wrote the row sends. Two overlapping ticks — in one
 // process, or on two instances — therefore mail a hold and state once. A send that throws gives the claim
 // back (`unclaimHoldNotice`), so the next tick retries; a crash between the claim and the send loses that
 // one email, and the create-a-team `notice` still carries the clause.

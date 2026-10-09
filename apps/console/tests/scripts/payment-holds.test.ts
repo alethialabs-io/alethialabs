@@ -40,6 +40,8 @@ vi.mock("@/lib/auth/internal-auth", async (importOriginal) => {
 });
 
 import { render } from "@react-email/components";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { is, SQL } from "drizzle-orm";
 import { POST } from "@/app/api/internal/payment-holds/sweep/route";
 import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { sendDueHoldNotices } from "@/lib/billing/payment-holds/emails";
@@ -51,6 +53,7 @@ import {
 	type SweepDeps,
 } from "@/lib/billing/payment-holds/sweeper";
 import * as lease from "@/lib/billing/purchase-lease";
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { getServiceDb } from "@/lib/db";
 import { PAYMENT_HOLD_NOTIFIED_STATES, type PaymentHoldRow } from "@/lib/db/schema";
 import { sendGuardedEmail } from "@/lib/email/guard";
@@ -74,10 +77,15 @@ const LEASE = { key: "user:payer-1", holder: "holder-1" };
 function makeDb() {
 	const queue: unknown[][] = [];
 	const calls: string[] = [];
+	const wheres: unknown[] = [];
 	const chain: Record<string, unknown> = {};
-	for (const m of ["from", "where", "orderBy", "limit", "returning", "set", "values", "innerJoin"]) {
+	for (const m of ["from", "orderBy", "limit", "returning", "set", "values", "innerJoin"]) {
 		chain[m] = () => chain;
 	}
+	chain.where = (predicate: unknown) => {
+		wheres.push(predicate);
+		return chain;
+	};
 	chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
 		Promise.resolve(queue.shift() ?? []).then(resolve, reject);
 	const op = (name: string) =>
@@ -86,7 +94,7 @@ function makeDb() {
 			return chain;
 		});
 	const db = { select: op("select"), update: op("update"), insert: op("insert") };
-	return { db, queue, calls };
+	return { db, queue, calls, wheres };
 }
 
 /** A hold row as the database holds it. */
@@ -285,6 +293,32 @@ describe("ageAlertFor (§5.4)", () => {
 		expect(ageAlertFor(settling, at(14 * DAY))).not.toBeNull();
 	});
 
+	it("every live hold alert names the hold, not the purchase flow (the backfill opens holds too)", async () => {
+		const input = { subscriptionId: "sub_x", customerId: "cus_x", paymentIntentId: null, detail: "d" };
+		await sweeper.liveSweepDeps().alert(input);
+		expect(alertPaymentNeedsSupport).toHaveBeenCalledWith({ ...input, context: "payment_hold" });
+		const real = await vi.importActual<typeof import("@/lib/billing/payment-alert")>("@/lib/billing/payment-alert");
+		const logged = vi.mocked(console.error);
+		logged.mockClear();
+		await real.alertPaymentNeedsSupport({ ...input, context: "payment_hold" });
+		expect(String(logged.mock.calls[0]?.[0])).toMatch(/a payment hold is settling/);
+		expect(String(logged.mock.calls[0]?.[0])).not.toMatch(/purchase flow/);
+	});
+
+	it("refund_pending: the 14-day alert still fires after the requires_action alert of the same entry, once", () => {
+		const entry = hold({
+			state: "refund_pending",
+			refund_action_since: NOW,
+			age_alerted_at: at(25 * HOUR), // the requires_action alert
+		});
+		expect(ageAlertFor(entry, at(13 * DAY))).toBeNull();
+		expect(ageAlertFor(entry, at(14 * DAY))).toMatch(/refund_pending since/);
+		expect(ageAlertFor({ ...entry, age_alerted_at: at(14 * DAY) }, at(20 * DAY))).toBeNull();
+		// A refund that goes requires_action again later re-arms its own 24h bound.
+		const again = { ...entry, age_alerted_at: at(14 * DAY), refund_action_since: at(15 * DAY) };
+		expect(ageAlertFor(again, at(16 * DAY))).toMatch(/requires_action/);
+	});
+
 	it("once per state entry: an age alert at or after state_since silences the state; a new entry re-arms it", () => {
 		const alerted = hold({ state: "invoice_payable", age_alerted_at: at(DAY) });
 		expect(ageAlertFor(alerted, at(30 * DAY))).toBeNull();
@@ -386,6 +420,29 @@ describe("runPaymentHoldSweep", () => {
 // ── The Q3 emails (C95) ─────────────────────────────────────────────────────────────────────────────
 
 describe("sendDueHoldNotices (Q3, C95)", () => {
+	it("the claim matches the hold's CURRENT state in the same statement (a failed refund is never told it is on its way)", async () => {
+		const real = await vi.importActual<typeof import("@/lib/billing/payment-holds/store")>(
+			"@/lib/billing/payment-holds/store",
+		);
+		const dialect = new PgDialect();
+		const rendered = async (notice: "refund_pending" | "released:refunded" | "released:adopted") => {
+			db.wheres.length = 0;
+			db.queue.push([{ id: "hold-1" }]);
+			expect(await real.claimHoldNotice("hold-1", notice)).toBe(true);
+			const where = db.wheres[0];
+			if (!is(where, SQL)) throw new Error("the claim built no SQL predicate");
+			return dialect.sqlToQuery(where);
+		};
+		const pending = await rendered("refund_pending");
+		expect(pending.sql).toMatch(/"payment_holds"\."state" = \$\d+/);
+		expect(pending.params).toEqual(expect.arrayContaining(["hold-1", "refund_pending"]));
+		const refunded = await rendered("released:refunded");
+		expect(refunded.sql).toMatch(/"payment_holds"\."release_reason" = \$\d+/);
+		expect(refunded.params).toEqual(expect.arrayContaining(["released", "refunded", "released:refunded"]));
+		const adopted = await rendered("released:adopted");
+		expect(adopted.params).toEqual(expect.arrayContaining(["released", "adopted"]));
+	});
+
 	it("mails a hold only when ITS claim wrote the row: a lost claim sends nothing", async () => {
 		db.queue.push([hold({ state: "refund_pending" })]);
 		vi.mocked(store.claimHoldNotice).mockResolvedValueOnce(false);
@@ -661,6 +718,7 @@ describe("backfillVerdict (§8 B1–B6)", () => {
 			customerId: "cus_x",
 			invoiceId: "in_a",
 			evidence: expect.stringMatching(/^backfill: B2 .* B4 invoice open/),
+			toOperator: false,
 		});
 	});
 
@@ -674,6 +732,7 @@ describe("backfillVerdict (§8 B1–B6)", () => {
 		expect(await backfillVerdict(ended("sub_p"), stripe)).toMatchObject({ kind: "hold" });
 		expect(await backfillVerdict(ended("sub_e", { status: "incomplete_expired", cancellation_details: null }), stripe)).toMatchObject({
 			kind: "hold",
+			toOperator: true,
 		});
 	});
 
@@ -715,15 +774,16 @@ describe("runBackfill (C58)", () => {
 	it("holds and advances each hit under its payer's lease, lists the rest, and writes nothing for them", async () => {
 		const subs = [ended("sub_hit"), ended("sub_legit"), ended("sub_org", { metadata: { created_by: "u", organization_id: "o" } })];
 		const bf = backfillStripe(subs, { sub_hit: one("in_hit", "open"), sub_legit: one("in_legit", "paid", 500) }, {
+			in_hit: [{ id: "pi_h", status: "requires_payment_method", pm: null }],
 			in_legit: [{ id: "pi_l", status: "succeeded", pm: "card" }],
 		});
 		const { stripe: machine } = fakeStripe({ sub: "canceled", invoice: "open" });
 		const opened = hold({ id: "hold-new", subscription_id: "sub_hit", invoice_id: "in_hit", opened_by: "backfill" });
 		vi.mocked(store.openHold).mockResolvedValue({ kind: "opened", hold: opened });
-		// sub_hit: B6, no known hold; sub_legit: no known hold (it is listed after the B-tests).
-		db.queue.push([], [], [], []);
+		// sub_hit: B6, no known hold, none under the lease either; sub_legit: no known hold (it is listed).
+		db.queue.push([], [], [], [], []);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 1, listed: 1, alreadyHeld: 0, notCreateATeam: 1 });
+		expect(summary).toEqual({ held: 1, toOperator: 0, listed: 1, alreadyHeld: 0, notCreateATeam: 1 });
 		expect(store.openHold).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(store.openHold).mock.calls[0]?.[1]).toMatchObject({
 			subscriptionId: "sub_hit",
@@ -743,10 +803,43 @@ describe("runBackfill (C58)", () => {
 		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
 		db.queue.push([], [{ id: "hold-old", state: "released" }]);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 0, listed: 0, alreadyHeld: 1, notCreateATeam: 0 });
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCreateATeam: 0 });
 		expect(store.openHold).not.toHaveBeenCalled();
 		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
 		expect(log).toEqual([]);
+	});
+
+	it("two backfills at once: a hold another run opened while this one waited for the lease is seen UNDER the lease, and nothing is opened", async () => {
+		const bf = backfillStripe([ended("sub_hit")], { sub_hit: one("in_hit", "open") }, {
+			in_hit: [{ id: "pi_h", status: "requires_payment_method", pm: null }],
+		});
+		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
+		// B6; the first look finds nothing; the look under the lease finds the other run's hold.
+		db.queue.push([], [], [{ id: "hold-other", state: "released" }]);
+		const summary = await runBackfill(serverDeps(machine), bf, print);
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCreateATeam: 0 });
+		expect(lease.acquirePurchaseLease).toHaveBeenCalledTimes(1);
+		expect(store.openHold).not.toHaveBeenCalled();
+		expect(log).toEqual([]);
+	});
+
+	it("B5 with NO PaymentIntent passes on nothing: held in needs_operator, alerted, never advanced", async () => {
+		const bf = backfillStripe([ended("sub_nopi")], { sub_nopi: one("in_nopi", "open") }, {});
+		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
+		const opened = hold({ id: "hold-op", subscription_id: "sub_nopi", state: "needs_operator", opened_by: "backfill" });
+		vi.mocked(store.openHold).mockResolvedValue({ kind: "opened", hold: opened });
+		db.queue.push([], [], []);
+		const summary = await runBackfill(serverDeps(machine), bf, print);
+		expect(summary).toEqual({ held: 0, toOperator: 1, listed: 0, alreadyHeld: 0, notCreateATeam: 0 });
+		expect(vi.mocked(store.openHold).mock.calls[0]?.[1]).toMatchObject({
+			state: "needs_operator",
+			openNote: expect.stringMatching(/B5 unproven/),
+		});
+		expect(alert).toHaveBeenCalledTimes(1);
+		expect(alert.mock.calls[0]?.[0]).toMatchObject({ subscriptionId: "sub_nopi", detail: expect.stringMatching(/no PaymentIntent/) });
+		expect(store.writeHoldState).toHaveBeenCalledWith(LEASE, { id: "hold-op", version: 0 }, { alertedAt: expect.any(Date) });
+		expect(log).toEqual([]);
+		expect(store.releaseHold).not.toHaveBeenCalled();
 	});
 });
 
