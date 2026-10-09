@@ -14,6 +14,7 @@
 // — `apps/console/lib/billing/plan.ts`, `activityRetentionDays`.
 
 import fs from "node:fs";
+import { untilFilterBarHydrated } from "../helpers/hydration";
 import { seedProject } from "../helpers/seed";
 import { personaMetaPath, type PersonaRecord } from "../helpers/personas";
 import { expect, test } from "../fixtures/qa";
@@ -55,9 +56,8 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		owner,
 	}) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		await expect(
-			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
-		).toBeVisible({ timeout: 30_000 });
+		// Visible is not interactive: the trigger paints before it hydrates (see the helper).
+		await untilFilterBarHydrated(owner.page, /^Last 7 days$/i);
 
 		// Captured while the filters are provably pristine, so the assertion at the end can be
 		// an EQUALITY rather than a list of keys someone has to remember to extend.

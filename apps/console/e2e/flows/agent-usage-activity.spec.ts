@@ -26,6 +26,7 @@
 // say, because it opens the panel from the org home: that the launcher is a TOPBAR affordance
 // available from an arbitrary authenticated route.
 
+import { untilFilterBarHydrated } from "../helpers/hydration";
 import { seedProject } from "../helpers/seed";
 import { expect, test } from "../fixtures/qa";
 
@@ -272,6 +273,7 @@ test.describe("Activity — org feed (owner)", () => {
 
 	test("the Events sheet's groups EXPAND to their options", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
+		await untilFilterBarHydrated(owner.page, /^events$/i);
 		await owner.page.getByRole("button", { name: /^events$/i }).click();
 		const sheet = owner.page.getByRole("dialog");
 		await expect(sheet.getByText("Result", { exact: true })).toBeVisible({
@@ -384,6 +386,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 	test("picking an event writes `eventTokens` to the URL", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
+		await untilFilterBarHydrated(owner.page, /^events$/i);
 		await owner.page.getByRole("button", { name: /^events$/i }).click();
 		const sheet = owner.page.getByRole("dialog");
 		await sheet.getByText("Result", { exact: true }).click();
@@ -399,9 +402,8 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 	test("picking a window writes `from`, `to` and `rangeLabel` to the URL", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		await expect(
-			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
-		).toBeVisible({ timeout: 30_000 });
+		// Visible is not interactive: the trigger paints before it hydrates (see the helper).
+		await untilFilterBarHydrated(owner.page, /^Last 7 days$/i);
 		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
 
 		// The "yesterday" relative chip, not a preset: the shortest preset IS the default, and the
