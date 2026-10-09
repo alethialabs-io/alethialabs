@@ -7,12 +7,11 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
-import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
-import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
+import { z } from "zod";
+import { readTurnRequest, serveClaimedTurn } from "@/lib/agent/turn-route-support";
 import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { supportSystemPrompt } from "@/lib/ai/support/prompt";
 import { buildSupportTools } from "@/lib/ai/tools/support";
-import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import {
 	AiBudgetError,
@@ -21,32 +20,77 @@ import {
 	releaseAiHold,
 } from "@/lib/billing/ai-guard";
 import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
-import { getAiModel, isAiConfigured } from "@/lib/config/ai";
+import { getAiModel } from "@/lib/config/ai";
 
-interface SupportAskBody {
-	messages: UIMessage[];
-	/** When set, the full transcript is persisted to this (kind:"support") thread. */
-	threadId?: string;
-	/** Selected model id (validated against the allowlist). */
-	model?: string;
+/** The support chat's own body fields: its messages and the user's model pick. */
+const supportBodySchema = z.looseObject({
+	messages: z.array(z.custom<UIMessage>()),
+	threadId: z.unknown().optional(),
+	/** Selected model id (validated against the allowlist by `getAiModel`). */
+	model: z.string().optional().catch(undefined),
+});
+
+/** The support route's own fields, as the claimed path's `prepare` reads them. */
+interface SupportRouteFields {
+	model: string | undefined;
+}
+
+const AI_DISABLED = "AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.";
+
+/**
+ * POST /api/support/ask — one Ask-AI support turn: the support persona, the read-only tools and one HITL
+ * `create_support_case` proposal, metered under the `"support"` usage kind.
+ *
+ * A request that names a thread runs on the turn claim (ADR 0003 slice 8, Q11): the claimed route
+ * body (`lib/agent/turn-route-support.ts`) resolves the org, reserves one hold per turn inside
+ * `reserveTurn`, and finalizes before `finish`. A missing support thread is `thread-not-found`; it is
+ * never recreated. A request with no `threadId` (what the console's support chat sends) keeps the
+ * per-request hold below (§12): it has no transcript to claim against.
+ */
+export async function POST(req: Request): Promise<Response> {
+	const request = await readTurnRequest(req, AI_DISABLED);
+	if (!request.ok) return request.response;
+	const { userId, raw } = request;
+	const threadId = "threadId" in raw ? raw.threadId : undefined;
+	if (threadId === undefined || threadId === null) return answerThreadless(req, raw);
+
+	return serveClaimedTurn<SupportRouteFields, null>(req, userId, raw, {
+		threadKind: "support",
+		aiKind: "support",
+		parseBody: (body) => {
+			const parsed = supportBodySchema.safeParse(body);
+			if (!parsed.success) {
+				const first = parsed.error.issues[0];
+				return {
+					ok: false,
+					message: first ? `${first.path.join(".") || "body"}: ${first.message}` : "The request body is malformed.",
+				};
+			}
+			return {
+				ok: true,
+				value: { messages: parsed.data.messages, threadId: parsed.data.threadId, route: { model: parsed.data.model } },
+			};
+		},
+		// A support thread is an org thread of its user: no project, and no check of the route's own.
+		gate: async () => ({ ok: true, projectId: null, context: null }),
+		prepare: async ({ route }) => ({
+			system: supportSystemPrompt(),
+			tools: buildSupportTools(),
+			model: getAiModel(route.model),
+			thinking: false,
+		}),
+	});
 }
 
 /**
- * The Ask-AI support surface's streaming route — the same shape as the general agent
- * route (getOwner → isAiConfigured → currentActor → assertAiAllowed → streamText →
- * toUIMessageStreamResponse), swapping in the support persona + tool set and metering
- * under the `"support"` usage kind. Read-only tools + one HITL `create_support_case`
- * proposal; the 402-on-budget behavior is identical.
+ * A support turn that names no thread: the per-request hold, as before ADR 0003 (§12). The org is the
+ * session's, the hold is reserved by `assertAiAllowed`, settled from `onFinish`, released by `onError`
+ * and `onAbort`, and nothing is stored.
  */
-export async function POST(req: Request) {
-	const owner = await getOwner();
-	if (!owner) return new Response("Unauthorized", { status: 401 });
-	if (!isAiConfigured()) {
-		return new Response(
-			"AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
-			{ status: 503 },
-		);
-	}
+async function answerThreadless(req: Request, raw: object): Promise<Response> {
+	const parsed = supportBodySchema.safeParse(raw);
+	if (!parsed.success) return new Response("The request body is malformed.", { status: 400 });
+	const { messages, model } = parsed.data;
 
 	const actor = await currentActor();
 	const charge = await assertAiAllowed(actor.orgId, "support", actor.userId).catch(
@@ -68,17 +112,14 @@ export async function POST(req: Request) {
 	}
 
 	// Everything from here through the streamText registration runs AFTER the hold was reserved. A
-	// throw in this window (req parsing, model resolution, message conversion) would strand the
-	// ≈$0.10 hold — nothing downstream releases it — so release it in the catch. `holdCtx.refId` is
-	// filled once `threadId` is known; a throw in `req.json()` leaves it undefined (harmless).
+	// throw in this window (model resolution, message conversion) would strand the ≈$0.10 hold —
+	// nothing downstream releases it — so release it in the catch. A threadless turn has no `refId`.
 	const holdCtx: AiHoldContext = {
 		orgId: actor.orgId,
 		userId: actor.userId,
 		kind: "support",
 	};
 	try {
-		const { messages, threadId, model }: SupportAskBody = await req.json();
-		holdCtx.refId = threadId;
 		const resolved = getAiModel(model);
 
 		const result = streamText({
@@ -106,7 +147,6 @@ export async function POST(req: Request) {
 					// Metered → omit credits; settled from this row's real cost-of-serve.
 					source: charge.source,
 					holdId: charge.settle ? charge.holdId : undefined,
-					refId: threadId,
 					model: resolved.key,
 					inputTokens: usage.inputTokens,
 					outputTokens: usage.outputTokens,
@@ -121,7 +161,6 @@ export async function POST(req: Request) {
 					kind: "support",
 					source: charge.source,
 					holdId: charge.settle ? charge.holdId : undefined,
-					refId: threadId,
 					model: resolved.key,
 					isError: true,
 					error: error instanceof Error ? error.message : String(error),
@@ -134,17 +173,7 @@ export async function POST(req: Request) {
 			},
 		});
 
-		return result.toUIMessageStreamResponse({
-			originalMessages: messages,
-			onFinish: ({ messages }) => {
-				if (threadId) {
-					void saveThreadTranscript(
-						{ owner: actor.userId, threadId, kind: "support", projectId: null },
-						messages,
-					).catch(transcriptNotSaved(threadId));
-				}
-			},
-		});
+		return result.toUIMessageStreamResponse({ originalMessages: messages });
 	} catch (e) {
 		// A throw between the gate and stream registration strands the hold — release it before rethrow.
 		await releaseAiHold(charge, holdCtx);
