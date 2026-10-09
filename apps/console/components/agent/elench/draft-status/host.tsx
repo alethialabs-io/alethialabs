@@ -25,7 +25,7 @@ import { asksBeforeUnload, conversationName, COPY, footerOf, heldOtherOrgText, i
 import { registerDraftsStore, setJustSaved } from "./registry";
 
 /** What a toast for `notice` says, or null when the notice is not the host's to show. */
-export function toastText(view: DraftsView, notice: DraftNoticeItem): string | null {
+function toastText(view: DraftsView, notice: DraftNoticeItem): string | null {
 	const entry = view.drafts.entries[keyId(notice.key)];
 	switch (notice.notice) {
 		case "unsaved":
@@ -66,7 +66,7 @@ function savePending(entry: DraftEntry | undefined): boolean {
 }
 
 /** How long the footer says "Saved" after an acknowledgement (§7.4). */
-export const SAVED_SHOWN_MS = 2_000;
+const SAVED_SHOWN_MS = 2_000;
 
 /** The keys that went from a pending save to acknowledged between `before` and `view`. */
 function newlySaved(before: DraftsView, view: DraftsView): string[] {

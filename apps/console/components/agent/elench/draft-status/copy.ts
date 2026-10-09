@@ -23,7 +23,7 @@ import type { DraftNoticeItem, DraftsView } from "@/lib/stores/elench-drafts/sto
 import type { DraftEntry, DraftKey } from "@/lib/stores/elench-drafts/types";
 
 /** A notice the store raises (§7.4). */
-export type DraftNoticeKind = DraftNoticeItem["notice"];
+type DraftNoticeKind = DraftNoticeItem["notice"];
 
 // ── The words ───────────────────────────────────────────────────────────────────────────────
 
@@ -116,7 +116,7 @@ export function notSentReason(code: string): string | null {
 // ── The bar ─────────────────────────────────────────────────────────────────────────────────
 
 /** The longest excerpt of a text the conflict bar quotes. */
-export const EXCERPT_CHARS = 60;
+const EXCERPT_CHARS = 60;
 
 /** The first `EXCERPT_CHARS` characters of `text` on one line, with an ellipsis when cut. */
 export function excerpt(text: string): string {
@@ -251,7 +251,7 @@ function dropNotSent(lines: string[]): void {
 }
 
 /** The most notice lines shown at once: the newest, so a reason and its outcome both show. */
-export const MAX_LINES = 3;
+const MAX_LINES = 3;
 
 /**
  * The lines the store said about `key` since its last send, oldest first, each once, at most
@@ -301,7 +301,7 @@ export function noticeLines(view: DraftsView, key: DraftKey): string[] {
 // ── The footer ──────────────────────────────────────────────────────────────────────────────
 
 /** The footer's dot: what the save state is, in the console's grayscale status vocabulary. */
-export type FooterTier = "active" | "pending" | "failed" | "idle";
+type FooterTier = "active" | "pending" | "failed" | "idle";
 
 /** What the footer under the box shows for one key. */
 export interface DraftFooter {
@@ -312,7 +312,7 @@ export interface DraftFooter {
 }
 
 /** `pathname` with its org segment (the first) replaced by `slug`. */
-export function addressUnder(pathname: string, slug: string): string {
+function addressUnder(pathname: string, slug: string): string {
 	const parts = pathname.split("/");
 	if (parts.length < 2 || parts[1] === "") return `/${slug}`;
 	parts[1] = slug;

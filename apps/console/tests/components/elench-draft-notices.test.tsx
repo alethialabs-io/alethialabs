@@ -833,6 +833,31 @@ describe("S11 › every refused send says why", () => {
 		expect(statusLine()).toBe(`Starting the conversation took longer than 30 seconds. | ${COPY.notSent}`);
 	});
 
+	it("a claim answered wrong-kind loads the conversation another tab started and says so", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "reject");
+		type("restart it");
+		await enter();
+		const k = shown(tab);
+		const claim = server.callsOf("claimDraft")[0] as { turnId: string };
+		// A duplicate of this tab sent the same turn, and it was answered.
+		server.putThread({
+			id: k.conversationId,
+			projectId: null,
+			title: "restart it",
+			messages: [
+				{ id: claim.turnId, role: "user", parts: [{ type: "text", text: "restart it" }] },
+				{ id: crypto.randomUUID(), role: "assistant", parts: [{ type: "text", text: "restarted" }] },
+			],
+		});
+		await enter(); // the claim answers wrong-kind: the conversation is a stored one now
+		await flush();
+		expect(statusLine()).toBe(`${COPY.notSent} | ${COPY.transcriptStale}`);
+		expect(screen.getAllByText("restarted").length).toBeGreaterThan(0);
+		expect(box()).toBe("restart it");
+	});
+
 	it("a claim refused for good says why in the footer, and Not sent above the box", async () => {
 		const tab = newTab(ORG_A, memoryStorage(), {
 			claimDraft: async () => ({ outcome: "limit" }),

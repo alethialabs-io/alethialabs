@@ -753,10 +753,15 @@ function claimResult(
 	const back = unclaim(e, claiming);
 	const notSent = [notice(entry.key, "not-sent")];
 	switch (r.outcome) {
-		case "wrong-kind":
-			return prepend(notSent, withThread(back, r.thread.status, ctx));
+		case "wrong-kind": {
+			// The conversation was started from another tab or device: its transcript is loaded, and
+			// the notice says so, as D9a's does (the box is untouched; Enter sends it as a later turn).
+			const t = withThread(back, r.thread.status, ctx);
+			const loaded = t.effects.some((x) => x.type === "load-transcript");
+			return prepend(loaded ? [...notSent, notice(entry.key, "transcript-shown")] : notSent, t);
+		}
 		case "empty":
-			return { entry: back, effects: notSent };
+			return { entry: back, effects: [...notSent, notice(entry.key, "empty-box")] };
 		case "claimed":
 			return prepend(notSent, claimedElsewhere(back, r.row, r.thread, ctx));
 		case "gone":
