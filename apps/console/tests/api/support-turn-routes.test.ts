@@ -4,7 +4,7 @@
 
 // ADR 0003 slice 8's R tests (`docs/adr/0003-chat-turn-answered-and-billed-once.md`, §11, Q11): the
 // support route for a request that names a thread, and the agent-identity route, driven end to end
-// through the claimed route body (`lib/agent/turn-route-support.ts`) with ai's mock language model, over
+// through the shared route body (`lib/agent/turn-route.ts`) with ai's mock language model, over
 // an IN-MEMORY FAKE of the claim state machine with real lock and compare-and-set semantics (the same
 // fake as `tests/api/agent-turn-routes.test.ts`: it classifies with the real `classifyTurn` and decides
 // with the real `decideAcceptance`). A support request with no `threadId` keeps its per-request hold
@@ -121,6 +121,8 @@ interface World {
 	agents: Map<string, FAgent>;
 	/** The model picks `getAiModel` was asked for. */
 	modelPicks: (string | undefined)[];
+	/** `holdRequest` throws: a throw inside the stream's execute AFTER the attempt finalized. */
+	holdThrows: boolean;
 }
 
 const world = vi.hoisted(
@@ -152,6 +154,7 @@ const world = vi.hoisted(
 		aiConfigured: true,
 		agents: new Map(),
 		modelPicks: [],
+		holdThrows: false,
 	}),
 );
 
@@ -235,6 +238,11 @@ vi.mock("@/lib/ai/tools/support", async () => {
 		}),
 	};
 });
+vi.mock("@/lib/http/hold-request", () => ({
+	holdRequest: (_req: Request) => {
+		if (world.holdThrows) throw new Error("boom after finalize");
+	},
+}));
 vi.mock("@/lib/ai/support/prompt", () => ({ supportSystemPrompt: () => "SUPPORT PERSONA" }));
 // The threadless support path's per-request hold (§12): recorded, never reached by a claimed turn.
 vi.mock("@/lib/billing/ai-guard", async (importOriginal) => ({
@@ -245,6 +253,7 @@ vi.mock("@/lib/billing/ai-guard", async (importOriginal) => ({
 vi.mock("@/lib/billing/ai-quota", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/billing/ai-quota")>()),
 	recordAiUsage: vi.fn(async () => undefined),
+	meteringFailed: vi.fn(() => () => undefined),
 }));
 
 // The two reads the shared route body makes itself (the thread's pin, the project check), against the
@@ -655,7 +664,8 @@ vi.mock("@/lib/config/ai", async () => {
 			return { stream: typeof script === "function" ? script(options) : sim({ chunks: script }) };
 		},
 	});
-	const resolved = { model: lm, key: "openai/test-model", provider: "openai" as const };
+	// An Anthropic model, so that `thinkingOptions` answers options and the thinking tests can tell.
+	const resolved = { model: lm, key: "openai/test-model", provider: "anthropic" as const };
 	return {
 		isAiConfigured: () => world.aiConfigured,
 		getExecutorModel: () => resolved,
@@ -933,6 +943,7 @@ beforeEach(() => {
 		[AGENT_P, { id: AGENT_P, user_id: USER, org_id: ORG_A, project_id: PROJECT, persona: PERSONA, mission: "run the project", tool_scope: [] }],
 	]);
 	world.modelPicks = [];
+	world.holdThrows = false;
 	model.scripts = [];
 	model.prompts = [];
 	model.options = [];
@@ -1194,7 +1205,7 @@ describe("the support route, for a request with no threadId: today's path, uncha
 		expect(model.prompts).toHaveLength(0);
 	});
 
-	it("a disconnect releases the per-request hold through onAbort", async () => {
+	it("a disconnect after a full GC still reaches the model, and releases the per-request hold through onAbort", async () => {
 		const ctl = new AbortController();
 		const gate = deferred();
 		model.scripts.push(gatedParts("Checking", gate.promise));
@@ -1202,7 +1213,9 @@ describe("the support route, for a request with no threadId: today's path, uncha
 		const seen = { text: false };
 		const reading = readNoting(res, seen);
 		await vi.waitFor(() => expect(seen.text).toBe(true));
+		await collectAfterMacrotask();
 		ctl.abort();
+		await vi.waitFor(() => expect(aborts()).toBe(1));
 		await reading;
 		const { releaseAiHold } = await import("@/lib/billing/ai-guard");
 		await vi.waitFor(() => expect(releaseAiHold).toHaveBeenCalledTimes(1));
@@ -1360,5 +1373,103 @@ describe("the agent-identity route (slice 8)", () => {
 		expect(world.events).toContain("finalize:lost");
 		expect(holdList()[0]?.settled).toBe(false);
 		gate.resolve();
+	});
+});
+
+describe("the shared route body's remaining arms, through the slice 8 routes", () => {
+	it("finalizes an attempt once: a throw in execute after finalize reaches onError, which does not finalize again", async () => {
+		seedSupportThread([]);
+		world.holdThrows = true;
+		model.scripts.push(speakParts("ok"));
+		await chunksOf(await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 })));
+		await vi.waitFor(() => expect(claims()[0]?.state).toBe("answered"));
+		await new Promise<void>((resolve) => {
+			setTimeout(resolve, 20);
+		});
+		expect(world.finalizeCalls).toBe(1);
+		expect(holdList()[0]).toMatchObject({ settled: true, steps: 1 });
+	});
+
+	it("an actor the resolver answers for another user is refused 403, and nothing is reserved", async () => {
+		seedSupportThread([]);
+		world.foreignActor = true;
+		const res = await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		expect(res.status).toBe(403);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "org-forbidden" });
+		expect(world.reserveCalls).toBe(0);
+		const agent = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		expect(agent.status).toBe(403);
+		expect(world.reserveCalls).toBe(0);
+	});
+
+	it("a pin written by a racing first turn: the gate re-runs for the pinned org, and the support turn bills there", async () => {
+		seedSupportThread([], { billingOrgId: ORG_B });
+		world.pinReadMisses = true;
+		model.scripts.push(speakParts("ok"));
+		const res = await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		expect(res.status).toBe(200);
+		await chunksOf(res);
+		expect(world.reserveCalls).toBe(2);
+		expect(holdList()).toEqual([expect.objectContaining({ orgId: ORG_B, kind: "support", settled: true })]);
+	});
+
+	it("the agent identity is read again under the pinned org when the pin moved", async () => {
+		seedThread([], { billingOrgId: ORG_C });
+		world.pinReadMisses = true;
+		world.memberships.get(USER)?.add(ORG_C);
+		const res = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		// AGENT is ORG_A's and the caller's own row, so it is readable under ORG_C through its user arm.
+		expect(res.status).toBe(200);
+		await chunksOf(res);
+		expect(holdList()[0]?.orgId).toBe(ORG_C);
+		// An identity that is only ORG_A's (another user's row) is not readable under the pinned ORG_C.
+		world.agents.set(AGENT, { id: AGENT, user_id: OTHER_USER, org_id: ORG_A, project_id: null, persona: PERSONA, mission: "m", tool_scope: [] });
+		const again = await postAgent(body([userMsg("u1", "hi"), { id: "a", role: "assistant", parts: [{ type: "text", text: "ok" }] }, userMsg("u2", "more")], { turnId: "u2", baseRevision: 3 }));
+		expect(again.status).toBe(404);
+		expect(holdList()).toHaveLength(1);
+	});
+
+	it("a finalize that throws is logged; the stream still finishes and no data-turn-finished is written", async () => {
+		seedSupportThread([]);
+		world.finalizeThrows = true;
+		const chunks = await chunksOf(await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 })));
+		const types = chunks.map((c) => c.type);
+		expect(types).toContain("finish");
+		expect(types).not.toContain("data-turn-finished");
+		const { log } = await import("@/lib/observability/log");
+		expect(log.error).toHaveBeenCalledWith("turn finalize failed", expect.anything());
+		expect(claims()[0]?.state).toBe("running");
+	});
+
+	it("a heartbeat that throws is logged and does not stop the turn", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		world.heartbeatThrows = true;
+		const gate = deferred();
+		model.scripts.push(gatedParts("Thinking", gate.promise));
+		const res = await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		const seen = { text: false };
+		const reading = readNoting(res, seen);
+		await vi.waitFor(() => expect(seen.text).toBe(true));
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(world.heartbeats).toBe(1);
+		const { log } = await import("@/lib/observability/log");
+		await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith("turn heartbeat failed", expect.anything()));
+		gate.resolve();
+		await reading;
+		expect(aborts()).toBe(0);
+		expect(claims()[0]?.state).toBe("answered");
+	});
+
+	it("the support turn runs one model with no extended thinking; the identity's runs with it on every step", async () => {
+		seedSupportThread([]);
+		await chunksOf(await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 })));
+		expect(model.options[0]?.providerOptions).toBeUndefined();
+		world.threads = new Map();
+		world.claims = [];
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("none"));
+		await chunksOf(await postAgent(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 })));
+		expect(model.options).toHaveLength(3);
+		expect(model.options[1]?.providerOptions?.anthropic).toBeDefined();
+		expect(model.options[2]?.providerOptions?.anthropic).toBeDefined();
 	});
 });

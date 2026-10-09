@@ -3,17 +3,19 @@
 
 import "server-only";
 
-// The shared body of the two Elench chat routes (`/api/agent`, `/api/projects/[projectId]/assistant`),
-// ADR 0003 slice 6 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`): a turn is answered by the
-// model, and billed, exactly once. Each route parses its own body fields and builds its own prompt and
-// tools (`TurnRouteSpec`); everything that decides WHO pays, WHETHER the model runs and WHAT is stored
-// lives here, so the two routes cannot drift on it.
+// The shared body of every chat route on the turn claim (`docs/adr/0003-chat-turn-answered-and-billed-once.md`):
+// the two Elench routes (`/api/agent`, `/api/projects/[projectId]/assistant`, slice 6), and the
+// agent-identity route (`/api/agent/[agentId]`) and the support route for a request that names a thread
+// (`/api/support/ask`, slice 8, Q11). A turn is answered by the model, and billed, exactly once. Each
+// route parses its own body fields, names its thread and ledger kinds, may add its own check before
+// the hold, and builds its own prompt and tools (`TurnRouteSpec`); everything that decides WHO pays,
+// WHETHER the model runs and WHAT is stored lives here, so the routes cannot drift on it.
 //
 // The order of refusals (§9.3), every one before the budget hold:
 //   401 no session · 503 AI not configured · 400 malformed body · 413 over-long turn ·
 //   409 client-outdated (no `orgId` or no `turn`) · 400 malformed turn or approval output ·
-//   403 org-forbidden (§6.1) · 404 project-not-found (§6.2) · then `reserveTurn`'s own refusals and
-//   the 402 budget refusal, all inside its one transaction (§5.1).
+//   403 org-forbidden (§6.1) · the route's own check (`gate`) · 404 project-not-found (§6.2) · then
+//   `reserveTurn`'s own refusals and the 402 budget refusal, all inside its one transaction (§5.1).
 //
 // MONEY. The hold is reserved only by `reserveTurn` and settled or released only by `finalizeTurn`,
 // called exactly once per accepted attempt through `finalizeOnce`: from the end of the model stream
@@ -22,8 +24,8 @@ import "server-only";
 //
 // TENANCY. `userId` is the verified session's, never the body's. `orgId` is validated as a uuid before
 // `resolveTurnActor` (whose enterprise resolver casts it `::uuid`), the thread's pin wins over it, and
-// from acceptance on everything runs inside `runWithActor`, so the tools and every nested
-// `currentActor()` resolve the billing org, not the session's.
+// from the org gate on everything runs inside `runWithActor`, so the route's own check, the tools and
+// every nested `currentActor()` resolve the billing org, not the session's.
 
 import {
 	type AsyncIterableStream,
@@ -54,9 +56,11 @@ import { runWithActor } from "@/lib/authz/actor-context";
 import { resolveTurnActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import type { AgentStep } from "@/lib/billing/agent-metering";
+import type { MeteredAiKind } from "@/lib/billing/ai-guard";
 import type { ResolvedModel } from "@/lib/config/ai";
 import { isAiConfigured } from "@/lib/config/ai";
 import { getServiceDb } from "@/lib/db";
+import { holdRequest } from "@/lib/http/hold-request";
 import { agentThreads, projects } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import {
@@ -139,8 +143,13 @@ export interface TurnModels {
 	executor: ResolvedModel;
 	/** The run's base model: the user's explicit pick, else the executor. */
 	base: ResolvedModel;
-	/** True when the user force-picked a model: one model on every step, thinking throughout. */
+	/**
+	 * True for one model (`base`) on every step: the user force-picked it, or the route runs a single
+	 * model. Extended thinking on every step unless `thinking` is false.
+	 */
 	clientPick: boolean;
+	/** False: no extended thinking on any step (the support persona). Read only with `clientPick`. */
+	thinking?: boolean;
 }
 
 /** What a route's `prepare` builds: the prompt, the tool set and the models. */
@@ -150,12 +159,25 @@ export interface PreparedTurn {
 	models: TurnModels;
 }
 
-/** The route-specific half of an Elench route. */
+/** What a route's own check answers: the thread's project, or the refusal to answer. */
+export type TurnGate = { ok: true; projectId: string | null } | { ok: false; response: Response };
+
+/** The route-specific half of a chat route on the claim. */
 export interface TurnRouteSpec<R> {
 	/** The 503 body when AI is not configured. */
 	aiDisabledMessage: string;
-	/** The project the route answers for (its threads' `project_id`), or null for the org route. */
+	/** The project the route answers for (its threads' `project_id`), or null for an org thread. */
 	projectId: string | null;
+	/** The route's thread kind (`agent_threads.kind`). Default `agent`. */
+	threadKind?: "agent" | "support";
+	/** The ledger kind of the turn's hold. Default `agent`. */
+	aiKind?: MeteredAiKind;
+	/**
+	 * The route's own check, under the resolved actor, after the org gate and before the project check
+	 * and the hold: the thread's project (replacing `projectId`), or the refusal to answer. It runs
+	 * again when the thread's pin moved, under the pinned org's actor.
+	 */
+	gate?(actor: Actor, route: R): Promise<TurnGate>;
 	/** Parse the route's body: a 400 with `message` when it is malformed. Runs before the 413. */
 	parseBody(raw: object): { ok: true; value: TurnRouteBody<R> } | { ok: false; message: string };
 	/**
@@ -231,21 +253,32 @@ async function projectVisible(actor: Actor, projectId: string): Promise<boolean>
 	return decision.allowed;
 }
 
-/** The org gate and the project gate (§6.1, §6.2): the actor, or the refusal to answer. */
-async function resolveActor(
+/**
+ * The org gate, the route's own check and the project gate (§6.1, §6.2): the actor and the thread's
+ * project, or the refusal to answer.
+ */
+async function resolveActor<R>(
 	userId: string,
 	orgId: string,
-	projectId: string | null,
 	turnId: string,
-): Promise<{ ok: true; actor: Actor } | { ok: false; response: Response }> {
+	spec: TurnRouteSpec<R>,
+	route: R,
+): Promise<{ ok: true; actor: Actor; projectId: string | null } | { ok: false; response: Response }> {
 	const actor = await resolveTurnActor(userId, orgId);
 	if (!actor || actor.userId !== userId) {
 		return { ok: false, response: earlyRefusal("org-forbidden", turnId) };
 	}
+	let projectId = spec.projectId;
+	if (spec.gate) {
+		const { gate } = spec;
+		const checked = await runWithActor(actor, () => gate(actor, route));
+		if (!checked.ok) return checked;
+		projectId = checked.projectId;
+	}
 	if (projectId !== null && !(await projectVisible(actor, projectId))) {
 		return { ok: false, response: earlyRefusal("project-not-found", turnId) };
 	}
-	return { ok: true, actor };
+	return { ok: true, actor, projectId };
 }
 
 /**
@@ -282,19 +315,45 @@ function appendedTurnMetadata(
 }
 
 /**
- * Serve one Elench chat request (ADR 0003 slice 6): refuse in §9.3's order, accept through
- * `reserveTurn` under the resolved actor, and stream the model's answer, finalized exactly once.
+ * The first three refusals of §9.3: 401 without a verified session, 503 when AI is not configured, 400
+ * when the body is not a JSON object. Exported so that a route that chooses its path from the body (the
+ * support route, §12) reads it once.
  */
-export async function serveTurn<R>(req: Request, spec: TurnRouteSpec<R>): Promise<Response> {
+export async function readTurnRequest(
+	req: Request,
+	aiDisabledMessage: string,
+): Promise<{ ok: true; userId: string; raw: object } | { ok: false; response: Response }> {
 	// The verified session's user: the thread's owner and the only identity a turn runs as.
 	const userId = await getOwner();
-	if (!userId) return new Response("Unauthorized", { status: 401 });
-	if (!isAiConfigured()) return new Response(spec.aiDisabledMessage, { status: 503 });
-
+	if (!userId) return { ok: false, response: new Response("Unauthorized", { status: 401 }) };
+	if (!isAiConfigured()) return { ok: false, response: new Response(aiDisabledMessage, { status: 503 }) };
 	const raw: unknown = await req.json().catch(() => null);
 	if (raw === null || typeof raw !== "object") {
-		return new Response("The request body is malformed.", { status: 400 });
+		return { ok: false, response: new Response("The request body is malformed.", { status: 400 }) };
 	}
+	return { ok: true, userId, raw };
+}
+
+/**
+ * Serve one chat request on the claim: refuse in §9.3's order, accept through `reserveTurn` under the
+ * resolved actor, and stream the model's answer, finalized exactly once.
+ */
+export async function serveTurn<R>(req: Request, spec: TurnRouteSpec<R>): Promise<Response> {
+	const request = await readTurnRequest(req, spec.aiDisabledMessage);
+	if (!request.ok) return request.response;
+	return serveTurnBody(req, request.userId, request.raw, spec);
+}
+
+/**
+ * {@link serveTurn} after {@link readTurnRequest}: for a route that has already read the session and
+ * the body. `userId` must be the verified session's.
+ */
+export async function serveTurnBody<R>(
+	req: Request,
+	userId: string,
+	raw: object,
+	spec: TurnRouteSpec<R>,
+): Promise<Response> {
 	const parsed = spec.parseBody(raw);
 	if (!parsed.ok) return new Response(parsed.message, { status: 400 });
 	const body = parsed.value;
@@ -329,17 +388,17 @@ export async function serveTurn<R>(req: Request, spec: TurnRouteSpec<R>): Promis
 
 	// One re-run when a racing first turn pinned the thread after the read above (§5.1 step 2).
 	for (let attempt = 0; attempt < 2; attempt++) {
-		const gate = await resolveActor(userId, billingOrgId, spec.projectId, turn.turnId);
+		const gate = await resolveActor(userId, billingOrgId, turn.turnId, spec, body.route);
 		if (!gate.ok) return gate.response;
-		const { actor } = gate;
+		const { actor, projectId } = gate;
 		const outcome = await runWithActor(actor, async (): Promise<{ response: Response } | { pinnedOrgId: string }> => {
 			const reserved = await reserveTurn({
 				userId,
 				orgId: actor.orgId,
 				threadId,
-				threadKind: "agent",
-				projectId: spec.projectId,
-				aiKind: "agent",
+				threadKind: spec.threadKind ?? "agent",
+				projectId,
+				aiKind: spec.aiKind ?? "agent",
 				turn,
 				messages: body.messages,
 				turnMetadata: appendedTurnMetadata(body),
@@ -420,13 +479,6 @@ function answerStreamTransform(
 	});
 }
 
-/**
- * Do nothing with `req`. A call from inside the stream's `execute` closure makes the closure capture
- * the request, so it stays reachable (and keeps forwarding its client's disconnect to `req.signal`)
- * for as long as the stream is running.
- */
-function holdRequest(_req: Request): void {}
-
 /** The text of an answer, for the turn's observability enrichment. */
 function answerText(answer: UIMessage | null): string {
 	return (answer?.parts ?? []).map((p) => (p.type === "text" ? p.text : "")).join("");
@@ -505,6 +557,7 @@ async function streamAcceptedTurn<R>(
 		const { mentions, cellTarget } = turnContext(turn, body);
 		const prepared = await spec.prepare({ actor, turn, mentions, cellTarget, route: body.route });
 		const { advisor, executor, base, clientPick } = prepared.models;
+		const thinkEveryStep = clientPick && prepared.models.thinking !== false;
 		/** The canonical key metered for a step (step 0 is the advisor unless the user forced a pick). */
 		const modelForStep = (stepNumber: number): string =>
 			!clientPick && stepNumber === 0 ? advisor.key : base.key;
@@ -538,7 +591,7 @@ async function streamAcceptedTurn<R>(
 					abortSignal,
 					tools: prepared.tools,
 					stopWhen: stepCountIs(8),
-					providerOptions: clientPick ? thinkingOptions(base) : undefined,
+					providerOptions: thinkEveryStep ? thinkingOptions(base) : undefined,
 					prepareStep: ({ stepNumber }) => {
 						const marker = agentStepMarker({
 							stepNumber,

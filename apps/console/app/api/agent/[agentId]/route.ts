@@ -5,7 +5,7 @@ import type { UIMessage } from "ai";
 import { and, eq, or } from "drizzle-orm";
 import { z } from "zod";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
-import { readTurnRequest, serveClaimedTurn } from "@/lib/agent/turn-route-support";
+import { readTurnRequest, serveTurnBody } from "@/lib/agent/turn-route";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import type { Actor } from "@/lib/authz/types";
 import { getAiModel } from "@/lib/config/ai";
@@ -58,7 +58,7 @@ async function readAgentIdentity(actor: Actor, agentId: string): Promise<AgentId
 
 /**
  * Agent-scoped chat turn (elench A3): run a turn AS a specific agent identity, on the turn claim (ADR
- * 0003 slice 8, Q11). The claimed route body (`lib/agent/turn-route-support.ts`) resolves the billing
+ * 0003 slice 8, Q11). The shared route body (`lib/agent/turn-route.ts`) resolves the billing
  * org from the request's `orgId` and the thread's pin, then this route looks the identity up under that
  * actor (a 404 before the hold for an id the actor cannot read), and the thread is the identity's
  * project's. The deterministic executor core (buildAgentSystemPrompt + scopeToolsToAgent) shapes the
@@ -72,8 +72,13 @@ export async function POST(
 	const request = await readTurnRequest(req, "AI is not configured.");
 	if (!request.ok) return request.response;
 	const { agentId } = await params;
+	// The identity the route's check read for the attempt that is accepted: the check runs under each
+	// attempt's actor (again when the thread's pin moved), and `prepare` runs after its attempt's check.
+	let identity: AgentIdentity | null = null;
 
-	return serveClaimedTurn<AgentIdentityFields, AgentIdentity>(req, request.userId, request.raw, {
+	return serveTurnBody<AgentIdentityFields>(req, request.userId, request.raw, {
+		aiDisabledMessage: "AI is not configured.",
+		projectId: null,
 		threadKind: "agent",
 		aiKind: "agent",
 		parseBody: (raw) => {
@@ -90,21 +95,27 @@ export async function POST(
 				value: {
 					messages: parsed.data.messages,
 					threadId: parsed.data.threadId,
+					mentions: undefined,
+					cellTarget: null,
 					route: { agentId, mode: parsed.data.mode ?? "ask" },
 				},
 			};
 		},
 		gate: async (actor, route) => {
-			const agent = await readAgentIdentity(actor, route.agentId);
-			if (!agent) return { ok: false, response: new Response("Agent not found", { status: 404 }) };
-			return { ok: true, projectId: agent.project_id, context: agent };
+			identity = await readAgentIdentity(actor, route.agentId);
+			if (!identity) return { ok: false, response: new Response("Agent not found", { status: 404 }) };
+			return { ok: true, projectId: identity.project_id };
 		},
-		prepare: async ({ route, context: agent }) => ({
-			system: buildAgentSystemPrompt(agent),
-			tools: scopeToolsToAgent(buildAgentTools({ mode: route.mode }), agent.tool_scope),
-			model: getAiModel(),
-			// Single-model run: extended thinking on every step so reasoning streams.
-			thinking: true,
-		}),
+		prepare: async ({ route }) => {
+			const agent = identity;
+			if (!agent) throw new Error("the agent identity was not read before acceptance");
+			const model = getAiModel();
+			return {
+				system: buildAgentSystemPrompt(agent),
+				tools: scopeToolsToAgent(buildAgentTools({ mode: route.mode }), agent.tool_scope),
+				// Single-model run: extended thinking on every step so reasoning streams.
+				models: { advisor: model, executor: model, base: model, clientPick: true },
+			};
+		},
 	});
 }
