@@ -288,7 +288,6 @@ beforeEach(() => {
 		hydrate: vi.fn(async () => undefined),
 		reset: vi.fn(),
 		pendingCellRequest: null,
-		pendingCellTarget: null,
 	});
 });
 

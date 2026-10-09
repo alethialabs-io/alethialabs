@@ -13,7 +13,6 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { toast } from "sonner";
-import { z } from "zod";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
@@ -32,14 +31,13 @@ import {
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
 import { ChatRouteError, TurnRefusedError, useAgentChat } from "@/components/agent/use-agent-chat";
-import { pendingClientToolCalls, turnText } from "@/lib/agent/turn-key";
+import { pendingClientToolCalls } from "@/lib/agent/turn-key";
 import {
 	snapshotCanvas,
 	snapshotView,
 } from "@/components/project-assistant/use-project-assistant";
 import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
-import { distinctMentions } from "@/lib/elench/draft-content";
 import { keyId, scopeId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { RouteFailure } from "@/lib/stores/elench-drafts/reducer-sending";
 import { selectDraft } from "@/lib/stores/elench-drafts/selectors";
@@ -103,22 +101,6 @@ const REFUSAL_NOTICE: Partial<Record<TurnRefusedError["refusal"]["refusal"], str
 	"turn-has-accepted-approval":
 		"This answer started an approved operation, so it cannot be regenerated.",
 };
-
-/** A widget-grid cell, as a user message's `metadata.cellTarget` carries it. */
-const messageCellSchema = z.object({
-	cellTarget: z.object({ x: z.number().int().min(0), y: z.number().int().min(0) }),
-});
-
-/**
- * The cell target the turn being sent carries on its own message (`metadata.cellTarget`, D9b /
- * D10y), or null. The org route reads a turn's target from the request body, so the body repeats
- * the message's: no request reads the widget grid's pending slot (ADR 0003 §9.2, §9.4 change 3).
- */
-function cellTargetOf(messages: readonly UIMessage[]): { x: number; y: number } | null {
-	const lastUser = messages.findLast((m) => m.role === "user");
-	const parsed = messageCellSchema.safeParse(lastUser?.metadata);
-	return parsed.success ? parsed.data.cellTarget : null;
-}
 
 /**
  * What a chat error says about a request that failed before `streaming` (D9d): a typed refusal and
@@ -306,7 +288,9 @@ export function ElenchConversation({
 
 	// Transport by context. `api` + `prepareBody` are referentially stable within a
 	// mount (the conversation is keyed by ctx/thread upstream, so it remounts cleanly
-	// when either changes). prepareBody reads the store FRESH at send time.
+	// when either changes). prepareBody reads the store FRESH at send time. A turn's mentions
+	// and cell target are not body fields: they ride its own message's `metadata`, which is
+	// what the routes store and read (ADR 0003 §9.2).
 	const api = isOrg
 		? "/api/agent"
 		: `/api/projects/${ctx.kind === "project" ? ctx.projectId : ""}/assistant`;
@@ -314,17 +298,13 @@ export function ElenchConversation({
 	const prepareBody = useMemo(
 		() =>
 			isOrg
-				? (messages: UIMessage[]) => {
+				? () => {
 						const s = useElenchStore.getState();
 						return {
 							threadId: s.threadId,
 							mode: s.mode,
 							model: s.model,
-							mentions: s.pendingMentions,
 							deepReasoning: s.deepReasoning,
-							// The cell the turn's own message names: the empty-cell prompt's (D10y), or the
-							// Retry of a failed one (D10f). The route reads it here, before its hint.
-							cellTarget: cellTargetOf(messages),
 						};
 					}
 				: () => {
@@ -333,7 +313,6 @@ export function ElenchConversation({
 							projectId,
 							threadId: s.threadId,
 							canvas: snapshotCanvas(),
-							mentions: s.pendingMentions,
 							// Read FRESH from the store, never from the `ctx` this factory closed
 							// over: `prepareBody` is memoized on the project id, so a `syncEnvironment`
 							// from the topbar switcher would otherwise keep sending the environment
@@ -391,12 +370,18 @@ export function ElenchConversation({
 	const send = useElenchSend(binding, status);
 	const draftsScope = useListedScope(tab);
 
-	// The words of a refused send the store does not own, put back once the reloaded transcript (and
-	// its composer) has mounted (ADR 0003 §9.3's composer path).
+	// The status line of a refused regenerate or continuation (ADR 0003 §9.3), which no draft owns.
 	const [refusalNotice, setRefusalNotice] = useState<string | null>(null);
-	const [beingAnswered, setBeingAnswered] = useState(false);
+	// The turn of the conversation on screen that is being answered in another tab or device (D20):
+	// its thread is polled until done. It belongs to that conversation: a switch, a new chat or a
+	// delete (each changes `conversationId`) drops it, so a poll never outlives the screen it was for.
+	const [beingAnswered, setBeingAnswered] = useState<{ conversationId: string; threadId: string } | null>(null);
+	const [answeredFor, setAnsweredFor] = useState(conversationId);
+	if (answeredFor !== conversationId) {
+		setAnsweredFor(conversationId);
+		setBeingAnswered(null);
+	}
 	const [staleResume, setStaleResume] = useState(false);
-	const [restoreAt, setRestoreAt] = useState<{ text: string; epoch: number } | null>(null);
 	// A send while the page has not told the conversation its org: nothing is sent, and it says why.
 	const [orgNotReady, setOrgNotReady] = useState(false);
 	// Why a store-owned turn's request failed before `streaming` when the route said more than a
@@ -414,7 +399,6 @@ export function ElenchConversation({
 	// it (D4) is answered at once instead of loading it again.
 	const selecting = useRef<string | null>(null);
 
-	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 	const hydrateGrid = useWidgetGridStore((s) => s.hydrate);
 	const resetGrid = useWidgetGridStore((s) => s.reset);
 	useEffect(() => {
@@ -490,13 +474,12 @@ export function ElenchConversation({
 			switch (e.type) {
 				case "send-message": {
 					// D9b / D10y / D12: the turn goes out under the id the store minted, in the `parts`
-					// form (§5.3 item 1), with its pills and cell on its own message. The routes read
-					// the pills from the body, so the slot is staged first, synchronously (§5.1).
+					// form (§5.3 item 1), with its pills and cell on its own message, the one place the
+					// routes read them from (ADR 0003 §9.2).
 					setRefusalNotice(null);
 					setRouteError(null);
 					setStaleResume(false);
 					setOrgNotReady(false);
-					setPendingMentions(distinctMentions(e.mentions));
 					track("elench_message_sent", {
 						context: isOrg ? "org" : "project",
 						model: useElenchStore.getState().model,
@@ -531,7 +514,8 @@ export function ElenchConversation({
 					attachStarted(e.key.conversationId);
 					return;
 				case "poll-thread":
-					setBeingAnswered(true);
+					// D20: the turn is being answered elsewhere; poll its conversation until it is done.
+					setBeingAnswered({ conversationId: e.key.conversationId, threadId: e.key.conversationId });
 					return;
 				case "offer-undo-discard":
 					// The Undo toast of a Discard is slice 11's; nothing offers a Discard before it.
@@ -543,7 +527,6 @@ export function ElenchConversation({
 			isOrg,
 			projectId,
 			materializeOnto,
-			setPendingMentions,
 			sendMessage,
 			setMessages,
 			reloadThread,
@@ -637,13 +620,14 @@ export function ElenchConversation({
 	}, [routingTurn, stop, routeEvent]);
 
 	/**
-	 * A typed refusal (ADR 0003 §9.3). EXACTLY ONE handler reads it: when the drafts store holds a
-	 * send of the refused turn (a composer send, D9d, or an external one, D10f), the refusal goes to
-	 * the store and nothing else runs, so its words come back once, through the store. Otherwise
-	 * (a regenerate or a continuation, which the store never sends) the composer path runs: load
-	 * the stored transcript (which refreshes the base revision), clear the error, and put text the
-	 * server did not commit back into the composer with the refusal's notice. ADR 0003 slice 9 will
-	 * delete the composer path.
+	 * A typed refusal (ADR 0003 §9.3). Every send of a user's words is the drafts store's (a composer
+	 * send, D9d, or an external one, D10f), so the refusal of one goes to the store and NOTHING else
+	 * runs: the store decides where the words are and says why, loads the transcript, and asks for the
+	 * poll of a turn being answered elsewhere (D20). Nothing here ever puts words back into the box.
+	 * The only requests the store never sends are a regenerate and a continuation, whose words are
+	 * already in the stored transcript: for those the transcript is loaded (which refreshes the base
+	 * revision) and the refusal's status line shown. A refused send the store no longer holds (its
+	 * deadline already released it) has been answered by the store, so it is only cleared.
 	 */
 	const onTurnRefused = useCallback(
 		async (err: TurnRefusedError) => {
@@ -658,6 +642,9 @@ export function ElenchConversation({
 				}
 			}
 			const refused = request?.last;
+			const storeNeverSends =
+				request?.turn.trigger === "regenerate-message" || refused?.role === "assistant";
+			if (!storeNeverSends) return;
 			const threadId = useElenchStore.getState().threadId;
 			if (refusal.refusal === "thread-deleted") newChat();
 			else if (threadId && reloadThread) await reloadThread(threadId);
@@ -669,11 +656,11 @@ export function ElenchConversation({
 					refusal.revision !== null &&
 					refusal.revision !== request?.turn.baseRevision,
 			);
-			setBeingAnswered(refusal.refusal === "turn-in-progress");
+			const onScreen = useElenchStore.getState().conversationId;
+			setBeingAnswered(
+				refusal.refusal === "turn-in-progress" && threadId ? { conversationId: onScreen, threadId } : null,
+			);
 			setRefusalNotice(REFUSAL_NOTICE[refusal.refusal] ?? null);
-			if (!refusal.textCommitted && refused?.role === "user") {
-				setRestoreAt({ text: turnText(refused), epoch: useElenchStore.getState().epoch });
-			}
 		},
 		[clearError, binding, routeEvent, newChat, reloadThread],
 	);
@@ -682,31 +669,38 @@ export function ElenchConversation({
 	}, [error, onTurnRefused]);
 	// Whichever composer is mounted (the modal hero's or the docked one — never both).
 	const composerRef = useRef<ElenchComposerHandle>(null);
-	// Put the refused words back once the reloaded transcript (and its composer) has mounted.
+	// A turn being answered in another tab or device (D20): re-read its thread with `getThread` until
+	// no claim runs (`inFlight` is null), then retire the "Being answered" line and load the thread,
+	// but only while it is still the conversation on screen: the load never moves the view.
 	useEffect(() => {
-		if (!restoreAt || restoreAt.epoch !== epoch) return;
-		composerRef.current?.restore({ text: restoreAt.text, mentions: [] });
-		setRestoreAt(null);
-	}, [restoreAt, epoch]);
-	// A turn being answered in another tab: re-read the thread until no claim runs, then load it.
-	useEffect(() => {
-		if (!beingAnswered || !activeId) return;
+		if (beingAnswered === null || beingAnswered.conversationId !== conversationId) return;
+		const { threadId: polled } = beingAnswered;
 		let done = false;
 		const timer = setInterval(() => {
-			void getThread(activeId).then(async (t) => {
+			void getThread(polled).then(async (t) => {
 				if (done || t?.inFlight) return;
 				done = true;
 				clearInterval(timer);
-				setBeingAnswered(false);
+				setBeingAnswered(null);
 				setRefusalNotice(null);
-				if (reloadThread) await reloadThread(activeId);
+				if (binding !== null && binding.key.conversationId === conversationId) {
+					const id = keyId(binding.key);
+					const said = binding.store.view
+						.getState()
+						.notices.filter((n) => n.notice === "being-answered" && keyId(n.key) === id)
+						.map((n) => n.id);
+					if (said.length > 0) binding.store.ackNotices(said);
+				}
+				if (reloadThread && useElenchStore.getState().conversationId === conversationId) {
+					await reloadThread(polled);
+				}
 			});
 		}, IN_FLIGHT_POLL_MS);
 		return () => {
 			done = true;
 			clearInterval(timer);
 		};
-	}, [beingAnswered, activeId, reloadThread]);
+	}, [beingAnswered, conversationId, binding, reloadThread]);
 
 	// A resumed transcript that ENDS on a user turn is a turn whose reply never landed — most
 	// often a first send whose answer failed (AI not configured, budget, provider error):
@@ -715,7 +709,7 @@ export function ElenchConversation({
 	// (`regenerate` re-sends a trailing user turn), until the chat moves on.
 	const unanswered =
 		error === undefined &&
-		!beingAnswered &&
+		beingAnswered === null &&
 		status === "ready" &&
 		messages.length > 0 &&
 		messages.length === initialMessages.length &&
@@ -784,7 +778,7 @@ export function ElenchConversation({
 
 	// Empty-cell prompt dispatch: a submitted cell composer is an external send (D10y, or D10x into
 	// a new conversation) that carries its cell IN THE EVENT, so the turn's own message names the
-	// cell and nothing stages the widget grid's pending slot (ADR 0003 §9.4 change 3). The request is
+	// cell, and no later turn can carry it (ADR 0003 §9.2, §9.4 change 3). The request is
 	// cleared only once the store took the send: a prompt asked while another send runs, or before
 	// the transcript is loaded, waits instead of being lost.
 	const pendingCellRequest = useWidgetGridStore((s) => s.pendingCellRequest);

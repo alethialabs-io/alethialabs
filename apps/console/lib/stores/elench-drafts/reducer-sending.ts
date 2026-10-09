@@ -13,7 +13,7 @@
 //   the same token. In any other phase a write of this claim is in flight and its own answer decides.
 //   D22 reads a listed row against a live send by the same rule (R9, for the reason of B1').
 // - D9b / D10y: a send's `metadata.cellTarget` is the claimed content's (or the external event's),
-//   never the widget grid's pending slot, which this module cannot even see.
+//   and nothing else: no later turn carries a cell its own content or event does not name.
 //
 // Words never leave by accident (I3): a refused or failed send puts them back in the box (D10c,
 // D11r, D10f), forks them into a new conversation (D18), or leaves them in the frozen row until a
@@ -214,8 +214,9 @@ export type SendEffect =
 			prompt: { text: string; mentions: DraftMention[]; cellTarget: ElenchCellTarget | null } | null;
 	  }
 	/**
-	 * D9b / D10y / D12: stage `mentions` in the `pendingMentions` slot, then `sendMessage({ id: turnId,
-	 * parts: [{ type: "text", text }], metadata: { mentions, cellTarget } })`. `text` is trimmed.
+	 * D9b / D10y / D12: `sendMessage({ id: turnId, parts: [{ type: "text", text }], metadata: {
+	 * mentions, cellTarget } })`. `text` is trimmed. The message's own `metadata` is the only place the
+	 * turn's mentions and cell target travel: the routes store and read them there (ADR 0003 §9.2).
 	 */
 	| {
 			type: "send-message";
@@ -246,7 +247,7 @@ export type SendEffect =
 	| { type: "offer-undo-discard"; key: DraftKey; revision: number; content: DraftContent }
 	/** D31 / D9c: `saveDraft(base, content, dismissFailedSend: true)`, answered as a save. */
 	| { type: "dismiss-failed-send"; key: DraftKey; base: number; content: DraftContent }
-	/** D12: seed the transport's base revision (slice 9 will wire it to 0003/6's setter). */
+	/** D12: seed the transport's base revision (the conversation passes it to `setBaseRevision`). */
 	| { type: "thread-revision"; key: DraftKey; revision: number }
 	/** D12: place the pending Open-in-new-chat artifacts into the new conversation. */
 	| { type: "place-artifacts"; key: DraftKey; artifacts: string[] }
@@ -646,7 +647,7 @@ function unclaim(entry: DraftEntry, claiming: DraftClaiming): DraftEntry {
 
 /**
  * D9b / D10b: the claim is ours. The sent text, pills and cell target are the CLAIMED content's
- * (never the widget grid's pending slot), the box empties, and the send starts: a later turn goes to
+ * and nothing else's, the box empties, and the send starts: a later turn goes to
  * the chat route, a first turn to `startConversation`, which reads the text from the frozen row.
  */
 function granted(
