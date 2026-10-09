@@ -11,7 +11,7 @@ import {
 	TOOL_VIEW_TYPES,
 	ToolView,
 } from "@/components/agent/agent-tool-views";
-import { ApprovalCard } from "@/components/agent/approval-card";
+import { ApprovalCard, fitClientToolText } from "@/components/agent/approval-card";
 import { DashboardPinnedCard } from "@/components/agent/render-tool-parts/dashboard-pinned";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
@@ -119,7 +119,14 @@ export function projectRenderToolPart({
 										addToolResult({
 											tool: "propose_changes",
 											toolCallId: part.toolCallId,
-											output: { status: "accepted", label: proposal.label },
+											// The label is the model's; cut to the stored output's bounds.
+											output: {
+												status: "accepted",
+												label: fitClientToolText("propose_changes", proposal.label, (l) => ({
+													status: "accepted",
+													label: l,
+												})),
+											},
 										});
 									}}
 								>

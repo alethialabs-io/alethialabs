@@ -8,12 +8,49 @@ import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projec
 import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
+import { type ClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
 
 type Phase = "idle" | "running" | "done" | "rejected" | "denied";
+
+/**
+ * The longest prefix of `text` (whole code points, with an ellipsis when cut) for which
+ * `build(prefix)` passes `toolName`'s output schema and its 4,096-byte cap (ADR 0003 §5.1 step
+ * 8). A card's free text (an error message, a model-written label) can exceed either bound, and
+ * an output that fails them is refused before it is stored: without this, a long error would make
+ * the approval itself unsendable. Returns `text` itself when it already fits.
+ */
+export function fitClientToolText(
+	toolName: ClientToolName,
+	text: string,
+	build: (text: string) => unknown,
+): string {
+	if (parseClientToolOutput(toolName, build(text)).ok) return text;
+	const points = Array.from(text);
+	const fits = (n: number) =>
+		parseClientToolOutput(toolName, build(`${points.slice(0, n).join("")}…`)).ok;
+	let lo = 0;
+	let hi = points.length;
+	// The largest n in [0, length) that fits, by binary search (fitting is monotone in n).
+	while (lo < hi) {
+		const mid = Math.ceil((lo + hi) / 2);
+		if (fits(mid)) lo = mid;
+		else hi = mid - 1;
+	}
+	return `${points.slice(0, lo).join("")}…`;
+}
+
+/** A denial's output, its reason cut to fit the stored output's bounds. */
+function deniedOutput(reason: string): { status: "denied"; reason: string } {
+	const fitted = fitClientToolText("propose_operation", reason, (r) => ({
+		status: "denied",
+		reason: r,
+	}));
+	return { status: "denied", reason: fitted };
+}
 
 /**
  * HITL approval for an agent-proposed plan/deploy. Approve calls the PDP-gated
@@ -59,7 +96,7 @@ export function ApprovalCard({
 				// The gate's own sentence (#5445) — thrown, a production build reduced it to a digest.
 				setPhase("denied");
 				setReason(res.error);
-				onResolve?.({ status: "denied", reason: res.error });
+				onResolve?.(deniedOutput(res.error));
 				return;
 			}
 			const { jobId } = res;
@@ -76,7 +113,7 @@ export function ApprovalCard({
 			const message = err instanceof Error ? err.message : "Operation failed.";
 			setPhase("denied");
 			setReason(message);
-			onResolve?.({ status: "denied", reason: message });
+			onResolve?.(deniedOutput(message));
 		}
 	};
 

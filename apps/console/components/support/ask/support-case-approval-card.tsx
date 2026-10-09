@@ -6,6 +6,7 @@ import { ArrowUpRight, Check, LifeBuoy, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { submitCase } from "@/app/server/actions/support";
+import { fitClientToolText } from "@/components/agent/approval-card";
 import type { SupportCaseProposal } from "@/lib/ai/support/case";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
@@ -54,7 +55,12 @@ export function SupportCaseApprovalCard({
 			const message = err instanceof Error ? err.message : "Could not open the case.";
 			setPhase("denied");
 			setReason(message);
-			onResolve?.({ status: "failed", reason: message });
+			// Cut to the stored output's bounds, so a long error never makes the card unsendable.
+			const reason = fitClientToolText("create_support_case", message, (r) => ({
+				status: "failed",
+				reason: r,
+			}));
+			onResolve?.({ status: "failed", reason });
 		}
 	};
 

@@ -4,6 +4,7 @@
 import type React from "react";
 import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
+import { currentActor } from "@/lib/authz/guard";
 import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
@@ -34,8 +35,13 @@ export default async function OrgLayout({
 	// through, or a failed session lookup) → sign-in, not a dead-end 404.
 	if (!(await getOwner())) redirect("/login");
 	let orgId: string;
+	// The org a chat turn names (ADR 0003 §6.1): the page's `currentActor().orgId`, which in
+	// community collapses to the user id. NOT `orgId` above, which is the real organization's id
+	// for every non-`~` slug, and which the turn resolver refuses in community.
+	let pageOrgId: string;
 	try {
 		({ orgId } = await resolveOrgScope(org));
+		({ orgId: pageOrgId } = await currentActor());
 	} catch (e) {
 		// A lost session → sign-in; an org this user is not in → the 404. Anything else is rethrown
 		// by the classifier, so it reaches the error boundary and is logged (#5001) instead of being
@@ -56,7 +62,7 @@ export default async function OrgLayout({
 	const selfRunners = await orgHasSelfRunners(orgId);
 	return (
 		<UpgradeSheetProvider>
-			<AppShell isHosted={isHosted} selfRunners={selfRunners}>
+			<AppShell isHosted={isHosted} selfRunners={selfRunners} pageOrgId={pageOrgId}>
 				{children}
 			</AppShell>
 		</UpgradeSheetProvider>

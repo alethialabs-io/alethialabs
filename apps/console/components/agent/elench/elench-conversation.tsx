@@ -2,15 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
+import { createEditor } from "lexical";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
-import { ChatError, UnansweredTurnError } from "@/components/agent/chat-error";
+import {
+	ChatError,
+	ChatNoticeError,
+	UnansweredTurnError,
+} from "@/components/agent/chat-error";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
-import type { FirstTurn } from "@/app/server/actions/agent";
+import { type FirstTurn, getThread } from "@/app/server/actions/agent";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
@@ -18,7 +23,8 @@ import {
 } from "@/app/server/actions/agent-feedback";
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
-import { useAgentChat } from "@/components/agent/use-agent-chat";
+import { TurnRefusedError, useAgentChat } from "@/components/agent/use-agent-chat";
+import { pendingClientToolCalls, turnText } from "@/lib/agent/turn-key";
 import {
 	snapshotCanvas,
 	snapshotView,
@@ -36,7 +42,9 @@ import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
+import { contentToEditor } from "./draft-editor";
 import { ElenchComposer, type ElenchComposerHandle } from "./elench-composer";
+import { MentionNode } from "./mention-node";
 import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
@@ -61,6 +69,80 @@ function takePendingCellTarget(): { x: number; y: number } | null {
 
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
+/** How often a turn being answered elsewhere is re-read until it is done (ADR 0003 §9.3). */
+const IN_FLIGHT_POLL_MS = 5_000;
+
+/** The composer's serialized state holding plain `text` (a refused turn's words, put back). */
+function textToComposerState(text: string): string {
+	const editor = createEditor({
+		nodes: [MentionNode],
+		onError: (e) => {
+			throw e;
+		},
+	});
+	editor.update(contentToEditor({ text, mentions: [] }), { discrete: true });
+	return JSON.stringify(editor.getEditorState().toJSON());
+}
+
+/** The status line each typed refusal leaves above the composer (ADR 0003 §9.3's table). */
+const REFUSAL_NOTICE: Partial<Record<TurnRefusedError["refusal"]["refusal"], string>> = {
+	"turn-in-progress": "Being answered in another tab or device",
+	"turn-committed-different-text":
+		"An earlier version of this message was already sent. It is shown above. Your edit is still in the box.",
+	"thread-busy": "Another message in this conversation is being answered",
+	"transcript-stale":
+		"This conversation has newer messages. They are shown now. Press Enter to send.",
+	"thread-deleted": "That conversation was deleted. Your message is in a new conversation.",
+	"thread-not-found": "That conversation is not available. Your message is still in the box.",
+	"org-forbidden":
+		"This conversation belongs to an organization you are no longer a member of",
+	"project-not-found": "That project is not available. Your message is still in the box.",
+	"client-outdated": "Reload to continue",
+	"turn-has-accepted-approval":
+		"This answer started an approved operation, so it cannot be regenerated.",
+};
+
+/** How the transcript's Retry resends the last turn (see {@link retryKind}). */
+export type RetryKind =
+	| { kind: "answer" | "continue" | "await-approval" }
+	| { kind: "regenerate"; messageId: string };
+
+/**
+ * How the transcript's Retry resends the last turn (ADR 0003 §9.1), by what is last:
+ * - a user message (an unanswered turn): `regenerate()`, an `answer` attempt;
+ * - an assistant message whose pending client tool calls all have outputs: the continuation
+ *   request again, which the server re-arms or resumes with the stored outputs kept;
+ * - one whose pending client tool calls lack outputs (a tail that proposed something new):
+ *   `await-approval`, no Retry: the card is still approvable and is the way on;
+ * - any other assistant message: `regenerate({ messageId })` of that answer.
+ */
+export function retryKind(messages: readonly UIMessage[]): RetryKind {
+	const last = messages.at(-1);
+	if (!last || last.role !== "assistant") return { kind: "answer" };
+	const pending = pendingClientToolCalls(last);
+	if (pending.length === 0) return { kind: "regenerate", messageId: last.id };
+	const answered = new Set(
+		last.parts.flatMap((p) =>
+			isToolUIPart(p) && p.state === "output-available" ? [p.toolCallId] : [],
+		),
+	);
+	return pending.every((id) => answered.has(id))
+		? { kind: "continue" }
+		: { kind: "await-approval" };
+}
+
+/** The card an answer that stopped at an unresolved proposal shows instead of a Retry. */
+const AWAIT_APPROVAL = new ChatNoticeError(
+	"The answer stopped at a proposal",
+	"Approve or reject the proposal above to continue.",
+);
+
+/** The card a continuation refused from a stale revision keeps, with its Retry (§9.1). */
+const STALE_RESUME = new ChatNoticeError(
+	"The answer was interrupted",
+	"This conversation changed while the answer was being continued. Retry to continue it.",
+);
+
 /** The error a resumed transcript shows when it ends on a user turn that was never answered.
  * `ChatError` recognises it by type: "No reply arrived" + Retry, and no `elench_error` event. */
 const UNANSWERED_TURN = new UnansweredTurnError();
@@ -72,6 +154,10 @@ export interface ElenchThreadApi {
 	activeId: string | null;
 	initialMessages: UIMessage[];
 	selectThread: (id: string) => void;
+	/** The revision `initialMessages` was read at: the base revision of the next send. */
+	initialRevision?: number | null;
+	/** Reload a thread's transcript and revision in place (a refused turn's recovery). */
+	reloadThread?: (id: string) => Promise<unknown>;
 	newChat: () => void;
 	/** Lazily persist the ephemeral conversation on its first send (storing `firstTurn`, the
 	 * user message, with it); returns the new thread. */
@@ -93,6 +179,8 @@ export function ElenchConversation({
 	activeId,
 	initialMessages,
 	selectThread,
+	initialRevision,
+	reloadThread,
 	newChat,
 	startThread,
 	deleteThread,
@@ -104,6 +192,8 @@ export function ElenchConversation({
 	const seedPrompt = useElenchStore((s) => s.seedPrompt);
 	const setSeedPrompt = useElenchStore((s) => s.setSeedPrompt);
 	const isOrg = ctx.kind === "org";
+	// The org the turn names: the page's, read at request time (ADR 0003 §6.1, §9.1).
+	const pageOrg = useCallback(() => useElenchStore.getState().pageOrgId, []);
 
 	// In-app support hub (`/{org}/~/support`), not the marketing contact page. Undefined until
 	// the active org slug resolves, which hides the Support affordance rather than linking to
@@ -155,6 +245,8 @@ export function ElenchConversation({
 		? "/api/agent"
 		: `/api/projects/${ctx.kind === "project" ? ctx.projectId : ""}/assistant`;
 	const projectId = ctx.kind === "project" ? ctx.projectId : "";
+	// The cell target the last request carried (a refusal re-stages it, ADR 0003 §9.3).
+	const lastCellTarget = useRef<{ x: number; y: number } | null>(null);
 	const prepareBody = useMemo(
 		() =>
 			isOrg
@@ -169,7 +261,8 @@ export function ElenchConversation({
 							// Consumed HERE, as the request body is built: clearing it after
 							// `onSend` returned raced the transport and the coordinates were
 							// gone by the time this ran, so the widget landed at (0,0).
-							cellTarget: takePendingCellTarget(),
+							// Kept for the request, so a refused cell prompt can re-stage it.
+							cellTarget: (lastCellTarget.current = takePendingCellTarget()),
 						};
 					}
 				: () => {
@@ -206,12 +299,26 @@ export function ElenchConversation({
 		regenerate,
 		stop,
 		addToolResult,
+		clearError,
+		setBaseRevision,
 	} = useAgentChat({
 		api,
 		id: chatId,
 		initialMessages,
+		initialRevision,
 		prepareBody,
+		org: pageOrg,
 	});
+
+	// ── A refused turn (ADR 0003 §9.3, the composer path) ──────────────────────────────────────
+	// The status line a refusal leaves, a turn being answered elsewhere, the stale-revision resume
+	// card, and the words to put back into the composer once the reloaded transcript has mounted.
+	const [refusalNotice, setRefusalNotice] = useState<string | null>(null);
+	const [beingAnswered, setBeingAnswered] = useState(false);
+	const [staleResume, setStaleResume] = useState(false);
+	const [restoreAt, setRestoreAt] = useState<{ state: string; epoch: number } | null>(null);
+	// The composer state of the last send, so a refused turn comes back with its mention pills.
+	const lastComposerSend = useRef<{ text: string; state: string } | null>(null);
 
 	// A resumed transcript that ENDS on a user turn is a turn whose reply never landed — most
 	// often a first send that failed (AI not configured, budget, provider error): `createThread`
@@ -222,6 +329,7 @@ export function ElenchConversation({
 	// so it 404'd and surfaced Next's error page as a misclassified chat error.
 	const unanswered =
 		error === undefined &&
+		!beingAnswered &&
 		status === "ready" &&
 		messages.length > 0 &&
 		messages.length === initialMessages.length &&
@@ -243,6 +351,9 @@ export function ElenchConversation({
 
 	const beforeSend = useCallback(
 		(mentions: Mention[]) => {
+			// A new send supersedes whatever the last refusal said.
+			setRefusalNotice(null);
+			setStaleResume(false);
 			// Stage the @-referenced resources so prepareBody sends them with the request.
 			setPendingMentions(mentions);
 			track("elench_message_sent", {
@@ -255,6 +366,15 @@ export function ElenchConversation({
 	);
 	// The store, read fresh: `startThread` attaches the id before this component re-renders.
 	const hasThread = useCallback(() => useElenchStore.getState().threadId != null, []);
+	// A thread created on the first send seeds the base revision of that send (ADR 0003 §9.1).
+	const startThreadSeeded = useCallback(
+		async (title: string, firstTurn?: FirstTurn) => {
+			const thread = await startThread(title, firstTurn);
+			setBaseRevision(thread.revision);
+			return thread;
+		},
+		[startThread, setBaseRevision],
+	);
 	// The first send of an ephemeral conversation creates + attaches its thread (title from
 	// the text, the user turn stored with the row) BEFORE the message goes out, so prepareBody
 	// carries the id and the route's onFinish persists the reply. If that creation fails,
@@ -266,7 +386,15 @@ export function ElenchConversation({
 		retry: retrySend,
 		failedState,
 		reset: resetSend,
-	} = useElenchSend({ hasThread, startThread, sendMessage, beforeSend });
+	} = useElenchSend({ hasThread, startThread: startThreadSeeded, sendMessage, beforeSend });
+	/** The composer's send, remembering its editor state so a refused turn comes back intact. */
+	const onComposerSend = useCallback(
+		(text: string, mentions?: Mention[], state?: string) => {
+			if (state !== undefined) lastComposerSend.current = { text, state };
+			return onSend(text, mentions, state);
+		},
+		[onSend],
+	);
 	// A new chat / resume (a new lineage) starts with no failed send pending.
 	useEffect(() => {
 		resetSend();
@@ -296,10 +424,95 @@ export function ElenchConversation({
 				: undefined,
 		[retrySend, failedState],
 	);
+	/**
+	 * The composer path of a refused turn (ADR 0003 §9.3): load the stored transcript (which
+	 * refreshes the base revision), clear the error, and put text the server did not commit back
+	 * into the composer with the refusal's notice. From ADR 0001's slice 9 on, a refusal of a
+	 * store-owned send will go to the store instead.
+	 */
+	const onTurnRefused = useCallback(
+		async (err: TurnRefusedError) => {
+			const { refusal, request } = err;
+			clearError();
+			const refused = request?.last;
+			const threadId = useElenchStore.getState().threadId;
+			if (refusal.refusal === "thread-deleted") newChat();
+			else if (threadId && reloadThread) await reloadThread(threadId);
+			// A continuation refused as answered from an older revision ended partial without this
+			// tab seeing it finish: keep its card and Retry, which now carries the current revision.
+			setStaleResume(
+				refused?.role === "assistant" &&
+					refusal.refusal === "turn-answered" &&
+					refusal.revision !== null &&
+					refusal.revision !== request?.turn.baseRevision,
+			);
+			setBeingAnswered(refusal.refusal === "turn-in-progress");
+			setRefusalNotice(REFUSAL_NOTICE[refusal.refusal] ?? null);
+			if (!refusal.textCommitted && refused?.role === "user") {
+				const text = turnText(refused);
+				const sent = lastComposerSend.current;
+				const state =
+					sent && sent.text.trim() === text ? sent.state : textToComposerState(text);
+				setRestoreAt({ state, epoch: useElenchStore.getState().epoch });
+				if (lastCellTarget.current) {
+					useWidgetGridStore.getState().setPendingCellTarget(lastCellTarget.current);
+				}
+			}
+		},
+		[clearError, newChat, reloadThread],
+	);
+	useEffect(() => {
+		if (error instanceof TurnRefusedError) void onTurnRefused(error);
+	}, [error, onTurnRefused]);
+	// Put the refused words back once the reloaded transcript (and its composer) has mounted.
+	useEffect(() => {
+		if (!restoreAt || restoreAt.epoch !== epoch) return;
+		composerRef.current?.restore(restoreAt.state);
+		setRestoreAt(null);
+	}, [restoreAt, epoch]);
+	// A turn being answered in another tab: re-read the thread until no claim runs, then load it.
+	useEffect(() => {
+		if (!beingAnswered || !activeId) return;
+		let done = false;
+		const timer = setInterval(() => {
+			void getThread(activeId).then(async (t) => {
+				if (done || t?.inFlight) return;
+				done = true;
+				clearInterval(timer);
+				setBeingAnswered(false);
+				setRefusalNotice(null);
+				if (reloadThread) await reloadThread(activeId);
+			});
+		}, IN_FLIGHT_POLL_MS);
+		return () => {
+			done = true;
+			clearInterval(timer);
+		};
+	}, [beingAnswered, activeId, reloadThread]);
+
+	// The transcript's Retry, chosen by what is last (§9.1); undefined when there is none.
+	const retry = retryKind(messages);
+	const retryTurn =
+		retry.kind === "await-approval"
+			? undefined
+			: () => {
+					setStaleResume(false);
+					setRefusalNotice(null);
+					if (retry.kind === "regenerate") void regenerate({ messageId: retry.messageId });
+					else if (retry.kind === "continue") void sendMessage();
+					else void regenerate();
+				};
+
+	// The transcript's own error, as the conversation shows it: a refusal is handled above and is
+	// never an error card; an answer that stopped at a proposal says to resolve it instead.
+	let transcriptError: Error | undefined =
+		shownError instanceof TurnRefusedError ? undefined : shownError;
+	if (staleResume) transcriptError = STALE_RESUME;
+	else if (transcriptError && retry.kind === "await-approval") transcriptError = AWAIT_APPROVAL;
 	// A failed send (thread not created / too long) is shown where the transcript's own error
 	// would be, and takes precedence over it: it is the newer event.
-	const visibleError = sendError ?? shownError;
-	const onRetry = sendError ? onRetryStart : () => void regenerate();
+	const visibleError = sendError ?? transcriptError;
+	const onRetry = sendError ? onRetryStart : retryTurn;
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.
 	const seededRef = useRef(false);
@@ -461,7 +674,7 @@ export function ElenchConversation({
 					error={visibleError}
 					onSend={onSend}
 					onRetry={onRetry}
-					onRegenerate={() => void regenerate()}
+					onRegenerate={(messageId) => void regenerate({ messageId })}
 					onStop={() => void stop()}
 					renderToolPart={renderToolPart}
 					placeholder={PLACEHOLDER}
@@ -472,14 +685,21 @@ export function ElenchConversation({
 						view === "modal" ? "border-t-0 px-6 pb-6 pt-2" : undefined
 					}
 					renderComposer={
-						<ElenchComposer
-							handleRef={composerRef}
-							seed={failedState}
-							onSend={onSend}
-							onStop={() => void stop()}
-							showModel={isOrg}
-							status={status}
-						/>
+						<>
+							{refusalNotice && (
+								<p role="status" className="px-1 pb-2 text-ui-sm text-muted-foreground">
+									{refusalNotice}
+								</p>
+							)}
+							<ElenchComposer
+								handleRef={composerRef}
+								seed={failedState}
+								onSend={onComposerSend}
+								onStop={() => void stop()}
+								showModel={isOrg}
+								status={status}
+							/>
+						</>
 					}
 					onFeedback={handleFeedback}
 					initialFeedback={feedbackMap}

@@ -48,6 +48,7 @@ import {
 	AGENT_STEP_PART_TYPE,
 	agentStepDataSchema,
 } from "@/lib/ai/agent-steps";
+import { hasAcceptedApproval } from "@/lib/agent/turn-key";
 import { cn } from "@repo/ui/utils";
 
 export type AgentChatStatus = "submitted" | "streaming" | "ready" | "error";
@@ -82,11 +83,13 @@ export interface AgentChatProps {
 	 * Also drives the error state's always-present Retry. */
 	onRetry?: () => void;
 	/**
-	 * What the last message's "Regenerate response" action runs, when it must differ from
-	 * `onRetry`. Elench sets it: its `onRetry` is a failed send's re-attempt while one is
-	 * pending, and regenerating a reply must never submit the composer instead.
+	 * What the last message's "Regenerate response" action runs, with the id of the answer it
+	 * replaces, when it must differ from `onRetry`. Elench sets it: its `onRetry` is a failed
+	 * send's re-attempt while one is pending, and regenerating a reply must never submit the
+	 * composer instead. Passing the id means a tab can only regenerate the answer it displays
+	 * (ADR 0003 §9.1).
 	 */
-	onRegenerate?: () => void;
+	onRegenerate?: (messageId: string) => void;
 	/** Abort the in-flight stream. When set, the composer's submit becomes a Stop
 	 * control while generating. */
 	onStop?: () => void;
@@ -373,11 +376,17 @@ export function AgentChat({
 																		<CopyIcon className="size-3.5" />
 																	)}
 																</Action>
-																{(onRegenerate ?? onRetry) && m.id === lastMessageId && (
+																{(onRegenerate ?? onRetry) &&
+																	m.id === lastMessageId &&
+																	// An answer that started an approved operation is never
+																	// regenerated: the server refuses it, so it is not offered.
+																	!hasAcceptedApproval(m) && (
 																	<Action
 																		tooltip="Retry"
 																		label="Regenerate response"
-																		onClick={onRegenerate ?? onRetry}
+																		onClick={() =>
+																			onRegenerate ? onRegenerate(m.id) : onRetry?.()
+																		}
 																	>
 																		<RefreshCcwIcon className="size-3.5" />
 																	</Action>
