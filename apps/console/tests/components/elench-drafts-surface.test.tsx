@@ -393,10 +393,13 @@ describe("S9 › a later turn", () => {
 		await enter();
 		expect(bubbles("plan the cluster")).toHaveLength(0); // no user bubble left in the transcript
 		expect(box()).toBe("plan the cluster");
-		expect(server.callsOf("releaseClaim")).toHaveLength(1);
+		// D9d (a): the routes' own pre-hold refusal is CERTAIN — "Not sent", never "may already have
+		// been sent" — so the release says so, and so does the marker it leaves.
+		expect(server.callsOf("releaseClaim")).toMatchObject([{ error: "status-402", uncertain: false }]);
 		const row = server.row(shown(tab));
 		expect(row?.state).toBe("active");
 		expect(row?.content.text).toBe("plan the cluster");
+		expect(row?.failedSend).toMatchObject({ uncertain: false });
 		expect(userTurns(T).map(textOf)).toEqual(["first"]); // nothing stored
 	});
 
@@ -421,6 +424,51 @@ describe("S9 › a later turn", () => {
 		await enter();
 		expect(userTurns(thread.conversationId).map(textOf)).toEqual(["first in a new thread", "second turn"]);
 		expect(server.row(newChatKey)?.content.text).toBe("kept for later");
+	});
+});
+
+// ── Prompts that are not the box's, and a surface that closes and opens again ────────────────
+
+describe("S9 › suggestions and the surface's own lifetime", () => {
+	it("a suggestion card is an external send through the store: no claim, the box untouched, the prompt stored as the first turn", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, "modal");
+		type("my own draft");
+		act(() => screen.getByRole("button", { name: "Suggestion" }).click());
+		await flush();
+		const k = shown(tab);
+		expect(server.callsOf("startConversation")).toMatchObject([{ origin: "external", text: "Show my clusters" }]);
+		expect(server.callsOf("claimDraft")).toHaveLength(0);
+		expect(userTurns(k.conversationId).map(textOf)).toEqual(["Show my clusters"]);
+		expect(box()).toBe("my own draft");
+	});
+
+	it("close and open again: a later turn is sent once (the closed conversation's effects are gone)", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		act(() => useElenchStore.getState().close());
+		await flush();
+		act(() => useElenchStore.getState().openPanel({ kind: "org" }));
+		await flush();
+		type("once only");
+		await enter();
+		expect(server.requests).toHaveLength(1);
+		expect(userTurns(T).map(textOf)).toEqual(["first", "once only"]);
+	});
+
+	it("an unmounted root listens to nothing: a focus or a Back lists and holds nothing", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		unmount();
+		const lists = server.callsOf("listDrafts").length;
+		act(() => {
+			window.dispatchEvent(new Event("focus"));
+			window.dispatchEvent(new PopStateEvent("popstate"));
+		});
+		await flush();
+		expect(server.callsOf("listDrafts")).toHaveLength(lists);
+		expect(tab.drafts.store.view.getState().drafts.pageOrg).toBe(ORG_A);
 	});
 });
 
@@ -632,6 +680,26 @@ describe("S9 › the empty-cell prompt", () => {
 		expect(textOf(turn)).toBe("error rate");
 		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 1, y: 2 } });
 		expect(useWidgetGridStore.getState().pendingCellTarget).toBeNull();
+	});
+});
+
+describe("S9 › an empty-cell prompt that cannot go yet", () => {
+	it("an empty-cell prompt asked while another send runs waits, and goes out with its cell once it can", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		server.route.push({ kind: "hang" });
+		type("slow one");
+		await enter();
+		askCell(4, 2, "latency p99");
+		await flush();
+		expect(useWidgetGridStore.getState().pendingCellRequest).not.toBeNull(); // kept, not lost (D10z)
+		await flush(60_000); // the first send's deadline releases it
+		await flush();
+		const turn = userTurns(T).at(-1);
+		expect(textOf(turn)).toBe("latency p99");
+		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 4, y: 2 } });
+		expect(useWidgetGridStore.getState().pendingCellRequest).toBeNull();
 	});
 });
 

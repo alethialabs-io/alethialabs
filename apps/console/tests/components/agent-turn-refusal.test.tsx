@@ -669,8 +669,10 @@ describe("onTurnRefused", () => {
 
 // ── ADR 0003 §9.3's one-handler check (ADR 0001 slice 9) ────────────────────────────────────
 
-describe("One refusal handler", () => {
-	it("a refusal of a send the drafts store owns goes to the store only: the words come back once", async () => {
+describe("ADR 0003 §9.3's one-handler check", () => {
+	// ADR 0003's C test of this name: a refusal of a send the drafts store owns goes to the store
+	// only, so its words come back once.
+	it("One refusal handler", async () => {
 		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
 		answers.push({ refusal: refusal("thread-busy", { revision: 3 }), status: 409 });
 		fill("one copy only");

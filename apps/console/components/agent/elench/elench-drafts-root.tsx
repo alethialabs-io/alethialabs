@@ -118,7 +118,12 @@ export function createDraftsTab(deps: Omit<DraftsStoreDeps, "ui">): DraftsTab {
 	};
 }
 
-/** This tab's drafts, created at the first mount with a known viewer and kept for the page's life. */
+/**
+ * This tab's drafts, created at the first mount with a known viewer. ONE per tab and intentionally
+ * never disposed: the store outlives the `[org]` layout (ADR 0001 §1, §7), so an org switch that
+ * remounts the shell keeps every unsaved word, claim and heartbeat; a change of viewer clears it
+ * (D25) instead. The root's own listeners are removed when it unmounts.
+ */
 let pageTab: DraftsTab | null = null;
 
 /** The tab's drafts over the real transport, created once per page load (client only). */

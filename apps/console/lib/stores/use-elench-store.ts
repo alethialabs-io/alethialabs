@@ -187,7 +187,7 @@ interface ElenchState {
 	 * Resume a persisted thread: point at it AND bump `epoch` so the chat lineage token
 	 * changes, recreating the underlying chat with the resumed transcript (no chrome remount).
 	 */
-	selectThread: (id: string | null) => void;
+	selectThread: (id: string) => void;
 	/**
 	 * The INITIAL-LOAD resume of a persisted thread: point at it and bump `epoch`, exactly like
 	 * `selectThread`, but leave `mainView` alone. The resume lands after two server round trips,
@@ -319,7 +319,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	selectThread: (id) =>
 		set((s) => ({
 			threadId: id,
-			conversationId: id ?? mintConversationId(),
+			conversationId: id,
 			epoch: s.epoch + 1,
 			mainView: "chat" as const,
 		})),

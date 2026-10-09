@@ -31,7 +31,7 @@ import {
 } from "@/app/server/actions/agent-feedback";
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
 import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
-import { TurnRefusedError, useAgentChat } from "@/components/agent/use-agent-chat";
+import { ChatRouteError, TurnRefusedError, useAgentChat } from "@/components/agent/use-agent-chat";
 import { pendingClientToolCalls, turnText } from "@/lib/agent/turn-key";
 import {
 	snapshotCanvas,
@@ -121,14 +121,15 @@ function cellTargetOf(messages: readonly UIMessage[]): { x: number; y: number } 
 }
 
 /**
- * What a chat error says about a request that failed before `streaming` (D9d). A typed refusal
- * carries its status; a `fetch` that threw is a network failure. Any other error is the transport's
- * own for a non-2xx answer, whose status it does not keep: it is read as uncertain, like the
- * network, so the words come back to the box marked "may already have been sent".
+ * What a chat error says about a request that failed before `streaming` (D9d): a typed refusal and
+ * an untyped non-2xx both carry their status, which D9d reads (the routes' own pre-hold refusals
+ * are certain); anything else (a `fetch` that threw, a stream that broke) is a network failure,
+ * which is uncertain.
  */
 function routeFailureOf(error: Error): RouteFailure {
 	if (error instanceof TurnRefusedError)
 		return { kind: "status", status: error.status, refusal: error.refusal };
+	if (error instanceof ChatRouteError) return { kind: "status", status: error.status, refusal: null };
 	return { kind: "network" };
 }
 
@@ -750,29 +751,45 @@ export function ElenchConversation({
 	const visibleError = orgNotReady ? ORG_NOT_READY : transcriptError;
 	const onRetry = orgNotReady ? submitBox : retryTurn;
 
-	// Auto-send a staged seed prompt once into an otherwise-empty conversation (D10x), once its
-	// draft exists to own the send.
-	const seededRef = useRef(false);
+	/**
+	 * Sends an external prompt (D10x / D10y) and answers whether the store TOOK it: a token-less send
+	 * of this conversation now exists. A send the store refused (another send is under way, D10z;
+	 * the transcript is still loading, D9a; the chat is busy, R3) changes nothing, so its caller
+	 * keeps the prompt and tries again when the draft or the chat moves on.
+	 */
+	const takeExternal = useCallback(
+		(prompt: Parameters<typeof send.submitExternal>[0]): boolean => {
+			if (binding === null) return false;
+			const before = selectDraft(binding.store.view.getState(), binding.key)?.sending ?? null;
+			send.submitExternal(prompt);
+			const after = selectDraft(binding.store.view.getState(), binding.key)?.sending ?? null;
+			return after !== null && after !== before && after.token === null;
+		},
+		[binding, send],
+	);
+
+	// Auto-send a staged seed prompt once into an otherwise-empty conversation (D10x). It stays
+	// staged until the store takes it.
 	useEffect(() => {
-		if (seededRef.current || !seedPrompt || messages.length > 0 || entry === null) return;
-		seededRef.current = true;
-		send.submitExternal({ text: seedPrompt, origin: "seed" });
-		setSeedPrompt(null);
-	}, [seedPrompt, messages.length, entry, send, setSeedPrompt]);
+		if (!seedPrompt || messages.length > 0 || entry === null) return;
+		if (takeExternal({ text: seedPrompt, origin: "seed" })) setSeedPrompt(null);
+	}, [seedPrompt, messages.length, entry, status, takeExternal, setSeedPrompt]);
 
 	// Empty-cell prompt dispatch: a submitted cell composer is an external send (D10y, or D10x into
 	// a new conversation) that carries its cell IN THE EVENT, so the turn's own message names the
-	// cell and nothing stages the widget grid's pending slot (ADR 0003 §9.4 change 3).
+	// cell and nothing stages the widget grid's pending slot (ADR 0003 §9.4 change 3). The request is
+	// cleared only once the store took the send: a prompt asked while another send runs, or before
+	// the transcript is loaded, waits instead of being lost.
 	const pendingCellRequest = useWidgetGridStore((s) => s.pendingCellRequest);
 	useEffect(() => {
 		if (!pendingCellRequest || entry === null) return;
-		useWidgetGridStore.getState().clearPendingCellRequest();
-		send.submitExternal({
+		const taken = takeExternal({
 			text: pendingCellRequest.text,
 			cellTarget: { x: pendingCellRequest.x, y: pendingCellRequest.y },
 			origin: "cell",
 		});
-	}, [pendingCellRequest, entry, send]);
+		if (taken) useWidgetGridStore.getState().clearPendingCellRequest();
+	}, [pendingCellRequest, entry, status, takeExternal]);
 
 	// EXPLICIT action: add the artifact to the conversation that's already open. Never implicit —
 	// the old code called startThread(name) on a click, silently creating a chat named after the

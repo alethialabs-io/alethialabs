@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The two mount points of a draft's status (ADR 0001 §7.4, §14 slice 9). The composer renders the
-// footer slot under the box, and the conversation renders the bar slot above it, so slice 11 can
-// fill them without touching either file. Until slice 11 both render nothing: the words are kept by
+// The two mount points of a draft's status (ADR 0001 §7.4, §14 slice 9). The composer renders both,
+// wherever it is mounted (the modal landing and the docked chat): the bar slot above the box and
+// the footer slot under it, so slice 11 can fill them without touching the composer. Until slice 11 both render nothing: the words are kept by
 // the store whatever these show, and nothing on screen claims a state the store has not reached.
 
 import type { DraftKey } from "@/lib/stores/elench-drafts/types";
