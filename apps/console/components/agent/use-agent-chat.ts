@@ -105,6 +105,22 @@ export class TurnRefusedError extends Error {
 	}
 }
 
+/**
+ * A chat route answered a non-2xx WITHOUT a typed refusal body (401, 400, 413, 402, 503, a 5xx …).
+ * The message is the body, exactly as the transport's own error would carry it, so every reader of
+ * the message still reads the same text; the status is kept, because ADR 0001 D9d reads it: the
+ * routes' own pre-hold refusals are certain ("Not sent"), the rest uncertain.
+ */
+export class ChatRouteError extends Error {
+	constructor(
+		readonly status: number,
+		body: string,
+	) {
+		super(body);
+		this.name = "ChatRouteError";
+	}
+}
+
 /** Reads a typed refusal off a non-2xx response, or null when the body is not one. */
 async function readRefusal(res: Response): Promise<TurnRefusal | null> {
 	const body: unknown = await res
@@ -172,13 +188,16 @@ export function useAgentChat({
 	const lastRequestRef = useRef<RefusedRequest | null>(null);
 
 	const transport = useMemo(() => {
-		/** `fetch` that turns a typed refusal body into a {@link TurnRefusedError}. */
+		/**
+		 * `fetch` that turns a typed refusal body into a {@link TurnRefusedError}, and any other non-2xx
+		 * into a {@link ChatRouteError} that keeps its status.
+		 */
 		const turnFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 			const res = await fetch(input, init);
 			if (res.ok) return res;
 			const refusal = await readRefusal(res);
 			if (refusal) throw new TurnRefusedError(refusal, res.status, lastRequestRef.current);
-			return res;
+			throw new ChatRouteError(res.status, await res.text());
 		};
 		return new DefaultChatTransport({
 			api,

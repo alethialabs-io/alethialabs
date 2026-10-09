@@ -527,6 +527,23 @@ function loadFirst(entry: DraftEntry, ctx: SendContext): SendEntryTransition {
 }
 
 /**
+ * The failed send's turn id a re-send reuses (D9, D10, D31), or null for a fresh one. Reused only
+ * while the box still shows the text that failed: the row's text a release kept (for a certain
+ * marker the server drops the marker with the first saved edit), or the merged prompt D10f's
+ * fencing save carried. An edit not yet saved is a different text, which the stored turn's id could
+ * only refuse as `turn-committed-different-text` (ADR 0003 §9.4 change 1), so it is a new turn
+ * under a fresh id. One case keeps R10's reuse by design: an UNCERTAIN marker survives a saved
+ * edit, and the server's text is then the edit, so the re-send still names the uncertain turn.
+ */
+function failedTurnId(entry: DraftEntry, shown: DraftContent, ctx: SendContext): string | null {
+	const marker = entry.server?.failedSend?.turnId ?? null;
+	if (marker !== null && entry.server !== null && shown.text === entry.server.content.text) return marker;
+	const pending = entry.pendingFailedSend?.turnId ?? null;
+	if (pending !== null && ctx.fence !== null && shown.text === ctx.fence.merged.text) return pending;
+	return null;
+}
+
+/**
  * D9 / D10: Enter claims the box at the revision it shows, and empties `local`: the box now shows
  * the claimed content, read-only, and only text typed after the claim answers is `local` (R1). The
  * turn id is the failed-send marker's when there is one (D10f, D31), so a re-send names one turn.
@@ -547,8 +564,7 @@ function submit(entry: DraftEntry, chatReady: boolean, ctx: SendContext): SendEn
 	const claiming: DraftClaiming = {
 		attempt: ctx.fresh.attempt,
 		token: ctx.fresh.token,
-		turnId:
-			entry.server?.failedSend?.turnId ?? entry.pendingFailedSend?.turnId ?? ctx.fresh.turnId,
+		turnId: failedTurnId(entry, content, ctx) ?? ctx.fresh.turnId,
 		kind: stored ? "later" : "first",
 		content,
 	};
