@@ -26,7 +26,7 @@ evidence described below.
 | Security and operations | Users and visitors; IP, user agent, request, incident, audit and diagnostic data | Protect availability, integrity and tenants | Legitimate interests; legal obligation where applicable | Hetzner; Cloudflare; Alethia logs | Minimized by system; job logs 30 days; fleet actions 90 days; authorization activity 365 days |
 | Product analytics and client diagnostics | Consenting users; pseudonymous internal ids, plan/role, pages, feature events, performance and client errors | Understand, improve and diagnose the Service | Consent | PostHog EU Cloud | Provider retention must be verified and recorded before release |
 | Operational diagnostics | Users and visitors; minimized server and migration errors, request metadata and structured operational logs | Secure, diagnose and maintain the hosted Service | Legitimate interests | PostHog EU Cloud | Provider retention must be verified and recorded before release |
-| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Configured Anthropic or OpenAI endpoint | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output |
+| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Configured Anthropic or OpenAI endpoint; Alethia PostgreSQL for unsent drafts | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output; unsent Elench drafts 30 days unwritten, discarded drafts 24 hours |
 
 ## Data-flow and minimization rules
 
@@ -95,6 +95,30 @@ entry here.
   sheet shipped and was not recorded here until the register was introduced — which is
   what the register is for.)
 - Removed inventory/capability observations: 7 days by default.
+- Elench drafts (`elench_drafts`): unsent chat-composer text and the composer state
+  stored with it, one row per user, org and conversation. Drafts may hold pasted
+  secrets.
+  These windows are enforced by `elench-drafts-sweep`
+  (`apps/console/lib/elench/drafts-sweep.ts`), a task the reconcile loop runs once a
+  day, not by a `gc_*` function. The sweep reads both windows from the register, so
+  they have no environment override. The registry test above checks only the `gc_*`
+  lines of this document; these two windows are not yet held to it.
+  - `elench-drafts`: an active draft not written for 30 days (measured from
+    `updated_at`) is deleted, whether or not its user is still a member of the org.
+  - `elench-drafts-discarded`: a discarded draft is deleted 24 hours after it was
+    discarded (measured from `discarded_at`); the 24 hours are its Undo window.
+    Because the sweep runs daily, a discarded draft can stay up to about two days.
+  - The sweep never deletes a draft that is being sent (status `sending`). It first
+    settles every claim that has gone silent past its 120-second lease, as a draft
+    action would settle it: the row returns to `active` and `updated_at` is renewed,
+    so the settled draft starts a new 30-day window.
+  - On erasure, every draft the subject wrote is erased, in every org, keyed by
+    `user_id` (the `elench_drafts` rule in `apps/console/lib/privacy/erasure-plan.ts`).
+  - `retentionHealth()` in `apps/console/lib/retention/health.ts` measures both
+    windows from the data — the oldest active draft by `updated_at`, the oldest
+    discarded one by `discarded_at` — so a sweep that has stopped reads as overdue
+    there. No console surface or job calls it yet; until one does, this is evidence
+    to be gathered by hand for the quarterly review, not an alert.
 - Record and periodically verify the configured PostHog retention for product
   analytics, error diagnostics, and operational logs; do not publish a maximum
   until each setting is evidenced.
