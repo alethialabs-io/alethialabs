@@ -320,7 +320,7 @@ export type UnsentNote =
 	| "deleted";
 
 /** What an Unsent entry says about itself, in the rail and in the switcher alike. */
-export const UNSENT_NOTE_TEXT: Record<UnsentNote, string> = {
+const UNSENT_NOTE_TEXT: Record<UnsentNote, string> = {
 	sending: "Sending…",
 	"not-sent": "Not sent",
 	"not-saved": "Not saved",
