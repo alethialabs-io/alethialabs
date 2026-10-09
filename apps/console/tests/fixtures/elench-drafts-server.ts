@@ -4,7 +4,7 @@
 // An in-memory Elench server for the component tests of ADR 0001 slice 9: the draft actions with
 // REAL compare-and-set semantics (§3.4's S1-S7, §4.2, §5.1), the threads they start, the two chat
 // routes as a `fetch` stub that stores a turn the way ADR 0003's routes do (the user turn appended
-// with the BODY's mentions and cell target, then the answer), and the heartbeat route. One server
+// with the mentions and cell target of its OWN message's metadata, then the answer), and the heartbeat route. One server
 // is shared by every tab or device of a test, so two of them meet exactly as they would in the
 // database: in the rows.
 //
@@ -88,7 +88,9 @@ type ActionName = keyof DraftsTransport;
 export interface RouteRequest {
 	threadId: string | null;
 	messages: UIMessage[];
+	/** The body's `mentions` field, if a client still sent one (the routes never read it). */
 	mentions: unknown;
+	/** The body's `cellTarget` field, if a client still sent one (the routes never read it). */
 	cellTarget: unknown;
 	turnId: string | null;
 }
@@ -563,9 +565,10 @@ export class FakeElenchServer {
 		const last = b.messages.findLast((m) => m.role === "user");
 		const replyId = `reply-${this.requests.length}`;
 		if (thread !== undefined && last !== undefined) {
+			const own = typeof last.metadata === "object" && last.metadata !== null ? last.metadata : {};
 			const meta: Record<string, unknown> = {};
-			if (Array.isArray(b.mentions) && b.mentions.length > 0) meta.mentions = b.mentions;
-			if (b.cellTarget) meta.cellTarget = b.cellTarget;
+			if ("mentions" in own && Array.isArray(own.mentions) && own.mentions.length > 0) meta.mentions = own.mentions;
+			if ("cellTarget" in own && own.cellTarget) meta.cellTarget = own.cellTarget;
 			const stored = thread.messages.some((m) => m.id === last.id);
 			const turn: UIMessage = { id: last.id, role: "user", parts: last.parts, ...(Object.keys(meta).length ? { metadata: meta } : {}) };
 			thread.messages = [

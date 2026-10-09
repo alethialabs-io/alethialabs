@@ -22,7 +22,6 @@ import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState
 import { type DraftEditorContent, normalizeDraftText } from "@/lib/elench/draft-content";
 import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { EMPTY_CONTENT, shownContent } from "@/lib/stores/elench-drafts/reducer-drafting";
-import { appendContent } from "@/lib/stores/elench-drafts/reducer-sending";
 import type { DraftEntry } from "@/lib/stores/elench-drafts/types";
 import { cn } from "@repo/ui/utils";
 import { DraftBarSlot, DraftFooterSlot } from "./draft-status/slots";
@@ -70,7 +69,7 @@ export function ElenchComposer(props: {
 	showModel?: boolean;
 	status?: ChatStatus;
 	autoFocus?: boolean;
-	/** Lets the caller drive the box: Enter (`submit`), and words put back (`restore`). */
+	/** Lets the caller drive the box: Enter (`submit`). */
 	handleRef?: Ref<ElenchComposerHandle>;
 }) {
 	const draft = useElenchDraft();
@@ -90,12 +89,6 @@ export function ElenchComposer(props: {
 export interface ElenchComposerHandle {
 	/** EXACTLY what Enter does: `SUBMIT` of what the box shows. False when there is no draft. */
 	submit: () => boolean;
-	/**
-	 * Puts words back into the box after what it holds, as if typed there, so the store saves them
-	 * like any edit. Only ADR 0003 slice 6's composer path calls it, for a refused send the drafts
-	 * store does not own; a store-owned send's words come back through the store (D11r, D10f).
-	 */
-	restore: (content: DraftEditorContent) => void;
 }
 
 /** True when the box may be typed into: a draft exists, no claim is pending, no other tab sends it. */
@@ -216,17 +209,7 @@ function ComposerBody({
 	);
 
 	const submit = useCallback((): boolean => send.submit(), [send]);
-	const restore = useCallback(
-		(content: DraftEditorContent) => {
-			const merged = appendContent(
-				{ ...EMPTY_CONTENT, ...editorToContent(editor.getEditorState()) },
-				{ ...EMPTY_CONTENT, ...content },
-			);
-			editor.update(contentToEditor(merged));
-		},
-		[editor],
-	);
-	useImperativeHandle(handleRef, () => ({ submit, restore }), [submit, restore]);
+	useImperativeHandle(handleRef, () => ({ submit }), [submit]);
 
 	// Enter sends (Shift+Enter = newline). Registered LOW so the mention typeahead (NORMAL) wins
 	// when it has a selectable option — its handler consumes Enter to pick, so this never runs.
