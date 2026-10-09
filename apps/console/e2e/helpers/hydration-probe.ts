@@ -21,6 +21,7 @@ export async function installHydrationProbe(page: Page): Promise<void> {
 			longtasks: [] as { start: number; dur: number }[],
 			loaf: [] as unknown[],
 			clicks: [] as { t: number; target: string; hydrated: boolean }[],
+			rects: [] as { t: number; at: string; x: number; w: number }[],
 		};
 		Reflect.set(window, "__probe", probe);
 		const now = () => Math.round(performance.now());
@@ -34,6 +35,13 @@ export async function installHydrationProbe(page: Page): Promise<void> {
 			return null;
 		};
 		const shell = () => document.querySelector("[data-slot=sidebar], aside, nav");
+		const rect = (at: string) => {
+			const el = trigger();
+			if (!el) return;
+			const r = el.getBoundingClientRect();
+			probe.rects.push({ t: now(), at, x: Math.round(r.x), w: Math.round(r.width) });
+		};
+		Reflect.set(window, "__probeRect", rect);
 		let seen = false;
 		let hydrated = false;
 		let shellHydrated = false;
@@ -42,10 +50,12 @@ export async function installHydrationProbe(page: Page): Promise<void> {
 			if (el && !seen) {
 				seen = true;
 				mark("trigger-in-dom", el.textContent ?? "");
+				rect("in-dom");
 			}
 			if (el && !hydrated && hasFiber(el)) {
 				hydrated = true;
 				mark("trigger-hydrated");
+				rect("hydrated");
 			}
 			if (!shellHydrated && hasFiber(shell())) {
 				shellHydrated = true;
@@ -105,6 +115,7 @@ export async function installHydrationProbe(page: Page): Promise<void> {
 			"click",
 			(e) => {
 				const t = e.target instanceof Element ? e.target : null;
+				rect("click");
 				probe.clicks.push({ t: now(), target: t?.textContent?.slice(0, 40) ?? "", hydrated: hasFiber(t) });
 			},
 			true,

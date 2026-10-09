@@ -218,6 +218,7 @@ test.describe("hydration probe (#5849, temporary)", () => {
 					}, undefined, { timeout: 30_000 })
 					.catch(() => undefined);
 				await p.waitForTimeout(2000);
+				await p.evaluate(() => Reflect.get(window, "__probeRect")?.("final"));
 				const probe = await readHydrationProbe(p);
 				if (kind === "traced") {
 					const trace = await browser.stopTracing();
@@ -231,7 +232,8 @@ test.describe("hydration probe (#5849, temporary)", () => {
 				}
 				out[name].push({ kind, opened, probe });
 				const marks = Reflect.get(Object(probe), "marks");
-				console.log(`#5849-PROBE ${name} ${JSON.stringify({ kind, opened, marks })}`);
+				const rects = Reflect.get(Object(probe), "rects");
+				console.log(`#5849-PROBE ${name} ${JSON.stringify({ kind, opened, marks, rects })}`);
 				await ctx.close();
 			}
 		}
