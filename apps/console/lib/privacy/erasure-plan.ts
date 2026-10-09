@@ -126,6 +126,15 @@ export const ERASURE_RULES: readonly ErasureRule[] = [
 			"also carry whatever the subject typed, which is the material most likely to be personal.",
 	},
 	{
+		table: "elench_drafts",
+		subjectColumn: "user_id",
+		disposition: "erase",
+		reason:
+			"Unsent Elench messages are the subject's own words, and may hold pasted secrets. Keyed by " +
+			"user_id, not by org: the subject has a row per org they wrote in, and the erasure runs on " +
+			"the service role, which RLS does not filter, so every one of them goes (ADR 0001 §9).",
+	},
+	{
 		table: "oauth_access_token",
 		subjectColumn: "user_id",
 		disposition: "erase",
