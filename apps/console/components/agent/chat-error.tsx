@@ -29,6 +29,7 @@ type ChatErrorKind =
 	| "too-long"
 	| "unanswered"
 	| "thread-start"
+	| "notice"
 	| "network";
 
 /**
@@ -55,6 +56,21 @@ export class ThreadStartError extends Error {
 	constructor() {
 		super("The conversation could not be started.");
 		this.name = "ThreadStartError";
+	}
+}
+
+/**
+ * A card whose words the conversation chose, not a failure it classifies: the stale-revision
+ * resume of a continuation, or an answer that stopped at a proposal still awaiting its card
+ * (ADR 0003 §9.1). Recognised by type; never counted as an `elench_error`.
+ */
+export class ChatNoticeError extends Error {
+	constructor(
+		readonly title: string,
+		description: string,
+	) {
+		super(description);
+		this.name = "ChatNoticeError";
 	}
 }
 
@@ -114,6 +130,7 @@ function parseBudget(error: Error): ParsedBudget | null {
 function classify(error: Error): ChatErrorKind {
 	if (error instanceof UnansweredTurnError) return "unanswered";
 	if (error instanceof ThreadStartError) return "thread-start";
+	if (error instanceof ChatNoticeError) return "notice";
 	if (parseBudget(error)) return "budget";
 	const msg = error.message ?? "";
 	// The chat routes' 413 body, matched exactly — it is a shared constant, not prose.
@@ -165,6 +182,11 @@ const COPY: Record<
 		description:
 			"Your message was not sent. It is still in the box below — retry to start the conversation and send it. Closing this chat or reloading discards it.",
 	},
+	notice: {
+		icon: MessageSquareWarning,
+		title: "",
+		description: "",
+	},
 	network: {
 		icon: WifiOff,
 		title: "The assistant hit an error",
@@ -202,7 +224,7 @@ export function ChatError({
 	// transcript every time the thread opens, so counting it would inflate the error rate with
 	// requests this session never made.
 	useEffect(() => {
-		if (kind === "unanswered") return;
+		if (kind === "unanswered" || kind === "notice") return;
 		track("elench_error", { kind });
 	}, [kind]);
 	useEffect(() => {
@@ -218,7 +240,10 @@ export function ChatError({
 		};
 	}, [kind]);
 
-	const base = COPY[kind];
+	const base =
+		error instanceof ChatNoticeError
+			? { ...COPY.notice, title: error.title, description: error.message }
+			: COPY[kind];
 	const Icon = base.icon;
 	// When we parsed a real budget body, use the server's human message + reset time.
 	const reset = budget ? resetsIn(budget.resetAt) : null;
