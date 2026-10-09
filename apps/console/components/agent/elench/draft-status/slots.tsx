@@ -19,7 +19,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useRef, useSyncExternalStore } from "react";
 import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { DraftsStoreHandle, DraftsView } from "@/lib/stores/elench-drafts/store";
 import type { DraftEntry, DraftEntryEvent, DraftKey } from "@/lib/stores/elench-drafts/types";
@@ -38,15 +38,12 @@ import {
 	isAcknowledged,
 	noticeLines,
 } from "./copy";
-import { forgetKeptInTab, keepInTab, useKeptInTab, useSavedAt } from "./registry";
+import { forgetKeptInTab, keepInTab, useJustSaved, useKeptInTab } from "./registry";
 
 /** Where one draft's status is rendered: the key it reports on. */
 export interface DraftSlotProps {
 	draftKey: DraftKey;
 }
-
-/** How long the footer says "Saved" after an acknowledgement (§7.4). */
-export const SAVED_SHOWN_MS = 2_000;
 
 /** Subscribes to nothing: without a draft the view never changes. */
 function subscribeNothing(): () => void {
@@ -252,23 +249,6 @@ function HeldOtherOrg({ orgId }: { orgId: string }) {
 	return <>{heldOtherOrgText(name)}</>;
 }
 
-/**
- * True for `SAVED_SHOWN_MS` after the host recorded the key acknowledged after a save, while the box
- * still shows exactly what the server holds.
- */
-function useJustSaved(id: string, entry: DraftEntry | null): boolean {
-	const at = useSavedAt(id);
-	const acknowledged = entry !== null && isAcknowledged(entry);
-	const [, rerender] = useState(0);
-	const left = at === null ? 0 : at + SAVED_SHOWN_MS - Date.now();
-	useEffect(() => {
-		if (left <= 0) return;
-		const t = setTimeout(() => rerender((n) => n + 1), left);
-		return () => clearTimeout(t);
-	}, [left]);
-	return acknowledged && left > 0;
-}
-
 /** The composer footer's status line (§7.4): one status per key, true to what the server holds. */
 export function DraftFooterSlot({ draftKey }: DraftSlotProps) {
 	const draft = useElenchDraft();
@@ -277,7 +257,8 @@ export function DraftFooterSlot({ draftKey }: DraftSlotProps) {
 	const kept = useKeptInTab(id);
 	const pathname = usePathname() ?? "/";
 	const entry = view?.drafts.entries[id] ?? null;
-	const justSaved = useJustSaved(id, entry);
+	// "Saved" only while the box still shows exactly what the server holds.
+	const justSaved = useJustSaved(id) && entry !== null && isAcknowledged(entry);
 	const footer =
 		entry === null
 			? null

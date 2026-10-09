@@ -22,7 +22,7 @@ import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { DraftNoticeItem, DraftsStoreHandle, DraftsView } from "@/lib/stores/elench-drafts/store";
 import type { DraftEntry } from "@/lib/stores/elench-drafts/types";
 import { asksBeforeUnload, conversationName, COPY, footerOf, heldOtherOrgText, isAcknowledged } from "./copy";
-import { markSaved, registerDraftsStore } from "./registry";
+import { registerDraftsStore, setJustSaved } from "./registry";
 
 /** What a toast for `notice` says, or null when the notice is not the host's to show. */
 export function toastText(view: DraftsView, notice: DraftNoticeItem): string | null {
@@ -65,10 +65,14 @@ function savePending(entry: DraftEntry | undefined): boolean {
 	return entry !== undefined && (entry.inflight !== null || entry.save !== "idle");
 }
 
-/** Records every key that went from a pending save to acknowledged between `before` and `view`. */
-function recordSaved(before: DraftsView, view: DraftsView): void {
-	for (const [id, entry] of Object.entries(view.drafts.entries))
-		if (isAcknowledged(entry) && savePending(before.drafts.entries[id])) markSaved(id, Date.now());
+/** How long the footer says "Saved" after an acknowledgement (§7.4). */
+export const SAVED_SHOWN_MS = 2_000;
+
+/** The keys that went from a pending save to acknowledged between `before` and `view`. */
+function newlySaved(before: DraftsView, view: DraftsView): string[] {
+	return Object.entries(view.drafts.entries)
+		.filter(([id, entry]) => isAcknowledged(entry) && savePending(before.drafts.entries[id]))
+		.map(([id]) => id);
 }
 
 /** The tab-wide half of the draft status; renders nothing. */
@@ -76,11 +80,29 @@ export function DraftStatusHost({ store }: { store: DraftsStoreHandle }): null {
 	useEffect(() => registerDraftsStore(store), [store]);
 
 	useEffect(() => {
+		const timers = new Map<string, ReturnType<typeof setTimeout>>();
 		toastNotices(store, store.view.getState());
-		return store.view.subscribe((view, before) => {
-			recordSaved(before, view);
+		const unsubscribe = store.view.subscribe((view, before) => {
+			for (const id of newlySaved(before, view)) {
+				clearTimeout(timers.get(id));
+				setJustSaved(id, true);
+				timers.set(
+					id,
+					setTimeout(() => {
+						timers.delete(id);
+						setJustSaved(id, false);
+					}, SAVED_SHOWN_MS),
+				);
+			}
 			toastNotices(store, view);
 		});
+		return () => {
+			unsubscribe();
+			for (const [id, t] of timers) {
+				clearTimeout(t);
+				setJustSaved(id, false);
+			}
+		};
 	}, [store]);
 
 	useEffect(() => {

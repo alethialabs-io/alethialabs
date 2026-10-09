@@ -970,7 +970,7 @@ describe("S11 › copy", () => {
 		const key: DraftKey = { orgId: ORG_A, projectId: null, conversationId: "c" };
 		const lines = noticeLines(
 			{
-				drafts: { viewerId: VIEWER, scope: null, generation: 0, pageOrg: null, activeKey: {}, entries: {} },
+				drafts: { viewerId: VIEWER, scope: null, generation: 0, pageOrg: null, activeKey: {}, entries: {}, forks: {}, fences: {} },
 				uncached: {},
 				notices: [
 					{ id: 1, key, notice: "wait-for-send" },

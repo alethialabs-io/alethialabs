@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Two pieces of tab state the draft status needs outside the conversation that renders it:
+// The tab state the draft status needs outside the conversation that renders it:
 //
 // - the tab's drafts store, for the account menu's sign-out confirm (D25). The menu is in the
 //   sidebar, which is not inside the drafts root's provider, so the drafts host (mounted by the root
 //   once per tab) registers the store here;
 // - the keys whose credential notice the user answered "Keep in this tab only" (D36). The answer is
 //   the user's for this tab: it outlives a remount of the composer, and nothing is sent anywhere;
-// - when each key was last acknowledged after a save (§7.4's "Saved"), recorded by the host from
+// - the keys acknowledged after a save in the last 2 s (§7.4's "Saved"), recorded by the host from
 //   the store's own transitions, so a footer that mounts just after the answer still says it.
 
 import { useSyncExternalStore } from "react";
@@ -37,7 +37,7 @@ function cell<T>(initial: T) {
 
 const mounted = cell<DraftsStoreHandle | null>(null);
 const keptInTab = cell<ReadonlySet<string>>(new Set());
-const savedAt = cell<ReadonlyMap<string, number>>(new Map());
+const justSaved = cell<ReadonlySet<string>>(new Set());
 
 /** Registers the tab's drafts store (the host does, while it is mounted); returns the removal. */
 export function registerDraftsStore(store: DraftsStoreHandle): () => void {
@@ -73,15 +73,17 @@ export function useKeptInTab(id: string): boolean {
 	return useSyncExternalStore(keptInTab.subscribe, has, () => false);
 }
 
-/** Records that the key `id` was acknowledged after a save at `at` (ms since the epoch). */
-export function markSaved(id: string, at: number): void {
-	const next = new Map(savedAt.get());
-	next.set(id, at);
-	savedAt.set(next);
+/** Marks the key `id` as just acknowledged after a save (`on`), or no longer (`off`). */
+export function setJustSaved(id: string, on: boolean): void {
+	if (justSaved.get().has(id) === on) return;
+	const next = new Set(justSaved.get());
+	if (on) next.add(id);
+	else next.delete(id);
+	justSaved.set(next);
 }
 
-/** When the key `id` was last acknowledged after a save, or null. */
-export function useSavedAt(id: string): number | null {
-	const read = (): number | null => savedAt.get().get(id) ?? null;
-	return useSyncExternalStore(savedAt.subscribe, read, () => null);
+/** Whether the key `id` was acknowledged after a save within the last `SAVED_SHOWN_MS`. */
+export function useJustSaved(id: string): boolean {
+	const has = (): boolean => justSaved.get().has(id);
+	return useSyncExternalStore(justSaved.subscribe, has, () => false);
 }
