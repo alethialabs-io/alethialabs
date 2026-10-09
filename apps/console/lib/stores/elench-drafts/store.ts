@@ -163,10 +163,12 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 	let poll: { ms: number; timer: ReturnType<typeof setInterval> } | null = null;
 	let noticeId = 0;
 
-	/** Arms the timer `name`, replacing one of the same name. */
+	/** Arms the timer `name`, replacing one of the same name; with no delay, runs at once. */
 	const arm = (name: string, ms: number, run: () => void): void => {
 		const old = timers.get(name);
 		if (old !== undefined) clearTimeout(old);
+		timers.delete(name);
+		if (ms <= 0) return run();
 		timers.set(
 			name,
 			setTimeout(() => {
