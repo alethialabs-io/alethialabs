@@ -11,7 +11,7 @@
 // rules are load-bearing and each has a mutation-checked test:
 // - D34: a heartbeat's `not-claimed` or `gone` is read only while the send is still `routing` under
 //   the same token. In any other phase a write of this claim is in flight and its own answer decides.
-//   D22 reads a listed row against a live send by the same rule (R9 with B1''s reason).
+//   D22 reads a listed row against a live send by the same rule (R9, for the reason of B1').
 // - D9b / D10y: a send's `metadata.cellTarget` is the claimed content's (or the external event's),
 //   never the widget grid's pending slot, which this module cannot even see.
 //
@@ -328,7 +328,7 @@ export function appendContent(head: DraftContent, tail: DraftContent | null): Dr
 }
 
 /** The text a send stores (`text.trim()`, as every send trims), with its spans re-based onto it. */
-export function trimForSend(
+function trimForSend(
 	text: string,
 	mentions: DraftMention[],
 ): { text: string; mentions: DraftMention[] } {
@@ -1527,8 +1527,7 @@ export function interceptDraftingEvent(
 		const words = entry.claiming?.content ?? entry.local;
 		if (words === null) return null; // D19, the drafting half's
 		const freed: DraftEntry = { ...settled, claiming: null, thread: r.thread.status };
-		const n = r.thread.status === "deleted" ? "kept-in-new-deleted" : "kept-in-new-started";
-		return fork(freed, words, null, n);
+		return fork(freed, words, null, "kept-in-new-deleted");
 	}
 	const fence = ctx.fence;
 	if (r.outcome === "conflict" && fence !== null && r.thread.firstTurnId === fence.turnId) {
