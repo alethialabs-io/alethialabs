@@ -131,6 +131,115 @@ Two other log lines are worth a search when a customer asks about a paid team:
   alert names the subscription.
 - `billing.pending_org_setup.adopted`: a setup that Stripe had already linked was marked linked.
 
+## 7. Payment holds: the sweeper, its alert, and the operator command
+
+A **payment hold** (`payment_holds`, ADR 0002) is a row saying that one create-a-team subscription is
+not yet proven settled: its first invoice may still be paid, a payment on it may still land, or money
+taken after its cancel must be refunded. Each hold moves through one state machine until a Stripe read
+proves it settled, and is then `released` with a reason. Rows are never deleted.
+
+### The sweeper
+
+The console advances every open hold that is due, every 5 minutes, on every instance. A hold is due
+when its `next_check_at` has passed, or when it was nudged since its last observation (the Stripe
+webhook nudges holds from ADR 0002 slice 7 on). Each hold is advanced under its payer's purchase lease
+(`user:<payer>`), so two instances never advance the same hold at once, and neither will the purchase
+flow once it opens holds (slice 8). A hold whose lease is busy waits for the next tick.
+
+The same tick has a twin route for an external cron or a manual run. It needs the bearer secret
+`ALETHIA_CRON_SECRET`, answers 503 when the secret is unset, and returns counts only:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $ALETHIA_CRON_SECRET" \
+  https://<console host>/api/internal/payment-holds/sweep
+```
+
+The sweeper also sends the customer emails about a hold, at most once per hold and state:
+
+- the refund was issued (`refund_pending`);
+- the refund went through in full (`released`, reason `refunded`);
+- the payment went through and the team can be finished from Create a team (`released`, reason
+  `adopted`, when the setup has no team yet).
+
+### The alert rule `system.platform.payment_needs_support`
+
+Every hold that needs a person raises this alert on the platform operator's org. Set it up once, or the
+alert is only a `[billing] payment needs support` line in the console log:
+
+1. Set `ALETHIA_PLATFORM_ALERT_ORG_ID` to the operator org's id in the prod env.
+2. In that org, open **Alerts** and create a rule for **Customer payment needs manual review**
+   (`system.platform.payment_needs_support`, under Platform health). Bind it to the on-call channel.
+
+The alert names the subscription. It is raised when a hold moves to `needs_operator`, and when a hold
+has sat in one state longer than its bound:
+
+| State | Alert after |
+|---|---|
+| `closing`, `cancel_unproven` | 1h if its payment succeeded, 8 days if authorised, 14 days if processing, else 24h |
+| `payment_in_flight` | 8 days if authorised, else 14 days |
+| `invoice_payable` | 24h |
+| `refund_due` | 48h (the refund budget itself sends it to `needs_operator` after about 8h35m of failed attempts) |
+| `refund_pending` | 24h after a refund went `requires_action`, and again at 14 days |
+| `needs_operator` | 24h, then every 7 days, only when its first alert did not reach a channel |
+
+Each age alert is raised once per state and bound, whether or not it reached a channel. Only
+`needs_operator` re-alerts on its own.
+
+### The command
+
+Run it with the service connection (`ALETHIA_DATABASE_URL`) and the Stripe key, on Node 22.15 or later:
+
+```sh
+pnpm -C apps/console billing:payment-holds list --open [--payer <user id>]
+pnpm -C apps/console billing:payment-holds show sub_…
+pnpm -C apps/console billing:payment-holds release sub_… \
+  --reason "<why>" --operator <your user id>
+pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--payer <user id>]
+```
+
+- `list` and `show` change nothing. `show` prints every hold of the subscription, its setup, and what
+  Stripe says about it now: the subscription, the held invoice, and its payments and refunds.
+- `release` is the way out of `needs_operator`, and of a subscription stuck `unpaid` or `paused`. It
+  refuses with no `--reason`. It waits up to 30s for the payer's lease and refuses while it is still
+  busy. It prints the live read, then releases the hold with `released_by` and `release_note` and logs
+  one `billing.payment_hold.released` line. A second run finds no open hold and changes nothing.
+  `--operator` is free text: the command does not check that it names a real user. It is recorded as
+  `released_by` and in the log line, so type your own user id exactly.
+  A release also closes the subscription's unfinished setup. So while a setup is open, `release`
+  refuses unless Stripe reads the subscription ended or not found: cancel it in the Stripe dashboard
+  first, and refund it if it was paid.
+- `reconcile` runs one sweeper tick now, so it can also send the customer emails above. With
+  `--backfill` it first runs the backfill below.
+
+### The backfill
+
+Until the create-a-team purchase opens holds (ADR 0002 slice 8), it cancels checkouts and keeps no
+record of them. The backfill finds them in Stripe. Run it **before** slice 8 deploys, and **again**
+once that release has rolled out to every instance, because old instances keep cancelling without holds
+until then:
+
+```sh
+pnpm -C apps/console billing:payment-holds reconcile --backfill
+```
+
+It reads every `canceled` and `incomplete_expired` subscription in the account. It holds a subscription
+only when all six tests pass:
+
+1. **B1:** it is a create-a-team subscription (`created_by` set, no `organization_id`).
+2. **B2:** it was cancelled on request, or expired.
+3. **B3:** it has exactly one invoice, the first one.
+4. **B4:** that invoice was unpaid when the subscription ended, or was paid after it ended.
+5. **B5:** every payment on it used a card.
+6. **B6:** no order names it as withdrawn or refunded.
+
+Each hold is advanced at once: an unpaid invoice is voided, and a payment that landed after the end is
+refunded. One case is held but not advanced: an invoice with **no** PaymentIntent proves nothing about how
+it would be paid (B5). That hold opens in `needs_operator`, the alert names the subscription, and you
+decide it with `show` and `release`. Every other create-a-team subscription is printed as `LISTED <sub>: <the failed test>`, and
+nothing is written for it. Each one is a support decision: use `show` as the evidence, and refund in the
+Stripe dashboard only when the customer did not mean to keep it. A second run skips every subscription a
+hold has named, so it writes nothing new.
+
 ## Rollback
 
 - Set `STRIPE_TAX_ENABLED=false` to drop automatic tax if registrations aren't ready.

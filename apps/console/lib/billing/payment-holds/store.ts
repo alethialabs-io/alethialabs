@@ -299,15 +299,37 @@ export async function nudgeHold(subscriptionId: string): Promise<number> {
 }
 
 /**
+ * The hold state each notice is about: a claim of it matches only a hold that is in that state NOW.
+ * `released:refunded` and `released:adopted` are terminal; `refund_pending` is not (a failed refund
+ * takes the hold back to `refund_due`, T10f).
+ */
+function noticeStatePredicate(state: PaymentHoldNotifiedState): SQL | undefined {
+	if (state === "refund_pending") return eq(paymentHolds.state, "refund_pending");
+	return and(
+		eq(paymentHolds.state, "released"),
+		eq(paymentHolds.release_reason, state === "released:refunded" ? "refunded" : "adopted"),
+	);
+}
+
+/**
  * The notice claim (§4.1, rev 7, Q3), made before a customer email is sent: `notified_state = state`
- * unless it already is. True only for the call whose claim wrote the row; only that call may send the
- * email. Touches `notified_state` and `notified_at` and nothing else.
+ * unless it already is, AND only while the hold is in the state the email is about, in the same
+ * statement (S6's tightening of §4.1's literal predicate). So a refund that failed between the
+ * sweeper's selection and this claim never gets "your refund is on its way". True only for the call
+ * whose claim wrote the row; only that call may send the email. Touches `notified_state` and
+ * `notified_at` and nothing else.
  */
 export async function claimHoldNotice(holdId: string, state: PaymentHoldNotifiedState): Promise<boolean> {
 	const rows = await getServiceDb()
 		.update(paymentHolds)
 		.set({ notified_state: state, notified_at: sql`now()` })
-		.where(and(eq(paymentHolds.id, holdId), sql`${paymentHolds.notified_state} IS DISTINCT FROM ${state}`))
+		.where(
+			and(
+				eq(paymentHolds.id, holdId),
+				sql`${paymentHolds.notified_state} IS DISTINCT FROM ${state}`,
+				noticeStatePredicate(state),
+			),
+		)
 		.returning({ id: paymentHolds.id });
 	return rows.length > 0;
 }
