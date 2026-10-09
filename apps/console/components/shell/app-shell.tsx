@@ -15,6 +15,7 @@ import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
@@ -134,8 +135,11 @@ export function AppShell({
 			{/* The global Elench assistant surface. In panel view it renders as an in-flow flex
 			    child here — its width animates from 0 and squeezes the main column (true seam
 			    border, like the canvas inspector). In modal view it portals out (Radix Dialog),
-			    leaving this slot empty. One surface per session. */}
-			<ElenchSurface />
+			    leaving this slot empty. One surface per session. Its drafts root runs whether or not
+			    the surface is open, so unsent words keep saving (ADR 0001). */}
+			<ElenchDraftsRoot pageOrgId={pageOrgId}>
+				<ElenchSurface />
+			</ElenchDraftsRoot>
 
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
 			<CommandPalette selfRunners={selfRunners} />

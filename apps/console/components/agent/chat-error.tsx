@@ -47,10 +47,12 @@ export class UnansweredTurnError extends Error {
 }
 
 /**
- * The conversation's thread could not be created on its first send (`startThread` threw), so
- * NOTHING was sent: a send without a thread id is a reply that is never stored. Raised by
- * `useElenchSend`, recognised by type like {@link UnansweredTurnError}, and its Retry
- * re-attempts the thread before sending — the message itself is kept, not lost.
+ * A conversation's thread could not be created on its first send, so NOTHING was sent: a send
+ * without a thread id is a reply that is never stored. Recognised by type like
+ * {@link UnansweredTurnError}; its Retry re-attempts the thread before sending. Elench no longer
+ * raises it: since ADR 0001 slice 9 a failed first send puts its words back into the box through
+ * the drafts store (D11r), with no card of its own. It stays for any surface that still starts a
+ * thread before its first send.
  */
 export class ThreadStartError extends Error {
 	constructor() {

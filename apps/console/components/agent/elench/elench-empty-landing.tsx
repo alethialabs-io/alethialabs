@@ -66,8 +66,8 @@ function ElenchMark({ className }: { className?: string }) {
 }
 
 interface ModalLandingProps {
-	/** Resolves false when the message did not go out — the composer then keeps its text. */
-	onSend: (text: string, mentions?: Mention[], state?: string) => void | Promise<boolean>;
+	/** Sends a suggestion card's or the Try-now button's prompt (the composer sends its own box). */
+	onSend: (text: string) => void;
 	suggestions: ElenchSuggestion[];
 	/** Recent threads for "Ready to keep going?" (empty → section hidden). */
 	recents: AgentThread[];
@@ -81,8 +81,6 @@ interface ModalLandingProps {
 	notice?: ReactNode;
 	/** The hero composer's handle — the notice's Retry submits what it holds. */
 	composerRef?: Ref<ElenchComposerHandle>;
-	/** What the hero composer starts from when it mounts (see `ElenchComposer`'s `seed`). */
-	composerSeed?: string | null;
 }
 
 /**
@@ -102,7 +100,6 @@ export function ElenchModalLanding({
 	status,
 	notice,
 	composerRef,
-	composerSeed,
 }: ModalLandingProps) {
 	return (
 		<div className="h-full overflow-y-auto">
@@ -114,12 +111,10 @@ export function ElenchModalLanding({
 
 			{notice && <div className="mb-4">{notice}</div>}
 			<ElenchComposer
-				onSend={onSend}
 				showModel={showModel}
 				status={status}
 				autoFocus
 				handleRef={composerRef}
-				seed={composerSeed}
 			/>
 
 {/* Paged suggestion carousel — 3 cards × 3 pages, cycled by its own button
