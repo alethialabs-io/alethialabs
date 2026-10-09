@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The composer's handle is what the thread-start card's Retry calls (#5423 review): it must be
-// exactly Enter — send what the box holds now, keep it when the send did not go out — and it
-// clears only what was SENT. A first send awaits its thread while the editor stays editable, so
-// text typed in that window is not part of the message and must survive the clear.
+// The composer is a VIEW of its conversation's draft (ADR 0001 §7.1, slice 9): it seeds from the
+// draft when it mounts, reseeds when the store replaces the box from outside (`epoch`, I6), stamps
+// every edit with the epoch it was seeded at, is read-only while a claim is pending, and its Enter
+// and its handle's `submit` are one `SUBMIT`. Its handle's `restore` puts words back as if typed.
+// The composer is the real one over a real drafts store whose server is the in-memory fake.
 
 import { act, render, screen } from "@testing-library/react";
 import {
@@ -12,16 +13,17 @@ import {
 	$createTextNode,
 	$getRoot,
 	getNearestEditorFromDOMNode,
+	KEY_ENTER_COMMAND,
 	type LexicalEditor,
 } from "lexical";
 import { createRef, type RefObject } from "react";
-import { describe, expect, it, vi } from "vitest";
-import {
-	ElenchComposer,
-	type ElenchComposerHandle,
-	type ElenchComposerSubmit,
-} from "@/components/agent/elench/elench-composer";
-import { $createMentionNode } from "@/components/agent/elench/mention-node";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ElenchComposer, type ElenchComposerHandle } from "@/components/agent/elench/elench-composer";
+import { createDraftsTab, type DraftsTab } from "@/components/agent/elench/elench-drafts-root";
+import { ElenchDraftContext } from "@/components/agent/elench/use-elench-send";
+import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
+import type { DraftKey } from "@/lib/stores/elench-drafts/types";
+import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 
 vi.mock("@/components/agent/elench/elench-controls", () => ({
 	ElenchAskMode: () => null,
@@ -31,6 +33,51 @@ vi.mock("@/components/agent/elench/elench-controls", () => ({
 vi.mock("@/components/agent/elench/mention-typeahead", () => ({
 	MentionTypeaheadPlugin: () => null,
 }));
+// The real actions are server code; the store here is handed the fake server's transport.
+vi.mock("@/app/server/actions/elench-drafts", () => ({
+	listDrafts: vi.fn(),
+	saveDraft: vi.fn(),
+	restoreDraft: vi.fn(),
+	discardDraft: vi.fn(),
+	claimDraft: vi.fn(),
+	consumeDraft: vi.fn(),
+	releaseClaim: vi.fn(),
+	startConversation: vi.fn(),
+}));
+
+const ORG = "00000000-0000-4000-8000-00000000000a";
+const KEY: DraftKey = { orgId: ORG, projectId: null, conversationId: "00000000-0000-4000-8000-0000000000c1" };
+
+let server: FakeElenchServer;
+let tab: DraftsTab;
+
+/** A store over the fake server with KEY's scope listed and KEY selected (a new conversation). */
+async function newStore(): Promise<void> {
+	server = new FakeElenchServer();
+	tab = createDraftsTab({
+		viewerId: "00000000-0000-4000-8000-0000000000aa",
+		transport: server.transport(() => ORG),
+		heartbeat: async () => Response.json({ outcome: "touched" }),
+		storage: () => null,
+		tabId: "tab-1",
+		mint: () => crypto.randomUUID(),
+	});
+	tab.store.load({ orgId: ORG, projectId: null });
+	await act(async () => {});
+	tab.store.dispatch({ type: "SELECT", key: KEY, thread: "none" });
+}
+
+/** Mounts a composer on KEY; returns its handle. */
+async function mountComposer(): Promise<{ handle: RefObject<ElenchComposerHandle | null>; unmount: () => void }> {
+	const handle = createRef<ElenchComposerHandle>();
+	const r = render(
+		<ElenchDraftContext.Provider value={{ store: tab.store, key: KEY }}>
+			<ElenchComposer status="ready" handleRef={handle} />
+		</ElenchDraftContext.Provider>,
+	);
+	await act(async () => {});
+	return { handle, unmount: r.unmount };
+}
 
 /** The live Lexical editor behind the rendered composer. */
 function composerEditor(): LexicalEditor {
@@ -46,7 +93,7 @@ function fill(text: string) {
 			() => {
 				const root = $getRoot();
 				root.clear();
-				if (text) root.append($createParagraphNode().append($createTextNode(text)));
+				root.append($createParagraphNode().append($createTextNode(text)));
 			},
 			{ discrete: true },
 		);
@@ -58,115 +105,86 @@ function content(): string {
 	return composerEditor().getEditorState().read(() => $getRoot().getTextContent());
 }
 
-/** Call the handle's submit inside act and return what it reported. */
-async function submit(ref: RefObject<ElenchComposerHandle | null>) {
-	let outcome: ElenchComposerSubmit | undefined;
-	await act(async () => {
-		outcome = await ref.current?.submit();
-	});
-	return outcome;
+/** KEY's entry. */
+function entry() {
+	return tab.store.view.getState().drafts.entries[keyId(KEY)];
 }
 
-describe("ElenchComposer — the submit handle", () => {
-	it("sends the current text and clears it once the send went out", async () => {
-		const onSend = vi.fn(async () => true);
-		const ref = createRef<ElenchComposerHandle>();
-		render(<ElenchComposer onSend={onSend} handleRef={ref} />);
-		fill("deploy staging, edited");
-		expect(await submit(ref)).toBe("sent");
-		expect(onSend).toHaveBeenCalledWith("deploy staging, edited", [], expect.any(String));
-		expect(content()).toBe("");
+beforeEach(async () => {
+	await newStore();
+});
+
+describe("ElenchComposer — a view of the draft", () => {
+	it("every edit goes to the store, stamped with the epoch the box was seeded at", async () => {
+		await mountComposer();
+		fill("deploy");
+		expect(entry()?.local?.text).toBe("deploy");
 	});
 
-	it("keeps the text when the send did not go out", async () => {
-		const ref = createRef<ElenchComposerHandle>();
-		render(<ElenchComposer onSend={async () => false} handleRef={ref} />);
-		fill("keep me");
-		expect(await submit(ref)).toBe("not-sent");
-		expect(content()).toBe("keep me");
+	it("a composer that mounts later (a minimize, a maximize, the landing giving way) shows the draft", async () => {
+		const first = await mountComposer();
+		fill("keep me across the remount");
+		first.unmount();
+		await mountComposer();
+		expect(content()).toBe("keep me across the remount");
 	});
 
-	it("reports an empty box as empty and sends nothing", async () => {
-		const onSend = vi.fn(async () => true);
-		const ref = createRef<ElenchComposerHandle>();
-		render(<ElenchComposer onSend={onSend} handleRef={ref} />);
-		expect(await submit(ref)).toBe("empty");
-		expect(onSend).not.toHaveBeenCalled();
-	});
-
-	it("does not erase text typed while the send was in flight", async () => {
-		let release: (sent: boolean) => void = () => undefined;
-		const onSend = vi.fn(() => new Promise<boolean>((resolve) => (release = resolve)));
-		const ref = createRef<ElenchComposerHandle>();
-		render(<ElenchComposer onSend={onSend} handleRef={ref} />);
-		fill("first part");
-		let pending: Promise<ElenchComposerSubmit> | undefined;
+	it("reseeds when the store replaces the box from outside, and an edit seeded before it is dropped", async () => {
+		await mountComposer();
+		fill("mine");
+		const before = entry()?.epoch ?? -1;
+		// An editor seeded before the box was last replaced from outside: its edit is stale.
+		act(() =>
+			tab.store.dispatch({
+				type: "ENTRY",
+				key: KEY,
+				event: { type: "EDIT", epoch: before - 1, content: { text: "stale editor", mentions: [] } },
+			}),
+		);
+		expect(entry()?.local?.text).toBe("mine"); // a stale-epoch edit changes nothing (I6)
+		server.plan("startConversation", "reject");
 		act(() => {
-			pending = ref.current?.submit();
+			composerEditor().dispatchCommand(KEY_ENTER_COMMAND, null);
 		});
-		fill("first part, and more typed meanwhile");
-		await act(async () => {
-			release(true);
-			await pending;
-		});
-		expect(onSend).toHaveBeenCalledWith("first part", [], expect.any(String));
-		expect(content()).toBe("first part, and more typed meanwhile");
+		await act(async () => {});
+		await act(async () => {});
+		// The claim emptied the box, the failed start's release put the words back: both from outside.
+		expect((entry()?.epoch ?? 0) > before).toBe(true);
+		expect(content()).toBe("mine");
 	});
 });
 
-// A failed first send hands its serialized editor state out with the message; the conversation
-// seeds a composer that mounts while that failure is pending (a minimize or maximize remounts it),
-// and puts it back into an emptied box on Retry (`restore`).
-describe("ElenchComposer — seed and restore", () => {
-	/** The serialized state of a box holding "deploy " plus a mention pill, as `onSend` hands it out. */
-	async function stateWithMention(): Promise<string> {
-		const ref = createRef<ElenchComposerHandle>();
-		const onSend = vi.fn(async () => false);
-		const view = render(<ElenchComposer onSend={onSend} handleRef={ref} />);
+describe("ElenchComposer — the submit handle", () => {
+	it("submit is Enter: it claims exactly what the box shows, and the box is read-only while the claim is pending", async () => {
+		const { handle } = await mountComposer();
+		fill("ship it");
+		server.plan("claimDraft", "hold");
 		act(() => {
-			composerEditor().update(
-				() => {
-					$getRoot().clear().append(
-						$createParagraphNode().append(
-							$createTextNode("deploy "),
-							$createMentionNode("@api", "cl-1", "cluster"),
-						),
-					);
-				},
-				{ discrete: true },
-			);
+			expect(handle.current?.submit()).toBe(true);
 		});
-		expect(await submit(ref)).toBe("not-sent");
-		view.unmount();
-		const state = onSend.mock.calls[0]?.at(2);
-		if (typeof state !== "string") throw new Error("onSend was not handed the editor state");
-		return state;
-	}
-
-	it("a seeded composer opens holding the turn, mention pill included, with Send enabled", async () => {
-		const seed = await stateWithMention();
-		const ref = createRef<ElenchComposerHandle>();
-		const onSend = vi.fn(async () => true);
-		render(<ElenchComposer onSend={onSend} handleRef={ref} seed={seed} />);
-
-		expect(content()).toBe("deploy @api");
-		expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(false);
-		expect(await submit(ref)).toBe("sent");
-		expect(onSend).toHaveBeenCalledWith(
-			"deploy @api",
-			[{ id: "cl-1", type: "cluster", label: "api" }],
-			expect.any(String),
-		);
+		expect(server.callsOf("claimDraft")).toMatchObject([{ content: { text: "ship it" }, kind: "first" }]);
+		expect(composerEditor().isEditable()).toBe(false);
+		expect(screen.getByTestId("elench-composer")).toHaveAttribute("aria-readonly", "true");
+		await act(async () => server.release("claimDraft"));
+		await act(async () => {});
+		expect(composerEditor().isEditable()).toBe(true);
+		expect(content()).toBe(""); // the claim was granted: the box empties (I1)
 	});
 
-	it("restore puts a handed-out state back into an emptied box", async () => {
-		const seed = await stateWithMention();
-		const ref = createRef<ElenchComposerHandle>();
-		render(<ElenchComposer onSend={vi.fn(async () => true)} handleRef={ref} />);
-		expect(content()).toBe("");
+	it("an empty box sends nothing", async () => {
+		const { handle } = await mountComposer();
+		act(() => {
+			handle.current?.submit();
+		});
+		await act(async () => {});
+		expect(server.callsOf("claimDraft")).toHaveLength(0);
+	});
 
-		act(() => ref.current?.restore(seed));
-
-		expect(content()).toBe("deploy @api");
+	it("restore puts words back after what the box holds, as an edit the store saves", async () => {
+		const { handle } = await mountComposer();
+		fill("typed since");
+		await act(async () => handle.current?.restore({ text: "refused words", mentions: [] }));
+		expect(content()).toBe("typed since\n\nrefused words");
+		expect(entry()?.local?.text).toBe("typed since\n\nrefused words");
 	});
 });
