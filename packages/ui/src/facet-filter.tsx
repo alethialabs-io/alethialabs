@@ -43,7 +43,11 @@ interface FacetFilterProps {
   value: string[];
   onChange: (next: string[]) => void;
   align?: "start" | "center" | "end";
-  /** The search box's placeholder; also its accessible name, less a trailing ellipsis. */
+  /**
+   * The search box's placeholder; also its accessible name, less a trailing ellipsis. When omitted,
+   * the placeholder reads "Search…" and the search is named `Search <label>` (e.g. "Search Status"),
+   * so a screen reader hears which facet it is searching rather than a bare "Search".
+   */
   searchPlaceholder?: string;
   emptyText?: string;
 }

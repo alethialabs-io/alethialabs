@@ -88,9 +88,9 @@ tier_separation:
     reason: The country-select and facet-filter suites open a real dialog, mounting the root, content, header, title and description.
 
   - path: src/command.tsx
-    suite: [tests/country-select.test.tsx]
-    symbols: [Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
-    reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch.
+    suite: [tests/country-select.test.tsx, tests/command.test.tsx]
+    symbols: [Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList]
+    reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch — and the dialog wrapper, which the command suite opens to assert its search is named after its title (#5824).
 
   - path: src/sheet.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
@@ -159,10 +159,10 @@ baseline:
     reason: The day-button slot is reached by no suite; the date-range filter mounts the calendar above it.
 
   - path: src/command.tsx
-    symbols: [CommandDialog, CommandSeparator, CommandShortcut]
+    symbols: [CommandSeparator, CommandShortcut]
     issue: "#2649"
     state: untested-export
-    reason: The dialog wrapper, separator and shortcut hint of the command list are rendered by no suite.
+    reason: The separator and shortcut hint of the command list are rendered by no suite.
 
   - path: src/dialog.tsx
     symbols: [DialogClose, DialogFooter, DialogOverlay, DialogPortal, DialogTrigger]
