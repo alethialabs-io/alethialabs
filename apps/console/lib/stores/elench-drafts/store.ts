@@ -162,6 +162,8 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 	let surfaceOpen = false;
 	let poll: { ms: number; timer: ReturnType<typeof setInterval> } | null = null;
 	let noticeId = 0;
+	/** Set by `dispose`: a late answer must not re-arm a heartbeat, a poll or a write of a store that is gone. */
+	let disposed = false;
 
 	/** Arms the timer `name`, replacing one of the same name; with no delay, runs at once. */
 	const arm = (name: string, ms: number, run: () => void): void => {
@@ -188,6 +190,7 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 
 	/** `listDrafts` for `scope` at `generation`; its answer is D22 (with D26's restored items). */
 	const list = (scope: DraftScope, generation: number): void => {
+		if (disposed) return;
 		const at = nextSeq();
 		const input: ListDraftsInput =
 			lastListedOrg === null ? { projectId: scope.projectId } : { projectId: scope.projectId, orgHint: lastListedOrg };
@@ -264,7 +267,9 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 				const base = { ...e.key, turnId: e.turnId, title: "" };
 				let input: StartConversationInput;
 				if (e.token !== null) input = { ...base, origin: "composer", token: e.token, revision: e.revision };
-				else if (e.prompt !== null)
+				else if (e.prompt === null)
+					throw new Error("an external start carries its prompt"); // unreachable: the reducer always sets one
+				else
 					input = {
 						...base,
 						origin: "external",
@@ -273,7 +278,6 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 						mentions: e.prompt.mentions,
 						cellTarget: e.prompt.cellTarget,
 					};
-				else return;
 				return write(
 					e.key,
 					{
@@ -364,6 +368,7 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 
 	/** After a dispatch: the cache items, the active-key mirror, the heartbeats, the poll and the queue. */
 	const sync = (before: DraftsStore): void => {
+		if (disposed) return;
 		const now = view.getState().drafts;
 		for (const [id, e] of Object.entries(now.entries)) {
 			if (!cacheable(e) || cached.get(id) === e) continue;
@@ -400,6 +405,7 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 
 	/** Reduces one event, publishes the state and runs its effects. */
 	function dispatch(event: DraftsStoreEvent): void {
+		if (disposed) return; // an answer that lands after dispose renews nothing
 		const before = view.getState().drafts;
 		const t = reduce(before, event, {
 			tabId: deps.tabId,
@@ -467,6 +473,7 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 			return viewer === null ? null : cache.readActive(viewer, scope);
 		},
 		dispose() {
+			disposed = true;
 			heartbeats.stopAll();
 			queue.clear();
 			for (const t of [...timers.values(), ...cacheTimers.values()]) clearTimeout(t);

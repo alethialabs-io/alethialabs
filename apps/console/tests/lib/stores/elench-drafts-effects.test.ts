@@ -88,9 +88,13 @@ function setup(storage: () => Storage | null = () => window.sessionStorage) {
 	};
 	const beats: HeartbeatBody[] = [];
 	let beatStatus = 200;
+	let holdBeats = false;
+	const heldBeats: Array<() => void> = [];
 	const heartbeat = vi.fn((body: HeartbeatBody) => {
 		beats.push(body);
-		return Promise.resolve(new Response(JSON.stringify({ outcome: "touched" }), { status: beatStatus }));
+		const answer = (): Response => new Response(JSON.stringify({ outcome: "touched" }), { status: beatStatus });
+		if (!holdBeats) return Promise.resolve(answer());
+		return new Promise<Response>((resolve) => heldBeats.push(() => resolve(answer())));
 	});
 	const ui: DraftUiEffect[] = [];
 	let n = 0;
@@ -116,6 +120,10 @@ function setup(storage: () => Storage | null = () => window.sessionStorage) {
 		setBeatStatus: (s: number) => {
 			beatStatus = s;
 		},
+		holdBeats: () => {
+			holdBeats = true;
+		},
+		heldBeats,
 	};
 }
 
@@ -515,6 +523,34 @@ describe("listDrafts (§6.4, D22, D23, D30)", () => {
 		h.store.setSurfaceOpen(true);
 		await vi.advanceTimersByTimeAsync(10_000);
 		expect(h.list.calls).toHaveLength(2);
+	});
+});
+
+describe("dispose", () => {
+	it("a heartbeat answered after dispose re-arms nothing: the claim is left to the lease", async () => {
+		const h = setup();
+		h.holdBeats();
+		await loadA(h);
+		await submitLater(h);
+		await grant(h);
+		await vi.advanceTimersByTimeAsync(20_000);
+		expect(h.beats).toHaveLength(1);
+		h.store.dispose();
+		h.heldBeats[0]?.();
+		await flush();
+		await vi.advanceTimersByTimeAsync(100_000);
+		expect(h.beats).toHaveLength(1);
+	});
+
+	it("a listDrafts answered after dispose arms no poll", async () => {
+		const h = setup();
+		h.store.setSurfaceOpen(true);
+		h.store.load(SCOPE_A);
+		h.store.dispose();
+		h.list.calls[0]?.resolve({ outcome: "ok", orgId: ORG_A, drafts: [] });
+		await flush();
+		await vi.advanceTimersByTimeAsync(180_000);
+		expect(h.list.calls).toHaveLength(1);
 	});
 });
 

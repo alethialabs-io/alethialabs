@@ -134,15 +134,15 @@ export class DraftCache {
 		const s = this.store();
 		if (s === null) return false;
 		const name = itemKey(viewerId, entry.key);
-		const value = JSON.stringify({
-			base: entry.server?.revision ?? 0,
-			local: entry.local,
-			claiming: entry.claiming,
-			sending: entry.sending,
-			abandoned: entry.abandoned,
-			epoch: entry.epoch,
-		});
 		try {
+			const value = JSON.stringify({
+				base: entry.server?.revision ?? 0,
+				local: entry.local,
+				claiming: entry.claiming,
+				sending: entry.sending,
+				abandoned: entry.abandoned,
+				epoch: entry.epoch,
+			});
 			let used = name.length + value.length;
 			for (const other of this.names(s)) {
 				if (other === name || !other.startsWith(CACHE_PREFIX)) continue;

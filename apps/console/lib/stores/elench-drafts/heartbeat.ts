@@ -104,7 +104,7 @@ export function fetchHeartbeat(fetchImpl: typeof fetch = fetch): HeartbeatSend {
 /** The timers of every granted claim of this tab. */
 export class ClaimHeartbeats {
 	private timers = new Map<string, { claim: GrantedClaim; timer: ReturnType<typeof setInterval> }>();
-	/** Tokens whose heartbeat a 401 or 403 stopped; never restarted. */
+	/** Tokens whose heartbeat a 401 or 403 stopped; not restarted while their send lasts. */
 	private stopped = new Set<string>();
 
 	/** `onResult` receives a 200's validated body for the claim the beat carried. */
@@ -116,6 +116,7 @@ export class ClaimHeartbeats {
 	/** Runs exactly one timer per granted claim in `claims`, and none for any other token. */
 	sync(claims: readonly GrantedClaim[]): void {
 		const want = new Map(claims.map((c) => [c.token, c]));
+		for (const token of this.stopped) if (!want.has(token)) this.stopped.delete(token); // the send cleared
 		for (const [token, t] of this.timers)
 			if (!want.has(token)) {
 				clearInterval(t.timer);
