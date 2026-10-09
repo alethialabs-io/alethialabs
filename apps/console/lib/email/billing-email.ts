@@ -36,7 +36,12 @@ import {
 	WelcomeToPlanEmail,
 	subject as planWelcomeSubject,
 } from "@/emails/welcome-to-plan";
-import type { FeatureRow } from "@/emails/billing-shared";
+import { BillingLegal, type FeatureRow } from "@/emails/billing-shared";
+import { Heading, Text } from "@react-email/components";
+import { EmailLayout } from "@repo/email/components/layout";
+import { text as textStyle } from "@repo/email/components/theme";
+import { createElement } from "react";
+import type { PaymentHoldNotifiedState } from "@/lib/db/schema";
 import { sendGuardedEmail } from "./guard";
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
@@ -400,5 +405,70 @@ export async function sendOrderConfirmationEmail(order: {
 			immediatePerformance: order.immediatePerformance,
 		}),
 		devLog: `order confirmation ${order.productLabel} for ${order.organizationId}`,
+	});
+}
+
+// ── Payment-hold notices (ADR 0002 Q3; sent by the payment-hold sweeper only) ──────────────────────
+
+/** The copy of each payment-hold email: what was READ, never more (ADR 0002 I8, §5.5). */
+const PAYMENT_HOLD_NOTICE_COPY: Record<
+	PaymentHoldNotifiedState,
+	{ subject: string; eyebrow: string; heading: string; body: string[] }
+> = {
+	refund_pending: {
+		subject: "Your refund from Alethia is on its way",
+		eyebrow: "Refund issued",
+		heading: "Your refund is on its way.",
+		body: [
+			"A payment for an earlier team setup went through after that checkout was cancelled, so nothing was set up for it. We have issued its refund, and it is on its way back to you.",
+			"If you buy again before it arrives and that refund fails, you may see both charges until we have refunded it again.",
+		],
+	},
+	"released:refunded": {
+		subject: "Your Alethia refund is complete",
+		eyebrow: "Refunded",
+		heading: "Your payment was refunded in full.",
+		body: [
+			"An earlier payment for a team setup was refunded in full. It can take 5–10 business days to reach you, depending on your bank.",
+		],
+	},
+	"released:adopted": {
+		subject: "Your Alethia payment went through",
+		eyebrow: "Payment confirmed",
+		heading: "Your payment went through.",
+		body: [
+			"The payment for your earlier team setup went through, and the plan is yours. Open Create a team in Alethia to finish setting up your team.",
+		],
+	},
+};
+
+/**
+ * One payment-hold email (ADR 0002 Q3) to the payer's own address. Called by the payment-hold sweeper
+ * after it claimed the notice (lib/billing/payment-holds/emails.ts), and nowhere else. Carries no
+ * amount, card or invoice detail. Throws when the send failed, so the sweeper gives the claim back.
+ */
+export async function sendPaymentHoldNoticeEmail(args: {
+	to: string;
+	notice: PaymentHoldNotifiedState;
+}): Promise<void> {
+	const copy = PAYMENT_HOLD_NOTICE_COPY[args.notice];
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
+		to: args.to,
+		subject: copy.subject,
+		react: EmailLayout({
+			preview: copy.heading,
+			legal: BillingLegal(),
+			children: [
+				createElement(Text, { key: "eyebrow", className: "a-text-3", style: textStyle.eyebrow }, copy.eyebrow),
+				createElement(Heading, { key: "heading", as: "h2", className: "a-text", style: textStyle.heading }, copy.heading),
+				...copy.body.map((paragraph, i) =>
+					createElement(Text, { key: `body-${i}`, className: "a-text-2", style: textStyle.body }, paragraph),
+				),
+			],
+		}),
+		devLog: `payment hold notice ${args.notice}`,
 	});
 }
