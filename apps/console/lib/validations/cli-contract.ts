@@ -155,6 +155,8 @@ export const jobWire = createSelectSchema(jobs, {
 	progress_at: true,
 	// Internal config_snapshot authenticity HMAC — verified server-side at claim, never on the CLI wire.
 	config_snapshot_sig: true,
+	// Internal approval dedupe digest (#5797) — matched server-side, never on the CLI wire.
+	idempotency_key: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
