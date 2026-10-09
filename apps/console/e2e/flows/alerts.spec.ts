@@ -443,7 +443,7 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 		const { channels } = sections(team.page);
 		await expect(channels.getByRole("option")).toHaveCount(3);
 		await channels
-			.getByPlaceholder("Filter channels by name or transport…")
+			.getByRole("textbox", { name: "Filter channels by name or transport…", exact: true })
 			.fill(verifiedA);
 		await expect(channels.getByRole("option")).toHaveCount(1);
 		await expect(team.page).toHaveURL(/[?&]channel=/, { timeout: 15_000 });
