@@ -642,6 +642,28 @@ describe("S11 › §11's notices, bars and footer", () => {
 		expect(box()).toBe("");
 	});
 
+	it("an edit over a message another device sent: the conflict bar names that message from the transcript", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		type("drain node one");
+		await flush(1_000);
+		const k = shown(tab);
+		// Device B sends this draft: it claims it, its route stores the turn, and it consumes the claim.
+		const token = crypto.randomUUID();
+		const turnId = crypto.randomUUID();
+		const sentText = "drain node one, and when it is empty cordon it until the kernel patch has rolled out";
+		await device().claimDraft({ ...k, baseRevision: server.row(k)?.revision ?? 0, content: { text: sentText, mentions: [], artifacts: [], cellTarget: null }, turnId, token, kind: "later", tabId: "device-b" });
+		server.threads.get(T)?.messages.push({ id: turnId, role: "user", parts: [{ type: "text", text: sentText }] });
+		await device().consumeDraft({ ...k, token });
+		type("drain node one, then cordon"); // A keeps typing on its stale base
+		await flush(1_000);
+		await flush();
+		expect(box()).toBe("drain node one, then cordon");
+		expect(statusLine()).toContain(`This message was sent from another tab or device: “${sentText.slice(0, 60).trimEnd()}…”`);
+		expect(decisionBar()?.textContent).toContain("“drain node one, then cordon”");
+	});
+
 	it("device A's live claim: device B's box is read-only with the being-sent bar", async () => {
 		const tab = newTab(ORG_A);
 		await mount(tab);

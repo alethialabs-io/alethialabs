@@ -131,8 +131,12 @@ export type DraftBar =
 	| { kind: "sending"; text: string }
 	/** D30: another tab or device holds the claim. */
 	| { kind: "claimed" }
-	/** D15: another tab or device saved over this tab's base. */
-	| { kind: "edited"; sentElsewhere: boolean; mine: string; theirs: string }
+	/**
+	 * D15: another tab or device saved over this tab's base. `sent` is the turn id of the message
+	 * it SENT from this draft, when it did, and `sentExcerpt` that turn's first 60 characters once the
+	 * transcript holds it.
+	 */
+	| { kind: "edited"; sent: string | null; sentExcerpt: string | null; mine: string; theirs: string }
 	/** D16: discarded elsewhere. */
 	| { kind: "discarded" }
 	/** D31: a send may already have gone out. */
@@ -143,7 +147,11 @@ export type DraftBar =
 	| { kind: "credential" };
 
 /** The bar `entry` shows, or null. The order is the order of what holds the box. */
-export function barOf(entry: DraftEntry, keptInTab: boolean): DraftBar | null {
+export function barOf(
+	entry: DraftEntry,
+	keptInTab: boolean,
+	sentText: (turnId: string) => string | null = () => null,
+): DraftBar | null {
 	if (entry.claiming !== null) return { kind: "sending", text: COPY.sending };
 	const phase = entry.sending?.phase;
 	if (phase === "starting") return { kind: "sending", text: COPY.sending };
@@ -155,9 +163,12 @@ export function barOf(entry: DraftEntry, keptInTab: boolean): DraftBar | null {
 		const row = conflict.row;
 		const ours = entry.server?.lastSent?.turnId ?? null;
 		const theirs = row?.lastSent?.turnId ?? null;
+		const sent = theirs !== null && theirs !== ours ? theirs : null;
+		const text = sent === null ? null : sentText(sent);
 		return {
 			kind: "edited",
-			sentElsewhere: theirs !== null && theirs !== ours,
+			sent,
+			sentExcerpt: text === null ? null : excerpt(text),
 			mine: excerpt(shownContent(entry).text),
 			theirs: excerpt(row?.content.text ?? ""),
 		};
@@ -175,7 +186,10 @@ export function barText(bar: DraftBar): string {
 		case "claimed":
 			return COPY.claimed;
 		case "edited":
-			return bar.sentElsewhere ? COPY.sentElsewhere : COPY.edited;
+			if (bar.sent === null) return COPY.edited;
+			return bar.sentExcerpt === null
+				? COPY.sentElsewhere
+				: `${COPY.sentElsewhere.slice(0, -1)}: “${bar.sentExcerpt}”`;
 		case "discarded":
 			return COPY.discarded;
 		case "uncertain":

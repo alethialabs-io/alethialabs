@@ -59,6 +59,7 @@ import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
 } from "./elench-empty-landing";
+import { type DraftConversationFacts, DraftConversationContext } from "./draft-status/conversation";
 import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { ElenchModal } from "./elench-modal";
 import { ElenchPanel } from "./elench-panel";
@@ -731,6 +732,17 @@ export function ElenchConversation({
 	}, [send]);
 
 	// The transcript's Retry, chosen by what is last (§9.1); undefined when there is none.
+	// What the draft status reads from this conversation (slice 11): D15 names a message another tab
+	// or device sent from the transcript.
+	const sentText = useCallback(
+		(turnId: string): string | null => {
+			const turn = messages.find((m) => m.role === "user" && m.id === turnId);
+			return turn === undefined ? null : turn.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("");
+		},
+		[messages],
+	);
+	const draftFacts = useMemo<DraftConversationFacts>(() => ({ loadError: null, sentText }), [sentText]);
+
 	const retry = retryKind(messages);
 	const retryTurn =
 		retry.kind === "await-approval"
@@ -970,5 +982,9 @@ export function ElenchConversation({
 			</ElenchPanel>
 		);
 
-	return <ElenchDraftContext.Provider value={binding}>{chrome}</ElenchDraftContext.Provider>;
+	return (
+		<ElenchDraftContext.Provider value={binding}>
+			<DraftConversationContext.Provider value={draftFacts}>{chrome}</DraftConversationContext.Provider>
+		</ElenchDraftContext.Provider>
+	);
 }

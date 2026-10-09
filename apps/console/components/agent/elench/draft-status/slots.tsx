@@ -38,7 +38,7 @@ import {
 	isAcknowledged,
 	noticeLines,
 } from "./copy";
-import { loadErrorText, useDraftLoadError } from "./load-error";
+import { loadErrorText, useDraftConversation } from "./conversation";
 import { forgetKeptInTab, keepInTab, useJustSaved, useKeptInTab } from "./registry";
 
 /** Where one draft's status is rendered: the key it reports on. */
@@ -207,11 +207,12 @@ export function DraftBarSlot({ draftKey }: DraftSlotProps) {
 		if (entry !== null) store?.dispatch({ type: "SELECT", key: draftKey, thread: entry.thread });
 	}, [store, draftKey, entry]);
 
-	const bar = entry === null ? null : barOf(entry, kept);
+	const conversation = useDraftConversation();
+	const bar = entry === null ? null : barOf(entry, kept, conversation.sentText);
 	// While the box is frozen for a send, its state is the whole story: the lines of earlier sends
 	// were acknowledged by this send, and a line of its own would only repeat the bar.
 	const lines = view === null || bar?.kind === "sending" ? [] : noticeLines(view, draftKey);
-	const loadError = useDraftLoadError();
+	const loadError = conversation.loadError;
 	const empty = bar === null && lines.length === 0 && loadError === null;
 
 	let shownBar: ReactNode = null;
