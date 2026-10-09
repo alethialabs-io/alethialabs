@@ -41,6 +41,7 @@ export const COPY = {
 		"This message was sent, and a copy came back to the draft because the send took too long to confirm.",
 	credential: "Not saved to your account: this looks like a credential.",
 	notSent: "Not sent. Your message is back in the box.",
+	unreachable: "Not sent — Alethia couldn't be reached. Your words are kept; press Enter to try again.",
 	emptyBox: "The box is empty, so nothing was sent.",
 	waitForSend: "Wait for the message that is being sent.",
 	transcriptStale: "This conversation has newer messages. They are shown now. Press Enter to send.",
@@ -193,6 +194,8 @@ function noticeLine(notice: DraftNoticeKind, stale: boolean): string | null {
 	switch (notice) {
 		case "not-sent":
 			return COPY.notSent;
+		case "not-sent-unreachable":
+			return COPY.unreachable;
 		case "empty-box":
 			return COPY.emptyBox;
 		case "wait-for-send":
@@ -242,8 +245,13 @@ const SENT_AFTER_ALL: ReadonlySet<DraftNoticeKind> = new Set<DraftNoticeKind>([
 	"sent-elsewhere",
 ]);
 
+/** The failure codes that mean the server could not be reached: the card says so, and nothing else. */
+const UNREACHABLE_CODES: ReadonlySet<string> = new Set(["network", "unreachable"]);
+
 /** Removes "Not sent" and the reason said before it from `lines`. */
 function dropNotSent(lines: string[]): void {
+	const unreachable = lines.indexOf(COPY.unreachable);
+	if (unreachable !== -1) lines.splice(unreachable, 1);
 	const at = lines.indexOf(COPY.notSent);
 	if (at === -1) return;
 	const reason = at > 0 && REASONS.has(lines[at - 1] ?? "");
@@ -255,8 +263,8 @@ const MAX_LINES = 3;
 
 /**
  * The lines the store said about `key` since its last send, oldest first, each once, at most
- * `MAX_LINES`. A "Not sent" line is preceded by its reason when only the recorded failure code
- * names it (`notSentReason`). A transcript load raised with a "Not sent" is the route's
+ * `MAX_LINES`. A "Not sent" line is preceded by its reason when the failure code the notice carries
+ * names one (`notSentReason`); a server that could not be reached is said in one line. A transcript load raised with a "Not sent" is the route's
  * transcript-stale refusal; raised alone it is D9a's load before a send.
  *
  * A send that failed for certain also leaves its marker on the row (§5.4), so "Not sent" is said
@@ -266,33 +274,34 @@ const MAX_LINES = 3;
  */
 export function noticeLines(view: DraftsView, key: DraftKey): string[] {
 	const id = keyId(key);
-	const mine = view.notices.filter((n) => keyId(n.key) === id).map((n) => n.notice);
-	const stale = mine.includes("not-sent");
+	const mine = view.notices.filter((n) => keyId(n.key) === id);
+	const stale = mine.some((n) => n.notice === "not-sent" || n.notice === "not-sent-unreachable");
 	const entry = view.drafts.entries[id];
 	const failed = entry?.pendingFailedSend ?? entry?.server?.failedSend ?? null;
-	const code = failed?.error ?? null;
 	const lines: string[] = [];
 	const push = (line: string): void => {
 		const at = lines.indexOf(line);
 		if (at !== -1) lines.splice(at, 1);
 		lines.push(line);
 	};
-	/** "Not sent", after its reason when the recorded code names one. */
-	const notSent = (): void => {
+	/** "Not sent", after its reason when `code` names one; unreachable says both in one line. */
+	const notSent = (code: string | null): void => {
+		if (code !== null && UNREACHABLE_CODES.has(code)) return push(COPY.unreachable);
 		const reason = code === null ? null : notSentReason(code);
 		if (reason !== null) push(reason);
 		push(COPY.notSent);
 	};
+	// After a reload, or on another tab or device, no notice was raised: the marker says it.
 	if (entry !== undefined && failed !== null && !failed.uncertain && !stale && !isEmptyContent(shownContent(entry)))
-		notSent();
+		notSent(failed.error);
 	for (const n of mine) {
-		if (n === "not-sent") {
-			notSent();
+		if (n.notice === "not-sent") {
+			notSent(n.reason ?? null);
 			continue;
 		}
 		// A send learned to have gone out after all supersedes an earlier "Not sent" (D17, D30).
-		if (SENT_AFTER_ALL.has(n)) dropNotSent(lines);
-		const line = noticeLine(n, stale);
+		if (SENT_AFTER_ALL.has(n.notice)) dropNotSent(lines);
+		const line = noticeLine(n.notice, stale);
 		if (line !== null) push(line);
 	}
 	return lines.slice(-MAX_LINES);

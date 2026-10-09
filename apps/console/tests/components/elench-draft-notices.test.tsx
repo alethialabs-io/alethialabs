@@ -410,14 +410,14 @@ describe("S11 › §11's notices, bars and footer", () => {
 		server.plan("startConversation", "reject");
 		type("restart the api");
 		await enter();
-		expect(statusLine()).toBe(COPY.notSent);
+		expect(statusLine()).toBe(COPY.unreachable);
 		const k = shown(tab);
 		const again = await reload(tab, unmount, k.conversationId);
 		await flush();
 		expect(shown(again.tab).conversationId).toBe(k.conversationId);
 		expect(box()).toBe("restart the api");
 		// No notice survives a reload; the card is said from the row's failed-send marker (§5.4).
-		expect(statusLine()).toBe(COPY.notSent);
+		expect(statusLine()).toBe(COPY.unreachable);
 		again.unmount();
 	});
 
@@ -856,6 +856,31 @@ describe("S11 › every refused send says why", () => {
 		expect(statusLine()).toBe(`${COPY.notSent} | ${COPY.transcriptStale}`);
 		expect(screen.getAllByText("restarted").length).toBeGreaterThan(0);
 		expect(box()).toBe("restart it");
+	});
+
+	it("a claim that times out says the server could not be reached, and the words are kept", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("claimDraft", "hold");
+		type("scale the workers");
+		await enter();
+		expect(statusLine()).toBe(COPY.sending);
+		await flush(15_000); // the claim's client timeout (D32)
+		await flush();
+		expect(statusLine()).toBe(COPY.unreachable);
+		expect(box()).toBe("scale the workers");
+		expect(server.callsOf("releaseClaim")).toMatchObject([{ error: "unreachable" }]);
+	});
+
+	it("a start rejected by the network says the server could not be reached, and records why", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "reject");
+		type("open a ticket");
+		await enter();
+		expect(statusLine()).toBe(COPY.unreachable);
+		expect(server.callsOf("releaseClaim")).toMatchObject([{ error: "network" }]);
+		expect(box()).toBe("open a ticket");
 	});
 
 	it("a claim refused for good says why in the footer, and Not sent above the box", async () => {

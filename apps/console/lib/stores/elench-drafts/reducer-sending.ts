@@ -171,6 +171,8 @@ export type DraftSendEvent =
 /** The notices this half raises (§7.4); slice 11 will render them. */
 export type DraftSendNotice =
 	| "not-sent"
+	/** Not sent because the server could not be reached (a claim's timeout or network failure). */
+	| "not-sent-unreachable"
 	| "empty-box"
 	| "wait-for-send"
 	| "transcript-shown"
@@ -190,7 +192,11 @@ export type DraftSendNotice =
 /** What the sending half asks for; the effects layer (slice 8) and the conversation (slice 9) will do it. */
 export type SendEffect =
 	| Exclude<DraftEffect, { type: "notice" }>
-	| { type: "notice"; key: DraftKey; notice: DraftNotice | DraftSendNotice }
+	/**
+	 * A notice. `reason` is the failure code a "Not sent" is for (what its release or failed-send
+	 * marker records), so the card can say why; absent when the notice carries none.
+	 */
+	| { type: "notice"; key: DraftKey; notice: DraftNotice | DraftSendNotice; reason?: string }
 	/** D9 / D10: `claimDraft`. This is the flush; there is no separate save. */
 	| {
 			type: "claim";
@@ -286,6 +292,13 @@ function none(entry: DraftEntry): SendEntryTransition {
 /** A notice effect. */
 function notice(key: DraftKey, n: DraftNotice | DraftSendNotice): SendEffect {
 	return { type: "notice", key, notice: n };
+}
+
+/** "Not sent", carrying the failure code it is for when there is one. */
+function notSentFor(key: DraftKey, reason: string | null | undefined): SendEffect {
+	return reason === null || reason === undefined
+		? notice(key, "not-sent")
+		: { type: "notice", key, notice: "not-sent", reason };
 }
 
 /** A transition with `effects` put in front of its own. */
@@ -781,12 +794,14 @@ function claimFailed(
 	const claiming = entry.claiming;
 	if (claiming === null || claiming.attempt !== ev.attempt) return none(entry);
 	const back = unclaim(entry, claiming);
-	const notSent = notice(entry.key, "not-sent");
+	// A claim that timed out, or never reached the server, failed for no reason of the draft's own.
+	const unreachable = ev.failure.kind === "timeout" || ev.failure.network;
+	const notSent = notice(entry.key, unreachable ? "not-sent-unreachable" : "not-sent");
 	if (ev.failure.kind === "timeout") {
 		const abandoned = { ...back, abandoned: [...back.abandoned, claiming.token] };
 		return {
 			entry: abandoned,
-			effects: [notSent, releaseEffect(entry.key, claiming.token, "timeout", false, null, 0)],
+			effects: [notSent, releaseEffect(entry.key, claiming.token, "unreachable", false, null, 0)],
 		};
 	}
 	// A rejected call: read as the drafting half reads a rejected save (D27, D28).
@@ -887,7 +902,7 @@ function releasedBack(
 		conflict: uncertain ? { kind: "uncertain", row: null } : entry.conflict, // D31's card, not "Not sent"
 	};
 	const t = saveIfDirty(none(next), ctx);
-	return uncertain ? t : prepend([notice(entry.key, "not-sent")], t);
+	return uncertain ? t : prepend([notSentFor(entry.key, row.failedSend?.error)], t);
 }
 
 /** The claim-outcome table's `not-claimed(row, thread)`: consumed (D17 / D9c) or released (D11n). */
@@ -970,7 +985,7 @@ function failExternal(
 		conflict: uncertain ? { kind: "uncertain", row: null } : entry.conflict,
 	};
 	const t = saveNow(next, ctx);
-	const effects = uncertain ? t.effects : [notice(entry.key, "not-sent"), ...t.effects];
+	const effects = uncertain ? t.effects : [notSentFor(entry.key, error), ...t.effects];
 	return { entry: t.entry, effects, fence: { turnId: sending.turnId, before, merged } };
 }
 
@@ -1077,7 +1092,8 @@ function startFailed(
 	const sending = entry.sending;
 	if (sending === null || sending.attempt !== ev.attempt || sending.phase !== "starting")
 		return none(entry);
-	const error = ev.failure.kind === "timeout" ? "timeout" : "error";
+	// The code the release records, so the card can say why: a network failure is "network".
+	const error = ev.failure.kind === "timeout" ? "timeout" : ev.failure.network ? "network" : "error";
 	if (sending.token === null) return failExternal(entry, sending, error, false, ctx);
 	return releaseNow(entry, sending, error, false, null);
 }
