@@ -402,6 +402,31 @@ describe("S10 › resume", () => {
 		expect(server.requests).toHaveLength(0);
 	});
 
+	it("a conversation deleted in another tab is never resumed: the newest thread is", async () => {
+		const A = crypto.randomUUID();
+		const B = crypto.randomUUID();
+		storedThread(A, "older");
+		storedThread(B, "newer");
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		await openThread("older");
+		await openThread("newer");
+		await closeSurface();
+		server.deleteThread(B); // another tab
+		await openSurface();
+		expect(useElenchStore.getState().conversationId).toBe(A);
+		expect(useElenchStore.getState().threadId).toBe(A);
+		// …and the same after a reload, from this tab's mirror of the active conversation.
+		storedThread(B, "newer");
+		act(() => useElenchStore.getState().selectThread(B));
+		await flush();
+		expect(useElenchStore.getState().conversationId).toBe(B);
+		server.deleteThread(B);
+		const again = await reload(tab, unmount);
+		expect(useElenchStore.getState().conversationId).toBe(A);
+		again.unmount();
+	});
+
 	it("A→B→A→B keeps each draft; re-selecting keeps it", async () => {
 		const A = crypto.randomUUID();
 		const B = crypto.randomUUID();
@@ -480,14 +505,17 @@ describe("S10 › the Unsent group", () => {
 		const tab = newTab(ORG_A);
 		await mount(tab);
 		type("first idea");
+		await flush(1_000);
 		await newChat();
 		type("second idea");
+		await flush(1_000);
 		await newChat();
 		expect(box()).toBe("");
 		await flush(1_000);
 		const group = unsentGroup();
 		expect(group).not.toBeNull();
-		expect(unsentRows().map((r) => r.label).sort()).toEqual(["first idea", "second idea"]);
+		// Most recently written first.
+		expect(unsentRows().map((r) => r.label)).toEqual(["second idea", "first idea"]);
 		expect(within(group as HTMLElement).getByText("2")).toBeTruthy(); // the group's count
 		await openUnsent("first idea");
 		expect(box()).toBe("first idea");
@@ -617,9 +645,9 @@ describe("S10 › the Unsent group", () => {
 		again.unmount();
 	});
 
-	// An artifact's "Open in new chat" is `ElenchConversation.openArtifactInNewChat`, which still
-	// creates a thread through `startThread`, and the composer renders no artifact chip. Neither file
-	// is in this slice's scope (ADR 0001 §14 row 10), so D3 has no UI to drive here.
+	// AC14's artifact draft (D3: `OPEN_ARTIFACT_NEW` and the composer's artifact chip) is a gap in
+	// ADR 0001 §14: no slice's scope holds `openArtifactInNewChat` or the chip. Ruled out of slice 10
+	// (S10 lands at 13/14); the follow-up slice #5848 builds it and turns this into a test.
 	it.todo("artifact new chat creates no thread; the chip survives a reload; the first send places it");
 
 	it("the panel's switcher lists the same entries", async () => {
@@ -643,16 +671,33 @@ describe("S10 › the Unsent group", () => {
 		expect(box()).toBe("panel words");
 	});
 
-	it("the narrow toggle shows the Unsent count", async () => {
+	it("the narrow toggle shows the Unsent count, less the conversation on screen", async () => {
 		const tab = newTab(ORG_A);
 		await mount(tab);
 		expect(screen.queryByTestId("elench-narrow-rail-unsent")).toBeNull();
 		type("one");
+		await flush(1_000);
+		// The words on screen are in the group, but the user is looking at them: no badge yet.
+		expect(unsentRows()).toHaveLength(1);
+		expect(screen.queryByTestId("elench-narrow-rail-unsent")).toBeNull();
 		await newChat();
 		type("two");
 		await flush(1_000);
-		const toggle = screen.getByRole("button", { name: "Open sidebar, 2 unsent" });
-		expect(within(toggle).getByTestId("elench-narrow-rail-unsent").textContent).toBe("2");
+		expect(unsentRows()).toHaveLength(2);
+		const toggle = screen.getByRole("button", { name: "Open sidebar, 1 unsent" });
+		expect(within(toggle).getByTestId("elench-narrow-rail-unsent").textContent).toBe("1");
+	});
+
+	it("a listed thread's draft is noted on its own row, never repeated under Unsent", async () => {
+		const T = crypto.randomUUID();
+		storedThread(T, "listed chat");
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		type("more for the listed chat");
+		await flush(1_000);
+		expect(unsentGroup()).toBeNull();
+		const row = screen.getAllByTestId("thread-rail-row").find((el) => el.textContent?.includes("listed chat"));
+		expect(row?.querySelector('[data-testid="thread-rail-row-note"]')?.textContent).toBe("· Draft");
 	});
 });
 
@@ -681,11 +726,35 @@ describe("S10 › the delete confirm", () => {
 		act(() => screen.getByRole("button", { name: "Delete chat doomed chat" }).click());
 		await flush();
 		const dialog = screen.getByRole("alertdialog");
-		expect(dialog.textContent).toContain("It also deletes 2 unsent messages of this conversation, in 2 organizations.");
+		expect(dialog.textContent).toContain("It also deletes your unsent draft of this conversation in 2 organizations.");
 		expect(dialog.textContent).not.toContain("being sent");
 		act(() => within(dialog).getByRole("button", { name: "Delete chat" }).click());
 		await flush();
 		expect([...server.rows.values()].filter((r) => r.conversationId === T)).toHaveLength(0);
+	});
+
+	it("the confirm names a message being sent when the stored row is sending", async () => {
+		// The row as this tab last listed it is `sending`, with no claim bar of its own open (the
+		// listed-row arm of R8, apart from D30's `claimed` conflict).
+		const T = crypto.randomUUID();
+		storedThread(T, "row sending");
+		await draftIn(ORG_A, T, "queued words");
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		act(() =>
+			tab.drafts.store.view.setState((v) => {
+				const entries = { ...v.drafts.entries };
+				for (const [id, e] of Object.entries(entries))
+					if (e.key.conversationId === T && e.server !== null)
+						entries[id] = { ...e, conflict: null, server: { ...e.server, state: "sending" } };
+				return { drafts: { ...v.drafts, entries } };
+			}),
+		);
+		act(() => screen.getByRole("button", { name: "Delete chat row sending" }).click());
+		await flush();
+		expect(screen.getByRole("alertdialog").textContent).toContain(
+			"A message in this conversation is being sent right now.",
+		);
 	});
 
 	it("the confirm names a message being sent", async () => {
@@ -702,7 +771,7 @@ describe("S10 › the delete confirm", () => {
 		act(() => screen.getByRole("button", { name: "Delete chat busy chat" }).click());
 		await flush();
 		const dialog = screen.getByRole("alertdialog");
-		expect(dialog.textContent).toContain("1 unsent message of this conversation, in 1 organization.");
+		expect(dialog.textContent).toContain("It also deletes your unsent draft of this conversation in 1 organization.");
 		expect(dialog.textContent).toContain("A message in this conversation is being sent right now.");
 	});
 });

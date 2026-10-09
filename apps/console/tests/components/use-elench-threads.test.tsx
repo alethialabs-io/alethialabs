@@ -448,4 +448,25 @@ describe("useElenchThreads — a load that fails (G10)", () => {
 		expect(useElenchStore.getState().threadId).toBeNull();
 		expect(useElenchStore.getState().epoch).toBe(0);
 	});
+
+	it("retryLoad after a failed pick retries THAT conversation, not the open-time resume", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-1"), thread("t-2"), thread("t-3")]);
+		vi.mocked(getThread).mockImplementation(async (id: string) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(useElenchStore.getState().threadId).toBe("t-1");
+
+		act(() => result.current.selectThread("t-3"));
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-3"));
+
+		vi.mocked(getThread).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		act(() => result.current.selectThread("t-2"));
+		await waitFor(() => expect(result.current.loadError).toEqual({ step: "select", conversationId: "t-2" }));
+		expect(useElenchStore.getState().threadId).toBe("t-3");
+
+		act(() => result.current.retryLoad());
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-2"));
+		expect(result.current.loadError).toBeNull();
+	});
 });

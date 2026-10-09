@@ -42,13 +42,14 @@ interface ThreadRailProps {
 	 * never sent, shown above the threads. Selecting one calls `onSelect` with its conversation id.
 	 */
 	unsent?: readonly UnsentConversation[];
+	/** Listed thread id → what its row says about its unsent words ("Draft", "Not sent", …). */
+	threadNotes?: Readonly<Record<string, string>>;
 	/**
 	 * Counts a conversation's drafts for the delete confirm (§6.3). Without it, the confirm names
 	 * no count.
 	 */
 	countDrafts?: (id: string) => Promise<ConversationDraftFacts | null>;
 }
-
 
 /** The delete confirm's count, while it is asked for and once it is answered. */
 interface DeleteCount {
@@ -60,15 +61,15 @@ interface DeleteCount {
 const DELETE_BASE =
 	"This permanently deletes the conversation and everything in it — the transcript, its widgets and its approvals. This cannot be undone.";
 
-/** "1 unsent message" / "2 unsent messages". */
+/** "1 organization" / "2 organizations". */
 function plural(n: number, one: string, many: string): string {
 	return `${n} ${n === 1 ? one : many}`;
 }
 
 /**
  * The delete confirm's description (§6.3): what the delete removes, then the drafts of the
- * conversation it removes with it — how many, in how many organizations, and whether one is being
- * sent right now — once the count has answered.
+ * conversation it removes with it — in how many organizations, and whether one is being sent right
+ * now — once the count has answered.
  */
 function deleteDescription(count: DeleteCount | null): string {
 	if (count === null) return DELETE_BASE;
@@ -76,9 +77,10 @@ function deleteDescription(count: DeleteCount | null): string {
 	const f = count.facts;
 	if (f === null) return `${DELETE_BASE} Its unsent messages could not be counted; any it has are deleted with it.`;
 	const parts = [DELETE_BASE];
-	if (f.count > 0)
+	// One user holds at most one draft of a conversation per org, so the count IS the org count.
+	if (f.orgs > 0)
 		parts.push(
-			`It also deletes ${plural(f.count, "unsent message", "unsent messages")} of this conversation, in ${plural(f.orgs, "organization", "organizations")}.`,
+			`It also deletes your unsent draft of this conversation in ${plural(f.orgs, "organization", "organizations")}.`,
 		);
 	if (f.sending) parts.push("A message in this conversation is being sent right now.");
 	return parts.join(" ");
@@ -128,6 +130,7 @@ export function ThreadRail({
 	knowledgeActive = false,
 	className,
 	unsent = [],
+	threadNotes = {},
 	countDrafts,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
@@ -306,6 +309,9 @@ export function ThreadRail({
 										<span className="flex items-center gap-1.5 font-mono text-ui-3xs text-muted-foreground">
 											<span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
 											{relTime(new Date(t.updated_at))}
+											{threadNotes[t.id] !== undefined && (
+												<span data-testid="thread-rail-row-note">· {threadNotes[t.id]}</span>
+											)}
 										</span>
 									</button>
 									{/* The name carries the TITLE, and the noun is not decoration. N rows
