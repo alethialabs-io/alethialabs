@@ -161,77 +161,81 @@ test.describe("Connectors page", () => {
 	});
 });
 
-// TEMPORARY MEASUREMENT PROBE for #5849 — removed before the PR leaves draft.
+// TEMPORARY MEASUREMENT PROBE for #5849 — removed before the PR leaves draft. It FAILS on purpose
+// at the end so the leg uploads its attachments (passing tests' attachments are not kept).
 test.describe("hydration probe (#5849, temporary)", () => {
-	test("records the hydration timeline of the activity and connectors boundaries", async ({
+	test.describe.configure({ retries: 0 });
+	test("records the COLD-load hydration timeline of the activity and connectors boundaries", async ({
 		authedPage: page,
 		orgSlug,
 		browser,
 	}, testInfo) => {
-		test.setTimeout(300_000);
-		await installHydrationProbe(page);
+		test.setTimeout(600_000);
+		const storageState = await page.context().storageState();
 		const routes = { activity: `/${orgSlug}/~/settings/activity`, connectors: `/${orgSlug}/~/connectors` };
 		const out: Record<string, unknown[]> = {};
-		/** Wait for the probe's hydration mark, tolerating a page that never reaches it. */
-		const settle = async () => {
-			await page
-				.waitForFunction(() => {
-					const p = Reflect.get(window, "__probe");
-					return Array.isArray(p?.marks) && p.marks.some((m: { name: string }) => m.name === "trigger-hydrated");
-				}, undefined, { timeout: 30_000 })
-				.catch(() => undefined);
-			await page.waitForTimeout(1500);
-		};
+		const baseURL = testInfo.project.use.baseURL;
 		for (const [name, path] of Object.entries(routes)) {
 			out[name] = [];
-			for (let i = 0; i < 3; i++) {
-				await page.goto(path);
-				await settle();
-				out[name].push({ kind: "plain", probe: await readHydrationProbe(page) });
+			for (const kind of ["traced", "plain", "plain", "plain", "click300", "click300", "click300", "click300"]) {
+				// A FRESH context per load: an empty HTTP cache, as a person's first visit and every
+				// new test's first goto are.
+				const ctx = await browser.newContext({ storageState, baseURL });
+				const p = await ctx.newPage();
+				await installHydrationProbe(p);
+				if (kind === "traced") {
+					await browser.startTracing(p, {
+						categories: [
+							"devtools.timeline",
+							"disabled-by-default-devtools.timeline",
+							"v8.execute",
+							"disabled-by-default-v8.cpu_profiler",
+							"blink.user_timing",
+							"loading",
+							"toplevel",
+						],
+					});
+				}
+				let opened: boolean | undefined;
+				if (kind === "click300") {
+					await p.goto(path, { waitUntil: "commit" });
+					const trigger = p.locator('main button[data-slot="popover-trigger"]').first();
+					await trigger.waitFor({ state: "visible", timeout: 30_000 });
+					await p.waitForTimeout(300);
+					await trigger.click();
+					opened = await p
+						.locator('[data-slot="popover-content"], [role="dialog"], [role="listbox"]')
+						.first()
+						.waitFor({ state: "visible", timeout: 3_000 })
+						.then(() => true, () => false);
+				} else {
+					await p.goto(path);
+				}
+				await p
+					.waitForFunction(() => {
+						const pr = Reflect.get(window, "__probe");
+						return Array.isArray(pr?.marks) && pr.marks.some((m: { name: string }) => m.name === "trigger-hydrated");
+					}, undefined, { timeout: 30_000 })
+					.catch(() => undefined);
+				await p.waitForTimeout(2000);
+				const probe = await readHydrationProbe(p);
+				if (kind === "traced") {
+					const trace = await browser.stopTracing();
+					await testInfo.attach(`trace-${name}.json`, { body: trace, contentType: "application/json" });
+					const urls = await p.evaluate(() =>
+						performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.includes("/_next/static/chunks/") && u.endsWith(".js")),
+					);
+					const sources: Record<string, string> = {};
+					for (const u of new Set(urls)) sources[u] = await (await p.request.get(u)).text();
+					await testInfo.attach(`chunks-${name}.json`, { body: JSON.stringify(sources), contentType: "application/json" });
+				}
+				out[name].push({ kind, opened, probe });
+				const marks = Reflect.get(Object(probe), "marks");
+				console.log(`#5849-PROBE ${name} ${JSON.stringify({ kind, opened, marks })}`);
+				await ctx.close();
 			}
-			for (let i = 0; i < 3; i++) {
-				await page.goto(path, { waitUntil: "commit" });
-				const trigger = page.locator('main button[data-slot="popover-trigger"]').first();
-				await trigger.waitFor({ state: "visible", timeout: 30_000 });
-				await page.waitForTimeout(300);
-				await trigger.click();
-				const opened = await page
-					.locator('[data-slot="popover-content"], [role="dialog"], [role="listbox"]')
-					.first()
-					.waitFor({ state: "visible", timeout: 3_000 })
-					.then(() => true, () => false);
-				await settle();
-				out[name].push({ kind: "click300", opened, probe: await readHydrationProbe(page) });
-			}
-			await browser.startTracing(page, {
-				categories: [
-					"devtools.timeline",
-					"disabled-by-default-devtools.timeline",
-					"v8.execute",
-					"disabled-by-default-v8.cpu_profiler",
-					"blink.user_timing",
-					"loading",
-					"toplevel",
-				],
-			});
-			await page.goto(path);
-			await settle();
-			const trace = await browser.stopTracing();
-			out[name].push({ kind: "traced", probe: await readHydrationProbe(page) });
-			await testInfo.attach(`trace-${name}.json`, { body: trace, contentType: "application/json" });
 		}
-		const urls = await page.evaluate(() =>
-			performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.includes("/_next/static/chunks/") && u.endsWith(".js")),
-		);
-		const sources: Record<string, string> = {};
-		for (const u of new Set(urls)) sources[u] = await (await page.request.get(u)).text();
-		await testInfo.attach("chunks.json", { body: JSON.stringify(sources), contentType: "application/json" });
 		await testInfo.attach("probe.json", { body: JSON.stringify(out, null, 1), contentType: "application/json" });
-		for (const [name, loads] of Object.entries(out)) {
-			for (const load of loads) {
-				const marks = Reflect.get(Reflect.get(Object(load), "probe") ?? {}, "marks");
-				console.log(`#5849-PROBE ${name} ${JSON.stringify({ ...Object(load), probe: undefined, marks })}`);
-			}
-		}
+		expect(false, "deliberate: keep the probe's attachments").toBe(true);
 	});
 });
