@@ -34,7 +34,11 @@ vi.mock("@/lib/billing/stripe", () => ({
 
 import { readFirstPayment } from "@/lib/billing/first-payment";
 
-const sub = (status: "incomplete" | "incomplete_expired" | "active" = "incomplete") => ({ id: "sub_1", status, latest_invoice: "in_1" });
+const sub = (status: "incomplete" | "incomplete_expired" | "active" = "incomplete") => ({
+	id: "sub_1",
+	status,
+	latest_invoice: "in_1",
+});
 
 describe("readFirstPayment (C47)", () => {
 	beforeEach(() => {
