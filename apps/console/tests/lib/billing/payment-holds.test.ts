@@ -472,6 +472,17 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 		expect(kept.row.refund_action_since).toEqual(earlier);
 	});
 
+	it("T5 / T13: a refund the re-read does not show yet (lag) is not made again in the same call", async () => {
+		const w = world({ sub: "canceled", invoice: "paid", pis: [succeeded()] });
+		const { s, store } = storeOf(w, holdRow({ state: "refund_due" }));
+		const stripe = stripeOf(w);
+		const reader = { ...stripe, refunds: { ...stripe.refunds, list: async () => ({ has_more: false, data: [] }) } };
+		const result = await advanceHold(holdRow({ state: "refund_due" }), { reader, writer: stripe, store, fence: async () => undefined, alert: async () => true, now: () => T0 });
+		expect(result.rows).toEqual(["T5", "T13"]);
+		expect(stripeWrites(w.log)).toEqual(["refunds.create:hold-refund-pi_1-0"]);
+		expect(s.row.state).toBe("refund_due");
+	});
+
 	it("T5 refunds only the uncovered part of a partial refund", async () => {
 		const w = world({ sub: "canceled", invoice: "paid", pis: [succeeded(2900)], refunds: { pi_1: [{ status: "succeeded", amount: 900 }] } });
 		await run(w, holdRow({ state: "refund_due" }));

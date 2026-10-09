@@ -135,13 +135,15 @@ export interface CallContext {
 	voided: boolean;
 	/** A `paymentIntents.cancel` was attempted (T7): still `requires_capture` means stay in flight. */
 	piCancelAttempted: boolean;
-	/** A `refunds.create` failed (T13 / T14): no second refund in this call. */
+	/** A `refunds.create` was made: no second refund in this call, even when the re-read lags. */
+	refundAttempted: boolean;
+	/** A `refunds.create` failed (T13 / T14). */
 	refundFailed: boolean;
 }
 
 /** A fresh call's context. */
 export function newCallContext(): CallContext {
-	return { reread: false, cancelAttempted: false, voidFailed: false, voided: false, piCancelAttempted: false, refundFailed: false };
+	return { reread: false, cancelAttempted: false, voidFailed: false, voided: false, piCancelAttempted: false, refundAttempted: false, refundFailed: false };
 }
 
 /** `closing` and `cancel_unproven`: the states before the subscription is proven ended. */
@@ -243,10 +245,14 @@ function decideSucceeded(
 	if (hold.state === "refund_pending") {
 		return { row: "T10f", kind: "stay", state: "refund_due", alert: "a refund the hold issued no longer covers the payment (failed or canceled)" };
 	}
-	if (hold.refund_attempt >= REFUND_BUDGET) {
-		return { row: "T14", kind: "operator", detail: `the refund failed ${hold.refund_attempt} times` };
+	const spent = hold.refund_attempt >= REFUND_BUDGET;
+	if (ctx.refundFailed && spent) {
+		return { row: "T14", kind: "operator", detail: `the refund failed on all ${hold.refund_attempt} attempts` };
 	}
-	if (ctx.refundFailed) return { row: "T13", kind: "stay", state: "refund_due" };
+	// A refund made in this call that the re-read does not show yet is not made again: the next call
+	// reads the refunds first (§3.5).
+	if (ctx.refundAttempted) return { row: "T13", kind: "stay", state: "refund_due" };
+	if (spent) return { row: "T14", kind: "operator", detail: `the refund budget of ${REFUND_BUDGET} attempts is spent` };
 	return { row: "T5", kind: "act", act: { do: "refund", pis: uncovered } };
 }
 
@@ -434,6 +440,7 @@ export async function advanceHold(start: PaymentHoldRow, deps: HoldMachineDeps):
 				if (!reserved) return done("stale");
 				hold = reserved.hold;
 				if (!(await fenced())) return done("lease_lost");
+				ctx.refundAttempted = true;
 				try {
 					await deps.writer.refunds.create(
 						{ payment_intent: p.id, amount: p.refund.uncovered, metadata: { [HOLD_REFUND_METADATA_KEY]: hold.id } },
