@@ -171,6 +171,10 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	await dialog.getByPlaceholder("Director").fill("Director");
 	await dialog.getByRole("button", { name: "Select a country" }).click();
 	// The country list is a popover portalled outside the sheet, so it is located on the page.
+	// By placeholder, not by role, and deliberately: cmdk labels its input with an EMPTY `<label>`
+	// (`aria-labelledby` → ""), so it has no accessible name to ask for (#5803). The #5777 race does
+	// not reach it either — the popover renders on the client after the click, so no hidden streamed
+	// copy of it can exist.
 	await page.getByPlaceholder("Search country…").fill("Germany");
 	// Not `exact`: each row's flag carries the country's name as an SVG title, so the option's
 	// accessible name can read it twice. The search above has already narrowed the list to one.

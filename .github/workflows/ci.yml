@@ -1117,6 +1117,18 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-filter-standard.mjs --self-test
+      # The filter bar's other half, in the e2e suite (#5800). React leaves the server's copy of a
+      # streamed Suspense section in a hidden `<div hidden id="S:n">`, and `getByLabel` /
+      # `getByPlaceholder` match inside it while `getByRole` does not — so a spec that asks for a
+      # list page's search box by label can fill the hidden copy and apply no search (#5795's qa leg
+      # counted 42 connectors, expecting 3). The input names are derived from every <FilterSearch> /
+      # <MultiCombobox> in the console; known, unfixed sites sit in a ledger that fails both ways.
+      - name: No e2e spec asks for a list-page filter input by label or placeholder
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:e2e-filter-locators
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-e2e-filter-locators.mjs --self-test
       # The release gate (.github/workflows/release-gate.yml) is green-by-RATCHET: every leg fails on
       # regression against apps/console/e2e/gate-baseline.json, and the rules live in one script. A
       # ratchet that stopped firing would let every leg pass on an empty ledger, so its self-test

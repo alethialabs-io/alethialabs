@@ -43,11 +43,15 @@ test.describe.configure({ timeout: 120_000 });
  */
 async function gotoConnectors(page: Page, orgSlug: string, query = ""): Promise<void> {
 	await page.goto(`/${orgSlug}/~/connectors${query}`, { waitUntil: "commit" });
-	await expect(page.getByLabel("Search connectors")).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByRole("textbox", { name: "Search connectors", exact: true })).toBeVisible({ timeout: 60_000 });
 }
 
-/** The board's free-text filter input (accessible name, not placeholder — see the filter bar). */
-const search = (page: Page) => page.getByLabel("Search connectors");
+/**
+ * The board's free-text filter input, by role under its accessible name (see the filter bar).
+ * Never `getByLabel`/`getByPlaceholder`: those also match the hidden streamed copy of the bar a
+ * full-page load can leave in the DOM, and filling that copy applies no search (#5777, #5800).
+ */
+const search = (page: Page) => page.getByRole("textbox", { name: "Search connectors", exact: true });
 
 /**
  * Opens the Group facet popover. The trigger's accessible name grows a selection badge
@@ -90,7 +94,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 		// The four controls the console filter standard requires of a list page's bar.
 		await expect(search(owner.page)).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^Group\b/ })).toBeVisible();
-		await expect(owner.page.getByPlaceholder("All vendors")).toBeVisible();
+		await expect(owner.page.getByRole("textbox", { name: "All vendors", exact: true })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: "Table view" })).toBeVisible();
 	});
 
@@ -225,7 +229,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 
 	test("the vendor combobox narrows the board to one organization", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder("All vendors").click();
+		await owner.page.getByRole("textbox", { name: "All vendors", exact: true }).click();
 		await owner.page.getByRole("button", { name: /^Datadog, Inc\./ }).click();
 		await expect(
 			owner.page.getByRole("button", { name: "Connect Datadog", exact: true }),
