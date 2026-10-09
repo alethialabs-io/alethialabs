@@ -7,7 +7,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DateRangeFilter } from "../src/date-range-filter";
-import { localTimeZone, presetRange } from "../src/range";
+import { formatRangeLabel, localTimeZone, presetRange } from "../src/range";
 
 const TZ = localTimeZone();
 
@@ -41,6 +41,31 @@ describe("DateRangeFilter", () => {
 		expect(html).not.toMatch(/\d(am|pm)/i);
 		// It still renders a trigger the reader can see and click.
 		expect(html).toMatch(/Date range/);
+	});
+
+	// #5849: the server's trigger must already be as wide as the label that replaces it on mount.
+	// A placeholder ~20 characters shorter than the label made the trigger grow at hydration, and
+	// the filter bar's `flex-1` search box paid for it by sliding every control between them left by
+	// a whole button width — a click aimed in that window hit the bar. jsdom has no layout, so this
+	// measures what decides the width: the characters the pre-mount trigger lays out.
+	it("holds the default label's width before mount, without naming it", () => {
+		const host = document.createElement("div");
+		host.innerHTML = renderToString(
+			<DateRangeFilter value={presetRange("7d")} onChange={() => {}} />,
+		);
+		const trigger = host.querySelector("button");
+		if (!trigger) throw new Error("no trigger in the server HTML");
+		// The widest line the trigger lays out before mount: the visible placeholder and any
+		// invisible sizer share one grid cell, so the longer of them sets the width.
+		const cells = [...trigger.querySelectorAll("span")].map((s) => s.textContent ?? "");
+		const laidOut = Math.max(trigger.textContent?.length ?? 0, ...cells.map((c) => c.length));
+		const label = formatRangeLabel(presetRange("7d"));
+		expect(laidOut).toBeGreaterThanOrEqual(label.length - 2);
+		// What a reader and the accessible name get is still only the placeholder.
+		const named = [...trigger.querySelectorAll("span")].filter(
+			(s) => !s.closest("[aria-hidden]") && s.querySelector("span") === null,
+		);
+		expect(named.map((s) => s.textContent).join("")).toBe("Date range");
 	});
 
 	it("opens to a calendar + start/end date+time inputs", async () => {

@@ -16,7 +16,7 @@ import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
-import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
@@ -138,7 +138,7 @@ export function AppShell({
 			    leaving this slot empty. One surface per session. Its drafts root runs whether or not
 			    the surface is open, so unsent words keep saving (ADR 0001). */}
 			<ElenchDraftsRoot pageOrgId={pageOrgId}>
-				<ElenchSurface />
+				<ElenchSurfaceLoader />
 			</ElenchDraftsRoot>
 
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
