@@ -65,16 +65,22 @@ const OVERRUN_SLACK_DAYS = 1;
  */
 const RECONCILE_TASK_SLACK_DAYS = OVERRUN_SLACK_DAYS + 1;
 
+/**
+ * Runs one fixed age query and returns its `age_days`, or null when no row matched. The seam the
+ * measurement runs through: `retentionHealth` answers it from the database, and a unit test answers
+ * it directly.
+ */
+export type AgeQuery = (query: SQL) => Promise<number | null>;
+
 /** Age in days of the oldest row in `table`, or null when the table is empty. */
-async function oldestRowAgeDays(db: Db, table: string): Promise<number | null> {
+async function oldestRowAgeDays(age: AgeQuery, table: string): Promise<number | null> {
 	// The column differs per table only in name; every governed table stamps its insert time. Chosen
 	// from a fixed map rather than interpolated from caller input — this is raw SQL identifier
 	// interpolation, and a table name that reached it from anywhere but the register would be an
 	// injection point.
 	const column = TIMESTAMP_COLUMN[table];
 	if (!column) return null;
-	return ageOfOldest(
-		db,
+	return age(
 		sql`select extract(epoch from (now() - min(${sql.identifier(column)}))) / 86400 as age_days
 		    from ${sql.identifier(table)}`,
 	);
@@ -125,13 +131,13 @@ function selfEnforced(entry: RetentionEntry): boolean {
 }
 
 /** Age in days of the oldest row `entry`'s enforcement would delete, or null when not measurable. */
-async function measureEntry(db: Db, entry: RetentionEntry): Promise<number | null> {
+async function measureEntry(age: AgeQuery, entry: RetentionEntry): Promise<number | null> {
 	if (entry.mechanism === "gc-function") {
-		return entry.table ? oldestRowAgeDays(db, entry.table) : null;
+		return entry.table ? oldestRowAgeDays(age, entry.table) : null;
 	}
 	if (entry.mechanism === "reconcile-task") {
 		const query = RECONCILE_TASK_AGE[entry.id];
-		return query ? ageOfOldest(db, query) : null;
+		return query ? age(query) : null;
 	}
 	return null;
 }
@@ -144,6 +150,11 @@ async function measureEntry(db: Db, entry: RetentionEntry): Promise<number | nul
  * tells an operator less than a partial one that names the hole.
  */
 export async function retentionHealth(db: Db): Promise<RetentionHealthRow[]> {
+	return measureRetention((query) => ageOfOldest(db, query));
+}
+
+/** The live retention picture, measured through `age` — `retentionHealth` without the database. */
+export async function measureRetention(age: AgeQuery): Promise<RetentionHealthRow[]> {
 	const out: RetentionHealthRow[] = [];
 	for (const entry of RETENTION_REGISTRY) {
 		// A `reconcile-task` reads its window from the register itself (no env override), so the
@@ -157,7 +168,7 @@ export async function retentionHealth(db: Db): Promise<RetentionHealthRow[]> {
 
 		let oldest: number | null = null;
 		try {
-			oldest = await measureEntry(db, entry);
+			oldest = await measureEntry(age, entry);
 		} catch {
 			// Unreadable table (permissions, a rename mid-migration): report it as unmeasured
 			// rather than throwing away every other row's answer.

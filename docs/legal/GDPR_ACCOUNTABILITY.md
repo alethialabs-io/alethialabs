@@ -26,7 +26,7 @@ evidence described below.
 | Security and operations | Users and visitors; IP, user agent, request, incident, audit and diagnostic data | Protect availability, integrity and tenants | Legitimate interests; legal obligation where applicable | Hetzner; Cloudflare; Alethia logs | Minimized by system; job logs 30 days; fleet actions 90 days; authorization activity 365 days |
 | Product analytics and client diagnostics | Consenting users; pseudonymous internal ids, plan/role, pages, feature events, performance and client errors | Understand, improve and diagnose the Service | Consent | PostHog EU Cloud | Provider retention must be verified and recorded before release |
 | Operational diagnostics | Users and visitors; minimized server and migration errors, request metadata and structured operational logs | Secure, diagnose and maintain the hosted Service | Legitimate interests | PostHog EU Cloud | Provider retention must be verified and recorded before release |
-| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Configured Anthropic or OpenAI endpoint; Alethia PostgreSQL for unsent drafts | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output; unsent Elench drafts 30 days unwritten, discarded drafts 24 hours |
+| AI assistance | Users and people in submitted context; prompt, selected Service context, response and usage | Provide a user-requested AI feature | Contract; customer instructions under DPA | Configured Anthropic or OpenAI endpoint; Alethia PostgreSQL for unsent drafts | Provider retention governed by contracted configuration; Alethia product analytics receives no prompt or output; unsent Elench drafts deleted after 30 days unwritten; discarded drafts deleted after 24 hours by a daily sweep, so kept up to about 2 days |
 
 ## Data-flow and minimization rules
 
@@ -108,10 +108,15 @@ entry here.
   - `elench-drafts-discarded`: a discarded draft is deleted 24 hours after it was
     discarded (measured from `discarded_at`); the 24 hours are its Undo window.
     Because the sweep runs daily, a discarded draft can stay up to about two days.
-  - The sweep never deletes a draft that is being sent (status `sending`). It first
-    settles every claim that has gone silent past its 120-second lease, as a draft
-    action would settle it: the row returns to `active` and `updated_at` is renewed,
-    so the settled draft starts a new 30-day window.
+  - The sweep never deletes a draft that is being sent (status `sending`). Before it
+    deletes, it settles claims that have gone silent past their 120-second lease, as
+    a draft action would settle them: the row returns to `active` and `updated_at` is
+    renewed, so the settled draft starts a new 30-day window.
+  - Each phase of one run handles at most 500 rows per page and 20 pages, on each app
+    instance. A settle that fails is rolled back and that row is skipped: it stays
+    `sending`, is never deleted, and is retried on a later page or run. Rows beyond
+    the bound are left for later runs, so a large backlog takes more than one day to
+    clear.
   - On erasure, every draft the subject wrote is erased, in every org, keyed by
     `user_id` (the `elench_drafts` rule in `apps/console/lib/privacy/erasure-plan.ts`).
   - `retentionHealth()` in `apps/console/lib/retention/health.ts` measures both
