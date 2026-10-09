@@ -118,6 +118,15 @@ export async function GET(
 
 	const stream = new ReadableStream({
 		async start(controller) {
+			/** Tear the stream down for a client that has gone: stop its work, then end the body. */
+			const stop = () => {
+				cleanup();
+				try {
+					controller.close();
+				} catch {
+					/* already closed */
+				}
+			};
 			const send = (rows: OutMessage[]) => {
 				for (const r of rows) {
 					controller.enqueue(
@@ -133,6 +142,13 @@ export async function GET(
 				} catch {
 					/* transient read error; live stream still delivers new rows */
 				}
+			}
+			// A client that left during the backlog read aborted before the listener below existed, and
+			// an abort listener never hears an abort that already happened. Stop here, before the
+			// subscription and the heartbeat exist; `closed` covers a `cancel()` that ran in the same gap.
+			if (signal.aborted || closed) {
+				stop();
+				return;
 			}
 
 			// Live: each notify carries the new message id — fetch it (visible only) and emit.
@@ -152,14 +168,7 @@ export async function GET(
 				if (!closed) controller.enqueue(encoder.encode(":\n\n"));
 			}, 20_000);
 
-			signal.addEventListener("abort", () => {
-				cleanup();
-				try {
-					controller.close();
-				} catch {
-					/* already closed */
-				}
-			});
+			signal.addEventListener("abort", stop);
 		},
 		cancel() {
 			cleanup();
