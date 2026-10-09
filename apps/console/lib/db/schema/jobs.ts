@@ -113,6 +113,11 @@ export const jobs = pgTable(
 		// W3C traceparent (`00-<32hex trace-id>-<16hex span-id>-01`) minted at enqueue.
 		// Flows enqueue → claim → runner so console + runner logs/spans share one trace.
 		traceparent: text(),
+		// The approval that queued this job, when one did (#5797): a SHA-256 hex over the
+		// operation and the proposing tool call's `threadId:toolCallId`. A second Approve of the
+		// same proposal resolves to this row instead of queuing another plan or deploy. NULL for
+		// every enqueue that passes no key (the CLI, the canvas, the reconcilers).
+		idempotency_key: text(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
@@ -164,6 +169,15 @@ export const jobs = pgTable(
 			.where(
 				sql`job_type = 'DETECT_DRIFT' AND status IN ('QUEUED', 'CLAIMED', 'PROCESSING')`,
 			),
+		// One job per approval (#5797). The keyed enqueue in app/server/actions/projects.ts inserts
+		// with `ON CONFLICT (…) WHERE idempotency_key IS NOT NULL DO NOTHING` and reads the existing
+		// row back in the same transaction, so two Approves of one proposal — sequential or
+		// concurrent — queue exactly one job. Scoped by org, project and user: a key never matches
+		// another tenant's, another project's or another person's job. Partial, so the keyless
+		// enqueues (every other caller) are not constrained at all.
+		uniqueIndex("uq_jobs_idempotency_key")
+			.on(t.org_id, t.project_id, t.user_id, t.idempotency_key)
+			.where(sql`idempotency_key IS NOT NULL`),
 	],
 );
 
