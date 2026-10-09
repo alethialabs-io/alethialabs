@@ -5,8 +5,8 @@
 // Every metered chat route — the two Elench posts to, and the agent-scoped `/api/agent/[agentId]`
 // — refuses an over-limit user message with a 413 whose body is the shared MESSAGE_TOO_LONG, and
 // a body whose messages it cannot read with a 400 (it used to throw a TypeError → a 500), BEFORE
-// the AI budget hold is reserved. The two Elench routes reserve it inside `reserveTurn` (ADR 0003
-// slice 6), and refuse a body with no `orgId` or `turn` as 409 client-outdated — AFTER the 400 and
+// the AI budget hold is reserved. All three reserve it inside `reserveTurn` (ADR 0003 slice 6 for the
+// two Elench routes, slice 8 for the agent-scoped one), and refuse a body with no `orgId` or `turn` as 409 client-outdated — AFTER the 400 and
 // the 413, so a bare `messages` body still gets those two (§9.3's order). The limit is the one
 // `createThread` and the composer enforce (lib/ai/message-limits.ts). Before #5423's repair the
 // action capped a first turn at 100k while these routes capped nothing, so a long first message
@@ -50,7 +50,7 @@ vi.mock("@/lib/agent/executor", () => ({
 // `getServiceDb` serves the Elench routes' two reads (the thread's pin: none; the project check: the
 // project is in the org), so a well-formed turn reaches `reserveTurn`.
 vi.mock("@/lib/db", () => ({
-	withScope: vi.fn(async () => ({ id: "agent-1", tool_scope: [] })),
+	withScope: vi.fn(async () => ({ id: "5d8e2f3a-9c4b-4d6e-8f1a-2b3c4d5e6f7a", tool_scope: [], project_id: null })),
 	getServiceDb: () => ({
 		select: () => ({
 			from: () => ({ where: async () => [{ billingOrgId: null, id: "project" }] }),
@@ -113,6 +113,7 @@ import {
 const PROJECT = "2b6c0d1e-7a3c-4b5d-8f0a-1c2d3e4f5a6b";
 const THREAD = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 const ORG = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const AGENT_ID = "5d8e2f3a-9c4b-4d6e-8f1a-2b3c4d5e6f7a";
 
 /** A user turn whose text is `length` characters long. */
 function userTurn(length: number, id = "u1"): UIMessage {
@@ -126,7 +127,7 @@ function bodyWith(messages: unknown): string {
 
 /**
  * A complete Elench request body: the messages plus the thread, the page's org and the turn fields
- * (§9.1), so a valid one reaches the budget gate. The agent-identity route ignores the extra fields.
+ * (§9.1), so a valid one reaches the budget gate. All three routes accept on the claim.
  */
 function turnBodyWith(messages: unknown[], fields: Record<string, unknown> = {}, turnId = "u1"): string {
 	return JSON.stringify({
@@ -159,8 +160,8 @@ async function postProject(body: string): Promise<Response> {
 /** POST the agent-scoped route (`/api/agent/[agentId]`) with this raw body. */
 async function postAgent(body: string): Promise<Response> {
 	const { POST } = await import("@/app/api/agent/[agentId]/route");
-	return POST(new Request("https://console.local/api/agent/agent-1", { method: "POST", body }), {
-		params: Promise.resolve({ agentId: "agent-1" }),
+	return POST(new Request(`https://console.local/api/agent/${AGENT_ID}`, { method: "POST", body }), {
+		params: Promise.resolve({ agentId: AGENT_ID }),
 	});
 }
 
@@ -168,7 +169,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 });
 
-/** How many times a route reached its budget gate: `reserveTurn` for Elench, `assertAiAllowed` otherwise. */
+/** How many times a route reached its budget gate: `reserveTurn`, or the per-request `assertAiAllowed` none of them calls any more. */
 const gateCalls = () => vi.mocked(reserveTurn).mock.calls.length + vi.mocked(assertAiAllowed).mock.calls.length;
 
 describe.each([
