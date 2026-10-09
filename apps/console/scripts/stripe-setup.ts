@@ -64,6 +64,10 @@ const AI_MAX_UNIT_AMOUNT_EUR = aiPlanUnitAmountCents("ai_max", "eur"); // € / 
 const LK_AI_PLUS = "alethia_ai_plus_monthly";
 const LK_AI_MAX = "alethia_ai_max_monthly";
 
+// The events lib/billing/webhook-handler.ts handles — and only those (ADR 0002 Q6). Re-running this
+// script with --webhook-url REPLACES an existing endpoint's list with exactly this one, so an event
+// subscribed by hand in the dashboard and handled nowhere (e.g. `payment_intent.succeeded`) is dropped.
+// `charge.refund.updated` nudges a payment hold whose refund changed; `invoice.voided` mirrors a void.
 const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
 	"customer.subscription.created",
 	"customer.subscription.updated",
@@ -72,6 +76,8 @@ const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
 	"checkout.session.completed",
 	"invoice.payment_succeeded",
 	"invoice.payment_failed",
+	"invoice.voided",
+	"charge.refund.updated",
 ];
 
 /** Loads root .env into process.env without overriding values already set (so an

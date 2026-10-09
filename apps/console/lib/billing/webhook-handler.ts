@@ -8,6 +8,23 @@
 // grants are idempotent on the invoice id) — the ONLY non-idempotent side effect is the branded
 // emails, which is why the live webhook guards on stripe_webhook_event. A replay passes
 // `suppressEmails: true` so re-dispatching an already-delivered event never re-mails the customer.
+//
+// PAYMENT HOLDS (ADR 0002 §5.3, S7). The webhook never moves a hold and makes no Stripe call for one:
+// the sweeper (payment-holds/sweeper.ts) is the only caller of `advanceHold`. For holds the dispatcher
+// only READS `payment_holds` and makes the HINT WRITE (`nudgeHold`: `nudged_at` only, no `version`), and
+// it returns how many holds it nudged so the route can wake the sweeper AFTER it has answered Stripe.
+// Four rules read holds:
+//   1. No backup-card retry on an invoice a hold names (open or released), or on a create-a-team
+//      subscription's invoice when that subscription is not live (§5.3 (1), C41, C83).
+//   2. No receipt for a held invoice whose subscription reads ended: that payment is being refunded
+//      (§5.3 (2), C9, C64). Every invoice no hold names keeps its receipt whatever the status.
+//   3. A deletion the machine or the close-out made (stamped in `cancellation_details.comment`) still
+//      writes the row, but sends no email and no revenue event (§5.3 (4), C63, C67).
+//   4. `invoice.payment_*`, `customer.subscription.updated|deleted` and `charge.refund.updated` nudge the
+//      open holds they name (§5.3 (3), C53, C66). A failed nudge is logged and never fails the event:
+//      every open hold is also scheduled (I10), so a lost hint only delays the sweeper to its schedule.
+// Every hold lookup is keyed on the event's own subscription (and, where the event carries one, its
+// customer), so an event can never read, nudge or silence another payer's hold.
 
 import type Stripe from "stripe";
 import { captureServer } from "@/lib/analytics/server";
@@ -15,6 +32,8 @@ import type { AnalyticsEvent } from "@/lib/analytics/events";
 import { grantAiCredits } from "@/lib/billing/ai-quota";
 import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
 import { attemptBackupPayment } from "@/lib/billing/payment-methods";
+import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
+import { nudgeHold } from "@/lib/billing/payment-holds/store";
 import { getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
@@ -24,6 +43,9 @@ import {
 	sendSubscriptionCanceledEmail,
 	sendTrialEndingEmail,
 } from "@/lib/email/billing-email";
+import { and, eq, ne, or, type SQL } from "drizzle-orm";
+import { getServiceDb } from "@/lib/db";
+import { paymentHolds } from "@/lib/db/schema";
 
 /** Options controlling side effects of a dispatch. */
 export interface HandleEventOptions {
@@ -35,6 +57,126 @@ export interface HandleEventOptions {
 	 * a customer's backup card. Default-on for replay; an operator can explicitly opt back in.
 	 */
 	suppressPaymentRetry?: boolean;
+	/** The payment-hold reads and hint write; the live store unless a test injects one. */
+	holds?: WebhookHoldPort;
+}
+
+/** What a dispatch did that its caller acts on after responding. */
+export interface HandleEventResult {
+	/** Open payment holds this event nudged; the route wakes the sweeper when it is above zero. */
+	nudged: number;
+}
+
+/**
+ * Everything the webhook does to `payment_holds` (ADR 0002 §5.3): reads, and the hint write. There is
+ * deliberately no state write here — no `version` bump, no lease, no Stripe call.
+ */
+export interface WebhookHoldPort {
+	/** Whether any hold, open or released, on `subscriptionId` has `invoiceId` as its held invoice. */
+	holdNamesInvoice(subscriptionId: string, invoiceId: string): Promise<boolean>;
+	/** Whether the hold `holdId`, open or released, is the hold of `subscriptionId`. */
+	holdNamesSubscription(holdId: string, subscriptionId: string): Promise<boolean>;
+	/** Nudges the open holds of `subscriptionId` on `customerId`; returns how many it nudged. */
+	nudgeSubscription(subscriptionId: string, customerId: string): Promise<number>;
+	/** Nudges the open hold a refund names (its metadata's hold id, or its PaymentIntent); returns the count. */
+	nudgeRefund(holdId: string | null, paymentIntentId: string | null): Promise<number>;
+}
+
+/** A hold id is a uuid; anything else names no hold and is never sent to Postgres as one. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The open-hold predicate (`state <> 'released'`). */
+function openHold(): SQL {
+	return ne(paymentHolds.state, "released");
+}
+
+/** The live port: one read on `payment_holds` per question, and the store's `nudgeHold` as the only write. */
+export const liveWebhookHolds: WebhookHoldPort = {
+	async holdNamesInvoice(subscriptionId, invoiceId) {
+		const rows = await getServiceDb()
+			.select({ id: paymentHolds.id })
+			.from(paymentHolds)
+			.where(and(eq(paymentHolds.subscription_id, subscriptionId), eq(paymentHolds.invoice_id, invoiceId)))
+			.limit(1);
+		return rows.length > 0;
+	},
+	async holdNamesSubscription(holdId, subscriptionId) {
+		if (!UUID_RE.test(holdId)) return false;
+		const rows = await getServiceDb()
+			.select({ id: paymentHolds.id })
+			.from(paymentHolds)
+			.where(and(eq(paymentHolds.id, holdId), eq(paymentHolds.subscription_id, subscriptionId)))
+			.limit(1);
+		return rows.length > 0;
+	},
+	async nudgeSubscription(subscriptionId, customerId) {
+		const rows = await getServiceDb()
+			.select({ id: paymentHolds.id })
+			.from(paymentHolds)
+			.where(
+				and(
+					eq(paymentHolds.subscription_id, subscriptionId),
+					eq(paymentHolds.customer_id, customerId),
+					openHold(),
+				),
+			)
+			.limit(1);
+		return rows.length > 0 ? nudgeHold(subscriptionId) : 0;
+	},
+	async nudgeRefund(holdId, paymentIntentId) {
+		const keys: SQL[] = [];
+		if (holdId && UUID_RE.test(holdId)) keys.push(eq(paymentHolds.id, holdId));
+		if (paymentIntentId) keys.push(eq(paymentHolds.payment_intent_id, paymentIntentId));
+		if (keys.length === 0) return 0;
+		const rows = await getServiceDb()
+			.select({ subscriptionId: paymentHolds.subscription_id })
+			.from(paymentHolds)
+			.where(and(openHold(), or(...keys)));
+		let nudged = 0;
+		for (const subscriptionId of new Set(rows.map((r) => r.subscriptionId))) {
+			nudged += await nudgeHold(subscriptionId);
+		}
+		return nudged;
+	},
+};
+
+/** Subscription statuses that are ended (ADR 0002 §2): a payment on one of them is refunded by its hold. */
+const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
+/** Subscription statuses that are live (ADR 0002 §2): the subscription still exists and may bill. */
+const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+
+/** The stamp of a close-out's cancel (`closeOutMintedSubscription`, app/server/actions/billing.ts). */
+const CLOSEOUT_STAMP = "alethia:closeout";
+
+/** The prefix of the payment-hold machine's cancel stamp, `alethia:checkout_closed:<hold id>` (machine.ts). */
+const CHECKOUT_CLOSED_STAMP_PREFIX = "alethia:checkout_closed:";
+
+/**
+ * Whether `sub` is a create-a-team subscription (ADR 0002 §2: its own metadata has `created_by` and no
+ * `organization_id`) that is not live.
+ */
+function isUnliveCreateATeamSubscription(sub: Stripe.Subscription): boolean {
+	const isCreateATeam = Boolean(sub.metadata?.created_by) && !sub.metadata?.organization_id;
+	return isCreateATeam && !LIVE_STATUSES.has(sub.status);
+}
+
+/** The id of the customer a subscription belongs to. */
+function customerIdOf(sub: Stripe.Subscription): string {
+	return typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+}
+
+/**
+ * Whether a deletion was made by Alethia itself, not by the customer: the close-out's stamp, or the hold
+ * machine's stamp naming a hold that IS this subscription's. The hold-stamp is checked against the table
+ * so a comment a customer typed into a cancellation form cannot borrow it; the close-out stamp only ever
+ * silences that customer's own email.
+ */
+async function isAlethiaCancel(sub: Stripe.Subscription, holds: WebhookHoldPort): Promise<boolean> {
+	const stamp = sub.cancellation_details?.comment ?? null;
+	if (stamp === CLOSEOUT_STAMP) return true;
+	if (!stamp?.startsWith(CHECKOUT_CLOSED_STAMP_PREFIX)) return false;
+	return holds.holdNamesSubscription(stamp.slice(CHECKOUT_CLOSED_STAMP_PREFIX.length), sub.id);
 }
 
 /** The default payment method id on an invoice (the card that was charged), or null. */
@@ -77,7 +219,17 @@ async function trackRevenue(
 export async function handleStripeEvent(
 	event: Stripe.Event,
 	opts: HandleEventOptions = {},
-): Promise<void> {
+): Promise<HandleEventResult> {
+	const holds = opts.holds ?? liveWebhookHolds;
+	let nudged = 0;
+	// The hint write (§5.3 (3)): logged, never thrown — no event is ever failed because of a hold.
+	const nudge = async (fn: () => Promise<number>): Promise<void> => {
+		try {
+			nudged += await fn();
+		} catch (err) {
+			console.error(`[stripe] payment-hold nudge failed for ${event.type}:`, err);
+		}
+	};
 	// Runs an email send, swallowing (logging) failures; a no-op when suppressed (replay path).
 	const safeEmail = async (label: string, fn: () => Promise<void>): Promise<void> => {
 		if (opts.suppressEmails) return;
@@ -118,14 +270,22 @@ export async function handleStripeEvent(
 				await getStripe().subscriptions.retrieve(event.data.object.id),
 				sync,
 			);
+			if (event.type === "customer.subscription.updated") {
+				const snapshot = event.data.object;
+				await nudge(() => holds.nudgeSubscription(snapshot.id, customerIdOf(snapshot)));
+			}
 			break;
 		case "customer.subscription.deleted": {
 			const sub = event.data.object;
+			await nudge(() => holds.nudgeSubscription(sub.id, customerIdOf(sub)));
 			// A deletion the row refused is a subscription the org is NOT on (an `incomplete` attempt
 			// the purchase sweep cancelled, or a second subscription beside the live one). Telling the
 			// customer "your subscription was canceled" then would be false, so only the applied
 			// deletion reports and mails.
 			if ((await syncSubscriptionToBilling(sub, sync)) !== "applied") break;
+			// A cancel Alethia made (a hold closing a checkout, or a close-out) is not the customer's: the
+			// row still records it, but there was never a plan to tell them was cancelled (§5.3 (4)).
+			if (await isAlethiaCancel(sub, holds)) break;
 			await trackRevenue(sub, "subscription_canceled");
 			await safeEmail("subscription canceled", () =>
 				sendSubscriptionCanceledEmail(sub),
@@ -168,15 +328,25 @@ export async function handleStripeEvent(
 			// Subscription renewal / first payment: re-sync (status active) + receipt w/ PDF.
 			const sub = await subForInvoice(invoice);
 			if (sub) {
+				// A held invoice paid on a subscription that reads ended landed after our cancel, and its
+				// hold refunds it (T5): the refund is what the customer is told about, so no receipt and no
+				// revenue event. Every other invoice keeps its receipt whatever the status (§5.3 (2)).
+				const refundedByHold =
+					ENDED_STATUSES.has(sub.status) &&
+					Boolean(invoice.id) &&
+					(await holds.holdNamesInvoice(sub.id, invoice.id ?? ""));
 				await syncSubscriptionToBilling(sub, sync);
 				const orgId = sub.metadata?.organization_id;
 				if (orgId) await safeMirror(invoice, orgId);
-				await trackRevenue(sub, "subscription_active", {
-					amount: invoice.amount_paid,
-					currency: invoice.currency,
-					billing_reason: invoice.billing_reason,
-				});
-				await safeEmail("receipt", () => sendReceiptEmail(sub, invoice));
+				if (!refundedByHold) {
+					await trackRevenue(sub, "subscription_active", {
+						amount: invoice.amount_paid,
+						currency: invoice.currency,
+						billing_reason: invoice.billing_reason,
+					});
+					await safeEmail("receipt", () => sendReceiptEmail(sub, invoice));
+				}
+				await nudge(() => holds.nudgeSubscription(sub.id, customerIdOf(sub)));
 			}
 			break;
 		}
@@ -186,14 +356,20 @@ export async function handleStripeEvent(
 			const invoice = event.data.object;
 			const sub = await subForInvoice(invoice);
 			if (sub) {
+				// Read BEFORE any write: a held invoice is one a hold is closing, and an un-live
+				// create-a-team subscription's open invoice is a checkout we cancelled — paying either with
+				// a backup card is us charging for it (§5.3 (1)). A read that throws fails the event before
+				// any charge, and Stripe redelivers it.
+				const noRetry =
+					isUnliveCreateATeamSubscription(sub) ||
+					(Boolean(invoice.id) && (await holds.holdNamesInvoice(sub.id, invoice.id ?? "")));
 				await syncSubscriptionToBilling(sub, sync);
-				const customerId =
-					typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+				const customerId = customerIdOf(sub);
 				const failedPm = paymentMethodIdOf(invoice);
 				// A replay must not re-attempt a live charge (suppressPaymentRetry); treat it as
 				// unpaid so the state re-syncs without touching the customer's backup card.
 				const paid =
-					invoice.id && !opts.suppressPaymentRetry
+					invoice.id && !opts.suppressPaymentRetry && !noRetry
 						? await attemptBackupPayment(customerId, invoice.id, failedPm).catch(
 								() => null,
 							)
@@ -207,6 +383,7 @@ export async function handleStripeEvent(
 						sendPaymentFailedEmail(sub, invoice),
 					);
 				}
+				await nudge(() => holds.nudgeSubscription(sub.id, customerId));
 			}
 			break;
 		}
@@ -215,8 +392,20 @@ export async function handleStripeEvent(
 			if (invoice.id) await setInvoiceStatus(invoice.id, "void");
 			break;
 		}
+		case "charge.refund.updated": {
+			// A hold's refund changed (e.g. failed, or went `requires_action`): the hold's next observe
+			// should see it within minutes rather than at its schedule. The refunds a hold makes carry
+			// its id in their metadata (machine.ts); the PaymentIntent matches a hold opened with one.
+			const refund = event.data.object;
+			const piRef = refund.payment_intent;
+			const paymentIntentId = typeof piRef === "string" ? piRef : (piRef?.id ?? null);
+			const holdId = refund.metadata?.[HOLD_REFUND_METADATA_KEY] ?? null;
+			await nudge(() => holds.nudgeRefund(holdId, paymentIntentId));
+			break;
+		}
 		default:
 			// Unhandled event types are acknowledged so Stripe stops retrying.
 			break;
 	}
+	return { nudged };
 }

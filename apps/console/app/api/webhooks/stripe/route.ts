@@ -14,7 +14,12 @@
 // The org an event belongs to is carried as subscription.metadata.organization_id
 // (set by the checkout server action). Events without it are ignored (logged), so a
 // stray Stripe object can never mutate the wrong tenant.
+//
+// Payment holds (ADR 0002 §5.3): the handler only reads holds and nudges them (a hint write). When it
+// nudged any, the in-process sweeper is woken AFTER the response has been sent (`after`), never awaited,
+// so a hold's Stripe calls never run inside — or delay — Stripe's delivery.
 
+import { after } from "next/server";
 import type Stripe from "stripe";
 import { captureServerException } from "@/lib/analytics/server";
 import { getStripeConfig, isStripeConfigured } from "@/lib/billing/config";
@@ -24,8 +29,13 @@ import {
 	markWebhookEventError,
 	runWebhookEventExactlyOnce,
 } from "@/lib/billing/webhook-events";
+import { wakePaymentHoldSweeper } from "@/lib/billing/payment-holds/sweeper";
 import { handleStripeEvent } from "@/lib/billing/webhook-handler";
 
+/**
+ * Receives a Stripe webhook delivery: verifies its signature before anything else, runs the dispatcher
+ * exactly once per event id, and wakes the payment-hold sweeper after responding when holds were nudged.
+ */
 export async function POST(req: Request): Promise<Response> {
 	if (!isStripeConfigured()) {
 		return new Response("billing not configured", { status: 503 });
@@ -54,13 +64,14 @@ export async function POST(req: Request): Promise<Response> {
 		return Response.json({ received: true, duplicate: true });
 	}
 
+	let nudged = 0;
 	try {
 		// Serialize deliveries of THIS event id under a per-event advisory lock and run the handler
 		// (which sends the non-idempotent email) inside it, so a network-duplicated / retried delivery
 		// that arrives while the first is still IN-FLIGHT blocks and is then skipped — never double-mails.
-		const outcome = await runWebhookEventExactlyOnce(event.id, event.type, () =>
-			handleStripeEvent(event),
-		);
+		const outcome = await runWebhookEventExactlyOnce(event.id, event.type, async () => {
+			nudged = (await handleStripeEvent(event)).nudged;
+		});
 		if (outcome !== "handled") {
 			return Response.json({ received: true, duplicate: true });
 		}
@@ -74,5 +85,7 @@ export async function POST(req: Request): Promise<Response> {
 		return new Response("handler error", { status: 500 });
 	}
 
+	// Runs once the 2xx below has been sent; the wake itself only schedules a coalesced tick.
+	if (nudged > 0) after(() => wakePaymentHoldSweeper());
 	return Response.json({ received: true });
 }
