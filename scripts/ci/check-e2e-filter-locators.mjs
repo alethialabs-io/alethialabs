@@ -50,12 +50,13 @@
 //
 // ── THE LEDGER, AND WHY IT FAILS BOTH WAYS ───────────────────────────────────────────────────────
 //
-// `LEDGER` below is every site that is known and is NOT fixed by #5800, ONE ENTRY PER SITE. A site's
-// identity is its file plus the locator method and its first argument's source text
+// `LEDGER` below is every known site the guard reports that is NOT a defect, ONE ENTRY PER SITE. A
+// site's identity is its file plus the locator method and its first argument's source text
 // (`getByPlaceholder(/search services/i)`), never its line, so an unrelated edit does not churn it;
-// `count` covers a spec that repeats the identical call. `debt:` entries are filter inputs still asked
-// for by label or placeholder; #5801 removes them. `reason:` entries are unreadable calls that are
-// known NOT to be a filter input — each says what it is instead. A site found MORE often than its
+// `count` covers a spec that repeats the identical call. `reason:` entries are unreadable calls that
+// are known NOT to be a filter input — each says what it is instead. A `debt:` entry is a filter input
+// still asked for by label or placeholder; there are none (#5801 converted the last of them), and a
+// new one needs a board issue that removes it. A site found MORE often than its
 // entry fails (a new site). One found LESS often fails too (the entry outlived its subject, and would
 // otherwise excuse the next site written there): lower the number, or delete the entry, in the same
 // PR as the fix. Per site, not per file: a per-file count let a fix and a new site in the same file
@@ -93,27 +94,6 @@ const NAME_ATTRS = ["placeholder", "ariaLabel"];
  * @type {{ file: string, site: string, count: number, debt?: string, reason?: string }[]}
  */
 const LEDGER = [
-	{ file: "apps/console/e2e/hero-happy-path.spec.ts", site: "getByLabel(/search connectors/i)", count: 2, debt: "#5801 — the connectors search box" },
-	{ file: "apps/console/e2e/evidence.spec.ts", site: "getByPlaceholder(/Filter by project or environment/i)", count: 1, debt: "#5801 — the evidence filter bar" },
-	{
-		file: "apps/console/e2e/flows/agent-usage-activity.spec.ts",
-		site: "getByPlaceholder(/search actor, action or resource/i)",
-		count: 4,
-		debt: "#5801 — the activity search box",
-	},
-	{
-		file: "apps/console/e2e/flows/agent-usage-activity.negative.spec.ts",
-		site: "getByPlaceholder(/search actor, action or resource/i)",
-		count: 2,
-		debt: "#5801 — the activity search box",
-	},
-	{ file: "apps/console/e2e/flows/alerts.spec.ts", site: 'getByPlaceholder("Filter channels by name or transport…")', count: 1, debt: "#5801 — the alert channels filter" },
-	{
-		file: "apps/console/e2e/flows/projects.spec.ts",
-		site: "getByPlaceholder(/search/i)",
-		count: 1,
-		debt: "#5801 — `getByPlaceholder(/search/i).first()` matches every search box",
-	},
 	{
 		file: "apps/console/e2e/flows/alerts.negative.spec.ts",
 		site: "getByLabel(urlField)",
