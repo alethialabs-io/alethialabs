@@ -20,7 +20,7 @@ vi.mock("@/lib/rate-limit", () => ({
 	sweepExpiredRateLimitBuckets: vi.fn(async () => ({ deleted: 0 })),
 }));
 vi.mock("@/lib/elench/drafts-sweep", () => ({
-	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, discardedDeleted: 0, staleDeleted: 0 })),
+	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, settleFailed: 0, discardedDeleted: 0, staleDeleted: 0 })),
 }));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),

@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { eq, inArray, type SQL, sql } from "drizzle-orm";
 import { afterAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
-import { type ElenchDraft, elenchDrafts, type NewElenchDraft } from "@/lib/db/schema";
+import { agentThreads, type ElenchDraft, elenchDrafts, type NewElenchDraft } from "@/lib/db/schema";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { statementFor } from "@/lib/privacy/erasure-executor";
 import { ERASURE_RULES } from "@/lib/privacy/erasure-plan";
@@ -80,6 +80,7 @@ describeIfDb("the Elench drafts retention sweep against Postgres", () => {
 	afterAll(async () => {
 		if (users.length > 0) {
 			await getServiceDb().delete(elenchDrafts).where(inArray(elenchDrafts.user_id, users));
+			await getServiceDb().delete(agentThreads).where(inArray(agentThreads.user_id, users));
 		}
 	});
 
@@ -156,6 +157,36 @@ describeIfDb("the Elench drafts retention sweep against Postgres", () => {
 			text: silent.text,
 			failed_send: expect.objectContaining({ turnId: silent.claim_turn_id, uncertain: true }),
 		});
+	});
+
+	it("a row whose settle throws is skipped: the other claims settle and both delete phases still run", async () => {
+		const u = freshUser();
+		// The poison: a later-turn claim whose thread's transcript is not an array, so the settle's
+		// `storedTurn` read throws for this row alone. Its claim is the OLDEST, so it heads the page.
+		const poisoned = await insertAged(sending(u, "later"), { claimed_at: ago("2 hours") });
+		await getServiceDb()
+			.insert(agentThreads)
+			.values({ id: poisoned.conversation_id, user_id: u, org_id: u, title: "t", messages: sql`'{}'::jsonb` });
+		const silent = await insertAged(sending(u, "first"), { claimed_at: ago("10 minutes") });
+		const discarded = await insertAged(
+			{ ...active(u), status: "discarded", discarded_at: new Date() },
+			{ discarded_at: ago("25 hours") },
+		);
+		const stale = await insertAged(active(u), { updated_at: ago("31 days") });
+
+		const result = await sweepElenchDrafts(getServiceDb());
+		expect(result.settleFailed).toBeGreaterThanOrEqual(1);
+		// The poisoned row's transaction rolled back: it is exactly as it was.
+		expect(await reread(poisoned.id)).toMatchObject({
+			status: "sending",
+			claim_token: poisoned.claim_token,
+			revision: poisoned.revision,
+		});
+		expect(await reread(silent.id)).toMatchObject({ status: "active", text: silent.text });
+		expect(await reread(discarded.id)).toBeUndefined();
+		expect(await reread(stale.id)).toBeUndefined();
+		// Leave no poison for the tests after this one.
+		await getServiceDb().delete(elenchDrafts).where(eq(elenchDrafts.id, poisoned.id));
 	});
 
 	it("two overlapping runs settle each claim once and delete each row once", async () => {

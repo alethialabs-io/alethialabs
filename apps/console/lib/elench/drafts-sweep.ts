@@ -33,21 +33,40 @@
 // Bounded and idempotent under concurrent app instances: every phase works in pages, each page
 // locks its rows `FOR UPDATE SKIP LOCKED` and re-checks its predicate, and a run stops after
 // `maxPages` pages; a backlog drains over later runs. A second instance skips the rows the first
-// holds, and finds the ones it already settled `active` and the ones it deleted gone.
+// holds, and finds the ones it already settled `active` and the ones it deleted gone. The bound is
+// PER PROCESS: every app instance hosts its own reconcile loop, so N instances may each run a pass
+// a day, and the most a day can touch is N × the bound. The overlap is safe (above); it is not free.
 //
-// Drafts may hold pasted secrets: nothing here logs a row, and the result is counts only.
+// One bad row never stops the purge. A settle that throws is caught for that row alone: its
+// transaction rolls back, the error's NAME is logged and counted (`settleFailed`), and the next row
+// goes on. The two delete phases always run, whatever the settle did, and each runs even when the
+// other threw; a phase failure is re-thrown only after all three ran, as a message naming the phase
+// and the error's name.
+//
+// Drafts may hold pasted secrets, and a driver error's message can quote a statement's parameters
+// (drizzle's "Failed query: … params: …"), which for a settle include the row's claim token. So no
+// error message from a statement is ever logged or re-thrown here: only `errorName`. Nothing logs a
+// row, and the result is counts only.
 
 import { and, asc, eq, inArray, lte, type SQL, sql } from "drizzle-orm";
 import type { Actor } from "@/lib/authz/types";
 import type { Db } from "@/lib/db";
 import { elenchDrafts } from "@/lib/db/schema";
 import { settleIfSilent } from "@/lib/elench/draft-claims";
+import { errorName } from "@/lib/errors";
+import { log } from "@/lib/observability/log";
+import { RETENTION_DEFAULT_DAYS } from "@/lib/retention/registry";
 
-/** How long a discarded draft is kept for an Undo (§6.2) before it is deleted. */
-export const DISCARDED_RETENTION_HOURS = 24;
+const slog = log.child({ component: "elench-drafts-sweep" });
 
-/** How long a draft nobody writes is kept (Q2), measured from `updated_at`. */
-export const DRAFT_RETENTION_DAYS = 30;
+/**
+ * How long a discarded draft is kept for an Undo (§6.2) before it is deleted. Read from the
+ * retention register (lib/retention/registry.ts), so the published window is the enforced one.
+ */
+export const DISCARDED_RETENTION_HOURS = RETENTION_DEFAULT_DAYS.elenchDraftsDiscarded * 24;
+
+/** How long a draft nobody writes is kept (Q2), measured from `updated_at`; from the register too. */
+export const DRAFT_RETENTION_DAYS = RETENTION_DEFAULT_DAYS.elenchDrafts;
 
 /** The paging bounds of one run. */
 export interface DraftsSweepBounds {
@@ -57,13 +76,18 @@ export interface DraftsSweepBounds {
 	maxPages: number;
 }
 
-/** The default bounds: up to 10,000 rows a phase a day; a larger backlog drains over later runs. */
+/**
+ * The default bounds: up to 10,000 rows a phase per run, per app instance (each instance runs its
+ * own loop); a larger backlog drains over later runs.
+ */
 const DEFAULT_BOUNDS: DraftsSweepBounds = { pageSize: 500, maxPages: 20 };
 
 /** What one sweep pass did. A type alias, not an interface, so it is assignable to the heartbeat's
  *  `Record<string, number>` result shape (lib/reconcile/heartbeat.ts). */
 export type DraftsSweepResult = {
 	settled: number;
+	/** Rows whose settle threw; each was rolled back and skipped, and the run went on. */
+	settleFailed: number;
 	discardedDeleted: number;
 	staleDeleted: number;
 };
@@ -142,13 +166,20 @@ async function deletePage(
 	});
 }
 
+/** What one settle page did: rows settled, and rows whose settle threw. */
+interface SettlePageResult {
+	settled: number;
+	failed: number;
+}
+
 /**
  * Settles one page of silent claims (S5). The candidates are the `sending` rows with the oldest
  * `claimed_at`, so every silent claim comes before every live one; each is then locked on its own
  * (skipping one an action holds), and `settleIfSilent` re-reads the lease on the database's clock
- * and leaves a live claim alone. Returns how many rows it settled.
+ * and leaves a live claim alone. A row whose settle throws is rolled back, logged by error name
+ * only, counted, and skipped.
  */
-async function settlePage(db: Db, pageSize: number): Promise<number> {
+async function settlePage(db: Db, pageSize: number): Promise<SettlePageResult> {
 	const candidates = await db
 		.select({ id: elenchDrafts.id })
 		.from(elenchDrafts)
@@ -156,27 +187,60 @@ async function settlePage(db: Db, pageSize: number): Promise<number> {
 		.orderBy(asc(elenchDrafts.claimed_at))
 		.limit(pageSize);
 	let settled = 0;
+	let failed = 0;
 	for (const { id } of candidates) {
-		const changed = await db.transaction(async (tx) => {
-			const [row] = await tx
-				.select()
-				.from(elenchDrafts)
-				.where(and(eq(elenchDrafts.id, id), eq(elenchDrafts.status, "sending")))
-				.limit(1)
-				.for("update", { skipLocked: true });
-			if (!row) return false;
-			const owner: Actor = { userId: row.user_id, orgId: row.org_id };
-			const after = await settleIfSilent(tx, owner, row, null);
-			return after !== row;
-		});
+		let changed: boolean;
+		try {
+			changed = await settleOne(db, id);
+		} catch (e) {
+			failed++;
+			slog.error("draft settle failed; row skipped", { error: errorName(e) });
+			continue;
+		}
 		if (changed) settled++;
 	}
-	return settled;
+	return { settled, failed };
+}
+
+/** S5 for the one row `id`, in its own transaction; true when it settled the row. */
+async function settleOne(db: Db, id: string): Promise<boolean> {
+	return db.transaction(async (tx) => {
+		const [row] = await tx
+			.select()
+			.from(elenchDrafts)
+			.where(and(eq(elenchDrafts.id, id), eq(elenchDrafts.status, "sending")))
+			.limit(1)
+			.for("update", { skipLocked: true });
+		if (!row) return false;
+		const owner: Actor = { userId: row.user_id, orgId: row.org_id };
+		const after = await settleIfSilent(tx, owner, row, null);
+		return after !== row;
+	});
+}
+
+/**
+ * Runs one phase, and turns a throw into a sanitized record instead of letting it skip the phases
+ * after it: the phase's name and the error's name, never its message.
+ */
+async function runPhase(
+	phase: string,
+	failures: string[],
+	body: () => Promise<number>,
+): Promise<number> {
+	try {
+		return await body();
+	} catch (e) {
+		const name = errorName(e) ?? "unknown";
+		failures.push(`${phase} (${name})`);
+		slog.error("drafts sweep phase failed", { phase, error: name });
+		return 0;
+	}
 }
 
 /**
  * The daily `elench-drafts-sweep`: settles silent claims, then deletes discarded drafts past 24 h
- * and active drafts unwritten for 30 days, each phase paged and bounded. Returns counts only.
+ * and active drafts unwritten for 30 days, each phase paged and bounded. Every phase runs even when
+ * an earlier one failed; a phase failure is re-thrown at the end, sanitized. Returns counts only.
  */
 export async function sweepElenchDrafts(
 	db: Db,
@@ -185,14 +249,34 @@ export async function sweepElenchDrafts(
 	// A settled row leaves the `sending` set, so the next page re-selects from the oldest remaining
 	// claim. A page that settles fewer than it read has reached a live claim, and every later claim
 	// is younger still, so the drain stops there.
-	const settled = await drainPages(() => settlePage(db, bounds.pageSize), bounds);
-	const discardedDeleted = await drainPages(
-		() => deletePage(db, discardedExpired, elenchDrafts.discarded_at, bounds.pageSize),
-		bounds,
+	// A failed row counts as handled for the drain: it stays `sending` and is re-read at the head of
+	// the next page, so only `maxPages` bounds how often a run retries it.
+	const failures: string[] = [];
+	let settled = 0;
+	let settleFailed = 0;
+	await runPhase("settle", failures, () =>
+		drainPages(async () => {
+			const page = await settlePage(db, bounds.pageSize);
+			settled += page.settled;
+			settleFailed += page.failed;
+			return page.settled + page.failed;
+		}, bounds),
 	);
-	const staleDeleted = await drainPages(
-		() => deletePage(db, activeExpired, elenchDrafts.updated_at, bounds.pageSize),
-		bounds,
+	const discardedDeleted = await runPhase("discarded", failures, () =>
+		drainPages(
+			() => deletePage(db, discardedExpired, elenchDrafts.discarded_at, bounds.pageSize),
+			bounds,
+		),
 	);
-	return { settled, discardedDeleted, staleDeleted };
+	const staleDeleted = await runPhase("stale", failures, () =>
+		drainPages(
+			() => deletePage(db, activeExpired, elenchDrafts.updated_at, bounds.pageSize),
+			bounds,
+		),
+	);
+	if (failures.length > 0) {
+		// The loop host stores this message as the task's lastError: names only, no statement text.
+		throw new Error(`elench-drafts-sweep: ${failures.join(", ")} failed`);
+	}
+	return { settled, settleFailed, discardedDeleted, staleDeleted };
 }
