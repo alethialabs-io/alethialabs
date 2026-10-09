@@ -40,7 +40,7 @@
 // ── THE LEDGER, AND WHY IT FAILS BOTH WAYS ───────────────────────────────────────────────────────
 //
 // `LEDGER` below is every site that is known and is NOT fixed by #5800, per file, with a count.
-// `debt:` entries are filter inputs still asked for by label or placeholder; #5813 removes them.
+// `debt:` entries are filter inputs still asked for by label or placeholder; #5801 removes them.
 // `reason:` entries are unreadable calls that are known NOT to be a filter input — each says what it
 // is instead. A file with MORE findings than its entry fails (a new site). A file with FEWER fails too
 // (the entry outlived its subject, and would otherwise excuse the next site written there): lower
@@ -67,12 +67,12 @@ const NAME_ATTRS = ["placeholder", "ariaLabel"];
  * @type {Record<string, { count: number, debt?: string, reason?: string }>}
  */
 const LEDGER = {
-	"apps/console/e2e/hero-happy-path.spec.ts": { count: 2, debt: "#5813 — the connectors search box" },
-	"apps/console/e2e/evidence.spec.ts": { count: 1, debt: "#5813 — the evidence filter bar" },
-	"apps/console/e2e/flows/agent-usage-activity.spec.ts": { count: 4, debt: "#5813 — the activity search box" },
-	"apps/console/e2e/flows/agent-usage-activity.negative.spec.ts": { count: 2, debt: "#5813 — the activity search box" },
-	"apps/console/e2e/flows/alerts.spec.ts": { count: 1, debt: "#5813 — the alert channels filter" },
-	"apps/console/e2e/flows/projects.spec.ts": { count: 1, debt: "#5813 — `getByPlaceholder(/search/i).first()` matches every search box" },
+	"apps/console/e2e/hero-happy-path.spec.ts": { count: 2, debt: "#5801 — the connectors search box" },
+	"apps/console/e2e/evidence.spec.ts": { count: 1, debt: "#5801 — the evidence filter bar" },
+	"apps/console/e2e/flows/agent-usage-activity.spec.ts": { count: 4, debt: "#5801 — the activity search box" },
+	"apps/console/e2e/flows/agent-usage-activity.negative.spec.ts": { count: 2, debt: "#5801 — the activity search box" },
+	"apps/console/e2e/flows/alerts.spec.ts": { count: 1, debt: "#5801 — the alert channels filter" },
+	"apps/console/e2e/flows/projects.spec.ts": { count: 1, debt: "#5801 — `getByPlaceholder(/search/i).first()` matches every search box" },
 	"apps/console/e2e/flows/alerts.negative.spec.ts": {
 		count: 1,
 		reason: "`getByLabel(urlField)` — a transport's URL field in the new-channel sheet, not a filter input",

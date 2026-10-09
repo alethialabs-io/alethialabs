@@ -260,7 +260,9 @@ test.describe("Runners — the console filter standard", () => {
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await expect(cardFor(team.page, alpha)).toBeVisible({ timeout: 15_000 });
 
-		await team.page.getByPlaceholder("Search runners by name…").fill("alpha");
+		// By role, under the FilterSearch's `ariaLabel`: a placeholder query also matches the hidden
+		// streamed copy of the toolbar, and filling that one filters nothing (#5777, #5800).
+		await team.page.getByRole("textbox", { name: "Search runners", exact: true }).fill("alpha");
 		await expect(cardFor(team.page, alpha)).toBeVisible();
 		await expect(cardFor(team.page, bravo)).toHaveCount(0);
 	});
@@ -271,7 +273,7 @@ test.describe("Runners — the console filter standard", () => {
 			{ name: `e2e-filtermiss-${Date.now()}` },
 		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		await team.page.getByPlaceholder("Search runners by name…").fill("zzz-nonexistent-xyz");
+		await team.page.getByRole("textbox", { name: "Search runners", exact: true }).fill("zzz-nonexistent-xyz");
 		await expect(team.page.getByText("No runners match your filters.")).toBeVisible({
 			timeout: 10_000,
 		});
@@ -284,10 +286,10 @@ test.describe("Runners — the console filter standard", () => {
 		// @repo/ui/filter-chip and inlined (`FilterChipGroup inline`). There is no Filters button
 		// on this page, so that test could only ever have been red.
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		await expect(team.page.getByPlaceholder("Search runners by name…")).toBeVisible({
+		await expect(team.page.getByRole("textbox", { name: "Search runners", exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
-		await expect(team.page.getByPlaceholder("All clouds")).toBeVisible();
+		await expect(team.page.getByRole("textbox", { name: "All clouds", exact: true })).toBeVisible();
 		// Status + operator are always-visible chips, not a popover.
 		await expect(team.page.getByRole("button", { name: "Online", exact: true })).toBeVisible();
 		await expect(team.page.getByRole("button", { name: "Draining", exact: true })).toBeVisible();
