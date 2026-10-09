@@ -13,8 +13,14 @@
 // deploy-jobs.spec.ts:186).
 //
 // Each test renders the REAL surface on a link carrying `search=`, with fake timers that are never
-// advanced — so no debounce can elapse — and asserts the surface's data seam already saw the link's
-// search. Before #5861 each one failed: the seam saw `""` (or nothing) until the timer fired.
+// advanced — so no debounce can elapse — and asserts the link's search already reached the surface's
+// data seam (the server action or query hook it is asked through) or, where the search is applied
+// on the client (support cases, connectors), that the non-matching row is not on screen.
+//
+// Mutation check (done when this was written): dropping `{ urlRead }` from each surface's
+// `useDebouncedValue` call fails that surface's test, and dropping `enabled: urlRead` from
+// `useEvidenceQuery` fails the evidence "first fetch" test with `{}` as the first fetch. The
+// keystroke test passes either way — it is there so the fix cannot become "stop debouncing".
 //
 // The evidence hook is held to more than that: it must not fetch at all before the link is read,
 // because its route prefetches the LINK's key and nothing else, so the first fetch it makes is the
@@ -24,6 +30,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import type { RoleRow, RolesBootstrap } from "@/app/server/actions/roles";
 import type { SsoBootstrap } from "@/app/server/actions/sso";
 import type { CaseListItem } from "@/lib/queries/support";
@@ -64,6 +71,21 @@ vi.mock("@/lib/query/use-sso-query", () => ({
 	useInvalidateSso: () => vi.fn(),
 }));
 vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/connectors", () => ({
+	getConnectorsWithStatus: vi.fn(() => new Promise(() => {})),
+	deleteConnectorCredential: vi.fn(),
+}));
+vi.mock("@/app/(private)/dashboard/providers/actions", () => ({
+	disconnectAwsIdentity: vi.fn(),
+	renameCloudIdentity: vi.fn(),
+	reverifyCloudIdentity: vi.fn(),
+}));
+vi.mock("@/app/(private)/dashboard/providers/azure-actions", () => ({ disconnectAzureIdentity: vi.fn() }));
+vi.mock("@/app/(private)/dashboard/providers/gcp-actions", () => ({ disconnectGcpIdentity: vi.fn() }));
+vi.mock("@/app/(private)/dashboard/providers/extra-cloud-actions", () => ({ disconnectExtraCloud: vi.fn() }));
+vi.mock("@/app/server/actions/identities", () => ({ deleteProviderToken: vi.fn() }));
+vi.mock("@/lib/auth/client", () => ({ authClient: {} }));
+vi.mock("@/lib/analytics/track", () => ({ track: vi.fn(), captureException: vi.fn() }));
 
 // ── Page furniture that is not under test. ────────────────────────────────────────────────────
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
@@ -82,6 +104,7 @@ vi.mock("@/components/classification/classification-control", () => ({ Classific
 
 import { getActivityLog } from "@/app/server/actions/activity";
 import { getOrgEvidence } from "@/app/server/actions/evidence";
+import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
 import { RolesManager } from "@/components/settings/roles/roles-manager";
@@ -89,6 +112,7 @@ import { SsoManager } from "@/components/settings/sso/sso-manager";
 import { CaseList } from "@/components/support/cases/case-list";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
+import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { useActivityFilters, useRolesFilters, useSsoFilters } from "@/lib/stores/use-settings-filters";
 import { useSupportFilters } from "@/lib/stores/use-support-filters";
@@ -114,9 +138,12 @@ beforeEach(() => {
 	sessionStorage.clear();
 	asked.roles.length = 0;
 	asked.sso.length = 0;
-	for (const store of [useEvidenceFilters, useActivityFilters, useRolesFilters, useSsoFilters, useSupportFilters]) {
-		store.getState().reset();
-	}
+	useEvidenceFilters.getState().reset();
+	useActivityFilters.getState().reset();
+	useRolesFilters.getState().reset();
+	useSsoFilters.getState().reset();
+	useSupportFilters.getState().reset();
+	useConnectorFilters.getState().reset();
 });
 
 afterEach(() => {
@@ -229,5 +256,47 @@ describe("SsoManager — ~/settings/sso?search=…", () => {
 		await settleWithoutTime();
 
 		expect(asked.sso).toContain("okta");
+	});
+});
+
+describe("ConnectorsPage — ~/connectors?search=…", () => {
+	/** One observability connector from the catalog the RSC hands the board. */
+	const connector = (slug: string, name: string, organization: string): ConnectorWithConnection => ({
+		id: `c-${slug}`,
+		slug,
+		name,
+		description: `${name}.`,
+		category: "observability",
+		auth_method: "api_key",
+		organization,
+		icon_url: null,
+		docs_url: null,
+		support_url: null,
+		privacy_url: null,
+		status: "active",
+		sort_order: 0,
+		created_at: null,
+		updated_at: null,
+		connected: false,
+		connection_details: null,
+		group: "observability",
+	});
+
+	it("shows only the matching connector before any debounce has elapsed", async () => {
+		currentSearch = "search=Datadog";
+		renderWithClient(
+			<ConnectorsPage
+				orgSlug="acme"
+				canManage={false}
+				integrations={[connector("datadog", "Datadog", "Datadog, Inc."), connector("grafana", "Grafana", "Grafana Labs")]}
+				awsSetup={null}
+				gcpSetup={null}
+				azureSetup={null}
+			/>,
+		);
+		await settleWithoutTime();
+
+		expect(screen.getAllByText("Datadog").length).toBeGreaterThan(0);
+		expect(screen.queryByText("Grafana"), "the unfiltered connector is not on the board").toBeNull();
 	});
 });
