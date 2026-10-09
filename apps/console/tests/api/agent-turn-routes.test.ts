@@ -121,6 +121,13 @@ interface World {
 	foreignActor: boolean;
 	/** The stored copy of the answer stream ends after its first text, as a processing error leaves it. */
 	storeEndsEarly: boolean;
+	/** The unlocked pin read misses a pin a racing first turn wrote (so acceptance answers pin-moved). */
+	pinReadMisses: boolean;
+	finalizeThrows: boolean;
+	heartbeatThrows: boolean;
+	aiConfigured: boolean;
+	/** The user's explicit model pick is selectable. */
+	pickSelectable: boolean;
 }
 
 const world = vi.hoisted(
@@ -147,6 +154,11 @@ const world = vi.hoisted(
 		throwInStream: false,
 		foreignActor: false,
 		storeEndsEarly: false,
+		pinReadMisses: false,
+		finalizeThrows: false,
+		heartbeatThrows: false,
+		aiConfigured: true,
+		pickSelectable: false,
 	}),
 );
 
@@ -237,6 +249,7 @@ vi.mock("@/lib/db", async () => {
 						const [a, b] = params(cond);
 						if (table === schema.agentThreads) {
 							const t = world.threads.get(String(a));
+							if (world.pinReadMisses) return [{ billingOrgId: null }];
 							return t && t.userId === b ? [{ billingOrgId: t.billingOrgId }] : [];
 						}
 						if (table === schema.projects) {
@@ -490,12 +503,14 @@ vi.mock("@/lib/agent/turn-claims", async (importOriginal) => {
 
 	const heartbeatTurn: typeof real.heartbeatTurn = async (turn) => {
 		world.heartbeats += 1;
+		if (world.heartbeatThrows) throw new Error("db unreachable");
 		const c = C().find((x) => x.id === turn.claimId);
 		return c !== undefined && c.state === "running" && c.token === turn.token;
 	};
 
 	const finalizeTurn: typeof real.finalizeTurn = async (turn, outcome) => {
 		world.finalizeCalls += 1;
+		if (world.finalizeThrows) throw new Error("db unreachable");
 		await new Promise((r) => setTimeout(r, world.finalizeDelayMs));
 		return withLock(turn.threadId, async () => {
 			const c = C().find((x) => x.id === turn.claimId);
@@ -604,11 +619,11 @@ vi.mock("@/lib/config/ai", async () => {
 	});
 	const resolved = { model: lm, key: "openai/test-model", provider: "openai" as const };
 	return {
-		isAiConfigured: () => true,
+		isAiConfigured: () => world.aiConfigured,
 		getExecutorModel: () => resolved,
 		getAdvisorModel: () => resolved,
 		resolveModel: () => resolved,
-		isSelectableModel: () => false,
+		isSelectableModel: () => world.pickSelectable,
 	};
 });
 
@@ -857,6 +872,11 @@ beforeEach(() => {
 	world.throwInStream = false;
 	world.foreignActor = false;
 	world.storeEndsEarly = false;
+	world.pinReadMisses = false;
+	world.finalizeThrows = false;
+	world.heartbeatThrows = false;
+	world.aiConfigured = true;
+	world.pickSelectable = false;
 	model.scripts = [];
 	model.prompts = [];
 });
@@ -1550,5 +1570,86 @@ describe("review fixes (#5796)", () => {
 		expect(holdList()[0]?.credits).toBeGreaterThanOrEqual(100);
 		expect(chunks.some((c) => c.type === "finish")).toBe(true);
 		gate.resolve();
+	});
+});
+
+describe("the remaining arms of the route body", () => {
+	it("AI not configured is 503 before anything", async () => {
+		world.aiConfigured = false;
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		expect(res.status).toBe(503);
+		expect(world.reserveCalls).toBe(0);
+	});
+
+	it("a malformed turn is a 400 before the hold", async () => {
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u 1", baseRevision: -1 }));
+		expect(res.status).toBe(400);
+		expect(world.reserveCalls).toBe(0);
+	});
+
+	it("a project id that is not a uuid is 404 project-not-found", async () => {
+		const res = await postProject(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }), "not-a-project");
+		expect(res.status).toBe(404);
+		expect(world.reserveCalls).toBe(0);
+	});
+
+	it("a request whose turn is not its last message is a 400 from acceptance (the classifier's invalid row)", async () => {
+		const res = await postOrg(
+			body([userMsg("u1", "hi"), userMsg("u2", "later")], { trigger: "regenerate-message", turnId: "u1", baseRevision: 1 }),
+		);
+		expect(res.status).toBe(400);
+		expect(holdList()).toHaveLength(0);
+	});
+
+	it("a pin written by a racing first turn: the gate re-runs for the pinned org, and the turn bills there", async () => {
+		seedThread([], { billingOrgId: ORG_B, revision: 1 });
+		world.pinReadMisses = true;
+		const { resolveTurnActor } = await import("@/lib/authz/guard");
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		await chunksOf(res);
+		expect(vi.mocked(resolveTurnActor).mock.calls.map((c) => c[1])).toEqual([ORG_A, ORG_B]);
+		expect(holdList().map((h) => h.orgId)).toEqual([ORG_B]);
+	});
+
+	it("a finalize that throws is logged; the stream still finishes and no data-turn-finished is written", async () => {
+		world.finalizeThrows = true;
+		const { log } = await import("@/lib/observability/log");
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		const chunks = await chunksOf(res);
+		expect(chunks.some((c) => c.type === "finish")).toBe(true);
+		expect(chunks.some((c) => c.type === "data-turn-finished")).toBe(false);
+		expect(log.error).toHaveBeenCalledWith("turn finalize failed", expect.anything());
+		expect(claims()[0]?.state).toBe("running");
+	});
+
+	it("a heartbeat that throws is logged and does not stop the turn", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		world.heartbeatThrows = true;
+		const { log } = await import("@/lib/observability/log");
+		const gate = deferred();
+		model.scripts.push(gatedParts("long", gate.promise));
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
+		const reading = chunksOf(res);
+		await vi.waitFor(() => expect(model.prompts).toHaveLength(1));
+		await vi.advanceTimersByTimeAsync(31_000);
+		await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith("turn heartbeat failed", expect.anything()));
+		gate.resolve();
+		await reading;
+		expect(claims()[0]?.state).toBe("answered");
+	});
+
+	it("an explicit model pick runs one model on every step", async () => {
+		world.pickSelectable = true;
+		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }, { model: "openai/test-model" }));
+		await chunksOf(res);
+		expect(claims()[0]?.state).toBe("answered");
+	});
+
+	it("an assistant-last request whose pending call has no output yet, beside a server tool, passes the pre-check to the classifier", async () => {
+		const a1 = proposalAnswer("a1", "p1", true);
+		seedThread([userMsg("u1", "plan it"), a1], { billingOrgId: ORG_A, revision: 3 });
+		const res = await postOrg(body([userMsg("u1", "plan it"), a1], { turnId: "u1", baseRevision: 3, answerId: "a1", toolCallIds: ["p1"] }));
+		expect(res.status).toBe(409);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "turn-answered" });
 	});
 });
