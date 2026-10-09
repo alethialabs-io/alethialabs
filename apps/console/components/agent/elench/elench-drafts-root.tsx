@@ -16,7 +16,9 @@
 //   once each page has rendered;
 // - `VIEWER_CHANGE` from `useViewer()` (D25), so a session that ends any way at all clears the tab;
 // - the window and document listeners (focus, online, visibility, pagehide) and whether the surface
-//   is open (D12's `mounted`, the 60 s poll).
+//   is open (D12's `mounted`, the 60 s poll);
+// - the tab-wide half of the draft status (`DraftStatusHost`): the once-per-entry toasts of G19, the
+//   `beforeunload` confirm of §7.5, and the store the account menu's sign-out confirm reads (D25).
 //
 // The store outlives the `[org]` layout (§1): it is one per tab, not one per mount, so an org
 // switch that remounts the shell keeps every word in memory. A test passes its own `tab`.
@@ -45,6 +47,7 @@ import {
 } from "@/lib/stores/elench-drafts/store";
 import type { DraftScope } from "@/lib/stores/elench-drafts/types";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { DraftStatusHost } from "./draft-status/host";
 
 /** The draft actions themselves (§4.2): the store's transport in the app. */
 const SERVER_TRANSPORT: DraftsTransport = {
@@ -211,5 +214,10 @@ export function ElenchDraftsRoot({
 		tab.store.dispatch({ type: "PAGE_ORG", orgId: pageOrgId });
 	}, [tab, pageOrgId, projectId, pathname]);
 
-	return <DraftsTabContext.Provider value={tab}>{children}</DraftsTabContext.Provider>;
+	return (
+		<DraftsTabContext.Provider value={tab}>
+			{tab !== null && <DraftStatusHost store={tab.store} />}
+			{children}
+		</DraftsTabContext.Provider>
+	);
 }

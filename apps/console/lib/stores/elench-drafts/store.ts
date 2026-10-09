@@ -91,6 +91,8 @@ export interface DraftNoticeItem {
 	id: number;
 	key: DraftKey;
 	notice: Extract<SendEffect, { type: "notice" }>["notice"];
+	/** The failure code a "Not sent" is for, when the reducer named one. */
+	reason?: string;
 }
 
 /** What the store publishes to its selectors. */
@@ -344,7 +346,12 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 				view.setState({ uncached: {}, notices: [] });
 				return;
 			case "notice":
-				view.setState((s) => ({ notices: [...s.notices, { id: ++noticeId, key: e.key, notice: e.notice }] }));
+				view.setState((s) => ({
+					notices: [
+						...s.notices,
+						{ id: ++noticeId, key: e.key, notice: e.notice, ...(e.reason === undefined ? {} : { reason: e.reason }) },
+					],
+				}));
 				return;
 			default:
 				deps.ui?.(e);

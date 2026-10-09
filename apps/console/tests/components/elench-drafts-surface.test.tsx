@@ -806,7 +806,8 @@ describe("S9 › a refused or failed send is never silent", () => {
 		server.plan("startConversation", "reject");
 		type("first words");
 		await enter();
-		expect(statusLine()).toBe("Not sent. Your message is back in the box.");
+		// A rejected call is a network failure here, so the card says the server was not reached (slice 11).
+		expect(statusLine()).toBe("Not sent — Alethia couldn't be reached. Your words are kept; press Enter to try again.");
 		await enter();
 		expect(statusLine()).toBeNull();
 	});
