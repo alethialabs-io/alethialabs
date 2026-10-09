@@ -103,7 +103,7 @@ const REFUSAL_NOTICE: Partial<Record<TurnRefusedError["refusal"]["refusal"], str
 };
 
 /** How the transcript's Retry resends the last turn (see {@link retryKind}). */
-export type RetryKind =
+type RetryKind =
 	| { kind: "answer" | "continue" | "await-approval" }
 	| { kind: "regenerate"; messageId: string };
 
@@ -116,7 +116,7 @@ export type RetryKind =
  *   `await-approval`, no Retry: the card is still approvable and is the way on;
  * - any other assistant message: `regenerate({ messageId })` of that answer.
  */
-export function retryKind(messages: readonly UIMessage[]): RetryKind {
+function retryKind(messages: readonly UIMessage[]): RetryKind {
 	const last = messages.at(-1);
 	if (!last || last.role !== "assistant") return { kind: "answer" };
 	const pending = pendingClientToolCalls(last);
