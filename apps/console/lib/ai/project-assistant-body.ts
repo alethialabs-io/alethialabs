@@ -4,7 +4,6 @@
 import type { UIMessage } from "ai";
 import { z } from "zod";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
-import { mentionsSchema } from "@/lib/ai/mentions";
 
 /**
  * What the user is looking at when they send a project-assistant message — the route surface and,
@@ -36,6 +35,10 @@ export type AssistantView = z.infer<typeof assistantViewSchema>;
  * `environmentId` is the environment the conversation is scoped to. It is `.catch(null)` rather
  * than rejected: a malformed id degrades to "the project's default environment" — which the route
  * resolves server-side under the caller's org, so a foreign id can never be reached from here.
+ *
+ * There is no `mentions` field. A turn's @-mentions travel in its user message's `metadata` and the
+ * route reads them from the STORED message (`turnMetadata: { mentions: true }` in lib/agent/turn-route.ts),
+ * so a list on the body would be parsed and never read; zod strips one a client still sends.
  */
 export const projectAssistantBodySchema = z.object({
 	messages: z.array(z.custom<UIMessage>()),
@@ -50,10 +53,6 @@ export const projectAssistantBodySchema = z.object({
 	 * the shape the live client always sends, and the turn died at the door.
 	 */
 	threadId: z.string().nullish(),
-	/** Resources the user @-referenced in the latest message. A malformed list is dropped rather
-	 * than rejected — the route degraded it that way before this schema existed, and losing the
-	 * @-mentions is a smaller failure than losing the turn. */
-	mentions: mentionsSchema.catch(undefined),
 	/**
 	 * Per-message opt-in to the Opus advisor ("deep reasoning"). Only effective on `ai_max`
 	 * (the advisor selection guards it); ignored on every other tier.
