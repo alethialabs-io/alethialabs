@@ -260,6 +260,7 @@ export function createDraftsStore(deps: DraftsStoreDeps): DraftsStoreHandle {
 					fail: (s, failure) => entry(e.key, { type: "CLAIM_FAILED", attempt: e.attempt, seq: s, failure }),
 				});
 			case "start": {
+				// An empty title: the server titles the thread from the turn it stores (§5.1).
 				const base = { ...e.key, turnId: e.turnId, title: "" };
 				let input: StartConversationInput;
 				if (e.token !== null) input = { ...base, origin: "composer", token: e.token, revision: e.revision };

@@ -55,7 +55,7 @@ interface Lane {
  * True when a rejected action call is a network failure (offline, or the `fetch` under the call
  * failed), which D27 treats as transient. Any other rejection is an error, retried at most three times.
  */
-export function isNetworkFailure(e: unknown): boolean {
+function isNetworkFailure(e: unknown): boolean {
 	if (e instanceof TypeError) return true;
 	return typeof navigator !== "undefined" && navigator.onLine === false;
 }

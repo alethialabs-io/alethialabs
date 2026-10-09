@@ -11,7 +11,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftListEntry, ServerDraft } from "@/lib/elench/draft-outcomes";
 import { CACHE_PREFIX } from "@/lib/stores/elench-drafts/cache";
-import type { HeartbeatBody } from "@/lib/stores/elench-drafts/heartbeat";
+import { fetchHeartbeat, type HeartbeatBody } from "@/lib/stores/elench-drafts/heartbeat";
 import { DraftWriteQueue } from "@/lib/stores/elench-drafts/queue";
 import { EMPTY_CONTENT, keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import { selectUnsent, useDraft, useUnsent } from "@/lib/stores/elench-drafts/selectors";
@@ -308,13 +308,22 @@ describe("answers are fed back (D8, D27)", () => {
 });
 
 describe("the heartbeat (D34)", () => {
-	it("no heartbeat is sent while claiming", async () => {
+	it("no heartbeat is sent while claiming, even on visible; the first one is 20 s after the grant", async () => {
 		const h = setup();
+		const off = h.store.connect(window, document);
 		await loadA(h);
 		await submitLater(h);
 		expect(h.claim.calls).toHaveLength(1);
-		await vi.advanceTimersByTimeAsync(14_000);
+		await vi.advanceTimersByTimeAsync(10_000);
+		document.dispatchEvent(new Event("visibilitychange")); // jsdom is "visible"
+		await flush();
 		expect(h.beats).toHaveLength(0);
+		await grant(h);
+		await vi.advanceTimersByTimeAsync(19_999);
+		expect(h.beats).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(h.beats).toHaveLength(1);
+		off();
 	});
 
 	it("a granted claim held through a 100 s action-queue stall is still renewed by fetch every 20 s", async () => {
@@ -358,6 +367,17 @@ describe("the heartbeat (D34)", () => {
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(h.beats).toHaveLength(1);
 		off();
+	});
+
+	it("is a fetch POST of JSON to the heartbeat route, never a server action (B1)", async () => {
+		const f = vi.fn<typeof fetch>(() => Promise.resolve(new Response("{}")));
+		const body = { orgId: ORG_A, conversationId: K.conversationId, token: "tok" };
+		await fetchHeartbeat(f)(body, new AbortController().signal);
+		const [url, init] = f.mock.calls[0] ?? [];
+		expect(url).toBe("/api/elench/drafts/heartbeat");
+		expect(init?.method).toBe("POST");
+		expect(init?.headers).toEqual({ "content-type": "application/json" });
+		expect(init?.body).toBe(JSON.stringify(body));
 	});
 
 	it("a heartbeat answered 403 stops the timer", async () => {
@@ -509,5 +529,6 @@ describe("selectors", () => {
 		expect(result.current.unsent.map((e) => e.key.conversationId)).toEqual([K.conversationId]);
 		expect(result.current.draft?.local?.text).toBe("deploy");
 		expect(selectUnsent(h.store.view.getState(), SCOPE_B)).toEqual([]);
+		expect(h.store.readActive(SCOPE_A)).toBe(K.conversationId); // §7.3's per-tab mirror
 	});
 });
