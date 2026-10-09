@@ -200,7 +200,13 @@ function renderConversation(opts: {
 			updated_at: now,
 		} satisfies AgentThread;
 	});
-	useElenchStore.setState({ view: opts.view, ctx: { kind: "org" }, threadId: null });
+	// The shell has told the conversation its page org (a send without one is refused locally).
+	useElenchStore.setState({
+		view: opts.view,
+		ctx: { kind: "org" },
+		threadId: null,
+		pageOrgId: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+	});
 	const api: ElenchThreadApi = {
 		ready: true,
 		threads: [],
