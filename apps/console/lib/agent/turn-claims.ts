@@ -27,7 +27,7 @@ import "server-only";
 //   an `AcceptedTurn` must never be built from request data;
 // - `expireSilentTurns`' candidate scan has NO owner predicate, by design: the sweep serves every
 //   user, and re-checks each candidate under its locks with that candidate's own `user_id`.
-// No route calls this module yet: ADR 0003 slice 6 cuts the routes over.
+// Called by the two Elench chat routes through `lib/agent/turn-route.ts`, and by the sweep.
 
 import { randomUUID } from "node:crypto";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
