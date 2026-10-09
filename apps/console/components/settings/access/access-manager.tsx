@@ -86,9 +86,19 @@ const SCOPE_OPTIONS = [
 /**
  * The Access surface. When `projectId` is given the grants list, stats, and grant builder are scoped
  * to that single project (project-scoped Settings › Access); without it, the full org grants render.
+ *
+ * `customRoles` is the entitlement as the PAGE resolved it on the server (#5850). The workspace
+ * store's copy is `null` until `fetchWorkspace()` answers after hydration, and `useEntitlement`
+ * reads that `null` as "not entitled" — so an Enterprise org was shown the upsell, an empty state
+ * with nothing marking it provisional, for as long as that round trip took. The audit's `settle()`
+ * read it twice as a list of 0 rows. The server's answer is known at first paint; the store can
+ * still turn the surface on later (an in-session upgrade), never off.
  */
-export function AccessManager({ projectId }: { projectId?: string } = {}) {
-  const entitled = useEntitlement("customRoles");
+export function AccessManager({
+  projectId,
+  customRoles = false,
+}: { projectId?: string; customRoles?: boolean } = {}) {
+  const entitled = useEntitlement("customRoles") || customRoles;
   const { org } = useParams<{ org: string }>();
   const qc = useQueryClient();
 
@@ -98,8 +108,10 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
   const filters = useAccessFilters((s) => s.filters);
   const set = useAccessFilters((s) => s.set);
   const reset = useAccessFilters((s) => s.reset);
-  useFilterUrlSync(useAccessFilters, DEFAULT_ACCESS_FILTERS);
-  const search = useDebouncedValue(filters.search);
+  const urlRead = useFilterUrlSync(useAccessFilters, DEFAULT_ACCESS_FILTERS);
+  // Seeded from the URL once it is read, so a pasted `?search=…` asks first for the key the link
+  // names rather than spending one debounce on the pristine one (#4999, members).
+  const search = useDebouncedValue(filters.search, 250, { urlRead });
   const query = useMemo(
     () => normalizeAccessQuery(filters, search, projectId),
     [filters, search, projectId],
@@ -115,6 +127,16 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
   // narrows in SQL, and the scope/role/effect facets come back counted over the UNFILTERED
   // grants of the same scope — so an option never disappears the moment it is selected.
   const grantsQuery = useAccessGrantsPageQuery(query, entitled);
+  // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
+  // been read into the store, before the first answer, while the rows are the previous query's
+  // placeholder, and while a typed search is still inside its debounce — the jobs, runners,
+  // members, teams and activity lists' rule (#4980, #5494). `aria-busy` is what tells assistive
+  // tech, and the audit's F8–F9 `settle()`, that the skeleton is loading rather than empty.
+  const busy =
+    !urlRead ||
+    grantsQuery.isPending ||
+    grantsQuery.isPlaceholderData ||
+    filters.search !== search;
   const optionsQuery = useQuery({
     queryKey: ["access", "grant-options", org] as const,
     queryFn: () => getGrantOptions(),
@@ -323,12 +345,12 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
       {!entitled ? (
         <FeatureUpsell feature="access" />
       ) : grantsQuery.isPending ? (
-        <div className="space-y-3">
+        <div className="space-y-3" aria-busy>
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
-        <>
+        <div aria-busy={busy}>
           <PageToolbar
             className="mb-4"
             description="Who is granted what, and where it applies."
@@ -440,7 +462,7 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
               <DataTable columns={columns} data={filtered} pageSize={15} />
             </div>
           )}
-        </>
+        </div>
       )}
 
       <AlertDialog
