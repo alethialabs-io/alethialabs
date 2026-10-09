@@ -685,7 +685,10 @@ describe("ADR 0003 §9.3's one-handler check", () => {
 		await act(async () => {});
 		expect(content()).toBe("one copy only");
 		expect(reloads).toHaveBeenCalledTimes(1); // the store's own load (D9d (a), thread-busy)
-		expect(screen.queryByText("Another message in this conversation is being answered")).toBeNull();
+		// The reason is said once, by the store's own status line; the composer path's line is absent.
+		const said = screen.queryAllByText("Another message in this conversation is being answered");
+		expect(said).toHaveLength(1);
+		expect(said[0]?.closest('[data-testid="elench-draft-status"]')).not.toBeNull();
 		expect(drafts.server.row({ orgId: ORG, projectId: null, conversationId: THREAD })?.content.text).toBe("one copy only");
 	});
 

@@ -11,6 +11,7 @@
 import type { ChatStatus } from "ai";
 import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from "react";
 import type { DraftMention } from "@/lib/elench/draft-content";
+import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import { selectDraft } from "@/lib/stores/elench-drafts/selectors";
 import type { DraftsStoreHandle } from "@/lib/stores/elench-drafts/store";
 import type { DraftEntry, DraftKey } from "@/lib/stores/elench-drafts/types";
@@ -78,6 +79,16 @@ export function chatReady(status: ChatStatus | undefined): boolean {
 	return status === "ready" || status === "error";
 }
 
+/** A new send supersedes whatever the store last said about this draft: its notices are acknowledged. */
+function ackNotices(binding: ElenchDraftBinding): void {
+	const id = keyId(binding.key);
+	const ids = binding.store.view
+		.getState()
+		.notices.filter((n) => keyId(n.key) === id)
+		.map((n) => n.id);
+	if (ids.length > 0) binding.store.ackNotices(ids);
+}
+
 /**
  * The send path of the conversation in `binding`: each call dispatches one event to the store and
  * does nothing else. `status` is the chat's, read for R3's guard at the moment of the send.
@@ -89,6 +100,7 @@ export function useElenchSend(
 	const ready = chatReady(status);
 	const submit = useCallback((): boolean => {
 		if (binding === null) return false;
+		ackNotices(binding);
 		binding.store.dispatch({
 			type: "ENTRY",
 			key: binding.key,
@@ -99,6 +111,7 @@ export function useElenchSend(
 	const submitExternal = useCallback(
 		(prompt: ExternalPrompt): boolean => {
 			if (binding === null) return false;
+			ackNotices(binding);
 			binding.store.dispatch({
 				type: "ENTRY",
 				key: binding.key,

@@ -399,6 +399,10 @@ export function ElenchConversation({
 	const [restoreAt, setRestoreAt] = useState<{ text: string; epoch: number } | null>(null);
 	// A send while the page has not told the conversation its org: nothing is sent, and it says why.
 	const [orgNotReady, setOrgNotReady] = useState(false);
+	// Why a store-owned turn's request failed before `streaming` when the route said more than a
+	// typed refusal (a 402 budget, a 503, a 5xx, the network): shown with the chat's own error card,
+	// whose Retry is Enter on the box, until the next send of this conversation.
+	const [routeError, setRouteError] = useState<Error | null>(null);
 	// Threads this mount started (D12), shown in the rail before the next list.
 	const [started, setStarted] = useState<AgentThread[]>([]);
 	const shownThreads = useMemo(
@@ -489,6 +493,7 @@ export function ElenchConversation({
 					// form (§5.3 item 1), with its pills and cell on its own message. The routes read
 					// the pills from the body, so the slot is staged first, synchronously (§5.1).
 					setRefusalNotice(null);
+					setRouteError(null);
 					setStaleResume(false);
 					setOrgNotReady(false);
 					setPendingMentions(distinctMentions(e.mentions));
@@ -618,6 +623,7 @@ export function ElenchConversation({
 	useEffect(() => {
 		if (routingTurn === null || error === undefined || error instanceof TurnRefusedError) return;
 		clearError();
+		setRouteError(error);
 		routeEvent({ type: "ROUTE_FAILED", turnId: routingTurn, failure: routeFailureOf(error) });
 	}, [routingTurn, error, clearError, routeEvent]);
 	// D9d's deadline: stop the request, so the route sees a disconnect, and read it as uncertain.
@@ -726,6 +732,7 @@ export function ElenchConversation({
 	);
 	/** Enter on the box, for the cards' Retry: nothing is sent without a draft to send from. */
 	const submitBox = useCallback(() => {
+		setRouteError(null);
 		setOrgNotReady(!send.submit());
 	}, [send]);
 
@@ -748,8 +755,8 @@ export function ElenchConversation({
 		shownError instanceof TurnRefusedError ? undefined : shownError;
 	if (staleResume) transcriptError = STALE_RESUME;
 	else if (transcriptError && retry.kind === "await-approval") transcriptError = AWAIT_APPROVAL;
-	const visibleError = orgNotReady ? ORG_NOT_READY : transcriptError;
-	const onRetry = orgNotReady ? submitBox : retryTurn;
+	const visibleError = orgNotReady ? ORG_NOT_READY : (routeError ?? transcriptError);
+	const onRetry = orgNotReady || routeError !== null ? submitBox : retryTurn;
 
 	/**
 	 * Sends an external prompt (D10x / D10y) and answers whether the store TOOK it: a token-less send

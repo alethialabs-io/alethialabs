@@ -189,6 +189,14 @@ describe("D9 / D9a / D10 / D10z SUBMIT", () => {
 		expect(t.entry?.claiming?.turnId).toBe("turn-old");
 	});
 
+	it("D9 › a released send whose text was edited (not yet saved) is re-sent under a FRESH turn id", () => {
+		const failed = row(c("deploy"), 3, { failedSend: { turnId: "turn-old", kind: "later", error: "x", at: NOW, uncertain: false } });
+		const edited = listedEntry("deploy", { server: failed, local: c("deploy now") });
+		expect(step(edited, { type: "SUBMIT", chatReady: true }).entry?.claiming?.turnId).toBe(FRESH.turnId);
+		// The same text, unedited, still names the failed turn.
+		expect(step(listedEntry("deploy", { server: failed }), { type: "SUBMIT", chatReady: true }).entry?.claiming?.turnId).toBe("turn-old");
+	});
+
 	it("D9a › a stored thread whose transcript is not loaded is loaded, and nothing is claimed", () => {
 		const e = listedEntry("deploy", { transcript: "unloaded" });
 		const t = step(e, { type: "SUBMIT", chatReady: true });
@@ -454,7 +462,8 @@ describe("D9d a later turn fails before streaming", () => {
 		expect(notices(t.effects)).toContain("earlier-version-sent");
 		if (t.entry === null) throw new Error("removed");
 		// The release keeps the edit under the fresh id; Enter then sends it as a new turn.
-		const fresh = row(c("deploy v2"), 5, { failedSend: { turnId: "turn-new", kind: "later", error: "x", at: NOW, uncertain: false } });
+		// S4 keeps the claimed text in the row, so the released row holds exactly the sent words.
+		const fresh = row(c(t.entry.sending?.text ?? ""), 5, { failedSend: { turnId: "turn-new", kind: "later", error: "x", at: NOW, uncertain: false } });
 		const back = stay({ ...t.entry, transcript: "loaded" }, { type: "RELEASE_RESULT", token: "tok-1", seq: 5, retry: 0, result: { outcome: "released", row: fresh } });
 		const again = step(back, { type: "SUBMIT", chatReady: true }, { ...CTX, fresh: { ...FRESH, turnId: "turn-other" } });
 		expect(again.entry?.claiming?.turnId).toBe("turn-new");

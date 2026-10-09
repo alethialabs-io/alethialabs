@@ -22,7 +22,11 @@ const KEY: DraftKey = {
 /** A store whose only live part is `dispatch`, recorded. */
 function recordingStore(): { store: DraftsStoreHandle; dispatch: ReturnType<typeof vi.fn> } {
 	const dispatch = vi.fn();
-	const store = { dispatch } as unknown as DraftsStoreHandle;
+	const store = {
+		dispatch,
+		ackNotices: vi.fn(),
+		view: { getState: () => ({ notices: [] }) },
+	} as unknown as DraftsStoreHandle;
 	return { store, dispatch };
 }
 

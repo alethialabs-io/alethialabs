@@ -310,7 +310,7 @@ describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry af
 		expect(editor().isEditable()).toBe(true);
 	});
 
-	it("sends the EDITED text on Enter, under the same first-turn id", async () => {
+	it("sends the EDITED text on Enter, as a new turn under a fresh id (the failed text is not what is sent)", async () => {
 		const tab = newTab(ORG_A);
 		await mount(tab, view);
 		server.plan("startConversation", "reject");
@@ -321,7 +321,18 @@ describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry af
 		await enter();
 		const turns = userTurns(shown(tab).conversationId);
 		expect(turns.map(textOf)).toEqual(["first try, edited"]);
-		expect(turns[0].id).toBe(failed.turnId);
+		expect(turns[0].id).not.toBe(failed.turnId);
+	});
+
+	it("re-sends the UNEDITED text under the failed send's own turn id", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, view);
+		server.plan("startConversation", "reject");
+		type("first try");
+		await enter();
+		const failed = server.callsOf("claimDraft")[0] as { turnId: string };
+		await enter();
+		expect(userTurns(shown(tab).conversationId)[0].id).toBe(failed.turnId);
 	});
 
 	it("keeps the edited text when the second try fails too", async () => {

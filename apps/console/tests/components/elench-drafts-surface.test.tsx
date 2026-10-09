@@ -494,7 +494,8 @@ describe("S9 › a failed first send", () => {
 		const k = shown(tab);
 		const turns = userTurns(k.conversationId);
 		expect(turns.map(textOf)).toEqual(["restart the api, gently"]);
-		expect(turns[0].id).toBe(first.turnId); // the failed send's turn id, never re-minted
+		// An edited text is a new turn: a fresh id, never the failed send's (it named other words).
+		expect(turns[0].id).not.toBe(first.turnId);
 	});
 
 	it("a lost created response: the next Enter loads the turn and sends nothing", async () => {
@@ -703,6 +704,113 @@ describe("S9 › an empty-cell prompt that cannot go yet", () => {
 	});
 });
 
+// ── The interim status line in the bar slot (until slice 11) ───────────────────────────────
+
+/** The bar slot's interim lines, or null when it shows none. */
+function statusLine(): string | null {
+	const el = screen.queryByTestId("elench-draft-status");
+	return el === null ? null : Array.from(el.querySelectorAll("p"), (p) => p.textContent).join(" | ");
+}
+
+/** A typed refusal of a later turn the store owns. */
+function refuse(code: "transcript-stale" | "thread-busy" | "client-outdated" | "turn-in-progress" | "turn-committed-different-text", committed = false) {
+	return {
+		kind: "refuse" as const,
+		status: 409,
+		refusal: {
+			refusal: code,
+			turnId: null,
+			committed,
+			textCommitted: committed && code !== "turn-committed-different-text",
+			answered: false,
+			revision: 1,
+			answerId: null,
+		},
+	};
+}
+
+describe("S9 › a refused or failed send is never silent", () => {
+	it("a certain refusal (D9d (a)): Not sent, the words back in the box", async () => {
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, crypto.randomUUID());
+		server.route.push(refuse("thread-busy"));
+		type("scale up");
+		await enter();
+		expect(statusLine()).toBe("Another message in this conversation is being answered | Not sent. Your message is back in the box.");
+		expect(box()).toBe("scale up");
+	});
+
+	it("D9a's transcript-stale says the newer messages are shown", async () => {
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, crypto.randomUUID());
+		server.route.push(refuse("transcript-stale"));
+		type("scale up");
+		await enter();
+		expect(statusLine()).toContain("This conversation has newer messages. They are shown now. Press Enter to send.");
+		expect(statusLine()).toContain("Not sent. Your message is back in the box.");
+	});
+
+	it("a 402 before streaming shows the chat's own budget card, whose Retry is Enter on the box, and says Not sent", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		server.route.push({ kind: "status", status: 402, body: JSON.stringify({ error: "AI limit reached.", reason: "out", resetAt: null, upgradable: false }) });
+		type("plan it");
+		await enter();
+		expect(statusLine()).toBe("Not sent. Your message is back in the box.");
+		expect(screen.getByText("AI limit reached.")).toBeTruthy();
+		act(() => screen.getByRole("button", { name: /retry/i }).click());
+		await flush();
+		expect(userTurns(T).map(textOf)).toEqual(["first", "plan it"]);
+		expect(statusLine()).toBeNull();
+	});
+
+	it("an uncertain failure (D9d (b)) says the message may already have been sent", async () => {
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, crypto.randomUUID());
+		server.route.push({ kind: "hang" });
+		type("drain");
+		await enter();
+		await flush(60_000);
+		await flush();
+		expect(statusLine()).toMatch(/^This message may already have been sent/);
+	});
+
+	it("turn-committed-different-text (D9d (d)) says an earlier version was sent", async () => {
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, crypto.randomUUID());
+		server.route.push(refuse("turn-committed-different-text", true));
+		type("an edit");
+		await enter();
+		expect(statusLine()).toContain("An earlier version of this message was already sent. It is shown above. Your edit is still in the box.");
+	});
+
+	it("a failed first send says Not sent; while it is being sent it says Sending…", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "hold");
+		type("first words");
+		await enter();
+		expect(statusLine()).toBe("Sending…");
+		server.loseHeld("startConversation");
+		server.deleteThread(shown(tab).conversationId); // nothing stored; the next release finds the row gone
+		await flush(30_000);
+		await flush();
+		expect(statusLine()).not.toBe("Sending…");
+	});
+
+	it("a start that fails says Not sent, and the next Enter clears the line", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "reject");
+		type("first words");
+		await enter();
+		expect(statusLine()).toBe("Not sent. Your message is back in the box.");
+		await enter();
+		expect(statusLine()).toBeNull();
+	});
+});
+
 // ── An edited re-send of an uncertain turn (D9d (b) and (d), D31) ─────────────────────────────
 
 describe("S9 › turn-committed-different-text", () => {
@@ -724,6 +832,7 @@ describe("S9 › turn-committed-different-text", () => {
 		thread.messages.push({ id: first.turnId, role: "user", parts: [{ type: "text", text: "drain the node" }] });
 		thread.revision += 1;
 		type("drain the node gracefully");
+		await flush(1_000); // saved: an UNCERTAIN marker survives the edit, so the re-send names its turn (R10)
 		server.route.push({
 			kind: "refuse",
 			status: 409,
