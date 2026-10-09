@@ -14,12 +14,14 @@
 
 import type { DraftListOk } from "@/lib/elench/draft-outcomes";
 import {
+	contentEquals,
 	type DraftsEnv,
 	initialDraftsState,
 	keyId,
 	newEntry,
 	reduceDrafts,
 	scopeId,
+	shownContent,
 } from "@/lib/stores/elench-drafts/reducer-drafting";
 import {
 	afterDrafting,
@@ -124,6 +126,16 @@ export function reduceEntry(
 	let t: SendEntryTransition;
 	if (isSendEvent(event)) t = reduceSendEntry(entry, event, ctx);
 	else t = afterDrafting(entry, interceptDraftingEvent(entry, event, ctx) ?? reduceDraftingEvent(entry, event, ctx));
+	// I6: a box that changes for any reason but the user's own EDIT was replaced from outside, so the
+	// editor must reseed. Each transition bumps the epoch itself; this makes it structural.
+	const after = t.entry;
+	if (
+		event.type !== "EDIT" &&
+		after !== null &&
+		after.epoch === entry.epoch &&
+		!contentEquals(shownContent(entry), shownContent(after))
+	)
+		t = { ...t, entry: { ...after, epoch: entry.epoch + 1 } };
 	const effects: SendEffect[] = t.effects.filter((x) => x.type !== "cache-remove");
 	const kept = t.fork === undefined ? t.entry : null;
 	if (holdsCache(entry) && !holdsCache(kept)) effects.push({ type: "cache-remove", key: entry.key });

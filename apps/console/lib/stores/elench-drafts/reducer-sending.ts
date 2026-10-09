@@ -377,7 +377,9 @@ export function reduceDraftingEvent(
 	const card = entry.conflict;
 	if (card === null || card.kind !== "uncertain" || card.row !== null)
 		return reduceDraftEntry(entry, event, ctx);
-	const t = reduceDraftEntry({ ...entry, conflict: null }, event, ctx);
+	const open: DraftEntry = { ...entry, conflict: null };
+	const t = reduceDraftEntry(open, event, ctx);
+	if (t.entry === open) return { entry, effects: t.effects }; // unchanged: the very same entry
 	if (t.entry === null || t.entry.conflict !== null) return t;
 	return { entry: { ...t.entry, conflict: card }, effects: t.effects };
 }
@@ -477,8 +479,9 @@ function sendingWords(entry: DraftEntry, sending: DraftSending): DraftContent {
 		artifacts: external ? [] : (entry.server?.content.artifacts ?? []),
 		cellTarget: null,
 	};
-	// An external prompt is not the draft's text: the box's own draft stays under this key.
-	return external ? head : appendContent(head, entry.local);
+	// Then the box's unsaved words. An external send's own row is never discarded (no claim took it),
+	// so its acknowledged draft stays on the server under this key.
+	return appendContent(head, entry.local);
 }
 
 /**
@@ -1305,7 +1308,10 @@ function discardResult(
 			};
 		}
 		case "conflict":
-			// The discard did not happen: another tab changed the row. Show both texts (D15).
+			// The discard did not happen: another tab changed the row. Show both texts (D15), unless a
+			// claim pressed meanwhile is pending: its own answer decides, and the box stays read-only.
+			if (e.claiming !== null || e.sending !== null)
+				return { entry: e, effects: [notice(entry.key, "discard-conflict")] };
 			return {
 				entry: { ...e, local: e.local ?? e.server?.content ?? EMPTY_CONTENT, conflict: { kind: "edited", row: r.row } },
 				effects: [notice(entry.key, "discard-conflict")],
@@ -1528,15 +1534,15 @@ export function interceptDraftingEvent(
 	if (r.outcome === "conflict" && fence !== null && r.thread.firstTurnId === fence.turnId) {
 		// D10f → D17: D10x's start committed first. The prompt leaves the box; the box keeps what it
 		// held before, unless the user typed since (I5: then the words stay, beside the row, as D15).
-		const untouched = entry.local !== null && contentEquals(entry.local, fence.merged);
+		const typed = entry.local !== null && !contentEquals(entry.local, fence.merged);
 		const before = contentEquals(fence.before, r.row.content) ? null : fence.before;
 		const next = withEpoch(entry, {
 			...settled,
 			server: r.row,
-			local: untouched ? before : entry.local,
+			local: typed ? entry.local : before,
 			pendingFailedSend: null,
 			thread: "listed",
-			conflict: untouched ? entry.conflict : { kind: "edited", row: r.row },
+			conflict: typed ? { kind: "edited", row: r.row } : entry.conflict,
 		});
 		const t = reload(next, ctx);
 		return { entry: t.entry, effects: [...t.effects, notice(entry.key, "first-sent")], fence: null };
