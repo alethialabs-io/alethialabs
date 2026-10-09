@@ -39,6 +39,9 @@ export function useElenchThreads() {
 	const projectId = ctx.kind === "project" ? ctx.projectId : undefined;
 	const [threads, setThreads] = useState<AgentThread[]>([]);
 	const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
+	// The revision `initialMessages` was read at (ADR 0003 §9.1): the transport's base revision
+	// for the next send. Null for an ephemeral conversation; `startThread`'s caller seeds it.
+	const [initialRevision, setInitialRevision] = useState<number | null>(null);
 	// Whether the initial resolution (list → resume/create) has settled. Until it has,
 	// the surface must NOT mount the keyed conversation: threadId is still null, so mounting
 	// now and flipping it to the resumed thread would remount the whole chat (the open flash).
@@ -50,7 +53,9 @@ export function useElenchThreads() {
 		async (id: string) => {
 			const full = await getThread(id);
 			setInitialMessages(full?.messages ?? []);
+			setInitialRevision(full?.revision ?? null);
 			selectStore(id);
+			return full;
 		},
 		[selectStore],
 	);
@@ -109,12 +114,14 @@ export function useElenchThreads() {
 				if (cancelled) return;
 				if (!userActed()) {
 					setInitialMessages(full?.messages ?? []);
+					setInitialRevision(full?.revision ?? null);
 					resumeStore(resume);
 				}
 			} else if (!resume && !userActed()) {
 				// Nothing to resume → the empty landing. Clear the transcript a previous context (or
 				// a previous open) staged, or the new conversation would be seeded with it.
 				setInitialMessages([]);
+				setInitialRevision(null);
 			}
 			setInitialResolved(true);
 		})();
@@ -143,6 +150,7 @@ export function useElenchThreads() {
 	 * to close it. */
 	const newChat = useCallback(() => {
 		setInitialMessages([]);
+		setInitialRevision(null);
 		useArtifactStore.getState().closeGrid();
 		useArtifactStore.getState().close();
 		newChatStore();
@@ -187,7 +195,10 @@ export function useElenchThreads() {
 		threads,
 		activeId: threadId,
 		initialMessages,
+		initialRevision,
 		selectThread,
+		/** Reload a thread's transcript (and its revision) in place of the current one. */
+		reloadThread: loadInto,
 		newChat,
 		startThread,
 		deleteThread,
