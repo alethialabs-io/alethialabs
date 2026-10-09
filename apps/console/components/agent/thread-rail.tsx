@@ -3,12 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { BookOpen, LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import {
+	type ConversationDraftFacts,
+	type UnsentConversation,
+	unsentNoteText,
+} from "@/components/agent/elench/use-elench-threads";
 import type { AgentThread } from "@/lib/db/schema";
 import { cn } from "@repo/ui/utils";
 
@@ -32,6 +37,51 @@ interface ThreadRailProps {
 	 * a narrow screen (the modal's sheet, #5650) passes `flex` here to show it at every width.
 	 */
 	className?: string;
+	/**
+	 * The Unsent group (ADR 0001 decision 3): conversations of this scope holding words that were
+	 * never sent, shown above the threads. Selecting one calls `onSelect` with its conversation id.
+	 */
+	unsent?: readonly UnsentConversation[];
+	/**
+	 * Counts a conversation's drafts for the delete confirm (§6.3). Without it, the confirm names
+	 * no count.
+	 */
+	countDrafts?: (id: string) => Promise<ConversationDraftFacts | null>;
+}
+
+
+/** The delete confirm's count, while it is asked for and once it is answered. */
+interface DeleteCount {
+	id: string;
+	done: boolean;
+	facts: ConversationDraftFacts | null;
+}
+
+const DELETE_BASE =
+	"This permanently deletes the conversation and everything in it — the transcript, its widgets and its approvals. This cannot be undone.";
+
+/** "1 unsent message" / "2 unsent messages". */
+function plural(n: number, one: string, many: string): string {
+	return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The delete confirm's description (§6.3): what the delete removes, then the drafts of the
+ * conversation it removes with it — how many, in how many organizations, and whether one is being
+ * sent right now — once the count has answered.
+ */
+function deleteDescription(count: DeleteCount | null): string {
+	if (count === null) return DELETE_BASE;
+	if (!count.done) return `${DELETE_BASE} Counting its unsent messages…`;
+	const f = count.facts;
+	if (f === null) return `${DELETE_BASE} Its unsent messages could not be counted; any it has are deleted with it.`;
+	const parts = [DELETE_BASE];
+	if (f.count > 0)
+		parts.push(
+			`It also deletes ${plural(f.count, "unsent message", "unsent messages")} of this conversation, in ${plural(f.orgs, "organization", "organizations")}.`,
+		);
+	if (f.sending) parts.push("A message in this conversation is being sent right now.");
+	return parts.join(" ");
 }
 
 const DAY = 86_400_000;
@@ -62,8 +112,8 @@ function relTime(d: Date): string {
 }
 
 /**
- * Thread sidebar — New chat, search, and the owner's threads grouped by recency
- * (Today/Yesterday/Earlier). Grayscale/squared; hidden below `lg` unless the caller passes a
+ * Thread sidebar — New chat, search, the Unsent group (conversations holding words that were never
+ * sent, ADR 0001 decision 3), and the owner's threads grouped by recency (Today/Yesterday/Earlier). Grayscale/squared; hidden below `lg` unless the caller passes a
  * `className` that shows it — the modal hosts it in a sheet there (#5650).
  */
 export function ThreadRail({
@@ -77,12 +127,32 @@ export function ThreadRail({
 	onOpenKnowledge,
 	knowledgeActive = false,
 	className,
+	unsent = [],
+	countDrafts,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 	// The thread a delete has been REQUESTED for. A chat carries its whole transcript and there is
 	// no undo, and the trigger is a small icon (hover-revealed where a pointer can hover) a hand's
 	// width from the row you meant to open — so the click asks first (#4280).
 	const [pendingDelete, setPendingDelete] = useState<AgentThread | null>(null);
+	const [deleteCount, setDeleteCount] = useState<DeleteCount | null>(null);
+	const unsentHeadingId = useId();
+
+	/** Opens the delete confirm for `t`, and asks for its draft count (§6.3) while it is open. */
+	const requestDelete = (t: AgentThread) => {
+		setPendingDelete(t);
+		if (countDrafts === undefined) return setDeleteCount(null);
+		setDeleteCount({ id: t.id, done: false, facts: null });
+		void countDrafts(t.id).then(
+			(facts) => setDeleteCount((cur) => (cur?.id === t.id ? { id: t.id, done: true, facts } : cur)),
+			() => setDeleteCount((cur) => (cur?.id === t.id ? { id: t.id, done: true, facts: null } : cur)),
+		);
+	};
+
+	const shownUnsent = useMemo(() => {
+		const needle = q.trim().toLowerCase();
+		return needle ? unsent.filter((u) => u.label.toLowerCase().includes(needle)) : unsent;
+	}, [unsent, q]);
 
 	const groups = useMemo(() => {
 		const todayStart = startOfDay(new Date());
@@ -163,7 +233,38 @@ export function ThreadRail({
 
 			<ScrollArea className="flex-1">
 				<div className="px-2 pb-3.5">
-					{groups.length === 0 && (
+					{shownUnsent.length > 0 && (
+						<div role="group" aria-labelledby={unsentHeadingId}>
+							<div
+								id={unsentHeadingId}
+								className="vx-eyebrow flex items-center justify-between px-2 pb-1.5 pt-3 text-ui-3xs"
+							>
+								<span>Unsent</span>
+								<span className="font-mono">{shownUnsent.length}</span>
+							</div>
+							{shownUnsent.map((u) => (
+								<button
+									key={u.conversationId}
+									type="button"
+									data-testid="thread-rail-unsent-row"
+									aria-current={u.active ? "true" : undefined}
+									onClick={() => onSelect(u.conversationId)}
+									className={cn(
+										"flex w-full flex-col gap-0.5 border-l-2 border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted",
+										u.active && "border-l-foreground bg-muted",
+									)}
+								>
+									<span title={u.label} className="min-w-0 truncate text-ui-sm text-foreground">
+										{u.label}
+									</span>
+									<span className="font-mono text-ui-3xs text-muted-foreground">
+										{unsentNoteText(u.note)}
+									</span>
+								</button>
+							))}
+						</div>
+					)}
+					{groups.length === 0 && shownUnsent.length === 0 && (
 						/* The rail is a 240px column, so the shared state's page-sized padding is
 						   tuned down the same way the artifact panel's is — the structure and the
 						   words stay shared, only the scale is local. */
@@ -231,7 +332,7 @@ export function ThreadRail({
 									<button
 										type="button"
 										aria-label={`Delete chat ${t.title}`}
-										onClick={() => setPendingDelete(t)}
+										onClick={() => requestDelete(t)}
 										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100"
 									>
 										<Trash2 className="h-3 w-3" />
@@ -246,14 +347,18 @@ export function ThreadRail({
 			<ConfirmDialog
 				open={pendingDelete !== null}
 				onOpenChange={(o) => {
-					if (!o) setPendingDelete(null);
+					if (!o) {
+						setPendingDelete(null);
+						setDeleteCount(null);
+					}
 				}}
 				title={`Delete ${pendingDelete?.title ?? "this chat"}?`}
-				description="This permanently deletes the conversation and everything in it — the transcript, its widgets and its approvals. This cannot be undone."
+				description={deleteDescription(deleteCount)}
 				confirmLabel="Delete chat"
 				onConfirm={() => {
 					if (pendingDelete) onDelete(pendingDelete.id);
 					setPendingDelete(null);
+					setDeleteCount(null);
 				}}
 			/>
 		</aside>
