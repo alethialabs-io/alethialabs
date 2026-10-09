@@ -6,7 +6,8 @@
 // cmdk names its search input through `aria-labelledby` → its own hidden `<label cmdk-label>`, whose
 // text is the root's `label` prop. A root without one renders an input whose name computes to "" —
 // and an empty `aria-labelledby` target still beats the placeholder, so the search is an unnamed
-// combobox with its placeholder visible inside it. Eleven roots shipped that way (#5803, #5824).
+// combobox with its placeholder visible inside it. Every root in the repo shipped that way until
+// #5803 and #5824.
 //
 // WHAT THIS READS, AND WHERE IT STOPS:
 //  - `<CommandDialog>` is named by construction: it passes its `title` (default "Command Palette")
