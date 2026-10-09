@@ -190,10 +190,7 @@ async function mount(tab: Tab, view: "modal" | "panel" = "panel"): Promise<() =>
 		else useElenchStore.getState().openPanel({ kind: "org" });
 	});
 	await flush();
-	return () => {
-		r.unmount();
-		tab.drafts.store.dispose();
-	};
+	return () => r.unmount();
 }
 
 /** Reloads: the page's memory is gone, its `sessionStorage` and the server are not. */
@@ -202,6 +199,7 @@ async function reload(tab: Tab, unmount: () => void, open?: string): Promise<{ t
 		window.dispatchEvent(new Event("pagehide")); // the cache is written synchronously on leave (§7.5)
 	});
 	unmount();
+	tab.drafts.store.dispose(); // the page's memory, timers and listeners are gone
 	cleanup();
 	useElenchStore.setState({ ...INITIAL, conversationId: open ?? crypto.randomUUID() });
 	const next = newTab(tab.page.org, tab.storage);
@@ -560,5 +558,512 @@ describe("S9 › reload during a send", () => {
 		await flush(1_000);
 		expect(box()).toBe("enter at once");
 		again.unmount();
+	});
+});
+
+// ── The empty-cell prompt: an external send with its cell in the event (D10y, D10f) ────────────
+
+/** The empty-cell composer's submit, as the widget grid stages it. */
+function askCell(x: number, y: number, text: string): void {
+	act(() => useWidgetGridStore.setState({ pendingCellRequest: { x, y, text } }));
+}
+
+/** The metadata a stored user turn carries. */
+function metaOf(m: UIMessage | undefined): unknown {
+	return m?.metadata;
+}
+
+describe("S9 › the empty-cell prompt", () => {
+	it("the empty-cell prompt into an existing conversation, driven through pendingCellRequest, stores its cell target on its own message", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		askCell(2, 1, "cpu by node");
+		await flush();
+		const turn = userTurns(T).at(-1);
+		expect(textOf(turn)).toBe("cpu by node");
+		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 2, y: 1 } });
+		// The request named the cell on the turn's own message, and nothing staged the grid's slot.
+		expect(server.requests.at(-1)?.messages.at(-1)?.metadata).toMatchObject({ cellTarget: { x: 2, y: 1 } });
+		expect(useWidgetGridStore.getState().pendingCellTarget).toBeNull();
+		// It took no claim: the box was never the prompt's.
+		expect(server.callsOf("claimDraft")).toHaveLength(0);
+	});
+
+	it("after a cell prompt, the next composer turn's stored message has no cellTarget", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		askCell(3, 0, "memory by pod");
+		await flush();
+		type("and the disk?");
+		await enter();
+		const turn = userTurns(T).at(-1);
+		expect(textOf(turn)).toBe("and the disk?");
+		expect(metaOf(turn) ?? {}).not.toHaveProperty("cellTarget");
+		expect(server.requests.at(-1)?.cellTarget).toBeNull();
+	});
+
+	it("a refused empty-cell prompt into an existing conversation, driven through pendingCellRequest, is in the box with its cell, and Enter lands the widget in that cell", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		server.route.push({
+			kind: "refuse",
+			status: 409,
+			refusal: {
+				refusal: "transcript-stale",
+				turnId: null,
+				committed: false,
+				textCommitted: false,
+				answered: false,
+				revision: 1,
+				answerId: null,
+			},
+		});
+		askCell(1, 2, "error rate");
+		await flush(1_000);
+		expect(box()).toBe("error rate"); // D10f: the prompt is in the box, not lost
+		expect(bubbles("error rate")).toHaveLength(0);
+		const row = server.row(shown(tab));
+		expect(row?.content).toMatchObject({ text: "error rate", cellTarget: { x: 1, y: 2 } });
+		await enter(); // the Retry: a claimed composer send of the box, with the content's cell
+		const turn = userTurns(T).at(-1);
+		expect(textOf(turn)).toBe("error rate");
+		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 1, y: 2 } });
+		expect(useWidgetGridStore.getState().pendingCellTarget).toBeNull();
+	});
+});
+
+// ── An edited re-send of an uncertain turn (D9d (b) and (d), D31) ─────────────────────────────
+
+describe("S9 › turn-committed-different-text", () => {
+	it("an uncertain later turn stored by a late acceptance, edited and re-sent: turn-committed-different-text keeps the edit in the box under a new turn id, and Enter sends it as a new turn", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		server.route.push({ kind: "hang" });
+		type("drain the node");
+		await enter();
+		const first = server.callsOf("claimDraft")[0] as { turnId: string };
+		await flush(60_000); // D9d's deadline: stopped, released uncertain, the words are back
+		await flush();
+		expect(box()).toBe("drain the node");
+		expect(server.row(shown(tab))?.failedSend).toMatchObject({ turnId: first.turnId, uncertain: true });
+		// The route accepted it late after all: the turn is stored under that id.
+		const thread = server.threads.get(T);
+		if (!thread) throw new Error("no thread");
+		thread.messages.push({ id: first.turnId, role: "user", parts: [{ type: "text", text: "drain the node" }] });
+		thread.revision += 1;
+		type("drain the node gracefully");
+		server.route.push({
+			kind: "refuse",
+			status: 409,
+			refusal: {
+				refusal: "turn-committed-different-text",
+				turnId: first.turnId,
+				committed: true,
+				textCommitted: false,
+				answered: false,
+				revision: thread.revision,
+				answerId: null,
+			},
+		});
+		await enter();
+		const second = server.callsOf("claimDraft")[1] as { turnId: string };
+		expect(second.turnId).toBe(first.turnId); // the uncertain marker's id (R10)
+		expect(box()).toBe("drain the node gracefully"); // the edit is kept
+		const fresh = server.row(shown(tab))?.failedSend?.turnId;
+		expect(fresh).toBeTruthy();
+		expect(fresh).not.toBe(first.turnId);
+		await enter();
+		const third = server.callsOf("claimDraft")[2] as { turnId: string };
+		expect(third.turnId).toBe(fresh);
+		expect(userTurns(T).map(textOf)).toEqual(["first", "drain the node", "drain the node gracefully"]);
+		expect(userTurns(T).at(-1)?.id).toBe(fresh);
+	});
+});
+
+// ── Another tab or device (D13, D17, D18, D21, D22, D35) ─────────────────────────────────────
+
+describe("S9 › another tab or device", () => {
+	it("B gets already-stored, the transcript shows A's turns, and B's next send keeps them in the row", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "hold");
+		type("one command");
+		await enter();
+		const k = shown(tab);
+		const claim = server.callsOf("claimDraft")[0] as { turnId: string };
+		// Tab A (a duplicate holding the same claim) stored this turn and was answered meanwhile.
+		server.putThread({
+			id: k.conversationId,
+			projectId: null,
+			title: "one command",
+			messages: [
+				{ id: claim.turnId, role: "user", parts: [{ type: "text", text: "one command" }] },
+				{ id: crypto.randomUUID(), role: "assistant", parts: [{ type: "text", text: "A's answer" }] },
+			],
+		});
+		server.release("startConversation");
+		await flush();
+		expect(bubbles("A's answer")).not.toHaveLength(0); // loaded, never re-sent (D13)
+		expect(server.requests).toHaveLength(0);
+		type("one more");
+		await enter();
+		expect(userTurns(k.conversationId).map(textOf)).toEqual(["one command", "one more"]);
+		expect(server.threads.get(k.conversationId)?.messages.map(textOf)).toContain("A's answer");
+	});
+
+	it("duplicated tab: Retry in B after A's success loads A's transcript, and a further send from B keeps A's turns", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "reject");
+		type("restart it");
+		await enter();
+		const k = shown(tab);
+		const claim = server.callsOf("claimDraft")[0] as { turnId: string };
+		expect(box()).toBe("restart it");
+		// A, the duplicate, sent the same turn and was answered.
+		server.putThread({
+			id: k.conversationId,
+			projectId: null,
+			title: "restart it",
+			messages: [
+				{ id: claim.turnId, role: "user", parts: [{ type: "text", text: "restart it" }] },
+				{ id: crypto.randomUUID(), role: "assistant", parts: [{ type: "text", text: "restarted" }] },
+			],
+		});
+		await enter(); // B's Retry: the claim is a later one now, so the transcript loads first (D9a)
+		await flush();
+		expect(bubbles("restarted")).not.toHaveLength(0);
+		type("and check it");
+		await flush(1_000); // saved: a new text drops the (certain) failed-send marker and its id
+		await enter();
+		expect(server.threads.get(k.conversationId)?.messages.map(textOf)).toEqual([
+			"restart it",
+			"restarted",
+			"and check it",
+			"OK",
+		]);
+	});
+
+	it("device A starts K; on device B the refresh lands and B sends: the row holds A's turns followed by B's", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		const k = shown(tab);
+		type("draft on B");
+		await flush(1_000);
+		// A claims and starts K (B's words are A's here: one draft row), stored with its answer.
+		const a = server.transport(() => ORG_A);
+		const row = server.row(k);
+		const token = crypto.randomUUID();
+		const turnId = crypto.randomUUID();
+		await a.claimDraft({ ...k, baseRevision: row?.revision ?? 0, content: { text: "from A", mentions: [], artifacts: [], cellTarget: null }, turnId, token, kind: "first", tabId: "tab-a" });
+		await a.startConversation({ ...k, origin: "composer", token, turnId, title: "" });
+		server.threads.get(k.conversationId)?.messages.push({ id: crypto.randomUUID(), role: "assistant", parts: [{ type: "text", text: "A's reply" }] });
+		act(() => window.dispatchEvent(new Event("focus"))); // B's list refresh (D22)
+		await flush();
+		await flush();
+		expect(bubbles("A's reply")).not.toHaveLength(0);
+		type("from B");
+		await enter();
+		expect(userTurns(k.conversationId).map(textOf)).toEqual(["from A", "from B"]);
+	});
+
+	it("Discard in B while A chats in the thread leaves the thread and its widgets", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		type("half a thought");
+		await flush(1_000);
+		const k = shown(tab);
+		act(() => tab.drafts.store.dispatch({ type: "ENTRY", key: k, event: { type: "DISCARD" } }));
+		await flush();
+		expect(server.row(k)?.state).toBe("discarded");
+		expect(server.threads.get(T)?.deleted).toBe(false);
+		expect(userTurns(T).map(textOf)).toEqual(["first"]);
+	});
+
+	it("send into a deleted conversation keeps the words in a new one", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		const k = shown(tab);
+		// Elsewhere this conversation was started and then deleted: its id is a tombstone.
+		server.putThread({ id: k.conversationId, projectId: null, title: "gone", messages: [], deleted: true });
+		type("still needed");
+		await enter();
+		await flush(1_000);
+		const now = shown(tab);
+		expect(now.conversationId).not.toBe(k.conversationId); // D18: forked, and the screen followed
+		expect(box()).toBe("still needed");
+		expect(server.row(now)?.content.text).toBe("still needed");
+	});
+
+	it("delete in tab B while tab A's first send is starting: A's words move to a new conversation", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		server.plan("startConversation", "hold");
+		type("about to be deleted");
+		await enter();
+		const k = shown(tab);
+		server.deleteThread(k.conversationId); // B's delete purges the frozen row (§6.3)
+		server.release("startConversation");
+		await flush(1_000);
+		const now = shown(tab);
+		expect(now.conversationId).not.toBe(k.conversationId);
+		expect(box()).toBe("about to be deleted");
+		expect(server.row(now)?.content.text).toBe("about to be deleted");
+	});
+
+	it("delete elsewhere then reload: no draft", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		type("soon purged");
+		await flush(1_000);
+		const k = shown(tab);
+		expect(server.row(k)?.content.text).toBe("soon purged");
+		server.deleteThread(k.conversationId);
+		const again = await reload(tab, unmount, k.conversationId);
+		expect(box()).toBe("");
+		again.unmount();
+	});
+
+	it("a later turn whose consume is delayed 95 s is consumed once, and no other device shows the text", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		for (let i = 0; i < 8; i++) server.plan("consumeDraft", "hold");
+		type("rotate the keys");
+		await enter();
+		await flush(95_000);
+		const k = shown(tab);
+		// Another device lists the scope: the claim is alive (heartbeats), so the words stay frozen.
+		const other = await server.transport(() => ORG_A).listDrafts({ projectId: null });
+		if (other.outcome !== "ok") throw new Error("list refused");
+		const listed = other.drafts.find((d) => d.row.conversationId === k.conversationId);
+		expect(listed?.row.state).toBe("sending");
+		while (server.callsOf("consumeDraft").length > 0) {
+			try {
+				server.release("consumeDraft");
+			} catch {
+				break;
+			}
+		}
+		await flush();
+		const row = server.row(k);
+		expect(row?.state).toBe("active");
+		expect(row?.content.text).toBe("");
+		expect(userTurns(T).map(textOf)).toEqual(["first", "rotate the keys"]);
+		expect(box()).toBe("");
+	});
+});
+
+// ── Orgs, accounts and pages (D23-D25, D29) ─────────────────────────────────────────────────
+
+/** Re-renders the shell for another page (an org switch remounts the `[org]` layout). */
+function rerenderPage(tab: Tab, org: string, unmountOld: () => void): () => void {
+	unmountOld();
+	tab.page.org = org;
+	nav.pathname = org === ORG_A ? "/acme" : "/beta";
+	useElenchStore.setState({ pageOrgId: org });
+	const r = render(
+		<ElenchDraftsRoot pageOrgId={org} tab={tab.drafts}>
+			<ElenchSurface />
+		</ElenchDraftsRoot>,
+	);
+	return () => r.unmount();
+}
+
+describe("S9 › orgs, accounts and pages", () => {
+	it("org switch shows B's empty box and keeps A's failed start for A", async () => {
+		const tab = newTab(ORG_A);
+		const r = render(
+			<ElenchDraftsRoot pageOrgId={ORG_A} tab={tab.drafts}>
+				<ElenchSurface />
+			</ElenchDraftsRoot>,
+		);
+		useElenchStore.setState({ pageOrgId: ORG_A });
+		act(() => useElenchStore.getState().openPanel({ kind: "org" }));
+		await flush();
+		server.plan("startConversation", "reject");
+		type("A's words");
+		await enter();
+		const a = shown(tab);
+		expect(box()).toBe("A's words");
+		const unmountB = rerenderPage(tab, ORG_B, () => r.unmount());
+		await flush();
+		expect(box()).toBe("");
+		expect(server.row(a)?.content.text).toBe("A's words");
+		expect(server.row(a)?.failedSend).not.toBeNull();
+		rerenderPage(tab, ORG_A, unmountB);
+		await flush();
+		expect(box()).toBe("A's words");
+	});
+
+	it("scope change during listDrafts settles for the new scope only", async () => {
+		const tab = newTab(ORG_A);
+		const K = crypto.randomUUID();
+		await server.transport(() => ORG_A).saveDraft({ orgId: ORG_A, projectId: null, conversationId: K, baseRevision: 0, content: { text: "org words", mentions: [], artifacts: [], cellTarget: null }, tabId: "x" });
+		server.plan("listDrafts", "hold");
+		useElenchStore.setState({ pageOrgId: ORG_A });
+		render(
+			<ElenchDraftsRoot pageOrgId={ORG_A} tab={tab.drafts}>
+				<ElenchSurface />
+			</ElenchDraftsRoot>,
+		);
+		const P = crypto.randomUUID();
+		act(() => useElenchStore.getState().openPanel({ kind: "project", projectId: P, environmentId: null }));
+		await flush();
+		server.release("listDrafts"); // the org scope's late answer
+		await flush();
+		const drafts = tab.drafts.store.view.getState().drafts;
+		expect(drafts.scope).toEqual({ orgId: ORG_A, projectId: P });
+		expect(drafts.entries[keyId({ orgId: ORG_A, projectId: null, conversationId: K })]).toBeUndefined();
+	});
+
+	it("account B in the same tab never sees A's words", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		type("A's secret");
+		act(() => window.dispatchEvent(new Event("pagehide")));
+		who.viewer = { id: "00000000-0000-4000-8000-0000000000bb" };
+		unmount();
+		cleanup();
+		await mount(tab);
+		expect(box()).toBe("");
+		expect(JSON.stringify(Object.values(tab.drafts.store.view.getState().drafts.entries))).not.toContain("A's secret");
+		const items = Array.from({ length: tab.storage.length }, (_, i) => tab.storage.getItem(tab.storage.key(i) ?? "") ?? "");
+		expect(items.join()).not.toContain("A's secret");
+	});
+
+	it("a session that ends without the menu clears the cache", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		server.plan("saveDraft", "reject");
+		type("kubeconfig contents");
+		await flush(1_000);
+		act(() => window.dispatchEvent(new Event("pagehide")));
+		const before = Array.from({ length: tab.storage.length }, (_, i) => tab.storage.getItem(tab.storage.key(i) ?? "") ?? "");
+		expect(before.join()).toContain("kubeconfig contents");
+		who.viewer = null; // the session expired (no menu sign-out)
+		unmount();
+		cleanup();
+		await mount(tab);
+		const after = Array.from({ length: tab.storage.length }, (_, i) => tab.storage.getItem(tab.storage.key(i) ?? "") ?? "");
+		expect(after.join()).not.toContain("kubeconfig contents");
+	});
+
+	it("with storage that throws, drafts still save to the server", async () => {
+		const tab = newTab(ORG_A, memoryStorage(), () => {
+			throw new DOMException("denied", "SecurityError");
+		});
+		await mount(tab);
+		type("saved anyway");
+		await flush(1_000);
+		expect(server.row(shown(tab))?.content.text).toBe("saved anyway");
+	});
+
+	it("after a slug rename, the words stay under the org id and save after reload", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		server.renamed.add(ORG_A);
+		type("renamed meanwhile");
+		await flush(1_000);
+		const k = shown(tab);
+		expect(server.row(k)).toBeUndefined(); // scope-changed(address): nothing written
+		expect(box()).toBe("renamed meanwhile");
+		server.renamed.delete(ORG_A); // the reload is at the new address
+		const again = await reload(tab, unmount, k.conversationId);
+		await flush(1_000);
+		expect(box()).toBe("renamed meanwhile");
+		expect(server.row(k)?.content.text).toBe("renamed meanwhile");
+		again.unmount();
+	});
+
+	it("following the address link re-arms the blocked key and saves it", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		server.renamed.add(ORG_A);
+		type("blocked by the rename");
+		await flush(1_000);
+		const k = shown(tab);
+		expect(server.row(k)).toBeUndefined();
+		server.renamed.delete(ORG_A);
+		// The link navigates this tab to the org's new address: the same org id, another path.
+		rerenderPage(tab, ORG_A, unmount);
+		nav.pathname = "/acme-renamed";
+		await flush(1_000);
+		expect(server.row(k)?.content.text).toBe("blocked by the rename");
+	});
+
+	it("Back/Forward between orgs inside the debounce: no write is POSTed from B's page", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		type("typed on A");
+		act(() => window.dispatchEvent(new PopStateEvent("popstate"))); // Back: now on B's page
+		tab.page.org = ORG_B;
+		await flush(1_000);
+		expect(server.calls.filter((c) => c.name === "saveDraft" && c.page === ORG_B)).toHaveLength(0);
+		// Forward again: A's page names its org, and the words save there.
+		tab.page.org = ORG_A;
+		rerenderPage(tab, ORG_A, unmount);
+		await flush(1_000);
+		expect(server.row(shown(tab))?.content.text).toBe("typed on A");
+	});
+
+	it("a save handed to Next before router.push is answered other-org and held, then saved on return", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		server.plan("saveDraft", "hold");
+		type("in flight across the switch");
+		await flush(1_000);
+		const k = shown(tab);
+		tab.page.org = ORG_B; // the switch committed while the save waited in Next's queue
+		server.release("saveDraft");
+		await flush();
+		expect(server.row(k)).toBeUndefined();
+		expect(tab.drafts.store.view.getState().drafts.entries[keyId(k)]?.save).toBe("held");
+		tab.page.org = ORG_A;
+		rerenderPage(tab, ORG_A, unmount);
+		await flush(1_000);
+		expect(server.row(k)?.content.text).toBe("in flight across the switch");
+	});
+
+	it("New chat, type, focus inside the debounce: the words stay", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		act(() => useElenchStore.getState().newChat());
+		await flush();
+		type("not yet saved");
+		act(() => window.dispatchEvent(new Event("focus")));
+		await flush();
+		expect(box()).toBe("not yet saved");
+		await flush(1_000);
+		expect(server.row(shown(tab))?.content.text).toBe("not yet saved");
+	});
+});
+
+// ── A long paste (§4.1's bound) ─────────────────────────────────────────────────────────────
+
+describe("S9 › a 50,000-line paste", () => {
+	const paste = Array.from({ length: 50_000 }, () => "x").join("\n");
+
+	it("a 50,000-line paste is claimed and sent as the first message", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		type(paste);
+		await enter();
+		const turns = userTurns(shown(tab).conversationId);
+		expect(textOf(turns[0])).toBe(paste);
+	});
+
+	it("a 50,000-line paste is sent as a later turn", async () => {
+		const T = crypto.randomUUID();
+		const tab = newTab(ORG_A);
+		await mountOnThread(tab, T);
+		type(paste);
+		await enter();
+		expect(textOf(userTurns(T).at(-1))).toBe(paste);
 	});
 });

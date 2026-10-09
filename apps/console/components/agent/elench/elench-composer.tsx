@@ -162,17 +162,26 @@ function ComposerBody({
 		if (autoFocus) editor.focus();
 	}, [autoFocus, editor]);
 
-	// Reseed whenever the store replaced the box from outside (its epoch moved), or once the draft
-	// first exists. Never on the user's own edits, which never move the epoch.
+	// Reseed whenever the store replaced the box from outside (its epoch moved), once the draft first
+	// exists, and to empty when it is gone (D25 cleared the tab): the box never shows words the store
+	// no longer holds. Never on the user's own edits, which never move the epoch.
 	const epoch = entry?.epoch ?? null;
+	const present = entry !== null;
 	useEffect(() => {
-		if (entry === null || epochRef.current === entry.epoch) return;
+		if (entry === null) {
+			if (epochRef.current === null) return;
+			epochRef.current = null;
+			lastRef.current = { text: "", mentions: [] };
+			editor.update(contentToEditor(EMPTY_CONTENT), { tag: RESEED_TAG });
+			return;
+		}
+		if (epochRef.current === entry.epoch) return;
 		const content = shownContent(entry);
 		epochRef.current = entry.epoch;
 		lastRef.current = { text: content.text, mentions: content.mentions };
 		editor.update(contentToEditor(content), { tag: RESEED_TAG });
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- `entry` changes on every keystroke; only an epoch move reseeds
-	}, [editor, epoch]);
+	}, [editor, epoch, present]);
 
 	useEffect(() => {
 		editor.setEditable(editable);
