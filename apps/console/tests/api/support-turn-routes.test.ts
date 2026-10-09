@@ -12,7 +12,6 @@
 
 import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 import { getToolName, isToolUIPart, tool, type UIMessage } from "ai";
-import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -191,18 +190,6 @@ vi.mock("@/lib/authz", () => ({
 			allowed: !(ref.type === "project" && ref.id !== undefined && world.hiddenProjects.has(ref.id)),
 		})),
 	}),
-}));
-vi.mock("@/lib/billing/ai-plan", () => ({ resolveAiTier: vi.fn(async () => "ai_free") }));
-vi.mock("@/lib/ai/project-knowledge", () => ({
-	buildProjectKnowledge: vi.fn(async () => ""),
-	formatContextBlock: vi.fn(() => ""),
-	readAgentContext: vi.fn(async () => null),
-}));
-vi.mock("@/lib/ai/environment-knowledge", () => ({
-	buildEnvironmentKnowledge: vi.fn(async () => ({ name: null, block: "" })),
-}));
-vi.mock("@/app/server/actions/resolve", () => ({
-	resolveActiveEnvironmentId: vi.fn(async () => null),
 }));
 vi.mock("@/lib/ai/provider-options", async (importOriginal) => {
 	const real = await importOriginal<typeof import("@/lib/ai/provider-options")>();
@@ -759,6 +746,18 @@ function collectGarbage(): void {
 	if (typeof gc === "function") gc();
 }
 
+/**
+ * Wait one macrotask, then collect. The route's last synchronous reference to the request goes when
+ * the turn that returned the response unwinds; collecting before that can pass on a route that has
+ * already let its request go.
+ */
+async function collectAfterMacrotask(): Promise<void> {
+	await new Promise<void>((resolve) => {
+		setTimeout(resolve, 0);
+	});
+	collectGarbage();
+}
+
 /** Read `res` to its end, raising `seen.text` once the first text delta has reached the client. */
 function readNoting(res: Response, seen: { text: boolean }): Promise<Chunk[]> {
 	return chunksOf(res, (c) => {
@@ -782,16 +781,6 @@ function userMsg(id: string, text: string, metadata?: unknown): UIMessage {
 	return { id, role: "user", parts: [{ type: "text", text }], ...(metadata === undefined ? {} : { metadata }) };
 }
 
-/** An answer that proposes `propose_operation` (and, with `alsoRead`, a stored `list_projects` read). */
-function proposalAnswer(id: string, toolCallId: string, alsoRead = false): UIMessage {
-	const parts: UIMessage["parts"] = [{ type: "step-start" }];
-	if (alsoRead) {
-		parts.push({ type: "tool-list_projects", toolCallId: "read-1", state: "output-available", input: {}, output: { projects: [] } });
-	}
-	parts.push({ type: "tool-propose_operation", toolCallId, state: "input-available", input: { operation: "plan_project" } });
-	return { id, role: "assistant", parts };
-}
-
 /** `a` with the browser's output of `toolCallId`. */
 function withOutput(a: UIMessage, toolCallId: string, output: unknown): UIMessage {
 	return {
@@ -803,14 +792,6 @@ function withOutput(a: UIMessage, toolCallId: string, output: unknown): UIMessag
 		),
 	};
 }
-
-const APPROVED = {
-	status: "approved",
-	operation: "plan_project",
-	projectId: PROJECT,
-	environmentId: null,
-	jobId: "4a8d2b3f-9c5e-4d7f-8b2c-3e4f5a6b7c8d",
-};
 
 /** The turn fields of a request. */
 interface TurnFields {
@@ -960,6 +941,8 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers();
+});
+
 /** A support thread, seeded (`kind = support`, no project). */
 function seedSupportThread(messages: UIMessage[], over: Partial<FThread> = {}): FThread {
 	return seedThread(messages, { kind: "support", ...over });
@@ -1140,7 +1123,7 @@ describe("the support route, for a request that names a thread (slice 8)", () =>
 		const seen = { text: false };
 		const reading = readNoting(res, seen);
 		await vi.waitFor(() => expect(seen.text).toBe(true));
-		collectGarbage();
+		await collectAfterMacrotask();
 		ctl.abort();
 		await reading;
 		await vi.waitFor(() => expect(claims()[0]?.state).toBe("answered"));
@@ -1331,7 +1314,7 @@ describe("the agent-identity route (slice 8)", () => {
 		const seen = { text: false };
 		const reading = readNoting(res, seen);
 		await vi.waitFor(() => expect(seen.text).toBe(true));
-		collectGarbage();
+		await collectAfterMacrotask();
 		ctl.abort();
 		await reading;
 		await vi.waitFor(() => expect(claims()[0]?.state).toBe("answered"));
