@@ -38,6 +38,7 @@ import {
 	isAcknowledged,
 	noticeLines,
 } from "./copy";
+import { loadErrorText, useDraftLoadError } from "./load-error";
 import { forgetKeptInTab, keepInTab, useJustSaved, useKeptInTab } from "./registry";
 
 /** Where one draft's status is rendered: the key it reports on. */
@@ -210,7 +211,8 @@ export function DraftBarSlot({ draftKey }: DraftSlotProps) {
 	// While the box is frozen for a send, its state is the whole story: the lines of earlier sends
 	// were acknowledged by this send, and a line of its own would only repeat the bar.
 	const lines = view === null || bar?.kind === "sending" ? [] : noticeLines(view, draftKey);
-	const empty = bar === null && lines.length === 0;
+	const loadError = useDraftLoadError();
+	const empty = bar === null && lines.length === 0 && loadError === null;
 
 	let shownBar: ReactNode = null;
 	if (bar !== null && entry !== null) {
@@ -229,6 +231,14 @@ export function DraftBarSlot({ draftKey }: DraftSlotProps) {
 		<div ref={ref} role="status" aria-live="polite">
 			{!empty && (
 				<div data-testid="elench-draft-status" className="flex flex-col gap-1 px-1 pb-2">
+					{loadError !== null && (
+						// G10: the draft still renders; what failed to load says so, with its Retry.
+						<DecisionBar
+							text={loadErrorText(loadError.step)}
+							actions={[{ label: "Retry", run: loadError.retry }]}
+							onDone={() => focusBox(ref.current)}
+						/>
+					)}
 					{shownBar}
 					{lines.map((line) => (
 						<p key={line} className="text-ui-sm text-muted-foreground">
