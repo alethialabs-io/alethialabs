@@ -8,6 +8,9 @@
 // whatever the topbar switcher said. Every collaborator is mocked; what is asserted is the
 // wiring — the body's id goes through `resolveActiveEnvironmentId` (org-scoped, falls back to
 // the default), the resolved id reaches the prompt, the knowledge readers and the tool builder.
+// Since ADR 0003 slice 6 the turn is accepted through `reserveTurn` (stubbed here to accept) and runs
+// as the actor `resolveTurnActor` resolved for the body's org, so that actor is what the knowledge
+// readers are handed.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,12 +33,19 @@ interface StreamTextArgs {
 vi.mock("ai", () => ({
 	convertToModelMessages: vi.fn(async (m: unknown) => m),
 	createUIMessageStream: vi.fn(
-		({ execute }: { execute: (o: { writer: unknown }) => void }) => {
-			execute({ writer: { write: vi.fn(), merge: vi.fn() } });
+		({ execute }: { execute: (o: { writer: unknown }) => Promise<void> | void }) => {
+			// The streamText call is synchronous at the top of `execute`; what follows it reads a real
+			// stream, which this stub does not produce, so its rejection is expected and swallowed.
+			void Promise.resolve()
+				.then(() => execute({ writer: { write: vi.fn(), merge: vi.fn() } }))
+				.catch(() => undefined);
 			return {};
 		},
 	),
 	createUIMessageStreamResponse: vi.fn(() => new Response("ok")),
+	generateId: () => "answer-1",
+	isToolUIPart: () => false,
+	readUIMessageStream: vi.fn(),
 	stepCountIs: vi.fn(() => () => false),
 	streamText: (args: StreamTextArgs) => streamText(args),
 }));
@@ -55,7 +65,40 @@ vi.mock("@/lib/ai/environment-knowledge", () => ({
 vi.mock("@/lib/ai/tools", () => ({ buildProjectAgentTools: vi.fn(() => ({})) }));
 vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn(async () => "user-1") }));
 vi.mock("@/lib/authz/guard", () => ({
-	currentActor: vi.fn(async () => ({ userId: "user-1", orgId: "org-1" })),
+	currentActor: vi.fn(async () => ({ userId: "user-1", orgId: "session-org" })),
+	resolveTurnActor: vi.fn(async (userId: string, orgId: string) => ({ userId, orgId })),
+}));
+vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can: async () => ({ allowed: true }) }) }));
+// The thread's pin (none) and the project check (the project is in the org).
+vi.mock("@/lib/db", () => ({
+	getServiceDb: () => ({
+		select: () => ({ from: () => ({ where: async () => [{ billingOrgId: null, id: "p" }] }) }),
+	}),
+}));
+vi.mock("@/lib/agent/turn-claims", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/agent/turn-claims")>()),
+	reserveTurn: vi.fn(async () => ({
+		outcome: "accepted",
+		turn: {
+			claimId: "c1",
+			token: "t1",
+			userId: "user-1",
+			threadId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+			threadKind: "agent",
+			projectId: "2b6c0d1e-7a3c-4b5d-8f0a-1c2d3e4f5a6b",
+			billingOrgId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			aiKind: "agent",
+			turnId: "u1",
+			attemptKey: "answer",
+			attemptNo: 1,
+			kind: "answer",
+			acceptedRevision: 2,
+			charge: { source: "included", credits: 0 },
+			modelInput: [],
+		},
+	})),
+	heartbeatTurn: vi.fn(async () => true),
+	finalizeTurn: vi.fn(async () => ({ outcome: "won", state: "failed" })),
 }));
 vi.mock("@/lib/billing/agent-metering", () => ({ recordAgentTurnUsage: vi.fn() }));
 vi.mock("@/lib/billing/ai-quota", () => ({
@@ -82,6 +125,8 @@ import { buildProjectAgentTools } from "@/lib/ai/tools";
 const PROJECT = "2b6c0d1e-7a3c-4b5d-8f0a-1c2d3e4f5a6b";
 const REQUESTED_ENV = "3f7c1a2e-8b4d-4c6e-9a1b-2d3e4f5a6b7c";
 const DEFAULT_ENV = "4a8d2b3f-9c5e-4d7f-8b2c-3e4f5a6b7c8d";
+const ORG = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ACTOR = { userId: "user-1", orgId: ORG };
 
 /** POST the route with a body; only `environmentId` / `view` vary per test. */
 async function post(body: Record<string, unknown>) {
@@ -89,7 +134,15 @@ async function post(body: Record<string, unknown>) {
 	return POST(
 		new Request(`https://console.local/api/projects/${PROJECT}/assistant`, {
 			method: "POST",
-			body: JSON.stringify({ messages: [], mentions: [], deepReasoning: false, ...body }),
+			body: JSON.stringify({
+				messages: [{ id: "u1", role: "user", parts: [{ type: "text", text: "what is here" }] }],
+				threadId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+				orgId: ORG,
+				turn: { trigger: "submit-message", turnId: "u1", baseRevision: 1 },
+				mentions: [],
+				deepReasoning: false,
+				...body,
+			}),
 		}),
 		{ params: Promise.resolve({ projectId: PROJECT }) },
 	);
@@ -143,16 +196,8 @@ describe("POST /api/projects/[projectId]/assistant — environment scope", () =>
 		);
 		expect(system).toContain("discussed a different environment, say so before acting");
 		// The knowledge readers are scoped to the same id the prompt names.
-		expect(buildEnvironmentKnowledge).toHaveBeenCalledWith(
-			{ userId: "user-1", orgId: "org-1" },
-			PROJECT,
-			REQUESTED_ENV,
-		);
-		expect(buildProjectKnowledge).toHaveBeenCalledWith(
-			{ userId: "user-1", orgId: "org-1" },
-			PROJECT,
-			REQUESTED_ENV,
-		);
+		expect(buildEnvironmentKnowledge).toHaveBeenCalledWith(ACTOR, PROJECT, REQUESTED_ENV);
+		expect(buildProjectKnowledge).toHaveBeenCalledWith(ACTOR, PROJECT, REQUESTED_ENV);
 	});
 
 	it("hands the resolved environment to the tool builder", async () => {
