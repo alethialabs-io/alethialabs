@@ -10,7 +10,7 @@
 // `DefaultChatTransport`), the real `AgentChat` and the real Lexical composer. Only `fetch` is
 // stubbed: each test queues what the route answers, and asserts on the bodies it was sent.
 
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
 	createUIMessageStream,
@@ -114,7 +114,7 @@ import { tryPlanProject } from "@/app/server/actions/projects";
 import { ApprovalCard, fitClientToolText } from "@/components/agent/approval-card";
 import { ElenchConversation } from "@/components/agent/elench/elench-conversation";
 import { parseClientToolOutput } from "@/lib/ai/client-tools";
-import { turnOf } from "@/components/agent/use-agent-chat";
+import { turnOf, useAgentChat } from "@/components/agent/use-agent-chat";
 import { classifyTurn } from "@/lib/agent/turn-key";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -378,6 +378,40 @@ describe("the transport's turn fields", () => {
 			answerId: "a2",
 			baseRevision: 8,
 		});
+	});
+
+	it("a caller without `org` (the support chat) sends no orgId and no turn: its wire is unchanged", async () => {
+		answers.push({ chunks: answered("a1", "ok", 2) });
+		const { result } = renderHook(() => useAgentChat({ api: "/api/support/ask" }));
+		await act(async () => {
+			await result.current.sendMessage({ id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] });
+		});
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		const body = sentSchema.parse(bodies[0]);
+		expect(body.messages.map((m) => m.id)).toEqual(["u1"]);
+		expect(bodies[0]).not.toHaveProperty("orgId");
+		expect(bodies[0]).not.toHaveProperty("turn");
+	});
+
+	it("a send before the page org is known sends nothing, keeps the text and says the organization is still loading", async () => {
+		renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		act(() => useElenchStore.getState().setPageOrgId(null));
+		fill("my question");
+		await pressEnter();
+
+		expect(
+			await screen.findByText("Your organization is still loading. Try again in a moment.", undefined, { timeout: 5_000 }),
+		).toBeTruthy();
+		expect(bodies).toHaveLength(0);
+		expect(content()).toBe("my question");
+
+		// Once the shell has it, the same Enter goes out with it.
+		act(() => useElenchStore.getState().setPageOrgId(ORG));
+		answers.push({ chunks: answered("a1", "answered", 5) });
+		await pressEnter();
+		await waitFor(() => expect(bodies).toHaveLength(1));
+		expect(sent(0).orgId).toBe(ORG);
+		expect(screen.queryByText("Your organization is still loading. Try again in a moment.")).toBeNull();
 	});
 
 	it("U › turnOf over the client copy and the classifier over the stored answer derive the same key for a mixed step", () => {

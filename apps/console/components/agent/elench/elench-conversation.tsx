@@ -111,7 +111,7 @@ type RetryKind =
  * How the transcript's Retry resends the last turn (ADR 0003 §9.1), by what is last:
  * - a user message (an unanswered turn): `regenerate()`, an `answer` attempt;
  * - an assistant message whose pending client tool calls all have outputs: the continuation
- *   request again, which the server re-arms or resumes with the stored outputs kept;
+ *   request again, which the server re-arms or resumes with the stored outputs kept (#5796);
  * - one whose pending client tool calls lack outputs (a tail that proposed something new):
  *   `await-approval`, no Retry: the card is still approvable and is the way on;
  * - any other assistant message: `regenerate({ messageId })` of that answer.
@@ -135,6 +135,12 @@ function retryKind(messages: readonly UIMessage[]): RetryKind {
 const AWAIT_APPROVAL = new ChatNoticeError(
 	"The answer stopped at a proposal",
 	"Approve or reject the proposal above to continue.",
+);
+
+/** The card a send gets while the page has not yet told the conversation its org. */
+const ORG_NOT_READY = new ChatNoticeError(
+	"Your organization is still loading",
+	"Your organization is still loading. Try again in a moment.",
 );
 
 /** The card a continuation refused from a stale revision keeps, with its Retry (§9.1). */
@@ -381,12 +387,27 @@ export function ElenchConversation({
 	// NOTHING is sent — a send without a thread is never stored — the failure shows inline, the
 	// composer keeps the text (still editable), and Retry re-attempts the thread (see below).
 	const {
-		send: onSend,
+		send: sendTurn,
 		error: sendError,
 		retry: retrySend,
 		failedState,
 		reset: resetSend,
 	} = useElenchSend({ hasThread, startThread: startThreadSeeded, sendMessage, beforeSend });
+	// No page org yet (the shell has not mounted it): the route would answer `client-outdated`
+	// (#5796), so nothing is sent; the text stays where it was typed and the user is told why.
+	const [orgNotReady, setOrgNotReady] = useState(false);
+	/** Every send of this conversation: refused here, before a thread or a request, without a page org. */
+	const onSend = useCallback(
+		async (text: string, mentions?: Mention[], state?: string): Promise<boolean> => {
+			if (!pageOrg()) {
+				setOrgNotReady(true);
+				return false;
+			}
+			setOrgNotReady(false);
+			return sendTurn(text, mentions, state);
+		},
+		[pageOrg, sendTurn],
+	);
 	/** The composer's send, remembering its editor state so a refused turn comes back intact. */
 	const onComposerSend = useCallback(
 		(text: string, mentions?: Mention[], state?: string) => {
@@ -426,7 +447,7 @@ export function ElenchConversation({
 	);
 	/**
 	 * The composer path of a refused turn (ADR 0003 §9.3): load the stored transcript (which
-	 * refreshes the base revision), clear the error, and put text the server did not commit back
+	 * refreshes the base revision), clear the error, and put text the server (#5796) did not commit back
 	 * into the composer with the refusal's notice. From ADR 0001's slice 9 on, a refusal of a
 	 * store-owned send will go to the store instead.
 	 */
@@ -511,8 +532,12 @@ export function ElenchConversation({
 	else if (transcriptError && retry.kind === "await-approval") transcriptError = AWAIT_APPROVAL;
 	// A failed send (thread not created / too long) is shown where the transcript's own error
 	// would be, and takes precedence over it: it is the newer event.
-	const visibleError = sendError ?? transcriptError;
-	const onRetry = sendError ? onRetryStart : retryTurn;
+	const visibleError = (orgNotReady ? ORG_NOT_READY : null) ?? sendError ?? transcriptError;
+	const onRetry = orgNotReady
+		? () => void composerRef.current?.submit()
+		: sendError
+			? onRetryStart
+			: retryTurn;
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.
 	const seededRef = useRef(false);
@@ -662,7 +687,9 @@ export function ElenchConversation({
 					composerRef={composerRef}
 					composerSeed={failedState}
 					notice={
-						sendError ? (
+						orgNotReady ? (
+							<ChatError error={ORG_NOT_READY} />
+						) : sendError ? (
 							<ChatError error={sendError} onRetry={onRetryStart} />
 						) : undefined
 					}

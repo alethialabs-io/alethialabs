@@ -379,7 +379,7 @@ export function AgentChat({
 																{(onRegenerate ?? onRetry) &&
 																	m.id === lastMessageId &&
 																	// An answer that started an approved operation is never
-																	// regenerated: the server refuses it, so it is not offered.
+																	// regenerated: the server refuses it (#5796), so it is not offered.
 																	!hasAcceptedApproval(m) && (
 																	<Action
 																		tooltip="Retry"

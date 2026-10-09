@@ -20,7 +20,7 @@ type Phase = "idle" | "running" | "done" | "rejected" | "denied";
  * The longest prefix of `text` (whole code points, with an ellipsis when cut) for which
  * `build(prefix)` passes `toolName`'s output schema and its 4,096-byte cap (ADR 0003 §5.1 step
  * 8). A card's free text (an error message, a model-written label) can exceed either bound, and
- * an output that fails them is refused before it is stored: without this, a long error would make
+ * an output that fails them is refused before it is stored (#5796): without this, a long error would make
  * the approval itself unsendable. Returns `text` itself when it already fits.
  */
 export function fitClientToolText(

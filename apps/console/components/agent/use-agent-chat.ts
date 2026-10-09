@@ -36,7 +36,7 @@ type TurnTrigger = TurnRequest["trigger"];
  * The turn fields of a request (ADR 0003 §9.1): `turnId` is the last USER message's id;
  * `answerId` is the regenerated answer (`messageId`), or, for a continuation (an assistant
  * message last), that message's id, with `toolCallIds` its pending client tool calls computed by
- * the SAME `pendingClientToolCalls` the server runs over the stored answer.
+ * the SAME `pendingClientToolCalls` the server runs over the stored answer (#5796).
  */
 export function turnOf(
 	messages: readonly UIMessage[],
@@ -56,7 +56,7 @@ export function turnOf(
 	return turn;
 }
 
-/** Every refusal code a chat route answers (ADR 0003 §9.3), checked against the server's union. */
+/** Every refusal code a chat route answers (ADR 0003 §9.3, #5796), checked against the server's union. */
 const TURN_REFUSAL_CODES = [
 	"turn-in-progress",
 	"turn-answered",
@@ -90,7 +90,7 @@ export interface RefusedRequest {
 }
 
 /**
- * A chat route refused the request before its budget hold, with a typed body (ADR 0003 §9.3).
+ * A chat route refused the request before its budget hold, with a typed body (ADR 0003 §9.3, #5796).
  * Thrown by the opted-in transport's `fetch` so `useChat` surfaces it as the chat's error, where
  * the caller's refusal handler reads it by type.
  */
@@ -206,7 +206,7 @@ export function useAgentChat({
 		// the run automatically so the model continues from the outcome. Fires only when the
 		// last step's tool calls are all complete — a normal text turn never triggers it.
 		sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-		// The route reports the transcript's revision when it accepts a turn and when it stores
+		// The route reports (#5796) the transcript's revision when it accepts a turn and when it stores
 		// the answer; the next request carries it as its base revision.
 		onData: (part) => {
 			const parsed = turnRevisionPartSchema.safeParse(part);
