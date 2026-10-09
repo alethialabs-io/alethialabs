@@ -89,6 +89,8 @@ interface FClaim {
 interface FHold {
 	id: string;
 	orgId: string;
+	/** The ledger kind the hold was reserved under. */
+	kind: string;
 	credits: number;
 	settled: boolean;
 	/** How many steps it was settled for (each step costs 10 credits in the fake). */
@@ -426,7 +428,7 @@ vi.mock("@/lib/agent/turn-claims", async (importOriginal) => {
 			let holdId: string | null = null;
 			if (world.hosted) {
 				holdId = randomUUID();
-				H().set(holdId, { id: holdId, orgId: input.orgId, credits: 100, settled: false, steps: 0 });
+				H().set(holdId, { id: holdId, orgId: input.orgId, kind: input.aiKind, credits: 100, settled: false, steps: 0 });
 			}
 			let claim: FClaim;
 			if (decision.action === "insert") {
@@ -920,7 +922,8 @@ describe("the shape of an accepted turn", () => {
 		expect(t?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
 		expect(t?.billingOrgId).toBe(ORG_A);
 		expect(holdList()).toHaveLength(1);
-		expect(holdList()[0]).toMatchObject({ orgId: ORG_A, settled: true, steps: 1 });
+		// The Elench routes name no `aiKind`, so their holds take the shared default: an `agent` row.
+		expect(holdList()[0]).toMatchObject({ orgId: ORG_A, kind: "agent", settled: true, steps: 1 });
 		expect(claims()[0]).toMatchObject({ state: "answered", billingOrgId: ORG_A });
 	});
 });
@@ -1047,6 +1050,7 @@ describe("the project check (§6.2, case 4)", () => {
 		world.hiddenProjects = new Set([PROJECT]);
 		const res = await postProject(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }));
 		expect(res.status).toBe(404);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "project-not-found" });
 		expect(world.reserveCalls).toBe(0);
 	});
 
@@ -1055,7 +1059,7 @@ describe("the project check (§6.2, case 4)", () => {
 		expect(res.status).toBe(200);
 		await chunksOf(res);
 		expect(threads().get(THREAD)?.projectId).toBe(PROJECT);
-		expect(holdList()[0]).toMatchObject({ orgId: ORG_A, settled: true });
+		expect(holdList()[0]).toMatchObject({ orgId: ORG_A, kind: "agent", settled: true });
 	});
 });
 
@@ -1614,6 +1618,7 @@ describe("the remaining arms of the route body", () => {
 	it("a project id that is not a uuid is 404 project-not-found", async () => {
 		const res = await postProject(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }), "not-a-project");
 		expect(res.status).toBe(404);
+		expect(await refusalOf(res)).toMatchObject({ refusal: "project-not-found" });
 		expect(world.reserveCalls).toBe(0);
 	});
 
