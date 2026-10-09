@@ -74,8 +74,11 @@ export const LINK_REFUSED_NOTE = "link_refused";
 
 /** The most Stripe writes one call makes (§3.3, "up to 3 steps per call"). */
 const MAX_ACTS = 3;
-/** The most observations one call makes: one per act, one re-read (T11r/T11), and the last. */
-const MAX_READS = MAX_ACTS + 3;
+/**
+ * The most observations one call makes: the first, one after each act, and one re-read (T11r / T11),
+ * which is made at most once per call.
+ */
+const MAX_READS = 1 + MAX_ACTS + 1;
 
 const MINUTE = 60_000;
 /**
@@ -159,6 +162,16 @@ function decide(
 			hold.open_note !== LINK_REFUSED_NOTE
 		) {
 			return { row: "T2o", kind: "release", reason: "adopted" };
+		}
+		// T1 matches from any open state. On a hold already with an operator it changes nothing but the
+		// alert, which is raised once per state entry.
+		if (sub.kind === "missing") {
+			return {
+				row: "T1",
+				kind: "stay",
+				state: "needs_operator",
+				alert: "subscription not found in Stripe (resource_missing) while the hold was needs_operator",
+			};
 		}
 		return { row: "T15", kind: "stay", state: "needs_operator" };
 	}

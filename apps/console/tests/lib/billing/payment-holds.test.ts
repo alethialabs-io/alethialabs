@@ -31,6 +31,8 @@ interface World {
 	/** PaymentIntents on the held invoice; `nonPi` adds a payment that is not one. */
 	pis: Array<{ id: string; status: string; amount: number }>;
 	nonPi: boolean;
+	/** Adds a payment whose PaymentIntent is an unexpanded id that Stripe reports `resource_missing`. */
+	missingPi: boolean;
 	hasMore: boolean;
 	/** Per method, errors thrown by the next calls. */
 	fail: Record<string, unknown[]>;
@@ -46,6 +48,7 @@ function world(over: Partial<World> = {}): World {
 		invoice: "open",
 		pis: [],
 		nonPi: false,
+		missingPi: false,
 		hasMore: false,
 		fail: {},
 		paymentReads: [],
@@ -111,12 +114,19 @@ function stripeOf(w: World) {
 					},
 				}));
 				if (w.nonPi) data.push({ status: "paid", payment: { type: "charge", payment_intent: null } });
-				return { has_more: w.hasMore, data };
+				const all: Array<{
+					status: string;
+					payment: { type: string; payment_intent: Payment["payment"]["payment_intent"] | string };
+				}> = data;
+				if (w.missingPi)
+					all.push({ status: "open", payment: { type: "payment_intent", payment_intent: "pi_gone" } });
+				return { has_more: w.hasMore, data: all };
 			},
 		},
 		paymentIntents: {
 			retrieve: async (id: string) => {
 				call("paymentIntents.retrieve");
+				if (id === "pi_gone") throw stripeError("resource_missing");
 				return { id, status: "succeeded", amount_received: 0 };
 			},
 		},
@@ -389,6 +399,24 @@ describe("advanceHold: positive evidence (T11r, T11)", () => {
 		}
 	});
 
+	it("§3.4 S7: incomplete with the held invoice void but a payment in flight or succeeded is NEVER cancelled (T4)", async () => {
+		for (const status of ["processing", "requires_capture", "succeeded"]) {
+			const w = world({ invoice: "void", pis: [{ id: "pi_1", status, amount: 2900 }] });
+			const { result, row } = await run(w, holdRow());
+			expect(result.rows).toEqual(["T4"]);
+			expect(stripeWrites(w.log)).toEqual([]);
+			expect(row.state).toBe("closing");
+		}
+	});
+
+	it("a PaymentIntent Stripe reports resource_missing is never read as absent: no void, needs_operator (T11)", async () => {
+		const w = world({ missingPi: true });
+		const { result, row } = await run(w, holdRow());
+		expect(result.rows).toEqual(["T11", "T11"]);
+		expect(stripeWrites(w.log)).toEqual([]);
+		expect(row.state).toBe("needs_operator");
+	});
+
 	it("C72: `unrecognised` (has_more) is never read as unpaid — no void, no cancel, needs_operator after one re-read", async () => {
 		for (const sub of ["incomplete", "canceled"]) {
 			const w = world({ sub, invoice: "open", hasMore: true });
@@ -435,6 +463,15 @@ describe("advanceHold: operator states (T15, T2o, T16, T17)", () => {
 		expect(unpaid.result.rows).toEqual(["T15"]);
 		expect(unpaid.row.state).toBe("needs_operator");
 		expect(unpaid.alerts).toEqual([]);
+	});
+
+	it("T1 on a needs_operator hold alerts once per state entry and stays (T15 never releases)", async () => {
+		const first = await run(world({ sub: "missing" }), holdRow({ state: "needs_operator" }));
+		expect(first.result.rows).toEqual(["T1"]);
+		expect(first.alerts).toHaveLength(1);
+		expect(first.row.state).toBe("needs_operator");
+		const again = await run(world({ sub: "missing" }), first.row);
+		expect(again.alerts).toHaveLength(0);
 	});
 
 	it("C80 / T2o: a hold the link opened on its refusal is the operator's, even when the subscription is active", async () => {
@@ -524,20 +561,46 @@ describe("advanceHold: failures never move a hold (I5, C2, C14)", () => {
 		expect(row.release_reason).toBe("adopted");
 	});
 
-	it("a state write that matches no row ends the call stale, with no further Stripe write", async () => {
-		const w = world({ pis: [{ id: "pi_1", status: "processing", amount: 2900 }], sub: "canceled" });
+	it("a state write that matches no row ends the call stale and keeps the row it started from", async () => {
+		// The call voids and cancels (T3 → T3v), and its last state write then finds the version moved.
+		const w = world();
 		const { s, store } = storeOf(w, holdRow());
-		s.stale = true;
 		const stripe = stripeOf(w);
 		const result = await advanceHold(holdRow(), {
 			reader: stripe,
 			writer: stripe,
-			store,
+			store: {
+				...store,
+				write: async (ref, patch) => {
+					s.stale = true;
+					return store.write(ref, patch);
+				},
+			},
 			fence: async () => undefined,
 			alert: async () => true,
 			now: () => T0,
 		});
 		expect(result.outcome).toBe("stale");
+		expect(result.hold.version).toBe(0);
+		expect(stripeWrites(w.log)).toEqual([
+			"invoices.voidInvoice",
+			"subscriptions.cancel:alethia:checkout_closed:hold_1",
+		]);
+	});
+
+	it("§4.4 rule 1: a lost lease stops the call before any Stripe write", async () => {
+		const w = world();
+		const { result, row } = await run(w, holdRow(), { leaseLost: true });
+		expect(result.outcome).toBe("lease_lost");
+		expect(w.log).toContain("fence");
+		expect(stripeWrites(w.log)).toEqual([]);
+		expect(row.state).toBe("closing");
+	});
+
+	it("a lost lease after the void stops the cancel", async () => {
+		const w = world({ invoice: "void" });
+		const { result } = await run(w, holdRow({ state: "cancel_unproven" }), { leaseLost: true });
+		expect(result.outcome).toBe("lease_lost");
 		expect(stripeWrites(w.log)).toEqual([]);
 	});
 
