@@ -14,7 +14,9 @@ import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "@repo/ui/sheet";
+import { cn } from "@repo/ui/utils";
 import { ElenchScopeChip } from "./elench-scope-chip";
+import { useConversationDraftFacts, useUnsentConversations } from "./use-elench-threads";
 
 /**
  * Split-pane bounds as RATIOS of the split width (the panes sit ~50/50, so a fixed pixel
@@ -60,28 +62,44 @@ function useCloseAtLg(active: boolean, onReachLg: () => void): void {
  * sheet instead. It is `lg:hidden` and rendered regardless of `railOpen`, because below `lg` it is
  * the only way to reach Delete chat, Artifacts and Knowledge. At `lg` and up it is not displayed,
  * and the `railOpen`-driven toggle keeps the job it always had.
+ *
+ * It carries the Unsent count when that is not zero (ADR 0001 decision 3): below `lg` the rail is
+ * behind this toggle, and a phone user must see that words are unsent without opening the sheet.
+ * The count is in its accessible name too, so a screen reader hears what a sighted user sees.
  */
 function NarrowRailToggle({
 	open,
 	onOpen,
+	unsent,
 	className,
 }: {
 	/** Whether the sheet this toggle opens is open — announced as `aria-expanded`. */
 	open: boolean;
 	onOpen: () => void;
+	/** How many conversations the rail's Unsent group holds. */
+	unsent: number;
 	className: string;
 }) {
 	return (
 		<button
 			type="button"
-			aria-label="Open sidebar"
+			aria-label={unsent > 0 ? `Open sidebar, ${unsent} unsent` : "Open sidebar"}
 			aria-haspopup="dialog"
 			aria-expanded={open}
 			data-testid="elench-narrow-rail-toggle"
 			onClick={onOpen}
-			className={className}
+			// Positioned, so the count can sit on its corner; an absolutely placed caller keeps its own.
+			className={cn("relative", className)}
 		>
 			<PanelLeft className="h-4 w-4" />
+			{unsent > 0 && (
+				<span
+					data-testid="elench-narrow-rail-unsent"
+					className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center bg-foreground px-1 font-mono text-ui-3xs text-background"
+				>
+					{unsent}
+				</span>
+			)}
 		</button>
 	);
 }
@@ -139,6 +157,9 @@ export function ElenchModal({
 	// later widens; a sheet is a transient thing the user opened just now.
 	const [narrowRailOpen, setNarrowRailOpen] = useState(false);
 	const closeNarrowRail = useCallback(() => setNarrowRailOpen(false), []);
+	// The rail's Unsent group, and the delete confirm's draft count (ADR 0001 §6.3, §7.4).
+	const unsent = useUnsentConversations(threads);
+	const countDrafts = useConversationDraftFacts();
 	useCloseAtLg(narrowRailOpen, closeNarrowRail);
 
 	// The generative-UI split pane is LAYERED: the per-chat widget grid is the base
@@ -221,6 +242,8 @@ export function ElenchModal({
 							onSelect={onSelectThread}
 							onNew={onNewChat}
 							onDelete={onDeleteThread}
+							unsent={unsent}
+							countDrafts={countDrafts}
 							onOpenArtifacts={
 								gallery ? () => setMainView("artifacts") : undefined
 							}
@@ -273,6 +296,8 @@ export function ElenchModal({
 								setNarrowRailOpen(false);
 							}}
 							onDelete={onDeleteThread}
+							unsent={unsent}
+							countDrafts={countDrafts}
 							onOpenArtifacts={
 								gallery
 									? () => {
@@ -306,6 +331,7 @@ export function ElenchModal({
 								<NarrowRailToggle
 									open={narrowRailOpen}
 									onOpen={() => setNarrowRailOpen(true)}
+									unsent={unsent.length}
 									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 								/>
 							</div>
@@ -328,6 +354,7 @@ export function ElenchModal({
 							<NarrowRailToggle
 								open={narrowRailOpen}
 									onOpen={() => setNarrowRailOpen(true)}
+									unsent={unsent.length}
 								className="absolute left-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground lg:hidden"
 							/>
 							{/* The empty state hides the top-bar grid toggle — so if the split
@@ -372,6 +399,7 @@ export function ElenchModal({
 								<NarrowRailToggle
 									open={narrowRailOpen}
 									onOpen={() => setNarrowRailOpen(true)}
+									unsent={unsent.length}
 									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
 								/>
 								{/* Which project + environment this conversation plans against — the modal
