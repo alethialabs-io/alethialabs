@@ -30,7 +30,7 @@ import { expect, test } from "./fixtures/auth";
 /** The feed's search box: the visible, accessible one, never a hidden streamed copy. */
 function searchBox(page: Page) {
 	// `FilterSearch` (packages/ui/src/filter-search.tsx) names the input by its placeholder.
-	return page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true });
+	return page.getByPlaceholder(/search actor, action or resource/i);
 }
 
 test.describe("Activity page (a brand-new org)", () => {
