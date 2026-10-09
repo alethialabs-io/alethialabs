@@ -53,7 +53,7 @@ export const COPY = {
 	keptInNewStarted: "This conversation was started from another tab or device. Your message is kept in a new one.",
 	earlierVersionSent:
 		"An earlier version of this message was already sent. It is shown above. Your edit is still in the box.",
-	beingAnswered: "Being answered in another tab or device.",
+	beingAnswered: "Being answered in another tab or device",
 	threadBusy: "Another message in this conversation is being answered",
 	reloadToContinue: "This tab runs an older version of Elench. Reload the page to continue.",
 	discardConflict: "Not discarded: this message changed in another tab or device.",
