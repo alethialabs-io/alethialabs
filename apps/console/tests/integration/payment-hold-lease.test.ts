@@ -15,8 +15,8 @@
 //        secret is returned. After A's failed gate its only Stripe writes are `voidInvoice` on its own
 //        subscription Z's first invoice and a `cancel` stamped `alethia:closeout`, and nothing records Z.
 //        Variant: A's close-out cannot prove the void, so Z is never cancelled; B's next purchase sweeps it.
-//   ---  for one release the purchase also takes the old `new-org:<user>` advisory key, so a pod still
-//        running the older build and a pod running this one exclude each other.
+//   ---  from S3 (#5754) the purchase no longer takes the old `new-org:<user>` advisory key, which S2
+//        took for one release only: an advisory lock held on that key does not hold the purchase back.
 //   ---  the purchase path's Stripe client carries the timeout the mint deadline is computed from; the
 //        shared client keeps the SDK's defaults.
 //   ---  RLS: `purchase_leases` is service-role only.
@@ -358,7 +358,7 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		expect(await holderOf(KEY)).toBeNull();
 	});
 
-	it("for one release the purchase also takes the old new-org: advisory key — an old pod's purchase excludes it", async () => {
+	it("S3: the purchase no longer takes the old new-org: advisory key — a lock held on it does not hold the purchase back", async () => {
 		const oldPod = deferred();
 		let oldPodInside = false;
 		const old = withPurchaseLock(`new-org:${USER}`, async () => {
@@ -366,16 +366,14 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 			await oldPod.promise;
 		});
 		await waitFor(() => oldPodInside);
-
-		const mine = purchase("A");
-		// The new build took the lease, but waits on the advisory key the old pod holds: no Stripe write.
-		await waitFor(async () => (await holderOf(KEY)) !== null);
-		await new Promise((r) => setTimeout(r, 500));
-		expect(fake.writes).toEqual([]);
-
-		oldPod.resolve();
-		await old;
-		await expect(mine).resolves.toMatchObject({ kind: "intent" });
+		try {
+			// While the advisory key is held, the purchase runs to the end under the lease alone.
+			await expect(purchase("A")).resolves.toMatchObject({ kind: "intent" });
+			expect(fake.writes.some((w) => w.call === "subscriptions.create")).toBe(true);
+		} finally {
+			oldPod.resolve();
+			await old;
+		}
 	});
 
 	it("C52: A's lease expires before its mint returns; B mints; exactly one secret leaves, and A closes Z out", async () => {
@@ -383,15 +381,15 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		fake.state.stallMint = stall.promise;
 		const aResult = purchase("A");
 		await waitFor(() => fake.writes.some((w) => w.call === "subscriptions.create"));
-		const aHolder = await holderOf(KEY);
 
-		// A stalls past its lease; B takes it over, and waits behind A on the old advisory key.
+		// A stalls past its lease; B takes it over and runs while A is still inside its mint.
 		await expireLease(KEY);
-		const bResult = purchase("B");
-		await waitFor(async () => (await holderOf(KEY)) !== aHolder);
+		// B no longer waits behind A on the old advisory key (S3), so it runs to the end while A is still
+		// stalled — and then A wakes. Awaited in that order, so B's sweep deterministically runs before Z exists.
+		const b = await purchase("B");
 
 		stall.resolve();
-		const [a, b] = await Promise.all([aResult, bResult]);
+		const a = await aResult;
 
 		const secrets = [a, b].filter((r) => r.kind === "intent");
 		expect(secrets).toHaveLength(1);
@@ -403,7 +401,7 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		expect(b).toMatchObject({ kind: "intent" });
 
 		// Z is A's subscription. Apart from the two mints, the only Stripe writes either request made are
-		// A's close-out of Z: B's sweep, run after A let go of the advisory key, found Z already ended.
+		// A's close-out of Z: B's sweep ran before Z existed.
 		const z = [...fake.subs.values()].find((s) => b.kind === "intent" && s.id !== b.subscriptionId);
 		if (!z) throw new Error("A's subscription Z was never minted");
 		const notMints = fake.writes
