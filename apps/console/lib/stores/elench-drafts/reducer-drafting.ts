@@ -12,9 +12,10 @@
 // events to `reduceDraftEntry` for that key alone.
 //
 // None of these transitions reads a claim outcome. The send transitions (D9-D13, D17, D18, D20-D22,
-// D26, D30-D35) will be slice 7b's, in reducer-sending.ts. Until then, a save answer that one of
-// them reads (`claimed`, which is D30; `gone` while the box holds unsaved words, which is D18)
-// settles the request here and keeps every word where it was, so nothing is lost meanwhile.
+// D26, D30-D35) are in reducer-sending.ts, and reducer.ts composes the two halves. A save answer
+// that one of them reads (`claimed`, which is D30; `gone` while the box holds unsaved words, which
+// is D18) is intercepted there before it reaches this half; called on its own, this half settles
+// the request and keeps every word where it was.
 //
 // No caller yet: the effects layer (queue, cache, page org, list) will be slice 8's.
 
@@ -423,7 +424,7 @@ function goneWithNothingUnsaved(
 
 /**
  * The answers every write shares: the refusals of §4 (D24, D27, D28) and `gone` (D19; while the
- * box holds unsaved words it will be D18, slice 7b's, and until then the words simply stay).
+ * box holds unsaved words it is D18, which reducer-sending.ts reads first; here the words stay).
  * Returns null for an answer the caller reads itself.
  */
 function reduceSharedOutcome(
@@ -479,9 +480,9 @@ function reduceConflict(
 	ctx: DraftEntryContext,
 ): DraftEntryTransition {
 	// Nothing unsaved (the box was edited back to the row it was based on while the save flew):
-	// nothing is replaced here, so no keystroke in flight can be dropped (I6). From slice 7b the next
-	// list refresh will adopt the newer row (D22); until then an edit saves at the old base and its
-	// conflict opens D15, which shows both texts.
+	// nothing is replaced here, so no keystroke in flight can be dropped (I6). The next list refresh
+	// adopts the newer row (D22, reducer-sending.ts); before it, an edit saves at the old base and
+	// its conflict opens D15, which shows both texts.
 	if (entry.local === null) return unchanged(entry);
 	if (contentEquals(entry.local, row.content)) return unchanged({ ...entry, server: row, local: null }); // D14
 	if (row.lastWriter === ctx.tabId) return trySave({ ...entry, server: row }, ctx); // D14s
@@ -524,7 +525,7 @@ function reduceSaveResult(
 				conflict: { kind: "discarded", row: result.row },
 			});
 		case "claimed":
-			// D30 will read this from slice 7b. Until then the request is settled and the words stay.
+			// D30, which reducer-sending.ts reads before this half; here the request is settled and the words stay.
 			return unchanged({ ...answered(settled), thread: result.thread.status });
 		default:
 			return reduceSharedOutcome(settled, result, ctx);
