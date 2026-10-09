@@ -9,7 +9,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { unsentNoteText, useUnsentConversations } from "./use-elench-threads";
 
-
 /** "13m ago" etc. */
 function relTime(d: Date): string {
   const m = Math.floor((Date.now() - d.getTime()) / 60_000);
@@ -43,7 +42,7 @@ export function ElenchConversationSwitcher({
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
 
-  const unsent = useUnsentConversations(threads);
+  const { unsent, threadNotes } = useUnsentConversations(threads);
   const label =
     threads.find((t) => t.id === activeId)?.title ??
     unsent.find((u) => u.active)?.label ??
@@ -147,7 +146,7 @@ export function ElenchConversationSwitcher({
                     {t.title}
                   </span>
                   <span className="flex-none font-mono text-ui-xs text-muted-foreground">
-                    {relTime(new Date(t.updated_at))}
+                    {threadNotes[t.id] ?? relTime(new Date(t.updated_at))}
                   </span>
                 </button>
               ))}

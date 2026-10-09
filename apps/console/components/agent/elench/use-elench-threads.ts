@@ -28,14 +28,15 @@ import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { type DraftsTab, useDraftsTab } from "./elench-drafts-root";
 
 /**
- * Why the initial resolution could not load what it was resuming (G10): `listThreads` or the
- * resume's `getThread` rejected. The surface is no longer on its skeleton; `retryLoad` runs the
- * resolution again.
+ * Why a conversation could not be loaded (G10): the initial `listThreads` or the resume's
+ * `getThread` rejected (`list`, `resume`), or the `getThread` of a conversation the user picked did
+ * (`select`). The surface is never left on its skeleton. `retryLoad` retries exactly this: the
+ * picked conversation for `select`, the whole initial resolution otherwise.
  */
 export interface ElenchThreadsLoadError {
 	/** Which round trip failed. */
-	step: "list" | "resume";
-	/** The conversation the resume was for, when it was the resume that failed. */
+	step: "list" | "resume" | "select";
+	/** The conversation the failed `getThread` was for; null for `list`. */
 	conversationId: string | null;
 }
 
@@ -153,7 +154,8 @@ export function useElenchThreads() {
 	//
 	// Either round trip may reject (G10). A rejected list leaves the rail as it was; a rejected
 	// resume leaves the conversation on screen as it was. Both set `loadError` and still resolve,
-	// so the body leaves its skeleton.
+	// so the body leaves its skeleton. A candidate whose thread is gone (`getThread` answers null, or
+	// this tab's drafts say `deleted`) is skipped for the next one, never opened empty.
 	useEffect(() => {
 		if (!open) return;
 		let cancelled = false;
@@ -179,33 +181,69 @@ export function useElenchThreads() {
 			}
 			if (cancelled) return;
 			if (list !== null) setThreads(list);
-			const resume = remembered ?? resumeIdRef.current ?? list?.[0]?.id ?? null;
-			if (resume !== null && !userActed()) {
-				const listed = list?.some((t) => t.id === resume) ?? false;
-				if (!listed && hasNoThread(entryOf(tab, scope, resume))) {
-					openThreadless(resume);
-				} else {
-					try {
-						const full = await getThread(resume);
-						if (cancelled) return;
-						if (!userActed()) {
-							if (full === null) openThreadless(resume);
-							else {
-								setInitialMessages(full.messages);
-								setInitialRevision(full.revision);
-								resumeStore(resume);
-							}
-						}
-					} catch {
-						if (cancelled) return;
-						setLoadError({ step: "resume", conversationId: resume });
-					}
+			// The candidates, best first. One whose thread is gone (deleted in another tab, or reaped)
+			// and that holds no draft here is skipped, never opened empty under its old id.
+			const candidates = [remembered, resumeIdRef.current, list?.[0]?.id ?? null].filter(
+				(id, i, all): id is string => id !== null && all.indexOf(id) === i,
+			);
+			const skipped: string[] = [];
+			let resumed = false;
+			for (const id of candidates) {
+				if (userActed()) break;
+				const listed = list?.some((t) => t.id === id) ?? false;
+				const entry = listed ? null : entryOf(tab, scope, id);
+				if (entry?.thread === "none") {
+					// Never sent, or its thread was reaped: its words are its draft (G21).
+					openThreadless(id);
+					resumed = true;
+					break;
 				}
-			} else if (resume === null && !userActed()) {
+				if (entry?.thread === "deleted") {
+					skipped.push(id);
+					continue;
+				}
+				let full: Awaited<ReturnType<typeof getThread>>;
+				try {
+					full = await getThread(id);
+				} catch {
+					if (cancelled) return;
+					setLoadError({ step: "resume", conversationId: id });
+					resumed = true; // the conversation on screen stays as it was
+					break;
+				}
+				if (cancelled) return;
+				if (full === null) {
+					// No live thread. A draft of it with no thread (never sent, or reaped) opens (G21).
+					// Once this tab's drafts have listed the scope, an id they hold no draft for is gone
+					// (deleted elsewhere): skip it. Before that list, a draft of it may still be on its way
+					// (D26's restore), so it opens.
+					const now = entryOf(tab, scope, id); // the list may have landed during the round trip
+					const unknown = tab !== null && scope !== null && !tab.hasListed(scope) && now === null;
+					if (now?.thread === "none" || unknown) {
+						if (!userActed()) openThreadless(id);
+						resumed = true;
+						break;
+					}
+					skipped.push(id);
+					continue;
+				}
+				if (!userActed()) {
+					setInitialMessages(full.messages);
+					setInitialRevision(full.revision);
+					resumeStore(id);
+				}
+				resumed = true;
+				break;
+			}
+			if (!resumed && !userActed()) {
 				// Nothing to resume → the empty landing. Clear the transcript a previous context (or
-				// a previous open) staged, or the new conversation would be seeded with it.
+				// a previous open) staged, or the new conversation would be seeded with it; and when
+				// the conversation on screen is one whose thread is gone, start a fresh one instead.
 				setInitialMessages([]);
 				setInitialRevision(null);
+				const s = useElenchStore.getState();
+				if (skipped.includes(s.conversationId))
+					useElenchStore.setState({ threadId: null, conversationId: crypto.randomUUID(), epoch: s.epoch + 1 });
 			}
 			setInitialResolved(true);
 		})();
@@ -218,8 +256,6 @@ export function useElenchThreads() {
 		};
 	}, [open, projectId, resumeStore, tab, scope, remembered, loadAttempt]);
 
-	/** Runs the initial resolution again after it failed (G10). */
-	const retryLoad = useCallback(() => setLoadAttempt((n) => n + 1), []);
 
 	/** Reset to a fresh EPHEMERAL conversation — clears the transcript and bumps the chat
 	 * lineage (via the store's `newChat`). Persists nothing; the thread is created lazily on
@@ -247,10 +283,20 @@ export function useElenchThreads() {
 				useElenchStore.getState().followConversation(id);
 				return;
 			}
-			void loadInto(id).catch(() => setLoadError({ step: "resume", conversationId: id }));
+			setLoadError(null);
+			void loadInto(id).catch(() => setLoadError({ step: "select", conversationId: id }));
 		},
 		[threads, tab, scope, newChat, loadInto],
 	);
+
+	/**
+	 * Tries again what `loadError` names (G10): the conversation a failed pick was for, or else the
+	 * whole initial resolution (the list and the resume).
+	 */
+	const retryLoad = useCallback(() => {
+		if (loadError?.step === "select" && loadError.conversationId !== null) selectThread(loadError.conversationId);
+		else setLoadAttempt((n) => n + 1);
+	}, [loadError, selectThread]);
 
 	/** Lazily persist the current ephemeral conversation on its first message: inserts the
 	 * thread (title derived from `title`), adds it to the rail, and attaches its id to the
@@ -387,12 +433,34 @@ function noteOf(entry: DraftEntry): UnsentNote | null {
 	return null;
 }
 
+/** The Unsent group, and the notes of the listed threads that hold unsent words. */
+export interface UnsentView {
+	/**
+	 * Conversations with unsent words and NO listed thread (never sent, unlisted, reaped or deleted),
+	 * most recently written first. A listed thread is never repeated here; its note is on its own row.
+	 */
+	unsent: UnsentConversation[];
+	/** Listed thread id → what its row says about its unsent words ("Draft", "Not sent", …). */
+	threadNotes: Record<string, string>;
+	/**
+	 * The count the narrow toggle shows: the Unsent rows, less the conversation on screen (the user
+	 * is looking at it, so typing there does not raise the badge).
+	 */
+	badge: number;
+}
+
+/** When an entry was last written: now for words only this tab holds, else its row's `updatedAt`. */
+function writtenAt(entry: DraftEntry, now: number): number {
+	if (entry.local !== null || entry.claiming !== null || entry.sending !== null || entry.server === null) return now;
+	return Date.parse(entry.server.updatedAt);
+}
+
 /**
- * The Unsent group of the surface's scope (ADR 0001 §7.4): every conversation this tab's drafts
- * store holds unsent words for, in the store's stable order. `threads` names the listed ones by
- * their rail title. Empty without a drafts store (a surface outside the drafts root).
+ * The Unsent group of the surface's scope (ADR 0001 §7.4), from this tab's drafts store: see
+ * `UnsentView`. `threads` is what the rail lists; a conversation in it is a listed thread. Empty
+ * without a drafts store (a surface outside the drafts root).
  */
-export function useUnsentConversations(threads: readonly AgentThread[]): UnsentConversation[] {
+export function useUnsentConversations(threads: readonly AgentThread[]): UnsentView {
 	const tab = useDraftsTab();
 	const scope = useSurfaceScope();
 	const conversationId = useElenchStore((s) => s.conversationId);
@@ -400,21 +468,32 @@ export function useUnsentConversations(threads: readonly AgentThread[]): UnsentC
 		tab?.store.view ?? NO_DRAFTS,
 		useShallow((s: DraftsView) => (scope === null ? NONE : selectUnsent(s, scope))),
 	);
-	return useMemo(
-		() =>
-			entries.map((e) => {
-				const id = e.key.conversationId;
-				const title = threads.find((t) => t.id === id)?.title ?? e.server?.title ?? null;
-				return {
+	return useMemo(() => {
+		const listed = new Set(threads.map((t) => t.id));
+		const now = Date.now();
+		const threadNotes: Record<string, string> = {};
+		const rows: { at: number; row: UnsentConversation }[] = [];
+		for (const e of entries) {
+			const id = e.key.conversationId;
+			const note = noteOf(e);
+			if (listed.has(id)) {
+				threadNotes[id] = unsentNoteText(note);
+				continue;
+			}
+			rows.push({
+				at: writtenAt(e, now),
+				row: {
 					conversationId: id,
-					label: labelOf(e, title),
-					note: noteOf(e),
+					label: labelOf(e, e.server?.title ?? null),
+					note,
 					thread: e.thread,
 					active: id === conversationId,
-				};
-			}),
-		[entries, threads, conversationId],
-	);
+				},
+			});
+		}
+		const unsent = rows.sort((x, y) => y.at - x.at).map((r) => r.row);
+		return { unsent, threadNotes, badge: unsent.filter((u) => !u.active).length };
+	}, [entries, threads, conversationId]);
 }
 
 /** What the delete confirm says about a conversation's drafts (§6.3). */
