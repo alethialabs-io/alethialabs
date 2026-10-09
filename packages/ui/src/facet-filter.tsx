@@ -43,8 +43,18 @@ interface FacetFilterProps {
   value: string[];
   onChange: (next: string[]) => void;
   align?: "start" | "center" | "end";
+  /** The search box's placeholder; also its accessible name, less a trailing ellipsis. */
   searchPlaceholder?: string;
   emptyText?: string;
+}
+
+/**
+ * The accessible name of a facet's search box: the caller's placeholder without its trailing
+ * ellipsis, or "Search <label>" when the caller left the generic "Search…" placeholder in place.
+ */
+function searchName(label: string, searchPlaceholder: string | undefined): string {
+  if (searchPlaceholder === undefined) return `Search ${label}`;
+  return searchPlaceholder.replace(/\s*(…|\.\.\.)$/, "");
 }
 
 /** A searchable multi-select dropdown. Selecting toggles; the popover stays open. */
@@ -55,7 +65,7 @@ export function FacetFilter({
   value,
   onChange,
   align = "start",
-  searchPlaceholder = "Search…",
+  searchPlaceholder,
   emptyText = "No matches.",
 }: FacetFilterProps) {
   const [open, setOpen] = useState(false);
@@ -88,9 +98,12 @@ export function FacetFilter({
         }
       />
       <PopoverContent align={align} className="w-[240px] p-0">
-        <Command>
+        {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
+            prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
+            the search is an unnamed combobox to a screen reader (#5803). */}
+        <Command label={searchName(label, searchPlaceholder)}>
           <CommandInput
-            placeholder={searchPlaceholder}
+            placeholder={searchPlaceholder ?? "Search…"}
             className="text-[12.5px]"
           />
           <CommandList>
