@@ -667,7 +667,8 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 		const { row } = await run(w, holdRow({ state: "refund_due" }));
 		expect(stripeWrites(w.log)).toEqual(["refunds.create:hold-refund-pi_1-0"]);
 		expect(w.refunds.pi_1?.[1]?.amount).toBe(2000);
-		expect(row.release_reason).toBe("refunded");
+		// Part of the payment was refunded outside this hold, so it was not refunded by this hold alone.
+		expect(row.release_reason).toBe("already_refunded");
 	});
 
 	it("T5 refunds each uncovered PaymentIntent under its own reserved number, and none already covered", async () => {
@@ -684,7 +685,8 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 			"refunds.create:hold-refund-pi_2-1",
 		]);
 		expect(row.refund_attempt).toBe(2);
-		expect(row.release_reason).toBe("refunded");
+		// pi_3 was refunded outside this hold.
+		expect(row.release_reason).toBe("already_refunded");
 	});
 
 	it("I3: a succeeded payment on a subscription still incomplete is never refunded (T4)", async () => {
@@ -699,6 +701,7 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 		const { s, store } = storeOf(w, holdRow({ state: "refund_due", refund_attempt: 4 }));
 		const stripe = stripeOf(w);
 		const pis: Array<string | null> = [];
+		const details: string[] = [];
 		const result = await advanceHold(holdRow({ state: "refund_due", refund_attempt: 4 }), {
 			reader: stripe,
 			writer: stripe,
@@ -706,6 +709,7 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 			fence: async () => undefined,
 			alert: async (a) => {
 				pis.push(a.paymentIntentId);
+				details.push(a.detail);
 				return true;
 			},
 			now: () => T0,
@@ -714,6 +718,49 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 		expect(s.row.state).toBe("needs_operator");
 		expect(stripeWrites(w.log)).toEqual(["refunds.create:hold-refund-pi_1-4"]);
 		expect(pis).toEqual(["pi_1"]);
+		expect(s.row.refund_attempt).toBe(5);
+		expect(details.join(" ")).toContain("5 of 5 refund attempts made, and the last one failed");
+	});
+
+	it("§3.5: one call never reserves past the budget, however many payments it has to refund; T14 then states the true count", async () => {
+		const w = world({
+			sub: "canceled",
+			invoice: "paid",
+			pis: [succeeded(), { id: "pi_2", status: "succeeded", amount: 1000 }],
+		});
+		const first = await run(w, holdRow({ state: "refund_due", refund_attempt: 4 }));
+		expect(stripeWrites(w.log)).toEqual(["refunds.create:hold-refund-pi_1-4"]);
+		expect(first.row.refund_attempt).toBe(5);
+		expect(first.result.rows).toEqual(["T5", "T13"]);
+		expect(first.row.state).toBe("refund_due");
+
+		const next = await run(w, first.row);
+		expect(next.result.rows).toEqual(["T14"]);
+		expect(next.row.state).toBe("needs_operator");
+		expect(next.row.refund_attempt).toBe(5);
+		expect(next.alerts.join(" ")).toContain("5 of 5 refund attempts made");
+		expect(stripeWrites(w.log)).toEqual(["refunds.create:hold-refund-pi_1-4"]);
+	});
+
+	it("T10: `refunded` only when this hold alone refunded every payment; a payment refunded outside it makes `already_refunded`", async () => {
+		const mixed = world({
+			sub: "canceled",
+			invoice: "paid",
+			pis: [succeeded(), { id: "pi_2", status: "succeeded", amount: 1000 }],
+			refunds: { pi_2: [{ status: "succeeded", amount: 1000 }] },
+		});
+		const a = await run(mixed, holdRow({ state: "refund_due" }));
+		expect(a.result.rows).toEqual(["T5", "T10"]);
+		expect(stripeWrites(mixed.log)).toEqual(["refunds.create:hold-refund-pi_1-0"]);
+		expect(a.row.release_reason).toBe("already_refunded");
+
+		const ours = world({
+			sub: "canceled",
+			invoice: "paid",
+			pis: [succeeded(), { id: "pi_2", status: "succeeded", amount: 1000 }],
+		});
+		const b = await run(ours, holdRow({ state: "refund_due" }));
+		expect(b.row.release_reason).toBe("refunded");
 	});
 
 	it("T14: a spent budget makes no sixth refund", async () => {
@@ -740,6 +787,23 @@ describe("advanceHold: refunds (T5, T10, T10p, T10f, T13, T14; §3.5)", () => {
 		expect(result.rows).toEqual([]);
 		expect(s.row.state).toBe("refund_due");
 		expect(s.row.last_error).toContain("refunds.list");
+		expect(stripeWrites(w.log)).toEqual([]);
+	});
+
+	it("I5: a refunds.list that Stripe answers resource_missing is never read as no refunds: no refund, attempts += 1", async () => {
+		const missing = stripeError("resource_missing");
+		const w = world({
+			sub: "canceled",
+			invoice: "paid",
+			pis: [succeeded()],
+			fail: { "refunds.list": [missing, missing] },
+		});
+		const { result, row } = await run(w, holdRow({ state: "refund_due", attempts: 1 }));
+		expect(result.outcome).toBe("open");
+		expect(result.rows).toEqual([]);
+		expect(row.state).toBe("refund_due");
+		expect(row.attempts).toBe(2);
+		expect(row.last_error).toContain("refunds.list");
 		expect(stripeWrites(w.log)).toEqual([]);
 	});
 

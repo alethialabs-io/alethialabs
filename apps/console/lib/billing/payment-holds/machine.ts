@@ -341,7 +341,9 @@ function decideSucceeded(
 			return {
 				row: "T10",
 				kind: "release",
-				reason: pis.some((p) => p.refund.byThisHold) ? "refunded" : "already_refunded",
+				// §3.1: `refunded` only when this hold alone refunded every payment; any refund it did not
+				// create makes the release `already_refunded`.
+				reason: pis.every((p) => p.refund.byThisHold) ? "refunded" : "already_refunded",
 			};
 		}
 		return { row: "T10p", kind: "stay", state: "refund_pending" };
@@ -360,7 +362,7 @@ function decideSucceeded(
 		return {
 			row: "T14",
 			kind: "operator",
-			detail: `the refund failed on all ${hold.refund_attempt} attempts`,
+			detail: `the refund budget is spent: ${hold.refund_attempt} of ${REFUND_BUDGET} refund attempts made, and the last one failed`,
 			pi,
 		};
 	}
@@ -371,7 +373,7 @@ function decideSucceeded(
 		return {
 			row: "T14",
 			kind: "operator",
-			detail: `the refund budget of ${REFUND_BUDGET} attempts is spent`,
+			detail: `the refund budget is spent: ${hold.refund_attempt} of ${REFUND_BUDGET} refund attempts made, and a payment is still not covered`,
 			pi,
 		};
 	}
@@ -589,7 +591,10 @@ export async function advanceHold(start: PaymentHoldRow, deps: HoldMachineDeps):
 				});
 				if (!entered) return done("stale");
 			}
-			for (const p of act.pis) {
+			// §3.5: never past the budget, even with several payments to refund. Those left over are
+			// refunded by a later call while budget remains, else go to an operator (T14).
+			const remaining = Math.max(0, REFUND_BUDGET - hold.refund_attempt);
+			for (const p of act.pis.slice(0, remaining)) {
 				// §3.5: reserve the attempt number BEFORE the call. No row, no refund.
 				const reserved = await deps.store.reserveRefundAttempt(refOf(hold));
 				if (!reserved) return done("stale");

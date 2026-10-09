@@ -71,8 +71,9 @@ export type InvoiceObservation = "open" | "uncollectible" | "draft" | "void" | "
  *   - `done`: `succeeded` refunds alone cover `amount_received`;
  *   - `pending`: live refunds cover it, and one is `pending` or `requires_action`;
  *   - `partial`: anything else.
- * `uncovered` is what no live refund covers. `byThisHold` is whether a succeeded refund carries this
- * hold's id (`released(refunded)` against `released(already_refunded)`, T10). `actionRequired` is
+ * `uncovered` is what no live refund covers. `byThisHold` is whether there is a succeeded refund and
+ * EVERY succeeded refund carries this hold's id, so the payment was refunded by this hold alone
+ * (`released(refunded)` against `released(already_refunded)`, T10). `actionRequired` is
  * whether a refund reads `requires_action` (`refund_action_since`, §3.1).
  */
 export interface RefundObservation {
@@ -169,11 +170,13 @@ function classifyRefunds(amountReceived: number, refunds: ReadonlyArray<HeldRefu
 	let unsettled = false;
 	let actionRequired = false;
 	let byThisHold = false;
+	let byOther = false;
 	for (const r of refunds) {
 		if (r.status === "succeeded") {
 			succeeded += r.amount;
 			live += r.amount;
 			if (r.metadata?.[HOLD_REFUND_METADATA_KEY] === holdId) byThisHold = true;
+			else byOther = true;
 		} else if (r.status === "pending" || r.status === "requires_action") {
 			live += r.amount;
 			unsettled = true;
@@ -189,7 +192,7 @@ function classifyRefunds(amountReceived: number, refunds: ReadonlyArray<HeldRefu
 				: live >= amountReceived && unsettled
 					? "pending"
 					: "partial";
-	return { kind, uncovered, byThisHold, actionRequired };
+	return { kind, uncovered, byThisHold: byThisHold && !byOther, actionRequired };
 }
 
 /**
