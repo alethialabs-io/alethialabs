@@ -35,14 +35,12 @@ interface WidgetGridState {
 	 * number of contiguous free columns to the right (1–2) so the composer never overlaps a
 	 * neighbouring widget. */
 	cellPrompt: { x: number; y: number; span: number } | null;
-	/** A submitted cell request awaiting dispatch into the chat (the conversation
-	 * consumes it: stages `pendingCellTarget`, sends the text, clears this). */
+	/** A submitted cell request awaiting dispatch into the chat. The conversation sends it as an
+	 * external send that carries the cell in its own event, so the turn's message names the cell, and
+	 * clears this once the drafts store took the send (ADR 0003 §9.2, §9.4 change 3). */
 	pendingCellRequest: { x: number; y: number; text: string } | null;
-	/** The grid cell the NEXT chat request should fill (read fresh by prepareBody). */
-	pendingCellTarget: { x: number; y: number } | null;
 	setCellPrompt: (cell: { x: number; y: number; span: number } | null) => void;
 	submitCellPrompt: (text: string) => void;
-	setPendingCellTarget: (cell: { x: number; y: number } | null) => void;
 	clearPendingCellRequest: () => void;
 	/** toolCallIds already pinned this session (client-side auto-pin guard; the DB
 	 * unique upsert is the durable guard). */
@@ -74,7 +72,6 @@ export const useWidgetGridStore = create<WidgetGridState>((set, get) => ({
 	pinned: new Set<string>(),
 	cellPrompt: null,
 	pendingCellRequest: null,
-	pendingCellTarget: null,
 
 	setCellPrompt: (cell) => set({ cellPrompt: cell }),
 	submitCellPrompt: (text) => {
@@ -86,7 +83,6 @@ export const useWidgetGridStore = create<WidgetGridState>((set, get) => ({
 			pendingCellRequest: { x: cell.x, y: cell.y, text: trimmed },
 		});
 	},
-	setPendingCellTarget: (cell) => set({ pendingCellTarget: cell }),
 	clearPendingCellRequest: () => set({ pendingCellRequest: null }),
 
 	hydrate: async (threadId) => {

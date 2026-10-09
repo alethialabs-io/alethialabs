@@ -160,6 +160,9 @@ export async function POST(
 	return serveTurn<AssistantRouteFields>(req, {
 		aiDisabledMessage: "AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
 		projectId,
+		// The project prompt has no grid hint (an empty-cell prompt is an org-chat feature), so a turn's
+		// cell target is never stored here; its mentions are.
+		turnMetadata: { mentions: true },
 		// The body shape is shared with the client (lib/ai/project-assistant-body.ts), so the two cannot
 		// drift. It degrades rather than throws: only `messages` is genuinely required. `environmentId`
 		// is the environment the user is looking at (a malformed one degrades to null).
@@ -172,9 +175,6 @@ export async function POST(
 				value: {
 					messages: v.messages,
 					threadId: v.threadId,
-					mentions: v.mentions,
-					// The project prompt has no grid hint: an empty-cell prompt is an org-chat feature.
-					cellTarget: null,
 					route: {
 						canvas: v.canvas,
 						deepReasoning: v.deepReasoning,

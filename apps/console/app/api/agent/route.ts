@@ -3,8 +3,8 @@
 
 import type { UIMessage } from "ai";
 import { z } from "zod";
-import { serveTurn, cellTargetSchema } from "@/lib/agent/turn-route";
-import { formatMentionsForPrompt, mentionsSchema } from "@/lib/ai/mentions";
+import { serveTurn } from "@/lib/agent/turn-route";
+import { formatMentionsForPrompt } from "@/lib/ai/mentions";
 import { formatContextBlock, readAgentContext } from "@/lib/ai/project-knowledge";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
@@ -18,17 +18,16 @@ import {
 /**
  * The org route's own body fields, validated before the budget hold. `mode` picks the prompt and the
  * tool set: an unknown value used to run silently as Ask. `threadId` is checked as a uuid by the shared
- * route body (`lib/agent/turn-route.ts`). `mentions`, `deepReasoning` and `cellTarget` degrade rather
- * than reject: losing a hint is a smaller failure than losing the turn.
+ * route body (`lib/agent/turn-route.ts`). `deepReasoning` degrades rather than rejects: losing a hint is
+ * a smaller failure than losing the turn. The turn's mentions and cell target are not body fields: they
+ * ride the user message's own `metadata`, which the shared route body stores and reads (§9.2).
  */
 const agentBodySchema = z.looseObject({
 	messages: z.array(z.custom<UIMessage>()),
 	threadId: z.unknown().optional(),
 	mode: z.enum(["ask", "act"]).optional(),
 	model: z.string().optional().catch(undefined),
-	mentions: mentionsSchema.catch(undefined),
 	deepReasoning: z.boolean().catch(false),
-	cellTarget: cellTargetSchema.nullish().catch(null),
 });
 
 /** The org route's own fields, as `prepare` reads them. */
@@ -116,6 +115,7 @@ export async function POST(req: Request): Promise<Response> {
 	return serveTurn<AgentRouteFields>(req, {
 		aiDisabledMessage: "AI is not configured. Set ANTHROPIC_API_KEY to enable the agent.",
 		projectId: null,
+		turnMetadata: { mentions: true, cellTarget: true },
 		parseBody: (raw) => {
 			const parsed = agentBodySchema.safeParse(raw);
 			if (!parsed.success) {
@@ -131,8 +131,6 @@ export async function POST(req: Request): Promise<Response> {
 				value: {
 					messages: b.messages,
 					threadId: b.threadId,
-					mentions: b.mentions,
-					cellTarget: b.cellTarget ?? null,
 					route: { mode: b.mode ?? "ask", model: b.model, deepReasoning: b.deepReasoning },
 				},
 			};

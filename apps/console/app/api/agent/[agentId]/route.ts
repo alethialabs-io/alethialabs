@@ -95,8 +95,6 @@ export async function POST(
 				value: {
 					messages: parsed.data.messages,
 					threadId: parsed.data.threadId,
-					mentions: undefined,
-					cellTarget: null,
 					route: { agentId, mode: parsed.data.mode ?? "ask" },
 				},
 			};

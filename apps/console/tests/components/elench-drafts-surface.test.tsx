@@ -291,7 +291,6 @@ beforeEach(() => {
 		hydrate: vi.fn(async () => undefined),
 		reset: vi.fn(),
 		pendingCellRequest: null,
-		pendingCellTarget: null,
 	});
 });
 
@@ -634,7 +633,7 @@ describe("S9 › the empty-cell prompt", () => {
 		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 2, y: 1 } });
 		// The request named the cell on the turn's own message, and nothing staged the grid's slot.
 		expect(server.requests.at(-1)?.messages.at(-1)?.metadata).toMatchObject({ cellTarget: { x: 2, y: 1 } });
-		expect(useWidgetGridStore.getState().pendingCellTarget).toBeNull();
+		expect(server.requests.at(-1)?.cellTarget).toBeUndefined(); // never a body field (ADR 0003 §9.2)
 		// It took no claim: the box was never the prompt's.
 		expect(server.callsOf("claimDraft")).toHaveLength(0);
 	});
@@ -650,7 +649,10 @@ describe("S9 › the empty-cell prompt", () => {
 		const turn = userTurns(T).at(-1);
 		expect(textOf(turn)).toBe("and the disk?");
 		expect(metaOf(turn) ?? {}).not.toHaveProperty("cellTarget");
-		expect(server.requests.at(-1)?.cellTarget).toBeNull();
+		// The second turn's own request names no cell anywhere: not on its message, not in the body.
+		expect(server.requests).toHaveLength(2);
+		expect(server.requests.at(-1)?.messages.at(-1)?.metadata ?? {}).toMatchObject({ cellTarget: null });
+		expect(server.requests.at(-1)?.cellTarget).toBeUndefined();
 	});
 
 	it("a refused empty-cell prompt into an existing conversation, driven through pendingCellRequest, is in the box with its cell, and Enter lands the widget in that cell", async () => {
@@ -680,7 +682,6 @@ describe("S9 › the empty-cell prompt", () => {
 		const turn = userTurns(T).at(-1);
 		expect(textOf(turn)).toBe("error rate");
 		expect(metaOf(turn)).toMatchObject({ cellTarget: { x: 1, y: 2 } });
-		expect(useWidgetGridStore.getState().pendingCellTarget).toBeNull();
 	});
 });
 

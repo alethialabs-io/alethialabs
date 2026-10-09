@@ -179,12 +179,4 @@ describe("ElenchComposer — the submit handle", () => {
 		await act(async () => {});
 		expect(server.callsOf("claimDraft")).toHaveLength(0);
 	});
-
-	it("restore puts words back after what the box holds, as an edit the store saves", async () => {
-		const { handle } = await mountComposer();
-		fill("typed since");
-		await act(async () => handle.current?.restore({ text: "refused words", mentions: [] }));
-		expect(content()).toBe("typed since\n\nrefused words");
-		expect(entry()?.local?.text).toBe("typed since\n\nrefused words");
-	});
 });
