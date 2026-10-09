@@ -21,6 +21,7 @@ import {
 } from "@/app/server/actions/activity";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
 import { ErrorState } from "@/components/errors/error-state";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
@@ -115,6 +116,7 @@ export function ActivityLog({
 	const patch = useActivityFilters((s) => s.patch);
 	const reset = useActivityFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
+	const hydrated = useHydrated();
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
 
 	// The default window is resolved ONCE. Resolving it per render would move `to` forward
@@ -288,7 +290,10 @@ export function ActivityLog({
 		}
 	}
 
-	const projectName = projectId ? lookups.projectName.get(projectId) : undefined;
+	// The topbar's project switcher reads the same projects query and may have fetched it by the
+	// time this feed hydrates; the server rendered "this project". Name it only once hydration is
+	// over, or React discards the page's server HTML with #418 (see `useHydrated`, #5786).
+	const projectName = projectId && hydrated ? lookups.projectName.get(projectId) : undefined;
 
 	return (
 		<div aria-busy={busy}>

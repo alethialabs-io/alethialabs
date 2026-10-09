@@ -11,6 +11,7 @@ import {
 	useEffect,
 	useMemo,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import { useForm } from "react-hook-form";
 import {
@@ -40,15 +41,102 @@ interface ConsentContextValue {
 	save: (preferences: ConsentPreferences) => void;
 }
 
-const ConsentContext = createContext<ConsentContextValue | null>(null);
+/** The browser-only facts the provider learns after mount. */
+interface ConsentSnapshot {
+	consent: ConsentRecord | null;
+	gpc: boolean;
+}
+
+/**
+ * Where the consent decision lives, OUTSIDE React context.
+ *
+ * WHY NOT `useState` IN THE PROVIDER (#5786). The decision is a cookie, so the server renders
+ * "no decision" and the browser learns the real one after mount. When that answer was provider
+ * state, learning it changed the CONTEXT VALUE — and this provider sits at the root of every app,
+ * with consumers (the console's `AnalyticsProvider`) wrapping the whole page below it. The change
+ * propagated through those consumers into every Suspense boundary still waiting for its streamed
+ * HTML, and React's rule for a dehydrated boundary that receives an update before its content has
+ * arrived is to stop waiting and render it on the client, silently, throwing the server's streamed
+ * copy away. Every returning visitor (anyone who answered the notice, every e2e session) therefore
+ * lost the server render of whatever the page streamed — measured on the connectors board as a
+ * second, hidden filter bar on 19 of 20 loads (#5777, #5784).
+ *
+ * So the context carries only this store, which never changes identity, and each consumer
+ * subscribes to it with `useSyncExternalStore`. A changed decision re-renders exactly the
+ * components that read it, and reaches no boundary that has not hydrated yet.
+ */
+interface ConsentStore {
+	subscribe: (listener: () => void) => () => void;
+	getSnapshot: () => ConsentSnapshot;
+	set: (next: ConsentSnapshot) => void;
+}
+
+/** What the server renders with, and what every consumer hydrates against: no decision, no GPC. */
+const SERVER_SNAPSHOT: ConsentSnapshot = { consent: null, gpc: false };
+
+/** The server (and hydration) snapshot, shared so React sees one stable value. */
+function getServerSnapshot(): ConsentSnapshot {
+	return SERVER_SNAPSHOT;
+}
+
+/** A store holding one snapshot; `set` replaces it and notifies every subscriber. */
+function createConsentStore(): ConsentStore {
+	let snapshot = SERVER_SNAPSHOT;
+	const listeners = new Set<() => void>();
+	return {
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		getSnapshot: () => snapshot,
+		set(next) {
+			snapshot = next;
+			for (const listener of listeners) listener();
+		},
+	};
+}
+
+/** The store a hook reads when no provider is mounted: it never changes. */
+const DETACHED_STORE = createConsentStore();
+
+/** What the context carries. Every field is referentially stable for the provider's lifetime. */
+interface ConsentHandle {
+	store: ConsentStore;
+	openPreferences: () => void;
+	save: (preferences: ConsentPreferences) => void;
+}
+
+const ConsentContext = createContext<ConsentHandle | null>(null);
+
+/** Subscribe to `handle`'s store and assemble the public value; `null` when there is no handle. */
+function useConsentValue(handle: ConsentHandle | null): ConsentContextValue | null {
+	const store = handle?.store ?? DETACHED_STORE;
+	const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, getServerSnapshot);
+	return useMemo(
+		() =>
+			handle
+				? {
+						consent: snapshot.consent,
+						hasDecision: snapshot.consent !== null,
+						analyticsAllowed: analyticsAllowed(snapshot.consent),
+						gpc: snapshot.gpc,
+						openPreferences: handle.openPreferences,
+						save: handle.save,
+					}
+				: null,
+		[handle, snapshot],
+	);
+}
 
 /** Return the current consent decision and controls for privacy-aware clients. */
 export function useConsent(): ConsentContextValue {
-	const context = useContext(ConsentContext);
-	if (!context) {
+	const value = useConsentValue(useContext(ConsentContext));
+	if (!value) {
 		throw new Error("useConsent must be used inside ConsentProvider.");
 	}
-	return context;
+	return value;
 }
 
 /**
@@ -78,7 +166,8 @@ declare const process: { env: { NODE_ENV?: string } };
 let warnedNoProvider = false;
 
 export function useOptionalConsent(): ConsentContextValue | null {
-	const context = useContext(ConsentContext);
+	const handle = useContext(ConsentContext);
+	const context = useConsentValue(handle);
 	// DEGRADING IS NOT THE SAME AS SAYING NOTHING.
 	//
 	// The strict hook threw, which is how the blog's missing provider was found at all — as the
@@ -124,57 +213,63 @@ export function ConsentProvider({
 	children,
 	cookieNoticeHref = "/cookies",
 }: ConsentProviderProps) {
-	const [consent, setConsent] = useState<ConsentRecord | null>(null);
+	// Created once per provider; its identity is what keeps the context value stable (see
+	// `ConsentStore` for why that matters).
+	const [store] = useState(createConsentStore);
+	// The provider renders the notice and the dialog from the same store its consumers read.
+	const { consent, gpc } = useSyncExternalStore(
+		store.subscribe,
+		store.getSnapshot,
+		getServerSnapshot,
+	);
 	const [ready, setReady] = useState(false);
-	const [gpc, setGpc] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
 
 	useEffect(() => {
-		setConsent(readConsent());
-		// Read after mount, never during render: navigator is absent server-side, and a value that
-		// differed between the server and client render would hydrate inconsistently.
-		setGpc(globalPrivacyControlEnabled());
+		// Read after mount, never during render: the cookie and navigator are browser facts, and a
+		// value that differed between the server and client render would hydrate inconsistently.
+		store.set({ consent: readConsent(), gpc: globalPrivacyControlEnabled() });
 		setReady(true);
 
 		/** Synchronize consumers after a choice changes in this document. */
 		const onConsent = (event: Event) => {
 			if (event instanceof CustomEvent) {
 				const parsed = consentPreferencesSchema.safeParse(event.detail);
-				if (parsed.success) setConsent(readConsent());
+				if (parsed.success) store.set({ ...store.getSnapshot(), consent: readConsent() });
 			}
 		};
 		window.addEventListener(CONSENT_EVENT, onConsent);
 		return () => window.removeEventListener(CONSENT_EVENT, onConsent);
-	}, []);
+	}, [store]);
 
-	const save = useCallback((preferences: ConsentPreferences) => {
-		const previous = readConsent();
-		setConsent(writeConsent(preferences));
-		setPreferencesOpen(false);
-		// Withdrawal deletes the identifiers HERE, synchronously, before the reload below.
-		// Relying on the effect cleanup does not work: `save` reloads in the same tick, so React
-		// never commits the state change and the cleanup that would have called reset() is not
-		// reached. The AnalyticsProvider purges again after the reload; both are cheap and
-		// idempotent, and the failure mode of doing it once is identifiers that never go.
-		if (!preferences.analytics) purgePostHogStorage();
-		// A reload is how an already-initialised analytics SDK stops: posthog-js cannot be fully
-		// unloaded in place. The identifiers are deleted by the AnalyticsProvider, which watches the
-		// same decision — doing it here too would duplicate the rule in two files.
-		if (previous && previous.analytics !== preferences.analytics) {
-			window.location.reload();
-		}
-	}, []);
+	const save = useCallback(
+		(preferences: ConsentPreferences) => {
+			const previous = readConsent();
+			store.set({ ...store.getSnapshot(), consent: writeConsent(preferences) });
+			setPreferencesOpen(false);
+			// Withdrawal deletes the identifiers HERE, synchronously, before the reload below.
+			// Relying on the effect cleanup does not work: `save` reloads in the same tick, so React
+			// never commits the state change and the cleanup that would have called reset() is not
+			// reached. The AnalyticsProvider purges again after the reload; both are cheap and
+			// idempotent, and the failure mode of doing it once is identifiers that never go.
+			if (!preferences.analytics) purgePostHogStorage();
+			// A reload is how an already-initialised analytics SDK stops: posthog-js cannot be fully
+			// unloaded in place. The identifiers are deleted by the AnalyticsProvider, which watches the
+			// same decision — doing it here too would duplicate the rule in two files.
+			if (previous && previous.analytics !== preferences.analytics) {
+				window.location.reload();
+			}
+		},
+		[store],
+	);
 
-	const value = useMemo<ConsentContextValue>(
-		() => ({
-			consent,
-			hasDecision: consent !== null,
-			analyticsAllowed: analyticsAllowed(consent),
-			gpc,
-			openPreferences: () => setPreferencesOpen(true),
-			save,
-		}),
-		[consent, gpc, save],
+	const openPreferences = useCallback(() => setPreferencesOpen(true), []);
+
+	// Stable for the provider's lifetime: a decision learnt or changed after mount must not change
+	// the context value (see `ConsentStore`).
+	const value = useMemo<ConsentHandle>(
+		() => ({ store, openPreferences, save }),
+		[store, openPreferences, save],
 	);
 
 	return (

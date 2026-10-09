@@ -15,13 +15,16 @@
 // `aria-label="Connect <connector name>"` (#4268); ask for the one you mean, with `exact: true`.
 //
 // Ask for the filter bar's inputs BY ROLE, never `getByLabel`/`getByPlaceholder` (#5777). A
-// full-page load streams the board into a Suspense boundary, and React often renders that boundary
-// on the client before the server's segment for it has arrived. The server's copy then still lands,
-// as `<div hidden id="S:n">`, and sits in the DOM until React's segment script removes it. Measured
-// in CI (release-gate run 37871585504): 19 of 20 loads, for 2 ms or more — and over 50 ms in
-// run 37870297134, past `load`. `getByLabel` and `getByPlaceholder` match that hidden copy, so an
-// assertion that lands in the window fails strict mode with "resolved to 2 elements". Role queries
-// leave out `hidden` subtrees, which is also what a person and a screen reader get: one search box.
+// full-page load streams the board into a Suspense boundary, and a streamed segment waits in a
+// `<div hidden id="S:n">` until React's segment script moves it into place. `getByLabel` and
+// `getByPlaceholder` match nodes inside that hidden div; role queries leave `hidden` subtrees out,
+// which is also what a person and a screen reader get: one search box.
+//
+// That window used to be much wider. Until #5786 React threw the server's copy away and rendered
+// the board again on the client, so the hidden copy sat beside a live one: two search boxes on 19 of
+// 20 CI loads (release-gate run 37871585504). The cause was the consent decision changing a root
+// context value after mount; the test "the board the server streamed is the board that hydrates"
+// below holds that fixed. The role queries stay, because the brief segment window is real either way.
 
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
@@ -62,6 +65,39 @@ test.describe("Connectors page", () => {
 		await expect(searchBox(page)).toBeVisible();
 		await searchBox(page).fill("Datadog");
 		await expect(page.getByRole("button", { name: "Connect Datadog", exact: true })).toBeVisible();
+	});
+
+	// #5786: the streamed board must HYDRATE — the search box the server sent is the one left on the
+	// page — and at no point may two exist. A client render of the boundary replaces the server's node
+	// with a new one, so node identity catches it on every load, not only on the loads where the
+	// duplicate happens to be observed. Three loads, because the failure was a race the old code lost
+	// on almost every load but not all.
+	test("the board the server streamed is the board that hydrates", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		await page.addInitScript(() => {
+			const probe = window as unknown as { __firstSearchBox?: Element; __mostSearchBoxes?: number };
+			probe.__mostSearchBoxes = 0;
+			new MutationObserver(() => {
+				const boxes = document.querySelectorAll('input[aria-label="Search connectors"]');
+				if (!probe.__firstSearchBox && boxes[0]) probe.__firstSearchBox = boxes[0];
+				probe.__mostSearchBoxes = Math.max(probe.__mostSearchBoxes ?? 0, boxes.length);
+			}).observe(document, { childList: true, subtree: true });
+		});
+		for (let load = 0; load < 3; load++) {
+			await page.goto(`/${orgSlug}/~/connectors`);
+			await expect(searchBox(page)).toBeVisible();
+			const seen = await page.evaluate(() => {
+				const probe = window as unknown as { __firstSearchBox?: Element; __mostSearchBoxes?: number };
+				const live = document.querySelector('main input[aria-label="Search connectors"]');
+				return {
+					mostAtOnce: probe.__mostSearchBoxes,
+					serverNodeIsLive: probe.__firstSearchBox !== undefined && probe.__firstSearchBox === live,
+				};
+			});
+			expect(seen, `load ${load + 1}`).toEqual({ mostAtOnce: 1, serverNodeIsLive: true });
+		}
 	});
 
 	test("search filters the board by name", async ({ authedPage: page, orgSlug }) => {

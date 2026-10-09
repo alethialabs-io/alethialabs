@@ -28,6 +28,7 @@ import {
 } from "@/components/support/cases/case-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { qk } from "@/lib/query/keys";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
@@ -88,14 +89,24 @@ export function CaseList({
 		[filters.bucket, filters.severity, filters.type, debouncedSearch],
 	);
 
-	const { data, isPending, isPlaceholderData, isError, refetch } = useQuery({
+	const result = useQuery({
 		queryKey: qk.supportCases(query.bucket),
 		queryFn: () => listMyCases(serverFilterForBucket(query.bucket)),
 		placeholderData: keepPreviousData,
 	});
+	const { refetch } = result;
+	// The notifications bell in the shell reads this same `"all"` key. On the server it creates the
+	// query before this page's HydrationBoundary runs, so the server renders the list pending; in
+	// the browser the bell's fetch can land before this boundary hydrates. Until hydration is over,
+	// render exactly what the server did — pending, no rows — or React discards the page's server
+	// HTML with #418 (see `useHydrated`, #5786).
+	const hydrated = useHydrated();
+	const isPending = result.isPending || !hydrated;
+	const isError = hydrated && result.isError;
+	const isPlaceholderData = hydrated && result.isPlaceholderData;
 	// A module-level empty array, not an inline `= []` default: a fresh literal on every
 	// render would give the memos below a new dependency identity each time and defeat them.
-	const rows = data ?? NO_ROWS;
+	const rows = (hydrated ? result.data : undefined) ?? NO_ROWS;
 
 	// Facet counts come off the bucket's rows BEFORE the client-side refinement, so an
 	// option never disappears at the moment you select it.
