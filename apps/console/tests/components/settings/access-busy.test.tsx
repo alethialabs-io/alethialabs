@@ -16,7 +16,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccessGrantsPage } from "@/lib/queries/access-grants";
 
@@ -45,7 +45,15 @@ vi.mock("@/components/settings/upgrade/feature-upsell", () => ({
 	FeatureUpsell: () => <div>Custom access is an Enterprise feature</div>,
 }));
 
+// The pages' server half: the actor is the only thing they ask for, and `getEntitlements` is real.
+const { currentActor } = vi.hoisted(() => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ currentActor }));
+vi.mock("@/app/server/actions/resolve", () => ({ resolveProjectId: vi.fn(async () => "proj-1") }));
+
+import ProjectAccessPage from "@/app/(private)/[org]/[project]/settings/access/page";
+import OrgAccessPage from "@/app/(private)/[org]/~/settings/access/page";
 import { AccessManager } from "@/components/settings/access/access-manager";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useAccessFilters } from "@/lib/stores/use-settings-filters";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 
@@ -132,5 +140,22 @@ describe("Settings · Access before the workspace store has loaded (#5850)", () 
 		render(tree(false));
 		expect(screen.getByText(UPSELL)).toBeTruthy();
 		expect(getAccessGrantsPage).not.toHaveBeenCalled();
+	});
+});
+
+/** The `customRoles` prop a page handed its `AccessManager`, or undefined when it handed none. */
+function customRolesOf(element: unknown): unknown {
+	if (!isValidElement(element) || element.type !== AccessManager) return "not an AccessManager";
+	const props: unknown = element.props;
+	if (typeof props !== "object" || props === null || !("customRoles" in props)) return undefined;
+	return props.customRoles;
+}
+
+describe("the Access pages resolve the entitlement on the server (#5850)", () => {
+	it.each([true, false])("hand the manager customRoles=%s from the actor's entitlements", async (customRoles) => {
+		currentActor.mockResolvedValue({ userId: "u1", orgId: "o1", entitlements: { ...COMMUNITY_ENTITLEMENTS, customRoles } });
+		expect(customRolesOf(await OrgAccessPage())).toBe(customRoles);
+		const project = await ProjectAccessPage({ params: Promise.resolve({ org: "acme", project: "proj" }) });
+		expect(customRolesOf(project)).toBe(customRoles);
 	});
 });
