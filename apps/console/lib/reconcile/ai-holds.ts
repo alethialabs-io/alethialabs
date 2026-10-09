@@ -22,8 +22,9 @@
 //   3. retention: terminal claims (`state <> 'running'`) whose `finished_at` is older than
 //      {@link CLAIM_RETENTION_DAYS} are deleted, whether or not their thread still exists.
 //
-// No chat route calls `reserveTurn` yet, so until ADR 0003 slice 6 cuts them over no hold is claimed
-// in production and passes 1 and 3 find nothing there; every hold is pass 2's.
+// The two Elench chat routes (`/api/agent`, `/api/projects/[projectId]/assistant`) accept every turn
+// through `reserveTurn`, so their holds are claimed and reach pass 1; every other caller's hold
+// (support, agent identity, colony, verify) is unclaimed and is pass 2's.
 
 import { and, isNull, lt, ne, sql } from "drizzle-orm";
 import { expireSilentTurns } from "@/lib/agent/turn-claims";

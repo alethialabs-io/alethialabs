@@ -27,14 +27,14 @@ import "server-only";
 //   an `AcceptedTurn` must never be built from request data;
 // - `expireSilentTurns`' candidate scan has NO owner predicate, by design: the sweep serves every
 //   user, and re-checks each candidate under its locks with that candidate's own `user_id`.
-// No route calls this module yet: ADR 0003 slice 6 cuts the routes over.
+// Called by the two Elench chat routes through `lib/agent/turn-route.ts`, and by the sweep.
 
 import { randomUUID } from "node:crypto";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import { and, eq, like, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
-import { type AgentStep, recordAgentTurnUsage } from "@/lib/billing/agent-metering";
+import { type AgentStep, type AgentTurnObservability, recordAgentTurnUsage } from "@/lib/billing/agent-metering";
 import {
 	type AiBudgetError,
 	type AiBudgetRefusal,
@@ -880,6 +880,11 @@ export interface TurnOutcome {
 	partial: boolean;
 	/** Why it ended without an answer, when it did. */
 	error?: FinalizeErrorCode;
+	/**
+	 * The turn's LLM-observability enrichment (session, input, output, tools, latency), passed through
+	 * to the settle's generation as `recordAgentTurnUsage`'s `turn`. Optional: it changes no ledger row.
+	 */
+	observability?: AgentTurnObservability;
 }
 
 /** What {@link finalizeTurn} did (§5.3's four outcomes; `won` is C6 or C7). */
@@ -972,6 +977,7 @@ export async function finalizeTurn(turn: AcceptedTurn, outcome: TurnOutcome): Pr
 					refId: turn.threadId,
 					steps,
 					...(floor > 0 ? { floorCredits: floor } : {}),
+					...(outcome.observability ? { turn: outcome.observability } : {}),
 				},
 				tx,
 			);
