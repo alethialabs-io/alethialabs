@@ -17,6 +17,8 @@ interface Recorded {
 	table: unknown;
 	values?: unknown;
 	onConflict?: unknown;
+	/** The WHERE the query was built with, rendered later by a real PgDialect. */
+	where?: unknown;
 }
 
 const state = vi.hoisted(() => ({
@@ -39,7 +41,10 @@ function chain(op: Recorded["op"], table?: unknown) {
 		},
 		leftJoin: () => c,
 		innerJoin: () => c,
-		where: () => c,
+		where(w: unknown) {
+			rec.where = w;
+			return c;
+		},
 		limit: () => c,
 		orderBy: () => c,
 		groupBy: () => c,
@@ -104,6 +109,8 @@ import {
 	provisionProject,
 	tryPlanProject,
 } from "@/app/server/actions/projects";
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { approvalKeyOf } from "@/components/agent/approval-card";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -261,7 +268,55 @@ describe("getApprovedJob (#5797)", () => {
 	});
 });
 
+/** The SQL text of every recorded SELECT on `jobs`' WHERE clause, rendered by a real PgDialect. */
+function jobLookupWheres(): string[] {
+	const dialect = new PgDialect();
+	return state.recorded
+		.filter((r) => r.op === "select" && r.table === jobs)
+		.map((r) => (r.where instanceof SQL ? dialect.sqlToQuery(r.where).sql : ""));
+}
+
+// The lookup is the only thing between a client-chosen key and someone else's job: RLS's `owner_all`
+// is `user OR org`, so it does not hide the caller's own job in another org, nor a colleague's job in
+// this org. These pin each of the four predicates, so dropping any one of them goes red here — fast,
+// without the real-Postgres suite.
+describe("the existing-job lookup is scoped to org, project, user and key (#5797)", () => {
+	it.each([
+		["the early lookup", () => planProject("p1", undefined, undefined, KEY)],
+		["the card's lookup", () => getApprovedJob("p1", "plan_project", KEY)],
+	])("%s filters on every scope column", async (_label, run) => {
+		state.insert.set(jobs, [{ id: "job-new" }]);
+		await run();
+
+		const [where] = jobLookupWheres();
+		expect(where).toBeTruthy();
+		for (const col of ["org_id", "project_id", "user_id", "idempotency_key"]) {
+			expect(where).toContain(`"jobs"."${col}" = $`);
+		}
+	});
+
+	it("the conflict read-back filters on every scope column too", async () => {
+		state.insert.set(jobs, []);
+		let n = 0;
+		const realGet = state.select.get.bind(state.select);
+		state.select.get = (t: unknown) => {
+			if (t !== jobs) return realGet(t);
+			n += 1;
+			return n === 1 ? [] : [{ id: "job-winner", job_type: "PLAN" }];
+		};
+		await planProject("p1", undefined, undefined, KEY);
+
+		const wheres = jobLookupWheres();
+		expect(wheres).toHaveLength(2);
+		for (const col of ["org_id", "project_id", "user_id", "idempotency_key"]) {
+			expect(wheres[1]).toContain(`"jobs"."${col}" = $`);
+		}
+	});
+});
+
 describe("approvalKeyOf", () => {
+	// The fallback is deliberate, not a gap: a proposal with no thread (an ephemeral conversation)
+	// still dedupes, on the tool call id alone — a provider-minted random id, unique per call.
 	it("qualifies the tool call by its thread, and falls back to the tool call alone", () => {
 		expect(approvalKeyOf("t-1", "toolu_1")).toBe("t-1:toolu_1");
 		expect(approvalKeyOf(null, "toolu_1")).toBe("toolu_1");
