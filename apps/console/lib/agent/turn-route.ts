@@ -47,7 +47,7 @@ import { z } from "zod";
 import { AGENT_STEP_PART_TYPE, type AgentStepData, agentStepMarker } from "@/lib/ai/agent-steps";
 import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import { type Mention, mentionSchema, mentionsSchema } from "@/lib/ai/mentions";
-import { MAX_DRAFT_MENTION_FIELD, MAX_DRAFT_MENTION_SPANS } from "@/lib/elench/draft-content";
+import { MAX_DRAFT_MENTION_FIELD, MAX_DRAFT_MENTION_SPANS, normalizeDraftText } from "@/lib/elench/draft-content";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
@@ -111,11 +111,14 @@ function distinctResources(spans: readonly Mention[]): Mention[] {
 	});
 }
 
-/** One mention of a message's `metadata`, its id and label capped as a draft caps them. */
-const turnMentionSchema = mentionSchema.extend({
-	id: z.string().max(MAX_DRAFT_MENTION_FIELD),
-	label: z.string().max(MAX_DRAFT_MENTION_FIELD),
-});
+/**
+ * A mention id or label of a message's `metadata`: capped as a draft caps it, and normalized as a draft
+ * is (U+0000 removed, lone surrogates replaced), so the jsonb insert of the stored turn cannot fail on it.
+ */
+const turnMentionFieldSchema = z.string().max(MAX_DRAFT_MENTION_FIELD).transform(normalizeDraftText);
+
+/** One mention of a message's `metadata`. */
+const turnMentionSchema = mentionSchema.extend({ id: turnMentionFieldSchema, label: turnMentionFieldSchema });
 
 /**
  * What a user message carries in `metadata` (§9.2): its mentions and its cell target. Read

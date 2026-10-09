@@ -132,6 +132,7 @@ vi.mock("@/components/agent/elench/elench-panel", () => ({
 	ElenchPanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+import { getThread } from "@/app/server/actions/agent";
 import { tryPlanProject } from "@/app/server/actions/projects";
 import { ApprovalCard, fitClientToolText } from "@/components/agent/approval-card";
 import { ElenchConversation } from "@/components/agent/elench/elench-conversation";
@@ -140,6 +141,7 @@ import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 import { parseClientToolOutput } from "@/lib/ai/client-tools";
 import { turnOf, useAgentChat } from "@/components/agent/use-agent-chat";
 import { classifyTurn } from "@/lib/agent/turn-key";
+import { selectDraft } from "@/lib/stores/elench-drafts/selectors";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 
@@ -154,7 +156,9 @@ const THREAD = "7a2e3d4c-5b6f-4071-9b8c-0d1e2f3a4b5c";
 // ── The route, stubbed at `fetch` ────────────────────────────────────────────────────────────
 
 /** What one request answers: a typed refusal, or a UI message stream of `chunks`. */
-type Answer = { refusal: TurnRefusal; status: number } | { chunks: UIMessageChunk[] };
+type Answer =
+	| { refusal: TurnRefusal; status: number; gate?: Promise<void> }
+	| { chunks: UIMessageChunk[] };
 
 const answers: Answer[] = [];
 const bodies: unknown[] = [];
@@ -196,6 +200,7 @@ async function routeFetch(_input: RequestInfo | URL, init?: RequestInit): Promis
 	const next = answers.shift();
 	if (!next) throw new TypeError("Failed to fetch");
 	if ("refusal" in next) {
+		if (next.gate) await next.gate;
 		return new Response(JSON.stringify(next.refusal), {
 			status: next.status,
 			headers: { "content-type": "application/json" },
@@ -673,6 +678,74 @@ describe("onTurnRefused", () => {
 		await waitFor(() => expect(reloads.mock.calls.length).toBe(before + 1));
 		expect(await screen.findByText("the other tab's answer")).toBeTruthy();
 		expect(screen.queryByText("Being answered in another tab or device")).toBeNull();
+	});
+
+	it("the Being-answered poll stops once inFlight clears: no further getThread reads", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		answers.push({ refusal: refusal("turn-in-progress", { revision: 4 }), status: 409 });
+		fill("plan api");
+		await pressEnter();
+		await screen.findByText("Being answered in another tab or device");
+		threadReads.inFlight = [false];
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(5_000);
+		});
+		await waitFor(() => expect(screen.queryByText("Being answered in another tab or device")).toBeNull());
+		const reads = vi.mocked(getThread).mock.calls.length;
+		const loads = reloads.mock.calls.length;
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(30_000);
+		});
+		expect(vi.mocked(getThread).mock.calls.length).toBe(reads);
+		expect(reloads.mock.calls.length).toBe(loads);
+	});
+
+	it("a switch to another conversation drops the poll: when the first one's turn finishes, the view stays where the user went", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		answers.push({ refusal: refusal("turn-in-progress", { revision: 4 }), status: 409 });
+		fill("plan api");
+		await pressEnter();
+		await screen.findByText("Being answered in another tab or device");
+		const other = crypto.randomUUID();
+		act(() => useElenchStore.setState({ conversationId: other, threadId: other }));
+		const reads = vi.mocked(getThread).mock.calls.length;
+		const loads = reloads.mock.calls.length;
+		threadReads.inFlight = [false, false, false];
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(15_000);
+		});
+		expect(vi.mocked(getThread).mock.calls.length).toBe(reads); // nothing polls A any more
+		expect(reloads.mock.calls.length).toBe(loads); // A is never loaded over B
+		expect(useElenchStore.getState().conversationId).toBe(other);
+		expect(useElenchStore.getState().threadId).toBe(other);
+	});
+
+	it("a refusal of a send the store has already let go of (released before it arrived) is only cleared", async () => {
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		let open = (): void => undefined;
+		const gate = new Promise<void>((resolve) => {
+			open = resolve;
+		});
+		answers.push({ refusal: refusal("thread-busy", { revision: 3 }), status: 409, gate });
+		fill("let go of");
+		await pressEnter();
+		const key = { orgId: ORG, projectId: null, conversationId: THREAD };
+		await waitFor(() => expect(selectDraft(drafts.tab.store.view.getState(), key)?.sending?.phase).toBe("routing"));
+		const turnId = selectDraft(drafts.tab.store.view.getState(), key)?.sending?.turnId ?? "";
+		// The store lets the send go first (as its deadline would), so the refusal finds no owner.
+		act(() => drafts.tab.store.dispatch({ type: "ENTRY", key, event: { type: "ROUTE_FAILED", turnId, failure: { kind: "network" } } }));
+		await waitFor(() => expect(drafts.server.callsOf("releaseClaim")).toHaveLength(1));
+		const loads = reloads.mock.calls.length;
+		await act(async () => {
+			open();
+		});
+		await act(async () => {});
+		await act(async () => {});
+		expect(reloads.mock.calls.length).toBe(loads);
+		expect(screen.queryByText("Another message in this conversation is being answered")).toBeNull();
+		expect(screen.queryByText(ERROR_CARD)).toBeNull();
 	});
 
 	it("a refused Retry (a regenerate, which no draft owns) loads the transcript and puts nothing into the box", async () => {

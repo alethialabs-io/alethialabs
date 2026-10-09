@@ -372,8 +372,15 @@ export function ElenchConversation({
 
 	// The status line of a refused regenerate or continuation (ADR 0003 §9.3), which no draft owns.
 	const [refusalNotice, setRefusalNotice] = useState<string | null>(null);
-	// The conversation whose turn is being answered in another tab or device (D20): polled until done.
-	const [beingAnswered, setBeingAnswered] = useState<string | null>(null);
+	// The turn of the conversation on screen that is being answered in another tab or device (D20):
+	// its thread is polled until done. It belongs to that conversation: a switch, a new chat or a
+	// delete (each changes `conversationId`) drops it, so a poll never outlives the screen it was for.
+	const [beingAnswered, setBeingAnswered] = useState<{ conversationId: string; threadId: string } | null>(null);
+	const [answeredFor, setAnsweredFor] = useState(conversationId);
+	if (answeredFor !== conversationId) {
+		setAnsweredFor(conversationId);
+		setBeingAnswered(null);
+	}
 	const [staleResume, setStaleResume] = useState(false);
 	// A send while the page has not told the conversation its org: nothing is sent, and it says why.
 	const [orgNotReady, setOrgNotReady] = useState(false);
@@ -508,7 +515,7 @@ export function ElenchConversation({
 					return;
 				case "poll-thread":
 					// D20: the turn is being answered elsewhere; poll its conversation until it is done.
-					setBeingAnswered(e.key.conversationId);
+					setBeingAnswered({ conversationId: e.key.conversationId, threadId: e.key.conversationId });
 					return;
 				case "offer-undo-discard":
 					// The Undo toast of a Discard is slice 11's; nothing offers a Discard before it.
@@ -649,7 +656,10 @@ export function ElenchConversation({
 					refusal.revision !== null &&
 					refusal.revision !== request?.turn.baseRevision,
 			);
-			setBeingAnswered(refusal.refusal === "turn-in-progress" ? threadId : null);
+			const onScreen = useElenchStore.getState().conversationId;
+			setBeingAnswered(
+				refusal.refusal === "turn-in-progress" && threadId ? { conversationId: onScreen, threadId } : null,
+			);
 			setRefusalNotice(REFUSAL_NOTICE[refusal.refusal] ?? null);
 		},
 		[clearError, binding, routeEvent, newChat, reloadThread],
@@ -659,11 +669,12 @@ export function ElenchConversation({
 	}, [error, onTurnRefused]);
 	// Whichever composer is mounted (the modal hero's or the docked one — never both).
 	const composerRef = useRef<ElenchComposerHandle>(null);
-	// A turn being answered in another tab or device (D20): re-read its conversation with `getThread`
-	// until no claim runs (`inFlight` is null), then load it and retire the "Being answered" line.
+	// A turn being answered in another tab or device (D20): re-read its thread with `getThread` until
+	// no claim runs (`inFlight` is null), then retire the "Being answered" line and load the thread,
+	// but only while it is still the conversation on screen: the load never moves the view.
 	useEffect(() => {
-		if (beingAnswered === null) return;
-		const polled = beingAnswered;
+		if (beingAnswered === null || beingAnswered.conversationId !== conversationId) return;
+		const { threadId: polled } = beingAnswered;
 		let done = false;
 		const timer = setInterval(() => {
 			void getThread(polled).then(async (t) => {
@@ -672,7 +683,7 @@ export function ElenchConversation({
 				clearInterval(timer);
 				setBeingAnswered(null);
 				setRefusalNotice(null);
-				if (binding !== null && binding.key.conversationId === polled) {
+				if (binding !== null && binding.key.conversationId === conversationId) {
 					const id = keyId(binding.key);
 					const said = binding.store.view
 						.getState()
@@ -680,14 +691,16 @@ export function ElenchConversation({
 						.map((n) => n.id);
 					if (said.length > 0) binding.store.ackNotices(said);
 				}
-				if (reloadThread) await reloadThread(polled);
+				if (reloadThread && useElenchStore.getState().conversationId === conversationId) {
+					await reloadThread(polled);
+				}
 			});
 		}, IN_FLIGHT_POLL_MS);
 		return () => {
 			done = true;
 			clearInterval(timer);
 		};
-	}, [beingAnswered, binding, reloadThread]);
+	}, [beingAnswered, conversationId, binding, reloadThread]);
 
 	// A resumed transcript that ENDS on a user turn is a turn whose reply never landed — most
 	// often a first send whose answer failed (AI not configured, budget, provider error):
@@ -765,7 +778,7 @@ export function ElenchConversation({
 
 	// Empty-cell prompt dispatch: a submitted cell composer is an external send (D10y, or D10x into
 	// a new conversation) that carries its cell IN THE EVENT, so the turn's own message names the
-	// cell and nothing stages the widget grid's pending slot (ADR 0003 §9.4 change 3). The request is
+	// cell, and no later turn can carry it (ADR 0003 §9.2, §9.4 change 3). The request is
 	// cleared only once the store took the send: a prompt asked while another send runs, or before
 	// the transcript is loaded, waits instead of being lost.
 	const pendingCellRequest = useWidgetGridStore((s) => s.pendingCellRequest);

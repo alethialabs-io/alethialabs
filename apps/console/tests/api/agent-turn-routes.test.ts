@@ -1220,6 +1220,16 @@ describe("mentions and the cell target (§9.2, case 13)", () => {
 		expect(threads().get(THREAD)?.messages[2]?.metadata).toEqual({ mentions: [pill], cellTarget: { x: 2, y: 1 } });
 	});
 
+	it("a mention label with U+0000 or a lone surrogate is stored normalized, as a draft stores it", async () => {
+		seedAnswered();
+		const raw = { type: "project" as const, id: `${PROJECT}\u0000`, label: "check\u0000out\ud800" };
+		const res = await postOrg(body([userMsg("u1", "about @checkout", { mentions: [raw] })], { turnId: "u1", baseRevision: 3 }));
+		await chunksOf(res);
+		expect(threads().get(THREAD)?.messages[2]?.metadata).toEqual({
+			mentions: [{ type: "project", id: PROJECT, label: "checkout\ufffd" }],
+		});
+	});
+
 	it("the project route stores a turn's mentions but never a cell target (its prompt has no grid)", async () => {
 		const pill = { type: "project" as const, id: PROJECT, label: "checkout" };
 		const res = await postProject(
