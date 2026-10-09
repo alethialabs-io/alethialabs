@@ -5,19 +5,20 @@
 //
 // Every private page mounts the shell, and the browser has to run every module in the shell's
 // static graph before React can hydrate anything or even listen for a click. On a cold load in CI
-// that was one ~470 ms task (release-gate run 37917147461), and a click on a filter-bar control
-// 300 ms after the page painted was lost on 4 of 4 Activity loads. Two things in that graph did
-// nothing on first paint: the Elench conversation (the whole chat, markdown, code-highlighting and
-// canvas-preview stack, rendered only once the assistant is opened) and Stripe.js (which the
-// package root injects as a side effect of being imported). These tests hold both out.
+// that was one 378–480 ms task (release-gate run 37917147461). Two things in that graph did nothing
+// on first paint: the Elench conversation — the whole chat, markdown, code-highlighting and
+// canvas-preview stack, rendered only once the assistant is opened, and now mounted by the shell
+// through `ElenchSurfaceLoader` — and Stripe.js, which the package root injects as a side effect of
+// being imported. These tests hold both out.
 
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const evaluated = vi.hoisted(() => ({ conversation: 0 }));
 
-// Counts evaluations of the conversation module. A static import from the surface evaluates this
-// factory the moment the surface is imported — before anything is opened.
+// Counts evaluations of the conversation module. A static import anywhere on the shell's path to
+// it evaluates this factory the moment the shell's mount point is imported — before anything is
+// opened.
 vi.mock("@/components/agent/elench/elench-conversation", () => {
 	evaluated.conversation += 1;
 	return { ElenchConversation: () => <div data-testid="conversation" /> };
@@ -26,7 +27,7 @@ vi.mock("@/components/agent/elench/use-elench-threads", () => ({
 	useElenchThreads: () => ({}),
 }));
 
-import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
 const INITIAL = useElenchStore.getState();
@@ -38,7 +39,7 @@ afterEach(() => {
 
 describe("the app shell's first evaluation (#5849)", () => {
 	it("does not evaluate the Elench conversation until the assistant is opened", async () => {
-		const view = render(<ElenchSurface />);
+		const view = render(<ElenchSurfaceLoader />);
 		await act(async () => {});
 		expect(evaluated.conversation).toBe(0);
 		expect(view.queryByTestId("conversation")).toBeNull();

@@ -6,7 +6,7 @@ import { Button } from "@repo/ui/button";
 import { Sparkles } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { resolveProjectId } from "@/app/server/actions/resolve";
-import { preloadElenchConversation } from "@/components/agent/elench/elench-surface";
+import { preloadElenchSurface } from "@/components/agent/elench/elench-surface-loader";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { projectScope } from "./nav-config";
 
@@ -55,8 +55,8 @@ export function AskAiButton() {
 			variant="ghost"
 			size="sm"
 			onClick={onClick}
-			onPointerEnter={preloadElenchConversation}
-			onFocus={preloadElenchConversation}
+			onPointerEnter={preloadElenchSurface}
+			onFocus={preloadElenchSurface}
 			aria-label="Ask AI"
 			className="h-9 gap-2 text-muted-foreground hover:text-foreground"
 		>
