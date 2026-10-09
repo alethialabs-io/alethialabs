@@ -3,22 +3,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Elench draft actions (ADR 0001 §4.2): `listDrafts`, `saveDraft`, `discardDraft`,
-// `restoreDraft`, and the claim (§3.4): `claimDraft`, `consumeDraft` and `releaseClaim`. Each parses
+// `restoreDraft`, the claim (§3.4): `claimDraft`, `consumeDraft` and `releaseClaim`, the first send
+// (§5.1): `startConversation`, and the delete confirm's `countDraftsOfConversation` (§6.3). Each parses
 // its input with zod (§4 step 1), then runs behind the preamble in lib/elench/draft-gate.ts, and
 // answers an outcome of lib/elench/draft-outcomes.ts. Every write is a compare-and-set on
 // `revision`, or on the claim token, under a `FOR UPDATE` lock of the key's row.
 //
 // The lease settle (S5, lib/elench/draft-claims.ts) runs first inside every action here that locks
-// or lists a row, EXCEPT for a claim whose token the request itself presents: `consumeDraft` and
-// `releaseClaim` act on their own claim whatever its age, and a `claimDraft` retried with its own
-// token (S1r) answers that claim again. The claim's heartbeat (S7) is not an action: it is the route
+// or lists a row, EXCEPT for a claim whose token the request itself presents: `consumeDraft`,
+// `releaseClaim` and a composer `startConversation` act on their own claim whatever its age, and a
+// `claimDraft` retried with its own token (S1r) answers that claim again. The claim's heartbeat (S7) is not an action: it is the route
 // handler app/api/elench/drafts/heartbeat/route.ts, so Next's action queue cannot starve it (B1).
 
+import type { UIMessage } from "ai";
 import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
+import { THREAD_DELETED, threadTitle } from "@/lib/agent/transcript-save";
 import type { Actor } from "@/lib/authz/types";
 import type { Tx } from "@/lib/db";
-import { type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
+import { agentThreads, type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
 import {
 	claimOf,
 	endClaim,
@@ -28,7 +31,7 @@ import {
 	settleIfSilent,
 	settleScope,
 } from "@/lib/elench/draft-claims";
-import { contentSchema } from "@/lib/elench/draft-content";
+import { contentSchema, type DraftContent, type DraftMention } from "@/lib/elench/draft-content";
 import {
 	lockDraft,
 	lockDraftScope,
@@ -46,16 +49,19 @@ import type {
 	DraftClaimed,
 	DraftConflict,
 	DraftDiscardedRefusal,
+	DraftGateRefusal,
 	DraftGone,
 	DraftInvalid,
 	DraftListEntry,
 	DraftNotClaimed,
+	DraftStartDraftConflict,
 	ListDraftsResult,
 	ReleaseClaimResult,
 	RestoreDraftResult,
 	SaveDraftResult,
+	StartConversationResult,
 } from "@/lib/elench/draft-outcomes";
-import type { ElenchFailedSend } from "@/types/jsonb.types";
+import type { ElenchCellTarget, ElenchFailedSend } from "@/types/jsonb.types";
 
 /** The most ACTIVE drafts one scope may hold; a new row past it is refused with `limit` (§4.3). */
 const MAX_ACTIVE_DRAFTS_PER_SCOPE = 200;
@@ -128,6 +134,42 @@ const releaseClaimSchema = keySchema.extend({
 	freshTurnId: z.uuid().optional(),
 });
 
+/** The longest title a start may name; the stored title is cut to 60 characters (`threadTitle`). */
+const MAX_START_TITLE = 1000;
+
+/** What every start names: its key, the turn id the client minted, and the thread's title. */
+const startBaseSchema = keySchema.extend({
+	turnId: z.uuid(),
+	title: z.string().max(MAX_START_TITLE),
+});
+
+/**
+ * `startConversation`'s input (§5.1). A COMPOSER start names its claim (the token, and the claim's
+ * revision, which the token already fences) and carries no text: the text is read from the locked
+ * row. An EXTERNAL start (a suggestion, a seed or an empty-cell prompt, D10x) takes no claim; it
+ * carries its prompt and the draft revision it was sent at, and its content is validated by
+ * `contentSchema` exactly as a save's is.
+ */
+const startConversationSchema = z.discriminatedUnion("origin", [
+	startBaseSchema.extend({
+		origin: z.literal("composer"),
+		token: tokenSchema,
+		revision: baseRevisionSchema.optional(),
+	}),
+	startBaseSchema.extend({
+		origin: z.literal("external"),
+		revision: baseRevisionSchema,
+		text: contentSchema.shape.text,
+		mentions: contentSchema.shape.mentions,
+		cellTarget: contentSchema.shape.cellTarget.optional(),
+	}),
+]);
+
+const countDraftsSchema = z.object({ id: z.uuid(), orgHint: z.uuid().optional() });
+
+/** The one row `count_elench_drafts_of_conversation` answers. */
+const countRowsSchema = z.array(z.object({ n: z.number().int().min(0) }));
+
 /** `listDrafts`' input: the anchor, and the org id of the scope this tab last listed (A12). */
 export type ListDraftsInput = z.input<typeof listDraftsSchema>;
 /** `saveDraft`'s input (§4.2). */
@@ -140,6 +182,18 @@ export type ClaimDraftInput = z.input<typeof claimDraftSchema>;
 export type ConsumeDraftInput = z.input<typeof consumeDraftSchema>;
 /** `releaseClaim`'s input (§4.2): a key, the claim's token, and why the send failed. */
 export type ReleaseClaimInput = z.input<typeof releaseClaimSchema>;
+/** `startConversation`'s input (§5.1): a composer start's claim, or an external start's prompt. */
+export type StartConversationInput = z.input<typeof startConversationSchema>;
+/** `countDraftsOfConversation`'s input: the conversation, and the org this tab last listed (A12). */
+export type CountDraftsInput = z.input<typeof countDraftsSchema>;
+
+/**
+ * What `countDraftsOfConversation` answers (§4.2): how many drafts of the conversation the caller
+ * holds across every org, and in how many orgs.
+ */
+export type CountDraftsResult =
+	| { outcome: "ok"; count: number; orgs: number }
+	| DraftGateRefusal;
 
 /**
  * Locks the caller's row for a key and settles its claim first when that claim has been silent past
@@ -631,6 +685,357 @@ export async function releaseClaim(input: ReleaseClaimInput): Promise<ReleaseCla
 			});
 			if (released === null) return notClaimedOf(tx, actor, row);
 			return { outcome: "released", row: toServerDraft(released) };
+		},
+	);
+}
+
+// ── startConversation (§5.1) ─────────────────────────────────────────────────────────────────────
+
+/** The first turn a start stores: the trimmed text, its re-based mention spans, and its cell. */
+interface FirstTurnContent {
+	text: string;
+	mentions: DraftMention[];
+	cellTarget: ElenchCellTarget | null;
+}
+
+/**
+ * The first turn of `content` as it is stored (§5.1 step 2): the text trimmed, as every send trims,
+ * and each mention span moved by the leading whitespace removed. A span the trim cut into (a label
+ * that ends in whitespace at the very end of the text) no longer covers its `@label`, so it is
+ * dropped rather than stored pointing past the text.
+ */
+function firstTurnOf(content: Pick<DraftContent, "text" | "mentions" | "cellTarget">): FirstTurnContent {
+	const lead = content.text.length - content.text.trimStart().length;
+	const text = content.text.trim();
+	const mentions = content.mentions
+		.map((m) => ({ ...m, start: m.start - lead, end: m.end - lead }))
+		.filter((m) => m.start >= 0 && m.end <= text.length);
+	return { text, mentions, cellTarget: content.cellTarget };
+}
+
+/**
+ * §5.1 step 3: inserts the caller's thread under the client-minted conversation id, holding exactly
+ * the first turn (`parts` form, mentions and cell target on the message's own `metadata`). `ON
+ * CONFLICT (id) DO NOTHING`: when any row already holds the id (the caller's own, or one RLS hides
+ * from them), nothing is written and this returns null. Otherwise the inserted row's `revision`,
+ * read from the row rather than assumed (ADR 0003 §9.4 change 4).
+ */
+async function insertFirstTurn(
+	tx: Tx,
+	actor: Actor,
+	req: { conversationId: string; projectId: string | null; turnId: string; title: string },
+	turn: FirstTurnContent,
+): Promise<{ revision: number } | null> {
+	const message: UIMessage = {
+		id: req.turnId,
+		role: "user",
+		parts: [{ type: "text", text: turn.text }],
+		metadata: { mentions: turn.mentions, cellTarget: turn.cellTarget },
+	};
+	const [inserted] = await tx
+		.insert(agentThreads)
+		.values({
+			id: req.conversationId,
+			user_id: actor.userId,
+			// An org-level thread is the user's own (`createThread`, §1), so its org is the user id.
+			org_id: actor.userId,
+			project_id: req.projectId,
+			title: threadTitle(req.title || turn.text),
+			messages: [message],
+		})
+		.onConflictDoNothing({ target: agentThreads.id })
+		.returning({ revision: agentThreads.revision });
+	return inserted ?? null;
+}
+
+/** What §5.1 step 5 answers for a start whose thread insert wrote nothing. */
+type StartConflictVerdict = "conflict" | "deleted" | "already-stored";
+
+/**
+ * §5.1 step 5: classifies the row that holds the conversation id. The read names
+ * `user_id = actor.userId` (§4 step 5), so another owner's row, live or tombstone, is never read and
+ * answers `conflict`, the same as a mismatch on the caller's own row: no existence oracle (§13 Q1).
+ */
+async function classifyStartConflict(
+	tx: Tx,
+	actor: Actor,
+	req: { conversationId: string; projectId: string | null; turnId: string },
+): Promise<StartConflictVerdict> {
+	const [thread] = await tx
+		.select({
+			status: agentThreads.status,
+			kind: agentThreads.kind,
+			projectId: agentThreads.project_id,
+			firstTurnId: sql<string | null>`${agentThreads.messages}->0->>'id'`,
+			messageCount: sql<number>`jsonb_array_length(${agentThreads.messages})`.mapWith(Number),
+		})
+		.from(agentThreads)
+		.where(
+			and(
+				eq(agentThreads.id, req.conversationId),
+				eq(agentThreads.user_id, actor.userId), // authz-scope-ok: the caller's own thread only (ADR 0001 §4 step 5, §13 Q1); owner_all would also admit the page org's rows
+			),
+		)
+		.limit(1);
+	if (!thread) return "conflict";
+	if (thread.status === THREAD_DELETED) return "deleted";
+	if (thread.kind !== "agent" || thread.projectId !== req.projectId || thread.messageCount === 0) {
+		return "conflict";
+	}
+	return thread.firstTurnId === req.turnId ? "already-stored" : "conflict";
+}
+
+/**
+ * S2: a composer start's claim becomes the thread's first turn, in the transaction that stored it.
+ * The content is emptied, the row is `active` with the claim cleared, `last_sent` records the turn,
+ * the failed-send marker is cleared and `thread_seen` set. Returns the new revision, or null when the
+ * row no longer holds `claim` (it is locked by this transaction, so that cannot happen here).
+ */
+async function consumeFirstTurn(
+	tx: Tx,
+	actor: Actor,
+	row: ElenchDraft,
+	claim: RowClaim,
+): Promise<number | null> {
+	const [updated] = await tx
+		.update(elenchDrafts)
+		.set({
+			status: "active",
+			claim_token: null,
+			claim_turn_id: null,
+			claim_kind: null,
+			claimed_at: null,
+			text: "",
+			mentions: [],
+			artifacts: [],
+			cell_target: null,
+			failed_send: null,
+			last_sent: { turnId: claim.turnId, kind: claim.kind, at: new Date().toISOString() },
+			thread_seen: true,
+			revision: row.revision + 1,
+			updated_at: sql`now()`,
+		})
+		.where(
+			and(
+				eq(elenchDrafts.id, row.id),
+				eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
+				eq(elenchDrafts.org_id, actor.orgId),
+				eq(elenchDrafts.status, "sending"),
+				eq(elenchDrafts.claim_token, claim.token),
+			),
+		)
+		.returning({ revision: elenchDrafts.revision });
+	return updated?.revision ?? null;
+}
+
+/**
+ * Thrown inside the start's savepoint when an external start's draft-row insert lost to a
+ * concurrent base-0 save (§5.1 step 4), so the thread insert rolls back with it.
+ */
+class StartLostToSave extends Error {
+	/** Names the sentinel; it never leaves `startExternal`. */
+	constructor() {
+		super("an external start lost its draft key to a concurrent save");
+		this.name = "StartLostToSave";
+	}
+}
+
+/** `draft-conflict(row, thread)` for an external start whose draft row is not where it was sent. */
+async function draftConflictOf(
+	tx: Tx,
+	actor: Actor,
+	row: ElenchDraft,
+): Promise<DraftStartDraftConflict> {
+	const refusal = await refuseRow(tx, actor, row);
+	return { outcome: "draft-conflict", row: refusal.row, thread: refusal.thread };
+}
+
+/**
+ * A composer start (§5.1, D10b): the locked row must hold exactly this claim, a first-turn claim
+ * under `token` for `turnId`. Otherwise the start writes nothing and answers `not-claimed`, or
+ * `gone` when a delete purged the row. The first turn is read from the row, never from the input.
+ * Once the claim matches, `created` and `already-stored` consume it (S2), and `conflict` and
+ * `deleted` release it with its text intact (S4).
+ */
+async function startComposer(
+	tx: Tx,
+	actor: Actor,
+	req: { conversationId: string; projectId: string | null; turnId: string; title: string; token: string },
+	row: ElenchDraft | null,
+): Promise<StartConversationResult> {
+	if (row === null) return goneOf(tx, actor, req.conversationId);
+	const claim = claimOf(row);
+	if (
+		claim === null ||
+		claim.token !== req.token ||
+		claim.kind !== "first" ||
+		claim.turnId !== req.turnId
+	) {
+		return notClaimedOf(tx, actor, row);
+	}
+	const turn = firstTurnOf({ text: row.text, mentions: row.mentions, cellTarget: row.cell_target });
+	const inserted = await insertFirstTurn(tx, actor, req, turn);
+	const verdict = inserted === null ? await classifyStartConflict(tx, actor, req) : null;
+	if (inserted !== null || verdict === "already-stored") {
+		const revision = await consumeFirstTurn(tx, actor, row, claim);
+		// The row is locked by this transaction, so the claim is still its own. Throwing rolls the
+		// thread insert back rather than commit a turn whose draft still reads `sending`.
+		if (revision === null) throw new Error("startConversation: the locked claim moved");
+		return inserted !== null
+			? { outcome: "created", revision, threadRevision: inserted.revision }
+			: { outcome: "already-stored", revision };
+	}
+	const outcome = verdict ?? "conflict";
+	const released = await endClaim(tx, actor, row, claim, {
+		end: "release",
+		turnId: claim.turnId,
+		error: outcome,
+		uncertain: false,
+	});
+	if (released === null) throw new Error("startConversation: the locked claim moved");
+	return { outcome, revision: released.revision };
+}
+
+/**
+ * An external start (§5.1, D10x): the prompt is not the draft's text, so it takes no claim. The
+ * draft row must be absent, or `active` at `revision`; a `sending` row answers `claimed`, any other
+ * mismatch `draft-conflict`. On `created` the row's content is left as it is; when there was no row,
+ * an empty one is inserted, and if a concurrent save inserted the key first the thread insert is
+ * rolled back with it and the start answers `draft-conflict` (D10f's fence). A start whose thread
+ * insert wrote nothing writes no draft row.
+ */
+async function startExternal(
+	tx: Tx,
+	actor: Actor,
+	req: { conversationId: string; projectId: string | null; turnId: string; title: string; revision: number },
+	content: DraftContent,
+	row: ElenchDraft | null,
+): Promise<StartConversationResult> {
+	if (row !== null && row.status === "sending") {
+		const refusal = await refuseRow(tx, actor, row);
+		return { outcome: "claimed", row: refusal.row, thread: refusal.thread };
+	}
+	if (row !== null && (row.status !== "active" || row.revision !== req.revision)) {
+		return draftConflictOf(tx, actor, row);
+	}
+	const turn = firstTurnOf(content);
+	let created: StartConversationResult | null;
+	try {
+		created = await tx.transaction(async (sp): Promise<StartConversationResult | null> => {
+			const inserted = await insertFirstTurn(sp, actor, req, turn);
+			if (inserted === null) return null;
+			if (row === null) {
+				const [draft] = await sp
+					.insert(elenchDrafts)
+					.values({
+						user_id: actor.userId,
+						org_id: actor.orgId,
+						project_id: req.projectId,
+						conversation_id: req.conversationId,
+						revision: 1,
+						status: "active",
+						text: "",
+						thread_seen: true,
+					})
+					.onConflictDoNothing({
+						target: [elenchDrafts.user_id, elenchDrafts.org_id, elenchDrafts.conversation_id],
+					})
+					.returning({ revision: elenchDrafts.revision });
+				if (!draft) throw new StartLostToSave();
+				return { outcome: "created", revision: draft.revision, threadRevision: inserted.revision };
+			}
+			const [updated] = await sp
+				.update(elenchDrafts)
+				.set({
+					failed_send: null,
+					thread_seen: true,
+					revision: row.revision + 1,
+					updated_at: sql`now()`,
+				})
+				.where(casPredicate(actor, row, req.revision, "active"))
+				.returning({ revision: elenchDrafts.revision });
+			// Locked by this transaction and checked above, so the compare-and-set holds.
+			if (!updated) throw new Error("startConversation: the locked draft moved");
+			return { outcome: "created", revision: updated.revision, threadRevision: inserted.revision };
+		});
+	} catch (e) {
+		if (!(e instanceof StartLostToSave)) throw e;
+		const winner = await lockDraft(tx, actor, req.conversationId);
+		if (winner === null) return goneOf(tx, actor, req.conversationId);
+		return draftConflictOf(tx, actor, winner);
+	}
+	if (created !== null) return created;
+	const verdict = await classifyStartConflict(tx, actor, req);
+	return { outcome: verdict, revision: row?.revision ?? 0 };
+}
+
+/**
+ * Starts a conversation with its first turn (§5.1), in one transaction: the thread is inserted under
+ * the client-minted conversation id holding exactly that turn, and the draft row moves with it.
+ * Step 1 locks the caller's draft row and runs the lease settle (S5), EXCEPT for a composer start
+ * that presents the row's live token: it acts on its own claim whatever its age (B2). `created`
+ * carries the draft's new revision and the inserted thread's `revision`.
+ *
+ * LOCK ORDER: the draft row first (step 1), then the thread row (the insert of step 3, which waits
+ * on any uncommitted row under the same id). `deleteThread` takes them in the same order (its purge
+ * runs before its tombstone), so a start and a delete of one conversation queue on the draft row
+ * instead of deadlocking.
+ */
+export async function startConversation(
+	input: StartConversationInput,
+): Promise<StartConversationResult> {
+	const parsed = startConversationSchema.safeParse(input);
+	if (!parsed.success) return { outcome: "invalid" };
+	const req = parsed.data;
+	let external: DraftContent | null = null;
+	if (req.origin === "external") {
+		const content = contentSchema.safeParse({
+			text: req.text,
+			mentions: req.mentions,
+			artifacts: [],
+			cellTarget: req.cellTarget ?? null,
+		});
+		if (!content.success || content.data.text.trim() === "") return { outcome: "invalid" };
+		external = content.data;
+	}
+	return runDraftGate(
+		{ keyOrgId: req.orgId, orgHint: null, projectId: req.projectId },
+		async (actor, tx): Promise<StartConversationResult> => {
+			const locked = await lockDraft(tx, actor, req.conversationId);
+			if (locked !== null && !sameAnchor(locked, req.projectId)) return { outcome: "invalid" };
+			// A composer start presents its token, so `settleIfSilent` spares exactly that claim; an
+			// external start presents none, so any silent claim is settled first.
+			const row =
+				locked === null
+					? null
+					: await settleIfSilent(tx, actor, locked, req.origin === "composer" ? req.token : null);
+			if (req.origin === "composer") return startComposer(tx, actor, req, row);
+			if (external === null) return { outcome: "invalid" };
+			return startExternal(tx, actor, req, external, row);
+		},
+	);
+}
+
+/**
+ * Counts the caller's drafts of one conversation in EVERY org, for the delete confirm (§6.3), through
+ * the owner-pinned `count_elench_drafts_of_conversation`: the owner is the GUC `withActorScope` sets,
+ * never an argument. The key `(user_id, org_id, conversation_id)` is unique (`uq_elench_drafts_key`),
+ * so one user holds at most one draft of a conversation per org, and the count IS the number of orgs.
+ */
+export async function countDraftsOfConversation(
+	input: CountDraftsInput,
+): Promise<CountDraftsResult> {
+	const parsed = countDraftsSchema.safeParse(input);
+	if (!parsed.success) return { outcome: "invalid" };
+	const { id, orgHint } = parsed.data;
+	return runDraftGate(
+		{ keyOrgId: null, orgHint: orgHint ?? null, projectId: null },
+		async (_actor, tx): Promise<CountDraftsResult> => {
+			const res = await tx.execute(
+				sql`select public.count_elench_drafts_of_conversation(${id}::uuid) as n`,
+			);
+			const count = countRowsSchema.parse(res)[0]?.n ?? 0;
+			return { outcome: "ok", count, orgs: count };
 		},
 	);
 }

@@ -148,8 +148,8 @@ export async function endClaim(
 
 /**
  * The lease settle of one silent claim (S5). A first-turn claim is released: nothing here consumes
- * one, and from slice 5 `startConversation` (S2) will consume it only in the transaction that stores
- * its turn, so a first claim that reaches the lease is unsent. A later turn is consumed when the
+ * one, and `startConversation` (S2) consumes it only in the transaction that stores its turn, so a
+ * first claim that reaches the lease is unsent. A later turn is consumed when the
  * thread stores it with this text; released with no turn id when the thread stores the id with
  * another text (that text can never be stored under that id, so the next claim mints a fresh one);
  * and released `uncertain` otherwise, because the route may have accepted it.
