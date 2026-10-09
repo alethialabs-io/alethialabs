@@ -33,11 +33,13 @@ vi.mock("@/lib/billing/payment-holds/store", () => ({
 	claimHoldNotice: vi.fn(),
 	unclaimHoldNotice: vi.fn(),
 }));
+vi.mock("@/lib/email/guard", () => ({ sendGuardedEmail: vi.fn() }));
 vi.mock("@/lib/auth/internal-auth", async (importOriginal) => {
 	const real = await importOriginal<typeof import("@/lib/auth/internal-auth")>();
 	return { ...real, isInternalAuthorized: vi.fn(real.isInternalAuthorized) };
 });
 
+import { render } from "@react-email/components";
 import { POST } from "@/app/api/internal/payment-holds/sweep/route";
 import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { sendDueHoldNotices } from "@/lib/billing/payment-holds/emails";
@@ -50,7 +52,8 @@ import {
 } from "@/lib/billing/payment-holds/sweeper";
 import * as lease from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
-import type { PaymentHoldRow } from "@/lib/db/schema";
+import { PAYMENT_HOLD_NOTIFIED_STATES, type PaymentHoldRow } from "@/lib/db/schema";
+import { sendGuardedEmail } from "@/lib/email/guard";
 import {
 	type BackfillStripe,
 	type BackfillSubscription,
@@ -431,6 +434,31 @@ describe("sendDueHoldNotices (Q3, C95)", () => {
 		db.queue.push([hold({ state: "released", release_reason: "voided_unpaid", released_at: NOW })]);
 		expect(await sendDueHoldNotices({ deliver })).toBe(0);
 		expect(store.claimHoldNotice).not.toHaveBeenCalled();
+	});
+});
+
+describe("sendPaymentHoldNoticeEmail (Q3 copy, I8)", () => {
+	it("mails the given address, says only what was read, and carries no amount or card detail", async () => {
+		const { sendPaymentHoldNoticeEmail } = await vi.importActual<typeof import("@/lib/email/billing-email")>(
+			"@/lib/email/billing-email",
+		);
+		const html: Record<string, string> = {};
+		for (const notice of PAYMENT_HOLD_NOTIFIED_STATES) {
+			vi.mocked(sendGuardedEmail).mockClear();
+			await sendPaymentHoldNoticeEmail({ to: "payer@example.test", notice });
+			const sent = vi.mocked(sendGuardedEmail).mock.calls[0]?.[0];
+			expect(sent?.to).toBe("payer@example.test");
+			expect(sent?.subject).toMatch(/Alethia/);
+			html[notice] = sent ? await render(sent.react, { plainText: true }) : "";
+		}
+		expect(html.refund_pending).toMatch(/issued its refund/);
+		expect(html.refund_pending).toMatch(/both charges/);
+		expect(html.refund_pending).not.toMatch(/refunded in full/);
+		expect(html["released:refunded"]).toMatch(/refunded in full/);
+		expect(html["released:adopted"]).toMatch(/Create a team/);
+		for (const text of Object.values(html)) {
+			expect(text).not.toMatch(/[$€£]\s?\d|\d+[.,]\d{2}\b|\bcard\b|charged twice|won't be charged/i);
+		}
 	});
 });
 

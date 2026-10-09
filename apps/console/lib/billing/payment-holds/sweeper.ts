@@ -6,9 +6,11 @@
 //
 // ONE TICK (`runPaymentHoldSweep`):
 //   1. selects the open holds that are DUE — `next_check_at <= now()`, or nudged since their last
-//      observation (`nudged_at > observed_at`) — oldest first, at most `SWEEP_BATCH`;
+//      observation (`nudged_at > observed_at`; the webhook nudges from slice 7) — oldest first, at most
+//      `SWEEP_BATCH`;
 //   2. for each, takes its payer's lease (`user:<payer>`) with a ZERO wait: a lease another caller holds
-//      (a purchase, the operator, another instance's tick) skips that hold until the next tick;
+//      (the operator, another instance's tick, a create-a-team purchase) skips that hold until the
+//      next tick;
 //   3. under the lease, re-reads the row, runs `advanceHold` (up to 3 Stripe writes), and then the AGE
 //      ALERT (§5.4, I11): once per hold and state entry, when the hold has sat in its state past the
 //      bound its state and last observation give it (`ageAlertFor`);

@@ -12,8 +12,9 @@
 //                       only while the hold's setup has NO org (§5.6 "When a hold ends"). A setup with an
 //                       org is re-linked from slice 9 on, and is the creator's to link until then.
 //
-// ONE SENDER. Only the sweeper calls `sendDueHoldNotices`: the purchase flow, the link and the operator
-// command move holds but never mail, so whichever caller moved a hold, its email goes out within one tick.
+// ONE SENDER. Only the sweeper calls `sendDueHoldNotices`. The operator command moves holds but never
+// mails, and neither will the purchase flow and the link when they move holds (slices 8 and 9), so
+// whichever caller moved a hold, its email goes out within one tick.
 //
 // AT MOST ONCE. Before a send, the notice claim (store.ts `claimHoldNotice`) sets `notified_state` with a
 // compare-and-set; only the caller whose claim wrote the row sends. Two overlapping ticks — in one
