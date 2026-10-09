@@ -103,8 +103,13 @@ const activeExpired: SQL = sql`${eq(elenchDrafts.status, "active")} and ${lte(
 
 /**
  * Deletes one page of the rows `where` matches, oldest first by `order`, skipping rows another
- * transaction holds. The predicate sits on both the locking sub-select and the delete, so a row
- * written between the two (an Undo, a save, a claim) is re-checked and kept. Returns the count.
+ * transaction holds. Two statements in one transaction, not `DELETE … WHERE id IN (SELECT … LIMIT
+ * n FOR UPDATE SKIP LOCKED)`: with bound parameters Postgres may plan that sub-select as a plain
+ * SubPlan, run once per outer row, and each run skips the rows the statement has already deleted and
+ * returns the NEXT page. Measured through this driver on Postgres 17, a two-row page deleted all
+ * five matching rows. Here the lock is taken first and the delete names only the locked ids, with the
+ * predicate repeated, so a page deletes at most `pageSize` rows and never one that stopped matching.
+ * Returns the count.
  */
 async function deletePage(
 	db: Db,
@@ -112,18 +117,29 @@ async function deletePage(
 	order: typeof elenchDrafts.updated_at | typeof elenchDrafts.discarded_at,
 	pageSize: number,
 ): Promise<number> {
-	const page = db
-		.select({ id: elenchDrafts.id })
-		.from(elenchDrafts)
-		.where(where)
-		.orderBy(asc(order))
-		.limit(pageSize)
-		.for("update", { skipLocked: true });
-	const gone = await db
-		.delete(elenchDrafts)
-		.where(and(inArray(elenchDrafts.id, page), where))
-		.returning({ id: elenchDrafts.id });
-	return gone.length;
+	return db.transaction(async (tx) => {
+		const locked = await tx
+			.select({ id: elenchDrafts.id })
+			.from(elenchDrafts)
+			.where(where)
+			.orderBy(asc(order))
+			.limit(pageSize)
+			.for("update", { skipLocked: true });
+		if (locked.length === 0) return 0;
+		const gone = await tx
+			.delete(elenchDrafts)
+			.where(
+				and(
+					inArray(
+						elenchDrafts.id,
+						locked.map((r) => r.id),
+					),
+					where,
+				),
+			)
+			.returning({ id: elenchDrafts.id });
+		return gone.length;
+	});
 }
 
 /**
