@@ -13,21 +13,60 @@
 // Never `getByRole("button", { name: "Connect" })` — the catalog renders a couple of dozen buttons
 // whose visible word is "Connect", so that fails strict mode. Each carries
 // `aria-label="Connect <connector name>"` (#4268); ask for the one you mean, with `exact: true`.
+//
+// Ask for the filter bar's inputs BY ROLE, never `getByLabel`/`getByPlaceholder` (#5777). A
+// full-page load streams the board into a Suspense boundary, and React often renders that boundary
+// on the client before the server's segment for it has arrived. The server's copy then still lands,
+// as `<div hidden id="S:n">`, and sits in the DOM until React's segment script removes it. Measured
+// in CI (release-gate run 37871585504): 19 of 20 loads, for 2 ms or more — and over 50 ms in
+// run 37870297134, past `load`. `getByLabel` and `getByPlaceholder` match that hidden copy, so an
+// assertion that lands in the window fails strict mode with "resolved to 2 elements". Role queries
+// leave out `hidden` subtrees, which is also what a person and a screen reader get: one search box.
 
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
+
+/** The board's search box: the visible, accessible one, never a hidden streamed copy. */
+function searchBox(page: Page) {
+	return page.getByRole("textbox", { name: "Search connectors", exact: true });
+}
 
 test.describe("Connectors page", () => {
 	test("loads the board on the shared filter grammar", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel("Search connectors")).toBeVisible();
+		await expect(searchBox(page)).toBeVisible();
 		await expect(page.getByRole("button", { name: /^Group\b/ })).toBeVisible();
-		await expect(page.getByPlaceholder("All vendors")).toBeVisible();
+		await expect(page.getByRole("textbox", { name: "All vendors", exact: true })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Clouds", exact: true })).toBeVisible();
+	});
+
+	// The #5777 race, made deterministic: put a server-shaped copy of the search box in a hidden
+	// `S:` segment, exactly as React leaves one while a streamed segment waits to be removed, and the
+	// locator must still resolve to the one box a person can see. `getByLabel` fails this.
+	test("a hidden streamed copy of the board does not make the search box ambiguous", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		await page.goto(`/${orgSlug}/~/connectors`);
+		await expect(searchBox(page)).toBeVisible();
+		await page.evaluate(() => {
+			const segment = document.createElement("div");
+			segment.hidden = true;
+			segment.id = "S:5777";
+			const copy = document.createElement("input");
+			copy.setAttribute("aria-label", "Search connectors");
+			copy.placeholder = "Filter connectors…";
+			segment.appendChild(copy);
+			document.body.appendChild(segment);
+		});
+		await expect(searchBox(page)).toBeVisible();
+		await searchBox(page).fill("Datadog");
+		await expect(page.getByRole("button", { name: "Connect Datadog", exact: true })).toBeVisible();
 	});
 
 	test("search filters the board by name", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await page.getByLabel("Search connectors").fill("Datadog");
+		await searchBox(page).fill("Datadog");
 		await expect(page.getByRole("button", { name: "Connect Datadog", exact: true })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Source", exact: true })).toHaveCount(0);
 	});
@@ -60,7 +99,7 @@ test.describe("Connectors page", () => {
 		orgSlug,
 	}) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel("Search connectors")).toBeVisible();
+		await expect(searchBox(page)).toBeVisible();
 		await expect(page.getByText(/verification failed/i)).toHaveCount(0);
 		await expect(page.getByRole("button", { name: /^Re-verify/ })).toHaveCount(0);
 	});
@@ -74,7 +113,7 @@ test.describe("Connectors page", () => {
 	}) => {
 		// Trigger the eager placeholder creation.
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel("Search connectors")).toBeVisible();
+		await expect(searchBox(page)).toBeVisible();
 
 		// Back on the overview, open the setup guide from the topbar.
 		await page.goto(`/${orgSlug}`);
