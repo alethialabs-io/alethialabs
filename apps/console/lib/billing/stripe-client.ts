@@ -12,7 +12,8 @@
 // iframes — inside the window in which the page is still hydrating. `/pure` loads it when
 // `loadStripe` is first called, i.e. when a payment surface actually renders.
 
-import { loadStripe, type Stripe } from "@stripe/stripe-js/pure";
+import type { Stripe } from "@stripe/stripe-js";
+import { loadStripe } from "@stripe/stripe-js/pure";
 import { env } from "next-runtime-env";
 
 let promise: Promise<Stripe | null> | null = null;
