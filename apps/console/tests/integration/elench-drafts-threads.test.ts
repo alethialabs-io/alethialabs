@@ -15,7 +15,8 @@
 //      transaction, and never another user's; `countDraftsOfConversation` counts the same rows.
 //
 // The actions run under an injected actor (`runWithActor`). Each case uses fresh users and orgs; the
-// PDP authorizes from `grants`, so each actor holds an org-wide viewer grant in each org it acts in.
+// PDP authorizes from `grants`, so each actor holds an org-wide viewer grant in each org it acts in,
+// and, in a team org, the active `member` row the PDP requires there (#5472).
 
 import { randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
@@ -36,8 +37,11 @@ import {
 	agentThreads,
 	elenchDrafts,
 	grants,
+	member,
 	type NewAgentThread,
 	type NewElenchDraft,
+	organization,
+	user as userTable,
 } from "@/lib/db/schema";
 import { describeIfDb } from "./db";
 
@@ -51,10 +55,23 @@ function freshUser(): string {
 	return id;
 }
 
-/** A fresh team org id, remembered for cleanup. */
-function freshOrg(): string {
+/** Users given a `user` row (team members need one), remembered for cleanup. */
+const accounts: string[] = [];
+
+/**
+ * A fresh TEAM org whose active members are `members`, remembered for cleanup. Outside the personal
+ * scope the PDP honours a grant only for an active `member` row (#5472), so each member gets one.
+ */
+async function freshOrg(members: string[]): Promise<string> {
 	const id = randomUUID();
 	orgs.push(id);
+	const db = getServiceDb();
+	await db.insert(userTable).values(members.map((m) => ({ id: m, email: `it-elench-${m}@example.test` })));
+	accounts.push(...members);
+	await db.insert(organization).values({ id, name: `it-elench-${id.slice(0, 8)}` });
+	await db
+		.insert(member)
+		.values(members.map((m) => ({ id: randomUUID(), organizationId: id, userId: m, role: "member" })));
 	return id;
 }
 
@@ -182,6 +199,11 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 			await getServiceDb().delete(agentThreads).where(inArray(agentThreads.user_id, users));
 			await getServiceDb().delete(grants).where(inArray(grants.principal_id, users));
 		}
+		if (orgs.length > 0) {
+			await getServiceDb().delete(member).where(inArray(member.organizationId, orgs));
+			await getServiceDb().delete(organization).where(inArray(organization.id, orgs));
+		}
+		if (accounts.length > 0) await getServiceDb().delete(userTable).where(inArray(userTable.id, accounts));
 	});
 
 	it("a composer start stores the trimmed first turn and answers the inserted row's revision", async () => {
@@ -233,9 +255,9 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 	// out — and if it were read, its first turn (this very turn id) would answer `already-stored` and
 	// consume the caller's words into a thread they cannot open.
 	it("a teammate's thread whose org_id is the page org is never read: conflict, and the words are released", async () => {
-		const org = freshOrg();
 		const user = freshUser();
 		const mate = freshUser();
+		const org = await freshOrg([user, mate]);
 		await grantViewer(user, org);
 		await grantViewer(mate, org);
 		const conversation = randomUUID();
@@ -349,7 +371,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 	it("deleteThread purges the user's drafts in orgs A and B, and never another user's", async () => {
 		const user = freshUser();
 		const stranger = freshUser();
-		const orgB = freshOrg();
+		const orgB = await freshOrg([user]);
 		await grantViewer(user, user);
 		await grantViewer(user, orgB);
 		const conversation = randomUUID();
