@@ -522,10 +522,13 @@ export async function advanceHold(start: PaymentHoldRow, deps: HoldMachineDeps):
 		} catch (err) {
 			if (!(err instanceof HoldObservationError)) throw err;
 			// I5: a failed observation moves nothing. It records the failure and reschedules.
+			const state = hold.state;
+			// Unreachable (a release ends the call), but the store refuses a released row anyway.
+			if (state === "released") return done("stale");
 			const ok = await write({
 				attempts: hold.attempts + 1,
 				lastError: err.message,
-				nextCheckAt: nextCheck(hold.state, hold.refund_attempt, observedAt),
+				nextCheckAt: nextCheck(state, hold.refund_attempt, observedAt),
 			});
 			return done(ok ? "open" : "stale");
 		}
