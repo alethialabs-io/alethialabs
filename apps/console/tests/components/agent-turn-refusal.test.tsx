@@ -677,10 +677,13 @@ describe("One refusal handler", () => {
 		await pressEnter();
 		await waitFor(() => expect(drafts.server.callsOf("releaseClaim")).toHaveLength(1));
 		await waitFor(() => expect(content()).toBe("one copy only"));
-		// Give a second handler every chance to run: it would have put the words back again.
+		// Give a second handler every chance to run: it would reload again, say so in its own status
+		// line, and put the words back a second time.
 		await act(async () => {});
 		await act(async () => {});
 		expect(content()).toBe("one copy only");
+		expect(reloads).toHaveBeenCalledTimes(1); // the store's own load (D9d (a), thread-busy)
+		expect(screen.queryByText("Another message in this conversation is being answered")).toBeNull();
 		expect(drafts.server.row({ orgId: ORG, projectId: null, conversationId: THREAD })?.content.text).toBe("one copy only");
 	});
 
