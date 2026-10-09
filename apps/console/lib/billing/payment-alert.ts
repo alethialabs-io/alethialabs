@@ -25,9 +25,12 @@ import { emitAlertEvent } from "@/lib/alerts/emit";
  *   - `link_refused`: a create-a-team subscription the link refused, because the team already has
  *     another live plan — it is live and unlinked, and keeps renewing until a person acts;
  *   - `setup_closed`: a create-a-team subscription whose unfinished setup was closed because the
- *     subscription ended, and whose first payment is not proven unmoved.
+ *     subscription ended, and whose first payment is not proven unmoved;
+ *   - `payment_hold`: a create-a-team subscription a payment hold is settling — whoever opened the hold
+ *     (the backfill, from slice 8 the purchase flow, from slice 9 the link). The payment-hold sweeper and
+ *     the operator command raise their alerts under it (ADR 0002 §5.4).
  */
-export type PaymentAlertContext = "purchase_flow" | "link_refused" | "setup_closed";
+export type PaymentAlertContext = "purchase_flow" | "link_refused" | "setup_closed" | "payment_hold";
 
 /** The summary clause for each context. */
 const CONTEXT_CLAUSE: Record<PaymentAlertContext, string> = {
@@ -36,6 +39,7 @@ const CONTEXT_CLAUSE: Record<PaymentAlertContext, string> = {
 		"a create-a-team subscription the link refused because the team already has another live plan",
 	setup_closed:
 		"a create-a-team subscription whose unfinished setup was closed because the subscription ended",
+	payment_hold: "a create-a-team subscription that a payment hold is settling",
 };
 
 /** The event key the catalog lists under Platform health. */

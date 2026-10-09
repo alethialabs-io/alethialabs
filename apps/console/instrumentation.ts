@@ -41,6 +41,11 @@ export async function register() {
 	// never-synced connections (self-hostable; no external cron — the /api route stays for hosted).
 	const { startConnectionSweeper } = await import("@/lib/cloud-providers/sweep");
 	startConnectionSweeper();
+	// In-app payment-hold sweeper (ADR 0002 §5.4): the REQUIRED scheduled caller that advances every due
+	// payment hold under its payer's lease, raises the age alerts and sends the hold emails. It runs on
+	// every instance; the lease serialises them (the /api/internal/payment-holds/sweep twin stays for hosted).
+	const { startPaymentHoldSweeper } = await import("@/lib/billing/payment-holds/sweeper");
+	startPaymentHoldSweeper();
 	// In-app capability refresh: keeps the per-tenant capabilities catalog (launchable regions +
 	// instance-types) fresh via a hash-gated change-detector, and backfills never-synced connections
 	// (self-hostable; the /api/internal/capabilities/sweep route stays for hosted).

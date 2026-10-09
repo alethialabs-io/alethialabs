@@ -265,26 +265,38 @@ describeIfDb("payment_holds — C74: hint writes and notice claims never touch v
 	it("a notice is claimed once per hold and state, never bumps version, and an unclaim lets the next tick retry", async () => {
 		const { payer, lease } = await payerWithLease();
 		const hold = await opened(lease, e0(payer, newSubscription()));
-		const prepared = refOf(hold);
+
+		// S6: a claim matches only a hold that is in the email's state NOW, in the same statement.
+		expect(await claimHoldNotice(hold.id, "refund_pending")).toBe(false);
+		const pending = await writeHoldState(lease, refOf(hold), { state: "refund_pending" });
+		if (!pending) throw new Error("fixture: the state write missed");
 
 		expect(await claimHoldNotice(hold.id, "refund_pending")).toBe(true);
 		expect(await claimHoldNotice(hold.id, "refund_pending")).toBe(false);
 		const claimed = await readHold(hold.id);
-		expect(claimed).toMatchObject({ notified_state: "refund_pending", version: 0 });
+		expect(claimed).toMatchObject({ notified_state: "refund_pending", version: 1 });
 		expect(claimed.notified_at).not.toBeNull();
-		expect(claimed.updated_at).toEqual(hold.updated_at);
+		expect(claimed.updated_at).toEqual(pending.updated_at);
 
 		// The send threw: the claim is given back, and the next claim of that state wins again.
 		await unclaimHoldNotice(hold.id, "refund_pending");
 		expect(await readHold(hold.id)).toMatchObject({ notified_state: null, notified_at: null });
 		expect(await claimHoldNotice(hold.id, "refund_pending")).toBe(true);
 
-		// An unclaim of a state that is no longer the claim leaves the newer claim alone.
+		// A claim never moves state, so a state write prepared before it still lands.
+		expect(await writeHoldState(lease, refOf(pending), { state: "refund_due" })).toMatchObject({ version: 2 });
+		// A refund that failed (refund_due) cannot be claimed as on its way, nor as refunded.
+		await unclaimHoldNotice(hold.id, "refund_pending");
+		expect(await claimHoldNotice(hold.id, "refund_pending")).toBe(false);
+		expect(await claimHoldNotice(hold.id, "released:refunded")).toBe(false);
+
+		// Released refunded: that notice is claimable, and an unclaim of an older state leaves it alone.
+		const released = await releaseHold(lease, { id: hold.id, version: 2 }, { reason: "refunded" });
+		expect(released?.hold.state).toBe("released");
+		expect(await claimHoldNotice(hold.id, "released:adopted")).toBe(false);
 		expect(await claimHoldNotice(hold.id, "released:refunded")).toBe(true);
 		await unclaimHoldNotice(hold.id, "refund_pending");
 		expect((await readHold(hold.id)).notified_state).toBe("released:refunded");
-
-		expect(await writeHoldState(lease, prepared, { state: "refund_pending" })).toMatchObject({ version: 1 });
 	});
 });
 
