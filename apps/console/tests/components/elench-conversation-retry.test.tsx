@@ -1,36 +1,56 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// A user's message is never lost silently (maintainer ruling, #5423 review). When a first send
-// cannot create its thread, nothing is sent and the composer keeps the text — still editable.
-// Retry used to re-send the FAILED attempt's snapshot (`pending.text`) and then remount the
-// docked composer (or, on the modal landing, unmount it along with the landing): an edit made
-// after the failure was neither sent nor kept, and nothing said so. Retry is now the composer's
-// own submit — exactly Enter. These tests drive the real `ElenchConversation`, the real
-// `useElenchSend` and the real Lexical composer; the chat transport, the transcript renderer and
-// the chrome are stubbed (the transcript stub renders the conversation's own `ChatError`, so the
-// card, its copy and its Retry are the real ones).
+// A user's message is never lost silently (maintainer ruling, #5423 review), and Retry is Enter on
+// the box. Since ADR 0001 slice 9 a failed first send is not a card with a Retry of its own: the
+// words come back into the box (D11r for the composer, D10f for a prompt that was never the box's),
+// still editable, in the panel and in the modal, and Enter sends what the box shows then, under the
+// failed send's own turn id. These drive the real drafts root, surface, conversation, store and
+// Lexical composer over the in-memory server (tests/fixtures/elench-drafts-server.ts).
 
-import { act, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import type { UIMessage } from "ai";
 import {
+	$createLineBreakNode,
 	$createParagraphNode,
 	$createTextNode,
 	$getRoot,
 	getNearestEditorFromDOMNode,
 	KEY_ENTER_COMMAND,
 	type LexicalEditor,
+	type LexicalNode,
 } from "lexical";
-import { type ReactNode, useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FirstTurn } from "@/app/server/actions/agent";
-import type { ElenchThreadApi } from "@/components/agent/elench/elench-conversation";
-import type { AgentThread } from "@/lib/db/schema";
+import type { ReactNode } from "react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 
+const nav = vi.hoisted(() => ({ pathname: "/acme" }));
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn() }),
+	usePathname: () => nav.pathname,
 	useParams: () => ({}),
+}));
+const who = vi.hoisted(() => ({ viewer: { id: "00000000-0000-4000-8000-0000000000aa" } as { id: string } | null }));
+vi.mock("@/components/providers/viewer-provider", () => ({
+	useViewer: () => ({ viewer: who.viewer, isPending: false }),
+}));
+// The real actions are server code; every tab here is handed the fake server's transport.
+vi.mock("@/app/server/actions/elench-drafts", () => ({
+	listDrafts: vi.fn(),
+	saveDraft: vi.fn(),
+	restoreDraft: vi.fn(),
+	discardDraft: vi.fn(),
+	claimDraft: vi.fn(),
+	consumeDraft: vi.fn(),
+	releaseClaim: vi.fn(),
+	startConversation: vi.fn(),
+}));
+const srv = vi.hoisted(() => ({ current: null as FakeElenchServer | null }));
+vi.mock("@/app/server/actions/agent", () => ({
+	listThreads: vi.fn(async (projectId?: string) => srv.current?.listThreads(projectId) ?? []),
+	getThread: vi.fn(async (id: string) => srv.current?.getThread(id) ?? null),
+	createThread: vi.fn(),
+	deleteThread: vi.fn(async (id: string) => srv.current?.deleteThread(id)),
 }));
 vi.mock("@/app/server/actions/billing", () => ({ getAiUsageSummary: vi.fn(async () => null) }));
 vi.mock("@/app/server/actions/artifacts", () => ({
@@ -42,6 +62,11 @@ vi.mock("@/app/server/actions/agent-feedback", () => ({
 	setMessageFeedback: vi.fn(),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
+vi.mock("@/app/server/actions/projects", () => ({
+	getApprovedJob: vi.fn(async () => null),
+	tryPlanProject: vi.fn(),
+	tryProvisionProject: vi.fn(),
+}));
 vi.mock("@/components/agent/agent-artifact-gallery", () => ({ AgentArtifactGallery: () => null }));
 vi.mock("@/components/agent/agent-knowledge-panel", () => ({ AgentKnowledgePanel: () => null }));
 vi.mock("@/components/agent/render-tool-parts/org-tool-parts", () => ({
@@ -65,332 +90,273 @@ vi.mock("@/components/agent/elench/mention-typeahead", () => ({
 	MentionTypeaheadPlugin: () => null,
 }));
 vi.mock("@/components/agent/elench/suggestion-carousel", () => ({
-	SuggestionCarousel: () => null,
+	SuggestionCarousel: ({ onSelect }: { onSelect: (prompt: string) => void }) => (
+		<button type="button" onClick={() => onSelect("Show my clusters")}>
+			Suggestion
+		</button>
+	),
 }));
 vi.mock("@/components/agent/elench/elench-modal", () => ({
-	ElenchModal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+	ElenchModal: ({ children }: { children: ReactNode }) => <div data-testid="modal">{children}</div>,
 }));
 vi.mock("@/components/agent/elench/elench-panel", () => ({
-	ElenchPanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+	ElenchPanel: ({ children }: { children: ReactNode }) => <div data-testid="panel">{children}</div>,
 }));
 
-// The transport: `sendMessage` appends to a real transcript (so the modal landing unmounts on a
-// send, as it does in the product), and `transportError` stands in for the chat's own error.
-interface ChatHarness {
-	sent: UIMessage[];
-	transportError: Error | undefined;
-	regenerate: (options?: { messageId?: string }) => void;
-}
-const chat = vi.hoisted(
-	(): ChatHarness => ({ sent: [], transportError: undefined, regenerate: () => undefined }),
-);
-vi.mock("@/components/agent/use-agent-chat", async (importOriginal) => ({
-	...(await importOriginal<typeof import("@/components/agent/use-agent-chat")>()),
-	useAgentChat: ({ initialMessages }: { initialMessages: UIMessage[] }) => {
-		const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
-		return {
-			messages,
-			status: "ready",
-			error: chat.transportError,
-			sendMessage: (m: UIMessage) => {
-				chat.sent.push(m);
-				setMessages((prev) => [...prev, m]);
-			},
-			regenerate: (options?: { messageId?: string }) => chat.regenerate(options),
-			stop: () => undefined,
-			addToolResult: () => undefined,
-			clearError: () => undefined,
-			setBaseRevision: () => undefined,
-		};
-	},
-}));
-
-// The transcript renderer: the conversation's error card + composer + empty state, nothing else.
-vi.mock("@/components/agent/agent-chat", async () => {
-	const { ChatError } = await import("@/components/agent/chat-error");
-	return {
-		AgentChat: (props: {
-			error?: Error;
-			onRetry?: () => void;
-			renderComposer?: ReactNode;
-			emptyState?: ReactNode;
-		}) => (
-			<div data-testid="agent-chat">
-				{props.emptyState}
-				{props.error && <ChatError error={props.error} onRetry={props.onRetry} />}
-				{props.renderComposer}
-			</div>
-		),
-	};
-});
-
-import { ElenchConversation } from "@/components/agent/elench/elench-conversation";
+import { createDraftsTab, type DraftsTab, ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
+import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
+import type { DraftKey } from "@/lib/stores/elench-drafts/types";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 
-/** The live Lexical editor behind the (one) rendered composer. */
-function composerEditor(): LexicalEditor {
-	const editor = getNearestEditorFromDOMNode(screen.getByTestId("elench-composer"));
-	if (!editor) throw new Error("the composer has no Lexical editor");
-	return editor;
+const VIEWER = "00000000-0000-4000-8000-0000000000aa";
+const ORG_A = "00000000-0000-4000-8000-00000000000a";
+const ORG_B = "00000000-0000-4000-8000-00000000000b";
+
+const INITIAL = useElenchStore.getState();
+
+beforeAll(() => {
+	// jsdom lacks Element.scrollTo — the message scroller calls it on content changes.
+	Element.prototype.scrollTo ??= () => {};
+	// …and Range's geometry, which Lexical reads when it moves the caret after a reseed.
+	Range.prototype.getBoundingClientRect ??= () => new DOMRect();
+	Range.prototype.getClientRects ??= () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList;
+});
+
+// ── The harness ──────────────────────────────────────────────────────────────────────────────
+
+let server: FakeElenchServer;
+
+/** One browser tab: its drafts over the fake server, posting from the page `page.org`. */
+interface Tab {
+	drafts: DraftsTab;
+	page: { org: string };
+	storage: Storage;
 }
 
-/** Replace the composer's content with `text`, as if the user typed it. */
-function fill(text: string) {
+/** A storage over a plain map, so a "reload" can keep it and a test can make it throw. */
+function memoryStorage(): Storage {
+	const items = new Map<string, string>();
+	return {
+		get length() {
+			return items.size;
+		},
+		clear: () => items.clear(),
+		getItem: (k) => items.get(k) ?? null,
+		key: (i) => [...items.keys()][i] ?? null,
+		removeItem: (k) => void items.delete(k),
+		setItem: (k, v) => void items.set(k, v),
+	};
+}
+
+/** A new tab (or a reload of one: pass its storage) of `org`. */
+function newTab(org: string, storage: Storage = memoryStorage(), getStorage?: () => Storage | null): Tab {
+	const page = { org };
+	const drafts = createDraftsTab({
+		viewerId: VIEWER,
+		transport: server.transport(() => page.org),
+		heartbeat: (body, signal) =>
+			server.fetch("/api/elench/drafts/heartbeat", { method: "POST", body: JSON.stringify(body), signal }),
+		storage: getStorage ?? (() => storage),
+		tabId: crypto.randomUUID(),
+		mint: () => crypto.randomUUID(),
+	});
+	return { drafts, page, storage };
+}
+
+/** Lets every pending promise, render and timer due within `ms` run. */
+async function flush(ms = 0): Promise<void> {
+	for (let i = 0; i < 4; i++) {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(i === 0 ? ms : 0);
+		});
+	}
+}
+
+/** Renders the shell's Elench part for `tab`, opened in `view`; resolves once the list settled. */
+async function mount(tab: Tab, view: "modal" | "panel" = "panel"): Promise<() => void> {
+	useElenchStore.setState({ pageOrgId: tab.page.org });
+	const r = render(
+		<ElenchDraftsRoot pageOrgId={tab.page.org} tab={tab.drafts}>
+			<ElenchSurface />
+		</ElenchDraftsRoot>,
+	);
 	act(() => {
-		composerEditor().update(
+		if (view === "modal") useElenchStore.getState().openModal({ kind: "org" });
+		else useElenchStore.getState().openPanel({ kind: "org" });
+	});
+	await flush();
+	return () => r.unmount();
+}
+
+/** Reloads: the page's memory is gone, its `sessionStorage` and the server are not. */
+async function reload(tab: Tab, unmount: () => void, open?: string): Promise<{ tab: Tab; unmount: () => void }> {
+	act(() => {
+		window.dispatchEvent(new Event("pagehide")); // the cache is written synchronously on leave (§7.5)
+	});
+	unmount();
+	tab.drafts.store.dispose(); // the page's memory, timers and listeners are gone
+	cleanup();
+	useElenchStore.setState({ ...INITIAL, conversationId: open ?? crypto.randomUUID() });
+	const next = newTab(tab.page.org, tab.storage);
+	return { tab: next, unmount: await mount(next) };
+}
+
+/** The live Lexical editor behind the rendered composer. */
+function editor(): LexicalEditor {
+	const e = getNearestEditorFromDOMNode(screen.getByTestId("elench-composer"));
+	if (!e) throw new Error("the composer has no Lexical editor");
+	return e;
+}
+
+/** Replaces the box with `text` (its `\n`s as line breaks), as if the user typed it. */
+function type(text: string): void {
+	act(() => {
+		editor().update(
 			() => {
+				const nodes: LexicalNode[] = [];
+				text.split("\n").forEach((line, i) => {
+					if (i > 0) nodes.push($createLineBreakNode());
+					if (line) nodes.push($createTextNode(line));
+				});
 				const root = $getRoot();
 				root.clear();
-				if (text) root.append($createParagraphNode().append($createTextNode(text)));
+				root.append($createParagraphNode().append(...nodes));
 			},
 			{ discrete: true },
 		);
 	});
 }
 
-/** The composer's current plain text. */
-function content(): string {
-	return composerEditor().getEditorState().read(() => $getRoot().getTextContent());
+/** The box's text. */
+function box(): string {
+	return editor().getEditorState().read(() => $getRoot().getTextContent());
 }
 
-/** Press Enter in the composer — the user's own send. */
-async function pressEnter() {
-	await act(async () => {
-		composerEditor().dispatchCommand(KEY_ENTER_COMMAND, null);
+/** Enter in the box, then everything it starts. */
+async function enter(): Promise<void> {
+	act(() => {
+		editor().dispatchCommand(KEY_ENTER_COMMAND, null);
 	});
+	await flush();
 }
 
-/** Click the error card's Retry and let the send settle. */
-async function clickRetry() {
-	await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+/** The key of the conversation on screen. */
+function shown(tab: Tab): DraftKey {
+	const s = useElenchStore.getState();
+	return { orgId: tab.page.org, projectId: null, conversationId: s.conversationId };
 }
 
-const THREAD_START_TITLE = "Could not start the conversation";
+/** The user turns of a stored thread. */
+function userTurns(id: string): UIMessage[] {
+	return server.threads.get(id)?.messages.filter((m) => m.role === "user") ?? [];
+}
 
-/**
- * Render the conversation in `view` with a `startThread` that fails `failures` times and then
- * attaches a thread (as the real one does, through the store).
- */
-function renderConversation(opts: {
-	view: "modal" | "panel";
-	failures: number;
-	initialMessages?: UIMessage[];
-}) {
-	let left = opts.failures;
-	const startThread = vi.fn(async (title: string, _turn?: FirstTurn): Promise<AgentThread> => {
-		if (left > 0) {
-			left -= 1;
-			throw new Error("insert failed");
-		}
-		useElenchStore.getState().attachThread("t-1");
-		const now = new Date();
-		return {
-			id: "t-1",
-			user_id: "u",
-			org_id: "u",
-			project_id: null,
-			title,
-			status: "active",
-			kind: "agent",
-			messages: [],
-			billing_org_id: null,
-			revision: 1,
-			created_at: now,
-			updated_at: now,
-		} satisfies AgentThread;
+/** The transcript's elements showing `text` (the composer's own box excluded). */
+function bubbles(text: string): HTMLElement[] {
+	return screen.queryAllByText(text).filter((el) => el.closest('[data-testid="elench-composer"]') === null);
+}
+
+/** The text of a message. */
+function textOf(m: UIMessage | undefined): string {
+	return m?.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("") ?? "";
+}
+
+/** A stored thread `id` of org scope, holding one answered turn. */
+function storedThread(id: string, text = "first"): void {
+	server.putThread({
+		id,
+		projectId: null,
+		title: text,
+		messages: [
+			{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] },
+			{ id: crypto.randomUUID(), role: "assistant", parts: [{ type: "text", text: "answer" }] },
+		],
 	});
-	// The shell has told the conversation its page org (a send without one is refused locally).
-	useElenchStore.setState({
-		view: opts.view,
-		ctx: { kind: "org" },
-		threadId: null,
-		pageOrgId: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
-	});
-	const api: ElenchThreadApi = {
-		ready: true,
-		threads: [],
-		activeId: null,
-		initialMessages: opts.initialMessages ?? [],
-		selectThread: vi.fn(),
-		newChat: vi.fn(),
-		startThread,
-		deleteThread: vi.fn(),
-	};
-	render(<ElenchConversation {...api} />);
-	return { startThread };
 }
 
 beforeEach(() => {
-	chat.sent.length = 0;
-	chat.transportError = undefined;
-	chat.regenerate = () => undefined;
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+	server = new FakeElenchServer();
+	srv.current = server;
+	who.viewer = { id: VIEWER };
+	nav.pathname = "/acme";
+	vi.stubGlobal("fetch", vi.fn(server.fetch));
+	useElenchStore.setState({ ...INITIAL, conversationId: crypto.randomUUID() });
 	useWidgetGridStore.setState({
 		hydrate: vi.fn(async () => undefined),
 		reset: vi.fn(),
+		pendingCellRequest: null,
+		pendingCellTarget: null,
 	});
 });
 
-describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry after a failed thread start", (view) => {
-	it("shows the failure as the thread-start card and keeps the text in the composer", async () => {
-		renderConversation({ view, failures: 1 });
-		fill("deploy staging");
-		await pressEnter();
-		expect(await screen.findByText(THREAD_START_TITLE)).toBeTruthy();
-		expect(content()).toBe("deploy staging");
-		expect(chat.sent).toHaveLength(0);
-	});
-
-	it("sends the EDITED text on Retry, under the same first-turn id, and clears only after it went out", async () => {
-		const { startThread } = renderConversation({ view, failures: 1 });
-		fill("deploy staging");
-		await pressEnter();
-		await screen.findByText(THREAD_START_TITLE);
-
-		fill("deploy staging, but skip the db migration");
-		await clickRetry();
-
-		await waitFor(() => expect(chat.sent).toHaveLength(1));
-		const edited = "deploy staging, but skip the db migration";
-		expect(chat.sent[0].parts).toEqual([{ type: "text", text: edited }]);
-		expect(startThread).toHaveBeenCalledTimes(2);
-		const [, firstTurn] = startThread.mock.calls[0];
-		const [retryTitle, retryTurn] = startThread.mock.calls[1];
-		expect(retryTitle).toBe(edited);
-		expect(retryTurn).toEqual({ id: firstTurn?.id, text: edited });
-		expect(chat.sent[0].id).toBe(firstTurn?.id);
-		expect(screen.queryByText(THREAD_START_TITLE)).toBeNull();
-		// What is in the box now is the docked composer after a send that went out: empty. (On
-		// the modal the landing gave way to the transcript; its composer held exactly what was
-		// sent.)
-		expect(content()).toBe("");
-	});
-
-	it("keeps the edited text when the Retry fails too", async () => {
-		const { startThread } = renderConversation({ view, failures: 2 });
-		fill("deploy staging");
-		await pressEnter();
-		await screen.findByText(THREAD_START_TITLE);
-
-		fill("deploy staging, edited");
-		await clickRetry();
-
-		await waitFor(() => expect(startThread).toHaveBeenCalledTimes(2));
-		expect(chat.sent).toHaveLength(0);
-		expect(screen.getByText(THREAD_START_TITLE)).toBeTruthy();
-		expect(content()).toBe("deploy staging, edited");
-	});
-
-	it("puts a typed failed turn back into an emptied composer and sends nothing", async () => {
-		const { startThread } = renderConversation({ view, failures: 1 });
-		fill("deploy staging");
-		await pressEnter();
-		await screen.findByText(THREAD_START_TITLE);
-
-		// The user emptied the box: Retry must not send words they just erased.
-		fill("");
-		await clickRetry();
-
-		await waitFor(() => expect(content()).toBe("deploy staging"));
-		expect(chat.sent).toHaveLength(0);
-		expect(startThread).toHaveBeenCalledTimes(1);
-		expect(screen.getByText(THREAD_START_TITLE)).toBeTruthy();
-
-		// Now the box holds it, so the next Retry sends it.
-		await clickRetry();
-		await waitFor(() => expect(chat.sent).toHaveLength(1));
-		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "deploy staging" }]);
-	});
-
-	it("re-sends a failed seed prompt (it never lived in the composer) when the box is empty", async () => {
-		const { startThread } = renderConversation({ view, failures: 1 });
-		act(() => useElenchStore.getState().setSeedPrompt("summarise my clusters"));
-		await screen.findByText(THREAD_START_TITLE);
-		expect(content()).toBe("");
-
-		await clickRetry();
-
-		await waitFor(() => expect(chat.sent).toHaveLength(1));
-		expect(startThread).toHaveBeenCalledTimes(2);
-		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "summarise my clusters" }]);
-	});
+afterEach(() => {
+	cleanup();
+	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
-// A minimize or maximize remounts the composer (ElenchModal and ElenchPanel each wrap the body;
-// in the modal an empty conversation is the landing, with its own composer). The remounted
-// composer starts from the failed turn, so the box shows what Retry sends. An edit made AFTER
-// the failure and before the flip is not kept — a remount loses unsent text exactly as it does
-// on dev; keeping it is the draft redesign (#5464).
-describe.each([
-	["modal", "minimize"],
-	["panel", "maximize"],
-] as const)("ElenchConversation (%s) — a %s after a failed thread start", (view, flip) => {
-	it("remounts the composer holding the failed turn, and Retry sends exactly what it shows", async () => {
-		const { startThread } = renderConversation({ view, failures: 1 });
-		fill("deploy staging");
-		await pressEnter();
-		await screen.findByText(THREAD_START_TITLE);
-		fill("deploy staging, EDITED");
-
-		act(() => useElenchStore.getState()[flip]());
-
-		expect(screen.getByText(THREAD_START_TITLE)).toBeTruthy();
-		await waitFor(() => expect(content()).toBe("deploy staging"));
-		await clickRetry();
-
-		await waitFor(() => expect(chat.sent).toHaveLength(1));
-		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "deploy staging" }]);
-		expect(startThread).toHaveBeenCalledTimes(2);
-		expect(chat.sent[0].id).toBe(startThread.mock.calls[0][1]?.id);
+describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry after a failed first send", (view) => {
+	it("shows no error card, and the words are back in the box, editable", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, view);
+		server.plan("startConversation", "reject");
+		type("first try");
+		await enter();
+		expect(box()).toBe("first try");
+		expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+		expect(editor().isEditable()).toBe(true);
 	});
 
-	it("a composer mounted with no failed send pending starts empty", async () => {
-		renderConversation({ view, failures: 0 });
-		act(() => useElenchStore.getState()[flip]());
-		expect(content()).toBe("");
-	});
-});
-
-describe("ElenchConversation — which error the transcript shows", () => {
-	it("a failed send takes precedence over the transcript's error, and its Retry is the thread re-attempt", async () => {
-		// The transcript ends on a plain answer, so its own Retry regenerates THAT answer (§9.1).
-		const regenerate = vi.fn();
-		chat.regenerate = regenerate;
-		chat.transportError = new TypeError("Failed to fetch");
-		const earlier: UIMessage[] = [
-			{ id: "u0", role: "user", parts: [{ type: "text", text: "earlier" }] },
-			{ id: "a0", role: "assistant", parts: [{ type: "text", text: "reply" }] },
-		];
-		const { startThread } = renderConversation({
-			view: "panel",
-			failures: 1,
-			initialMessages: earlier,
-		});
-		// Before any failed send: the transcript's own error, whose Retry regenerates.
-		expect(screen.getByText("The assistant hit an error")).toBeTruthy();
-		await clickRetry();
-		expect(regenerate).toHaveBeenCalledTimes(1);
-		expect(regenerate).toHaveBeenCalledWith({ messageId: "a0" });
-
-		fill("next question");
-		await pressEnter();
-		expect(await screen.findByText(THREAD_START_TITLE)).toBeTruthy();
-		expect(screen.queryByText("The assistant hit an error")).toBeNull();
-
-		await clickRetry();
-		await waitFor(() => expect(startThread).toHaveBeenCalledTimes(2));
-		expect(regenerate).toHaveBeenCalledTimes(1);
-		expect(chat.sent.at(-1)?.parts).toEqual([{ type: "text", text: "next question" }]);
+	it("sends the EDITED text on Enter, under the same first-turn id", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, view);
+		server.plan("startConversation", "reject");
+		type("first try");
+		await enter();
+		const failed = server.callsOf("claimDraft")[0] as { turnId: string };
+		type("first try, edited");
+		await enter();
+		const turns = userTurns(shown(tab).conversationId);
+		expect(turns.map(textOf)).toEqual(["first try, edited"]);
+		expect(turns[0].id).toBe(failed.turnId);
 	});
 
-	it("the modal landing shows a failed send as its notice, above a composer that still holds the text", async () => {
-		renderConversation({ view: "modal", failures: 1 });
-		fill("hello");
-		await pressEnter();
-		expect(await screen.findByText(THREAD_START_TITLE)).toBeTruthy();
-		// Still the landing: nothing was sent, so the transcript never replaced it.
-		expect(screen.queryByTestId("agent-chat")).toBeNull();
-		expect(screen.getByText("What should we do today?")).toBeTruthy();
-		expect(content()).toBe("hello");
+	it("keeps the edited text when the second try fails too", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, view);
+		server.plan("startConversation", "reject");
+		server.plan("startConversation", "reject");
+		type("first try");
+		await enter();
+		type("second try");
+		await enter();
+		expect(box()).toBe("second try");
+		expect(server.threads.size).toBe(0);
+	});
+
+	it("an emptied box sends nothing", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab, view);
+		server.plan("startConversation", "reject");
+		type("first try");
+		await enter();
+		type("");
+		await enter();
+		expect(server.callsOf("claimDraft")).toHaveLength(1);
+		expect(server.threads.size).toBe(0);
+	});
+
+	it("a failed seed prompt (it never lived in the box) lands in the box, and Enter sends it", async () => {
+		const tab = newTab(ORG_A);
+		server.plan("startConversation", "reject");
+		useElenchStore.setState({ seedPrompt: "create a staging cluster" });
+		await mount(tab, view);
+		await flush(1_000);
+		expect(box()).toBe("create a staging cluster");
+		await enter();
+		expect(userTurns(shown(tab).conversationId).map(textOf)).toEqual(["create a staging cluster"]);
 	});
 });

@@ -7,8 +7,13 @@
 // composer path: load the stored transcript, clear the error, and put uncommitted words back.
 //
 // These drive the REAL `ElenchConversation`, the real `useAgentChat` (so the real `useChat` and
-// `DefaultChatTransport`), the real `AgentChat` and the real Lexical composer. Only `fetch` is
-// stubbed: each test queues what the route answers, and asserts on the bodies it was sent.
+// `DefaultChatTransport`), the real `AgentChat`, the real Lexical composer and, since ADR 0001
+// slice 9, the real drafts store every composer send goes through. Only the server is stubbed:
+// the chat route at `fetch` (each test queues what it answers, and asserts on the bodies it was
+// sent) and the draft actions, by the in-memory server of tests/fixtures/elench-drafts-server.ts.
+//
+// ADR 0001 slice 9 also owns ADR 0003 §9.3's ONE-HANDLER check and its C test, `One refusal
+// handler`, at the end: a refusal of a send the store owns goes to the store and nowhere else.
 
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -36,6 +41,21 @@ import type { TurnRefusal } from "@/lib/agent/turn-claims";
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn() }),
 	useParams: () => ({}),
+	usePathname: () => "/acme",
+}));
+vi.mock("@/components/providers/viewer-provider", () => ({
+	useViewer: () => ({ viewer: { id: "00000000-0000-4000-8000-0000000000aa" }, isPending: false }),
+}));
+// The real actions are server code; the drafts store here is handed the fake server's transport.
+vi.mock("@/app/server/actions/elench-drafts", () => ({
+	listDrafts: vi.fn(),
+	saveDraft: vi.fn(),
+	restoreDraft: vi.fn(),
+	discardDraft: vi.fn(),
+	claimDraft: vi.fn(),
+	consumeDraft: vi.fn(),
+	releaseClaim: vi.fn(),
+	startConversation: vi.fn(),
 }));
 vi.mock("@/app/server/actions/billing", () => ({ getAiUsageSummary: vi.fn(async () => null) }));
 vi.mock("@/app/server/actions/artifacts", () => ({
@@ -114,6 +134,8 @@ vi.mock("@/components/agent/elench/elench-panel", () => ({
 import { tryPlanProject } from "@/app/server/actions/projects";
 import { ApprovalCard, fitClientToolText } from "@/components/agent/approval-card";
 import { ElenchConversation } from "@/components/agent/elench/elench-conversation";
+import { createDraftsTab, type DraftsTab, ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
+import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 import { parseClientToolOutput } from "@/lib/ai/client-tools";
 import { turnOf, useAgentChat } from "@/components/agent/use-agent-chat";
 import { classifyTurn } from "@/lib/agent/turn-key";
@@ -266,17 +288,44 @@ function Harness({ initial, revision }: { initial: UIMessage[]; revision: number
 	return <ElenchConversation {...api} />;
 }
 
-/** Render the org conversation on `initial` (stored at `revision`). */
-function renderConversation(initial: UIMessage[], revision: number) {
+// ── The drafts store every composer send goes through (ADR 0001 slice 9) ───────────────────────
+
+let drafts: { server: FakeElenchServer; tab: DraftsTab };
+
+/** A tab's drafts over the fake server, which knows THREAD as a stored thread (so sends are later turns). */
+function newDrafts(): { server: FakeElenchServer; tab: DraftsTab } {
+	const server = new FakeElenchServer();
+	server.putThread({ id: THREAD, projectId: null, title: "t", messages: [user("s0", "stored")] });
+	const tab = createDraftsTab({
+		viewerId: "00000000-0000-4000-8000-0000000000aa",
+		transport: server.transport(() => ORG),
+		heartbeat: async () => Response.json({ outcome: "touched" }),
+		storage: () => null,
+		tabId: "tab-1",
+		mint: () => crypto.randomUUID(),
+	});
+	return { server, tab };
+}
+
+/** Render the org conversation on `initial` (stored at `revision`), on its draft. */
+async function renderConversation(initial: UIMessage[], revision: number) {
 	stored.messages = initial;
 	stored.revision = revision;
 	useElenchStore.setState({
+		open: true,
 		view: "panel",
 		ctx: { kind: "org" },
 		threadId: THREAD,
+		conversationId: THREAD,
 		pageOrgId: ORG,
 	});
-	render(<Harness initial={initial} revision={revision} />);
+	render(
+		<ElenchDraftsRoot pageOrgId={ORG} tab={drafts.tab}>
+			<Harness initial={initial} revision={revision} />
+		</ElenchDraftsRoot>,
+	);
+	// The scope's first list, then the selection of THREAD's draft: the box is writable after it.
+	await waitFor(() => expect(composerEditor().isEditable()).toBe(true));
 }
 
 // ── The composer ─────────────────────────────────────────────────────────────────────────────
@@ -322,6 +371,7 @@ async function clickRetry() {
 const ERROR_CARD = "The assistant hit an error";
 
 beforeEach(() => {
+	drafts = newDrafts();
 	answers.length = 0;
 	bodies.length = 0;
 	threadReads.inFlight = [];
@@ -343,7 +393,7 @@ afterEach(() => {
 
 describe("the transport's turn fields", () => {
 	it("the request carries trigger, turnId, answerId, toolCallIds and baseRevision", async () => {
-		renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 4);
+		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 4);
 		answers.push({ chunks: answered("a1", "Rejected, so nothing was queued.", 6) });
 		await userEvent.click(screen.getByRole("button", { name: "Resolve card" }));
 
@@ -394,25 +444,22 @@ describe("the transport's turn fields", () => {
 		expect(bodies[0]).not.toHaveProperty("turn");
 	});
 
-	it("a send before the page org is known sends nothing, keeps the text and says the organization is still loading", async () => {
-		renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+	it("before the page org is known the box has no draft to write to and Enter sends nothing; once it is, the send goes out with it", async () => {
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
 		act(() => useElenchStore.getState().setPageOrgId(null));
-		fill("my question");
+		await waitFor(() => expect(composerEditor().isEditable()).toBe(false));
 		await pressEnter();
-
-		expect(
-			await screen.findByText("Your organization is still loading. Try again in a moment.", undefined, { timeout: 5_000 }),
-		).toBeTruthy();
 		expect(bodies).toHaveLength(0);
-		expect(content()).toBe("my question");
+		expect(drafts.server.callsOf("claimDraft")).toHaveLength(0);
 
-		// Once the shell has it, the same Enter goes out with it.
+		// Once the shell has it, the box is the draft again and Enter goes out with the page's org.
 		act(() => useElenchStore.getState().setPageOrgId(ORG));
+		await waitFor(() => expect(composerEditor().isEditable()).toBe(true));
+		fill("my question");
 		answers.push({ chunks: answered("a1", "answered", 5) });
 		await pressEnter();
 		await waitFor(() => expect(bodies).toHaveLength(1));
 		expect(sent(0).orgId).toBe(ORG);
-		expect(screen.queryByText("Your organization is still loading. Try again in a moment.")).toBeNull();
 	});
 
 	it("U › turnOf over the client copy and the classifier over the stored answer derive the same key for a mixed step", () => {
@@ -441,7 +488,7 @@ describe("the transport's turn fields", () => {
 
 describe("Retry resends what is last", () => {
 	it("Retry on a failed continuation resends the continuation, not regenerate()", async () => {
-		renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 2);
+		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 2);
 		// The continuation fails before the route answers.
 		await userEvent.click(screen.getByRole("button", { name: "Resolve card" }));
 		expect(await screen.findByText(ERROR_CARD)).toBeTruthy();
@@ -455,7 +502,7 @@ describe("Retry resends what is last", () => {
 
 	it("Retry on a partial continuation resends the continuation, and Regenerate is not shown on an answer with an accepted approval", async () => {
 		card.output = { status: "approved", operation: "plan_project", projectId: ORG, environmentId: null, jobId: THREAD };
-		renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 3);
+		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 3);
 		// The approval's continuation streams a tail, then fails: partial after the approval.
 		answers.push({
 			chunks: [
@@ -479,7 +526,7 @@ describe("Retry resends what is last", () => {
 	});
 
 	it("Retry after a partial answer with no client tool output is regenerate({ messageId })", async () => {
-		renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
 		answers.push({
 			chunks: [
 				{ type: "start", messageId: "a1" },
@@ -500,7 +547,7 @@ describe("Retry resends what is last", () => {
 	});
 
 	it("a partial continuation whose tail holds an unanswered proposal offers no Retry and says to approve or reject it", async () => {
-		renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 2);
+		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 2);
 		answers.push({
 			chunks: [
 				{ type: "start", messageId: "a1" },
@@ -520,7 +567,7 @@ describe("Retry resends what is last", () => {
 
 describe("onTurnRefused", () => {
 	it("turn-answered loads the transcript and shows no error card", async () => {
-		renderConversation([user("u1", "plan api")], 2);
+		await renderConversation([user("u1", "plan api")], 2);
 		expect(screen.getByText("No reply arrived")).toBeTruthy();
 		stored.messages = [user("u1", "plan api"), { id: "a1", role: "assistant", parts: [{ type: "text", text: "answered elsewhere" }] }];
 		stored.revision = 3;
@@ -533,8 +580,8 @@ describe("onTurnRefused", () => {
 		expect(screen.queryByText("No reply arrived")).toBeNull();
 	});
 
-	it("transcript-stale reloads the transcript, restores the text, shows no error card, and the next Enter is accepted", async () => {
-		renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+	it("transcript-stale (a store-owned send) reloads the transcript, puts the text back, shows no error card, and the next Enter is accepted", async () => {
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
 		stored.messages = [
 			...stored.messages,
 			user("u9", "from the other tab"),
@@ -546,9 +593,10 @@ describe("onTurnRefused", () => {
 		await pressEnter();
 
 		expect(await screen.findByText("newer answer")).toBeTruthy();
-		expect(screen.getByText(/This conversation has newer messages/)).toBeTruthy();
 		expect(screen.queryByText(ERROR_CARD)).toBeNull();
 		await waitFor(() => expect(content()).toBe("my question"));
+		// D9d (a): released as a certain refusal, never "may already have been sent".
+		expect(drafts.server.callsOf("releaseClaim")).toMatchObject([{ error: "transcript-stale", uncertain: false }]);
 
 		answers.push({ chunks: answered("a10", "answered now", 7) });
 		await pressEnter();
@@ -557,8 +605,8 @@ describe("onTurnRefused", () => {
 		expect(await screen.findByText("answered now")).toBeTruthy();
 	});
 
-	it("turn-committed-different-text keeps the edit in the composer", async () => {
-		renderConversation([user("u1", "deploy staging")], 2);
+	it("turn-committed-different-text (a store-owned send) keeps the edit in the composer under a fresh turn id", async () => {
+		await renderConversation([user("u1", "deploy staging")], 2);
 		answers.push({
 			refusal: refusal("turn-committed-different-text", { turnId: "u1", revision: 2 }),
 			status: 409,
@@ -567,13 +615,14 @@ describe("onTurnRefused", () => {
 		await pressEnter();
 
 		await waitFor(() => expect(content()).toBe("deploy staging, but skip the migration"));
-		expect(screen.getByText(/An earlier version of this message was already sent/)).toBeTruthy();
+		const [release] = drafts.server.callsOf("releaseClaim") as { freshTurnId?: string }[];
+		expect(release?.freshTurnId).toEqual(expect.any(String));
 		expect(screen.queryByText(ERROR_CARD)).toBeNull();
 	});
 
 	it("turn-in-progress shows Being answered and reloads when inFlight clears", async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-		renderConversation([user("u1", "plan api")], 2);
+		await renderConversation([user("u1", "plan api")], 2);
 		answers.push({ refusal: refusal("turn-in-progress", { turnId: "u1", revision: 2 }), status: 409 });
 		await clickRetry();
 
@@ -597,7 +646,7 @@ describe("onTurnRefused", () => {
 
 	it("a continuation refused turn-answered with a newer revision loads, keeps the card and Retry, and the next Retry is accepted as a resume", async () => {
 		const rejected = { status: "rejected" };
-		renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 4);
+		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 4);
 		// The approval was stored by an earlier attempt that ended partial; this tab is one behind.
 		stored.messages = [user("u1", "plan api"), proposal("a1", "call-1", rejected)];
 		stored.revision = 6;
@@ -615,6 +664,37 @@ describe("onTurnRefused", () => {
 			toolCallIds: ["call-1"],
 			baseRevision: 6,
 		});
+	});
+});
+
+// ── ADR 0003 §9.3's one-handler check (ADR 0001 slice 9) ────────────────────────────────────
+
+describe("One refusal handler", () => {
+	it("a refusal of a send the drafts store owns goes to the store only: the words come back once", async () => {
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		answers.push({ refusal: refusal("thread-busy", { revision: 3 }), status: 409 });
+		fill("one copy only");
+		await pressEnter();
+		await waitFor(() => expect(drafts.server.callsOf("releaseClaim")).toHaveLength(1));
+		await waitFor(() => expect(content()).toBe("one copy only"));
+		// Give a second handler every chance to run: it would have put the words back again.
+		await act(async () => {});
+		await act(async () => {});
+		expect(content()).toBe("one copy only");
+		expect(drafts.server.row({ orgId: ORG, projectId: null, conversationId: THREAD })?.content.text).toBe("one copy only");
+	});
+
+	it("a refusal of a send the store does not own (a Retry, which regenerates) runs the composer path and touches no draft", async () => {
+		await renderConversation([user("u1", "plan api")], 2);
+		stored.messages = [user("u1", "plan api"), { id: "a1", role: "assistant", parts: [{ type: "text", text: "answered elsewhere" }] }];
+		stored.revision = 3;
+		answers.push({ refusal: refusal("turn-answered", { turnId: "u1", answered: true, revision: 3 }), status: 409 });
+		await clickRetry();
+		expect(await screen.findByText("answered elsewhere")).toBeTruthy();
+		expect(reloads).toHaveBeenCalledWith(THREAD);
+		expect(drafts.server.callsOf("claimDraft")).toHaveLength(0);
+		expect(drafts.server.callsOf("releaseClaim")).toHaveLength(0);
+		expect(content()).toBe("");
 	});
 });
 
