@@ -13,6 +13,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
@@ -53,6 +54,10 @@ const INTERVALS = {
 	// 5m — a finished window is dead weight, never a wrong answer (a later hit lands in a new row), so
 	// the cadence only bounds how many dead rows sit in rate_limit_buckets (lib/rate-limit.ts).
 	"rate-limit-sweep": 5 * 60_000,
+	// 24h — draft retention is counted in days (discarded 24h, everything else 30 days), so a daily
+	// pass keeps a discarded draft at most about two days. The silent claims it settles are a
+	// backstop: every draft action settles its own row or scope first (lib/elench/drafts-sweep.ts).
+	"elench-drafts-sweep": 24 * 60 * 60_000,
 } as const;
 
 declare global {
@@ -133,6 +138,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// Rate-limit bucket expiry (#5309): delete every lib/rate-limit.ts window that has ended.
 		if (isDue("rate-limit-sweep", INTERVALS["rate-limit-sweep"], now)) {
 			await runTask("rate-limit-sweep", () => sweepExpiredRateLimitBuckets(db));
+		}
+		// Elench drafts retention (ADR 0001 §9): settle silent claims, then delete discarded drafts
+		// past 24h and drafts unwritten for 30 days. Never deletes a `sending` row.
+		if (isDue("elench-drafts-sweep", INTERVALS["elench-drafts-sweep"], now)) {
+			await runTask("elench-drafts-sweep", () => sweepElenchDrafts(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
