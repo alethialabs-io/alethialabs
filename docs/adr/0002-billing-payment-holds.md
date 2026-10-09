@@ -190,6 +190,9 @@ relative to the repo root, as the board's `scope:` lines are.
   treats a `past_due` Y on the org's row as live (§5.6 "The refused sync"). (b) The refusal's alert
   is skipped in one case only (§5.6). (c) The co-owner's guard copy never says "finish" in any form
   (§5.5). Three follow-ups from the S1 review are recorded in the slices that own them (S9, S10).
+- **Amendment** (2026-10-09, maintainer delegation: T14 timing wins over Q4's ~32h; #5774, S5b). The
+  fifth failed refund attempt goes to T14 at once, so a person sees a failing refund after about 8h35m
+  (5m, 30m, 2h, 6h), not about 32h. Q4's decision text is corrected to match.
 
 ---
 
@@ -1531,8 +1534,10 @@ revisions.
   sends one "your payment went through; finish creating your team" email when a hold on a setup
   with no org is adopted (§5.6 "When a hold ends").
 - **Q4.** *The refund budget and the §5.4 age bounds.*
-  **Decision: as written.** 5 attempts over about 32h (5m, 30m, 2h, 6h, 24h), then `needs_operator`,
-  with the §5.4 age table unchanged. Reason: every open state reaches a person within a stated
+  **Decision: as written, with T14's timing (amended 2026-10-09).** 5 attempts, waiting 5m, 30m, 2h and
+  6h after the first four failures, so about 8h35m; the fifth failure goes to `needs_operator` at once
+  (T14). The 24h step applies only when the fifth attempt did not fail but its refund does not read
+  back yet. The §5.4 age table is unchanged. Reason: every open state reaches a person within a stated
   bound (I11). A longer budget would keep a customer's money away from them for longer.
 - **Q6.** *The webhook event set: subscribe `charge.refund.updated` and `invoice.voided`, and drop the
   runbook's `payment_intent.succeeded` (`docs/stripe-prod-runbook.md:33`)?*

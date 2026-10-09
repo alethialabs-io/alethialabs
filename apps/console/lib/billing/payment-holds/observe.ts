@@ -4,13 +4,13 @@
 // The observation behind every payment-hold transition (ADR 0002 §3.2, E1 `observe`, S5 #5763).
 //
 // `observeHold` reads, in this order, the hold's subscription, its HELD invoice (never the
-// subscription's `latest_invoice`, I2) and that invoice's payments, and classifies them as the tuple
-// O = (sub, inv, pay). The order narrows the race with a payment landing between two reads; it does not
-// close it, which is why the machine re-reads (T11r). The fourth element, `refund` — the refunds of
-// every payment that succeeded — comes with the refund rows in the second part of S5.
+// subscription's `latest_invoice`, I2), that invoice's payments, and the refunds of every payment that
+// succeeded, and classifies them as the tuple O = (sub, inv, pay, refund). The order narrows the race
+// with a payment landing between two reads; it does not close it, which is why the machine re-reads
+// (T11r).
 //
 // A read that throws is retried once (`readTwice`, §5.1). One that throws twice is an OBSERVATION
-// FAILURE (`HoldObservationError`): it is never read as "gone", "void" or "unpaid", and it
+// FAILURE (`HoldObservationError`): it is never read as "gone", "void", "unpaid" or "refunded", and it
 // never moves a hold (I5). The one error that IS an answer is Stripe's `resource_missing`: on the
 // subscription it reads `missing` (T1), and on the held invoice `none` (a deleted draft).
 //
@@ -38,6 +38,19 @@ export interface HoldStripeReader {
 		}>;
 	};
 	paymentIntents: { retrieve(id: string): Promise<HeldPaymentIntent> };
+	refunds: {
+		list(params: { payment_intent: string; limit: number }): Promise<{
+			has_more: boolean;
+			data: ReadonlyArray<HeldRefund>;
+		}>;
+	};
+}
+
+/** A refund as the hold reads it. */
+export interface HeldRefund {
+	status: string | null;
+	amount: number;
+	metadata?: Record<string, string> | null;
 }
 
 /** `sub` (§3.2). `ended` is `canceled` or `incomplete_expired`; `other` is a status no row names (T17). */
@@ -51,10 +64,30 @@ export type SubObservation =
 /** `inv` (§3.2), for the held invoice. `none` is an invoice Stripe no longer has; `other` is unknown. */
 export type InvoiceObservation = "open" | "uncollectible" | "draft" | "void" | "paid" | "none" | "other";
 
-/** A PaymentIntent on the held invoice that `succeeded`, and what it took. */
+/**
+ * `refund` (§3.2) for one succeeded PaymentIntent, from the refunds' own statuses — never from
+ * `amount_refunded` (S9). A LIVE refund is `succeeded`, `pending` or `requires_action`.
+ *   - `none`: no live refund;
+ *   - `done`: `succeeded` refunds alone cover `amount_received`;
+ *   - `pending`: live refunds cover it, and one is `pending` or `requires_action`;
+ *   - `partial`: anything else.
+ * `uncovered` is what no live refund covers. `byThisHold` is whether there is a succeeded refund and
+ * EVERY succeeded refund carries this hold's id, so the payment was refunded by this hold alone
+ * (`released(refunded)` against `released(already_refunded)`, T10). `actionRequired` is
+ * whether a refund reads `requires_action` (`refund_action_since`, §3.1).
+ */
+export interface RefundObservation {
+	kind: "none" | "pending" | "done" | "partial";
+	uncovered: number;
+	byThisHold: boolean;
+	actionRequired: boolean;
+}
+
+/** A PaymentIntent on the held invoice that `succeeded`, what it took, and what its refunds cover. */
 export interface SucceededPayment {
 	id: string;
 	amountReceived: number;
+	refund: RefundObservation;
 }
 
 /** `pay` (§3.2): what the held invoice's payments show. `succeeded` always carries at least one. */
@@ -86,6 +119,9 @@ export class HoldObservationError extends Error {
 	}
 }
 
+/** The metadata key a hold's refunds carry, naming the hold that created them (T10). */
+export const HOLD_REFUND_METADATA_KEY = "alethia_payment_hold";
+
 /** The PaymentIntent statuses under which nothing was charged and nothing will be until the customer acts. */
 const AWAITING: ReadonlySet<string> = new Set([
 	"requires_payment_method",
@@ -97,7 +133,7 @@ const AWAITING: ReadonlySet<string> = new Set([
 const LIVE: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
 
 /** Whether `err` is Stripe's `resource_missing` (the object does not exist in this account). */
-function isResourceMissing(err: unknown): boolean {
+export function isResourceMissing(err: unknown): boolean {
 	return typeof err === "object" && err !== null && "code" in err && err.code === "resource_missing";
 }
 
@@ -127,12 +163,49 @@ function classifySub(status: string): SubObservation {
 	return LIVE.has(status) ? { kind: "live", status } : { kind: "other", status };
 }
 
+/** Classifies one succeeded PaymentIntent's refunds as `refund` (§3.2). */
+function classifyRefunds(amountReceived: number, refunds: ReadonlyArray<HeldRefund>, holdId: string): RefundObservation {
+	let succeeded = 0;
+	let live = 0;
+	let unsettled = false;
+	let actionRequired = false;
+	let byThisHold = false;
+	let byOther = false;
+	for (const r of refunds) {
+		if (r.status === "succeeded") {
+			succeeded += r.amount;
+			live += r.amount;
+			if (r.metadata?.[HOLD_REFUND_METADATA_KEY] === holdId) byThisHold = true;
+			else byOther = true;
+		} else if (r.status === "pending" || r.status === "requires_action") {
+			live += r.amount;
+			unsettled = true;
+			if (r.status === "requires_action") actionRequired = true;
+		}
+	}
+	const uncovered = Math.max(0, amountReceived - live);
+	const kind =
+		succeeded >= amountReceived
+			? "done"
+			: live === 0
+				? "none"
+				: live >= amountReceived && unsettled
+					? "pending"
+					: "partial";
+	return { kind, uncovered, byThisHold: byThisHold && !byOther, actionRequired };
+}
+
 /**
- * Reads and classifies the held invoice's payments (`pay`). A payment that is not a PaymentIntent, and a list with `has_more`, are `unrecognised`.
+ * Reads and classifies the held invoice's payments (`pay`), with the refunds of each one that
+ * succeeded. A payment that is not a PaymentIntent, and a list with `has_more`, are `unrecognised`.
  * When several PaymentIntents disagree, the one that can still move money wins: `in_flight`, then
  * `capturable`, then `succeeded`, then `failed` (a `canceled` one), then `awaiting`.
  */
-async function observePayments(invoiceId: string, stripe: HoldStripeReader): Promise<PayObservation> {
+async function observePayments(
+	invoiceId: string,
+	holdId: string,
+	stripe: HoldStripeReader,
+): Promise<PayObservation> {
 	const payments = await readTwice("invoicePayments.list", () =>
 		stripe.invoicePayments.list({ invoice: invoiceId, limit: 100, expand: ["data.payment.payment_intent"] }),
 	);
@@ -160,15 +233,31 @@ async function observePayments(invoiceId: string, stripe: HoldStripeReader): Pro
 		return { kind: "unrecognised" };
 	}
 
-	const pis: SucceededPayment[] = intents
-		.filter((x) => x.status === "succeeded")
-		.map((i) => ({ id: i.id, amountReceived: i.amount_received }));
+	// A PaymentIntent that reads `succeeded` but took nothing is not a shape any row names: no refund
+	// can be made for it, and "fully refunded" would be read from the absence of any refund.
+	if (intents.some((i) => i.status === "succeeded" && i.amount_received <= 0)) return { kind: "unrecognised" };
+
+	const pis: SucceededPayment[] = [];
+	for (const i of intents.filter((x) => x.status === "succeeded")) {
+		const refunds = await readTwice("refunds.list", () =>
+			stripe.refunds.list({ payment_intent: i.id, limit: 100 }),
+		);
+		// A refund list that does not fit one page, or a PaymentIntent Stripe cannot list refunds for,
+		// proves nothing about what was refunded: an observation failure, never `none`.
+		if (refunds === "missing") throw new HoldObservationError("refunds.list", "resource_missing");
+		if (refunds.has_more) throw new HoldObservationError("refunds.list", "more refunds than one page");
+		pis.push({
+			id: i.id,
+			amountReceived: i.amount_received,
+			refund: classifyRefunds(i.amount_received, refunds.data, holdId),
+		});
+	}
 	if (pis.length > 0) return { kind: "succeeded", pis };
 	return intents.some((i) => i.status === "canceled") ? { kind: "failed" } : { kind: "awaiting" };
 }
 
 /**
- * E1's read (§3.2): the tuple O for `hold`, read subscription → held invoice → payments.
+ * E1's read (§3.2): the tuple O for `hold`, read subscription → held invoice → payments → refunds.
  * Throws `HoldObservationError` on a read that fails twice; never guesses.
  */
 export async function observeHold(
@@ -183,7 +272,7 @@ export async function observeHold(
 	// Only a draft can be deleted, and a draft was never finalized, so never payable: an invoice Stripe
 	// no longer has carries no payment. Every other invoice's payments are read.
 	const pay: PayObservation =
-		inv === "none" ? { kind: "awaiting" } : await observePayments(hold.invoice_id, stripe);
+		inv === "none" ? { kind: "awaiting" } : await observePayments(hold.invoice_id, hold.id, stripe);
 	return { sub: sub === "missing" ? { kind: "missing" } : classifySub(sub.status), inv, pay };
 }
 
