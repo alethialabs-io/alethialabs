@@ -75,7 +75,9 @@ export function Combobox({
         className="w-[--radix-popover-trigger-width] p-0"
         align="start"
       >
-        <Command>
+        {/* The search inside the popup is named for the same purpose as its trigger. cmdk names its
+            input from this prop (via its own hidden <label>); with none, the input is unnamed. */}
+        <Command label={purpose}>
           <CommandInput placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>{empty}</CommandEmpty>
