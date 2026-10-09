@@ -145,9 +145,11 @@ function holdTable(rows: FakeHold[]): WebhookHoldPort & { rows: FakeHold[] } {
 	};
 	return {
 		rows,
-		holdNamesInvoice: vi.fn(async (sub: string, inv: string, cus: string) =>
-			rows.some((r) => r.subscription_id === sub && r.invoice_id === inv && r.customer_id === cus),
-		),
+		heldInvoice: vi.fn(async (sub: string, inv: string, cus: string) => {
+			const named = rows.filter((r) => r.subscription_id === sub && r.invoice_id === inv && r.customer_id === cus);
+			if (named.length === 0) return null;
+			return named.some((r) => r.state !== "released") ? "open" : "released";
+		}),
 		holdNamesSubscription: vi.fn(async (id: string, sub: string) =>
 			rows.some((r) => r.id === id && r.subscription_id === sub),
 		),
@@ -299,6 +301,27 @@ describe("invoice.payment_failed — no backup-card retry on a held or ended cre
 		expect(res.nudged).toBe(0);
 	});
 
+	it("an invoice an OPEN hold names gets no \"payment failed — update your card\" email (maintainer ruling)", async () => {
+		stripeMock.retrieve.mockResolvedValue(sub("incomplete"));
+		await handleStripeEvent(eventOf("invoice.payment_failed", invoice()), { holds: holdTable([hold()]) });
+		expect(sendPaymentFailedEmail).not.toHaveBeenCalled();
+	});
+
+	it("an invoice only a RELEASED hold names keeps its payment-failed email", async () => {
+		stripeMock.retrieve.mockResolvedValue(sub("incomplete"));
+		await handleStripeEvent(eventOf("invoice.payment_failed", invoice()), {
+			holds: holdTable([hold({ state: "released" })]),
+		});
+		expect(sendPaymentFailedEmail).toHaveBeenCalledTimes(1);
+	});
+
+	it("an invoice NO hold names keeps its payment-failed email exactly as today", async () => {
+		stripeMock.retrieve.mockResolvedValue(sub("past_due", { organization_id: "org_1" }));
+		await handleStripeEvent(eventOf("invoice.payment_failed", invoice()), { holds: holdTable([hold({ invoice_id: "in_other" })]) });
+		expect(sendPaymentFailedEmail).toHaveBeenCalledTimes(1);
+		expect(sendPaymentFailedEmail).toHaveBeenCalledWith(expect.objectContaining({ id: "sub_x" }), expect.objectContaining({ id: "in_1" }));
+	});
+
 	it("C83: an org-plan FIRST invoice (organization_id set, no hold) keeps its backup-card retry", async () => {
 		stripeMock.retrieve.mockResolvedValue(sub("incomplete", { organization_id: "org_1", created_by: "user_u" }));
 		await handleStripeEvent(eventOf("invoice.payment_failed", invoice()), { holds: holdTable([]) });
@@ -317,7 +340,7 @@ describe("invoice.payment_failed — no backup-card retry on a held or ended cre
 	it("a hold read that throws fails the event BEFORE any charge (Stripe redelivers)", async () => {
 		stripeMock.retrieve.mockResolvedValue(sub("past_due", { organization_id: "org_1" }));
 		const table = holdTable([]);
-		vi.mocked(table.holdNamesInvoice).mockRejectedValueOnce(new Error("db down"));
+		vi.mocked(table.heldInvoice).mockRejectedValueOnce(new Error("db down"));
 		await expect(
 			handleStripeEvent(eventOf("invoice.payment_failed", invoice()), { holds: table }),
 		).rejects.toThrow("db down");

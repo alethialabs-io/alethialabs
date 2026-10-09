@@ -25,7 +25,7 @@
 //      open holds they name (§5.3 (3), C53, C66). A failed nudge is logged and never fails the event:
 //      every open hold is also scheduled (I10), so a lost hint only delays the sweeper to its schedule.
 // WHAT EACH LOOKUP IS KEYED ON (the live port, `liveWebhookHolds`):
-//   holdNamesInvoice       subscription + invoice (the event's own invoice and the subscription it names)
+//   heldInvoice            subscription + invoice (the event's own invoice and the subscription it names)
 //                          + that subscription's customer.
 //   holdNamesSubscription  hold id (from the stamp) + the event's own subscription.
 //   nudgeSubscription      the event's own subscription + its customer.
@@ -84,8 +84,11 @@ export interface HandleEventResult {
  * deliberately no state write here — no `version` bump, no lease, no Stripe call.
  */
 export interface WebhookHoldPort {
-	/** Whether any hold, open or released, of `subscriptionId` on `customerId` has `invoiceId` as its held invoice. */
-	holdNamesInvoice(subscriptionId: string, invoiceId: string, customerId: string): Promise<boolean>;
+	/**
+	 * The hold of `subscriptionId` on `customerId` whose held invoice is `invoiceId`: `open` when an open
+	 * hold names it, `released` when only a released one does, null when none does.
+	 */
+	heldInvoice(subscriptionId: string, invoiceId: string, customerId: string): Promise<HeldInvoice>;
 	/** Whether the hold `holdId`, open or released, is the hold of `subscriptionId`. */
 	holdNamesSubscription(holdId: string, subscriptionId: string): Promise<boolean>;
 	/** Nudges the open holds of `subscriptionId` on `customerId`; returns how many it nudged. */
@@ -93,6 +96,9 @@ export interface WebhookHoldPort {
 	/** Nudges the open hold a refund names (its metadata's hold id, or its PaymentIntent); returns the count. */
 	nudgeRefund(holdId: string | null, paymentIntentId: string | null): Promise<number>;
 }
+
+/** Which hold, if any, names an invoice (see {@link WebhookHoldPort.heldInvoice}). */
+export type HeldInvoice = "open" | "released" | null;
 
 /** A hold id is a uuid; anything else names no hold and is never sent to Postgres as one. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -104,9 +110,9 @@ function openHold(): SQL {
 
 /** The live port: one read on `payment_holds` per question, and the store's `nudgeHold` as the only write. */
 export const liveWebhookHolds: WebhookHoldPort = {
-	async holdNamesInvoice(subscriptionId, invoiceId, customerId) {
+	async heldInvoice(subscriptionId, invoiceId, customerId) {
 		const rows = await getServiceDb()
-			.select({ id: paymentHolds.id })
+			.select({ state: paymentHolds.state })
 			.from(paymentHolds)
 			.where(
 				and(
@@ -114,9 +120,9 @@ export const liveWebhookHolds: WebhookHoldPort = {
 					eq(paymentHolds.invoice_id, invoiceId),
 					eq(paymentHolds.customer_id, customerId),
 				),
-			)
-			.limit(1);
-		return rows.length > 0;
+			);
+		if (rows.length === 0) return null;
+		return rows.some((r) => r.state !== "released") ? "open" : "released";
 	},
 	async holdNamesSubscription(holdId, subscriptionId) {
 		if (!UUID_RE.test(holdId)) return false;
@@ -359,7 +365,7 @@ export async function handleStripeEvent(
 				const refundedByHold =
 					ENDED_STATUSES.has(sub.status) &&
 					Boolean(invoice.id) &&
-					(await holds.holdNamesInvoice(sub.id, invoice.id ?? "", customerIdOf(sub)));
+					(await holds.heldInvoice(sub.id, invoice.id ?? "", customerIdOf(sub))) !== null;
 				await syncSubscriptionToBilling(sub, sync);
 				const orgId = sub.metadata?.organization_id;
 				if (orgId) await safeMirror(invoice, orgId);
@@ -388,10 +394,10 @@ export async function handleStripeEvent(
 				// sheet with the card THEY chose, which may also be about to get a hold. Neither is ours to
 				// pay with another card. A read that throws fails the event before any charge, and Stripe
 				// redelivers it.
-				const noRetry =
-					isUnliveCreateATeamSubscription(sub) ||
-					(Boolean(invoice.id) &&
-						(await holds.holdNamesInvoice(sub.id, invoice.id ?? "", customerIdOf(sub))));
+				const held: HeldInvoice = invoice.id
+					? await holds.heldInvoice(sub.id, invoice.id, customerIdOf(sub))
+					: null;
+				const noRetry = isUnliveCreateATeamSubscription(sub) || held !== null;
 				await syncSubscriptionToBilling(sub, sync);
 				const customerId = customerIdOf(sub);
 				const failedPm = paymentMethodIdOf(invoice);
@@ -408,9 +414,15 @@ export async function handleStripeEvent(
 						amount: invoice.amount_due,
 						currency: invoice.currency,
 					});
-					await safeEmail("payment failed", () =>
-						sendPaymentFailedEmail(sub, invoice),
-					);
+					// Not for an invoice an OPEN hold names (maintainer ruling on #5807): "update your card"
+					// invites a retry while the hold is still deciding whether the first payment went through,
+					// and the hold's own emails (the sweeper's, Q3) speak for that subscription. An invoice no
+					// open hold names keeps the email exactly as before.
+					if (held !== "open") {
+						await safeEmail("payment failed", () =>
+							sendPaymentFailedEmail(sub, invoice),
+						);
+					}
 				}
 				await nudge(() => holds.nudgeSubscription(sub.id, customerId));
 			}
