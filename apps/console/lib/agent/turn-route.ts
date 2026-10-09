@@ -47,7 +47,7 @@ import { z } from "zod";
 import { AGENT_STEP_PART_TYPE, type AgentStepData, agentStepMarker } from "@/lib/ai/agent-steps";
 import { isClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import { type Mention, mentionSchema, mentionsSchema } from "@/lib/ai/mentions";
-import { MAX_DRAFT_MENTION_SPANS } from "@/lib/elench/draft-content";
+import { MAX_DRAFT_MENTION_FIELD, MAX_DRAFT_MENTION_SPANS } from "@/lib/elench/draft-content";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
@@ -88,7 +88,7 @@ const TURN_ACCEPTED_PART = "data-turn-accepted";
 const TURN_FINISHED_PART = "data-turn-finished";
 
 /** The empty-cell target a request may name (an empty-cell prompt, §9.2). */
-export const cellTargetSchema = z.object({
+const cellTargetSchema = z.object({
 	x: z.number().int().min(0).max(4),
 	y: z.number().int().min(0),
 });
@@ -111,6 +111,12 @@ function distinctResources(spans: readonly Mention[]): Mention[] {
 	});
 }
 
+/** One mention of a message's `metadata`, its id and label capped as a draft caps them. */
+const turnMentionSchema = mentionSchema.extend({
+	id: z.string().max(MAX_DRAFT_MENTION_FIELD),
+	label: z.string().max(MAX_DRAFT_MENTION_FIELD),
+});
+
 /**
  * What a user message carries in `metadata` (§9.2): its mentions and its cell target. Read
  * leniently, so a value that predates the schema degrades to "none" rather than failing a turn, and
@@ -118,10 +124,10 @@ function distinctResources(spans: readonly Mention[]): Mention[] {
  */
 const turnMetadataSchema = z.object({
 	mentions: z
-		.array(mentionSchema)
+		.array(turnMentionSchema)
 		.max(MAX_DRAFT_MENTION_SPANS)
 		.transform(distinctResources)
-		.pipe(mentionsSchema)
+		.pipe(mentionsSchema.unwrap())
 		.optional()
 		.catch(undefined),
 	cellTarget: cellTargetSchema.nullish().catch(null),

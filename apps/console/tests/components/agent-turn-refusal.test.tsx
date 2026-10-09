@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// ADR 0003 slice 6, the client half (§9.1, §9.3): the transport sends the turn fields an
+// ADR 0003's client half (§9.1, §9.3; slices 6 and 9): the transport sends the turn fields an
 // opted-in caller's server needs, Retry resends what is last (a turn, a continuation, or a
-// regenerate of one named answer), and a typed refusal is answered by `onTurnRefused`'s
-// composer path: load the stored transcript, clear the error, and put uncommitted words back.
+// regenerate of one named answer), and a typed refusal is answered by `onTurnRefused`: a refused
+// SEND goes to the drafts store only (D9d, D10f, D20), and a refused regenerate or continuation,
+// which no draft owns, loads the stored transcript and never puts words into the box.
 //
 // These drive the REAL `ElenchConversation`, the real `useAgentChat` (so the real `useChat` and
 // `DefaultChatTransport`), the real `AgentChat`, the real Lexical composer and, since ADR 0001
@@ -563,7 +564,7 @@ describe("Retry resends what is last", () => {
 	});
 });
 
-// ── Refusals: the composer path (§9.3) ───────────────────────────────────────────────────────
+// ── Refusals (§9.3) ──────────────────────────────────────────────────────────────────────────
 
 describe("onTurnRefused", () => {
 	it("turn-answered loads the transcript and shows no error card", async () => {
@@ -644,6 +645,51 @@ describe("onTurnRefused", () => {
 		expect(screen.queryByText("Being answered in another tab or device")).toBeNull();
 	});
 
+	it("turn-in-progress of a store-owned send consumes the draft, shows Being answered, polls getThread.inFlight, and reloads when it clears", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		await renderConversation([user("u0", "hi"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "hello" }] }], 3);
+		answers.push({ refusal: refusal("turn-in-progress", { revision: 4 }), status: 409 });
+		fill("plan api");
+		await pressEnter();
+
+		// D20 through the store: the turn is committed with this text, so the draft is consumed, the
+		// transcript loaded, and the status line is the store's own.
+		await waitFor(() => expect(drafts.server.callsOf("consumeDraft")).toHaveLength(1));
+		const said = await screen.findByText("Being answered in another tab or device");
+		expect(said.closest('[data-testid="elench-draft-status"]')).not.toBeNull();
+		expect(screen.queryByText(ERROR_CARD)).toBeNull();
+		expect(drafts.server.callsOf("releaseClaim")).toHaveLength(0);
+		const before = reloads.mock.calls.length;
+		threadReads.inFlight = [true, false];
+		stored.messages = [...stored.messages, { id: "a9", role: "assistant", parts: [{ type: "text", text: "the other tab's answer" }] }];
+		stored.revision = 5;
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(5_000);
+		});
+		expect(reloads.mock.calls.length).toBe(before); // still in flight: polled, not loaded
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(5_000);
+		});
+		await waitFor(() => expect(reloads.mock.calls.length).toBe(before + 1));
+		expect(await screen.findByText("the other tab's answer")).toBeTruthy();
+		expect(screen.queryByText("Being answered in another tab or device")).toBeNull();
+	});
+
+	it("a refused Retry (a regenerate, which no draft owns) loads the transcript and puts nothing into the box", async () => {
+		await renderConversation([user("u1", "plan api")], 2);
+		answers.push({ refusal: refusal("thread-busy", { turnId: "u1", revision: 2 }), status: 409 });
+		await clickRetry();
+
+		await waitFor(() => expect(reloads).toHaveBeenCalledWith(THREAD));
+		expect(await screen.findByText("Another message in this conversation is being answered")).toBeTruthy();
+		// Give a restore every chance to land: the stored turn's words must not come back as a new draft.
+		await act(async () => {});
+		await act(async () => {});
+		expect(content()).toBe("");
+		expect(drafts.server.callsOf("claimDraft")).toHaveLength(0);
+		expect(drafts.server.callsOf("releaseClaim")).toHaveLength(0);
+	});
+
 	it("a continuation refused turn-answered with a newer revision loads, keeps the card and Retry, and the next Retry is accepted as a resume", async () => {
 		const rejected = { status: "rejected" };
 		await renderConversation([user("u1", "plan api"), proposal("a1", "call-1")], 4);
@@ -692,7 +738,7 @@ describe("ADR 0003 §9.3's one-handler check", () => {
 		expect(drafts.server.row({ orgId: ORG, projectId: null, conversationId: THREAD })?.content.text).toBe("one copy only");
 	});
 
-	it("a refusal of a send the store does not own (a Retry, which regenerates) runs the composer path and touches no draft", async () => {
+	it("a refusal of a request the store does not own (a Retry, which regenerates) loads the transcript and touches no draft", async () => {
 		await renderConversation([user("u1", "plan api")], 2);
 		stored.messages = [user("u1", "plan api"), { id: "a1", role: "assistant", parts: [{ type: "text", text: "answered elsewhere" }] }];
 		stored.revision = 3;

@@ -1160,15 +1160,74 @@ describe("mentions and the cell target (§9.2, case 13)", () => {
 		expect(promptText(0)).not.toContain("STALE-BODY");
 	});
 
-	it("a later-turn cell prompt with body.cellTarget and no metadata lands in the named cell", async () => {
+	/** A thread with one answered turn, at revision 3: the next turn is a later turn. */
+	function seedAnswered(): void {
 		seedThread([userMsg("u0", "q"), { id: "a0", role: "assistant", parts: [{ type: "text", text: "a" }] }], {
 			billingOrgId: ORG_A,
 			revision: 3,
 		});
-		const res = await postOrg(body([userMsg("u1", "a jobs widget")], { turnId: "u1", baseRevision: 3 }, { cellTarget: { x: 3, y: 2 } }));
+	}
+
+	it("a later-turn cell prompt carries its cell on its own message: stored in its metadata, and it lands in the named cell", async () => {
+		seedAnswered();
+		const res = await postOrg(body([userMsg("u1", "a jobs widget", { cellTarget: { x: 3, y: 2 } })], { turnId: "u1", baseRevision: 3 }));
 		await chunksOf(res);
 		expect(promptText(0)).toContain("grid cell (x=3, y=2)");
 		expect(threads().get(THREAD)?.messages[2]?.metadata).toEqual({ cellTarget: { x: 3, y: 2 } });
+	});
+
+	it("body.cellTarget and body.mentions are never read: a turn whose message names neither stores neither, and the prompt has no hint", async () => {
+		seedAnswered();
+		const res = await postOrg(
+			body([userMsg("u1", "a jobs widget")], { turnId: "u1", baseRevision: 3 }, {
+				cellTarget: { x: 3, y: 2 },
+				mentions: [{ type: "project", id: PROJECT_B, label: "FROM-BODY" }],
+			}),
+		);
+		await chunksOf(res);
+		expect(promptText(0)).not.toContain("grid cell");
+		expect(promptText(0)).not.toContain("FROM-BODY");
+		expect(threads().get(THREAD)?.messages[2]?.metadata).toBeUndefined();
+	});
+
+	it("a Retry of a stored turn reads the stored message's cell and mentions, never the request message's", async () => {
+		const stored = { type: "project" as const, id: PROJECT, label: "checkout" };
+		seedThread([userMsg("u1", "a jobs widget", { mentions: [stored], cellTarget: { x: 1, y: 0 } })], { revision: 1 });
+		const forged = userMsg("u1", "a jobs widget", {
+			mentions: [{ type: "project", id: PROJECT_B, label: "FORGED" }],
+			cellTarget: { x: 4, y: 9 },
+		});
+		const res = await postOrg(body([forged], { trigger: "regenerate-message", turnId: "u1", baseRevision: 1 }));
+		await chunksOf(res);
+		expect(promptText(0)).toContain("grid cell (x=1, y=0)");
+		expect(promptText(0)).not.toContain("FORGED");
+		expect(threads().get(THREAD)?.messages[0]?.metadata).toEqual({ mentions: [stored], cellTarget: { x: 1, y: 0 } });
+	});
+
+	it("an appended turn stores only the validated mentions and cell target of its message, each resource once", async () => {
+		seedAnswered();
+		const pill = { type: "project" as const, id: PROJECT, label: "checkout" };
+		// One pill per occurrence (ADR 0001 §4.1): 25 spans of one resource are one mention, under the cap.
+		const spans = Array.from({ length: 25 }, (_, i) => ({ ...pill, start: i * 10, end: i * 10 + 9 }));
+		const res = await postOrg(
+			body([userMsg("u1", "about @checkout", { mentions: spans, cellTarget: { x: 2, y: 1 }, smuggled: "x" })], {
+				turnId: "u1",
+				baseRevision: 3,
+			}),
+		);
+		await chunksOf(res);
+		expect(promptText(0)).toContain("@checkout");
+		expect(threads().get(THREAD)?.messages[2]?.metadata).toEqual({ mentions: [pill], cellTarget: { x: 2, y: 1 } });
+	});
+
+	it("the project route stores a turn's mentions but never a cell target (its prompt has no grid)", async () => {
+		const pill = { type: "project" as const, id: PROJECT, label: "checkout" };
+		const res = await postProject(
+			body([userMsg("u1", "about @checkout", { mentions: [pill], cellTarget: { x: 2, y: 1 } })], { turnId: "u1", baseRevision: 1 }),
+		);
+		await chunksOf(res);
+		expect(promptText(0)).toContain("@checkout");
+		expect(threads().get(THREAD)?.messages[0]?.metadata).toEqual({ mentions: [pill] });
 	});
 });
 
