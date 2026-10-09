@@ -31,6 +31,7 @@ import {
 	createUIMessageStream,
 	createUIMessageStreamResponse,
 	generateId,
+	getToolName,
 	isToolUIPart,
 	readUIMessageStream,
 	stepCountIs,
@@ -75,10 +76,10 @@ import {
 import { pendingClientToolCalls, type TurnRequest } from "./turn-key";
 
 /** The transient part the stream opens with, once the turn is accepted (ADR 0003 §5.1 step 9). */
-export const TURN_ACCEPTED_PART = "data-turn-accepted";
+const TURN_ACCEPTED_PART = "data-turn-accepted";
 
 /** The transient part written after finalize stored the answer, before `finish` (§5.3). */
-export const TURN_FINISHED_PART = "data-turn-finished";
+const TURN_FINISHED_PART = "data-turn-finished";
 
 /** The empty-cell target a request may name (an empty-cell prompt, §9.2). */
 export const cellTargetSchema = z.object({
@@ -87,7 +88,7 @@ export const cellTargetSchema = z.object({
 });
 
 /** A cell target. */
-export type CellTarget = z.infer<typeof cellTargetSchema>;
+type CellTarget = z.infer<typeof cellTargetSchema>;
 
 /**
  * What a stored user message carries in `metadata` (§9.2): its mentions and its cell target. Read
@@ -194,7 +195,7 @@ function approvalOutputsValid(messages: readonly UIMessage[]): boolean {
 	for (const part of last.parts) {
 		if (!isToolUIPart(part) || !pending.has(part.toolCallId)) continue;
 		if (part.state !== "output-available") continue;
-		const name = part.type === "dynamic-tool" ? part.toolName : part.type.slice("tool-".length);
+		const name = getToolName(part);
 		if (!isClientToolName(name)) continue;
 		if (!parseClientToolOutput(name, part.output).ok) return false;
 	}
