@@ -108,6 +108,10 @@ vi.mock("@/components/agent/elench/elench-panel", () => ({
 
 import { createDraftsTab, type DraftsTab, ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+// The surface loads its conversation with a dynamic import (#5849); importing the module here puts it
+// in the module cache first, so the lazy component resolves within `flush()`'s microtasks instead
+// of waiting on a cold transform of the whole chat graph.
+import "@/components/agent/elench/elench-conversation";
 import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { DraftKey } from "@/lib/stores/elench-drafts/types";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
