@@ -13,14 +13,16 @@
 //   may never be on screen again.
 // - `beforeunload` asks before a close when a key is unsaved for a longer reason than the debounce
 //   (§7.5, Q4: held, blocked, or retrying with a cache that refused it).
-// - the tab's store is registered for the account menu's sign-out confirm (D25).
+// - the tab's store is registered for the account menu's sign-out confirm (D25);
+// - the moment each key is acknowledged after a save is recorded for the footer's "Saved" (§7.4).
 
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { DraftNoticeItem, DraftsStoreHandle, DraftsView } from "@/lib/stores/elench-drafts/store";
-import { asksBeforeUnload, conversationName, COPY, footerOf, heldOtherOrgText } from "./copy";
-import { registerDraftsStore } from "./registry";
+import type { DraftEntry } from "@/lib/stores/elench-drafts/types";
+import { asksBeforeUnload, conversationName, COPY, footerOf, heldOtherOrgText, isAcknowledged } from "./copy";
+import { markSaved, registerDraftsStore } from "./registry";
 
 /** What a toast for `notice` says, or null when the notice is not the host's to show. */
 export function toastText(view: DraftsView, notice: DraftNoticeItem): string | null {
@@ -58,13 +60,27 @@ function toastNotices(store: DraftsStoreHandle, view: DraftsView): void {
 	if (shown.length > 0) store.ackNotices(shown);
 }
 
+/** True while a key's save is on the wire, or the key is retrying, held or blocked. */
+function savePending(entry: DraftEntry | undefined): boolean {
+	return entry !== undefined && (entry.inflight !== null || entry.save !== "idle");
+}
+
+/** Records every key that went from a pending save to acknowledged between `before` and `view`. */
+function recordSaved(before: DraftsView, view: DraftsView): void {
+	for (const [id, entry] of Object.entries(view.drafts.entries))
+		if (isAcknowledged(entry) && savePending(before.drafts.entries[id])) markSaved(id, Date.now());
+}
+
 /** The tab-wide half of the draft status; renders nothing. */
 export function DraftStatusHost({ store }: { store: DraftsStoreHandle }): null {
 	useEffect(() => registerDraftsStore(store), [store]);
 
 	useEffect(() => {
 		toastNotices(store, store.view.getState());
-		return store.view.subscribe((view) => toastNotices(store, view));
+		return store.view.subscribe((view, before) => {
+			recordSaved(before, view);
+			toastNotices(store, view);
+		});
 	}, [store]);
 
 	useEffect(() => {

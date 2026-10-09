@@ -8,7 +8,9 @@
 //   sidebar, which is not inside the drafts root's provider, so the drafts host (mounted by the root
 //   once per tab) registers the store here;
 // - the keys whose credential notice the user answered "Keep in this tab only" (D36). The answer is
-//   the user's for this tab: it outlives a remount of the composer, and nothing is sent anywhere.
+//   the user's for this tab: it outlives a remount of the composer, and nothing is sent anywhere;
+// - when each key was last acknowledged after a save (§7.4's "Saved"), recorded by the host from
+//   the store's own transitions, so a footer that mounts just after the answer still says it.
 
 import { useSyncExternalStore } from "react";
 import type { DraftsStoreHandle } from "@/lib/stores/elench-drafts/store";
@@ -35,6 +37,7 @@ function cell<T>(initial: T) {
 
 const mounted = cell<DraftsStoreHandle | null>(null);
 const keptInTab = cell<ReadonlySet<string>>(new Set());
+const savedAt = cell<ReadonlyMap<string, number>>(new Map());
 
 /** Registers the tab's drafts store (the host does, while it is mounted); returns the removal. */
 export function registerDraftsStore(store: DraftsStoreHandle): () => void {
@@ -68,4 +71,17 @@ export function forgetKeptInTab(id: string): void {
 export function useKeptInTab(id: string): boolean {
 	const has = (): boolean => keptInTab.get().has(id);
 	return useSyncExternalStore(keptInTab.subscribe, has, () => false);
+}
+
+/** Records that the key `id` was acknowledged after a save at `at` (ms since the epoch). */
+export function markSaved(id: string, at: number): void {
+	const next = new Map(savedAt.get());
+	next.set(id, at);
+	savedAt.set(next);
+}
+
+/** When the key `id` was last acknowledged after a save, or null. */
+export function useSavedAt(id: string): number | null {
+	const read = (): number | null => savedAt.get().get(id) ?? null;
+	return useSyncExternalStore(savedAt.subscribe, read, () => null);
 }

@@ -38,7 +38,7 @@ import {
 	isAcknowledged,
 	noticeLines,
 } from "./copy";
-import { forgetKeptInTab, keepInTab, useKeptInTab } from "./registry";
+import { forgetKeptInTab, keepInTab, useKeptInTab, useSavedAt } from "./registry";
 
 /** Where one draft's status is rendered: the key it reports on. */
 export interface DraftSlotProps {
@@ -253,31 +253,20 @@ function HeldOtherOrg({ orgId }: { orgId: string }) {
 }
 
 /**
- * "Saved" for `SAVED_SHOWN_MS` after the key went from a save on the wire (or a held, retrying or
- * blocked save) to acknowledged; false otherwise.
+ * True for `SAVED_SHOWN_MS` after the host recorded the key acknowledged after a save, while the box
+ * still shows exactly what the server holds.
  */
-function useJustSaved(entry: DraftEntry | null): boolean {
-	const [saved, setSaved] = useState(false);
-	const pending = useRef(false);
+function useJustSaved(id: string, entry: DraftEntry | null): boolean {
+	const at = useSavedAt(id);
 	const acknowledged = entry !== null && isAcknowledged(entry);
-	const busy = entry !== null && (entry.inflight !== null || entry.save !== "idle");
+	const [, rerender] = useState(0);
+	const left = at === null ? 0 : at + SAVED_SHOWN_MS - Date.now();
 	useEffect(() => {
-		if (busy) {
-			pending.current = true;
-			setSaved(false);
-			return;
-		}
-		if (!acknowledged) {
-			setSaved(false);
-			return;
-		}
-		if (!pending.current) return;
-		pending.current = false;
-		setSaved(true);
-		const t = setTimeout(() => setSaved(false), SAVED_SHOWN_MS);
+		if (left <= 0) return;
+		const t = setTimeout(() => rerender((n) => n + 1), left);
 		return () => clearTimeout(t);
-	}, [busy, acknowledged]);
-	return saved && acknowledged;
+	}, [left]);
+	return acknowledged && left > 0;
 }
 
 /** The composer footer's status line (§7.4): one status per key, true to what the server holds. */
@@ -288,7 +277,7 @@ export function DraftFooterSlot({ draftKey }: DraftSlotProps) {
 	const kept = useKeptInTab(id);
 	const pathname = usePathname() ?? "/";
 	const entry = view?.drafts.entries[id] ?? null;
-	const justSaved = useJustSaved(entry);
+	const justSaved = useJustSaved(id, entry);
 	const footer =
 		entry === null
 			? null

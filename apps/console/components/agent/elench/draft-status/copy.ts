@@ -80,42 +80,37 @@ export function heldOtherOrgText(orgName: string | null): string {
 }
 
 /**
- * Why a send did not go out, from the code its release or its failed-send marker recorded, when
- * nothing else on screen says it. Null when another surface already names the reason (a typed
- * refusal with its own notice, the chat's own error card for an untyped status or a network
- * failure, the bar of a send that may have gone out) or when the code carries none (`error`).
+ * Why a send did not go out, by the code its release or its failed-send marker recorded, for the
+ * codes nothing else on screen explains. A typed refusal with a notice of its own (`thread-busy`,
+ * `transcript-stale`, `client-outdated`), an untyped status the chat's own error card names (402
+ * budget, 413 length, 503 missing key), and a send that MAY have gone out (the bar, D31) are not
+ * here; neither is `error`, which carries no reason.
  */
+const NOT_SENT_REASONS: ReadonlyMap<string, string> = new Map(Object.entries({
+	unauthorized: "You are signed out. Sign in again in this tab to send it.",
+	forbidden: "You can no longer write here.",
+	"scope-changed": "This tab now shows another organization.",
+	"rate-limited": "Too many requests. Wait a moment, then press Enter to send.",
+	unavailable: "The service did not answer.",
+	invalid: "This message could not be read.",
+	limit: "You have 200 unsent messages here.",
+	"draft-conflict": "This message changed in another tab or device.",
+	timeout: "Starting the conversation took longer than 30 seconds.",
+	reload: "The page was reloaded before the message was sent.",
+	"thread-not-found": "This conversation no longer exists.",
+	"project-not-found": "This project no longer exists.",
+	"org-forbidden": "You are not an active member of this organization.",
+	// The chat's own card reads these two as a generic error, so the reason is said here.
+	"status-400": "Elench could not read this message.",
+	"status-401": "You are signed out. Sign in again in this tab to send it.",
+}));
+
+/** Every sentence `notSentReason` can answer. */
+const REASONS: ReadonlySet<string> = new Set(NOT_SENT_REASONS.values());
+
+/** The reason a send recorded under `code` did not go out, or null when nothing needs saying. */
 export function notSentReason(code: string): string | null {
-	switch (code) {
-		case "unauthorized":
-			return "You are signed out. Sign in again in this tab to send it.";
-		case "forbidden":
-			return "You can no longer write here.";
-		case "scope-changed":
-			return "This tab now shows another organization.";
-		case "rate-limited":
-			return "Too many requests. Wait a moment, then press Enter to send.";
-		case "unavailable":
-			return "The service did not answer.";
-		case "invalid":
-			return "This message could not be read.";
-		case "limit":
-			return "You have 200 unsent messages here.";
-		case "draft-conflict":
-			return "This message changed in another tab or device.";
-		case "timeout":
-			return "Starting the conversation took longer than 30 seconds.";
-		case "reload":
-			return "The page was reloaded before the message was sent.";
-		case "thread-not-found":
-			return "This conversation no longer exists.";
-		case "project-not-found":
-			return "This project no longer exists.";
-		case "org-forbidden":
-			return "You are not an active member of this organization.";
-		default:
-			return null;
-	}
+	return NOT_SENT_REASONS.get(code) ?? null;
 }
 
 // ── The bar ─────────────────────────────────────────────────────────────────────────────────
@@ -240,6 +235,21 @@ function noticeLine(notice: DraftNoticeKind, stale: boolean): string | null {
 	}
 }
 
+/** The notices that say a send went out after all, so an earlier "Not sent" is no longer true. */
+const SENT_AFTER_ALL: ReadonlySet<DraftNoticeKind> = new Set<DraftNoticeKind>([
+	"first-sent",
+	"first-sent-more-in-box",
+	"sent-elsewhere",
+]);
+
+/** Removes "Not sent" and the reason said before it from `lines`. */
+function dropNotSent(lines: string[]): void {
+	const at = lines.indexOf(COPY.notSent);
+	if (at === -1) return;
+	const reason = at > 0 && REASONS.has(lines[at - 1] ?? "");
+	lines.splice(reason ? at - 1 : at, reason ? 2 : 1);
+}
+
 /** The most notice lines shown at once: the newest, so a reason and its outcome both show. */
 export const MAX_LINES = 3;
 
@@ -248,27 +258,42 @@ export const MAX_LINES = 3;
  * `MAX_LINES`. A "Not sent" line is preceded by its reason when only the recorded failure code
  * names it (`notSentReason`). A transcript load raised with a "Not sent" is the route's
  * transcript-stale refusal; raised alone it is D9a's load before a send.
+ *
+ * A send that failed for certain also leaves its marker on the row (§5.4), so "Not sent" is said
+ * from the marker too: after a reload, or on another tab or device, where no notice was raised,
+ * the words are in the box and the card says why (§7.5). A send that MAY have gone out is the
+ * bar's (D31), never "Not sent".
  */
 export function noticeLines(view: DraftsView, key: DraftKey): string[] {
 	const id = keyId(key);
 	const mine = view.notices.filter((n) => keyId(n.key) === id).map((n) => n.notice);
 	const stale = mine.includes("not-sent");
 	const entry = view.drafts.entries[id];
-	const code = entry?.pendingFailedSend?.error ?? entry?.server?.failedSend?.error ?? null;
+	const failed = entry?.pendingFailedSend ?? entry?.server?.failedSend ?? null;
+	const code = failed?.error ?? null;
 	const lines: string[] = [];
 	const push = (line: string): void => {
 		const at = lines.indexOf(line);
 		if (at !== -1) lines.splice(at, 1);
 		lines.push(line);
 	};
+	/** "Not sent", after its reason when the recorded code names one. */
+	const notSent = (): void => {
+		const reason = code === null ? null : notSentReason(code);
+		if (reason !== null) push(reason);
+		push(COPY.notSent);
+	};
+	if (entry !== undefined && failed !== null && !failed.uncertain && !stale && !isEmptyContent(shownContent(entry)))
+		notSent();
 	for (const n of mine) {
-		const line = noticeLine(n, stale);
-		if (line === null) continue;
-		if (n === "not-sent" && code !== null) {
-			const reason = notSentReason(code);
-			if (reason !== null) push(reason);
+		if (n === "not-sent") {
+			notSent();
+			continue;
 		}
-		push(line);
+		// A send learned to have gone out after all supersedes an earlier "Not sent" (D17, D30).
+		if (SENT_AFTER_ALL.has(n)) dropNotSent(lines);
+		const line = noticeLine(n, stale);
+		if (line !== null) push(line);
 	}
 	return lines.slice(-MAX_LINES);
 }
