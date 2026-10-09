@@ -15,9 +15,23 @@
 // Note: the bold actor/target rendering and the "Load more" trigger need seeded rows, so they
 // are covered by the unit tests (tests/components/activity-feed.test.tsx) rather than here.
 //
+// Ask for the filter bar's search box BY ROLE, never `getByPlaceholder`/`getByLabel` (#5785, the
+// same defect #5777 hit on connectors.spec.ts). A full-page load can leave the server's copy of a
+// streamed Suspense segment in the DOM as `<div hidden id="S:n">` until React's segment script
+// removes it. `getByPlaceholder` matches that hidden copy too, so an assertion landing in the window
+// fails strict mode with "resolved to 2 elements". Role queries leave out `hidden` subtrees — which
+// is also what a person and a screen reader get: one search box.
+//
 // Run locally with `pnpm dev:up` + `pnpm -C apps/console run test:e2e`.
 
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/auth";
+
+/** The feed's search box: the visible, accessible one, never a hidden streamed copy. */
+function searchBox(page: Page) {
+	// `FilterSearch` (packages/ui/src/filter-search.tsx) names the input by its placeholder.
+	return page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true });
+}
 
 test.describe("Activity page (a brand-new org)", () => {
 	test("renders the filter bar and gates export on a fresh plan", async ({
@@ -27,11 +41,35 @@ test.describe("Activity page (a brand-new org)", () => {
 		await page.goto(`/${orgSlug}/~/settings/activity`);
 
 		// The reusable filter bar the user liked.
-		await expect(page.getByPlaceholder(/search actor, action or resource/i)).toBeVisible();
+		await expect(searchBox(page)).toBeVisible();
 		await expect(page.getByRole("button", { name: /^events$/i })).toBeVisible();
 
 		// CSV export is Enterprise-only; a fresh Hobby org sees it disabled.
 		await expect(page.getByRole("button", { name: /export csv/i })).toBeDisabled();
+	});
+
+	// The #5777 race, made deterministic: put a server-shaped copy of the search box in a hidden
+	// `S:` segment, exactly as React leaves one while a streamed segment waits to be removed, and the
+	// locator must still resolve to the one box a person can see. `getByPlaceholder` fails this.
+	test("a hidden streamed copy of the feed does not make the search box ambiguous", async ({
+		authedPage: page,
+		orgSlug,
+	}) => {
+		await page.goto(`/${orgSlug}/~/settings/activity`);
+		await expect(searchBox(page)).toBeVisible();
+		await page.evaluate(() => {
+			const segment = document.createElement("div");
+			segment.hidden = true;
+			segment.id = "S:5785";
+			const copy = document.createElement("input");
+			copy.setAttribute("aria-label", "Search actor, action or resource…");
+			copy.placeholder = "Search actor, action or resource…";
+			segment.appendChild(copy);
+			document.body.appendChild(segment);
+		});
+		await expect(searchBox(page)).toBeVisible();
+		await searchBox(page).fill("nothing-matches-this");
+		await expect(searchBox(page)).toHaveValue("nothing-matches-this");
 	});
 
 	test("narrowing to denials drives a server refetch to the empty state", async ({
@@ -39,7 +77,7 @@ test.describe("Activity page (a brand-new org)", () => {
 		orgSlug,
 	}) => {
 		await page.goto(`/${orgSlug}/~/settings/activity`);
-		await expect(page.getByPlaceholder(/search actor, action or resource/i)).toBeVisible();
+		await expect(searchBox(page)).toBeVisible();
 
 		// Open the event-type sheet and keep only denials — a fresh org has none.
 		await page.getByRole("button", { name: /^events$/i }).click();
