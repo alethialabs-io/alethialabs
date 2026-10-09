@@ -1183,9 +1183,9 @@ END $$;
 -- user's own draft in another org is invisible here too. Community/personal: org_id == user id ==
 -- current_owner, so this is the same row set. Unset GUCs are NULL, and NULL denies. ENABLE first —
 -- without it the policy is inert. NOT FORCEd, as no table here is: the two functions below rely on
--- the table owner bypassing it (and raise if it is ever forced, see their note). Nothing sweeps or
--- erases drafts yet: the retention sweep and the erasure executor arrive in ADR 0001 slice 6, and
--- will run on the service role (RLS-bypassing), naming their rows explicitly.
+-- the table owner bypassing it (and raise if it is ever forced, see their note). The retention sweep
+-- (lib/elench/drafts-sweep.ts) and the erasure executor (lib/privacy/erasure-plan.ts) run on the
+-- service role (RLS-bypassing) and name their rows explicitly.
 DO $$
 BEGIN
   ALTER TABLE public.elench_drafts ENABLE ROW LEVEL SECURITY;
