@@ -194,8 +194,8 @@ let printed: string[];
 const print = (line: string) => {
 	printed.push(line);
 };
-const alert = vi.fn(async () => true);
-const deliver = vi.fn(async () => undefined);
+const alert = vi.fn<SweepDeps["alert"]>(async () => true);
+const deliver = vi.fn<SweepDeps["deliver"]>(async () => undefined);
 
 /** Sweep deps over `stripe`. */
 function depsOver(stripe: HoldStripe): SweepDeps {
