@@ -1197,17 +1197,18 @@ BEGIN
            AND org_id = current_setting('app.current_org', true)::uuid);
 END $$;
 
--- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). From ADR 0001 slice 5, deleting a
--- thread calls the purge to remove the caller's drafts of that conversation in EVERY org (the same
--- conversation id in two orgs is two rows, §3.2), which the policy above cannot do from one org's
--- scope — so these run with definer rights. Nothing calls either function yet: today `deleteThread`
--- leaves a conversation's drafts in place. What keeps them safe:
+-- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). Deleting a thread (`deleteThread`,
+-- app/server/actions/agent.ts) calls the purge in its own transaction to remove the caller's drafts
+-- of that conversation in EVERY org (the same conversation id in two orgs is two rows, §3.2), which
+-- the policy above cannot do from one org's scope — so these run with definer rights. The count is
+-- read by `countDraftsOfConversation` (app/server/actions/elench-drafts.ts) for the delete confirm.
+-- What keeps them safe:
 --   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so
 --     no caller can point either function at another user. Unset → NULL → no row matches.
 --   * The only argument is a conversation id, and the only predicate besides the owner pin is
 --     equality on it: definer rights widen the ORG, never the USER.
 --   * `count_…` returns a number and nothing else, so it reveals no content, and only the caller's
---     own count (slice 10's delete confirm will read it).
+--     own count.
 --   * `SET row_security = off`, as derive_component_org_id and project_environments_require_one_
 --     default above: for an owner that bypasses the policy it is a no-op, but if these functions are
 --     ever owned by a role that IS subject to the policy — not the table owner, or the table gains
