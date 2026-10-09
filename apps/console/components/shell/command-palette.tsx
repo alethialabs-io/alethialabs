@@ -18,7 +18,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
-import { JOB_TYPES } from "@/components/jobs/columns";
+import { JOB_TYPES } from "@/lib/jobs/format";
 import { settingsNavItemsForScope } from "@/components/settings/settings-nav-items";
 import {
 	buildDrills,

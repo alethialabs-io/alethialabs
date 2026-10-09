@@ -23,6 +23,14 @@ import { expect, type Page } from "@playwright/test";
  * #418). A mount effect runs after the hydration commit, so once the placeholder is gone every
  * control committed with it — the quick-range trigger beside it included — has its handlers.
  *
+ * #5849 measured the window again and found a second cause beside the first: on Activity the
+ * "Last 7 days" trigger sits between the `flex-1` search box and the date-range trigger, and the
+ * date-range label growing from "Date range" to the formatted window at mount slid it 136 px left,
+ * so a click aimed at the painted trigger landed on the bar. The date-range trigger now holds its
+ * width from the first paint, and the shell evaluates far less before it can hydrate, so the
+ * Activity spec's window test now clicks the moment the trigger is visible. The remaining callers
+ * keep this wait; it is still the honest signal for "this bar is live".
+ *
  * `anchor` is a control in the same bar that the server already renders; waiting for it first is
  * what keeps "no placeholder" from passing on a page that has not painted the bar at all.
  */
