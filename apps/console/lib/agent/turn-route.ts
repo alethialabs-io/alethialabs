@@ -420,6 +420,13 @@ function answerStreamTransform(
 	});
 }
 
+/**
+ * Do nothing with `req`. A call from inside the stream's `execute` closure makes the closure capture
+ * the request, so it stays reachable (and keeps forwarding its client's disconnect to `req.signal`)
+ * for as long as the stream is running.
+ */
+function holdRequest(_req: Request): void {}
+
 /** The text of an answer, for the turn's observability enrichment. */
 function answerText(answer: UIMessage | null): string {
 	return (answer?.parts ?? []).map((p) => (p.type === "text" ? p.text : "")).join("");
@@ -469,6 +476,13 @@ async function streamAcceptedTurn<R>(
 
 	// The route's own bound, the client's disconnect, and the route stopping the model itself: a lease
 	// the heartbeat found lost, or a stored copy of the answer that ended before the model did.
+	//
+	// `req.signal` is not the signal the request was built with: a `Request` gets its own controller,
+	// which follows the init signal only while the `Request` object is reachable (undici holds it
+	// through a WeakRef and unregisters the listener when the controller is collected). Nothing here
+	// reads `req` once this function returns, so without `holdRequest` below a GC between acceptance
+	// and the disconnect drops the controller, `req.signal` never fires, and an abandoned turn runs to
+	// its budget with nobody reading it.
 	const stop = new AbortController();
 	const timeout = AbortSignal.timeout(TURN_BUDGET_MS);
 	const abortSignal = AbortSignal.any([req.signal, timeout, stop.signal]);
@@ -605,6 +619,8 @@ async function streamAcceptedTurn<R>(
 						...(error === "provider-error" ? { isError: true, error } : {}),
 					},
 				});
+				// The request has to stay reachable until the model's stream has ended (see `stop` above).
+				holdRequest(req);
 				// Stored and settled: tell the client the revision it now holds, and only then finish.
 				if (finalized?.outcome === "won" && finalized.state === "answered") {
 					writer.write({

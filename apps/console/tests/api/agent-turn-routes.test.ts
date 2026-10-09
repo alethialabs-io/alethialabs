@@ -15,6 +15,8 @@ import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-
 import { getToolName, isToolUIPart, tool, type UIMessage } from "ai";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -694,6 +696,25 @@ function failingParts(): Script {
 		});
 }
 
+/**
+ * Run a full garbage collection now. An abort test calls it just before the client disconnects:
+ * `req.signal` follows the caller's signal only while the `Request` is reachable, and a route that let
+ * it go would miss the disconnect whenever a collection happened to land first (a 20s hang in the
+ * queue run, never on a quiet machine). Collecting every time turns that race into a certain failure.
+ */
+function collectGarbage(): void {
+	setFlagsFromString("--expose-gc");
+	const gc: unknown = runInNewContext("gc");
+	if (typeof gc === "function") gc();
+}
+
+/** Read `res` to its end, raising `seen.text` once the first text delta has reached the client. */
+function readNoting(res: Response, seen: { text: boolean }): Promise<Chunk[]> {
+	return chunksOf(res, (c) => {
+		if (c.type === "text-delta") seen.text = true;
+	}).catch(() => []);
+}
+
 /** A deferred: a promise and the function that settles it. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
 	let resolve = () => {};
@@ -1220,6 +1241,7 @@ describe("continuations (case 7, 7b)", () => {
 		const res = await postOrg(continuation(a1), ctl.signal);
 		const reading = chunksOf(res).catch(() => []);
 		await vi.waitFor(() => expect(model.prompts).toHaveLength(1));
+		collectGarbage();
 		ctl.abort();
 		await reading;
 		await vi.waitFor(() => expect(claims().find((c) => c.attemptKey === "continue:a1:p1")?.state).toBe("failed"));
@@ -1239,9 +1261,10 @@ describe("continuations (case 7, 7b)", () => {
 		const gate = deferred();
 		model.scripts.push(gatedParts("Queued the plan and", gate.promise));
 		const res = await postOrg(continuation(a1), ctl.signal);
-		const reading = chunksOf(res).catch(() => []);
-		await vi.waitFor(() => expect(model.prompts).toHaveLength(1));
-		await new Promise((r) => setTimeout(r, 20));
+		const seen = { text: false };
+		const reading = readNoting(res, seen);
+		await vi.waitFor(() => expect(seen.text).toBe(true));
+		collectGarbage();
 		ctl.abort();
 		await reading;
 		await vi.waitFor(() => expect(claims().find((c) => c.attemptKey === "continue:a1:p1")?.partial).toBe(true));
@@ -1324,9 +1347,10 @@ describe("how an attempt ends (§8.1, case 14)", () => {
 		const gate = deferred();
 		model.scripts.push(gatedParts("The whole answer the user read", gate.promise));
 		const res = await postOrg(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 }), ctl.signal);
-		const reading = chunksOf(res).catch(() => []);
-		await vi.waitFor(() => expect(model.prompts).toHaveLength(1));
-		await new Promise((r) => setTimeout(r, 20));
+		const seen = { text: false };
+		const reading = readNoting(res, seen);
+		await vi.waitFor(() => expect(seen.text).toBe(true));
+		collectGarbage();
 		ctl.abort();
 		await reading;
 		await vi.waitFor(() => expect(claims()[0]?.state).toBe("answered"));
