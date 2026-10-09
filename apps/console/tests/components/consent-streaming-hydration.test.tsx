@@ -18,7 +18,9 @@
 // The fiber-level CI trace behind this (release-gate run 37895619718, a React DevTools-hook probe on
 // the connectors page): in the load where the probe's fiber chain reached the root, the commit that
 // client-rendered the pending boundary was the one in which the consent provider's state and its
-// context value changed, with the consent-reading `AnalyticsProvider` re-rendering below it.
+// context value changed, with the consent-reading `AnalyticsProvider` re-rendering below it. Over
+// 12 loads the same probe counted a client-rendered boundary on 12 and two search boxes on 8 before
+// this fix, and 0 and 0 after it (release-gate run 37897658913).
 
 // The harness streams a real Fizz shell with one boundary whose content never resolves (it stands
 // for a segment still in flight), hydrates it in jsdom with a decision in the cookie and the document
