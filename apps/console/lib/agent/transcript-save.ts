@@ -173,7 +173,7 @@ export async function recoverTranscript(
  *   a turn sent into that id after the reap finds no row and recreates the thread under its id.
  *
  * Throws when the transcript could not be stored: the id is held by a row this owner cannot see, or
- * a support thread has no row. The routes log that (`transcriptNotSaved`).
+ * a support thread has no row; the caller decides what that failure means.
  */
 export async function saveTranscript(
 	rows: TranscriptRows,

@@ -347,16 +347,10 @@ baseline:
     reason: The org and per-project job counters are asserted by no suite, unlike the gauges beside them.
 
   - path: lib/billing/ai-quota.ts
-    symbols: [meteringFailed]
-    issue: "#2649"
-    state: untested-export
-    reason: The metering error sink is asserted by no suite.
-
-  - path: lib/billing/ai-quota.ts
-    symbols: [sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
+    symbols: [meteringFailed, sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
     issue: "#2649"
     state: mock-only
-    reason: The per-user credit sum and the usage-window reads are only ever named through a mock of this module.
+    reason: The metering error sink, the per-user credit sum and the usage-window reads are only ever named through a mock of this module (the error sink by the support route's threadless path in support-turn-routes.test.ts).
 
   - path: lib/billing/queries.ts
     symbols: [resolveOrgEntitlements, upsertOrgBilling, applySubscriptionToBilling, applyAiSubscriptionToBilling, claimPlanWelcome]
