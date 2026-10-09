@@ -13,7 +13,10 @@ import type { AgentThread } from "@/lib/db/schema";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/dialog";
+import { Sheet, SheetClose, SheetContent, SheetTitle } from "@repo/ui/sheet";
+import { cn } from "@repo/ui/utils";
 import { ElenchScopeChip } from "./elench-scope-chip";
+import { useConversationDraftFacts, useUnsentConversations } from "./use-elench-threads";
 
 /**
  * Split-pane bounds as RATIOS of the split width (the panes sit ~50/50, so a fixed pixel
@@ -28,6 +31,77 @@ const DEFAULT_WIDTH = 440;
 
 function clamp(n: number, lo: number, hi: number): number {
 	return Math.min(hi, Math.max(lo, n));
+}
+
+/** Tailwind v4's `lg` (64rem); the console overrides no breakpoint. */
+const LG_QUERY = "(min-width: 64rem)";
+
+/**
+ * Calls `onReachLg` when the viewport widens to `lg` while `active` is true. The narrow sheet is
+ * `lg:hidden`, but hiding a popup does not close it: base-ui keeps the dialog open (focus trapped
+ * in a `display:none` popup, and an invisible internal backdrop that swallows the next click). So
+ * crossing to `lg` CLOSES the sheet rather than merely hiding it. A missing `matchMedia` (an old
+ * engine, jsdom) leaves the sheet as it is.
+ */
+function useCloseAtLg(active: boolean, onReachLg: () => void): void {
+	useEffect(() => {
+		if (!active || typeof window.matchMedia !== "function") return;
+		const mq = window.matchMedia(LG_QUERY);
+		/** Closes on the transition INTO `lg`; narrowing again is not an event to act on. */
+		const onChange = (e: { matches: boolean }) => {
+			if (e.matches) onReachLg();
+		};
+		mq.addEventListener("change", onChange);
+		return () => mq.removeEventListener("change", onChange);
+	}, [active, onReachLg]);
+}
+
+/**
+ * The thread rail's toggle BELOW `lg` (#5650). The docked rail column is `hidden … lg:flex`, so
+ * under 1024px the store's `railOpen` changes nothing on screen; this button opens the rail as a
+ * sheet instead. It is `lg:hidden` and rendered regardless of `railOpen`, because below `lg` it is
+ * the only way to reach Delete chat, Artifacts and Knowledge. At `lg` and up it is not displayed,
+ * and the `railOpen`-driven toggle keeps the job it always had.
+ *
+ * It carries the Unsent count when that is not zero (ADR 0001 decision 3): below `lg` the rail is
+ * behind this toggle, and a phone user must see that words are unsent without opening the sheet.
+ * The count is in its accessible name too, so a screen reader hears what a sighted user sees.
+ */
+function NarrowRailToggle({
+	open,
+	onOpen,
+	unsent,
+	className,
+}: {
+	/** Whether the sheet this toggle opens is open — announced as `aria-expanded`. */
+	open: boolean;
+	onOpen: () => void;
+	/** How many conversations of the rail's Unsent group are not the one on screen. */
+	unsent: number;
+	className: string;
+}) {
+	return (
+		<button
+			type="button"
+			aria-label={unsent > 0 ? `Open sidebar, ${unsent} unsent` : "Open sidebar"}
+			aria-haspopup="dialog"
+			aria-expanded={open}
+			data-testid="elench-narrow-rail-toggle"
+			onClick={onOpen}
+			// Positioned, so the count can sit on its corner; an absolutely placed caller keeps its own.
+			className={cn("relative", className)}
+		>
+			<PanelLeft className="h-4 w-4" />
+			{unsent > 0 && (
+				<span
+					data-testid="elench-narrow-rail-unsent"
+					className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center bg-foreground px-1 font-mono text-ui-3xs text-background"
+				>
+					{unsent}
+				</span>
+			)}
+		</button>
+	);
 }
 
 /**
@@ -78,6 +152,15 @@ export function ElenchModal({
 	const mainView = useElenchStore((s) => s.mainView);
 	const setMainView = useElenchStore((s) => s.setMainView);
 	const showSidebar = sidebarOpen;
+	// Below `lg` the rail opens as a sheet. Local, not the store's `railOpen`: that flag is the
+	// docked column's, persists across minimize, and must not open an overlay when the window
+	// later widens; a sheet is a transient thing the user opened just now.
+	const [narrowRailOpen, setNarrowRailOpen] = useState(false);
+	const closeNarrowRail = useCallback(() => setNarrowRailOpen(false), []);
+	// The rail's Unsent group, and the delete confirm's draft count (ADR 0001 §6.3, §7.4).
+	const { unsent, threadNotes, badge } = useUnsentConversations(threads);
+	const countDrafts = useConversationDraftFacts();
+	useCloseAtLg(narrowRailOpen, closeNarrowRail);
 
 	// The generative-UI split pane is LAYERED: the per-chat widget grid is the base
 	// view (gridOpen) and the project/job inspector (artifact) overlays it on demand.
@@ -159,6 +242,9 @@ export function ElenchModal({
 							onSelect={onSelectThread}
 							onNew={onNewChat}
 							onDelete={onDeleteThread}
+							unsent={unsent}
+							threadNotes={threadNotes}
+							countDrafts={countDrafts}
 							onOpenArtifacts={
 								gallery ? () => setMainView("artifacts") : undefined
 							}
@@ -171,11 +257,88 @@ export function ElenchModal({
 					</div>
 				)}
 
+				{/* The same rail below `lg`, as a left sheet over the modal (#5650). Navigating —
+				    a chat, New chat, Artifacts, Knowledge — closes it, because the destination is
+				    what the user wanted to see and the sheet covers most of a phone. Deleting does
+				    NOT: the row disappears in place, and the user may be clearing several.
+				    NO SCRIM: the sheet mounts inside the modal, so base-ui treats it as a nested
+				    dialog and its backdrop renders only with `forceRender`, which `SheetContent`
+				    does not pass. The modal behind it is therefore not dimmed — a recorded choice
+				    of this unit, since a scrim needs an @repo/ui change. */}
+				<Sheet open={narrowRailOpen} onOpenChange={setNarrowRailOpen}>
+					<SheetContent
+						side="left"
+						showCloseButton={false}
+						data-testid="elench-narrow-rail"
+						className="z-[var(--z-overlay-nested)] w-[284px] gap-0 bg-card p-0 lg:hidden"
+					>
+						<div className="flex items-center gap-2 px-3.5 py-3">
+							<AlethiaMark className="h-6 w-auto flex-none text-foreground" />
+							<SheetTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
+								Chats
+							</SheetTitle>
+							<SheetClose
+								aria-label="Close sidebar"
+								className="ml-auto flex size-7 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+							>
+								<PanelLeft className="h-4 w-4" />
+							</SheetClose>
+						</div>
+						<ThreadRail
+							className="flex min-h-0 w-full flex-1 border-r-0"
+							threads={threads}
+							activeId={activeId}
+							onSelect={(id) => {
+								onSelectThread(id);
+								setNarrowRailOpen(false);
+							}}
+							onNew={() => {
+								onNewChat();
+								setNarrowRailOpen(false);
+							}}
+							onDelete={onDeleteThread}
+							unsent={unsent}
+							threadNotes={threadNotes}
+							countDrafts={countDrafts}
+							onOpenArtifacts={
+								gallery
+									? () => {
+											setMainView("artifacts");
+											setNarrowRailOpen(false);
+										}
+									: undefined
+							}
+							artifactsActive={mainView === "artifacts"}
+							onOpenKnowledge={
+								knowledge
+									? () => {
+											setMainView("knowledge");
+											setNarrowRailOpen(false);
+										}
+									: undefined
+							}
+							knowledgeActive={mainView === "knowledge"}
+						/>
+					</SheetContent>
+				</Sheet>
+
 				<main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-					{gallery && mainView === "artifacts" ? (
-						gallery
-					) : knowledge && mainView === "knowledge" ? (
-						knowledge
+					{(gallery && mainView === "artifacts") ||
+					(knowledge && mainView === "knowledge") ? (
+						<>
+							{/* Artifacts and Knowledge carry their own top bar and no way back to the
+							    chats; at `lg` the rail beside them is that way. Below it, this strip
+							    is — without it the sheet that opened them could not be reopened. */}
+							<div className="flex flex-none items-center border-b border-border px-3 py-1.5 lg:hidden">
+								<NarrowRailToggle
+									open={narrowRailOpen}
+									onOpen={() => setNarrowRailOpen(true)}
+									unsent={badge}
+									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+								/>
+							</div>
+							{mainView === "artifacts" ? gallery : knowledge}
+						</>
 					) : (
 						<>
 							{isEmpty ? (
@@ -185,11 +348,17 @@ export function ElenchModal({
 									type="button"
 									aria-label="Open sidebar"
 									onClick={() => setSidebarOpen(true)}
-									className="absolute left-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+									className="absolute left-4 top-4 z-[var(--z-raised)] hidden size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground lg:flex"
 								>
 									<PanelLeft className="h-4 w-4" />
 								</button>
 							)}
+							<NarrowRailToggle
+								open={narrowRailOpen}
+									onOpen={() => setNarrowRailOpen(true)}
+									unsent={badge}
+								className="absolute left-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+							/>
 							{/* The empty state hides the top-bar grid toggle — so if the split
 							    pane is somehow open here, surface a close control so it can never
 							    get stranded with no way out. */}
@@ -224,11 +393,17 @@ export function ElenchModal({
 										type="button"
 										aria-label="Open sidebar"
 										onClick={() => setSidebarOpen(true)}
-										className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+										className="hidden size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:flex"
 									>
 										<PanelLeft className="h-4 w-4" />
 									</button>
 								)}
+								<NarrowRailToggle
+									open={narrowRailOpen}
+									onOpen={() => setNarrowRailOpen(true)}
+									unsent={badge}
+									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+								/>
 								{/* Which project + environment this conversation plans against — the modal
 								    hides the topbar switcher, so without it the scope is unreadable. */}
 								<ElenchScopeChip className="px-1" />

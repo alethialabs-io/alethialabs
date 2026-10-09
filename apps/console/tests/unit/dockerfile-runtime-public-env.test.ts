@@ -22,6 +22,9 @@
 //   - `process.env.NEXT_PUBLIC_…` is deliberately NOT a runtime read: Next inlines it at build
 //     time, so for those the build stage is the right place (e.g. NEXT_PUBLIC_CANVAS_ENABLED).
 //   - both console images are checked: Dockerfile (enterprise) and Dockerfile.community.
+//   - the MARKETING image (apps/marketing/Dockerfile) is checked for the build id ONLY (#5697): the
+//     post-deploy smoke's `marketing-build-id` check reads it from marketing's `<PublicEnvScript />`
+//     on `/`. Marketing's other runtime reads are NOT scanned here.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -34,6 +37,7 @@ const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(CONSOLE, "..", "..");
 const DOCKERFILES = ["Dockerfile", "Dockerfile.community"];
 const DEPLOY_WORKFLOW = join(REPO, ".github/workflows/deploy-console.yml");
+const MARKETING_DOCKERFILE = join(REPO, "apps/marketing/Dockerfile");
 
 /** Where a runtime-read var gets its value when the image itself does not set it. */
 type OtherSource =
@@ -195,4 +199,25 @@ describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 			});
 		});
 	}
+
+	describe("apps/marketing/Dockerfile (#5697)", () => {
+		const stages = parseDockerfileStages(readFileSync(MARKETING_DOCKERFILE, "utf8"));
+		const runner = stages.find((s) => s.name === "runner");
+
+		it("has a runner stage", () => {
+			expect(runner).toBeDefined();
+		});
+
+		it("the runner stage sets the build id the smoke's marketing-build-id check reads", () => {
+			for (const [key, value] of Object.entries(RUNNER_MUST_SET)) {
+				expect(runner?.env.get(key), `apps/marketing/Dockerfile runner must set ${key}`).toBe(value);
+			}
+			// `$VERSION` is empty in a stage that never declared it — build args are per stage.
+			expect(runner?.args.has("VERSION")).toBe(true);
+		});
+
+		it("the runner stage names the commit it was built from — retag-unchanged reads it off the image", () => {
+			expect(runner?.env.get("ALETHIA_SOURCE_COMMIT")).toBe("$VERSION");
+		});
+	});
 });

@@ -16,6 +16,15 @@ mock_provider "hcloud" {
   mock_resource "hcloud_primary_ip" {
     defaults = { id = "4143" }
   }
+  # The extra pools' subnet ledger (#5595) reads as on a FRESH cluster: no firewall, no pool servers.
+  # Runs that need a recorded ledger override these per run. Pinned rather than left to the mock, so
+  # a generated value can never be read as a record.
+  mock_data "hcloud_firewalls" {
+    defaults = { firewalls = [] }
+  }
+  mock_data "hcloud_servers" {
+    defaults = { servers = [] }
+  }
 }
 
 mock_provider "talos" {}
@@ -108,6 +117,11 @@ run "hetzner_defaults_plan_unchanged" {
       length(talos_machine_configuration_apply.node_pool) == 0 && length(terraform_data.node_pool_subnets_guard) == 0
     )
     error_message = "With defaults, no extra-pool server, IP, subnet, Talos config, Talos apply or guard may be planned."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(local.default_labels) && length(data.hcloud_firewalls.node_pool_ledger) == 0 && length(data.hcloud_servers.node_pool_ledger) == 0
+    error_message = "With defaults, the firewall's labels must be exactly the default labels (no subnet ledger), and neither ledger data source may be read (#5595)."
   }
 
   assert {
@@ -503,26 +517,305 @@ run "hetzner_refuses_a_pool_when_the_network_has_no_free_subnet" {
   expect_failures = [hcloud_network_subnet.node_pools]
 }
 
-# ── Subnet allocation: stable under add, remove and reorder (servers.tf, ADDRESSING). ─────────────
+# ── Subnet allocation: stable AND clash-free, through the firewall-label ledger (#5595). ───────────
 #
-# A pool's /24 comes from its name, so these runs pin the literal /24s: on the default 10.0.0.0/16,
-# sha256 puts "a" on 81, "b" on 22 and "c" on 74, and "edge" and "search" both on 41.
+# servers.tf, ADDRESSING. On the default 10.0.0.0/16 the free /24s are 1..95 and sha256 hashes "a" to
+# 81, "b" to 22, "c" to 74, and BOTH "edge" and "search" to 41. On a 10.0.0.0/20 the free /24s are
+# 1..5 and "a", "edge" and "f" all hash to 1, "b" and "h" to 2.
+#
+# The ledger is read through data.hcloud_firewalls, so a run that stands for "a later plan" overrides
+# that data source with the labels the earlier run asserted the firewall was given. A mock apply does
+# not feed a resource's labels back into a data source, so each hand-off is asserted on both sides:
+# the run that WRITES checks hcloud_firewall.this.labels, and the next run READS exactly those labels.
 
-# A name collision is refused at plan, before any server is built.
-run "hetzner_refuses_two_pools_on_one_subnet" {
+# First apply, no ledger: two names on one hash slot no longer clash. The first by name keeps its hash
+# slot; the other takes the lowest free /24. Nothing needs node_pool_subnet_index.
+run "hetzner_two_names_on_one_hash_slot_plan_without_an_index" {
   command = plan
 
   variables {
     extra_node_pools = [
-      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
       { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.1.0/24"
+    error_message = "With no ledger, edge (first by name) must keep its hash slot 10.0.41.0/24 and search take the lowest free /24, 10.0.1.0/24."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/edge" = "41", "subnet.alethia.io/search" = "1" }))
+    error_message = "The plan must record each pool's /24 NUMBER on the firewall as subnet.alethia.io/<pool>, beside the default labels."
+  }
+}
+
+# Five pools on a /20, which has exactly five free /24s and where three of the names share one hash
+# slot and two share another: every pool still gets its own /24, and all five are used.
+run "hetzner_five_pools_fill_a_20_without_a_clash" {
+  command = plan
+
+  variables {
+    network_cidr = "10.0.0.0/20"
+    extra_node_pools = [
+      { name = "h", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "f", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition = jsonencode({ for k, v in hcloud_network_subnet.node_pools : k => v.ip_range }) == jsonencode({
+      a = "10.0.1.0/24", b = "10.0.2.0/24", edge = "10.0.3.0/24", f = "10.0.4.0/24", h = "10.0.5.0/24"
+    })
+    error_message = "On a /20, a and b keep their hash slots (1, 2) and edge, f and h take the free /24s 3, 4 and 5 in name order."
+  }
+}
+
+# A sixth pool on that /20 has nowhere to go, and the refusal says the other pools hold every free /24.
+run "hetzner_refuses_a_sixth_pool_on_a_20" {
+  command = plan
+
+  variables {
+    network_cidr = "10.0.0.0/20"
+    extra_node_pools = [
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "f", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "h", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "g", instance_type = "cpx31", min_size = 1, max_size = 1 },
     ]
   }
 
   expect_failures = [hcloud_network_subnet.node_pools]
 }
 
-# node_pool_subnet_index is the fix the refusal names: the same two pools plan once one is moved.
+# Ten pools, the most extra_node_pools allows, on the default network, with edge and search on one
+# hash slot: ten distinct /24s, every one free, and no node_pool_subnet_index.
+run "hetzner_ten_pools_plan_without_a_clash" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      for n in ["web", "search", "gpu", "edge", "db", "c", "batch", "b", "arm", "a"] :
+      { name = n, instance_type = "cpx31", min_size = 1, max_size = 1 }
+    ]
+  }
+
+  assert {
+    condition     = length(hcloud_network_subnet.node_pools) == 10 && length(distinct([for v in hcloud_network_subnet.node_pools : v.ip_range])) == 10
+    error_message = "Ten pools must plan onto ten distinct /24s."
+  }
+
+  assert {
+    condition     = alltrue([for name, ok in local.node_pool_subnet_fits : ok]) && alltrue([for name, others in local.node_pool_subnet_clashes : length(others) == 0])
+    error_message = "Each of the ten /24s must fit the network and clash with no other pool."
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.1.0/24" && hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24"
+    error_message = "edge keeps its hash slot 41, search takes the lowest free /24 (1), and a keeps its hash slot 81."
+  }
+}
+
+# The case a name-order or hash rule alone gets WRONG: search was created first and holds 41 (its
+# hash slot). Adding edge, which sorts before search and hashes to 41 too, must not take it from
+# search. The ledger says search holds 41, so edge takes the lowest free /24.
+run "hetzner_an_added_pool_never_takes_a_recorded_pools_subnet" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/search" = "41" } }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["search"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.1.0/24"
+    error_message = "search must keep its recorded 10.0.41.0/24; edge, added, must take 10.0.1.0/24."
+  }
+}
+
+# A pool that is NOT on its hash slot (it lost a hash tie when it was created) keeps the /24 the ledger
+# records once the pool that beat it is removed, and the removed pool's record is dropped.
+run "hetzner_removing_a_pool_moves_no_other_pool" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/edge" = "41", "subnet.alethia.io/search" = "1" } }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = keys(hcloud_network_subnet.node_pools) == ["search"] && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.1.0/24"
+    error_message = "With edge removed, search must stay on its recorded 10.0.1.0/24, not move to its hash slot 41."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/search" = "1" }))
+    error_message = "Removing edge must drop its ledger label and keep search's."
+  }
+}
+
+# A /24 a removed pool still holds is not handed to a pool added in the SAME plan: its subnet is
+# destroyed in the apply that would create the new one, and nothing orders the two. Here edge is
+# removed while search is added; search hashes to 41, edge's recorded /24, so it takes the lowest free.
+run "hetzner_an_added_pool_skips_a_removed_pools_subnet" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/edge" = "41", "subnet.alethia.io/b" = "22" } }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.1.0/24"
+    error_message = "search must not take 41 while removed edge's subnet is still recorded there; it takes 10.0.1.0/24."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/b" = "22", "subnet.alethia.io/search" = "1" }))
+    error_message = "edge's label must be dropped, so 41 is free on the next plan."
+  }
+}
+
+# The record wins over where a pool's servers are: a server read at another /24 (an address the
+# ledger does not agree with) does not move a recorded pool.
+run "hetzner_a_record_wins_over_server_addresses" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/search" = "7" } }]
+    }
+  }
+
+  override_data {
+    target = data.hcloud_servers.node_pool_ledger
+    values = {
+      servers = [{
+        id                = 9001, name = "acme-dev-search-0", status = "running", server_type = "cpx31", image = "", location = "fsn1", datacenter = "fsn1-dc14",
+        backup_window     = "", backups = false, delete_protection = false, rebuild_protection = false, rescue = "", iso = "", placement_group_id = 0,
+        primary_disk_size = 160, ipv4_address = "", ipv6_address = "", ipv6_network = "", firewall_ids = [4142],
+        labels            = { cluster = "acme-dev", role = "worker", pool = "search" }
+        network           = [{ ip = "10.0.41.101", network_id = 4141, alias_ips = [], mac_address = "" }]
+      }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [{ name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 }]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["search"].ip_range == "10.0.7.0/24"
+    error_message = "The recorded /24 (7) must win over the /24 a server address suggests (41)."
+  }
+}
+
+# Upgrade from the hash-only template: the firewall carries no ledger yet, but search's server already
+# sits in 10.0.41.0/24. Adding edge in that same plan must not take search's /24 from it.
+run "hetzner_upgrade_keeps_a_pool_where_its_servers_are" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev" } }]
+    }
+  }
+
+  override_data {
+    target = data.hcloud_servers.node_pool_ledger
+    values = {
+      servers = [{
+        id                = 9001, name = "acme-dev-search-0", status = "running", server_type = "cpx31", image = "", location = "fsn1", datacenter = "fsn1-dc14",
+        backup_window     = "", backups = false, delete_protection = false, rebuild_protection = false, rescue = "", iso = "", placement_group_id = 0,
+        primary_disk_size = 160, ipv4_address = "", ipv6_address = "", ipv6_network = "", firewall_ids = [4142],
+        labels            = { cluster = "acme-dev", role = "worker", pool = "search" }
+        network           = [{ ip = "10.0.41.101", network_id = 4141, alias_ips = [], mac_address = "" }]
+      }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["search"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.1.0/24"
+    error_message = "On upgrade, search must keep the 10.0.41.0/24 its server is in, and edge take 10.0.1.0/24."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/edge" = "1", "subnet.alethia.io/search" = "41" }))
+    error_message = "The upgrade plan must start the ledger with both pools."
+  }
+}
+
+# A record that is not a free /24 number (hand-edited, or inside the pod CIDR) is not a record, and a
+# firewall of another NAME that carries the cluster label is never read as the ledger.
+run "hetzner_ignores_an_unusable_or_foreign_record" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [
+        { id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/a" = "x7", "subnet.alethia.io/b" = "200" } },
+        { id = 4199, apply_to = [], rule = [], name = "acme-dev-old", labels = { cluster = "acme-dev", "subnet.alethia.io/c" = "5" } },
+      ]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "c", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" && hcloud_network_subnet.node_pools["c"].ip_range == "10.0.74.0/24"
+    error_message = "Unusable records and another firewall's labels must be ignored: a, b and c take their hash slots."
+  }
+}
+
+# node_pool_subnet_index still wins, and a NEW pool steps around a pinned /24 rather than clashing.
 run "hetzner_subnet_index_resolves_a_collision" {
   command = plan
 
@@ -536,12 +829,11 @@ run "hetzner_subnet_index_resolves_a_collision" {
 
   assert {
     condition     = hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.42.0/24"
-    error_message = "edge must keep its derived 10.0.41.0/24 and search take the 10.0.42.0/24 its node_pool_subnet_index names."
+    error_message = "edge must keep its hash slot 10.0.41.0/24 and search take the 10.0.42.0/24 its node_pool_subnet_index names."
   }
 }
 
-# An override onto another pool's /24 is refused the same way.
-run "hetzner_refuses_a_subnet_index_on_another_pools_subnet" {
+run "hetzner_a_new_pool_steps_around_a_pinned_subnet" {
   command = plan
 
   variables {
@@ -552,11 +844,35 @@ run "hetzner_refuses_a_subnet_index_on_another_pools_subnet" {
     node_pool_subnet_index = { b = 81 }
   }
 
+  assert {
+    condition     = hcloud_network_subnet.node_pools["b"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["a"].ip_range == "10.0.1.0/24"
+    error_message = "b is pinned to 81, a's hash slot, so a (new) must take the lowest free /24, 10.0.1.0/24."
+  }
+}
+
+# A pin onto a /24 another pool already HOLDS is refused: moving a held pool replaces its servers.
+run "hetzner_refuses_a_subnet_index_on_a_recorded_pools_subnet" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/search" = "41" } }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+    node_pool_subnet_index = { edge = 41 }
+  }
+
   expect_failures = [hcloud_network_subnet.node_pools]
 }
 
-# Two overrides onto the same /24 are refused too; the message then says node_pool_subnet_index put
-# them there, not their names.
+# Two overrides onto the same /24 are refused.
 run "hetzner_refuses_two_subnet_indexes_on_one_subnet" {
   command = plan
 
@@ -595,9 +911,8 @@ run "hetzner_refuses_a_subnet_index_for_an_unknown_pool" {
   expect_failures = [terraform_data.node_pool_subnets_guard]
 }
 
-# The reviewer's repro on #5582, as applies on mocks sharing one state: create [a, b], remove a,
-# then add c AT THE END. Under the old position-based rule c computed the /24 b still held and the
-# plan was refused; now each pool keeps the /24 its name gives it.
+# The #5582 repro, as applies on mocks sharing one state: create [a, b], reorder, remove a, then add c
+# AT THE END. Each later run reads back the ledger the run before it asserted it wrote.
 run "hetzner_subnets_create_a_and_b" {
   command = apply
 
@@ -612,11 +927,23 @@ run "hetzner_subnets_create_a_and_b" {
     condition     = hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24"
     error_message = "a must take 10.0.81.0/24 and b 10.0.22.0/24."
   }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/a" = "81", "subnet.alethia.io/b" = "22" }))
+    error_message = "The first apply must write the ledger for a and b."
+  }
 }
 
-# A reorder changes nothing: every pool, subnet and server address is where it was.
+# A reorder changes nothing: every pool, subnet, server address and ledger label is where it was.
 run "hetzner_subnets_reorder_changes_nothing" {
   command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/a" = "81", "subnet.alethia.io/b" = "22" } }]
+    }
+  }
 
   variables {
     extra_node_pools = [
@@ -628,14 +955,22 @@ run "hetzner_subnets_reorder_changes_nothing" {
   assert {
     condition = (
       hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" &&
-      one(hcloud_server.node_pools["a-0"].network).ip == "10.0.81.101" && one(hcloud_server.node_pools["b-0"].network).ip == "10.0.22.101"
+      one(hcloud_server.node_pools["a-0"].network).ip == "10.0.81.101" && one(hcloud_server.node_pools["b-0"].network).ip == "10.0.22.101" &&
+      jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/a" = "81", "subnet.alethia.io/b" = "22" }))
     )
-    error_message = "Reordering extra_node_pools must not move any pool's subnet or server address."
+    error_message = "Reordering extra_node_pools must not move any pool's subnet, server address or ledger label."
   }
 }
 
 run "hetzner_subnets_remove_a" {
   command = apply
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/a" = "81", "subnet.alethia.io/b" = "22" } }]
+    }
+  }
 
   variables {
     extra_node_pools = [
@@ -647,10 +982,22 @@ run "hetzner_subnets_remove_a" {
     condition     = keys(hcloud_network_subnet.node_pools) == ["b"] && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24"
     error_message = "Removing a must leave b on 10.0.22.0/24."
   }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/b" = "22" }))
+    error_message = "Removing a must drop a's ledger label."
+  }
 }
 
 run "hetzner_subnets_add_c_at_the_end" {
   command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/b" = "22" } }]
+    }
+  }
 
   variables {
     extra_node_pools = [

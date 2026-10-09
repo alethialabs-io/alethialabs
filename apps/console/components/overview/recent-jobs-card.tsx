@@ -16,6 +16,7 @@ import { formatDuration, formatRelative } from "@repo/format";
 import { CARD_EMPTY } from "@/components/overview/card-empty";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { globalHref } from "@/lib/routing";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 
 const MAX_ROWS = 5;
@@ -36,9 +37,12 @@ function jobDuration(job: JobWithMeta): string {
 /** Latest provisioning jobs (last few) for the org. */
 export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
 	const { data: jobs = [], isPending, isError, refetch } = useJobsQuery();
+	// The shell reads the same jobs query and may have fetched it by the time this card hydrates;
+	// render what the server rendered until hydration is over (see `useHydrated`, #5786).
+	const hydrated = useHydrated();
 
 	const recent = jobs.slice(0, MAX_ROWS);
-	const loading = isPending;
+	const loading = isPending || !hydrated;
 
 	return (
 		<div className="rounded-lg border bg-card shadow-sm">

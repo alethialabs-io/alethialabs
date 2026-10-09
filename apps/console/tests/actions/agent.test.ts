@@ -56,8 +56,10 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		delete: vi.fn(),
 		orderBy: vi.fn(),
 		limit: vi.fn(),
+		for: vi.fn(),
 		onConflictDoNothing: vi.fn(),
 		returning: vi.fn(),
+		execute: vi.fn(),
 	};
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
@@ -99,9 +101,18 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 			calls.limit(...a);
 			return db;
 		},
+		for: (...a: unknown[]) => {
+			calls.for(...a);
+			return db;
+		},
 		delete: (...a: unknown[]) => {
 			calls.delete(...a);
 			return db;
+		},
+		// A raw statement (the drafts purge) answers the next queued result as its rows.
+		execute: (...a: unknown[]) => {
+			calls.execute(...a);
+			return Promise.resolve(sequence.shift() ?? rows);
 		},
 		// Each awaited query takes the next queued result, then `rows` once the queue is empty.
 		then: (resolve: (v: unknown) => void) => resolve(sequence.shift() ?? rows),
@@ -248,9 +259,10 @@ describe("createThread", () => {
 			id: "t-committed",
 			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
 		};
-		const rewritten = { ...stored, title: "hello" };
-		// 1st await: the lookup finds the committed row; 2nd: the rewrite returns it.
-		const { calls } = useChain([], [[stored], [rewritten]]);
+		const rewritten = { ...stored, title: "hello", revision: 2 };
+		// 1st await: the lookup finds the committed row; 2nd: no running claim; 3rd: the rewrite
+		// returns it.
+		const { calls } = useChain([], [[stored], [], [rewritten]]);
 		const thread = await createThread("hello", undefined, { id: "msg-r", text: "hello" });
 		expect(thread).toBe(rewritten);
 		expect(calls.insert).not.toHaveBeenCalled();
@@ -261,10 +273,33 @@ describe("createThread", () => {
 		});
 	});
 
+	// ADR 0003 §4.2: every write to `messages` bumps `revision` in the same UPDATE, and the rewrite
+	// runs under the thread row's lock so its running-claim probe cannot race an acceptance.
+	it("locks the committed row, and its rewrite bumps revision in the same UPDATE", async () => {
+		const stored = { id: "t-rev", revision: 4, messages: [] };
+		const { calls } = useChain([], [[stored], [], [{ ...stored, revision: 5 }]]);
+		const thread = await createThread("hello", undefined, { id: "msg-rev", text: "hello" });
+		expect(thread).toMatchObject({ revision: 5 });
+		expect(calls.for).toHaveBeenCalledWith("update");
+		const revision: unknown = calls.set.mock.calls[0][0].revision;
+		if (!(revision instanceof SQL)) throw new Error("revision is not a SQL expression");
+		expect(new PgDialect().sqlToQuery(revision).sql).toBe('"agent_threads"."revision" + 1');
+	});
+
+	it("does nothing while the thread has a running turn claim, returning the row unchanged", async () => {
+		const stored = { id: "t-busy", revision: 3, messages: [] };
+		// 2nd await: the running-claim probe finds one.
+		const { calls } = useChain([], [[stored], [{ id: "claim-1" }]]);
+		const thread = await createThread("edited", undefined, { id: "msg-b", text: "edited" });
+		expect(thread).toBe(stored);
+		expect(calls.update).not.toHaveBeenCalled();
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
 	it("keeps the committed row when it already holds more than the first turn", async () => {
 		const stored = { id: "t-answered", messages: [] };
-		// The rewrite is guarded to a one-message transcript; it matches nothing here.
-		const { calls } = useChain([], [[stored], []]);
+		// No running claim; the rewrite is guarded to a one-message transcript and matches nothing here.
+		const { calls } = useChain([], [[stored], [], []]);
 		const thread = await createThread("hello", undefined, { id: "msg-a", text: "hello" });
 		expect(thread).toBe(stored);
 		expect(calls.insert).not.toHaveBeenCalled();
@@ -320,13 +355,29 @@ describe("listThreads", () => {
 });
 
 describe("getThread", () => {
-	it("returns the first matching row when present", async () => {
-		const row = { id: "t-7", title: "Found" };
-		const { calls } = useChain([row]);
+	it("returns the first matching row with no inFlight when no claim is running", async () => {
+		const row = { id: "t-7", title: "Found", revision: 3 };
+		const { calls } = useChain([], [[row], []]);
 		const thread = await getThread("t-7");
-		expect(thread).toBe(row);
+		expect(thread).toEqual({ ...row, inFlight: null });
 		expect(calls.limit).toHaveBeenCalledWith(1);
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		expect(calls.where).toHaveBeenCalledTimes(2);
+	});
+
+	// ADR 0003 §4.2: inFlight comes from a running claim whose lease is NOT silent, so a dead
+	// process's claim does not show "Being answered" while it waits for the sweep.
+	it("returns inFlight from a running claim, reading only a claim whose lease is not silent", async () => {
+		const row = { id: "t-8", title: "Busy", revision: 2 };
+		const since = new Date("2026-10-08T10:00:00Z");
+		const { calls } = useChain([], [[row], [{ turnId: "msg-9", since }]]);
+		const thread = await getThread("t-8");
+		expect(thread).toEqual({ ...row, inFlight: { turnId: "msg-9", since } });
+		const where = calls.where.mock.calls[1][0];
+		if (!(where instanceof SQL)) throw new Error("not a drizzle predicate");
+		const q = new PgDialect().sqlToQuery(where);
+		expect(q.sql).toMatch(/"agent_turn_claims"\."state" = \$\d/);
+		expect(q.params).toContain("running");
+		expect(q.sql).toMatch(/"agent_turn_claims"\."lease_until" >= now\(\)/);
 	});
 
 	it("returns null when no row matches", async () => {
@@ -373,16 +424,25 @@ describe("the action surface", () => {
 });
 
 describe("deleteThread", () => {
+	const T1 = "00000000-0000-4000-8000-0000000000f1";
+	const NONE = "00000000-0000-4000-8000-0000000000f2";
+
+	/** The SQL text and params of a recorded raw statement, as Postgres would receive them. */
+	function executed(stmt: unknown): { sql: string; params: unknown[] } {
+		if (!(stmt instanceof SQL)) throw new Error("not a drizzle statement");
+		return new PgDialect().sqlToQuery(stmt);
+	}
+
 	// A late save (a turn still streaming at the delete) must be able to tell the user's delete from
 	// the reap of an empty row, or it recreates the thread the user just deleted (#5423 review).
 	it("replaces the row with a tombstone under the same id, carrying no title and no messages", async () => {
 		const removed = { user_id: "user-1", org_id: "org-1", project_id: "proj-3", kind: "agent" };
-		const { calls } = useChain([], [[removed], []]);
-		await deleteThread("t-1");
+		const { calls } = useChain([], [[{ n: 0 }], [removed], []]);
+		await deleteThread(T1);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).toHaveBeenCalledWith(agentThreads);
 		expect(calls.values).toHaveBeenCalledWith({
-			id: "t-1",
+			id: T1,
 			user_id: "user-1",
 			org_id: "org-1",
 			project_id: "proj-3",
@@ -395,10 +455,51 @@ describe("deleteThread", () => {
 	});
 
 	it("writes no tombstone when there was no live thread to delete", async () => {
-		const { calls } = useChain([], [[]]);
-		await deleteThread("t-none");
+		const { calls } = useChain([], [[{ n: 0 }], []]);
+		await deleteThread(NONE);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
+	// ADR 0001 §6.3 (#5464 AC16): the purge runs in the delete's own transaction, through the
+	// owner-pinned function — the only statement that reaches the caller's drafts in EVERY org. The
+	// cross-org and other-user halves are proved against Postgres in
+	// tests/integration/elench-drafts-threads.test.ts; this pins the call and its answer.
+	it("deleteThread purges the user's drafts of that conversation in every org, in the delete's transaction", async () => {
+		const removed = { user_id: "user-1", org_id: "user-1", project_id: null, kind: "agent" };
+		const { calls } = useChain([], [[{ n: 2 }], [removed], []]);
+		expect(await deleteThread(T1)).toEqual({ purged: 2 });
+		expect(vi.mocked(withOwnerScope)).toHaveBeenCalledTimes(1);
+		expect(calls.execute).toHaveBeenCalledTimes(1);
+		const purge = executed(calls.execute.mock.calls[0]?.[0]);
+		expect(purge.sql).toMatch(/^select public\.purge_elench_drafts_of_conversation\(\$1::uuid\) as n$/);
+		expect(purge.params).toEqual([T1]);
+	});
+
+	// The lock order `startConversation` shares: drafts first, then the thread. A delete that took
+	// the thread first would deadlock against a start holding the draft row (#5772 review).
+	it("purges the drafts BEFORE it deletes the thread and writes the tombstone", async () => {
+		const removed = { user_id: "user-1", org_id: "user-1", project_id: null, kind: "agent" };
+		const { calls } = useChain([], [[{ n: 1 }], [removed], []]);
+		await deleteThread(T1);
+		const purgedAt = calls.execute.mock.invocationCallOrder[0] ?? Infinity;
+		expect(purgedAt).toBeLessThan(calls.delete.mock.invocationCallOrder[0] ?? -1);
+		expect(purgedAt).toBeLessThan(calls.insert.mock.invocationCallOrder[0] ?? -1);
+	});
+
+	it("purges the drafts even when the thread was already gone", async () => {
+		const { calls } = useChain([], [[{ n: 1 }], []]);
+		expect(await deleteThread(NONE)).toEqual({ purged: 1 });
+		expect(calls.insert).not.toHaveBeenCalled();
+		expect(executed(calls.execute.mock.calls[0]?.[0]).params).toEqual([NONE]);
+	});
+
+	it("refuses an id that is not a uuid before touching the database", async () => {
+		const { calls } = useChain([]);
+		await expect(deleteThread("t-1")).rejects.toThrow();
+		expect(calls.delete).not.toHaveBeenCalled();
+		expect(calls.execute).not.toHaveBeenCalled();
+		expect(vi.mocked(withOwnerScope)).not.toHaveBeenCalled();
 	});
 });
 

@@ -108,7 +108,10 @@ function CountrySelect({
         }
       />
       <PopoverContent className="w-[300px] p-0">
-        <Command>
+        {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
+            prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
+            the search is an unnamed combobox to a screen reader (#5803). */}
+        <Command label="Search country">
           <CommandInput placeholder="Search country…" />
           <CommandList>
             <CommandEmpty>No country found.</CommandEmpty>

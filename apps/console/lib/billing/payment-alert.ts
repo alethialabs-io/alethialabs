@@ -4,7 +4,9 @@
 // The operator alert for a customer payment that needs a person (#5463, #5489): a subscription the
 // purchase flow cancelled, or was replacing, is not proven settled — money was taken and the automatic
 // refund failed, what was taken cannot be read, its invoice could not be voided, or its cancel could
-// not be confirmed. A log line alone tells nobody; this also raises `system.platform.payment_needs_support`
+// not be confirmed. Since #5714 it also covers two create-a-team cases, chosen by `context`: a
+// subscription the link refused beside the team's other live plan, and one whose unfinished setup was
+// closed after it ended without its payment being proven unmoved. A log line alone tells nobody; this also raises `system.platform.payment_needs_support`
 // on the platform operator's org (`ALETHIA_PLATFORM_ALERT_ORG_ID`, the same routing the loop supervisor
 // uses), where an alert rule fans it out to the bound channels. When that variable is unset (a
 // self-hosted deployment with no operator org) only the log line is written.
@@ -16,12 +18,37 @@
 import "server-only";
 import { emitAlertEvent } from "@/lib/alerts/emit";
 
+/**
+ * What the alert's subject is to the flow that raises it — the clause the summary uses to say how the
+ * subscription got here (ADR 0002 §10 S1 item 7). The default, `purchase_flow`, is the original text.
+ *   - `purchase_flow`: a subscription the purchase flow cancelled, or was replacing;
+ *   - `link_refused`: a create-a-team subscription the link refused, because the team already has
+ *     another live plan — it is live and unlinked, and keeps renewing until a person acts;
+ *   - `setup_closed`: a create-a-team subscription whose unfinished setup was closed because the
+ *     subscription ended, and whose first payment is not proven unmoved;
+ *   - `payment_hold`: a create-a-team subscription a payment hold is settling — whoever opened the hold
+ *     (the backfill, from slice 8 the purchase flow, from slice 9 the link). The payment-hold sweeper and
+ *     the operator command raise their alerts under it (ADR 0002 §5.4).
+ */
+export type PaymentAlertContext = "purchase_flow" | "link_refused" | "setup_closed" | "payment_hold";
+
+/** The summary clause for each context. */
+const CONTEXT_CLAUSE: Record<PaymentAlertContext, string> = {
+	purchase_flow: "which the purchase flow cancelled or was replacing",
+	link_refused:
+		"a create-a-team subscription the link refused because the team already has another live plan",
+	setup_closed:
+		"a create-a-team subscription whose unfinished setup was closed because the subscription ended",
+	payment_hold: "a create-a-team subscription that a payment hold is settling",
+};
+
 /** The event key the catalog lists under Platform health. */
 const PAYMENT_NEEDS_SUPPORT_EVENT = "system.platform.payment_needs_support";
 
 /**
- * Logs, and alerts the platform operator about, a subscription the purchase flow cancelled (or was
- * replacing) whose payment needs a manual refund or review. `detail` says what went wrong; the subscription is the alert's subject, so
+ * Logs, and alerts the platform operator about, a subscription whose payment needs a manual refund or
+ * review — one the purchase flow cancelled (or was replacing), or, by `context`, a create-a-team one
+ * the link refused or whose setup was closed. `detail` says what went wrong; the subscription is the alert's subject, so
  * a rule's throttle collapses repeats for the same one.
  *
  * Resolves true only when at least one delivery was queued to a channel bound to an enabled rule for
@@ -34,10 +61,13 @@ export async function alertPaymentNeedsSupport(input: {
 	paymentIntentId: string | null;
 	detail: string;
 	error?: unknown;
+	/** Selects the summary's clause; `purchase_flow` when omitted. */
+	context?: PaymentAlertContext;
 }): Promise<boolean> {
+	const clause = CONTEXT_CLAUSE[input.context ?? "purchase_flow"];
 	const summary = `Subscription ${input.subscriptionId} (customer ${input.customerId}${
 		input.paymentIntentId ? `, PaymentIntent ${input.paymentIntentId}` : ""
-	}), which the purchase flow cancelled or was replacing: ${input.detail}`;
+	}), ${clause}: ${input.detail}`;
 	console.error(`[billing] payment needs support — ${summary}`, input.error ?? "");
 	const orgId = process.env.ALETHIA_PLATFORM_ALERT_ORG_ID;
 	if (!orgId) return false;

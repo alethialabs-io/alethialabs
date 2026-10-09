@@ -1157,6 +1157,109 @@ BEGIN
                 OR user_id = current_setting('app.current_owner', true)::uuid));
 END $$;
 
+-- Chat-turn claims (ADR 0003 §4.3, #5730): USER-only, with no org arm — deliberately outside the
+-- owner_all loop above. A thread is its user's (org_id = owner) and is listed in every org, and the
+-- claim key (thread_id, turn_id, attempt_key) carries no org, so one turn is one turn whichever org's
+-- tab drives it: two orgs' tabs sending it collide on the key and this policy shows BOTH of them the
+-- row they collide on. The org a turn bills to is the `billing_org_id` column, not a visibility rule.
+-- ENABLE first — without it the policy is inert. Not FORCEd, as no table here is. Acceptance,
+-- heartbeat and finalize run on the service role (RLS-bypassing) and name `user_id = $actor`
+-- explicitly; ownership of the thread is proved there by a locked read, not by a foreign key (there
+-- is none: a claim outlives its thread's delete, and Postgres skips row security for FK checks).
+-- This policy governs the app-role reads (getThread's `inFlight`, createThread's running-claim probe).
+DO $$
+BEGIN
+  ALTER TABLE public.agent_turn_claims ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_only ON public.agent_turn_claims;
+  CREATE POLICY owner_only ON public.agent_turn_claims FOR ALL
+    USING (user_id = current_setting('app.current_owner', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
+END $$;
+
+-- Elench drafts (ADR 0001 §3.3, #5737): USER **AND** ORG — deliberately outside the owner_all OR
+-- loop above. Under that OR, every member of the org named by app.current_org would read every
+-- member's drafts, and a draft is unsent composer text that may hold a pasted kubeconfig or token
+-- (§9). So both columns must match: an org owner or admin cannot read a member's draft, and the
+-- user's own draft in another org is invisible here too. Community/personal: org_id == user id ==
+-- current_owner, so this is the same row set. Unset GUCs are NULL, and NULL denies. ENABLE first —
+-- without it the policy is inert. NOT FORCEd, as no table here is: the two functions below rely on
+-- the table owner bypassing it (and raise if it is ever forced, see their note). The retention sweep
+-- (lib/elench/drafts-sweep.ts) and the erasure executor (lib/privacy/erasure-plan.ts) run on the
+-- service role (RLS-bypassing) and name their rows explicitly.
+DO $$
+BEGIN
+  ALTER TABLE public.elench_drafts ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_only ON public.elench_drafts;
+  CREATE POLICY owner_only ON public.elench_drafts FOR ALL
+    USING (user_id = current_setting('app.current_owner', true)::uuid
+           AND org_id = current_setting('app.current_org', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid
+           AND org_id = current_setting('app.current_org', true)::uuid);
+END $$;
+
+-- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). Deleting a thread (`deleteThread`,
+-- app/server/actions/agent.ts) calls the purge in its own transaction, together with the thread's
+-- tombstone (purge first, then tombstone), to remove the caller's drafts of that conversation in
+-- EVERY org (the same conversation id in two orgs is two rows, §3.2), which the policy above cannot
+-- do from one org's scope — so these run with definer rights. The count is
+-- read by `countDraftsOfConversation` (app/server/actions/elench-drafts.ts) for the delete confirm.
+-- What keeps them safe:
+--   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so
+--     no caller can point either function at another user. Unset → NULL → no row matches.
+--   * The only argument is a conversation id, and the only predicates besides the owner pin are
+--     equality on it and, in `count_…`, a constant filter on the row's own status: definer rights
+--     widen the ORG, never the USER.
+--   * `count_…` returns a number and nothing else, so it reveals no content, and only the caller's
+--     own count. It skips `status = 'discarded'` (#5855): the delete confirm it feeds says "your
+--     unsent draft", and a discarded draft is not unsent. The purge does NOT skip them — deleting the
+--     thread removes the caller's drafts of it in every status.
+--   * `SET row_security = off`, as derive_component_org_id and project_environments_require_one_
+--     default above: for an owner that bypasses the policy it is a no-op, but if these functions are
+--     ever owned by a role that IS subject to the policy — not the table owner, or the table gains
+--     FORCE ROW LEVEL SECURITY under a non-BYPASSRLS owner — Postgres RAISES instead of silently
+--     purging only the current org's rows (#5512 review advisory A11). NOTE the boundary: an owner
+--     that is a superuser or BYPASSRLS ignores FORCE entirely, so for such an owner forcing changes
+--     nothing and there is nothing to raise about; the purge still reaches every org.
+--   * `search_path` is pinned so a SECURITY DEFINER body never resolves a name through the caller's
+--     path; every reference is schema-qualified as well.
+--   * EXECUTE is revoked from PUBLIC (a function is executable by PUBLIC by default) and granted to
+--     the app role only.
+CREATE OR REPLACE FUNCTION public.purge_elench_drafts_of_conversation(p_conversation uuid)
+RETURNS integer
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  WITH d AS (
+    DELETE FROM public.elench_drafts
+     WHERE user_id = current_setting('app.current_owner', true)::uuid
+       AND conversation_id = p_conversation
+    RETURNING 1
+  )
+  SELECT count(*)::int FROM d
+$$;
+
+CREATE OR REPLACE FUNCTION public.count_elench_drafts_of_conversation(p_conversation uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  SELECT count(*)::int
+    FROM public.elench_drafts
+   WHERE user_id = current_setting('app.current_owner', true)::uuid
+     AND conversation_id = p_conversation
+     AND status <> 'discarded'
+$$;
+
+REVOKE ALL ON FUNCTION public.purge_elench_drafts_of_conversation(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.count_elench_drafts_of_conversation(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.purge_elench_drafts_of_conversation(uuid) TO alethia_app;
+GRANT EXECUTE ON FUNCTION public.count_elench_drafts_of_conversation(uuid) TO alethia_app;
+
 -- Kubeconfig mint requests (#5280): a row holds a client's ephemeral PUBLIC key and, once the runner
 -- has posted, a SEALED (HPKE) credential only that client can open. Org-scoped AND actor-scoped:
 -- unlike `owner_all`'s OR, both must hold. A mint request is its requester's alone — a teammate in
@@ -1689,6 +1792,29 @@ DROP POLICY IF EXISTS pending_org_setup_owner ON public.pending_org_setups;
 CREATE POLICY pending_org_setup_owner ON public.pending_org_setups FOR ALL
   USING (user_id = current_setting('app.current_owner', true)::uuid)
   WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
+
+-- purchase_leases (ADR 0002 §4.4, #5741): the create-a-team purchase lease. SERVICE-ROLE ONLY — RLS
+-- enabled with NO app policy denies the app role outright (the cli_logins idiom below). A lease names
+-- no tenant and nothing in it is a user's to see; an app-role write could block, or steal, another
+-- user's purchase. Only lib/billing/purchase-lease.ts touches it, through getServiceDb().
+ALTER TABLE public.purchase_leases ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.purchase_leases FROM alethia_app';
+  END IF;
+END $$;
+
+-- payment_holds (ADR 0002 §4.1, #5755): one row per create-a-team subscription not yet proven settled.
+-- SERVICE-ROLE ONLY — RLS enabled with NO app policy, the purchase_leases idiom above. A hold is about
+-- money: an app-role write could release another user's hold or move its state, and an app-role read
+-- would show one payer's Stripe ids to another. Only lib/billing/payment-holds/store.ts touches it,
+-- through getServiceDb().
+ALTER TABLE public.payment_holds ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.payment_holds FROM alethia_app';
+  END IF;
+END $$;
 
 -- cli_logins: service-role only — RLS enabled with no app policy denies the app role.
 ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;

@@ -1,212 +1,119 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	convertToModelMessages,
-	stepCountIs,
-	streamText,
-	type ToolSet,
-	type UIMessage,
-} from "ai";
+import type { UIMessage } from "ai";
 import { and, eq, or } from "drizzle-orm";
-import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
-import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
+import { z } from "zod";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
-import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
-import { refuseUserMessage } from "@/lib/ai/message-limits";
-import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
+import { readTurnRequest, serveTurnBody } from "@/lib/agent/turn-route";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
-import { currentActor } from "@/lib/authz/guard";
-import {
-	AiBudgetError,
-	type AiHoldContext,
-	assertAiAllowed,
-	releaseAiHold,
-} from "@/lib/billing/ai-guard";
-import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
-import { getAiModel, isAiConfigured } from "@/lib/config/ai";
+import type { Actor } from "@/lib/authz/types";
+import { getAiModel } from "@/lib/config/ai";
 import { withScope } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
 
 // Node runtime: the tools reach postgres-js + the actor seam uses AsyncLocalStorage.
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
-interface AgentChatBody {
-	messages: UIMessage[];
-	mode?: AgentMode;
-	/** When set, the full transcript is persisted to this thread on finish. */
-	threadId?: string;
+/** The agent route's own body fields. `threadId` is checked as a uuid by the claimed route body. */
+const agentIdentityBodySchema = z.looseObject({
+	messages: z.array(z.custom<UIMessage>()),
+	threadId: z.unknown().optional(),
+	mode: z.enum(["ask", "act"]).optional(),
+});
+
+/** The agent route's own fields, as its check and `prepare` read them. */
+interface AgentIdentityFields {
+	agentId: string;
+	mode: AgentMode;
+}
+
+/** The identity row the turn runs as. */
+type AgentIdentity = typeof agentIdentities.$inferSelect;
+
+/**
+ * The agent identity `agentId` as `actor` may read it: its own user rows, or the actor's org's. An
+ * agent id of another org resolves to nothing, so its persona and mission never enter a prompt.
+ * `agent_identities` has no RLS backstop yet, so this explicit predicate is the enforcement point.
+ */
+async function readAgentIdentity(actor: Actor, agentId: string): Promise<AgentIdentity | null> {
+	if (!z.uuid().safeParse(agentId).success) return null;
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+		const [a] = await tx
+			.select()
+			.from(agentIdentities)
+			.where(
+				and(
+					eq(agentIdentities.id, agentId),
+					or(
+						eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
+						eq(agentIdentities.org_id, actor.orgId),
+					),
+				),
+			)
+			.limit(1);
+		return a ?? null;
+	});
 }
 
 /**
- * Agent-scoped chat turn (elench A3): run a turn AS a specific agent identity. The
- * deterministic executor core (buildAgentSystemPrompt + scopeToolsToAgent — unit
- * tested) shapes the system prompt from the agent's persona/mission and narrows the
- * tool set to its tool_scope (least privilege per agent). The model call mirrors the
- * main /api/agent route; tools stay PDP-gated at execute time, so no new authority.
+ * Agent-scoped chat turn (elench A3): run a turn AS a specific agent identity, on the turn claim (ADR
+ * 0003 slice 8, Q11). The shared route body (`lib/agent/turn-route.ts`) resolves the billing
+ * org from the request's `orgId` and the thread's pin, then this route looks the identity up under that
+ * actor (a 404 before the hold for an id the actor cannot read), and the thread is the identity's
+ * project's. The deterministic executor core (buildAgentSystemPrompt + scopeToolsToAgent) shapes the
+ * prompt from the persona and mission and narrows the tools to its tool_scope; tools stay PDP-gated at
+ * execute time, so no new authority.
  */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ agentId: string }> },
 ): Promise<Response> {
-	// Resolve the actor first so the agent lookup is scoped to the caller's tenancy.
-	const actor = await currentActor().catch(() => null);
-	if (!actor) return new Response("Unauthorized", { status: 401 });
-	if (!isAiConfigured()) {
-		return new Response("AI is not configured.", { status: 503 });
-	}
-
+	const request = await readTurnRequest(req, "AI is not configured.");
+	if (!request.ok) return request.response;
 	const { agentId } = await params;
-	// Scope the lookup to the actor's tenancy (own user rows OR the active org's): an
-	// agent id belonging to another org resolves to nothing → 404, so its persona/mission
-	// never enters the system prompt. agent_identities has no RLS backstop yet, so this
-	// explicit org predicate — not RLS — is the enforcement point (fixes the IDOR).
-	const agent = await withScope(
-		{ ownerId: actor.userId, orgId: actor.orgId },
-		async (tx) => {
-			const [a] = await tx
-				.select()
-				.from(agentIdentities)
-				.where(
-					and(
-						eq(agentIdentities.id, agentId),
-						or(
-							eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
-							eq(agentIdentities.org_id, actor.orgId),
-						),
-					),
-				)
-				.limit(1);
-			return a ?? null;
+	// The identity the route's check read for the attempt that is accepted: the check runs under each
+	// attempt's actor (again when the thread's pin moved), and `prepare` runs after its attempt's check.
+	let identity: AgentIdentity | null = null;
+
+	return serveTurnBody<AgentIdentityFields>(req, request.userId, request.raw, {
+		aiDisabledMessage: "AI is not configured.",
+		projectId: null,
+		threadKind: "agent",
+		aiKind: "agent",
+		parseBody: (raw) => {
+			const parsed = agentIdentityBodySchema.safeParse(raw);
+			if (!parsed.success) {
+				const first = parsed.error.issues[0];
+				return {
+					ok: false,
+					message: first ? `${first.path.join(".") || "body"}: ${first.message}` : "The request body is malformed.",
+				};
+			}
+			return {
+				ok: true,
+				value: {
+					messages: parsed.data.messages,
+					threadId: parsed.data.threadId,
+					route: { agentId, mode: parsed.data.mode ?? "ask" },
+				},
+			};
 		},
-	);
-	if (!agent) return new Response("Agent not found", { status: 404 });
-
-	// Read BEFORE the budget hold (it used to be read after, inside the hold's try): the
-	// per-message limit every metered chat route enforces refuses a malformed (400) or
-	// over-limit (413) turn here, so it reserves nothing.
-	const body: AgentChatBody | null = await req.json().catch(() => null);
-	if (body === null || typeof body !== "object") {
-		return new Response("The request body is malformed.", { status: 400 });
-	}
-	const refusal = refuseUserMessage(body.messages);
-	if (refusal) return refusal;
-
-	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
-		if (e instanceof AiBudgetError) return e;
-		throw e;
+		gate: async (actor, route) => {
+			identity = await readAgentIdentity(actor, route.agentId);
+			if (!identity) return { ok: false, response: new Response("Agent not found", { status: 404 }) };
+			return { ok: true, projectId: identity.project_id };
+		},
+		prepare: async ({ route }) => {
+			const agent = identity;
+			if (!agent) throw new Error("the agent identity was not read before acceptance");
+			const model = getAiModel();
+			return {
+				system: buildAgentSystemPrompt(agent),
+				tools: scopeToolsToAgent(buildAgentTools({ mode: route.mode }), agent.tool_scope),
+				// Single-model run: extended thinking on every step so reasoning streams.
+				models: { advisor: model, executor: model, base: model, clientPick: true },
+			};
+		},
 	});
-	if (charge instanceof AiBudgetError) {
-		return new Response(JSON.stringify({ error: charge.message }), {
-			status: 402,
-			headers: { "content-type": "application/json" },
-		});
-	}
-
-	// Everything from here through the streamText registration runs AFTER the hold was reserved. A
-	// throw in this window (tool scoping, message conversion) would strand the ≈$0.10
-	// hold — nothing downstream releases it — so release it in the catch. refId defaults to the
-	// always-available agentId, then narrows to the thread's session id.
-	const holdCtx: AiHoldContext = {
-		orgId: actor.orgId,
-		userId: actor.userId,
-		kind: "agent",
-		refId: agentId,
-	};
-	try {
-		const { messages, mode = "ask", threadId } = body;
-		const model = getAiModel();
-		const tools = scopeToolsToAgent(buildAgentTools({ mode }), agent.tool_scope);
-		// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
-		// and the scoped tool set is what powers the Tools view. Latency is wall-clock around the stream.
-		const sessionId = threadId ?? agentId;
-		holdCtx.refId = sessionId;
-		const aiInput = uiMessagesToAiInput(messages);
-		const toolNames = Object.keys(tools);
-		const startedAt = Date.now();
-
-		const result = streamText({
-			model: model.model,
-			// Cache the (stable, per-agent) system prompt so repeated turns read it from cache.
-			messages: [
-				cachedSystemMessage(buildAgentSystemPrompt(agent)),
-				...(await convertToModelMessages(messages)),
-			],
-			// Our own system prompt (cached) is intentionally a system message; user turns are
-			// never system-role, so this is not a prompt-injection surface.
-			allowSystemInMessages: true,
-			// Wire the request's abort signal so a client disconnect aborts generation (and fires
-			// onAbort) instead of streaming — and paying — into the void with the hold left open.
-			abortSignal: req.signal,
-			tools,
-			stopWhen: stepCountIs(8),
-			// Single-model run — extended thinking on every step so reasoning streams.
-			providerOptions: thinkingOptions(model),
-			onFinish: ({ usage, text, finishReason }) => {
-				void recordAiUsage({
-					orgId: actor.orgId,
-					userId: actor.userId,
-					kind: "agent",
-					// Metered → omit credits; settled from this row's real cost-of-serve. Reconciles the
-					// reserved hold IN PLACE (holdId) so the provisional estimate becomes the real cost.
-					source: charge.source,
-					holdId: charge.settle ? charge.holdId : undefined,
-					refId: sessionId,
-					model: model.key,
-					inputTokens: usage.inputTokens,
-					outputTokens: usage.outputTokens,
-					cachedInputTokens: usage.cachedInputTokens,
-					latencyMs: Date.now() - startedAt,
-					sessionId,
-					input: aiInput,
-					outputChoices: textToAiOutput(text),
-					tools: toolNames,
-					stopReason: finishReason,
-					stream: true,
-				}).catch(meteringFailed(actor.orgId));
-			},
-			onError: ({ error }) => {
-				// Record the failed generation so it shows in PostHog's Errors view (no tokens on error)
-				// and RELEASE the reserved hold (reconciled to 0) so an errored turn never leaks headroom.
-				void recordAiUsage({
-					orgId: actor.orgId,
-					userId: actor.userId,
-					kind: "agent",
-					source: charge.source,
-					holdId: charge.settle ? charge.holdId : undefined,
-					refId: sessionId,
-					model: model.key,
-					latencyMs: Date.now() - startedAt,
-					sessionId,
-					input: aiInput,
-					tools: toolNames,
-					stream: true,
-					isError: true,
-					error: error instanceof Error ? error.message : String(error),
-				}).catch(meteringFailed(actor.orgId));
-			},
-			// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
-			// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
-			onAbort: () => {
-				void releaseAiHold(charge, holdCtx);
-			},
-		});
-
-		return result.toUIMessageStreamResponse({
-			originalMessages: messages,
-			onFinish: ({ messages }) => {
-				if (threadId) {
-					void saveThreadTranscript(
-						{ owner: actor.userId, threadId, kind: "agent", projectId: agent.project_id },
-						messages,
-					).catch(transcriptNotSaved(threadId));
-				}
-			},
-		});
-	} catch (e) {
-		// A throw between the gate and stream registration strands the hold — release it before rethrow.
-		await releaseAiHold(charge, holdCtx);
-		throw e;
-	}
 }

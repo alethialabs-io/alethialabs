@@ -545,7 +545,11 @@ async function runSteps(
 					billingCountry: record.declaration.billingCountry,
 				},
 			});
-			report = link;
+			// A typed refusal (#5714): the team already has another live plan, so this payment was
+			// not linked. Final, not retryable — a retry would be refused again — and the clause
+			// says what happened and who to contact.
+			if (link.kind === "refused") throw new SetupStopped(link.clause);
+			report = { planState: link.planState, paymentUrl: link.paymentUrl };
 			save({ ...record, linked: true });
 		}
 

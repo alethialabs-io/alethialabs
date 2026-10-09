@@ -7,6 +7,7 @@ import { getActiveScope } from "@/lib/auth/scope";
 import { authorizeUserId } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { supportMessages } from "@/lib/db/schema";
+import { holdRequest } from "@/lib/http/hold-request";
 import { getSupportMessageTransport } from "@/lib/realtime";
 import { isSupportCaseVisible } from "@/lib/support/scope";
 
@@ -57,6 +58,10 @@ export async function GET(
 		req.headers.get("last-event-id") ??
 		new URL(req.url).searchParams.get("after");
 
+	// The client's disconnect, read once here. The `Request` must stay reachable while the stream runs:
+	// its signal stops following the disconnect once the `Request` is collected, and nothing below
+	// reads `req` again except the `holdRequest` in teardown (see lib/http/hold-request.ts).
+	const signal = req.signal;
 	const encoder = new TextEncoder();
 	let unsubscribe: (() => void) | null = null;
 	let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -113,6 +118,15 @@ export async function GET(
 
 	const stream = new ReadableStream({
 		async start(controller) {
+			/** Tear the stream down for a client that has gone: stop its work, then end the body. */
+			const stop = () => {
+				cleanup();
+				try {
+					controller.close();
+				} catch {
+					/* already closed */
+				}
+			};
 			const send = (rows: OutMessage[]) => {
 				for (const r of rows) {
 					controller.enqueue(
@@ -128,6 +142,13 @@ export async function GET(
 				} catch {
 					/* transient read error; live stream still delivers new rows */
 				}
+			}
+			// A client that left during the backlog read aborted before the listener below existed, and
+			// an abort listener never hears an abort that already happened. Stop here, before the
+			// subscription and the heartbeat exist; `closed` covers a `cancel()` that ran in the same gap.
+			if (signal.aborted || closed) {
+				stop();
+				return;
 			}
 
 			// Live: each notify carries the new message id — fetch it (visible only) and emit.
@@ -147,21 +168,17 @@ export async function GET(
 				if (!closed) controller.enqueue(encoder.encode(":\n\n"));
 			}, 20_000);
 
-			req.signal.addEventListener("abort", () => {
-				cleanup();
-				try {
-					controller.close();
-				} catch {
-					/* already closed */
-				}
-			});
+			signal.addEventListener("abort", stop);
 		},
 		cancel() {
 			cleanup();
 		},
 	});
 
+	/** Stop the stream's work: the heartbeat and the thread subscription. Runs once. */
 	function cleanup() {
+		// Keeps `req` reachable — and so `signal` live — until the stream is torn down.
+		holdRequest(req);
 		if (closed) return;
 		closed = true;
 		if (heartbeat) clearInterval(heartbeat);

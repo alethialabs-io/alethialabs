@@ -43,6 +43,15 @@ mock_provider "hcloud" {
   mock_resource "hcloud_primary_ip" {
     defaults = { id = "4143" }
   }
+  # The extra pools' subnet ledger (#5595) reads as on a FRESH cluster: no firewall, no pool servers.
+  # Runs that need a recorded ledger override these per run. Pinned rather than left to the mock, so
+  # a generated value can never be read as a record.
+  mock_data "hcloud_firewalls" {
+    defaults = { firewalls = [] }
+  }
+  mock_data "hcloud_servers" {
+    defaults = { servers = [] }
+  }
 }
 
 mock_provider "talos" {}

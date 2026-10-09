@@ -243,6 +243,30 @@ tier_separation:
     symbols: [gcAuthzActivityLog]
     reason: The authz-activity retention sweep, asserted against the real WORM table and its keyset index.
 
+  # ── lib/agent — the chat turn's claim state machine (ADR 0003 slice 5) ─────────────────────
+  - path: lib/agent/turn-claims.ts
+    suite: [tests/integration/agent-turn-claims.test.ts, tests/integration/agent-thread-create-race.test.ts, tests/lib/agent/turn-claims.test.ts]
+    symbols:
+      [
+        reserveTurn,
+        heartbeatTurn,
+        finalizeTurn,
+        expireSilentTurns,
+        claimExpiry,
+        heartbeatRenews,
+        decideAcceptance,
+        rearmedClaim,
+        turnRefusal,
+        cutAfterApprovalStep,
+        turnIdSchema,
+        TURN_REFUSAL_STATUS,
+        TURN_BUDGET_MS,
+        TURN_LEASE_MS,
+        TURN_HEARTBEAT_MS,
+        TURN_AGE_BOUND_MS,
+      ]
+    reason: Acceptance, heartbeat, finalize and expiry are each one service-role transaction whose locks, compare-and-sets and in-transaction settle only real Postgres can race; the integration suite drives them (and was mutation-checked against dropping the thread lock, settling outside the transaction, a second finalizer taking `deleted`, and the age guard). The pure guards those transactions evaluate under their locks are unit-tested in the third suite.
+
   # ── lib/probes — BYOC B2.3 dispatch and ingest ───────────────────────────────────────────
   - path: lib/probes/dispatch.ts
     suite: [tests/integration/probes-b23.test.ts, tests/integration/scheduler-clock.test.ts]
@@ -323,16 +347,10 @@ baseline:
     reason: The org and per-project job counters are asserted by no suite, unlike the gauges beside them.
 
   - path: lib/billing/ai-quota.ts
-    symbols: [meteringFailed]
-    issue: "#2649"
-    state: untested-export
-    reason: The metering error sink is asserted by no suite.
-
-  - path: lib/billing/ai-quota.ts
-    symbols: [sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
+    symbols: [meteringFailed, sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
     issue: "#2649"
     state: mock-only
-    reason: The per-user credit sum and the usage-window reads are only ever named through a mock of this module.
+    reason: The metering error sink, the per-user credit sum and the usage-window reads are only ever named through a mock of this module (the error sink by the support route's threadless path in support-turn-routes.test.ts).
 
   - path: lib/billing/queries.ts
     symbols: [resolveOrgEntitlements, upsertOrgBilling, applySubscriptionToBilling, applyAiSubscriptionToBilling, claimPlanWelcome]

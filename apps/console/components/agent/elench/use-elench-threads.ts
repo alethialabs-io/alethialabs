@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
+import { createStore } from "zustand/vanilla";
 import {
 	createThread,
 	deleteThread as deleteThreadAction,
@@ -11,19 +14,62 @@ import {
 	getThread,
 	listThreads,
 } from "@/app/server/actions/agent";
+import { countDraftsOfConversation } from "@/app/server/actions/elench-drafts";
 import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
+import type { DraftThreadStatus } from "@/lib/elench/draft-outcomes";
+import { initialDraftsStore } from "@/lib/stores/elench-drafts/reducer";
+import { keyId, scopeId, shownContent } from "@/lib/stores/elench-drafts/reducer-drafting";
+import { isUnacknowledged, selectUnsent } from "@/lib/stores/elench-drafts/selectors";
+import type { DraftsView } from "@/lib/stores/elench-drafts/store";
+import type { DraftEntry, DraftScope } from "@/lib/stores/elench-drafts/types";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { type DraftsTab, useDraftsTab } from "./elench-drafts-root";
 
 /**
- * Thread orchestration for the Elench surface, in BOTH contexts: lists the owner's
- * threads (for the modal rail + panel switcher), resumes the most recent on open (or
- * falls back to an EMPTY ephemeral conversation), and loads a thread's transcript
- * BEFORE switching so the chat recreates with the right `initialMessages`. Nothing is
- * persisted until the first send — `startThread` lazily inserts the thread then, so a
- * "New chat" never litters the rail with empty rows. Org context lists org-level threads
- * (project_id IS NULL); project context lists + creates threads scoped to the project id.
+ * Why a conversation could not be loaded (G10): the initial `listThreads` or the resume's
+ * `getThread` rejected (`list`, `resume`), or the `getThread` of a conversation the user picked did
+ * (`select`). The surface is never left on its skeleton. `retryLoad` retries exactly this: the
+ * picked conversation for `select`, the whole initial resolution otherwise.
+ */
+export interface ElenchThreadsLoadError {
+	/** Which round trip failed. */
+	step: "list" | "resume" | "select";
+	/** The conversation the failed `getThread` was for; null for `list`. */
+	conversationId: string | null;
+}
+
+/** The drafts scope the surface shows: the page's org and the conversation's anchor (ADR 0001 §2). */
+function useSurfaceScope(): DraftScope | null {
+	const pageOrgId = useElenchStore((s) => s.pageOrgId);
+	const projectId = useElenchStore((s) => (s.ctx.kind === "project" ? s.ctx.projectId : null));
+	return useMemo(
+		() => (pageOrgId === null ? null : { orgId: pageOrgId, projectId }),
+		[pageOrgId, projectId],
+	);
+}
+
+/** The entry of `conversationId` in `scope`, when this tab holds one. */
+function entryOf(tab: DraftsTab | null, scope: DraftScope | null, conversationId: string): DraftEntry | null {
+	if (tab === null || scope === null) return null;
+	return tab.store.view.getState().drafts.entries[keyId({ ...scope, conversationId })] ?? null;
+}
+
+/** True when the conversation has no stored transcript to load: never sent, reaped, or deleted (G21). */
+function hasNoThread(entry: DraftEntry | null): boolean {
+	return entry !== null && (entry.thread === "none" || entry.thread === "deleted");
+}
+
+/**
+ * Thread orchestration for the Elench surface, in BOTH contexts: lists the owner's threads (for the
+ * modal rail and the panel switcher), resumes the conversation the user was last on in this scope
+ * (the drafts store's `activeKey[scope]`, ADR 0001 D23 and §7.3; else the most recent thread; else
+ * an EMPTY conversation), and loads a thread's transcript BEFORE switching so the chat recreates
+ * with the right `initialMessages`. A conversation with no stored thread (never sent, or its thread
+ * was reaped) is opened without `getThread` (G21): its words are its draft. A failed list or resume
+ * leaves the skeleton with `loadError` set instead of wedging it (G10). Org context lists org-level
+ * threads (project_id IS NULL); project context lists threads scoped to the project id.
  */
 export function useElenchThreads() {
 	const open = useElenchStore((s) => s.open);
@@ -33,17 +79,24 @@ export function useElenchThreads() {
 	const resumeStore = useElenchStore((s) => s.resumeThread);
 	const attachStore = useElenchStore((s) => s.attachThread);
 	const newChatStore = useElenchStore((s) => s.newChat);
+	const tab = useDraftsTab();
+	const scope = useSurfaceScope();
 
 	// The project this surface is scoped to (undefined in org context) — threads are
 	// listed/created against it so a project's conversations persist independently.
 	const projectId = ctx.kind === "project" ? ctx.projectId : undefined;
 	const [threads, setThreads] = useState<AgentThread[]>([]);
 	const [initialMessages, setInitialMessages] = useState<UIMessage[]>([]);
-	const initialized = useRef(false);
+	// The revision `initialMessages` was read at (ADR 0003 §9.1): the transport's base revision
+	// for the next send. Null for an ephemeral conversation; `startThread`'s caller seeds it.
+	const [initialRevision, setInitialRevision] = useState<number | null>(null);
 	// Whether the initial resolution (list → resume/create) has settled. Until it has,
 	// the surface must NOT mount the keyed conversation: threadId is still null, so mounting
 	// now and flipping it to the resumed thread would remount the whole chat (the open flash).
 	const [initialResolved, setInitialResolved] = useState(false);
+	const [loadError, setLoadError] = useState<ElenchThreadsLoadError | null>(null);
+	// Bumped by `retryLoad`, so the resolution effect runs again for the same open and context.
+	const [loadAttempt, setLoadAttempt] = useState(0);
 
 	/** Load a thread's transcript, then switch to it (order matters — the conversation
 	 * is keyed by threadId, so messages must be staged before the key flips). */
@@ -51,7 +104,9 @@ export function useElenchThreads() {
 		async (id: string) => {
 			const full = await getThread(id);
 			setInitialMessages(full?.messages ?? []);
+			setInitialRevision(full?.revision ?? null);
 			selectStore(id);
+			return full;
 		},
 		[selectStore],
 	);
@@ -64,15 +119,23 @@ export function useElenchThreads() {
 		resumeIdRef.current = threadId;
 	}, [threadId]);
 
-	// Initial load: list threads (org-level or this project's) and resume the most recent.
-	// An empty list resolves to an EMPTY ephemeral conversation — nothing is persisted until
-	// the first send (see `startThread`).
+	// The conversation this tab last showed in the scope (ADR 0001 §7.3): the store's in-memory
+	// `activeKey[scope]`, else this tab's `sessionStorage` mirror of it (a reload). Read while
+	// RENDERING the open (or the context change), because the conversation mounted in the same
+	// commit selects its own key in an effect that runs before this hook's (a child's effects run
+	// first), and that selection overwrites both. Captured once per (open, scope).
+	const remembered = useMemo(() => {
+		if (!open || tab === null || scope === null) return null;
+		return tab.store.view.getState().drafts.activeKey[scopeId(scope)] ?? tab.store.readActive(scope);
+	}, [open, tab, scope]);
+
+	// Initial load: list threads (org-level or this project's) and resume the conversation the user
+	// was last on here; else the most recent thread; else an EMPTY ephemeral conversation —
+	// nothing is persisted until the first send.
 	//
-	// `threadId` must NOT be a dep here: resuming calls `selectStore(id)`, which changes the
+	// `threadId` must NOT be a dep here: resuming calls `resumeStore(id)`, which changes the
 	// store's threadId — as a dep that re-ran this effect, and its cleanup flipped `cancelled`
 	// so `setInitialResolved(true)` never landed, wedging the body on its loading skeleton.
-	// It only reproduces once a thread exists (an empty list never resumes), which is how it
-	// survived until the AI e2e suite drove a second conversation.
 	//
 	// The resume goes through `resumeThread`, NOT `selectThread`: the rail is interactive while
 	// these two round trips are in flight, and `selectThread` resets `mainView` to the chat — a
@@ -80,48 +143,119 @@ export function useElenchThreads() {
 	// window allows a user-initiated thread pick or "New chat", both of which bump `epoch`; the
 	// epoch captured before the list is compared after EACH round trip, and a changed one means
 	// the user has already chosen, so the resume stands down rather than overriding them.
+	//
+	// A context switch on an OPEN surface changes `projectId`; the cleanup stands the old context's
+	// load down and this body runs again for the new one, exactly as opening from closed in that
+	// context would (#5680), and resumes the new scope's own remembered conversation (D23).
+	//
+	// `cancelled` is checked after EACH round trip: closing the surface also runs the cleanup, and a
+	// transcript that arrives after the close must not write the resume into a store nobody is
+	// looking at (#5680).
+	//
+	// Either round trip may reject (G10). A rejected list leaves the rail as it was; a rejected
+	// resume leaves the conversation on screen as it was. Both set `loadError` and still resolve,
+	// so the body leaves its skeleton. A candidate whose thread is gone (`getThread` answers null, or
+	// this tab's drafts say `deleted`) is skipped for the next one, never opened empty.
 	useEffect(() => {
-		if (!open || initialized.current) return;
-		initialized.current = true;
+		if (!open) return;
 		let cancelled = false;
 		const startEpoch = useElenchStore.getState().epoch;
 		/** True once the user has picked a thread or started a new chat since the load began. */
 		const userActed = () => useElenchStore.getState().epoch !== startEpoch;
+		/** Shows a conversation that has no stored thread, without resetting the main view. */
+		const openThreadless = (id: string) => {
+			setInitialMessages([]);
+			setInitialRevision(null);
+			const s = useElenchStore.getState();
+			if (s.conversationId === id && s.threadId === null) return;
+			useElenchStore.setState({ threadId: null, conversationId: id, epoch: s.epoch + 1 });
+		};
 		(async () => {
-			const list = await listThreads(projectId);
-			if (cancelled) return;
-			setThreads(list);
-			const resume = resumeIdRef.current ?? list[0]?.id;
-			if (resume && !userActed()) {
-				const full = await getThread(resume);
-				if (!userActed()) {
-					setInitialMessages(full?.messages ?? []);
-					resumeStore(resume);
-				}
+			setLoadError(null);
+			let list: AgentThread[] | null = null;
+			try {
+				list = await listThreads(projectId);
+			} catch {
+				if (cancelled) return;
+				setLoadError({ step: "list", conversationId: null });
 			}
-			// else: leave threadId null + initialMessages empty → the ephemeral landing.
-			if (!cancelled) setInitialResolved(true);
+			if (cancelled) return;
+			if (list !== null) setThreads(list);
+			// The candidates, best first. One whose thread is gone (deleted in another tab, or reaped)
+			// and that holds no draft here is skipped, never opened empty under its old id.
+			const candidates = [remembered, resumeIdRef.current, list?.[0]?.id ?? null].filter(
+				(id, i, all): id is string => id !== null && all.indexOf(id) === i,
+			);
+			const skipped: string[] = [];
+			let resumed = false;
+			for (const id of candidates) {
+				if (userActed()) break;
+				const listed = list?.some((t) => t.id === id) ?? false;
+				const entry = listed ? null : entryOf(tab, scope, id);
+				if (entry?.thread === "none") {
+					// Never sent, or its thread was reaped: its words are its draft (G21).
+					openThreadless(id);
+					resumed = true;
+					break;
+				}
+				if (entry?.thread === "deleted") {
+					skipped.push(id);
+					continue;
+				}
+				let full: Awaited<ReturnType<typeof getThread>>;
+				try {
+					full = await getThread(id);
+				} catch {
+					if (cancelled) return;
+					setLoadError({ step: "resume", conversationId: id });
+					resumed = true; // the conversation on screen stays as it was
+					break;
+				}
+				if (cancelled) return;
+				if (full === null) {
+					// No live thread. A draft of it with no thread (never sent, or reaped) opens (G21).
+					// Once this tab's drafts have listed the scope, an id they hold no draft for is gone
+					// (deleted elsewhere): skip it. Before that list, a draft of it may still be on its way
+					// (D26's restore), so it opens.
+					const now = entryOf(tab, scope, id); // the list may have landed during the round trip
+					const unknown = tab !== null && scope !== null && !tab.hasListed(scope) && now === null;
+					if (now?.thread === "none" || unknown) {
+						if (!userActed()) openThreadless(id);
+						resumed = true;
+						break;
+					}
+					skipped.push(id);
+					continue;
+				}
+				if (!userActed()) {
+					setInitialMessages(full.messages);
+					setInitialRevision(full.revision);
+					resumeStore(id);
+				}
+				resumed = true;
+				break;
+			}
+			if (!resumed && !userActed()) {
+				// Nothing to resume → the empty landing. Clear the transcript a previous context (or
+				// a previous open) staged, or the new conversation would be seeded with it; and when
+				// the conversation on screen is one whose thread is gone, start a fresh one instead.
+				setInitialMessages([]);
+				setInitialRevision(null);
+				const s = useElenchStore.getState();
+				if (skipped.includes(s.conversationId))
+					useElenchStore.setState({ threadId: null, conversationId: crypto.randomUUID(), epoch: s.epoch + 1 });
+			}
+			setInitialResolved(true);
 		})();
 		return () => {
 			cancelled = true;
-		};
-	}, [open, projectId, resumeStore]);
-
-	// Reset when the surface closes so reopening re-resumes cleanly.
-	useEffect(() => {
-		if (!open) {
-			initialized.current = false;
+			// Besides unmount (where the reset is moot), the cleanup runs on the events that
+			// invalidate this resolution — the surface closing, the context switching, a retry — so
+			// the body is back on its skeleton until the next load settles.
 			setInitialResolved(false);
-		}
-	}, [open]);
+		};
+	}, [open, projectId, resumeStore, tab, scope, remembered, loadAttempt]);
 
-	/** Resume a persisted thread (loads its transcript first). */
-	const selectThread = useCallback(
-		(id: string) => {
-			void loadInto(id);
-		},
-		[loadInto],
-	);
 
 	/** Reset to a fresh EPHEMERAL conversation — clears the transcript and bumps the chat
 	 * lineage (via the store's `newChat`). Persists nothing; the thread is created lazily on
@@ -130,10 +264,39 @@ export function useElenchThreads() {
 	 * to close it. */
 	const newChat = useCallback(() => {
 		setInitialMessages([]);
+		setInitialRevision(null);
 		useArtifactStore.getState().closeGrid();
 		useArtifactStore.getState().close();
 		newChatStore();
 	}, [newChatStore]);
+
+	/**
+	 * Open a conversation: a stored thread loads its transcript first; one this tab's drafts know has
+	 * no stored thread (an Unsent entry that was never sent, or whose thread was reaped or deleted)
+	 * opens at once under its own id, with no `getThread` (G21).
+	 */
+	const selectThread = useCallback(
+		(id: string) => {
+			const listed = threads.some((t) => t.id === id);
+			if (!listed && hasNoThread(entryOf(tab, scope, id))) {
+				newChat();
+				useElenchStore.getState().followConversation(id);
+				return;
+			}
+			setLoadError(null);
+			void loadInto(id).catch(() => setLoadError({ step: "select", conversationId: id }));
+		},
+		[threads, tab, scope, newChat, loadInto],
+	);
+
+	/**
+	 * Tries again what `loadError` names (G10): the conversation a failed pick was for, or else the
+	 * whole initial resolution (the list and the resume).
+	 */
+	const retryLoad = useCallback(() => {
+		if (loadError?.step === "select" && loadError.conversationId !== null) selectThread(loadError.conversationId);
+		else setLoadAttempt((n) => n + 1);
+	}, [loadError, selectThread]);
 
 	/** Lazily persist the current ephemeral conversation on its first message: inserts the
 	 * thread (title derived from `title`), adds it to the rail, and attaches its id to the
@@ -174,9 +337,205 @@ export function useElenchThreads() {
 		threads,
 		activeId: threadId,
 		initialMessages,
+		initialRevision,
+		/** Why the initial resolution failed, or null (G10). */
+		loadError,
+		retryLoad,
 		selectThread,
+		/** Reload a thread's transcript (and its revision) in place of the current one. */
+		reloadThread: loadInto,
 		newChat,
 		startThread,
 		deleteThread,
 	};
+}
+
+// ── The Unsent group (ADR 0001 decision 3, §7.4) ────────────────────────────────────────────────
+
+/** What is true of an Unsent conversation beyond holding words that were never sent. */
+export type UnsentNote =
+	/** A send of it is in flight in this tab, or another tab or device holds its claim. */
+	| "sending"
+	/** A send of it failed; the words are back in its box. */
+	| "not-sent"
+	/** The server has not acknowledged what this tab holds for it (§7.4). */
+	| "not-saved"
+	/** Its thread existed once and has since been reaped (AC15). */
+	| "unavailable"
+	/** Its thread was deleted. */
+	| "deleted";
+
+/** What an Unsent entry says about itself, in the rail and in the switcher alike. */
+const UNSENT_NOTE_TEXT: Record<UnsentNote, string> = {
+	sending: "Sending…",
+	"not-sent": "Not sent",
+	"not-saved": "Not saved",
+	unavailable: "No longer available",
+	deleted: "Conversation deleted",
+};
+
+/** The note an Unsent entry with nothing pressing to say shows: it is a draft. */
+export function unsentNoteText(note: UnsentNote | null): string {
+	return note === null ? "Draft" : UNSENT_NOTE_TEXT[note];
+}
+
+/** One row of the Unsent group: a conversation of the surface's scope that holds unsent words. */
+export interface UnsentConversation {
+	conversationId: string;
+	/** The thread's title, else the first line of the words, else what it holds. */
+	label: string;
+	note: UnsentNote | null;
+	thread: DraftThreadStatus;
+	/** The conversation on screen. */
+	active: boolean;
+}
+
+/** The view a surface without a drafts store reads: no entries, ever. */
+const NO_DRAFTS = createStore<DraftsView>(() => ({
+	drafts: initialDraftsStore(null),
+	uncached: {},
+	notices: [],
+}));
+
+const NONE: DraftEntry[] = [];
+
+/** The words an Unsent row is named by: what is being sent, else what the box shows. */
+function wordsOf(entry: DraftEntry): { text: string; artifacts: number } {
+	if (entry.sending !== null && entry.sending.text.trim() !== "")
+		return { text: entry.sending.text, artifacts: 0 };
+	const c = shownContent(entry);
+	return { text: c.text, artifacts: c.artifacts.length };
+}
+
+/** The label of one Unsent row (see `UnsentConversation.label`). */
+function labelOf(entry: DraftEntry, title: string | null): string {
+	if (title !== null && title.trim() !== "") return title;
+	const { text, artifacts } = wordsOf(entry);
+	const line = text
+		.split("\n")
+		.map((l) => l.trim())
+		.find((l) => l !== "");
+	if (line !== undefined) return line;
+	if (artifacts === 1) return "New chat with an artifact";
+	if (artifacts > 1) return `New chat with ${artifacts} artifacts`;
+	return "New chat";
+}
+
+/** The note of one Unsent row, the most pressing first. */
+function noteOf(entry: DraftEntry): UnsentNote | null {
+	if (entry.claiming !== null || entry.sending !== null || entry.server?.state === "sending")
+		return "sending";
+	if (entry.thread === "none" && entry.server?.threadSeen === true) return "unavailable";
+	if (entry.thread === "deleted") return "deleted";
+	if (entry.pendingFailedSend !== null || (entry.server?.failedSend ?? null) !== null)
+		return "not-sent";
+	if (isUnacknowledged(entry)) return "not-saved";
+	return null;
+}
+
+/** The Unsent group, and the notes of the listed threads that hold unsent words. */
+export interface UnsentView {
+	/**
+	 * Conversations with unsent words and NO listed thread (never sent, unlisted, reaped or deleted),
+	 * most recently written first. A listed thread is never repeated here; its note is on its own row.
+	 */
+	unsent: UnsentConversation[];
+	/** Listed thread id → what its row says about its unsent words ("Draft", "Not sent", …). */
+	threadNotes: Record<string, string>;
+	/**
+	 * The count the narrow toggle shows: the Unsent rows, less the conversation on screen (the user
+	 * is looking at it, so typing there does not raise the badge).
+	 */
+	badge: number;
+}
+
+/** When an entry was last written: now for words only this tab holds, else its row's `updatedAt`. */
+function writtenAt(entry: DraftEntry, now: number): number {
+	if (entry.local !== null || entry.claiming !== null || entry.sending !== null || entry.server === null) return now;
+	return Date.parse(entry.server.updatedAt);
+}
+
+/**
+ * The Unsent group of the surface's scope (ADR 0001 §7.4), from this tab's drafts store: see
+ * `UnsentView`. `threads` is what the rail lists; a conversation in it is a listed thread. Empty
+ * without a drafts store (a surface outside the drafts root).
+ */
+export function useUnsentConversations(threads: readonly AgentThread[]): UnsentView {
+	const tab = useDraftsTab();
+	const scope = useSurfaceScope();
+	const conversationId = useElenchStore((s) => s.conversationId);
+	const entries = useStore(
+		tab?.store.view ?? NO_DRAFTS,
+		useShallow((s: DraftsView) => (scope === null ? NONE : selectUnsent(s, scope))),
+	);
+	return useMemo(() => {
+		const listed = new Set(threads.map((t) => t.id));
+		const now = Date.now();
+		const threadNotes: Record<string, string> = {};
+		const rows: { at: number; row: UnsentConversation }[] = [];
+		for (const e of entries) {
+			const id = e.key.conversationId;
+			const note = noteOf(e);
+			if (listed.has(id)) {
+				threadNotes[id] = unsentNoteText(note);
+				continue;
+			}
+			rows.push({
+				at: writtenAt(e, now),
+				row: {
+					conversationId: id,
+					label: labelOf(e, e.server?.title ?? null),
+					note,
+					thread: e.thread,
+					active: id === conversationId,
+				},
+			});
+		}
+		const unsent = rows.sort((x, y) => y.at - x.at).map((r) => r.row);
+		return { unsent, threadNotes, badge: unsent.filter((u) => !u.active).length };
+	}, [entries, threads, conversationId]);
+}
+
+/** What the delete confirm says about a conversation's drafts (§6.3). */
+export interface ConversationDraftFacts {
+	/** The caller's drafts of the conversation, across every org. */
+	count: number;
+	/** In how many orgs. */
+	orgs: number;
+	/** A message of it is being sent right now, as far as this tab knows (R8). */
+	sending: boolean;
+}
+
+/**
+ * The delete confirm's count (§6.3): `countDraftsOfConversation` for the conversation, and whether
+ * this tab knows of a message of it being sent (its own claim or send, or a row the last
+ * `listDrafts` returned as `sending`). Resolves null when the count was refused or failed.
+ */
+export function useConversationDraftFacts(): (id: string) => Promise<ConversationDraftFacts | null> {
+	const tab = useDraftsTab();
+	const pageOrgId = useElenchStore((s) => s.pageOrgId);
+	return useCallback(
+		async (id: string) => {
+			const sending =
+				tab !== null &&
+				Object.values(tab.store.view.getState().drafts.entries).some(
+					(e) =>
+						e.key.conversationId === id &&
+						(e.claiming !== null ||
+							e.sending !== null ||
+							e.server?.state === "sending" ||
+							e.conflict?.kind === "claimed"),
+				);
+			try {
+				const result = await countDraftsOfConversation(
+					pageOrgId === null ? { id } : { id, orgHint: pageOrgId },
+				);
+				if (result.outcome !== "ok") return null;
+				return { count: result.count, orgs: result.orgs, sending };
+			} catch {
+				return null;
+			}
+		},
+		[tab, pageOrgId],
+	);
 }

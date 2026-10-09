@@ -170,8 +170,9 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	await dialog.getByRole("radio", { name: /An organization/ }).check({ timeout: 30_000 });
 	await dialog.getByPlaceholder("Director").fill("Director");
 	await dialog.getByRole("button", { name: "Select a country" }).click();
-	// The country list is a popover portalled outside the sheet, so it is located on the page.
-	await page.getByPlaceholder("Search country…").fill("Germany");
+	// The country list is a popover portalled outside the sheet, so it is located on the page. Its
+	// search is named by cmdk's `label` ("Search country", #5803), so it is asked for by role.
+	await page.getByRole("combobox", { name: "Search country", exact: true }).fill("Germany");
 	// Not `exact`: each row's flag carries the country's name as an SVG title, so the option's
 	// accessible name can read it twice. The search above has already narrowed the list to one.
 	await page.getByRole("option", { name: /Germany/ }).first().click();

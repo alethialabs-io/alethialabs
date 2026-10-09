@@ -126,8 +126,9 @@ export function ConnectorsPage({
 	const filters = useConnectorFilters((s) => s.filters);
 	const patchFilters = useConnectorFilters((s) => s.patch);
 	const resetFilters = useConnectorFilters((s) => s.reset);
-	useFilterUrlSync(useConnectorFilters, DEFAULT_CONNECTOR_FILTERS);
-	const debouncedSearch = useDebouncedValue(filters.search);
+	const urlRead = useFilterUrlSync(useConnectorFilters, DEFAULT_CONNECTOR_FILTERS);
+	// `urlRead`: a search the link carried lands at once; only typing is debounced (#5861).
+	const debouncedSearch = useDebouncedValue(filters.search, 250, { urlRead });
 	const query = useMemo(
 		() => normalizeConnectorQuery({ ...filters, search: debouncedSearch }),
 		[filters, debouncedSearch],

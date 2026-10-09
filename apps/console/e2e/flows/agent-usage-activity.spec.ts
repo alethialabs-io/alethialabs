@@ -26,6 +26,7 @@
 // say, because it opens the panel from the org home: that the launcher is a TOPBAR affordance
 // available from an arbitrary authenticated route.
 
+import { untilFilterBarHydrated } from "../helpers/hydration";
 import { seedProject } from "../helpers/seed";
 import { expect, test } from "../fixtures/qa";
 
@@ -256,14 +257,14 @@ test.describe("Activity — org feed (owner)", () => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(owner.page).not.toHaveURL(/\/login/);
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
 	});
 
 	test("the reusable filter bar renders all facets", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
 		await expect(owner.page.getByRole("button", { name: /^user$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^project$/i })).toBeVisible();
@@ -272,6 +273,7 @@ test.describe("Activity — org feed (owner)", () => {
 
 	test("the Events sheet's groups EXPAND to their options", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
+		await untilFilterBarHydrated(owner.page, /^events$/i);
 		await owner.page.getByRole("button", { name: /^events$/i }).click();
 		const sheet = owner.page.getByRole("dialog");
 		await expect(sheet.getByText("Result", { exact: true })).toBeVisible({
@@ -334,7 +336,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 		await owner.page.goto(`${activityPath(owner.orgSlug)}?${params}`);
 
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toHaveValue("grant", { timeout: 30_000 });
 		// A facet trigger renders a count badge only when something is selected, so "User 1" is
 		// a name that exists ONLY once the URL has been decoded into the store.
@@ -375,7 +377,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 	test("typing a search writes `search` to the URL", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		const search = owner.page.getByPlaceholder(/search actor, action or resource/i);
+		const search = owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true });
 		await expect(search).toBeVisible({ timeout: 30_000 });
 		await search.fill("connector");
 		// `toHaveURL` polls, which is what absorbs the 300ms debounce without a sleep.
@@ -384,6 +386,7 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 
 	test("picking an event writes `eventTokens` to the URL", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
+		await untilFilterBarHydrated(owner.page, /^events$/i);
 		await owner.page.getByRole("button", { name: /^events$/i }).click();
 		const sheet = owner.page.getByRole("dialog");
 		await sheet.getByText("Result", { exact: true }).click();
@@ -398,11 +401,21 @@ test.describe("Activity — the seven filter keys round-trip through the URL (ow
 	});
 
 	test("picking a window writes `from`, `to` and `rangeLabel` to the URL", async ({ owner }) => {
+		// THE CLICK LANDS THE MOMENT THE TRIGGER IS VISIBLE after `load` — no hydration wait (#5849).
+		// This used to need `untilFilterBarHydrated`: the click went to server HTML that React could
+		// not hydrate yet because the shell's modules were still evaluating, or to where the trigger
+		// had been before the date-range label grew at mount and slid it 136 px left. #5849 removed
+		// both causes, and this test is what says so.
+		//
+		// `load`, not `commit`: before the page's scripts have run there is no React listener at all,
+		// and no product change can answer a click made then — one cold `commit`-and-click in four
+		// lost its click (run 37924269448). By `load` the scripts have run; React hydrates a boundary
+		// synchronously when a click lands on it, and the cold-load probe's clicks after that point
+		// were delivered 8 of 8 (run 37921891867).
 		await owner.page.goto(activityPath(owner.orgSlug));
-		await expect(
-			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
-		).toBeVisible({ timeout: 30_000 });
-		await owner.page.getByRole("button", { name: /^Last 7 days$/i }).click();
+		const trigger = owner.page.getByRole("button", { name: /^Last 7 days$/i });
+		await expect(trigger).toBeVisible({ timeout: 30_000 });
+		await trigger.click();
 
 		// The "yesterday" relative chip, not a preset: the shortest preset IS the default, and the
 		// next one up (14 days) predates Hobby's 7-day retention and opens the upgrade sheet

@@ -13,8 +13,10 @@ import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
+import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { ElenchSurface } from "@/components/agent/elench/elench-surface";
+import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
+import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
 import { AppSidebar } from "./app-sidebar";
@@ -30,12 +32,18 @@ export function AppShell({
 	children,
 	isHosted = false,
 	selfRunners = false,
+	pageOrgId = null,
 }: {
 	children: React.ReactNode;
 	/** Hosted control plane → enables the in-app feedback widget in the sidebar. */
 	isHosted?: boolean;
 	/** Org runs its own runners → surfaces the gated Runners nav item. */
 	selfRunners?: boolean;
+	/**
+	 * The page's `currentActor().orgId` (ADR 0003 §6.1), kept in the Elench store where the chat
+	 * transport reads it at request time as the turn's `orgId`.
+	 */
+	pageOrgId?: string | null;
 }) {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -59,6 +67,11 @@ export function AppShell({
 	useEffect(() => {
 		useWorkspaceStore.getState().fetchWorkspace();
 	}, []);
+
+	// Keep the page's org where the chat transport reads it at request time (ADR 0003 §9.1).
+	useEffect(() => {
+		useElenchStore.getState().setPageOrgId(pageOrgId);
+	}, [pageOrgId]);
 
 	// Warm the shared jobs cache session-wide so the command palette, breadcrumbs, and
 	// overview resolve job names everywhere; TanStack Query dedupes and polls it.
@@ -122,8 +135,11 @@ export function AppShell({
 			{/* The global Elench assistant surface. In panel view it renders as an in-flow flex
 			    child here — its width animates from 0 and squeezes the main column (true seam
 			    border, like the canvas inspector). In modal view it portals out (Radix Dialog),
-			    leaving this slot empty. One surface per session. */}
-			<ElenchSurface />
+			    leaving this slot empty. One surface per session. Its drafts root runs whether or not
+			    the surface is open, so unsent words keep saving (ADR 0001). */}
+			<ElenchDraftsRoot pageOrgId={pageOrgId}>
+				<ElenchSurfaceLoader />
+			</ElenchDraftsRoot>
 
 			{/* Global command palette (the sidebar "Find…" box + ⌘K / F). */}
 			<CommandPalette selfRunners={selfRunners} />

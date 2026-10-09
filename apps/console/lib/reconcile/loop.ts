@@ -13,6 +13,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
@@ -43,9 +44,14 @@ const INTERVALS = {
 	"gc-job-logs": 15 * 60_000, // 15m — bounded-batch retention GC; a backlog drains over passes
 	"gc-fleet-actions": 15 * 60_000, // 15m
 	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
-	// 15m — a hold only becomes sweepable at STRANDED_HOLD_AGE_MINUTES (60m), so the tick rate sets
-	// how long past that a stranded reservation keeps counting against the org, not whether it is
-	// found. Matched to the GCs rather than tightened: it reclaims ~$0.10 at a time.
+	// 15m — two kinds of hold reach this sweep. A hold the two Elench chat routes reserved is CLAIMED
+	// (ADR 0003): it is released when its claim's 90 s lease goes silent or the attempt passes its
+	// 15-minute bound (pass 1, C8), so it waits at most 90 s plus one gap between runs here (about
+	// 17.5 minutes on this 60 s tick), and the next accept on its thread releases it sooner. Every
+	// other hold (support, agent identity, colony, verify) is unclaimed and only becomes sweepable at
+	// STRANDED_HOLD_AGE_MINUTES (60m, pass 2). The tick rate sets how long past those points a
+	// stranded reservation keeps counting against the org, not whether it is found. Matched to the
+	// GCs rather than tightened: it reclaims ~$0.10 at a time.
 	"release-ai-holds": 15 * 60_000,
 	// 1m — a mint request's poll window is 10m, so an uncollected ciphertext outlives its window by
 	// at most about a minute (lib/kubeconfig-mint/sweep.ts).
@@ -53,6 +59,10 @@ const INTERVALS = {
 	// 5m — a finished window is dead weight, never a wrong answer (a later hit lands in a new row), so
 	// the cadence only bounds how many dead rows sit in rate_limit_buckets (lib/rate-limit.ts).
 	"rate-limit-sweep": 5 * 60_000,
+	// 24h — draft retention is counted in days (discarded 24h, everything else 30 days), so a daily
+	// pass keeps a discarded draft at most about two days. The silent claims it settles are a
+	// backstop: every draft action settles its own row or scope first (lib/elench/drafts-sweep.ts).
+	"elench-drafts-sweep": 24 * 60 * 60_000,
 } as const;
 
 declare global {
@@ -133,6 +143,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// Rate-limit bucket expiry (#5309): delete every lib/rate-limit.ts window that has ended.
 		if (isDue("rate-limit-sweep", INTERVALS["rate-limit-sweep"], now)) {
 			await runTask("rate-limit-sweep", () => sweepExpiredRateLimitBuckets(db));
+		}
+		// Elench drafts retention (ADR 0001 §9): settle silent claims, then delete discarded drafts
+		// past 24h and drafts unwritten for 30 days. Never deletes a `sending` row.
+		if (isDue("elench-drafts-sweep", INTERVALS["elench-drafts-sweep"], now)) {
+			await runTask("elench-drafts-sweep", () => sweepElenchDrafts(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
