@@ -190,8 +190,10 @@ describe("cmdk root labels (#5824)", () => {
 			['<CommandInput placeholder="x" />', 0],
 			["<CommandList>", 0],
 		];
-		for (const [src, expected] of cases) {
-			expect(unlabelledRoots(src, "case"), src).toHaveLength(expected);
-		}
+		const flagged = cases.map(([src]) => [
+			src,
+			unlabelledRoots(src, "case").length,
+		]);
+		expect(flagged).toEqual(cases);
 	});
 });
