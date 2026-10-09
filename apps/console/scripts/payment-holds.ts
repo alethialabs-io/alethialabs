@@ -244,6 +244,9 @@ export async function releaseHoldCommand(
 		const live = await observe(hold, stripe);
 		print(observationLine(live));
 
+		if (!("error" in live) && live.sub.kind === "missing") {
+			print(`${hold.subscription_id} not found in this Stripe account. Check the key before you release it.`);
+		}
 		const settled = !("error" in live) && (live.sub.kind === "ended" || live.sub.kind === "missing");
 		if (!settled && (await hasOpenSetup(hold.subscription_id))) {
 			const read = "error" in live ? "could not be read" : `reads ${live.sub.kind}`;
