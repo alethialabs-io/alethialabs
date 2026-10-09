@@ -136,6 +136,12 @@ interface ElenchState {
 	 * enum rather than a bag of booleans, so two panels can never be "open" at once.
 	 */
 	mainView: ElenchMainView;
+	/**
+	 * The org the page names: `currentActor().orgId` of the `[org]` layout (ADR 0003 §6.1), so the
+	 * user id in community. The chat transport reads it at REQUEST time as the turn's `orgId`;
+	 * null until the shell has mounted.
+	 */
+	pageOrgId: string | null;
 
 	/** Open as a docked panel in the given context. */
 	openPanel: (ctx: ElenchCtxRequest) => void;
@@ -192,6 +198,8 @@ interface ElenchState {
 	setSeedPrompt: (prompt: string | null) => void;
 	/** Record the resources @-referenced in the message about to be sent. */
 	setPendingMentions: (mentions: Mention[]) => void;
+	/** Record the page's org (the `[org]` layout's `currentActor().orgId`). */
+	setPageOrgId: (orgId: string | null) => void;
 }
 
 /**
@@ -214,6 +222,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	pendingMentions: [],
 	railOpen: true,
 	mainView: "chat",
+	pageOrgId: null,
 
 	openPanel: (raw) => {
 		const cur = get();
@@ -289,6 +298,7 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 		})),
 	setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
 	setPendingMentions: (pendingMentions) => set({ pendingMentions }),
+	setPageOrgId: (pageOrgId) => set({ pageOrgId }),
 }));
 
 /**

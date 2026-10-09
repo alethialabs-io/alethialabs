@@ -153,6 +153,61 @@ describe("AgentChat — Regenerate response", () => {
 		);
 		await userEvent.click(screen.getByRole("button", { name: "Regenerate response" }));
 		expect(onRegenerate).toHaveBeenCalledTimes(1);
+		// It names the answer it replaces, so a tab can only regenerate what it displays (ADR 0003 §9.1).
+		expect(onRegenerate).toHaveBeenCalledWith("a1");
 		expect(onRetry).not.toHaveBeenCalled();
+	});
+
+	/** An answer whose `propose_operation` card resolved with `status`. */
+	function approvalAnswer(output: Record<string, unknown>): UIMessage[] {
+		return [
+			{ id: "u1", role: "user", parts: [{ type: "text", text: "plan api" }] },
+			{
+				id: "a1",
+				role: "assistant",
+				parts: [
+					{ type: "step-start" },
+					{
+						type: "tool-propose_operation",
+						toolCallId: "p1",
+						state: "output-available",
+						input: {},
+						output,
+					},
+					{ type: "step-start" },
+					{ type: "text", text: "Queued the plan." },
+				],
+			},
+		];
+	}
+
+	it("is not rendered on an answer that carries an accepted approval (ADR 0003 §9.1)", () => {
+		render(
+			<AgentChat
+				messages={approvalAnswer({
+					status: "approved",
+					operation: "plan_project",
+					projectId: "8a6e0804-2bd0-4b6e-8e4c-3f1f5d0b5f01",
+					environmentId: null,
+					jobId: "8a6e0804-2bd0-4b6e-8e4c-3f1f5d0b5f02",
+				})}
+				status="ready"
+				onSend={() => {}}
+				onRegenerate={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByRole("button", { name: "Regenerate response" })).toBeNull();
+	});
+
+	it("is rendered on an answer whose approval was rejected (it queued nothing)", () => {
+		render(
+			<AgentChat
+				messages={approvalAnswer({ status: "rejected" })}
+				status="ready"
+				onSend={() => {}}
+				onRegenerate={vi.fn()}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Regenerate response" })).toBeTruthy();
 	});
 });
