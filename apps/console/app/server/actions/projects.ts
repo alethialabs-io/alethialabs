@@ -2279,7 +2279,7 @@ async function findApprovedJob(
 			and(
 				eq(jobs.org_id, key.orgId),
 				eq(jobs.project_id, key.projectId),
-				eq(jobs.user_id, key.userId),
+				eq(jobs.user_id, key.userId), // authz-scope-ok: narrows a dedupe key to the actor's own job; the PDP authorized first
 				eq(jobs.idempotency_key, key.storedKey),
 			),
 		)
