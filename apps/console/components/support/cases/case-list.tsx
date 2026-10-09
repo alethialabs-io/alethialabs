@@ -71,13 +71,14 @@ export function CaseList({
 }) {
 	const filters = useSupportFilters((s) => s.filters);
 	const reset = useSupportFilters((s) => s.reset);
-	useFilterUrlSync(useSupportFilters, DEFAULT_SUPPORT_CASE_FILTERS, PARAM_NAMES);
+	const urlRead = useFilterUrlSync(useSupportFilters, DEFAULT_SUPPORT_CASE_FILTERS, PARAM_NAMES);
 
 	// Only the DEBOUNCED search reaches the query, and the memo is keyed on the individual
 	// filter fields rather than the `filters` object — that object gets a fresh identity on
 	// every keystroke, which would re-derive (and re-filter) the whole list ahead of the
 	// debounce it exists to wait for.
-	const debouncedSearch = useDebouncedValue(filters.search);
+	// `urlRead`: a search the link carried (`?search=`) lands at once; only typing is debounced (#5861).
+	const debouncedSearch = useDebouncedValue(filters.search, 250, { urlRead });
 	const query = useMemo(
 		() =>
 			normalizeSupportCaseQuery({
