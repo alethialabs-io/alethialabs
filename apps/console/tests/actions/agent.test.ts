@@ -59,6 +59,7 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		for: vi.fn(),
 		onConflictDoNothing: vi.fn(),
 		returning: vi.fn(),
+		execute: vi.fn(),
 	};
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
@@ -107,6 +108,11 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		delete: (...a: unknown[]) => {
 			calls.delete(...a);
 			return db;
+		},
+		// A raw statement (the drafts purge) answers the next queued result as its rows.
+		execute: (...a: unknown[]) => {
+			calls.execute(...a);
+			return Promise.resolve(sequence.shift() ?? rows);
 		},
 		// Each awaited query takes the next queued result, then `rows` once the queue is empty.
 		then: (resolve: (v: unknown) => void) => resolve(sequence.shift() ?? rows),
@@ -418,16 +424,25 @@ describe("the action surface", () => {
 });
 
 describe("deleteThread", () => {
+	const T1 = "00000000-0000-4000-8000-0000000000f1";
+	const NONE = "00000000-0000-4000-8000-0000000000f2";
+
+	/** The SQL text and params of a recorded raw statement, as Postgres would receive them. */
+	function executed(stmt: unknown): { sql: string; params: unknown[] } {
+		if (!(stmt instanceof SQL)) throw new Error("not a drizzle statement");
+		return new PgDialect().sqlToQuery(stmt);
+	}
+
 	// A late save (a turn still streaming at the delete) must be able to tell the user's delete from
 	// the reap of an empty row, or it recreates the thread the user just deleted (#5423 review).
 	it("replaces the row with a tombstone under the same id, carrying no title and no messages", async () => {
 		const removed = { user_id: "user-1", org_id: "org-1", project_id: "proj-3", kind: "agent" };
-		const { calls } = useChain([], [[removed], []]);
-		await deleteThread("t-1");
+		const { calls } = useChain([], [[removed], [], [{ n: 0 }]]);
+		await deleteThread(T1);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).toHaveBeenCalledWith(agentThreads);
 		expect(calls.values).toHaveBeenCalledWith({
-			id: "t-1",
+			id: T1,
 			user_id: "user-1",
 			org_id: "org-1",
 			project_id: "proj-3",
@@ -440,10 +455,40 @@ describe("deleteThread", () => {
 	});
 
 	it("writes no tombstone when there was no live thread to delete", async () => {
-		const { calls } = useChain([], [[]]);
-		await deleteThread("t-none");
+		const { calls } = useChain([], [[], [{ n: 0 }]]);
+		await deleteThread(NONE);
 		expect(calls.delete).toHaveBeenCalledTimes(1);
 		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
+	// ADR 0001 §6.3 (#5464 AC16): the purge runs in the delete's own transaction, through the
+	// owner-pinned function — the only statement that reaches the caller's drafts in EVERY org. The
+	// cross-org and other-user halves are proved against Postgres in
+	// tests/integration/elench-drafts-threads.test.ts; this pins the call and its answer.
+	it("deleteThread purges the user's drafts of that conversation in every org, in the delete's transaction", async () => {
+		const removed = { user_id: "user-1", org_id: "user-1", project_id: null, kind: "agent" };
+		const { calls } = useChain([], [[removed], [], [{ n: 2 }]]);
+		expect(await deleteThread(T1)).toEqual({ purged: 2 });
+		expect(vi.mocked(withOwnerScope)).toHaveBeenCalledTimes(1);
+		expect(calls.execute).toHaveBeenCalledTimes(1);
+		const purge = executed(calls.execute.mock.calls[0]?.[0]);
+		expect(purge.sql).toMatch(/^select public\.purge_elench_drafts_of_conversation\(\$1::uuid\) as n$/);
+		expect(purge.params).toEqual([T1]);
+	});
+
+	it("purges the drafts even when the thread was already gone", async () => {
+		const { calls } = useChain([], [[], [{ n: 1 }]]);
+		expect(await deleteThread(NONE)).toEqual({ purged: 1 });
+		expect(calls.insert).not.toHaveBeenCalled();
+		expect(executed(calls.execute.mock.calls[0]?.[0]).params).toEqual([NONE]);
+	});
+
+	it("refuses an id that is not a uuid before touching the database", async () => {
+		const { calls } = useChain([]);
+		await expect(deleteThread("t-1")).rejects.toThrow();
+		expect(calls.delete).not.toHaveBeenCalled();
+		expect(calls.execute).not.toHaveBeenCalled();
+		expect(vi.mocked(withOwnerScope)).not.toHaveBeenCalled();
 	});
 });
 
