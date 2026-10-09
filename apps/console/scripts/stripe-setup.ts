@@ -23,6 +23,11 @@
 //   pnpm -C apps/console run stripe:setup -- --write-env  # also patch the root .env
 //   STRIPE_SECRET_KEY=sk_live_… pnpm -C apps/console run stripe:setup -- --webhook-url=https://alethialabs.io/api/webhooks/stripe
 //
+// Event list only — touches NOTHING but an EXISTING endpoint's `enabled_events` (no product, price,
+// meter or lookup key is read or written, and no endpoint is created; the signing secret is unchanged):
+//   STRIPE_SECRET_KEY=sk_test_… pnpm -C apps/console run stripe:setup -- --webhook-events-only --webhook-url=<test endpoint URL>
+//   STRIPE_SECRET_KEY=sk_live_… pnpm -C apps/console run stripe:setup -- --webhook-events-only --webhook-url=https://alethialabs.io/api/webhooks/stripe
+//
 // TEST → LIVE: re-run with the live secret key (and --webhook-url) to mirror the catalog
 // into live mode; it prints the live price IDs + the new webhook signing secret to set as
 // prod env. Stripe test/live are separate datasets — only the catalog is recreated;
@@ -239,6 +244,30 @@ async function ensureMeter(stripe: Stripe): Promise<Stripe.Billing.Meter> {
 	});
 }
 
+/**
+ * `--webhook-events-only`: sets an EXISTING endpoint's `enabled_events` to exactly `WEBHOOK_EVENTS` and
+ * does nothing else — no catalog object is read or written and no endpoint is created. Refuses (exit 1)
+ * without `--webhook-url`, or when no endpoint in this mode has that URL. Prints the before/after diff.
+ */
+async function syncWebhookEventsOnly(stripe: Stripe, mode: string, webhookUrl: string | undefined): Promise<void> {
+	if (!webhookUrl) {
+		console.error("✗ --webhook-events-only needs --webhook-url=<the endpoint's exact URL>.");
+		process.exit(1);
+	}
+	const existing = await stripe.webhookEndpoints.list({ limit: 100 });
+	const match = existing.data.find((w) => w.url === webhookUrl);
+	if (!match) {
+		console.error(`✗ No ${mode}-mode webhook endpoint has the URL ${webhookUrl}; nothing was changed.`);
+		process.exit(1);
+	}
+	const before = new Set<string>(match.enabled_events);
+	const after = new Set<string>(WEBHOOK_EVENTS);
+	await stripe.webhookEndpoints.update(match.id, { enabled_events: WEBHOOK_EVENTS });
+	console.log(`✓ ${mode} webhook endpoint ${match.id} (${webhookUrl}) now has ${after.size} events.`);
+	for (const e of after) if (!before.has(e)) console.log(`  + ${e}`);
+	for (const e of before) if (!after.has(e)) console.log(`  - ${e}`);
+}
+
 async function main(): Promise<void> {
 	loadRootEnv();
 	const secret = process.env.STRIPE_SECRET_KEY;
@@ -252,6 +281,10 @@ async function main(): Promise<void> {
 	const webhookUrl = args.find((a) => a.startsWith("--webhook-url="))?.split("=")[1];
 
 	const stripe = new Stripe(secret, { appInfo: { name: "Alethia stripe-setup" } });
+	if (args.includes("--webhook-events-only")) {
+		await syncWebhookEventsOnly(stripe, mode, webhookUrl);
+		return;
+	}
 	console.log(`→ Stripe ${mode} mode — ensuring catalog (Pro = ${PRO_SEAT_LABEL})…\n`);
 
 	// 1) Pro product + per-seat price (amount from the catalog SSOT; reconciles if stale).
