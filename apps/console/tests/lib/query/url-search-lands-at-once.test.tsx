@@ -269,7 +269,7 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 		category: "observability",
 		auth_method: "api_key",
 		organization,
-		icon_url: null,
+		icon_url: `/icons/${slug}.png`,
 		docs_url: null,
 		support_url: null,
 		privacy_url: null,
