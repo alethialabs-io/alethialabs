@@ -84,7 +84,7 @@ const IN_FLIGHT_POLL_MS = 5_000;
  * D9d: a later turn's chat request that has not reached `streaming` after this long is stopped (the
  * route sees a disconnect) and read as an uncertain failure, so its words come back to the box.
  */
-export const ROUTE_DEADLINE_MS = 60_000;
+const ROUTE_DEADLINE_MS = 60_000;
 
 /** The status line each typed refusal leaves above the composer (ADR 0003 §9.3's table). */
 const REFUSAL_NOTICE: Partial<Record<TurnRefusedError["refusal"]["refusal"], string>> = {

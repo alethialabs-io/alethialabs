@@ -47,7 +47,7 @@ import type { DraftScope } from "@/lib/stores/elench-drafts/types";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
 /** The draft actions themselves (§4.2): the store's transport in the app. */
-export const SERVER_TRANSPORT: DraftsTransport = {
+const SERVER_TRANSPORT: DraftsTransport = {
 	listDrafts,
 	saveDraft,
 	restoreDraft,
