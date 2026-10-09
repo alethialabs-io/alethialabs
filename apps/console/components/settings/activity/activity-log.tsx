@@ -117,7 +117,7 @@ export function ActivityLog({
 	const reset = useActivityFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
 	const hydrated = useHydrated();
-	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 
 	// The default window is resolved ONCE. Resolving it per render would move `to` forward
 	// every time and produce a query key that never settles, refetching on every paint.
