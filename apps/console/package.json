@@ -149,7 +149,7 @@
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-table": "^8.21.3",
     "@xyflow/react": "^12.12.0",
-    "ai": "^6.0.300",
+    "ai": "^6.0.301",
     "@better-auth/cimd": "^1.7.7",
     "@better-auth/mcp": "^1.7.7",
     "bcryptjs": "^3.0.2",
