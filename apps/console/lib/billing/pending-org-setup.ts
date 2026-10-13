@@ -183,6 +183,17 @@ export async function openPaymentHoldOn(subscriptionId: string): Promise<Payment
 	return hold ?? null;
 }
 
+/** The newest RELEASED payment hold on `subscriptionId`, or null. Service role: holds have no app policy. */
+export async function latestReleasedHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
+	const [hold] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), eq(paymentHolds.state, "released")))
+		.orderBy(desc(paymentHolds.released_at))
+		.limit(1);
+	return hold ?? null;
+}
+
 /**
  * The payment holds of `payerKey` the create-a-team purchase reads (ADR 0002 §3.2 E1 (a), §5.5): every
  * OPEN one, which it advances before it may mint (I1 (a)), and every one released `refunded` or

@@ -55,6 +55,13 @@ const world = vi.hoisted(() => {
 		orgOf: new Map<string, string>(),
 		/** Whether the setup's creator holds manage_billing in the org (the sessionless check). */
 		manageBilling: true,
+		/** The org the scope resolver lands on when asked for another (a substitution), or null. */
+		scopeOrg: null as string | null,
+		/** Whether the org rows exist, and the org's members, as the read-only re-link lookup reads them. */
+		orgExists: true,
+		members: [{ userId: "user-1", status: "active" }] as { userId: string; status: string }[],
+		/** Every direct database write the paths under test made (an INSERT of a member would land here). */
+		dbWrites: [] as string[],
 		/** The lease is gone when the store opens a hold (the lease row's FOR SHARE read finds nothing). */
 		openLeaseLost: false,
 		/** The next subscription the sweep's machine reads goes `active`: its payment landed. */
@@ -160,18 +167,41 @@ vi.mock("@/lib/authz/guard", () => ({
 // The sessionless manage_billing check (`holdsManageBilling`): the scope resolves to the org named, and
 // the PDP answers what the test says.
 vi.mock("@/lib/auth/scope", () => ({
-	getActiveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId })),
+	getActiveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: world.state.scopeOrg ?? orgId ?? userId })),
 }));
 vi.mock("@/lib/authz", async (importActual) => {
 	const actual = await importActual<typeof import("@/lib/authz")>();
 	return { ...actual, getPdp: () => ({ can: async () => ({ allowed: world.state.manageBilling }) }) };
 });
-// Every direct read in these paths (the org's name, the payer declaration, a member join) answers
-// nothing, and every direct write is a no-op.
-vi.mock("@/lib/db", () => {
+// The direct reads in these paths, by table: `organization` answers the org (while `orgExists`), `member`
+// answers `world.members`, and everything else (the payer declaration, a billing row) answers nothing.
+// Every write is recorded in `dbWrites` and changes nothing.
+vi.mock("@/lib/db", async () => {
+	const schema = await import("@/lib/db/schema");
+	let table: unknown = null;
 	const chain: Record<string, unknown> = {};
-	for (const m of ["select", "from", "where", "limit", "innerJoin", "update", "set", "orderBy", "returning"]) chain[m] = () => chain;
-	chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve([]).then(resolve);
+	for (const m of ["select", "where", "limit", "innerJoin", "set", "orderBy", "returning", "values", "onConflictDoNothing"]) chain[m] = () => chain;
+	chain.from = (t: unknown) => {
+		table = t;
+		return chain;
+	};
+	for (const w of ["update", "insert", "delete", "execute"]) {
+		chain[w] = () => {
+			world.state.dbWrites.push(w);
+			table = null;
+			return chain;
+		};
+	}
+	chain.then = (resolve: (v: unknown[]) => unknown) => {
+		const rows =
+			table === schema.organization && world.state.orgExists
+				? [{ id: "org-1", slug: "acme", metadata: null }]
+				: table === schema.member
+					? world.state.members.map((m) => ({ ...m }))
+					: [];
+		table = null;
+		return Promise.resolve(rows).then(resolve);
+	};
 	return { getServiceDb: () => chain };
 });
 vi.mock("@/lib/billing/queries", () => ({
@@ -328,6 +358,10 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 			const id = world.state.orgOf.get(row.subscription_id);
 			return id ? { id, slug: "acme" } : null;
 		}),
+		latestReleasedHoldOn: vi.fn(async (sub: string) => {
+			const released = world.state.holds.filter((x) => x.subscription_id === sub && x.state === "released");
+			return released.length > 0 ? { ...released[released.length - 1] } : null;
+		}),
 		openPaymentHoldOn: vi.fn(async (sub: string) => {
 			const h = world.state.holds.find((x) => x.subscription_id === sub && x.state !== "released");
 			return h ? { ...h } : null;
@@ -482,6 +516,10 @@ beforeEach(() => {
 		row: null,
 		onUpdate: null,
 		manageBilling: true,
+		scopeOrg: null,
+		orgExists: true,
+		members: [{ userId: "user-1", status: "active" }],
+		dbWrites: [],
 		openLeaseLost: false,
 		activatesOnRead: null,
 		holds: [],
@@ -601,6 +639,46 @@ describe("§5.6 — an ended X with no open hold", () => {
 			"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.",
 		);
 		expect(emitAlertEvent).not.toHaveBeenCalled();
+	});
+
+	it("advisory 2: X a hold REFUNDED in full — the §5.5 refund clause, and no alert", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+		seedHold({ state: "released", release_reason: "refunded", released_at: new Date() });
+
+		expect(await refusedClause()).toBe(
+			"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the free plan.",
+		);
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+		expect(world.state.setups.get("sub_x")?.closed_reason).toBe("ended");
+	});
+
+	it("advisory 2: `already_refunded` reads the same; a voided release still goes by the payments read", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+		seedHold({ state: "released", release_reason: "already_refunded", released_at: new Date() });
+		expect(await refusedClause()).toMatch(/refunded in full/);
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+
+		world.state.holds = [];
+		seedHold({ state: "released", release_reason: "voided_unpaid", released_at: new Date() });
+		expect(await refusedClause()).toMatch(/^This checkout was closed, and we could not confirm/);
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it("advisory 4: money that moved AFTER an earlier close (the webhook holds nothing for it) is alerted by the link", async () => {
+		subX("canceled", ["succeeded"]);
+		Object.assign(setup(), { closed_at: new Date(), closed_reason: "ended", refused_reason: null });
+
+		expect(await refusedClause()).toMatch(/We have raised an alert\./);
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(emitAlertEvent).mock.calls[0]?.[2]?.summary).toMatch(/Its setup record is closed \(ended\)\./);
+	});
+
+	it("advisory 8: with NO setup record, the alert says no setup was closed", async () => {
+		subX("canceled", ["succeeded"]);
+		await refusedClause();
+		expect(vi.mocked(emitAlertEvent).mock.calls[0]?.[2]?.summary).toMatch(/No setup record names this subscription, so no setup was closed\./);
 	});
 
 	it("the clause claims the alert only when it reached a channel (I8)", async () => {
@@ -793,6 +871,46 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 		expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
 	});
 
+	it("BLOCKER: the creator was removed from the recorded team — no link, an alert, the setup open (never `no_org`)", async () => {
+		adoptable();
+		setup();
+		world.state.members = [{ userId: "user-2", status: "active" }];
+
+		await expect(sweepAndRelink()).resolves.toEqual({ kind: "not_linked", why: "its creator is no longer an active member of team org-1" });
+		expect(stripeWrites()).toBe(0);
+		expect(world.state.setups.get("sub_x")).toMatchObject({ linked_at: null, closed_at: null });
+		expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
+	});
+
+	it("BLOCKER: the recorded team no longer exists — no link, an alert, the setup open", async () => {
+		adoptable();
+		setup();
+		world.state.orgExists = false;
+
+		await expect(sweepAndRelink()).resolves.toEqual({ kind: "not_linked", why: "its recorded team org-1 no longer exists" });
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it("advisory 6: a team with NO members is never repaired by the sessionless re-link — no member write, no link, an alert", async () => {
+		adoptable();
+		setup();
+		world.state.members = [];
+
+		await expect(sweepAndRelink()).resolves.toEqual({ kind: "not_linked", why: "its team org-1 has no members" });
+		expect(world.state.dbWrites.filter((w) => w === "insert" || w === "execute")).toEqual([]);
+		expect(stripeWrites()).toBe(0);
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it("advisory 5: a scope resolver that substitutes another org is a no — no link, an alert", async () => {
+		adoptable();
+		setup();
+		world.state.scopeOrg = "org-other";
+
+		await expect(sweepAndRelink()).resolves.toMatchObject({ kind: "not_linked", why: expect.stringMatching(/manage_billing/) });
+		expect(stripeWrites()).toBe(0);
+	});
+
 	it("a re-link beside a live Y takes the table's row: a new link_refused hold, alerted, and the setup open", async () => {
 		adoptable();
 		setup();
@@ -809,7 +927,7 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 		seedHold({ state: "needs_operator", open_note: "link_refused", alerted_at: new Date() });
 		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
 
-		await expect(relinkAdoptedSetup(LEASE, { payer_key: "user-1", subscription_id: "sub_x" }, liveSweepDeps().alert)).resolves.toMatchObject({
+		await expect(relinkAdoptedSetup(LEASE, { payer_key: "user-1", subscription_id: "sub_x", customer_id: "cus_x" }, liveSweepDeps().alert)).resolves.toMatchObject({
 			kind: "refused",
 			clause: expect.stringMatching(ALERTED),
 		});

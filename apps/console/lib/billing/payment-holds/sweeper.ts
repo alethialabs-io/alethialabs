@@ -25,22 +25,24 @@
 // at once, under the same lease (`relinkAdoptedSetup`): the visit here, the create-a-team purchase (its
 // hold pass and its sweep) and `payment-holds release` all call it. The core (`linkSetupToOrg`) lives in this file because
 // the sweeper is its caller with no session, and the session's link (app/server/actions/billing.ts)
-// runs the same function. A setup with no org stays open for the creator's resume.
+// runs the same function. A setup with no org stays open for the creator's resume. A setup whose org is
+// recorded but not usable (gone, or the creator no longer in it) is alerted on and left open. This path
+// only READS membership: it never adds anyone to an org.
 //
 // Booted from instrumentation.ts every 5 minutes (`startPaymentHoldSweeper`, the `registerLoop` shape),
 // with the optional twin route app/api/internal/payment-holds/sweep behind ALETHIA_CRON_SECRET, and
 // `wakePaymentHoldSweeper()` for one immediate, coalesced tick.
 
 import "server-only";
-import { and, asc, eq, lte, ne, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, like, lte, ne, or, type SQL, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import { newOrgCreatedByOf, newOrgSubscriptionIdOf } from "@/lib/billing/new-org-setup";
 import {
-	findSetupOrg,
 	logBillingEvent,
 	markPendingOrgSetupLinked,
 	type PendingOrgSetupRow,
@@ -58,7 +60,7 @@ import {
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
-import { organization, organizationBilling, type PaymentHoldRow, paymentHolds } from "@/lib/db/schema";
+import { member, organization, organizationBilling, type PaymentHoldRow, paymentHolds } from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { type DeliverHoldNotice, deliverHoldNotice, sendDueHoldNotices } from "./emails";
 import {
@@ -551,21 +553,69 @@ function isAdopted(hold: PaymentHoldRow): boolean {
 }
 
 /**
+ * The org a sessionless re-link may link `row` to, read-only: by `created_org_id`, else by the org whose
+ * server-stamped marker names the subscription and the creator (`findSetupOrg`'s two ways, without its
+ * membership repair). `none`: no org was ever made for it, so the setup waits for the creator's resume.
+ * `unusable`: an org is recorded, but it no longer exists, or the creator is not an ACTIVE member of it
+ * (removed, suspended, or the org has no members at all) — nothing here adds them.
+ */
+async function relinkOrgOf(
+	row: PendingOrgSetupRow,
+): Promise<{ kind: "none" } | { kind: "org"; id: string } | { kind: "unusable"; why: string }> {
+	const db = getServiceDb();
+	let orgId = row.created_org_id;
+	if (orgId) {
+		const [found] = await db.select({ id: organization.id }).from(organization).where(eq(organization.id, orgId)).limit(1);
+		if (!found) return { kind: "unusable", why: `its recorded team ${orgId} no longer exists` };
+	} else {
+		const candidates = await db
+			.select({ id: organization.id, metadata: organization.metadata })
+			.from(organization)
+			.where(like(organization.metadata, `%${row.subscription_id}%`))
+			.orderBy(asc(organization.createdAt));
+		const marked = candidates.find(
+			(o) => newOrgSubscriptionIdOf(o.metadata) === row.subscription_id && newOrgCreatedByOf(o.metadata) === row.user_id,
+		);
+		if (!marked) return { kind: "none" };
+		orgId = marked.id;
+	}
+	const members = await db
+		.select({ userId: member.userId, status: member.status })
+		.from(member)
+		.where(eq(member.organizationId, orgId));
+	if (members.length === 0) return { kind: "unusable", why: `its team ${orgId} has no members` };
+	if (!members.some((m) => m.userId === row.user_id && m.status === "active")) {
+		return { kind: "unusable", why: `its creator is no longer an active member of team ${orgId}` };
+	}
+	return { kind: "org", id: orgId };
+}
+
+/**
  * §5.6 "When a hold ends", for an `adopted` hold under its payer's lease: the payer's open setup for the
- * hold's subscription is re-linked (`relinkSetup`) when it has an org (`findSetupOrg`: its
- * `created_org_id`, or the org whose marker names it). With no open setup, or no org, nothing runs: a
- * setup with no org stays open for the creator's resume. Called by the visit here, the create-a-team
- * purchase and `payment-holds release`.
+ * hold's subscription is re-linked (`relinkSetup`) to its org (`relinkOrgOf`, read-only). With no open
+ * setup, or no org ever made for it, nothing runs: such a setup stays open for the creator's resume. An
+ * org recorded but unusable runs no core either: the operator is alerted with X as the subject, and the
+ * setup stays open (`not_linked`). Called by the visit here, the create-a-team purchase and `payment-holds
+ * release`.
  */
 export async function relinkAdoptedSetup(
 	lease: PurchaseLease,
-	hold: Pick<PaymentHoldRow, "payer_key" | "subscription_id">,
+	hold: Pick<PaymentHoldRow, "payer_key" | "subscription_id" | "customer_id">,
 	alert: HoldMachineDeps["alert"],
 ): Promise<RelinkResult> {
 	const row = await pendingOrgSetupFor(hold.payer_key, hold.subscription_id);
 	if (!row || row.linked_at || row.closed_at) return { kind: "no_setup" };
-	const org = await findSetupOrg(row, row.user_id);
-	if (!org) return { kind: "no_org" };
+	const org = await relinkOrgOf(row);
+	if (org.kind === "none") return { kind: "no_org" };
+	if (org.kind === "unusable") {
+		await alert({
+			subscriptionId: hold.subscription_id,
+			customerId: hold.customer_id,
+			paymentIntentId: null,
+			detail: `its payment hold was released as adopted and its team setup could not be re-linked: ${org.why}. The setup stays open; link it to a team, or refund it, by hand.`,
+		});
+		return { kind: "not_linked", why: org.why };
+	}
 	return relinkSetup(lease, row, org.id, alert);
 }
 

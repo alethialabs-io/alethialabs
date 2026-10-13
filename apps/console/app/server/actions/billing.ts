@@ -118,6 +118,7 @@ import {
 	openPendingOrgSetupsForOrg,
 	paymentHoldsOfPayer,
 	pendingOrgSetupBillingSchema,
+	latestReleasedHoldOn,
 	pendingOrgSetupFor,
 	pendingOrgSetupSlugSchema,
 	type PendingOrgSetupRow,
@@ -921,6 +922,9 @@ const LINK_REFUSED_NOT_CHARGED =
 	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
 const LINK_REFUSED_UNCONFIRMED = `This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at ${SUPPORT_EMAIL} with the time of the payment.`;
 const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
+/** §5.5's `released(refunded)` clause, for an ended X a hold refunded in full. */
+const LINK_REFUSED_REFUNDED =
+	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the free plan.";
 const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
 
 /** Where the open-setup guard sends the setup's creator (ADR 0002 §5.5). */
@@ -2728,18 +2732,23 @@ async function refuseHeldLink(userId: string, subscriptionId: string, hold: Paym
 }
 
 /**
- * The link's refusal of an ENDED X with no open hold (§5.6 "X is ended, no hold names it"; C86). The
- * payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved) is the "not
- * charged" clause and no alert; anything else — money may have moved, or the read failed — is the
- * "contact support" clause and an alert with X as the subject. It refunds nothing: only a hold may
- * refund (I3). The setup is closed with `refused_reason = 'ended'` (`recordSetupRefusal`, which closes
- * only while no hold is open). The alert is skipped when that closed nothing and the setup was already
- * closed as `ended`, by the setup closer or by an earlier refusal here: each raised this alert when its
- * own read left money possibly moved, and raised none only on a read that proved no money moved. The
- * clause claims an alert only when this call's reached a channel (I8).
+ * The link's refusal of an ENDED X with no open hold (§5.6, the first two rows; C86). The setup is
+ * closed with `refused_reason = 'ended'` (`recordSetupRefusal`, which closes only while no hold is open).
+ *   - A hold already RELEASED as `refunded` or `already_refunded` names X (the newest released hold on
+ *     X): the §5.5 refund clause, and no alert. That release read every covering refund `succeeded`.
+ *   - Otherwise the payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved)
+ *     is the "not charged" clause and no alert; anything else — money may have moved, or the read failed
+ *     — is the "contact support" clause and an alert with X as the subject, on every such refusal. An
+ *     earlier reader that closed this setup read the payments at ITS moment; money can move on a
+ *     cancelled X's open invoice after that (a stale tab), and the webhook opens no hold for it, so an
+ *     earlier close is no reason to stay quiet now. The alert rule's throttle collapses repeats for X.
+ * It refunds nothing: only a hold may refund (I3). The clause claims an alert only when this call's
+ * reached a channel (I8).
  */
 async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
-	const { planState } = await readNewOrgPlanState(sub);
+	const released = await latestReleasedHoldOn(sub.id);
+	const refunded = released?.release_reason === "refunded" || released?.release_reason === "already_refunded";
+	const { planState } = refunded ? { planState: "refunded" } : await readNewOrgPlanState(sub);
 	const closed = await recordSetupRefusal({ userId, subscriptionId: sub.id, refused: "ended", close: true });
 	logBillingEvent("billing.new_org_link.refused", {
 		subscription_id: sub.id,
@@ -2749,18 +2758,16 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 		plan_state: planState,
 		setup_closed_now: closed ? "true" : "false",
 	});
+	if (refunded) return { kind: "refused", clause: LINK_REFUSED_REFUNDED };
 	if (planState === "not_charged") return { kind: "refused", clause: LINK_REFUSED_NOT_CHARGED };
 	const record = closed ?? (await pendingOrgSetupFor(userId, sub.id));
-	const closerAlerted = !closed && record?.closed_reason === "ended";
-	const alerted =
-		!closerAlerted &&
-		(await alertPaymentNeedsSupport({
-			subscriptionId: sub.id,
-			customerId: subscriptionCustomerId(sub),
-			paymentIntentId: null,
-			context: "setup_closed",
-			detail: `the link to team ${orgId} was refused because the subscription reads ${sub.status}, and its first payment is not proven unmoved. Nothing was refunded automatically; check the payment and refund it by hand if it was taken.`,
-		}));
+	const alerted = await alertPaymentNeedsSupport({
+		subscriptionId: sub.id,
+		customerId: subscriptionCustomerId(sub),
+		paymentIntentId: null,
+		context: "setup_closed",
+		detail: `the link to team ${orgId} was refused because the subscription reads ${sub.status}, and its first payment is not proven unmoved. ${setupRecordLine(record)} No hold has refunded it; check the payment and refund it by hand if it was taken.`,
+	});
 	return {
 		kind: "refused",
 		clause: `${LINK_REFUSED_UNCONFIRMED}${alerted ? LINK_REFUSED_ALERT_RAISED : ""}${LINK_REFUSED_FREE_PLAN}`,
@@ -2768,9 +2775,20 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 }
 
 /**
+ * What the ended-X alert says of the setup record, because its context's summary speaks of a closed
+ * setup: true only when the record is closed, so every other case says what it is.
+ */
+function setupRecordLine(record: PendingOrgSetupRow | null): string {
+	if (!record) return "No setup record names this subscription, so no setup was closed.";
+	if (record.closed_at) return `Its setup record is closed (${record.closed_reason ?? "no reason"}).`;
+	return record.linked_at ? "Its setup record is linked, not closed." : "Its setup record is still open.";
+}
+
+/**
  * What `linkSubscriptionToNewOrg` did (ADR 0002 §5.6): linked, with the plan state it read (#5539's
- * report, unchanged), or refused, with the sentence the sheet shows. A refusal is final for this
- * setup — the sheet does not offer a retry.
+ * report, unchanged), or refused, with the sentence the sheet shows. The sheet treats a refusal as final
+ * and offers no retry; the setup itself is closed only when X is ended and unheld, and otherwise stays
+ * open for the hold that names X, whose release closes it or whose adoption re-links it (I16).
  */
 export type NewOrgLinkResult =
 	| ({ kind: "linked" } & NewOrgPlanReport)

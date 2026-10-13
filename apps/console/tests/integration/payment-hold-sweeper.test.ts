@@ -31,7 +31,7 @@
 // Every tick here is scoped to the test's own payer (`payerKey`), so no other file's rows are touched.
 
 import { randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
 /** What the link's core reads and writes in Stripe, and whether the creator holds manage_billing. */
@@ -795,6 +795,42 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		expect(linkWorld.updates).toEqual([]);
 		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
 		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /manage_billing/.test(c[0].detail))).toBe(true);
+	});
+
+	it("BLOCKER: a creator removed from the recorded team is not linked — an alert, the setup open, and `release` names why", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		const other = await newUser();
+		await getServiceDb().insert(member).values({ organizationId: orgId, userId: other, role: "owner" });
+		await getServiceDb().delete(member).where(and(eq(member.organizationId, orgId), eq(member.userId, payer)));
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+
+		await tick(payer, stripe);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /no longer an active member/.test(c[0].detail))).toBe(true);
+	});
+
+	it("advisory 6: a team with NO members is never repaired by the sweeper — no member row is written, no link, an alert", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await getServiceDb().delete(member).where(eq(member.organizationId, orgId));
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+
+		await tick(payer, stripe);
+		const members = await getServiceDb().select().from(member).where(eq(member.organizationId, orgId));
+		expect(members).toEqual([]);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /has no members/.test(c[0].detail))).toBe(true);
 	});
 
 	it("C80: beside a live Y the re-link opens a link_refused hold and leaves the setup open (refused_reason), and T2o never adopts it", async () => {

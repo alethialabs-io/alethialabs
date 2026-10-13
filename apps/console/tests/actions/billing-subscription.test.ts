@@ -67,6 +67,7 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		// ADR 0002 S8: by default the user has no payment hold and no other record to live-check.
 		liveCheckSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
 		openPaymentHoldOn: vi.fn(async () => null),
+		latestReleasedHoldOn: vi.fn(async () => null),
 		paymentHoldsOfPayer: vi.fn(async () => [...holdFake.remembered.values()]),
 	};
 });
