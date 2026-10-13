@@ -4104,7 +4104,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 			unlinkedX();
 			purchaseLease.renewLease.mockResolvedValue(false);
 
-			await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(PURCHASE_IN_PROGRESS);
+			await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(PURCHASE_STOPPED);
 			expect(stripe.customers.update).not.toHaveBeenCalled();
 			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
 			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
@@ -4114,7 +4114,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 			unlinkedX();
 			purchaseLease.renewLease.mockResolvedValueOnce(true).mockResolvedValue(false);
 
-			await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(PURCHASE_IN_PROGRESS);
+			await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(PURCHASE_STOPPED);
 			expect(stripe.customers.update).toHaveBeenCalledTimes(1);
 			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
 		});

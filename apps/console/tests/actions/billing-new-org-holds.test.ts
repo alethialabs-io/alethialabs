@@ -290,6 +290,7 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 });
 
 import { createNewOrgSubscriptionIntent, createSubscriptionIntent } from "@/app/server/actions/billing";
+import { emitAlertEvent } from "@/lib/alerts/emit";
 import {
 	forgetPendingOrgSetup,
 	liveCheckSetupCustomers,
@@ -619,7 +620,7 @@ describe("I1 (c) — the live check, read last (§4.3)", () => {
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
 
-	it("C94: the live check reads its own record set — a record whose org exists, which the sweep's helper leaves out", async () => {
+	it("C94: the live check reads its own record set — a record whose org exists, which the reuse helper leaves out", async () => {
 		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
 		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_with_org"] });
 		sub("sub_live", "active", ["succeeded"], { created_by: "user-1" }, "cus_with_org");
@@ -656,6 +657,30 @@ describe("I1 (c) — the live check, read last (§4.3)", () => {
 
 		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("over the live check's record cap, a paid prior still resumes — the cap is read after the resume and the hold pass", async () => {
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+		sub("sub_paid", "active", ["succeeded"]);
+
+		await expect(buy({ priorSubscriptionId: "sub_paid" })).resolves.toMatchObject({
+			kind: "resume",
+			setup: { subscriptionId: "sub_paid" },
+		});
+	});
+
+	it("over the live check's record cap, the refusal raises an operator alert, and nothing is minted", async () => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		expect(refusalOf(await buy())).toMatch(/more unfinished checkouts than we can check automatically/);
+		expect(emitAlertEvent).toHaveBeenCalledWith(
+			"org-platform",
+			"system.platform.payment_needs_support",
+			expect.objectContaining({ resource_type: "user", resource_id: "user-1" }),
+		);
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
 	});
 
 	it("a live check that cannot list refuses — it never mints on a read it did not make", async () => {

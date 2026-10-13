@@ -2154,19 +2154,23 @@ const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94), read AFTER the hold pass and the sweep so that a
- * subscription either one adopted is still seen: every subscription, of every status, on each of
+ * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94): every subscription, of every status, on each of
  * `customers` — the customers of the user's unlinked records (`liveCheckSetupCustomers`, whether or not
  * the team exists or the record is closed), of the holds this request saw, and the one it would mint on —
- * fully paged. A LIVE create-a-team subscription of the user's — one whose webhook has not been seen yet,
+ * fully paged. ORDER: it runs AFTER the hold pass and the sweep, so a subscription either one adopted is
+ * still seen, and it reads the record set AGAIN here (`liveCheckCustomers`) rather than reuse the copy
+ * the sweep read: a resume lookup can add a record outside this user's lease (`setupRecordFor`'s
+ * backfill), so only a fresh read makes this the last read. A LIVE create-a-team subscription of the user's — one whose webhook has not been seen yet,
  * or one that went straight to `active` — is returned. A list that fails, or one over its cap, refuses
  * (§5.1): the purchase never mints on a read it did not make.
  */
 async function liveCreateATeamSubscription(
 	userId: string,
-	customers: Iterable<string>,
+	alsoOn: Iterable<string>,
 ): Promise<{ kind: "none" } | { kind: "live"; sub: Stripe.Subscription } | { kind: "refused"; message: string }> {
-	for (const customer of new Set(customers)) {
+	const recorded = await liveCheckCustomers(userId);
+	if (recorded.kind === "refused") return recorded;
+	for (const customer of new Set([...recorded.customers, ...alsoOn])) {
 		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
 		try {
 			listed = await listCustomerSubscriptions(getPurchaseStripe(), customer, "all");
@@ -2181,6 +2185,24 @@ async function liveCreateATeamSubscription(
 		if (live) return { kind: "live", sub: live };
 	}
 	return { kind: "none" };
+}
+
+/**
+ * The customers of the live check's record set (`liveCheckSetupCustomers`), or the refusal over its cap.
+ * Closed records are never deleted, so over the cap is lasting: the refusal also alerts the operator,
+ * who clears them.
+ */
+async function liveCheckCustomers(
+	userId: string,
+): Promise<{ kind: "all"; customers: string[] } | { kind: "refused"; message: string }> {
+	const recorded = await liveCheckSetupCustomers(userId);
+	if (recorded.kind === "all") return recorded;
+	await alertOperator({
+		title: "A create-a-team purchase refused: too many setup records to check",
+		subject: { type: "user", id: userId },
+		summary: `User ${userId} has unlinked create-a-team setup records (closed ones included) on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not check them all for a live or settling subscription and refused. Closed records are never deleted, so this repeats until they are cleared by hand.`,
+	});
+	return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 }
 
 /** The setup of a paid create-a-team subscription to resume, or the refusal when the user cannot finish it here. */
@@ -2217,12 +2239,6 @@ async function startNewOrgSubscription(
 		return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 	}
 	const recordedCustomers = recorded.customers;
-	// The live check's own record set (§4.3, C94): it includes records whose team exists and closed ones,
-	// which the reuse set above leaves out. The sweep reads it too, so an `incomplete` subscription still
-	// settling on such a customer is KEPT and refuses — the live check alone would read it "not live" and
-	// mint beside it, seconds before it activated.
-	const liveRecorded = await liveCheckSetupCustomers(actor.userId);
-	if (liveRecorded.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 
 	// The prior is READ from Stripe (#5445): the browser's id is a hint. A paid one is resumed; one this
 	// user did not mint, or one a link already gave an `organization_id` (§4.2), is left alone.
@@ -2265,6 +2281,15 @@ async function startNewOrgSubscription(
 		}
 	}
 
+	// The live check's own record set (§4.3, C94): every unlinked record, INCLUDING closed ones and ones
+	// whose team exists, which the reuse set above leaves out. Read only now — after the paid-prior resume
+	// and the hold pass, so a user over its cap can still resume a paid setup — and before a customer is
+	// minted. Closed records are never deleted, so over the cap is lasting: it refuses AND alerts. The
+	// sweep reads this set too, so an `incomplete` subscription still settling on such a customer is KEPT
+	// and refuses, where the live check alone would read it "not live" and mint beside it.
+	const liveRecorded = await liveCheckCustomers(actor.userId);
+	if (liveRecorded.kind === "refused") return liveRecorded;
+
 	// Reuse the customer from a prior attempt only if this user owns it and no org does (ADR 0002 §4.2
 	// (2), `isReusableCreateATeamCustomer`): the one the browser passed, else the one on the caller's
 	// newest unfinished setup record (the browser can lose its copy, #5463). Otherwise mint a fresh bare
@@ -2295,9 +2320,11 @@ async function startNewOrgSubscription(
 	const mintedOn: MintedCustomer = { customerId, origin };
 
 	// I1 (b), the sweep: every `incomplete` subscription on the customer this purchase uses and on every
-	// customer the caller's unlinked records name, whether or not their team exists — a purchase still
-	// settling on any of them blocks a second one. Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else
-	// on these customers is left alone, alerted on, and does not refuse. Each of the user's own is closed
+	// customer the caller's unlinked records name — closed records and records whose team exists
+	// included — so a purchase still settling on any of them blocks a second one. Only this user's
+	// create-a-team subscriptions are touched (ADR 0002 §4.2): one of theirs that never paid is closed
+	// under a hold even when its team exists (a failed bank debit, say), and anything else on these
+	// customers — a team's own plan or AI checkout included — is left alone, alerted on, and does not refuse. Each of the user's own is closed
 	// under a hold or kept (`closeOrKeep`). A customer with more than the sweep reads refuses, and so does
 	// a list that fails (§5.1).
 	for (const sweepCustomer of new Set([customerId, ...recordedCustomers, ...liveRecorded.customers])) {
@@ -2327,11 +2354,7 @@ async function startNewOrgSubscription(
 
 	// I1 (c), read last.
 	const holdCustomers = [...seen.holds.values()].map((h) => h.customer_id);
-	const live = await liveCreateATeamSubscription(actor.userId, [
-		...liveRecorded.customers,
-		...holdCustomers,
-		customerId,
-	]);
+	const live = await liveCreateATeamSubscription(actor.userId, [...holdCustomers, customerId]);
 	if (live.kind === "refused") return { kind: "refused", message: live.message };
 	if (live.kind === "live") return resumeOrRefuse(live.sub, actor.userId);
 
@@ -2554,7 +2577,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	const leased = await withUserPurchaseLease(actor.userId, (lease) =>
 		linkSubscriptionToNewOrgUnderLease(actor, input, fenceFor(lease)),
 	);
-	if (!leased.ran) throw new Error(PURCHASE_IN_PROGRESS);
+	if (!leased.ran) throw new Error(leased.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS);
 	return leased.value;
 }
 
