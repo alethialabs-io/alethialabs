@@ -93,9 +93,9 @@ tier_separation:
     reason: The searchable command list inside country-select, facet-filter and phone-input — root, input, list, group, item and the empty branch — and the dialog wrapper, which the command suite opens to assert its search is named after its title (#5824).
 
   - path: src/sheet.tsx
-    suite: [tests/grouped-filter-sheet.test.tsx]
-    symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle]
-    reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description.
+    suite: [tests/grouped-filter-sheet.test.tsx, tests/sheet.test.tsx]
+    symbols: [Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger]
+    reason: The grouped-filter sheet suite opens a real sheet, mounting the root, content, header, title and description; the sheet suite opens one from a real trigger, top-level and nested, and asserts its overlay (#5706).
 
   - path: src/collapsible.tsx
     suite: [tests/grouped-filter-sheet.test.tsx]
@@ -171,10 +171,10 @@ baseline:
     reason: The dialog's trigger, portal, overlay, footer and close are rendered by no suite — the filters open their dialogs programmatically.
 
   - path: src/sheet.tsx
-    symbols: [SheetClose, SheetFooter, SheetTrigger]
+    symbols: [SheetClose, SheetFooter]
     issue: "#2649"
     state: untested-export
-    reason: The sheet's trigger, footer and close are rendered by no suite — the grouped filter sheet is opened programmatically.
+    reason: The sheet's footer and close are rendered by no suite — the grouped filter sheet is opened programmatically, and the sheet suite closes through the overlay.
 
   # ── modules nothing in tests/ names at all ────────────────────────────────────────────────────
   #
