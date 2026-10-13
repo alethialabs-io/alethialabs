@@ -936,8 +936,9 @@ func TestNodePoolContract_ReferenceCasesAreWellFormed(t *testing.T) {
 }
 
 // TestNodePoolContract_ReferenceRunsEveryCase runs `tofu test` on the reference module and on the
-// conforming fixture: every refusal must refuse and every acceptance must plan. The Go job in ci.yml
-// installs tofu for packages/core, so in CI a missing binary is a failure, not a skip.
+// conforming fixture: every refusal must refuse and every acceptance must plan. Two ci.yml jobs run
+// this test and both install tofu: the Go matrix job (for packages/core) and go-coverage-badge. So in
+// CI a missing binary is a failure, not a skip.
 func TestNodePoolContract_ReferenceRunsEveryCase(t *testing.T) {
 	if _, err := exec.LookPath("tofu"); err != nil {
 		if os.Getenv("CI") != "" {
