@@ -316,7 +316,6 @@ baseline:
       [
         listDimensionsWithValues,
         assignmentsForKind,
-        listResourceIdsByValue,
         countResourcesByKindForDimension,
       ]
     issue: "#2649"
@@ -329,22 +328,10 @@ baseline:
     reason: The enforcing-value lookup is referenced only through the promotion-lifecycle test's `vi.mock` of this module; no suite executes it for real.
 
   - path: lib/queries/runner-usage.ts
-    symbols: [idleManagedRunnersForProvider]
-    issue: "#2649"
-    state: untested-export
-    reason: The idle-runner sweep read is asserted by no suite.
-
-  - path: lib/queries/runner-usage.ts
     symbols: [jobMinutesByProvider]
     issue: "#2649"
     state: mock-only
     reason: The per-provider job-minute roll-up is only ever named through a mock of this module.
-
-  - path: lib/queries/usage-counts.ts
-    symbols: [queryJobCount, queryProjectJobCount]
-    issue: "#2649"
-    state: untested-export
-    reason: The org and per-project job counters are asserted by no suite, unlike the gauges beside them.
 
   - path: lib/billing/ai-quota.ts
     symbols: [meteringFailed, sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
