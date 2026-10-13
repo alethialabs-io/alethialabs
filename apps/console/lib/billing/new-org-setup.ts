@@ -20,6 +20,7 @@
 
 import type { NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
+import type { OpenPaymentHoldState } from "@/lib/db/schema";
 
 /** The organization-metadata key that names the subscription an organization was created for. */
 export const NEW_ORG_SUBSCRIPTION_KEY = "newOrgSubscriptionId";
@@ -79,8 +80,14 @@ export interface NewOrgSetupState {
 	 * invoice's payments as the server read them — the sheet shows it instead of assuming "active".
 	 */
 	planState: NewOrgPlanState;
-	/** Stripe's hosted page to complete an `action_needed` payment; null otherwise. */
+	/** Stripe's hosted page to complete an `action_needed` payment; null otherwise, and while `hold` is set. */
 	paymentUrl: string | null;
+	/**
+	 * The OPEN payment hold that names this subscription (ADR 0002 §5.6): its state, and the sentence the
+	 * customer is shown about it (§5.5). Null when no hold is open. `resolveNewOrgSetup` and
+	 * `findUnfinishedNewOrgSetup` set it on every state they return.
+	 */
+	hold?: { state: OpenPaymentHoldState; notice: string } | null;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */
