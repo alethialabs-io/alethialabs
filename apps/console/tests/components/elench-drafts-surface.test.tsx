@@ -1344,7 +1344,7 @@ describe("S9 › close-out of the acceptance matrix (#5464)", () => {
 		await flush(1_000);
 		expect(server.row(k)?.content.text).toBe("deploy");
 		// No control in the console sends DISCARD yet (elench-conversation.tsx: "nothing offers a
-		// Discard"), so the event goes to the store, as the existing test at line 970 does too.
+		// Discard"), so the event goes to the store, as "send into a deleted conversation…" does too.
 		act(() => tab.drafts.store.dispatch({ type: "ENTRY", key: k, event: { type: "DISCARD" } }));
 		await flush();
 		expect(server.row(k)?.state).toBe("discarded");
