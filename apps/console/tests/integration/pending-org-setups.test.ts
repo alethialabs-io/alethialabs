@@ -42,6 +42,10 @@ import {
 import {
 	closePendingOrgSetup,
 	findSetupOrg,
+	forgetPendingOrgSetup,
+	liveCheckSetupCustomers,
+	openPaymentHoldOn,
+	paymentHoldsOfPayer,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
 	openPendingOrgSetupsForOrg,
@@ -61,9 +65,11 @@ import {
 	member,
 	organization,
 	organizationBilling,
+	paymentHolds,
 	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
+import { closeSetup } from "@/scripts/pending-org-setups";
 import { APP_ROLE_DISTINCT, describeIfDb, purgeAuthzActivityLog, refusalText } from "./db";
 
 const USER_A = randomUUID();
@@ -733,5 +739,141 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 	it("C81: once the last open setup is closed, the org's guard reads nothing", async () => {
 		await closePendingOrgSetup({ subscriptionId: SUB_OPEN, reason: "operator", closedBy: CO_OWNER, note: "it" });
 		expect(await openPendingOrgSetupsForOrg(ORG)).toEqual([]);
+	});
+});
+
+// ADR 0002 S8 (#5926). I16 (a), C92: a setup whose subscription has an OPEN payment hold is never closed —
+// not by the closer, not by the link's compare-and-set, not by the operator's `close-setup` — and the
+// hold's release decides it. §8: `forgetPendingOrgSetup` keeps a record a hold names unless the hold was
+// released as never payable. C94: the live check's record set includes records whose team exists, and
+// closed ones. Each fails on dev, where none of these predicates reads `payment_holds`.
+describeIfDb("pending_org_setups — S8: payment holds decide the setup (I16, C92), and the live check's records (C94)", () => {
+	const U = randomUUID();
+	const OTHER = randomUUID();
+	const ORG_H = randomUUID();
+	const sub = (tag: string) => `sub_it_s8_${tag}_${randomUUID().slice(0, 8)}`;
+	const SUB_HELD = sub("held");
+	const SUB_F_OPEN = sub("fopen");
+	const SUB_F_REFUNDED = sub("fref");
+	const SUB_F_VOIDED = sub("fvoid");
+	const SUB_F_NONE = sub("fnone");
+	const SUB_OTHER = sub("other");
+	const ALL = [SUB_HELD, SUB_F_OPEN, SUB_F_REFUNDED, SUB_F_VOIDED, SUB_F_NONE, SUB_OTHER];
+	let savedStripeKey: string | undefined;
+
+	/** Inserts a hold of `payer` on `subscriptionId`, open (`closing`) unless `released` names a reason. */
+	async function hold(subscriptionId: string, payer: string, released?: "voided_unpaid" | "refunded"): Promise<void> {
+		await getServiceDb()
+			.insert(paymentHolds)
+			.values({
+				subscription_id: subscriptionId,
+				customer_id: "cus_it_s8",
+				payer_key: payer,
+				invoice_id: `in_${subscriptionId}`,
+				state: released ? "released" : "closing",
+				release_reason: released ?? null,
+				released_at: released ? new Date() : null,
+				next_check_at: released ? null : new Date(),
+				opened_by: "purchase",
+			});
+	}
+
+	/** X as Stripe reads it: canceled, never linked. */
+	const canceledX = (id: string) => ({
+		id,
+		status: "canceled",
+		customer: "cus_it_s8",
+		latest_invoice: null,
+		currency: "eur",
+		items: { data: [] },
+		metadata: { created_by: U },
+	});
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const db = getServiceDb();
+		await db.insert(user).values([
+			{ id: U, email: `it-s8-${U}@example.test` },
+			{ id: OTHER, email: `it-s8-other-${OTHER}@example.test` },
+		]);
+		await db.insert(organization).values({ id: ORG_H, name: "Held", slug: `it-held-${ORG_H.slice(0, 8)}` });
+		for (const [s8, customer] of [
+			[SUB_HELD, "cus_it_s8_org"],
+			[SUB_F_OPEN, "cus_it_s8_a"],
+			[SUB_F_REFUNDED, "cus_it_s8_b"],
+			[SUB_F_VOIDED, "cus_it_s8_c"],
+			[SUB_F_NONE, "cus_it_s8_d"],
+		] as const) {
+			await recordPendingOrgSetup({ userId: U, subscriptionId: s8, customerId: customer, name: "Held", slug: "held" });
+		}
+		await recordPendingOrgSetup({ userId: OTHER, subscriptionId: SUB_OTHER, customerId: "cus_it_s8_other", name: "O", slug: "o" });
+		await db.update(pendingOrgSetups).set({ created_org_id: ORG_H }).where(eq(pendingOrgSetups.subscription_id, SUB_HELD));
+		await hold(SUB_HELD, U);
+		await hold(SUB_F_OPEN, U);
+		await hold(SUB_F_REFUNDED, U, "refunded");
+		await hold(SUB_F_VOIDED, U, "voided_unpaid");
+		await hold(SUB_OTHER, OTHER);
+	});
+
+	afterAll(async () => {
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await db.delete(paymentHolds).where(inArray(paymentHolds.subscription_id, ALL));
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.user_id, [U, OTHER]));
+		await db.delete(organization).where(eq(organization.id, ORG_H));
+		await db.delete(user).where(inArray(user.id, [U, OTHER]));
+	});
+
+	it("C92: with an open hold on an ended X, the closer, the link's compare-and-set and close-setup each leave closed_at null", async () => {
+		const row = await pendingOrgSetupFor(U, SUB_HELD);
+		if (!row) throw new Error("fixture: the held record is missing");
+		await expect(settleOpenSetup(row, { sub: canceledX(SUB_HELD) as never, orgId: ORG_H })).resolves.toBe("open");
+		expect(await closePendingOrgSetup({ subscriptionId: SUB_HELD, reason: "org_has_plan", refusedReason: "org_has_plan" })).toBeNull();
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce(canceledX(SUB_HELD));
+		const printed: string[] = [];
+		const r = await closeSetup({ subscriptionId: SUB_HELD, reason: "it", operator: U }, (line) => printed.push(line));
+		expect(r).toMatchObject({ kind: "refused", reason: expect.stringMatching(/open payment hold \(closing\)/) });
+		expect((await pendingOrgSetupFor(U, SUB_HELD))?.closed_at).toBeNull();
+		// The guard keeps refusing while the hold is open: the setup is still open for the org.
+		expect((await openPendingOrgSetupsForOrg(ORG_H)).map((x) => x.subscription_id)).toEqual([SUB_HELD]);
+	});
+
+	it("C92: once the hold is released, the same closer closes the setup", async () => {
+		await getServiceDb()
+			.update(paymentHolds)
+			.set({ state: "released", release_reason: "operator", released_at: new Date(), next_check_at: null })
+			.where(eq(paymentHolds.subscription_id, SUB_HELD));
+		expect(await openPaymentHoldOn(SUB_HELD)).toBeNull();
+		const row = await pendingOrgSetupFor(U, SUB_HELD);
+		if (!row) throw new Error("fixture: the held record is missing");
+		await expect(settleOpenSetup(row, { sub: canceledX(SUB_HELD) as never, orgId: ORG_H })).resolves.toBe("closed");
+		expect((await pendingOrgSetupFor(U, SUB_HELD))?.closed_reason).toBe("ended");
+	});
+
+	it("§8: forgetPendingOrgSetup drops a record only when no hold names it or the hold proved it never payable", async () => {
+		for (const id of [SUB_F_OPEN, SUB_F_REFUNDED, SUB_F_VOIDED, SUB_F_NONE]) {
+			await forgetPendingOrgSetup(U, { id, status: "incomplete_expired", metadata: { created_by: U } }, "never_paid");
+		}
+		expect(await pendingOrgSetupFor(U, SUB_F_OPEN)).not.toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_REFUNDED)).not.toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_VOIDED)).toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_NONE)).toBeNull();
+	});
+
+	it("C94: the live check lists the customers of unlinked records with a team, and of closed ones; never another user's", async () => {
+		const live = await liveCheckSetupCustomers(U);
+		expect(live).toEqual({ kind: "all", customers: expect.arrayContaining(["cus_it_s8_org", "cus_it_s8_a", "cus_it_s8_b"]) });
+		const unlinked = await unlinkedPendingOrgSetupCustomers(U);
+		expect(unlinked.kind === "all" ? unlinked.customers : []).not.toContain("cus_it_s8_org");
+		expect(live.kind === "all" ? live.customers : []).not.toContain("cus_it_s8_other");
+	});
+
+	it("paymentHoldsOfPayer reads the payer's open holds and recent refunds — never another payer's, never a voided release", async () => {
+		const subs = (await paymentHoldsOfPayer(U)).map((h) => h.subscription_id);
+		expect(subs).toEqual(expect.arrayContaining([SUB_F_OPEN, SUB_F_REFUNDED]));
+		expect(subs).not.toContain(SUB_F_VOIDED);
+		expect(subs).not.toContain(SUB_OTHER);
 	});
 });

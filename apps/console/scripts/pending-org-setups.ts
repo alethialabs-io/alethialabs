@@ -21,7 +21,11 @@
 // in Stripe first (refunding it when it was paid), because closing the setup of a live one would hide it
 // from every reader. Any other read failure refuses and writes nothing.
 //
-// The write is a compare-and-set on `closed_at IS NULL AND linked_at IS NULL`. Only when it returned
+// It also refuses while an OPEN payment hold names the subscription (ADR 0002 I16, C92): that hold is
+// watching the money, and its release decides the setup. `payment-holds release` is the way out then.
+//
+// The write is a compare-and-set on `closed_at IS NULL AND linked_at IS NULL` and on no open hold in the
+// same statement. Only when it returned
 // the row is the audit event `billing.pending_org_setup.closed` written — a structured log line with
 // that stable name (the console has no billing audit table; the durable record is the row's
 // `closed_by` and `closed_note`). A second run matches nothing and emits nothing.
@@ -30,11 +34,11 @@
 // console runs with. Exit codes: 0 — closed, or already not open; 1 — refused, or it could not run.
 
 import { fileURLToPath } from "node:url";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
-import { pendingOrgSetups } from "@/lib/db/schema";
+import { paymentHolds, pendingOrgSetups } from "@/lib/db/schema";
 
 // This file reads and writes `pending_org_setups` itself rather than through
 // lib/billing/pending-org-setup.ts: that module is `server-only`, which nothing resolves outside the
@@ -57,7 +61,7 @@ async function setupBySubscription(subscriptionId: string): Promise<SetupRow | n
 	return row ?? null;
 }
 
-/** Closes the setup if it is still open — one compare-and-set — and returns it, else null. */
+/** Closes the setup if it is still open and no payment hold on it is — one compare-and-set — and returns it, else null. */
 async function closeOpenSetup(subscriptionId: string, operator: string, note: string): Promise<SetupRow | null> {
 	const now = new Date();
 	const [closed] = await getServiceDb()
@@ -68,10 +72,21 @@ async function closeOpenSetup(subscriptionId: string, operator: string, note: st
 				eq(pendingOrgSetups.subscription_id, subscriptionId),
 				isNull(pendingOrgSetups.closed_at),
 				isNull(pendingOrgSetups.linked_at),
+				sql`NOT EXISTS (SELECT 1 FROM payment_holds h WHERE h.subscription_id = ${subscriptionId} AND h.state <> 'released')`,
 			),
 		)
 		.returning();
 	return closed ?? null;
+}
+
+/** The state of the open payment hold on `subscriptionId`, or null when none is open. */
+async function openHoldState(subscriptionId: string): Promise<string | null> {
+	const [hold] = await getServiceDb()
+		.select({ state: paymentHolds.state })
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.limit(1);
+	return hold?.state ?? null;
 }
 
 /** True for Stripe's "No such subscription" error — the id names nothing in this account. */
@@ -132,6 +147,13 @@ export async function closeSetup(
 
 	const closed = await closeOpenSetup(input.subscriptionId, operator, reason);
 	if (!closed) {
+		const held = await openHoldState(input.subscriptionId);
+		if (held) {
+			return refuse(
+				print,
+				`An open payment hold (${held}) names ${input.subscriptionId}; its release decides this setup. Use "billing:payment-holds show" and "release" instead.`,
+			);
+		}
 		print("The setup is not open (already closed or linked); nothing was changed.");
 		return { kind: "not_open" };
 	}
