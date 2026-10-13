@@ -58,6 +58,21 @@ function fatalErrors(guard: ConsoleGuard): string[] {
 }
 
 /**
+ * Whether a request is the project shell's environment-status server action: a POST whose body is
+ * the action's arguments, `[projectId, environmentId]`, with no environment chosen in the URL.
+ */
+function isEnvironmentStatusAction(method: string, body: string | null, projectId: string): boolean {
+	if (method !== "POST" || !body) return false;
+	let args: unknown;
+	try {
+		args = JSON.parse(body);
+	} catch {
+		return false;
+	}
+	return Array.isArray(args) && args.length === 2 && args[0] === projectId && args[1] === null;
+}
+
+/**
  * One line per violation, carrying axe's own check payload.
  *
  * THE PAYLOAD IS THE POINT, not decoration. `color-contrast` puts `fgColor`, `bgColor`,
@@ -253,7 +268,15 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 	for (const route of PROJECT_ROUTES) {
 		test(`project ${route.label} loads without a 500 / redirect / pageerror`, async ({ owner }) => {
 			const proj = await ensureProject(owner);
+			// The project shell posts the environment-status action once it has hydrated, on every
+			// project route. The test holds the page until that action has answered, so a failure in
+			// it is part of this verdict (#5865).
+			const envStatus = owner.page.waitForResponse(
+				(res) => isEnvironmentStatusAction(res.request().method(), res.request().postData(), proj.projectId),
+				{ timeout: 60_000 },
+			);
 			await loadAndAssertShell(owner.page, `/${owner.orgSlug}/${proj.slug}${route.sub}`);
+			await envStatus;
 			expect(fatalErrors(owner.guard), `fatal errors on project ${route.label}`).toEqual([]);
 		});
 	}
