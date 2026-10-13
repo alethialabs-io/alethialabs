@@ -591,7 +591,7 @@ describe("writes are debounced (§11.2 #21)", () => {
 		expect(h.save.calls).toHaveLength(1);
 	});
 
-	it("the tab's cache item is written once, 300 ms after the last edit", async () => {
+	it("a burst of edits writes the tab's cache item once, 300 ms after the last edit", async () => {
 		const item = `${CACHE_PREFIX}${VIEWER}:${keyId(K)}`;
 		const writes: string[] = [];
 		const real = Storage.prototype.setItem;
@@ -613,6 +613,12 @@ describe("writes are debounced (§11.2 #21)", () => {
 		expect(writes).toHaveLength(1);
 		expect(writes[0]).toContain("deploy");
 		expect(window.sessionStorage.getItem(item)).toContain("deploy");
+		// …and once for the burst: nothing writes it again before the save goes on the wire, 800 ms
+		// after the last edit. (That save changes the entry, and the store then writes the item
+		// again with the same content; that write is the save's, not the keystrokes'.)
+		await vi.advanceTimersByTimeAsync(499);
+		expect(h.save.calls).toHaveLength(0);
+		expect(writes).toHaveLength(1);
 	});
 });
 

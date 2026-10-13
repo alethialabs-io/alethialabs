@@ -24,7 +24,7 @@ import {
 	type LexicalNode,
 } from "lexical";
 import type { ReactNode } from "react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 
 const nav = vi.hoisted(() => ({ pathname: "/acme" }));
@@ -106,6 +106,7 @@ vi.mock("@/components/agent/elench/elench-panel", () => ({
 	ElenchPanel: ({ children }: { children: ReactNode }) => <div data-testid="panel">{children}</div>,
 }));
 
+import { getThread, type LoadedThread, listThreads } from "@/app/server/actions/agent";
 import { createDraftsTab, type DraftsTab, ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
@@ -166,6 +167,15 @@ function newTab(org: string, storage: Storage = memoryStorage(), getStorage?: ()
 		mint: () => crypto.randomUUID(),
 	});
 	return { drafts, page, storage };
+}
+
+/** A promise the test settles by hand: a round trip held open until the test answers it. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolve: (value: T) => void = () => {};
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
 }
 
 /** Lets every pending promise, render and timer due within `ms` run. */
@@ -1227,10 +1237,30 @@ describe("S9 › orgs, accounts and pages", () => {
 // and §11.2 #21's selection-only updates ──────────────────────────────────────────────────────
 
 describe("S9 › close-out of the acceptance matrix (#5464)", () => {
-	it("an org switch while A's listDrafts is held: B's box is live and saves under B, and A's late answer writes nothing into B (AC7)", async () => {
+	it("an org switch while A's listThreads and listDrafts are held: B resolves its own conversation, its box saves under B, and A's late answers write nothing into B (AC7)", async () => {
+		// Threads are the user's and listed in every org (§1), so A's late list carries the same rows as
+		// B's. What differs is the conversation each scope resumes: A's remembered one (T1) against
+		// B's newest (T2). The race that matters is A's list answering while B's resume is in flight:
+		// without the stand-down after `listThreads`, A resumes T1 first and B's resume then defers
+		// to it, leaving B on A's conversation.
+		const T1 = crypto.randomUUID();
+		const T2 = crypto.randomUUID();
+		storedThread(T1, "A's thread");
+		storedThread(T2, "the newest thread");
+		// An earlier visit to A left T1 as A's active conversation in this tab's sessionStorage.
+		const seed = newTab(ORG_A);
+		const unmountSeed = await mount(seed);
+		act(() => useElenchStore.getState().selectThread(T1));
+		await flush();
+		act(() => window.dispatchEvent(new Event("pagehide")));
+		unmountSeed();
+		seed.drafts.store.dispose();
+		cleanup();
+		useElenchStore.setState({ ...INITIAL, conversationId: crypto.randomUUID() });
+
 		// The fake server reads a call's page when it answers; a real action answers for the page it
 		// was POSTed from. So listDrafts is pinned to the page at the moment of the call.
-		const base = newTab(ORG_A);
+		const base = newTab(ORG_A, seed.storage);
 		const page = base.page;
 		const pinned = server.transport(() => page.org);
 		const tab: Tab = {
@@ -1254,14 +1284,35 @@ describe("S9 › close-out of the acceptance matrix (#5464)", () => {
 		base.drafts.store.dispose();
 		const aKey: DraftKey = { orgId: ORG_A, projectId: null, conversationId: crypto.randomUUID() };
 		await server.transport(() => ORG_A).saveDraft({ ...aKey, baseRevision: 0, content: { text: "A's words", mentions: [], artifacts: [], cellTarget: null }, tabId: "earlier" });
-		useElenchStore.setState({ conversationId: aKey.conversationId });
+
+		// A's listThreads is held; so is the transcript B's own resume asks for (T2).
+		const aList = deferred<LoadedThread[]>();
+		vi.mocked(listThreads).mockImplementationOnce(() => aList.promise);
+		const bResume = deferred<LoadedThread | null>();
+		const answer = vi.mocked(getThread).getMockImplementation();
+		onTestFinished(() => void vi.mocked(getThread).mockImplementation(answer ?? (async () => null)));
+		const asked = vi.mocked(getThread).mock.calls.length;
+		vi.mocked(getThread).mockImplementation(async (id) => (id === T2 ? bResume.promise : (answer?.(id) ?? null)));
 		server.plan("listDrafts", "hold");
+		const lists = vi.mocked(listThreads).mock.calls.length;
 		const unmountA = await mount(tab);
-		// A's list has not answered: the switch to B happens mid-load.
+		expect(vi.mocked(listThreads).mock.calls.length).toBe(lists + 1);
+		// Neither of A's lists has answered: the switch to B happens mid-load.
 		const unmountB = rerenderPage(tab, ORG_B, unmountA);
 		await flush();
-		server.release("listDrafts"); // A's late answer
+		expect(vi.mocked(listThreads).mock.calls.length).toBe(lists + 2); // B's own list, answered at once
+		const before = useElenchStore.getState().epoch;
+		aList.resolve(server.listThreads()); // A's late thread list
+		server.release("listDrafts"); // A's late drafts list
 		await flush();
+		// A's late answers resumed nothing: no transcript was asked for T1, the store did not move.
+		expect(vi.mocked(getThread).mock.calls.slice(asked).filter(([id]) => id === T1)).toEqual([]);
+		expect(useElenchStore.getState().epoch).toBe(before);
+		bResume.resolve(server.getThread(T2));
+		await flush();
+		// B resolved its own conversation: ready (the composer is up), on T2, never on A's T1.
+		expect(useElenchStore.getState().threadId).toBe(T2);
+		expect(useElenchStore.getState().conversationId).toBe(T2);
 		const drafts = tab.drafts.store.view.getState().drafts;
 		expect(drafts.scope).toEqual({ orgId: ORG_B, projectId: null });
 		expect(Object.values(drafts.entries).filter((e) => e.key.orgId === ORG_A)).toEqual([]);
@@ -1271,10 +1322,11 @@ describe("S9 › close-out of the acceptance matrix (#5464)", () => {
 		type("B's words");
 		await flush(1_000);
 		const b = shown(tab);
-		expect(b.orgId).toBe(ORG_B);
+		expect(b).toEqual({ orgId: ORG_B, projectId: null, conversationId: T2 });
 		expect(server.row(b)?.content.text).toBe("B's words");
 		// A's row is untouched: B's words never landed in it (one conversation in two orgs is two rows).
 		expect(server.row(aKey)?.content.text).toBe("A's words");
+		expect(server.row({ ...b, orgId: ORG_A })).toBeUndefined();
 		expect(server.callsOf("saveDraft").filter((c) => JSON.stringify(c).includes(ORG_A) && JSON.stringify(c).includes("B's words"))).toEqual([]);
 		unmountB();
 	});
@@ -1291,6 +1343,8 @@ describe("S9 › close-out of the acceptance matrix (#5464)", () => {
 		type("deploy now");
 		await flush(1_000);
 		expect(server.row(k)?.content.text).toBe("deploy");
+		// No control in the console sends DISCARD yet (elench-conversation.tsx: "nothing offers a
+		// Discard"), so the event goes to the store, as the existing test at line 970 does too.
 		act(() => tab.drafts.store.dispatch({ type: "ENTRY", key: k, event: { type: "DISCARD" } }));
 		await flush();
 		expect(server.row(k)?.state).toBe("discarded");
