@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { withPostHogConfig } from "@posthog/nextjs-config";
 import type { NextConfig } from "next";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	type NextConfigInput,
@@ -47,11 +47,28 @@ describe("withNonFatalSourcemapUpload", () => {
 	});
 
 	describe("against the real @posthog/nextjs-config", () => {
+		beforeEach(() => {
+			// From 1.11.2 the config function runs `posthog-cli release resolve` against the PostHog API
+			// on a production build unless a release id is already known; it reads this variable first
+			// (dist/config.mjs: `userEnv.POSTHOG_RELEASE_ID ?? process.env.POSTHOG_RELEASE_ID`). Setting it
+			// keeps these tests off the network. 1.11.1 never reads it. If a later version stops honouring
+			// it, the throwaway key fails resolution, the fallback is returned, and the hook assertion
+			// below goes red — loudly, not silently.
+			vi.stubEnv("POSTHOG_RELEASE_ID", "00000000-0000-0000-0000-000000000000");
+		});
+
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		/** The app config the plugin wraps, and the fallback the guard builds with. */
+		const BASE: NextConfig = { reactStrictMode: true };
+
 		/** Composes the plugin exactly as next.config.ts does, with throwaway credentials. */
 		function composeAsProduction(): NextConfigInput {
 			return withNonFatalSourcemapUpload(
 				withPostHogConfig(
-					{ reactStrictMode: true },
+					BASE,
 					{
 						personalApiKey: "phx_not_a_real_key",
 						projectId: "1",
@@ -64,7 +81,7 @@ describe("withNonFatalSourcemapUpload", () => {
 						},
 					},
 				),
-				{ expectHook: true },
+				{ expectHook: true, fallback: BASE },
 			);
 		}
 
@@ -125,6 +142,51 @@ describe("withNonFatalSourcemapUpload", () => {
 			await resolved.compiler?.runAfterProductionCompile?.(META);
 
 			expect(hook).toHaveBeenCalledOnce();
+		});
+	});
+
+	describe("a config function that rejects while resolving", () => {
+		/**
+		 * Faithful to @posthog/nextjs-config 1.11.2 with @posthog/plugin-utils 2.0.1: in `event` release
+		 * mode on a Turbopack production build, the config function awaits `resolveReleaseId`, which
+		 * throws this (plugin-utils dist/cli.mjs) when posthog-cli exits non-zero. The stderr is the one
+		 * an invalid key produced in CI on #5899. No hook exists yet when it throws.
+		 */
+		const RELEASE_RESOLVE_FAILURE =
+			"posthog-cli release resolve failed with code 1.\n" +
+			"Oops! API error: error='authentication_error' code='authentication_failed' " +
+			"details='Personal API key found in request Authorization header is invalid.'";
+
+		/** The 1.11.2 shape on a bad key: a config function that rejects before returning a config. */
+		function rejectingConfigFn() {
+			return async (): Promise<NextConfig> => {
+				throw new Error(RELEASE_RESOLVE_FAILURE);
+			};
+		}
+
+		it("builds with the fallback instead of failing the build", async () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const fallback: NextConfig = { reactStrictMode: true };
+
+			const wrapped = withNonFatalSourcemapUpload(rejectingConfigFn(), {
+				expectHook: true,
+				fallback,
+			});
+
+			// The assertion IS that this resolves. Unguarded, Next turns the rejection into a failed
+			// `next build` — #2244 again, one step earlier than the hook.
+			await expect(resolveLikeNext(wrapped)).resolves.toBe(fallback);
+
+			const logged = warn.mock.calls.flat().join(" ");
+			expect(logged).toContain("WITHOUT source-map upload");
+			expect(logged).toContain("authentication_failed");
+		});
+
+		it("rethrows when no fallback was given", async () => {
+			// Nothing to build with is not something to invent: the caller must name the config.
+			const wrapped = withNonFatalSourcemapUpload(rejectingConfigFn(), { expectHook: true });
+
+			await expect(resolveLikeNext(wrapped)).rejects.toThrow("release resolve failed");
 		});
 	});
 
