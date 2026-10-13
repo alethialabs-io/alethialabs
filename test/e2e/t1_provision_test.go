@@ -50,6 +50,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -147,6 +148,14 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
 
+	// The runner's helm --wait for ArgoCD must expire INSIDE the T1 wait, so a hung install ends
+	// the job FAILED with helm's own error instead of timing T1 out as PROCESSING (#5947).
+	wait := t1WaitTimeout()
+	argoInstall := t1ArgoInstallTimeout()
+	if err := t1ArgoBudgetFits(argoInstall, wait); err != nil {
+		t.Fatal(err)
+	}
+
 	// ── Real control plane over real Postgres. ──
 	cp, err := NewControlPlane(ctx, dbURL)
 	if err != nil {
@@ -185,6 +194,18 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 			t.Log("teardown: cluster destroyed")
 		}
 	})
+	// ArgoCD DIAGNOSIS on failure — registered AFTER the teardown so LIFO runs it FIRST, while the
+	// kind cluster still exists. It reads the cluster over its own kind kubeconfig, so it works
+	// whether or not the runner got as far as writing one.
+	diagDir := t.TempDir()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer dcancel()
+		t.Logf("──── argocd namespace on failure ────\n%s", dumpT1ArgoDiagnosis(dctx, clusterName, diagDir))
+	})
 
 	// ── Launch the REAL runner process pointed at the control plane. ──
 	var runnerOut bytes.Buffer
@@ -199,6 +220,7 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 		"ALETHIA_RUNNER_OPERATOR=self",
 		"ALETHIA_RECEIPT_SIGNING_KEY="+base64.StdEncoding.EncodeToString(priv),
 		"ALETHIA_CLUSTER_READY_TIMEOUT="+clusterReadyTimeout(),
+		t1ArgoInstallTimeoutEnv+"="+argoInstall.String(),
 		"ALETHIA_ARGOCD_TEMPLATES_DIR="+filepath.Join(root, "infra", "templates", "argocd"),
 	)
 	var runnerSink io.Writer = &runnerOut
@@ -222,7 +244,7 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	})
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
-	status, err := cp.WaitTerminal(ctx, jobID, waitTimeout())
+	status, err := cp.WaitTerminal(ctx, jobID, wait)
 	if err != nil {
 		t.Fatalf("waiting for job to finish: %v\n──── runner output ────\n%s", err, runnerOut.String())
 	}
@@ -392,17 +414,6 @@ func clusterReadyTimeout() string {
 	return "3m"
 }
 
-// waitTimeout bounds how long the test waits for the job to finish (build the kind
-// image pull + apply + spine + argo). Generous but finite.
-func waitTimeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_T1_WAIT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return 8 * time.Minute
-}
-
 func shortHex(t *testing.T) string {
 	t.Helper()
 	b := make([]byte, 4)
@@ -425,4 +436,56 @@ type testLogWriter struct{ t *testing.T }
 func (w testLogWriter) Write(p []byte) (int, error) {
 	w.t.Logf("%s", bytes.TrimRight(p, "\n"))
 	return len(p), nil
+}
+
+// dumpT1ArgoDiagnosis fetches the kind cluster's kubeconfig independently of the runner, writes it
+// under dir, and renders the argocd namespace's pods and events plus a describe of every non-Ready
+// pod. Every step's failure is rendered in place rather than returned, so a partial dump still
+// reaches the log.
+func dumpT1ArgoDiagnosis(ctx context.Context, clusterName, dir string) string {
+	kubeconfig, err := KindKubeconfig(ctx, clusterName)
+	if err != nil {
+		return fmt.Sprintf("argocd diagnosis unavailable: %v", err)
+	}
+	kc := filepath.Join(dir, "kubeconfig-argocd-diag")
+	if err := os.WriteFile(kc, kubeconfig, 0o600); err != nil {
+		return fmt.Sprintf("argocd diagnosis unavailable: write kubeconfig: %v", err)
+	}
+	var b strings.Builder
+	section := func(title string, out []byte, err error) {
+		fmt.Fprintf(&b, "── kubectl %s ──\n", title)
+		if len(out) > 0 {
+			b.Write(out)
+			if !strings.HasSuffix(string(out), "\n") {
+				b.WriteString("\n")
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(&b, "(error: %v)\n", err)
+		}
+	}
+	get := t1ArgoGetArgv()
+	out, err := kubectlRead(ctx, 60*time.Second, kc, get...)
+	section(strings.Join(get, " "), out, err)
+
+	podsJSON, err := kubectlRead(ctx, 60*time.Second, kc, t1ArgoPodsJSONArgv()...)
+	if err != nil {
+		fmt.Fprintf(&b, "(cannot list argocd pods as JSON: %v)\n", err)
+		return b.String()
+	}
+	names, err := notReadyPodNames(podsJSON)
+	if err != nil {
+		fmt.Fprintf(&b, "(cannot decode argocd pods: %v)\n", err)
+		return b.String()
+	}
+	if len(names) == 0 {
+		b.WriteString("every non-terminal argocd pod is Ready\n")
+		return b.String()
+	}
+	for _, name := range names {
+		desc := t1ArgoDescribeArgv(name)
+		out, err := kubectlRead(ctx, 60*time.Second, kc, desc...)
+		section(strings.Join(desc, " "), out, err)
+	}
+	return b.String()
 }

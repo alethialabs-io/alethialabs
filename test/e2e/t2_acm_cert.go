@@ -57,21 +57,14 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 const (
 	envAcmCert         = "ALETHIA_E2E_ACM_CERT"           // truthy ⇒ enable
 	envAcmCertZoneID   = "ALETHIA_E2E_ACM_CERT_ZONE_ID"   // the stable zone's id (infra/aws-oidc output)
 	envAcmCertZoneName = "ALETHIA_E2E_ACM_CERT_ZONE_NAME" // e.g. e2e.alethialabs.io
-	envAcmCertTimeout  = "ALETHIA_E2E_ACM_CERT_TIMEOUT"   // tuning knob; default below
 	envAcmCertSummary  = "ALETHIA_E2E_ACM_CERT_SUMMARY"   // where the run half writes its verdict
 )
-
-// acmCertDefaultTimeout budgets ACM issuance against an already-delegated zone. Issuance itself is
-// usually 2-5 minutes; the headroom is for the validation record's own propagation, not for the
-// 72-hour ceiling, which no wait here could ever cover.
-const acmCertDefaultTimeout = 20 * time.Minute
 
 type acmCertConfig struct {
 	provider   string
@@ -291,15 +284,6 @@ func acmCertAskFromSnapshot(raw []byte, wantZoneID string) (asked bool, carried 
 	carried = fmt.Sprintf("dns.enabled=%v zone_id=%q domain_name=%q managed_certificate=%v provider_config.acm_certificate=%s",
 		d.Enabled, d.ZoneID, d.DomainName, d.ManagedCertificate, override)
 	return d.Enabled && ask && d.ZoneID != "" && d.ZoneID == wantZoneID, carried, nil
-}
-
-func acmCertTimeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv(envAcmCertTimeout)); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return acmCertDefaultTimeout
 }
 
 // acmCertARNPattern is deliberately strict about the resource segment: an ACM certificate ARN is
