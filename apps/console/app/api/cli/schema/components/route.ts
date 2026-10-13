@@ -43,11 +43,13 @@ function ifNoneMatchHits(header: string, etag: string): boolean {
  * Publishes the component-kind registry — which kinds exist, which are singletons, and the JSON
  * Schema of the fields an add / `--set` request may assign.
  *
- * This exists so the CLI's `componentKinds` / `singletonKinds` literals become a CACHE of a
- * published schema instead of a second opinion. They have already drifted: the Go list omits
- * `helm_registries`, which this registry authors. And `--set` coercion runs in Go against a raw
- * string with no idea of the field's type, while the type lives here — the split-brain this
- * document closes by shipping the type with the field name.
+ * This exists so the CLI holds no second opinion of the component vocabulary. It used to: two Go
+ * literals, `componentKinds` and `singletonKinds`, had drifted from this registry (the Go list
+ * omitted `helm_registries`). #4444 deleted both, with no fallback; the CLI now fetches this
+ * document (`GetComponentSchema`, packages/core/api/components_schema.go) for its kind list,
+ * picker and cardinality. What remains split is `--set` coercion: it still runs in Go
+ * (`coerceSetValue`) against a raw string with no idea of the field's type, while the type lives
+ * here — the split-brain this document is shaped to close by shipping the type with the field name.
  *
  * GATING — the same as its siblings, and deliberately not weaker. The document is derived from
  * committed code, so it holds no tenant data and is byte-identical for every caller; that makes
