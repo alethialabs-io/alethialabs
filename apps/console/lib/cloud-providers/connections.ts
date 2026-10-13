@@ -20,6 +20,8 @@ import {
 	purgeCloudCapabilities,
 	syncCloudCapabilities,
 } from "@/lib/cloud-providers/capabilities";
+import { purgeCloudQuotaCapabilities } from "@/lib/cloud-providers/capabilities/quotas-index";
+import { purgeCloudServiceCapabilities } from "@/lib/cloud-providers/capabilities/services-index";
 import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
 import { azureIdConflict } from "./azure-ids";
 import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
@@ -814,10 +816,13 @@ export async function disconnectIdentity(
 		.set({ cloud_identity_id: null })
 		.where(eq(projects.cloud_identity_id, identityId));
 
-	// Purge the stored asset inventory + capability catalog (incl. its change-detection hashes) — we keep
-	// no projection of a cloud we no longer access.
+	// Purge the stored asset inventory and every capability catalog — regions + instance types (incl.
+	// the change-detection hashes), managed services, and service quotas — so we keep no projection of a
+	// cloud we no longer access. The identity row is UPDATEd, not DELETEd, so no FK cascade does this.
 	await purgeCloudInventory(identityId);
 	await purgeCloudCapabilities(identityId);
+	await purgeCloudServiceCapabilities(identityId);
+	await purgeCloudQuotaCapabilities(identityId);
 
 	// Ops alert (free): a cloud identity was revoked/disconnected.
 	if (disconnected?.org_id) {

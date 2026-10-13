@@ -27,6 +27,12 @@ vi.mock("@/lib/cloud-providers/capabilities", () => ({
 	syncCloudCapabilities: vi.fn(),
 	purgeCloudCapabilities: vi.fn(),
 }));
+vi.mock("@/lib/cloud-providers/capabilities/services-index", () => ({
+	purgeCloudServiceCapabilities: vi.fn(),
+}));
+vi.mock("@/lib/cloud-providers/capabilities/quotas-index", () => ({
+	purgeCloudQuotaCapabilities: vi.fn(),
+}));
 // Observability boundaries: every verify outcome is logged, and a hard failure is reported to PostHog
 // Error tracking. Both are stubbed so we can assert they fire without a real logger / PostHog client.
 vi.mock("@/lib/observability/log", () => ({
@@ -52,6 +58,10 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { probeHealth } from "@/lib/cloud-providers/health";
+import { purgeCloudInventory } from "@/lib/cloud-providers/inventory";
+import { purgeCloudCapabilities } from "@/lib/cloud-providers/capabilities";
+import { purgeCloudServiceCapabilities } from "@/lib/cloud-providers/capabilities/services-index";
+import { purgeCloudQuotaCapabilities } from "@/lib/cloud-providers/capabilities/quotas-index";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { log } from "@/lib/observability/log";
 import { captureServerException } from "@/lib/analytics/server";
@@ -644,6 +654,26 @@ describe("disconnectIdentity", () => {
 		);
 	});
 
+	it("purges the inventory and all three capability catalogs for the disconnected identity", async () => {
+		queue(
+			[{ provider: "aws" }], // provider-assert select
+			[{ org_id: "org-1" }], // reset update returning
+			[], // projects update
+		);
+		await disconnectIdentity(SCOPE, "ci-9", "aws");
+		// The row is UPDATEd back to pending, never DELETEd, so no FK cascade clears these — each purge
+		// must be called explicitly, once, with this identity's id.
+		for (const purge of [
+			purgeCloudInventory,
+			purgeCloudCapabilities,
+			purgeCloudServiceCapabilities,
+			purgeCloudQuotaCapabilities,
+		]) {
+			expect(purge).toHaveBeenCalledTimes(1);
+			expect(purge).toHaveBeenCalledWith("ci-9");
+		}
+	});
+
 	it("resets a non-role cloud to empty credentials (no external id preserved)", async () => {
 		queue(
 			[{ provider: "digitalocean", credentials: {} }], // provider-assert select (always)
@@ -658,7 +688,9 @@ describe("disconnectIdentity", () => {
 	it("throws on a provider mismatch instead of relabeling the wrong row", async () => {
 		queue([{ provider: "gcp", credentials: {} }]); // the row is actually gcp
 		await expect(disconnectIdentity(SCOPE, "ci-3", "aws")).rejects.toThrow(/provider mismatch/i);
-		// No reset was written.
+		// No reset was written, and nothing was purged.
 		expect(db._sets.length).toBe(0);
+		expect(purgeCloudServiceCapabilities).not.toHaveBeenCalled();
+		expect(purgeCloudQuotaCapabilities).not.toHaveBeenCalled();
 	});
 });

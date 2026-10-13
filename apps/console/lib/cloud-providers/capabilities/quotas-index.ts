@@ -55,8 +55,9 @@ export async function syncCloudQuotaCapabilities(
 	}
 }
 
-/** Purges a connection's entire service-quota capabilities catalog (called on disconnect — we keep no
- * projection of a cloud we no longer have access to). Parallels purgeCloudServiceCapabilities. */
+/** Purges a connection's entire service-quota capabilities catalog (called by disconnectIdentity in
+ * connections.ts — we keep no projection of a cloud we no longer have access to). Parallels
+ * purgeCloudServiceCapabilities. */
 export async function purgeCloudQuotaCapabilities(
 	cloudIdentityId: string,
 ): Promise<void> {
