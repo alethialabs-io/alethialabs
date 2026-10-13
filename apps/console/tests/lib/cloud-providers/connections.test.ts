@@ -9,6 +9,8 @@
 // inserted `.values()` payloads, the returned shapes, and which boundary fired with what.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
@@ -26,6 +28,12 @@ vi.mock("@/lib/cloud-providers/capabilities", () => ({
 	hasServerSideCapabilities: vi.fn(() => true),
 	syncCloudCapabilities: vi.fn(),
 	purgeCloudCapabilities: vi.fn(),
+}));
+vi.mock("@/lib/cloud-providers/capabilities/services-index", () => ({
+	purgeCloudServiceCapabilities: vi.fn(),
+}));
+vi.mock("@/lib/cloud-providers/capabilities/quotas-index", () => ({
+	purgeCloudQuotaCapabilities: vi.fn(),
 }));
 // Observability boundaries: every verify outcome is logged, and a hard failure is reported to PostHog
 // Error tracking. Both are stubbed so we can assert they fire without a real logger / PostHog client.
@@ -52,9 +60,14 @@ import {
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getServiceDb } from "@/lib/db";
 import { probeHealth } from "@/lib/cloud-providers/health";
+import { purgeCloudInventory } from "@/lib/cloud-providers/inventory";
+import { purgeCloudCapabilities } from "@/lib/cloud-providers/capabilities";
+import { purgeCloudServiceCapabilities } from "@/lib/cloud-providers/capabilities/services-index";
+import { purgeCloudQuotaCapabilities } from "@/lib/cloud-providers/capabilities/quotas-index";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { log } from "@/lib/observability/log";
 import { captureServerException } from "@/lib/analytics/server";
+import { projects } from "@/lib/db/schema";
 
 const SCOPE = { userId: "user-1", orgId: "org-1" };
 
@@ -69,19 +82,24 @@ const CONNECTED = {
 /**
  * Builds a thenable drizzle-ish db. Every terminal await (a chain `.then`, or `.execute`)
  * dequeues the next pushed result, so distinct queries inside one SUT call resolve to
- * distinct rows in call order. `.set()` / `.values()` payloads are captured for assertions.
+ * distinct rows in call order. `.set()` / `.values()` payloads are captured for assertions, and
+ * each `.update(table)` is recorded with the predicate its `.where()` was given.
  */
 function makeDb() {
 	const results: unknown[] = [];
 	const sets: Record<string, unknown>[] = [];
 	const values: Record<string, unknown>[] = [];
 	const executes: unknown[] = [];
-	function chain(): Record<string, unknown> {
+	const updates: { table: unknown; where?: SQL }[] = [];
+	function chain(update?: { table: unknown; where?: SQL }): Record<string, unknown> {
 		const c: Record<string, unknown> = {};
 		Object.assign(c, {
 			select: () => c,
 			from: () => c,
-			where: () => c,
+			where: (w: SQL) => {
+				if (update) update.where = w;
+				return c;
+			},
 			limit: () => c,
 			orderBy: () => c,
 			set: (v: Record<string, unknown>) => {
@@ -100,7 +118,11 @@ function makeDb() {
 	return {
 		select: () => chain(),
 		insert: () => chain(),
-		update: () => chain(),
+		update: (table: unknown) => {
+			const entry: { table: unknown; where?: SQL } = { table };
+			updates.push(entry);
+			return chain(entry);
+		},
 		execute: (arg: unknown) => {
 			executes.push(arg);
 			return Promise.resolve(results.shift());
@@ -109,6 +131,7 @@ function makeDb() {
 		_sets: sets,
 		_values: values,
 		_executes: executes,
+		_updates: updates,
 	};
 }
 
@@ -644,6 +667,26 @@ describe("disconnectIdentity", () => {
 		);
 	});
 
+	it("purges the inventory and all three capability catalogs for the disconnected identity", async () => {
+		queue(
+			[{ provider: "aws" }], // provider-assert select
+			[{ org_id: "org-1" }], // reset update returning
+			[], // projects update
+		);
+		await disconnectIdentity(SCOPE, "ci-9", "aws");
+		// The row is UPDATEd back to pending, never DELETEd, so no FK cascade clears these — each purge
+		// must be called explicitly, once, with this identity's id.
+		for (const purge of [
+			purgeCloudInventory,
+			purgeCloudCapabilities,
+			purgeCloudServiceCapabilities,
+			purgeCloudQuotaCapabilities,
+		]) {
+			expect(purge).toHaveBeenCalledTimes(1);
+			expect(purge).toHaveBeenCalledWith("ci-9");
+		}
+	});
+
 	it("resets a non-role cloud to empty credentials (no external id preserved)", async () => {
 		queue(
 			[{ provider: "digitalocean", credentials: {} }], // provider-assert select (always)
@@ -655,10 +698,53 @@ describe("disconnectIdentity", () => {
 		expect(db._sets[0]).toMatchObject({ name: "DigitalOcean Connection (Pending)" });
 	});
 
+	it("scopes the projects unlink to the caller's org, not just the identity id", async () => {
+		queue(
+			[{ provider: "aws" }], // provider-assert select
+			[{ org_id: "org-1" }], // reset update returning
+			[], // projects update
+		);
+		await disconnectIdentity(SCOPE, "ci-1", "aws");
+		const projectWrites = db._updates.filter((u) => u.table === projects);
+		expect(projectWrites).toHaveLength(1);
+		const where = projectWrites[0].where;
+		if (!where) throw new Error("the projects update has no WHERE clause");
+		// Rendered as Postgres receives it: the predicate must bind BOTH the identity id and the org id.
+		const q = new PgDialect().sqlToQuery(where);
+		expect(q.sql).toMatch(/"projects"\."cloud_identity_id" = \$\d/);
+		expect(q.sql).toMatch(/"projects"\."org_id" = \$\d/);
+		expect(q.params).toEqual(expect.arrayContaining(["ci-1", "org-1"]));
+	});
+
+	it("refuses a foreign-org or unknown id: no project write, no purge, no alert", async () => {
+		queue(
+			[], // provider-assert select: the id is not in the caller's org
+			[], // reset update returning: the org-scoped UPDATE matched no row
+			[], // projects update (must never be reached)
+		);
+		await expect(disconnectIdentity(SCOPE, "ci-foreign", "aws")).rejects.toThrow(
+			/cloud identity not found/i,
+		);
+		// Only the org-scoped reset was attempted; projects were never touched.
+		expect(db._updates.filter((u) => u.table === projects)).toHaveLength(0);
+		expect(db._sets).toHaveLength(1);
+		for (const purge of [
+			purgeCloudInventory,
+			purgeCloudCapabilities,
+			purgeCloudServiceCapabilities,
+			purgeCloudQuotaCapabilities,
+		]) {
+			expect(purge).not.toHaveBeenCalled();
+		}
+		expect(emitAlertEventSafe).not.toHaveBeenCalled();
+	});
+
 	it("throws on a provider mismatch instead of relabeling the wrong row", async () => {
 		queue([{ provider: "gcp", credentials: {} }]); // the row is actually gcp
 		await expect(disconnectIdentity(SCOPE, "ci-3", "aws")).rejects.toThrow(/provider mismatch/i);
-		// No reset was written.
+		// No reset was written, and nothing was purged.
 		expect(db._sets.length).toBe(0);
+		expect(purgeCloudServiceCapabilities).not.toHaveBeenCalled();
+		expect(purgeCloudQuotaCapabilities).not.toHaveBeenCalled();
 	});
 });

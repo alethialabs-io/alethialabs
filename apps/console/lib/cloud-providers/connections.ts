@@ -20,6 +20,8 @@ import {
 	purgeCloudCapabilities,
 	syncCloudCapabilities,
 } from "@/lib/cloud-providers/capabilities";
+import { purgeCloudQuotaCapabilities } from "@/lib/cloud-providers/capabilities/quotas-index";
+import { purgeCloudServiceCapabilities } from "@/lib/cloud-providers/capabilities/services-index";
 import type { CloudCredentials, WifCredentialConfig } from "@/types/jsonb.types";
 import { azureIdConflict } from "./azure-ids";
 import { buildWifConfig, GCP_PROJECT_ID_REGEX } from "./gcp-wif";
@@ -755,8 +757,13 @@ export async function reverifyConnection(
 }
 
 /**
- * Resets an identity to its pending state (clearing all stored credentials) and
- * orphans any projects that referenced it.
+ * Resets an identity to its pending state (clearing all stored credentials), orphans the caller's
+ * org's projects that referenced it, and purges its inventory and capability catalogs.
+ *
+ * Runs on the service-role DB, so the org scope is the only tenant wall: every write is gated on the
+ * org-scoped reset UPDATE matching a row. An id that belongs to another org, or to no identity at all,
+ * throws "Cloud identity not found" before any project write, purge or alert, and the caller surfaces
+ * that like any other thrown error (the connectors toast; a 400 from the CLI route).
  */
 export async function disconnectIdentity(
 	scope: ConnScope,
@@ -767,8 +774,8 @@ export async function disconnectIdentity(
 
 	// Load the row (by id + org) and assert its provider matches the caller's arg. The update below
 	// filters by id + org only (id is the PK), so a mismatched `provider` would relabel the row with the
-	// wrong PENDING_NAME. Fail loudly on a mismatch; a missing row keeps the old no-op behavior (the
-	// update simply affects nothing).
+	// wrong PENDING_NAME. Fail loudly on a mismatch. A missing row is not decided here: the reset UPDATE
+	// below matches nothing and the not-found throw after it stops everything that follows.
 	const [identity] = await db
 		.select({ provider: cloudIdentities.provider })
 		.from(cloudIdentities)
@@ -809,18 +816,30 @@ export async function disconnectIdentity(
 		)
 		.returning({ org_id: cloudIdentities.org_id });
 
+	// No row means the id is foreign to this org or unknown. Everything below is keyed by identity id
+	// (the purges) on the service-role DB, so continuing would write into another tenant's data.
+	if (!disconnected) throw new Error("Cloud identity not found");
+
 	await db
 		.update(projects)
 		.set({ cloud_identity_id: null })
-		.where(eq(projects.cloud_identity_id, identityId));
+		.where(
+			and(
+				eq(projects.cloud_identity_id, identityId),
+				eq(projects.org_id, scope.orgId),
+			),
+		);
 
-	// Purge the stored asset inventory + capability catalog (incl. its change-detection hashes) — we keep
-	// no projection of a cloud we no longer access.
+	// Purge the stored asset inventory and every capability catalog — regions + instance types (incl.
+	// the change-detection hashes), managed services, and service quotas — so we keep no projection of a
+	// cloud we no longer access. The identity row is UPDATEd, not DELETEd, so no FK cascade does this.
 	await purgeCloudInventory(identityId);
 	await purgeCloudCapabilities(identityId);
+	await purgeCloudServiceCapabilities(identityId);
+	await purgeCloudQuotaCapabilities(identityId);
 
 	// Ops alert (free): a cloud identity was revoked/disconnected.
-	if (disconnected?.org_id) {
+	if (disconnected.org_id) {
 		emitAlertEventSafe(disconnected.org_id, "system.identity.revoked", {
 			title: `Cloud identity disconnected: ${provider}`,
 			severity: "warning",
