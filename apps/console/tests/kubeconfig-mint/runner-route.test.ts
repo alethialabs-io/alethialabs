@@ -54,8 +54,10 @@ let job: JobFixture | null = null;
 let mintRow: MintFixture | null = null;
 /** The values the result transaction's UPDATE set, if it ran. */
 let updateSet: unknown = null;
-/** Whether the UPDATE matched (false = lost the race to the sweep or a second post). */
+/** Whether the UPDATE matched (false = lost the race to the sweep, the window or a second post). */
 let updateMatches = true;
+/** The mint row's status as the read-back after a lost race sees it (null = the row is gone). */
+let rereadStatus: MintFixture["status"] | null = null;
 /** update_job_status calls, rendered to SQL + params. */
 const statusCalls: { sql: string; params: unknown[] }[] = [];
 /** Make update_job_status raise this. */
@@ -72,9 +74,13 @@ function selectChain(queue: unknown[][]) {
 	return chain;
 }
 
-/** Builds the fake service DB for one request: job head, then mint head. */
+/** Builds the fake service DB for one request: job head, mint head, then the lost-race read-back. */
 function fakeDb() {
-	const queue: unknown[][] = [job ? [job] : [], mintRow ? [mintRow] : []];
+	const queue: unknown[][] = [
+		job ? [job] : [],
+		mintRow ? [mintRow] : [],
+		rereadStatus ? [{ status: rereadStatus }] : [],
+	];
 	const tx = {
 		update: () => ({
 			set: (v: unknown) => ({
@@ -148,6 +154,7 @@ beforeEach(() => {
 	mintRow = pendingMint();
 	updateSet = null;
 	updateMatches = true;
+	rereadStatus = null;
 	statusCalls.length = 0;
 	statusThrows = null;
 	logged.length = 0;
@@ -286,18 +293,38 @@ describe("POST — the one-shot result channel", () => {
 		expect(updateSet).toBeNull();
 	});
 
-	it("completes nothing when the guarded UPDATE lost the race to the sweep", async () => {
+	it("completes nothing when the guarded UPDATE lost the race to the sweep, and answers 410", async () => {
 		updateMatches = false;
+		rereadStatus = "expired";
 		const res = await postResult(READY);
-		expect(res.status).toBe(409);
+		expect(res.status).toBe(410);
 		expect(statusCalls).toHaveLength(0);
 	});
 
-	it("answers 409 when the job left this runner between the gate and the write", async () => {
+	it("answers 410 when the window closed between the head read and the write (row still pending)", async () => {
+		updateMatches = false;
+		rereadStatus = "pending";
+		expect((await postResult(READY)).status).toBe(410);
+		expect(statusCalls).toHaveLength(0);
+	});
+
+	it.each(["ready", "failed", null] as const)(
+		"answers 409 when a second post landed first (row now %s)",
+		async (status) => {
+			updateMatches = false;
+			rereadStatus = status;
+			expect((await postResult(READY)).status).toBe(409);
+			expect(statusCalls).toHaveLength(0);
+		},
+	);
+
+	it("answers 403 when the job left this runner between the gate and the write (AL409)", async () => {
 		statusThrows = Object.assign(new Error("Failed query"), {
 			cause: Object.assign(new Error("Job not owned"), { code: "AL409" }),
 		});
-		expect((await postResult(READY)).status).toBe(409);
+		// 403 is the runner's ownership-lost code (mintStatusError → ErrJobNotOwned); a 409 would be
+		// read there as "the mint already has a result" and followed by a SUCCESS post (#5945).
+		expect((await postResult(READY)).status).toBe(403);
 	});
 
 	it("refuses a body with a plaintext field riding along (strict), without echoing it", async () => {
