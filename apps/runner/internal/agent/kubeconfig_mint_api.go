@@ -33,13 +33,22 @@ type kubeconfigMintAPI interface {
 }
 
 // The console's refusals, by status code (apps/console/app/api/jobs/[id]/kubeconfig-mint/route.ts).
-// Each one ends the job cleanly: there is nothing to retry and nothing to mint.
+// The route's refusals are exactly these four; its other non-2xx answers — 401 (the runner's own
+// credentials were refused), 400 (a body it could not parse) and 500 — reach mintStatusError's default. Each refusal ends the job: there is nothing to retry and nothing to mint.
+//
+//	410 — the mint's window closed: past expires_at at the head read, already swept to expired, or
+//	      lost the guarded write to the window closing or to the sweep.
+//	409 — the mint already has a result (ready or failed): another post landed first. Nothing else.
+//	404 — the job, or the mint row it serves, does not exist.
+//	403 — the job is no longer this runner's: not the owner, not a MINT_KUBECONFIG job, not executing,
+//	      a mint_id that is not this job's mint, or update_job_status refusing the completion because
+//	      the job left this runner between the gate and the write (AL409). See mintStatusError.
 var (
 	// errMintWindowClosed is a 410: the mint's 10-minute poll window closed. No client is waiting.
 	errMintWindowClosed = errors.New("the kubeconfig mint's window closed before the runner could deliver it; nothing was minted for it")
 	// errMintSettled is a 409: the mint already has a result. Another post landed first.
 	errMintSettled = errors.New("the kubeconfig mint already has a result")
-	// errMintNotFound is a 404: the job or its mint row is gone (swept, or the job does not exist).
+	// errMintNotFound is a 404: the job or its mint row does not exist.
 	errMintNotFound = errors.New("the kubeconfig mint for this job was not found")
 )
 
@@ -47,8 +56,9 @@ var (
 const mintSpecMaxBytes = 16 << 10
 
 // mintStatusError maps the console's refusal codes onto the sentinels above. A 403 is the job no
-// longer being this runner's (not the owner, not executing, or a mint_id mismatch), which the
-// dispatcher already knows how to treat: ErrJobNotOwned stops the job without a terminal post.
+// longer being this runner's (every 403 case listed above, including ownership lost at the result
+// write), which the dispatcher already knows how to treat: ErrJobNotOwned stops the job without a
+// terminal post.
 // Any other non-2xx is a plain error carrying only the code — never the body.
 func mintStatusError(op string, code int) error {
 	switch code {
