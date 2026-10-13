@@ -71,7 +71,7 @@ vi.mock("@/lib/billing/stripe", () => {
 });
 vi.mock("@/lib/billing/sync", async (importActual) => {
 	const actual = await importActual<typeof import("@/lib/billing/sync")>();
-	const { applySubscriptionToBilling } = await import("@/lib/billing/queries");
+	// `applySubscriptionToBilling` is this file's own import (below), read when a sync runs, not here.
 	return {
 		...actual,
 		syncSubscriptionToBilling: async (sub: { id: string; status: string; customer: string; metadata: Record<string, string> }) => {
