@@ -190,9 +190,10 @@ func checkPasses(want, got kubeOutcome) bool {
 		return got == kubeAllowed
 	case kubeRefused:
 		return got == kubeRefused
-	default:
-		return false
+	case kubeUnauthenticated, kubeError:
+		// Never a wanted outcome: a check that "wants" one of these proves nothing.
 	}
+	return false
 }
 
 // kubeDoer is the one call the checks need. *kubeaccess.Client implements it.
@@ -627,16 +628,6 @@ func summaryPasses(s KubeconfigMintSummary) bool {
 		}
 	}
 	return true
-}
-
-// firstFailedTier names the first tier that failed and why, for the verdict line and the stage.
-func firstFailedTier(s KubeconfigMintSummary) (KubeconfigMintTier, bool) {
-	for _, t := range s.Tiers {
-		if !tierPasses(t) {
-			return t, true
-		}
-	}
-	return KubeconfigMintTier{}, false
 }
 
 // summarizeKubeconfigMint renders the one-line verdict, in the shape of the bundle's other lines.

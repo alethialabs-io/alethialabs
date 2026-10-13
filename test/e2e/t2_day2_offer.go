@@ -271,7 +271,7 @@ func AnalyzeDay2(op Day2Op, plan *tfjson.Plan) (*Day2Posture, error) {
 			}
 		}
 		p.Safe = len(p.Lingering) == 0
-	default: // Day2Update, Day2Resize
+	case Day2Update, Day2Resize:
 		// The change must converge in place: no STATEFUL resource may be force-replaced OR
 		// deleted (a delete is how a cross-resource engine swap — AWS/GCP redis↔valkey — shows
 		// up, distinct from a single-resource replace).
@@ -298,12 +298,13 @@ func renderDay2Verdict(p *Day2Posture) string {
 			return fmt.Sprintf("%s day2-destroy: clean teardown — %d managed resource(s) deleted, none lingering (out-of-state orphans not scanned)", icon, p.Changed)
 		}
 		return fmt.Sprintf("%s day2-destroy: %d managed change(s), but %d did not delete cleanly: %s", icon, p.Changed, len(p.Lingering), day2Addrs(p.Lingering))
-	default:
-		if p.Safe {
-			return fmt.Sprintf("%s day2-%s: converges in place — %d managed change(s), no stateful resource replaced or deleted", icon, p.Op, p.Changed)
-		}
-		return fmt.Sprintf("%s day2-%s: destroys/replaces %d stateful resource(s) (data + endpoint loss): %s", icon, p.Op, len(p.DataLossHazards), day2Addrs(p.DataLossHazards))
+	case Day2Update, Day2Resize:
+		// Rendered below: both must converge in place.
 	}
+	if p.Safe {
+		return fmt.Sprintf("%s day2-%s: converges in place — %d managed change(s), no stateful resource replaced or deleted", icon, p.Op, p.Changed)
+	}
+	return fmt.Sprintf("%s day2-%s: destroys/replaces %d stateful resource(s) (data + endpoint loss): %s", icon, p.Op, len(p.DataLossHazards), day2Addrs(p.DataLossHazards))
 }
 
 // day2Addrs joins the addresses of a set of resource changes for a human verdict line.

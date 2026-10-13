@@ -453,6 +453,9 @@ func byoIacSeedJob(ctx context.Context, cp *ControlPlane, jobID, jobType string,
 	if strings.TrimSpace(owner) == "" {
 		return fmt.Errorf("seed %s job: empty owner — the job would be unclaimable (the self-runner claim is org-scoped, #392)", jobType)
 	}
+	// An ALLOWLIST, not a dispatch: the default clause refuses every job type this leg does not
+	// drive, so a new types.JobType value must land in the default and be refused.
+	//exhaustive:ignore
 	switch types.JobType(jobType) {
 	case types.JobTypeDeploy, types.JobTypeDestroy, types.JobTypeDetectDrift:
 	default:
