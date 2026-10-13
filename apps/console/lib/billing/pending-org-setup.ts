@@ -183,6 +183,17 @@ export async function openPaymentHoldOn(subscriptionId: string): Promise<Payment
 	return hold ?? null;
 }
 
+/** The newest RELEASED payment hold on `subscriptionId`, or null. Service role: holds have no app policy. */
+export async function latestReleasedHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
+	const [hold] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), eq(paymentHolds.state, "released")))
+		.orderBy(desc(paymentHolds.released_at))
+		.limit(1);
+	return hold ?? null;
+}
+
 /**
  * The payment holds of `payerKey` the create-a-team purchase reads (ADR 0002 §3.2 E1 (a), §5.5): every
  * OPEN one, which it advances before it may mint (I1 (a)), and every one released `refunded` or
@@ -839,6 +850,43 @@ function noOpenHold(subscriptionId: string): SQL {
 }
 
 /**
+ * Records why the link refused `userId`'s setup of `subscriptionId` (ADR 0002 §5.6, I16). With `close`
+ * (the link read X ended), one compare-and-set writes `refused_reason`, `closed_at` and
+ * `closed_reason = 'ended'` — and, as every close does (`closePendingOrgSetup`), only while no open
+ * payment hold names X. Otherwise, or when that matched nothing, `refused_reason` alone is written on
+ * the setup if it is still open, and it stays open: the hold that names X, or an operator, decides it.
+ * A closed or linked setup keeps the reason it already has. Returns the row this call CLOSED, or null.
+ */
+export async function recordSetupRefusal(input: {
+	userId: string;
+	subscriptionId: string;
+	refused: PendingOrgSetupRefusedReason;
+	close: boolean;
+}): Promise<PendingOrgSetupRow | null> {
+	if (input.close) {
+		const closed = await closePendingOrgSetup({
+			subscriptionId: input.subscriptionId,
+			userId: input.userId,
+			reason: "ended",
+			refusedReason: input.refused,
+		});
+		if (closed) return closed;
+	}
+	await getServiceDb()
+		.update(pendingOrgSetups)
+		.set({ refused_reason: input.refused, updated_at: new Date() })
+		.where(
+			and(
+				eq(pendingOrgSetups.user_id, input.userId),
+				eq(pendingOrgSetups.subscription_id, input.subscriptionId),
+				isNull(pendingOrgSetups.closed_at),
+				isNull(pendingOrgSetups.linked_at),
+			),
+		);
+	return null;
+}
+
+/**
  * The verdict of a close whose compare-and-set matched nothing: `open` while a payment hold keeps the
  * setup open (I16), else `closed` (another reader closed or linked it first).
  */
@@ -894,7 +942,9 @@ export type SetupCloserVerdict = "closed" | "linked" | "open";
  *     leaves when it throws after `subscriptions.update` and before its mark (C96). The setup is marked
  *     linked. When the metadata names the org but the row does not name X yet, X is synced once first
  *     (the same idempotent call the webhook makes); a row that then names ANOTHER live plan is the S1
- *     refusal (closed with `org_has_plan`, alerted). Metadata naming a different org or user is never
+ *     refusal (closed with `org_has_plan`, alerted) — except when `linkRefuses` is set: the caller is
+ *     the link, which refuses that X itself under a `needs_operator` hold (ADR 0002 §5.6), so the
+ *     closer writes nothing and answers `open`. Metadata naming a different org or user is never
  *     adopted.
  *
  * Everything else stays open. A subscription Stripe cannot find (`resource_missing`) is NEVER closed
@@ -907,7 +957,7 @@ export type SetupCloserVerdict = "closed" | "linked" | "open";
  */
 export async function settleOpenSetup(
 	row: PendingOrgSetupRow,
-	opts: { sub?: Stripe.Subscription; orgId?: string | null } = {},
+	opts: { sub?: Stripe.Subscription; orgId?: string | null; linkRefuses?: boolean } = {},
 ): Promise<SetupCloserVerdict> {
 	if (row.closed_at) return "closed";
 	if (row.linked_at) return "linked";
@@ -973,6 +1023,7 @@ export async function settleOpenSetup(
 		return "linked";
 	}
 	if (billing?.stripeSubscriptionId && LIVE_BILLING_STATUSES.has(billing.status)) {
+		if (opts.linkRefuses) return "open";
 		const closed = await closePendingOrgSetup({
 			subscriptionId: row.subscription_id,
 			reason: "org_has_plan",
