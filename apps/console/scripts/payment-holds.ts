@@ -8,7 +8,8 @@
 //   show <subscription_id>                     read-only: its holds, its setup, and the LIVE observation
 //   release <subscription_id> --reason "<why>" --operator <your user id>
 //                                              T16: releases the subscription's OPEN hold, audited
-//   reconcile [--backfill] [--payer <user id>] one sweeper pass now; --backfill first runs the §8 listing
+//   reconcile [--backfill] [--payer <user id>] one sweeper pass now; --backfill first runs the §8 listing,
+//                                              then prints the S1-era closures whose subscription is live
 //
 // RELEASE (T16). Refuses with no --reason or no --operator. Takes the payer's lease (`user:<payer>`,
 // waiting up to 30s, refusing while still busy), prints the live observation, then releases with the
@@ -18,9 +19,14 @@
 // row's `released_by` and `release_note`). A second run finds no open hold and writes nothing.
 //   A release closes the hold's OPEN setup in the same transaction (§4.1). Closing the setup of a
 // subscription that may still go live would hide it from every reader (I14), so while an open setup names
-// the subscription, the release is REFUSED unless Stripe reads it ended or `resource_missing`: cancel it in
-// Stripe first (refunding it if it was paid), and the machine settles the hold. From slice 9 a live
-// subscription's release runs the link's core instead (§5.6 "When a hold ends").
+// the subscription, the release is REFUSED unless Stripe reads it ended or `resource_missing`, or it reads
+// live and its setup has an org. Then the link's core runs FIRST, under the same lease (§5.6 "When a hold
+// ends"): a setup it links is no longer open, so the release that follows closes nothing. A re-link
+// that does not link — the team's row names another live plan, or one of the link's checks fails (the
+// creator no longer holds manage_billing, say) — refuses the release, and says why: decide X, or Y, in
+// Stripe first. A live subscription whose setup has
+// no org, or any other read, still refuses: cancel it in Stripe first (refunding it if it was paid), and
+// the machine settles the hold.
 //
 // BACKFILL (§8 B1–B6). The memory-less code before holds kept no record of what it cancelled, so the
 // listing has no lower bound: every `canceled` and `incomplete_expired` subscription in the account. A
@@ -42,6 +48,12 @@
 // `show` as the evidence). Safe to re-run, and to run twice at once: a subscription any hold has ever
 // named — open or released — is skipped, and that check is made again under the payer's lease before a
 // hold is opened.
+//
+// S1-ERA CLOSURES (§8). Before holds existed, the link's refusal beside a team's other live plan CLOSED
+// the setup (`closed_reason = org_has_plan`) while its subscription could still be live, which hides it
+// from every reader. `--backfill` also prints each such setup whose subscription reads live, for the
+// operator. It holds none of them and writes nothing: the subscription is paid and live, and only an
+// operator decides its money (Q12).
 //
 // Nothing printed carries an amount, a card, or a customer's email.
 //
@@ -251,11 +263,22 @@ export async function releaseHoldCommand(
 		}
 		const settled = !("error" in live) && (live.sub.kind === "ended" || live.sub.kind === "missing");
 		if (!settled && (await hasOpenSetup(hold.subscription_id))) {
-			const read = "error" in live ? "could not be read" : `reads ${live.sub.kind}`;
-			return refuse(
-				print,
-				`the subscription ${read}, and an open setup names it. Releasing would close that setup and hide a subscription that may still go live. Cancel it in Stripe first (refund it if it was paid); the machine then settles the hold.`,
-			);
+			const relinked = !("error" in live) && live.sub.kind === "live" ? await relinkBeforeRelease(lease, hold, deps) : null;
+			if (relinked?.kind === "linked") {
+				print(`Linked ${hold.subscription_id} to its team first (§5.6); its setup is no longer open.`);
+			} else if (relinked?.kind === "refused" || relinked?.kind === "not_linked") {
+				const why = relinked.kind === "refused" ? "the team's billing row names another live plan" : relinked.why;
+				return refuse(
+					print,
+					`the subscription is live and its team setup could not be linked (${why}). Releasing would close that setup and hide a paid, live subscription. Cancel and refund it, or the team's other plan, in Stripe first.`,
+				);
+			} else {
+				const read = "error" in live ? "could not be read" : `reads ${live.sub.kind}`;
+				return refuse(
+					print,
+					`the subscription ${read}, and an open setup names it${relinked?.kind === "no_org" ? " with no team (none was made, or it was deleted)" : ""}. Releasing would close that setup and hide a subscription that may still go live. Cancel it in Stripe first (refund it if it was paid); the machine then settles the hold.`,
+				);
+			}
 		}
 
 		const { released } = await operatorRelease(hold, deps.sweeper.machineDepsFor(lease, deps.sweepDeps), {
@@ -282,6 +305,21 @@ export async function releaseHoldCommand(
 	} finally {
 		await deps.lease.releasePurchaseLease(lease);
 	}
+}
+
+/**
+ * §5.6 "When a hold ends", for a release of a LIVE subscription: the link's core for its open setup, under
+ * the payer's lease this command holds (`relinkAdoptedSetup`, loaded here because it imports
+ * `server-only`). A link it refuses beside another live plan opens nothing new: the hold being released
+ * already names the subscription.
+ */
+async function relinkBeforeRelease(
+	lease: LeaseModule.PurchaseLease,
+	hold: PaymentHoldRow,
+	deps: ServerDeps,
+): Promise<SweeperModule.RelinkResult> {
+	const { relinkAdoptedSetup } = await import("@/lib/billing/payment-holds/sweeper");
+	return relinkAdoptedSetup(lease, hold, deps.sweepDeps.alert);
 }
 
 /** The Stripe reads the backfill makes beyond the machine's (a structural subset of the SDK). */
@@ -562,14 +600,54 @@ async function holdFromBackfill(
 	}
 }
 
-/** `reconcile`: the backfill when asked, then one sweeper pass, printing its counts. */
+/** Statuses under which a subscription still exists and may bill (ADR 0002 §2, "Live subscription"). */
+const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+
+/**
+ * §8's S1-era listing: prints every setup closed with `closed_reason = org_has_plan` whose subscription
+ * reads live, with its user and team, and returns how many. A read that fails is printed as such. It
+ * holds nothing and writes nothing.
+ */
+export async function listLiveOrgHasPlanClosures(
+	stripe: Pick<SweeperModule.HoldStripe, "subscriptions">,
+	print: Print,
+): Promise<number> {
+	const closed = await getServiceDb()
+		.select()
+		.from(pendingOrgSetups)
+		.where(eq(pendingOrgSetups.closed_reason, "org_has_plan"))
+		.orderBy(desc(pendingOrgSetups.closed_at));
+	let live = 0;
+	for (const s of closed) {
+		let status: string;
+		try {
+			status = (await stripe.subscriptions.retrieve(s.subscription_id)).status;
+		} catch (err) {
+			print(`S1-ERA ${s.subscription_id}: could not read it (${err instanceof Error ? err.message : String(err)})`);
+			continue;
+		}
+		if (!LIVE_STATUSES.has(status)) continue;
+		live += 1;
+		print(
+			`S1-ERA ${s.subscription_id}: reads ${status}, setup ${s.id} of user ${s.user_id}, team ${s.created_org_id ?? "none"}, ` +
+				`closed ${s.closed_at?.toISOString() ?? "-"} as org_has_plan. Paid, live and unlinked: refund it or move it by hand.`,
+		);
+	}
+	print(`S1-era closures: ${live} of ${closed.length} read live.`);
+	return live;
+}
+
+/** `reconcile`: the backfill and the S1-era listing when asked, then one sweeper pass, printing its counts. */
 export async function reconcile(
 	input: { backfill: boolean; payer: string | undefined },
 	deps: ServerDeps,
 	stripe: BackfillStripe,
 	print: Print,
 ): Promise<void> {
-	if (input.backfill) await runBackfill(deps, stripe, print);
+	if (input.backfill) {
+		await runBackfill(deps, stripe, print);
+		await listLiveOrgHasPlanClosures(deps.sweepDeps.stripe(), print);
+	}
 	const result = await deps.sweeper.runPaymentHoldSweep({ payerKey: input.payer, deps: deps.sweepDeps });
 	print(`Sweep: ${JSON.stringify(result)}`);
 }

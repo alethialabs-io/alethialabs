@@ -168,9 +168,14 @@ tier_separation:
     reason: Credit grants, holds and settlement — the ledger arithmetic only a real transaction can race.
 
   - path: lib/billing/queries.ts
-    suite: [tests/integration/billing-queries.test.ts, tests/unit/billing-to-valid-date.test.ts]
-    symbols: [getOrgBilling, getOrgByStripeCustomer, toValidDate]
-    reason: Per-org billing reads against real Postgres, plus the pure timestamptz coercion its unit suite proves.
+    suite:
+      [
+        tests/integration/billing-queries.test.ts,
+        tests/unit/billing-to-valid-date.test.ts,
+        tests/integration/payment-hold-sweeper.test.ts,
+      ]
+    symbols: [getOrgBilling, getOrgByStripeCustomer, toValidDate, applySubscriptionToBilling]
+    reason: Per-org billing reads against real Postgres, the guarded subscription write (#5514) the S9 re-link syncs through against real Postgres, plus the pure timestamptz coercion its unit suite proves.
 
   # ── lib/fleet — the durable queue and pool tables ─────────────────────────────────────────
   - path: lib/fleet/queue.ts
@@ -340,10 +345,10 @@ baseline:
     reason: The metering error sink, the per-user credit sum and the usage-window reads are only ever named through a mock of this module (the error sink by the support route's threadless path in support-turn-routes.test.ts).
 
   - path: lib/billing/queries.ts
-    symbols: [resolveOrgEntitlements, upsertOrgBilling, applySubscriptionToBilling, applyAiSubscriptionToBilling, claimPlanWelcome]
+    symbols: [resolveOrgEntitlements, upsertOrgBilling, applyAiSubscriptionToBilling, claimPlanWelcome]
     issue: "#2649"
     state: mock-only
-    reason: Entitlement resolution, the off-Stripe upsert, the two guarded subscription writes (#5514) and the plan-welcome claim are only ever named through a mock of this module in the unit tier. The guarded writes run against real Postgres in tests/integration/billing-sync.test.ts, which this project does not measure.
+    reason: Entitlement resolution, the off-Stripe upsert, the guarded AI subscription write (#5514) and the plan-welcome claim are only ever named through a mock of this module in the unit tier. The guarded AI write runs against real Postgres in tests/integration/billing-sync.test.ts, which this project does not measure.
 
   - path: lib/fleet/queue.ts
     symbols: [countLiveManagedInstances, setRunnerObserved, markRunnerDraining, recentReapDeadCount, disableFleetPool]
