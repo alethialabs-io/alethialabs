@@ -26,14 +26,14 @@
 // `//` comments stripped. A go.work with no `use` entries is also a refusal.
 //
 // Usage:
-//   node scripts/check-dependabot-gomod.mjs --self-test   # hermetic fixtures + mutation controls
-//   node scripts/check-dependabot-gomod.mjs               # live: reads go.work and dependabot.yml
+//   node scripts/ci/check-dependabot-gomod.mjs --self-test   # hermetic fixtures + mutation controls
+//   node scripts/ci/check-dependabot-gomod.mjs               # live: reads go.work and dependabot.yml
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const GO_WORK = "go.work";
 const DEPENDABOT = ".github/dependabot.yml";
 

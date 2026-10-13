@@ -60,7 +60,7 @@ updates:
       - /packages/core
       # test/e2e is the fourth go.work module and `replace`s packages/core with ../../packages/core,
       # so a bump that moves core's requirements must move test/e2e/go.mod and go.sum in the same
-      # PR, or CI's GOWORK=off tidy check fails. scripts/check-dependabot-gomod.mjs fails when a
+      # PR, or CI's GOWORK=off tidy check fails. scripts/ci/check-dependabot-gomod.mjs fails when a
       # go.work `use` entry is missing from this list.
       - /test/e2e
     target-branch: dev

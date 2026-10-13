@@ -80,7 +80,8 @@
 //   node scripts/ci/check-pr-scope.mjs                # live: reads PR_NUMBER / PR_TITLE / PR_BODY / PR_BASE
 //
 // A PR whose base is not `dev` is skipped loudly before any `gh` call: only a dev merge closes
-// issues (close-on-dev-merge.yml), so a promotion's closing refs name no unit (#5948).
+// issues (close-on-dev-merge.yml), so the closing refs of a promotion, a hotfix, or a PR stacked on
+// another feature branch name no unit (#5948).
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -304,9 +305,11 @@ function liveChangedFiles(pr) {
  *
  * The check reads a PR's closing refs because merging into `dev` closes those issues —
  * `.github/workflows/close-on-dev-merge.yml` fires on `pull_request: closed, branches: [dev]` and
- * nothing else. A PR into `staging` or `main` (a promotion, or a hotfix) closes nothing, so holding
- * its diff against the scope of an issue its body happens to name asks a question that does not
- * apply: promotion #5654 failed this step seven times for that reason (#5948).
+ * nothing else. A PR into any other base closes nothing — `staging` or `main` (a promotion, or a
+ * hotfix), and equally a PR stacked on another `feat/*` branch — so holding its diff against the
+ * scope of an issue its body happens to name asks a question that does not apply: promotion #5654
+ * failed this step seven times for that reason (#5948). A stacked PR is checked when the branch it
+ * lands in opens its own PR into `dev`, whose diff then contains the stacked work.
  *
  * An EMPTY base means the caller did not pass one, and is treated as `dev`, so a caller that has not
  * been updated keeps the old behaviour rather than silently measuring nothing.
