@@ -57,6 +57,8 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		forgetPendingOrgSetup: vi.fn(),
 		markPendingOrgSetupDeclared: vi.fn(),
 		markPendingOrgSetupLinked: vi.fn(),
+		// ADR 0002 S9: the link's refusal records its reason; by default it closes nothing.
+		recordSetupRefusal: vi.fn(async () => null),
 		pendingOrgSetupFor: vi.fn(),
 		recordPendingOrgSetup: vi.fn(),
 		savePendingOrgSetupDetails: vi.fn(),
@@ -270,6 +272,7 @@ import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { getPurchaseStripe, getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { openHold } from "@/lib/billing/payment-holds/store";
 import {
 	closePendingOrgSetup,
 	findSetupOrg,
@@ -280,6 +283,7 @@ import {
 	pendingOrgSetupFor,
 	type PendingOrgSetupRow,
 	recordPendingOrgSetup,
+	recordSetupRefusal,
 	savePendingOrgSetupDetails,
 	settleOpenSetup,
 	unfinishedPendingOrgSetups,
@@ -2007,6 +2011,7 @@ describe("resolveNewOrgSetup", () => {
 			paid: true,
 			planState: "active",
 			paymentUrl: null,
+			hold: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
 			declared: false,
@@ -3565,21 +3570,24 @@ describe("ADR 0002 S1 (#5714)", () => {
 		});
 	});
 
-	describe("C88 — the link no longer ignores a refused sync", () => {
+	// From S9 (#5937) the refusal beside a live Y no longer closes the setup: it opens a `needs_operator`
+	// hold on X and leaves the setup open (I16). The full A cases are in billing-new-org-link.test.ts; these
+	// pin the calls the link makes through this file's mocks.
+	describe("C88 / C80 — the link refuses beside a live plan under a hold, before and after the sync", () => {
 		const input = { orgId: "org-1", subscriptionId: "sub_1", customerId: "cus_1" };
 		const payer = { capacity: "organization" as const, billingCountry: "de" };
+		const x = { id: "sub_1", status: "active", customer: "cus_1", latest_invoice: "in_1", metadata: { created_by: "user-1" } };
 
 		beforeEach(() => {
 			stripe.customers.retrieve.mockResolvedValue({ deleted: false, metadata: { created_by: "user-1" } });
 			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ created_org_id: "org-1" }));
 		});
 
-		it("the row names a live Y before the link: refused before any Stripe write — nothing linked, nothing marked, alerted", async () => {
+		it("the row names a live Y before the link: refused before any Stripe write — a needs_operator hold, the setup left open, alerted", async () => {
 			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
 			vi.mocked(emitAlertEvent).mockResolvedValue(1);
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			stripe.subscriptions.retrieve.mockResolvedValue(x);
 			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
 
 			const r = await linkSubscriptionToNewOrg({ ...input, payer });
 
@@ -3593,12 +3601,16 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
 			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
 			expect(db.update).not.toHaveBeenCalled(); // no payer write
-			expect(closePendingOrgSetup).toHaveBeenCalledWith({
+			expect(vi.mocked(openHold).mock.calls[0]?.[1]).toMatchObject({
 				subscriptionId: "sub_1",
-				userId: "user-1",
-				reason: "org_has_plan",
-				refusedReason: "org_has_plan",
+				payerKey: "user-1",
+				invoiceId: "in_1",
+				state: "needs_operator",
+				openedBy: "link",
+				openNote: "link_refused",
 			});
+			expect(recordSetupRefusal).toHaveBeenCalledWith({ userId: "user-1", subscriptionId: "sub_1", refused: "org_has_plan", close: false });
+			expect(closePendingOrgSetup).not.toHaveBeenCalled();
 			expect(events()).toEqual(["billing.new_org_link.refused"]);
 			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 			expect(emitAlertEvent).toHaveBeenCalledWith(
@@ -3612,22 +3624,19 @@ describe("ADR 0002 S1 (#5714)", () => {
 		});
 
 		it("a trialing Y refuses the same way; the clause claims no alert when none reached a channel", async () => {
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			stripe.subscriptions.retrieve.mockResolvedValue(x);
 			orgBilling.mockResolvedValue(rowNames("sub_y", "trialing"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
 			const r = await linkSubscriptionToNewOrg(input);
 			expect(r).toMatchObject({ kind: "refused" });
 			expect("clause" in r && r.clause).not.toMatch(/raised/);
 		});
 
 		it("race: the row names nothing at the first read and Y after the sync — refused, X's metadata already written, still not marked", async () => {
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			stripe.subscriptions.retrieve.mockResolvedValue(x);
 			db.queue.push([{ name: "LinkedCo" }]);
-			const linked = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1", organization_id: "org-1" } };
-			stripe.subscriptions.update.mockResolvedValue(linked);
+			stripe.subscriptions.update.mockResolvedValue({ ...x, metadata: { created_by: "user-1", organization_id: "org-1" } });
 			orgBilling.mockResolvedValueOnce(null).mockResolvedValueOnce(rowNames("sub_y", "active"));
 			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
 
 			const r = await linkSubscriptionToNewOrg({ ...input, payer });
 
@@ -3635,25 +3644,24 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(stripe.subscriptions.update).toHaveBeenCalledTimes(1);
 			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
 			expect(db.update).not.toHaveBeenCalled();
+			expect(openHold).toHaveBeenCalledTimes(1);
 			expect(events()).toEqual(["billing.new_org_link.refused"]);
 		});
 
 		it("control (C76): an ignored sync whose row names X itself is linked, and reports X's state", async () => {
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			stripe.subscriptions.retrieve.mockResolvedValue(x);
 			db.queue.push([{ name: "LinkedCo" }]);
-			const linked = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1", organization_id: "org-1" } };
-			stripe.subscriptions.update.mockResolvedValue(linked);
+			stripe.subscriptions.update.mockResolvedValue({ ...x, metadata: { created_by: "user-1", organization_id: "org-1" } });
 			orgBilling.mockResolvedValueOnce(null).mockResolvedValueOnce(rowNames("sub_1", "active"));
 			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
 
 			await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ kind: "linked", planState: "active", paymentUrl: null });
 			expect(markPendingOrgSetupLinked).toHaveBeenCalledWith("user-1", "sub_1", "org-1");
-			expect(closePendingOrgSetup).not.toHaveBeenCalled();
+			expect(openHold).not.toHaveBeenCalled();
 			expect(events()).toEqual([]);
 		});
 
-		it("the link runs the closer on its setup before it answers", async () => {
-			const x = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } };
+		it("the link runs the closer on its setup before it answers, telling it the link refuses beside a live plan itself", async () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(x);
 			db.queue.push([{ name: "LinkedCo" }]);
 			stripe.subscriptions.update.mockResolvedValue({ ...x, metadata: { created_by: "user-1", organization_id: "org-1" } });
@@ -3662,69 +3670,18 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(settleOpenSetup).toHaveBeenCalledWith(expect.objectContaining({ subscription_id: "sub_1" }), {
 				sub: x,
 				orgId: "org-1",
+				linkRefuses: true,
 			});
 		});
 
-		it("a refusal whose setup an earlier org_has_plan refusal already closed (and alerted on) does not alert again", async () => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
-			vi.mocked(emitAlertEvent).mockResolvedValue(1);
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+		it("the closer itself, told `linkRefuses`, writes nothing beside a live Y and answers open", async () => {
+			const closer = await realCloser();
 			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
-			vi.mocked(pendingOrgSetupFor).mockResolvedValue(
-				setupRow({ closed_at: new Date(), closed_reason: "org_has_plan", refused_reason: "org_has_plan" }),
-			);
-			await expect(linkSubscriptionToNewOrg(input)).resolves.toMatchObject({ kind: "refused" });
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+			const linkedX = subX("active", { created_by: "user-1", organization_id: "org-1" }) as never;
+			await expect(closer(openRow(), { sub: linkedX, orgId: "org-1", linkRefuses: true })).resolves.toBe("open");
+			expect(db.update).not.toHaveBeenCalled();
 			expect(emitAlertEvent).not.toHaveBeenCalled();
-		});
-
-		// Review blocker on #5715: the skip used to cover ANY already-closed setup, on the claim that the
-		// earlier closer "alerted then". Neither of these closers did, so X renewed beside Y unreported.
-		it.each([
-			["an operator's close-setup (which never alerts)", { closed_reason: "operator" as const, closed_by: "op-1" }],
-			["the closer's ended branch on a never_paid X (which raised nothing)", { closed_reason: "ended" as const }],
-		])("a refusal whose setup was already closed by %s still alerts", async (_label, closedBy) => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
-			vi.mocked(emitAlertEvent).mockResolvedValue(1);
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
-			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
-			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ closed_at: new Date(), ...closedBy }));
-			const r = await linkSubscriptionToNewOrg(input);
-			expect(r).toMatchObject({ kind: "refused", clause: expect.stringMatching(/We have raised this with support\.$/) });
-			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
-			expect(emitAlertEvent).toHaveBeenCalledWith(
-				"org-platform",
-				"system.platform.payment_needs_support",
-				expect.objectContaining({ resource_id: "sub_1" }),
-			);
-		});
-
-		it("a past_due Y refuses too — closed, logged and alerted — so X and Y never both bill silently", async () => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
-			vi.mocked(emitAlertEvent).mockResolvedValue(1);
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "incomplete", customer: "cus_1", metadata: { created_by: "user-1" } });
-			orgBilling.mockResolvedValue(rowNames("sub_y", "past_due"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
-			const r = await linkSubscriptionToNewOrg({ ...input, payer });
-			expect(r).toMatchObject({ kind: "refused", clause: expect.stringMatching(/already has an active plan/) });
-			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
-			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
-			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
-			expect(closePendingOrgSetup).toHaveBeenCalledWith(expect.objectContaining({ reason: "org_has_plan", refusedReason: "org_has_plan" }));
-			expect(events()).toEqual(["billing.new_org_link.refused"]);
-			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
-		});
-
-		it("a refused X with no setup record at all is still alerted on", async () => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
-			vi.mocked(emitAlertEvent).mockResolvedValue(1);
-			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
-			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
-			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
-			vi.mocked(pendingOrgSetupFor).mockResolvedValue(null);
-			await expect(linkSubscriptionToNewOrg(input)).resolves.toMatchObject({ kind: "refused" });
-			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 		});
 	});
 

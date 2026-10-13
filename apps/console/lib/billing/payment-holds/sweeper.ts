@@ -21,8 +21,11 @@
 // overlapping ticks, in one process or across instances, cannot advance one hold twice at once or mail
 // one hold and state twice.
 //
-// From slice 9 an `adopted` release whose setup has an org runs the link's core here (§5.6 "When a hold
-// ends"); until then such a setup stays open and the creator's next Create a team links it.
+// WHEN A HOLD ENDS (§5.6, I16 (b)). An `adopted` release whose setup has an org runs the link's core
+// at once, under the same lease (`relinkAdoptedSetup`): the visit here, the create-a-team purchase (its
+// hold pass and its sweep) and `payment-holds release` all call it. The core (`linkSetupToOrg`) lives in this file because
+// the sweeper is its caller with no session, and the session's link (app/server/actions/billing.ts)
+// runs the same function. A setup with no org stays open for the creator's resume.
 //
 // Booted from instrumentation.ts every 5 minutes (`startPaymentHoldSweeper`, the `registerLoop` shape),
 // with the optional twin route app/api/internal/payment-holds/sweep behind ALETHIA_CRON_SECRET, and
@@ -30,21 +33,43 @@
 
 import "server-only";
 import { and, asc, eq, lte, ne, or, type SQL, sql } from "drizzle-orm";
+import type Stripe from "stripe";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
+import { getActiveScope } from "@/lib/auth/scope";
+import { getPdp } from "@/lib/authz";
+import type { PayerCapacity } from "@repo/legal/commerce";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import {
+	findSetupOrg,
+	logBillingEvent,
+	markPendingOrgSetupLinked,
+	type PendingOrgSetupRow,
+	pendingOrgSetupFor,
+	recordSetupRefusal,
+} from "@/lib/billing/pending-org-setup";
+import { getOrgBilling } from "@/lib/billing/queries";
 import { getPurchaseStripe } from "@/lib/billing/stripe";
+import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	fenceFor,
 	type PurchaseLease,
+	PurchaseLeaseLostError,
 	releasePurchaseLease,
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
-import { type PaymentHoldRow, paymentHolds } from "@/lib/db/schema";
+import { organization, organizationBilling, type PaymentHoldRow, paymentHolds } from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { type DeliverHoldNotice, deliverHoldNotice, sendDueHoldNotices } from "./emails";
-import { type AdvanceResult, advanceHold, type HoldMachineDeps, type HoldStripeWriter } from "./machine";
+import {
+	type AdvanceResult,
+	advanceHold,
+	type HoldMachineDeps,
+	type HoldStripeWriter,
+	LINK_REFUSED_NOTE,
+} from "./machine";
 import type { HoldStripeReader } from "./observe";
-import { payerLeaseKey, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
+import { openHold, payerLeaseKey, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -217,11 +242,11 @@ async function readOpenHold(id: string): Promise<PaymentHoldRow | null> {
 	return row ?? null;
 }
 
-/** What one hold's visit did. */
+/** What one hold's visit did. `relinked` is the re-link an `adopted` release ran, or null when none ran. */
 export type HoldVisit =
 	| { kind: "busy" }
 	| { kind: "gone" }
-	| { kind: "advanced"; result: AdvanceResult; ageAlerted: boolean };
+	| { kind: "advanced"; result: AdvanceResult; ageAlerted: boolean; relinked: RelinkResult | null };
 
 /**
  * Advances one open hold under ITS payer's lease, taken with a zero wait, then raises its age alert when
@@ -237,7 +262,8 @@ export async function visitHold(hold: PaymentHoldRow, deps: SweepDeps): Promise<
 		if (!fresh) return { kind: "gone" };
 		const result = await advanceHold(fresh, machineDepsFor(lease, deps));
 		const ageAlerted = result.outcome === "open" ? await raiseAgeAlert(lease, result.hold, deps) : false;
-		return { kind: "advanced", result, ageAlerted };
+		const relinked = isAdopted(result.hold) ? await relinkAfterVisit(lease, result.hold, deps) : null;
+		return { kind: "advanced", result, ageAlerted, relinked };
 	} finally {
 		try {
 			await releasePurchaseLease(lease);
@@ -265,6 +291,301 @@ async function raiseAgeAlert(lease: PurchaseLease, hold: PaymentHoldRow, deps: S
 		detail,
 	});
 	return true;
+}
+
+// ── The link's core, and the re-link when a hold ends (§5.6) ───────────────────────────────────────
+
+const SUPPORT_EMAIL = LEGAL_ENTITY.supportEmail;
+
+/** §5.5: the link refused beside the team's other live, paid plan. */
+export const LINK_REFUSED_ORG_HAS_PLAN = `This team already has an active plan, so this payment was not linked to it. Contact support at ${SUPPORT_EMAIL}, who will refund it or move it to the right team.`;
+/** Appended to `LINK_REFUSED_ORG_HAS_PLAN` only when the alert behind it reached a channel (I8). */
+export const LINK_REFUSED_ALERTED = " We have raised this with support.";
+
+/** How long a `needs_operator` hold the link opens waits before the sweeper looks at it again (§3.1). */
+const OPERATOR_CHECK_MS = 24 * 60 * 60_000;
+
+/** Subscription statuses under which Stripe will never collect a payment for it again. */
+const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
+/**
+ * What the link's core did: linked X (`sub` is X as its metadata write returned it), or refused it
+ * beside the org's other live plan with the sentence the customer is shown, and the `needs_operator`
+ * hold that names X (null when none could be opened, or the open one is another payer's).
+ */
+export type SetupLinkResult =
+	| { kind: "linked"; sub: Stripe.Subscription }
+	| { kind: "refused"; clause: string; hold: PaymentHoldRow | null };
+
+/**
+ * The org's billing row names a subscription other than `subscriptionId` that still bills: active,
+ * trialing, or past_due. `past_due` is a deliberate widening of "live" for THIS refusal only (#5715
+ * review): the sync's row guard also refuses an X that does not supersede a past_due Y, so without it
+ * the link would mark X linked while X and Y both bill. Refusing here sends both to a person instead.
+ */
+function namesOtherLivePlan(billing: Awaited<ReturnType<typeof getOrgBilling>>, subscriptionId: string): boolean {
+	return (
+		!!billing?.stripeSubscriptionId &&
+		billing.stripeSubscriptionId !== subscriptionId &&
+		(billing.status === "active" || billing.status === "trialing" || billing.status === "past_due")
+	);
+}
+
+/** The id of a subscription's latest invoice, expanded or not; null when it has none. */
+function latestInvoiceOf(sub: Pick<Stripe.Subscription, "latest_invoice">): string | null {
+	return typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+}
+
+/** A hold's alert reached a channel in its CURRENT state entry (I8; `ageAlertFor`'s rule). */
+function alertedThisEntry(hold: PaymentHoldRow): boolean {
+	return hold.alerted_at !== null && hold.alerted_at >= hold.state_since;
+}
+
+/**
+ * THE LINK'S CORE (ADR 0002 §5.6), run under `userId`'s purchase lease by the session's link and by
+ * `relinkSetup`. It reads no session: its callers have already checked that X's customer was minted by
+ * `userId`, that X names no org but `orgId`, and that `userId` may manage billing in `orgId`.
+ *
+ * Beside another live plan on the org's row, read BEFORE any Stripe write, it refuses
+ * (`refuseBesideLivePlan`). Otherwise it writes `organization_id` on the customer, then on X — each
+ * Stripe write renews the lease first — unless X already names `orgId`, then syncs X to the org's row.
+ * A sync the row's guard ignored while the row, read again, names another live plan is the same refusal:
+ * Y took the row in between, and X's metadata already names the org. Then the payer facts, when given,
+ * and last the setup's mark, so the mark says only what has fully happened.
+ */
+export async function linkSetupToOrg(input: {
+	userId: string;
+	orgId: string;
+	sub: Stripe.Subscription;
+	customerId: string;
+	lease: PurchaseLease;
+	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
+}): Promise<SetupLinkResult> {
+	const { userId, orgId, sub, customerId, lease } = input;
+	const fence = fenceFor(lease);
+	const before = await getOrgBilling(orgId);
+	if (namesOtherLivePlan(before, sub.id)) {
+		return refuseBesideLivePlan({ userId, orgId, sub, customerId, lease, rowSubscriptionId: before?.stripeSubscriptionId ?? null });
+	}
+
+	let linked: Stripe.Subscription;
+	if (sub.metadata?.organization_id === orgId) {
+		linked = sub;
+	} else {
+		const [org] = await getServiceDb()
+			.select({ name: organization.name })
+			.from(organization)
+			.where(eq(organization.id, orgId))
+			.limit(1);
+		// Customer first, subscription second: X's `organization_id` is what a retried link and the
+		// webhook read, so it is written LAST — a failure between the two leaves X unlinked.
+		await fence();
+		await getPurchaseStripe().customers.update(customerId, {
+			name: org?.name,
+			metadata: { created_by: userId, organization_id: orgId },
+		});
+		await fence();
+		linked = await getPurchaseStripe().subscriptions.update(sub.id, {
+			metadata: { created_by: userId, organization_id: orgId },
+		});
+	}
+
+	// An "ignored" sync beside a row naming X itself is #5549's rank guard keeping a later state (C76),
+	// and X is linked.
+	if ((await syncSubscriptionToBilling(linked)) === "ignored") {
+		const after = await getOrgBilling(orgId);
+		if (namesOtherLivePlan(after, sub.id)) {
+			return refuseBesideLivePlan({ userId, orgId, sub, customerId, lease, rowSubscriptionId: after?.stripeSubscriptionId ?? null });
+		}
+	}
+
+	// After the sync, never before: the row does not exist until then.
+	if (input.payer?.capacity && input.payer.billingCountry) {
+		await getServiceDb()
+			.update(organizationBilling)
+			.set({
+				payerCapacity: input.payer.capacity,
+				billingCountry: input.payer.billingCountry.trim().toUpperCase(),
+				updatedAt: new Date(),
+			})
+			.where(eq(organizationBilling.organizationId, orgId));
+	}
+	await markPendingOrgSetupLinked(userId, sub.id, orgId);
+	return { kind: "linked", sub: linked };
+}
+
+/**
+ * The refusal beside the org's other live, paid plan Y (§5.6; C80). It never syncs X, marks the setup
+ * linked or writes payer facts. It opens a hold on X in `needs_operator` with `open_note = link_refused`
+ * — which T2o never adopts, and which blocks `userId`'s next create-a-team purchase — and alerts with X
+ * as the subject, recording `alerted_at` only when the alert reached a channel. The setup stays OPEN with
+ * `refused_reason = 'org_has_plan'` (I16): the hold is open, and its release decides the setup.
+ *
+ * When a hold on X is already open (an earlier refusal of the same X, or the hold `payment-holds
+ * release` is releasing), nothing new is opened and no second alert is raised; the clause claims the
+ * alert only when that hold, if it is `userId`'s, alerted in its current state entry. X with no invoice
+ * cannot be held (a hold names its invoice): it is alerted on and the setup stays open. A lost lease is
+ * thrown, with nothing written.
+ */
+async function refuseBesideLivePlan(input: {
+	userId: string;
+	orgId: string;
+	sub: Stripe.Subscription;
+	customerId: string;
+	lease: PurchaseLease;
+	rowSubscriptionId: string | null;
+}): Promise<SetupLinkResult> {
+	const { userId, sub, customerId, lease } = input;
+	const raise = () =>
+		alertPaymentNeedsSupport({
+			subscriptionId: sub.id,
+			customerId,
+			paymentIntentId: null,
+			context: "link_refused",
+			detail: `the link to team ${input.orgId} was refused because its billing row holds another live subscription (${input.rowSubscriptionId ?? "unknown"}), so this one is unlinked and keeps renewing beside it. Refund it, or move it to the right team.`,
+		});
+	let hold: PaymentHoldRow | null = null;
+	let alerted = false;
+	const invoiceId = latestInvoiceOf(sub);
+	if (invoiceId) {
+		const opened = await openHold(lease, {
+			subscriptionId: sub.id,
+			customerId,
+			payerKey: userId,
+			invoiceId,
+			state: "needs_operator",
+			nextCheckAt: new Date(Date.now() + OPERATOR_CHECK_MS),
+			openedBy: "link",
+			openedByUserId: userId,
+			openNote: LINK_REFUSED_NOTE,
+		});
+		if (opened.kind === "lease_lost") throw new PurchaseLeaseLostError(lease.key);
+		if (opened.kind === "opened") {
+			hold = opened.hold;
+			alerted = await raise();
+			if (alerted) {
+				hold = (await writeHoldState(lease, { id: hold.id, version: hold.version }, { alertedAt: new Date() })) ?? hold;
+			}
+		} else {
+			hold = opened.hold && opened.hold.payer_key === userId ? opened.hold : null;
+			alerted = hold !== null && alertedThisEntry(hold);
+		}
+	} else {
+		alerted = await raise();
+	}
+	await recordSetupRefusal({ userId, subscriptionId: sub.id, refused: "org_has_plan", close: false });
+	logBillingEvent("billing.new_org_link.refused", {
+		subscription_id: sub.id,
+		customer_id: customerId,
+		org_id: input.orgId,
+		org_subscription_id: input.rowSubscriptionId,
+		hold_id: hold?.id ?? null,
+	});
+	return { kind: "refused", clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}`, hold };
+}
+
+/**
+ * Whether `userId` may manage billing in `orgId`, asked with no session (§5.6 "When a hold ends"): the
+ * scope `userId` resolves to when it names `orgId` must BE `orgId` (a substituted scope is a no), and
+ * the PDP must allow `manage_billing` there. It is the question the session's link asks with
+ * `authorizeInOrg`, asked about the setup's creator rather than about whoever runs the caller, and
+ * asked with `can`, so nothing is recorded.
+ */
+async function holdsManageBilling(userId: string, orgId: string): Promise<boolean> {
+	const actor = await getActiveScope(userId, orgId);
+	if (actor.orgId !== orgId) return false;
+	return (await getPdp().can(actor, "manage_billing", { type: "billing" })).allowed;
+}
+
+/** What a re-link did: the core's result, or why the core was not run. */
+export type RelinkResult =
+	| SetupLinkResult
+	| { kind: "no_setup" }
+	| { kind: "no_org" }
+	| { kind: "not_linked"; why: string };
+
+/**
+ * Runs the link's core for the open setup `row` and the org `orgId`, with no session, under the setup
+ * creator's lease (§5.6 "When a hold ends"). It checks what the session's link checks — the customer's
+ * `created_by` is the creator, X names no org but `orgId`, the creator holds `manage_billing` in `orgId`
+ * — and also that X's own `metadata.created_by` is the creator. A check that fails runs no core: the
+ * operator is alerted with X as the subject, and the setup stays open. An X that reads ended is not linked, and not
+ * alerted on here: the setup closer closes such a setup. A Stripe read that fails is thrown.
+ */
+async function relinkSetup(
+	lease: PurchaseLease,
+	row: PendingOrgSetupRow,
+	orgId: string,
+	alert: HoldMachineDeps["alert"],
+): Promise<RelinkResult> {
+	if (lease.key !== payerLeaseKey(row.user_id)) {
+		throw new Error(`relinkSetup: the setup of ${row.user_id} needs that user's lease, not ${lease.key}.`);
+	}
+	if (row.linked_at || row.closed_at) return { kind: "no_setup" };
+	const stripe = getPurchaseStripe();
+	const sub = await stripe.subscriptions.retrieve(row.subscription_id);
+	if (ENDED_STATUSES.has(sub.status)) return { kind: "not_linked", why: `it reads ${sub.status}` };
+	const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+	const customer = await stripe.customers.retrieve(customerId);
+	const linkedTo = sub.metadata?.organization_id;
+	let why: string | null = null;
+	if (sub.metadata?.created_by !== row.user_id) why = "its metadata names another creator";
+	else if (customer.deleted || customer.metadata?.created_by !== row.user_id) why = "its customer was not minted by the setup's creator";
+	else if (linkedTo && linkedTo !== orgId) why = `it is already linked to another team (${linkedTo})`;
+	else if (!(await holdsManageBilling(row.user_id, orgId))) why = `its creator no longer holds manage_billing in team ${orgId}`;
+	if (why) {
+		await alert({
+			subscriptionId: sub.id,
+			customerId,
+			paymentIntentId: null,
+			detail: `its payment hold was released as adopted and its team setup could not be re-linked: ${why}. The setup stays open; link it to the team, or refund it, by hand.`,
+		});
+		return { kind: "not_linked", why };
+	}
+	return linkSetupToOrg({ userId: row.user_id, orgId, sub, customerId, lease });
+}
+
+/** The hold was released `adopted`. */
+function isAdopted(hold: PaymentHoldRow): boolean {
+	return hold.state === "released" && hold.release_reason === "adopted";
+}
+
+/**
+ * §5.6 "When a hold ends", for an `adopted` hold under its payer's lease: the payer's open setup for the
+ * hold's subscription is re-linked (`relinkSetup`) when it has an org (`findSetupOrg`: its
+ * `created_org_id`, or the org whose marker names it). With no open setup, or no org, nothing runs: a
+ * setup with no org stays open for the creator's resume. Called by the visit here, the create-a-team
+ * purchase and `payment-holds release`.
+ */
+export async function relinkAdoptedSetup(
+	lease: PurchaseLease,
+	hold: Pick<PaymentHoldRow, "payer_key" | "subscription_id">,
+	alert: HoldMachineDeps["alert"],
+): Promise<RelinkResult> {
+	const row = await pendingOrgSetupFor(hold.payer_key, hold.subscription_id);
+	if (!row || row.linked_at || row.closed_at) return { kind: "no_setup" };
+	const org = await findSetupOrg(row, row.user_id);
+	if (!org) return { kind: "no_org" };
+	return relinkSetup(lease, row, org.id, alert);
+}
+
+/**
+ * The visit's re-link of an adopted hold. The sweeper never visits that hold again — it is released — so
+ * a failure is logged AND alerted with X as the subject, and the setup stays open.
+ */
+async function relinkAfterVisit(lease: PurchaseLease, hold: PaymentHoldRow, deps: SweepDeps): Promise<RelinkResult | null> {
+	try {
+		return await relinkAdoptedSetup(lease, hold, deps.alert);
+	} catch (err) {
+		console.error(`[billing] payment-hold sweeper could not re-link the setup of adopted hold ${hold.id}:`, err);
+		await deps.alert({
+			subscriptionId: hold.subscription_id,
+			customerId: hold.customer_id,
+			paymentIntentId: null,
+			detail: `its payment hold ${hold.id} was released as adopted, and re-linking its team setup failed (${err instanceof Error ? err.message : String(err)}). The setup stays open; link it to the team, or refund it, by hand.`,
+		});
+		return null;
+	}
 }
 
 /** The predicate of a hold that is due (§3.2 E1 (b)): scheduled now, or nudged since it was observed. */

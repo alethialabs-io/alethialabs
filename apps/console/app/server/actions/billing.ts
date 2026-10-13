@@ -95,12 +95,18 @@ import {
 	NOT_CONFIRMED_CLOSED,
 	PAID_SETUP_ELSEWHERE,
 } from "@/lib/billing/new-org-hold-copy";
-import { advanceHold, decideOpen } from "@/lib/billing/payment-holds/machine";
+import { type AdvanceResult, advanceHold, decideOpen, LINK_REFUSED_NOTE } from "@/lib/billing/payment-holds/machine";
 import { type HoldStripeReader, observeHold } from "@/lib/billing/payment-holds/observe";
 import { type OpenHoldResult, openHold } from "@/lib/billing/payment-holds/store";
-import { liveSweepDeps, machineDepsFor } from "@/lib/billing/payment-holds/sweeper";
 import {
-	closePendingOrgSetup,
+	LINK_REFUSED_ALERTED,
+	LINK_REFUSED_ORG_HAS_PLAN,
+	linkSetupToOrg,
+	liveSweepDeps,
+	machineDepsFor,
+	relinkAdoptedSetup,
+} from "@/lib/billing/payment-holds/sweeper";
+import {
 	FORGETTABLE_RELEASES,
 	findSetupOrg,
 	forgetPendingOrgSetup,
@@ -117,6 +123,7 @@ import {
 	type PendingOrgSetupRow,
 	REPLACEABLE_SUBSCRIPTION_STATUSES,
 	recordPendingOrgSetup,
+	recordSetupRefusal,
 	savePendingOrgSetupDetails,
 	settleOpenSetup,
 	type UnfinishedSetupCursor,
@@ -905,11 +912,16 @@ const PURCHASE_STOPPED =
 	"This purchase took too long and was stopped, or another one on this account took over, so nothing new was started. Wait a moment and try again.";
 
 /**
- * The link's refusal beside the team's other live plan (ADR 0002 §5.5, #5714). The second sentence is
- * added only when `alertPaymentNeedsSupport` returned true (I8).
+ * The link's refusals of an ENDED X with no open hold (ADR 0002 §5.5, §5.6). The link runs only once the
+ * team exists, so both say the team stays on the free plan. "Not charged" is said only when the payments
+ * read proved that no money moved; anything else sends the customer to support, and claims the alert
+ * only when it reached a channel (I8).
  */
-const LINK_REFUSED_ORG_HAS_PLAN = `This team already has an active plan, so this payment was not linked to it. Contact support at ${SUPPORT_EMAIL}, who will refund it or move it to the right team.`;
-const LINK_REFUSED_ALERTED = " We have raised this with support.";
+const LINK_REFUSED_NOT_CHARGED =
+	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
+const LINK_REFUSED_UNCONFIRMED = `This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at ${SUPPORT_EMAIL} with the time of the payment.`;
+const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
+const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
 
 /** Where the open-setup guard sends the setup's creator (ADR 0002 §5.5). */
 const OPEN_SETUP_CREATOR_NEXT = `Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
@@ -2034,18 +2046,47 @@ function latestInvoiceId(sub: Pick<Stripe.Subscription, "latest_invoice">): stri
  * lease was taken over, or it LAPSED (`expires_at` passed) while this request was reading Stripe.
  */
 async function advanceUnderLease(hold: PaymentHoldRow, lease: PurchaseLease): Promise<PaymentHoldRow> {
+	return (await advanceResultUnderLease(hold, lease)).hold;
+}
+
+/** `advanceUnderLease`, returning the whole `AdvanceResult` (the rows it matched, its observation). */
+async function advanceResultUnderLease(hold: PaymentHoldRow, lease: PurchaseLease): Promise<AdvanceResult> {
 	const result = await advanceHold(hold, machineDepsFor(lease, liveSweepDeps()));
 	if (result.outcome === "lease_lost" || result.outcome === "stale") {
 		throw new PurchaseLeaseLostError(lease.key);
 	}
-	return result.hold;
+	return result;
+}
+
+/**
+ * §5.6 "When a hold ends", in the create-a-team purchase: when `before` was open and this request's
+ * advance left it released `adopted` (`after`), the setup that names it is re-linked under this lease
+ * (`relinkAdoptedSetup`) when it has an org. Returns the `needs_operator` hold a refused re-link opened,
+ * which the caller adds to what it has seen, so it blocks this purchase as it blocks the next one (I1
+ * (a)); else null. A lost lease is thrown. Any other failure is logged and the purchase goes on: the
+ * setup stays open, and the live check after this still sees X while X is unlinked.
+ */
+async function relinkIfAdopted(
+	before: PaymentHoldRow,
+	after: PaymentHoldRow,
+	lease: PurchaseLease,
+): Promise<PaymentHoldRow | null> {
+	if (before.state === "released" || after.state !== "released" || after.release_reason !== "adopted") return null;
+	try {
+		const relinked = await relinkAdoptedSetup(lease, after, liveSweepDeps().alert);
+		return relinked.kind === "refused" ? relinked.hold : null;
+	} catch (e) {
+		if (e instanceof PurchaseLeaseLostError) throw e;
+		console.error(`[billing] could not re-link the setup of adopted hold ${after.id}:`, e);
+		return null;
+	}
 }
 
 /**
  * I4, THE WRITE-AHEAD: closes `sub` (whose held invoice is `invoiceId`) only under a hold. E0 opens the
  * hold in `closing` under the lease BEFORE anything is voided or cancelled; then the machine advances
- * it — voiding first, cancelling only after a proven void (§3.4). Returns the hold as the machine left
- * it, or a refusal that ends the purchase with nothing touched: T0f, the hold could not be written (no
+ * it — voiding first, cancelling only after a proven void (§3.4). Returns the hold as E0 opened it
+ * (`opened`) and as the machine left it (`hold`), or a refusal that ends the purchase with nothing touched: T0f, the hold could not be written (no
  * block is promised); T0h, an open hold already names `sub` (its clause, when it is this payer's).
  */
 async function closeUnderHold(
@@ -2053,7 +2094,7 @@ async function closeUnderHold(
 	invoiceId: string,
 	userId: string,
 	lease: PurchaseLease,
-): Promise<{ kind: "held"; hold: PaymentHoldRow } | { kind: "refused"; message: string }> {
+): Promise<{ kind: "held"; opened: PaymentHoldRow; hold: PaymentHoldRow } | { kind: "refused"; message: string }> {
 	let opened: OpenHoldResult;
 	try {
 		opened = await openHold(lease, {
@@ -2073,7 +2114,7 @@ async function closeUnderHold(
 	if (opened.kind === "lease_lost") throw new PurchaseLeaseLostError(lease.key);
 	const decision = decideOpen(opened, userId);
 	if (decision.kind === "proceed") {
-		return { kind: "held", hold: await advanceUnderLease(decision.hold, lease) };
+		return { kind: "held", opened: decision.hold, hold: await advanceUnderLease(decision.hold, lease) };
 	}
 	const own = decision.kind === "refuse_held" ? decision.hold : null;
 	return { kind: "refused", message: (own ? holdClause(own) : null) ?? NOT_CONFIRMED_CLOSED };
@@ -2137,6 +2178,8 @@ async function closeOrKeep(
 	const closed = await closeUnderHold(sub, invoiceId, userId, lease);
 	if (closed.kind === "refused") return closed.message;
 	seen.holds.set(closed.hold.id, closed.hold);
+	const opened = await relinkIfAdopted(closed.opened, closed.hold, lease);
+	if (opened) seen.holds.set(opened.id, opened);
 	const reason = closed.hold.release_reason;
 	if (closed.hold.state === "released" && reason && FORGETTABLE_RELEASES.has(reason)) {
 		await forgetPendingOrgSetup(userId, sub, firstPayment);
@@ -2250,7 +2293,10 @@ async function startNewOrgSubscription(
 	// I1 (a): every open hold of the user, advanced once. Released ones are kept for their notice.
 	const seen: CheckoutsSeen = { holds: new Map(), kept: [] };
 	for (const hold of await paymentHoldsOfPayer(actor.userId)) {
-		seen.holds.set(hold.id, hold.state === "released" ? hold : await advanceUnderLease(hold, lease));
+		const advanced = hold.state === "released" ? hold : await advanceUnderLease(hold, lease);
+		seen.holds.set(advanced.id, advanced);
+		const opened = await relinkIfAdopted(hold, advanced, lease);
+		if (opened) seen.holds.set(opened.id, opened);
 	}
 	const held = copyOf(seen).refusal;
 	if (held) return { kind: "refused", message: held };
@@ -2575,22 +2621,32 @@ export async function linkSubscriptionToNewOrg(input: {
 	// lease is THROWN, not refused — a refusal is final for the setup, and this is only "not now", so
 	// the sheet's retry is the right answer.
 	const leased = await withUserPurchaseLease(actor.userId, (lease) =>
-		linkSubscriptionToNewOrgUnderLease(actor, input, fenceFor(lease)),
+		linkSubscriptionToNewOrgUnderLease(actor, input, lease),
 	);
 	if (!leased.ran) throw new Error(leased.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS);
 	return leased.value;
 }
 
 /**
- * The body of `linkSubscriptionToNewOrg`, run under the user's purchase lease: each Stripe write renews
- * the lease first (`fence`, §4.4 rule 1), and a lost lease stops the link before that write.
+ * The body of `linkSubscriptionToNewOrg`, under the user's purchase lease (ADR 0002 §5.6). After the
+ * retrieve and the ownership checks, and BEFORE any Stripe write, it consults the payment hold that
+ * names X:
+ *   - `closing` / `cancel_unproven`, this user's: advanced once (`advanceHold`, under this lease).
+ *     Released: X is read again, and is linked when the release adopted it, refused as ended when it
+ *     closed it. Still open with T4 as its last row (a payment in flight on an `incomplete` X): link and
+ *     defer. Still open otherwise: refused, as below.
+ *   - any other open state: refused (`refuseHeldLink`) with the hold's clause; the setup stays open
+ *     (I16), and the hold decides it when it ends.
+ * With no open hold, an ENDED X is refused (`refuseEndedLink`). Otherwise the setup closer runs, and
+ * then the link's core (`linkSetupToOrg`), which refuses beside the org's other live plan under a
+ * `needs_operator` hold. While an open hold names X the report carries no payment link (C84).
  */
 async function linkSubscriptionToNewOrgUnderLease(
 	actor: { userId: string },
 	input: Parameters<typeof linkSubscriptionToNewOrg>[0],
-	fence: StripeWriteFence,
+	lease: PurchaseLease,
 ): Promise<NewOrgLinkResult> {
-	const sub = await getPurchaseStripe().subscriptions.retrieve(input.subscriptionId);
+	let sub = await getPurchaseStripe().subscriptions.retrieve(input.subscriptionId);
 	const subCustomerId =
 		typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 	if (subCustomerId !== input.customerId) {
@@ -2600,88 +2656,115 @@ async function linkSubscriptionToNewOrgUnderLease(
 	if (customer.deleted || customer.metadata?.created_by !== actor.userId) {
 		throw new Error("Not allowed to link this subscription.");
 	}
-	// IDEMPOTENT FOR THE SAME ORG (#5445). The Stripe writes below land before the billing sync and
-	// the payer write, so a failure in either of those — or a response the browser never received —
-	// leaves a subscription that already names this org. A retry used to be refused here as "already
-	// linked", for ever, with the customer charged and no way to finish. Now a subscription that
-	// already names THIS org, stamped by THIS user, skips the Stripe writes and re-runs the rest
-	// (both of which converge: the sync re-applies the same subscription, the payer write is an update).
-	// A subscription naming a DIFFERENT org is still refused.
+	// IDEMPOTENT FOR THE SAME ORG (#5445). The Stripe writes land before the billing sync and the payer
+	// write, so a failure in either — or a response the browser never received — leaves a subscription
+	// that already names this org. Such a one, stamped by THIS user, is linked again: the core skips the
+	// Stripe writes and re-runs the rest. A subscription naming a DIFFERENT org is refused.
 	const linkedTo = sub.metadata?.organization_id;
 	if (linkedTo && (linkedTo !== input.orgId || sub.metadata?.created_by !== actor.userId)) {
 		throw new Error("Subscription is already linked to an organization.");
 	}
 
-	// The setup closer runs before the link answers (ADR 0002 §5.7): an ended X closes its setup, and
-	// one a lost response left linked in Stripe is adopted.
-	const setup = await pendingOrgSetupFor(actor.userId, sub.id);
-	if (setup) await settleOpenSetup(setup, { sub, orgId: input.orgId });
-
-	// THE REFUSED SYNC (ADR 0002 §5.6, #5714). The org may already hold another live plan Y — bought
-	// in it, or trialled, while this link had not yet run. Linking X beside it left X renewing next to
-	// Y while the sheet reported "active". Checked here, BEFORE any Stripe write, and again after a sync
-	// the row's guard refused (Y took the row in between).
-	const before = await getOrgBilling(input.orgId);
-	if (namesOtherLivePlan(before, sub.id)) {
-		return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: before?.stripeSubscriptionId ?? null });
-	}
-
-	let linked: Stripe.Subscription;
-	if (linkedTo) {
-		linked = sub;
-	} else {
-		const [org] = await getServiceDb()
-			.select({ name: organization.name })
-			.from(organization)
-			.where(eq(organization.id, input.orgId))
-			.limit(1);
-
-		// Customer first, subscription second: the subscription's `organization_id` is what the
-		// idempotent branch above (and the webhook) read, so it is written LAST — a failure between
-		// the two leaves an unlinked subscription, which a retry links normally.
-		await fence();
-		await getPurchaseStripe().customers.update(input.customerId, {
-			name: org?.name,
-			metadata: { created_by: actor.userId, organization_id: input.orgId },
-		});
-		await fence();
-		linked = await getPurchaseStripe().subscriptions.update(input.subscriptionId, {
-			metadata: { created_by: actor.userId, organization_id: input.orgId },
-		});
-	}
-
-	// Deterministic activation — don't wait for the (already-fired) webhook. An "ignored" sync is no
-	// longer discarded: beside another live plan it is the refusal above, reached by a race. Beside a
-	// row naming X itself it is #5549's rank guard keeping a later state (C76), and X is linked.
-	const synced = await syncSubscriptionToBilling(linked);
-	if (synced === "ignored") {
-		const after = await getOrgBilling(input.orgId);
-		if (namesOtherLivePlan(after, sub.id)) {
-			return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: after?.stripeSubscriptionId ?? null });
+	// THE HOLDS (§5.6), read only once X is known to be this user's. A hold is opened only for its payer
+	// (I12), so one naming another payer is not this user's to read: it refuses with no clause of its own.
+	let hold = await openPaymentHoldOn(sub.id);
+	if (hold && hold.payer_key === actor.userId && (hold.state === "closing" || hold.state === "cancel_unproven")) {
+		const advanced = await advanceResultUnderLease(hold, lease);
+		hold = advanced.hold;
+		const lastRow = advanced.rows[advanced.rows.length - 1];
+		if (hold.state === "released") {
+			// Read again: the advance just adopted X (linked below) or closed it (refused below as ended).
+			sub = await getPurchaseStripe().subscriptions.retrieve(sub.id);
+			hold = null;
+		} else if (lastRow !== "T4") {
+			return refuseHeldLink(actor.userId, sub.id, hold);
 		}
+	} else if (hold) {
+		return refuseHeldLink(actor.userId, sub.id, hold);
 	}
 
-	// Then carry the declared payer facts onto the row syncSubscriptionToBilling just created. After
-	// it, never before: the row does not exist until then, and writing them first would either race
-	// or need a second insert path for the same record.
-	if (input.payer?.capacity && input.payer.billingCountry) {
-		await getServiceDb()
-			.update(organizationBilling)
-			.set({
-				payerCapacity: input.payer.capacity,
-				billingCountry: input.payer.billingCountry.trim().toUpperCase(),
-				updatedAt: new Date(),
-			})
-			.where(eq(organizationBilling.organizationId, input.orgId));
+	if (!hold && ENDED_SUBSCRIPTION_STATUSES.has(sub.status)) {
+		return refuseEndedLink(actor.userId, sub, input.orgId);
 	}
 
-	// The setup record's link step (#5445). Last, so it says only what has fully happened.
-	await markPendingOrgSetupLinked(actor.userId, input.subscriptionId, input.orgId);
+	// The setup closer runs before the link answers (ADR 0002 §5.7): one a lost response left linked in
+	// Stripe is adopted. Beside the org's other live plan it writes nothing (`linkRefuses`): the core
+	// below refuses that X under a hold, and an X refused there must not be closed (I16).
+	const setup = await pendingOrgSetupFor(actor.userId, sub.id);
+	if (setup) await settleOpenSetup(setup, { sub, orgId: input.orgId, linkRefuses: true });
+
+	const linked = await linkSetupToOrg({
+		userId: actor.userId,
+		orgId: input.orgId,
+		sub,
+		customerId: input.customerId,
+		lease,
+		payer: input.payer,
+	});
+	if (linked.kind === "refused") return { kind: "refused", clause: linked.clause };
 
 	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
-	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
-	// often be false.
-	return { kind: "linked", ...(await readNewOrgPlanState(linked)) };
+	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would often
+	// be false. Linked and deferred under an open hold: no payment link (C84).
+	const report = await readNewOrgPlanState(linked.sub);
+	return { kind: "linked", ...report, ...(hold ? { paymentUrl: null } : {}) };
+}
+
+/**
+ * The link's refusal while an open payment hold names X (§5.6): the hold's clause (§5.5) when it is this
+ * user's, else the generic one. A hold an earlier refusal of this link opened beside the team's other
+ * live plan (`open_note = link_refused`) keeps that refusal's clause and reason: the live plan, not the
+ * payment, is what holds X. Otherwise `refused_reason = 'held'`. The setup stays open either way (I16):
+ * the hold's release closes it, or its adoption re-links it.
+ */
+async function refuseHeldLink(userId: string, subscriptionId: string, hold: PaymentHoldRow): Promise<NewOrgLinkResult> {
+	if (hold.payer_key === userId && hold.open_note === LINK_REFUSED_NOTE) {
+		await recordSetupRefusal({ userId, subscriptionId, refused: "org_has_plan", close: false });
+		const alerted = hold.alerted_at !== null && hold.alerted_at >= hold.state_since;
+		return { kind: "refused", clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}` };
+	}
+	await recordSetupRefusal({ userId, subscriptionId, refused: "held", close: false });
+	return { kind: "refused", clause: heldNotice(hold, userId) };
+}
+
+/**
+ * The link's refusal of an ENDED X with no open hold (§5.6 "X is ended, no hold names it"; C86). The
+ * payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved) is the "not
+ * charged" clause and no alert; anything else — money may have moved, or the read failed — is the
+ * "contact support" clause and an alert with X as the subject. It refunds nothing: only a hold may
+ * refund (I3). The setup is closed with `refused_reason = 'ended'` (`recordSetupRefusal`, which closes
+ * only while no hold is open). The alert is skipped when that closed nothing and the setup was already
+ * closed as `ended`, by the setup closer or by an earlier refusal here: each raised this alert when its
+ * own read left money possibly moved, and raised none only on a read that proved no money moved. The
+ * clause claims an alert only when this call's reached a channel (I8).
+ */
+async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
+	const { planState } = await readNewOrgPlanState(sub);
+	const closed = await recordSetupRefusal({ userId, subscriptionId: sub.id, refused: "ended", close: true });
+	logBillingEvent("billing.new_org_link.refused", {
+		subscription_id: sub.id,
+		customer_id: subscriptionCustomerId(sub),
+		org_id: orgId,
+		x_read: sub.status,
+		plan_state: planState,
+		setup_closed_now: closed ? "true" : "false",
+	});
+	if (planState === "not_charged") return { kind: "refused", clause: LINK_REFUSED_NOT_CHARGED };
+	const record = closed ?? (await pendingOrgSetupFor(userId, sub.id));
+	const closerAlerted = !closed && record?.closed_reason === "ended";
+	const alerted =
+		!closerAlerted &&
+		(await alertPaymentNeedsSupport({
+			subscriptionId: sub.id,
+			customerId: subscriptionCustomerId(sub),
+			paymentIntentId: null,
+			context: "setup_closed",
+			detail: `the link to team ${orgId} was refused because the subscription reads ${sub.status}, and its first payment is not proven unmoved. Nothing was refunded automatically; check the payment and refund it by hand if it was taken.`,
+		}));
+	return {
+		kind: "refused",
+		clause: `${LINK_REFUSED_UNCONFIRMED}${alerted ? LINK_REFUSED_ALERT_RAISED : ""}${LINK_REFUSED_FREE_PLAN}`,
+	};
 }
 
 /**
@@ -2692,77 +2775,6 @@ async function linkSubscriptionToNewOrgUnderLease(
 export type NewOrgLinkResult =
 	| ({ kind: "linked" } & NewOrgPlanReport)
 	| { kind: "refused"; clause: string };
-
-/**
- * The org's billing row names a subscription other than `subscriptionId` that still bills: active,
- * trialing, or past_due. `past_due` is a deliberate widening of "live" for THIS refusal only (#5715
- * review): the sync's row guard also refuses an X that does not supersede a past_due Y, so without it
- * the link would mark X linked while X and Y both bill. Refusing here sends both to a person instead.
- */
-function namesOtherLivePlan(
-	billing: Awaited<ReturnType<typeof getOrgBilling>>,
-	subscriptionId: string,
-): boolean {
-	return (
-		!!billing?.stripeSubscriptionId &&
-		billing.stripeSubscriptionId !== subscriptionId &&
-		(billing.status === "active" || billing.status === "trialing" || billing.status === "past_due")
-	);
-}
-
-/**
- * The link's refusal beside the org's other live plan (ADR 0002 §5.6 "The refused sync", #5714). It
- * writes nothing to the plan and never marks the setup linked: it closes the setup with
- * `refused_reason = 'org_has_plan'` (one compare-and-set), logs `billing.new_org_link.refused`, and
- * alerts the operator with X as the subject — X is paid or may be, unlinked, and renews until a person
- * refunds it or moves it.
- *
- * The alert is skipped in exactly one case: this call's compare-and-set closed nothing AND the setup's
- * `closed_reason` is already `org_has_plan` — an earlier refusal of this same X, which raised this same
- * alert with this subject. Every other case alerts: the setup closed now; no setup record at all; a
- * setup closed as `ended` (the closer alerts there only when a payment may have moved, so a `never_paid`
- * close raised nothing) or as `operator` (`close-setup` never alerts); a setup already linked. A new
- * closer does NOT inherit the skip — it alerts here unless it writes `org_has_plan`. The customer is
- * told the alert was raised only when it reached a channel (I8).
- */
-async function refuseNewOrgLink(input: {
-	actor: { userId: string };
-	sub: Stripe.Subscription;
-	customerId: string;
-	orgId: string;
-	rowSubscriptionId: string | null;
-}): Promise<NewOrgLinkResult> {
-	const closed = await closePendingOrgSetup({
-		subscriptionId: input.sub.id,
-		userId: input.actor.userId,
-		reason: "org_has_plan",
-		refusedReason: "org_has_plan",
-	});
-	const record = closed ?? (await pendingOrgSetupFor(input.actor.userId, input.sub.id));
-	logBillingEvent("billing.new_org_link.refused", {
-		subscription_id: input.sub.id,
-		customer_id: input.customerId,
-		org_id: input.orgId,
-		org_subscription_id: input.rowSubscriptionId,
-		setup_closed_now: closed ? "true" : "false",
-	});
-	// The one skip: an earlier refusal of this X already raised this alert (see the JSDoc).
-	const alreadyRefused = !closed && record?.closed_reason === "org_has_plan";
-	let alerted = false;
-	if (!alreadyRefused) {
-		alerted = await alertPaymentNeedsSupport({
-			subscriptionId: input.sub.id,
-			customerId: input.customerId,
-			paymentIntentId: null,
-			context: "link_refused",
-			detail: `the link to team ${input.orgId} was refused because its billing row holds another live subscription (${input.rowSubscriptionId ?? "unknown"}), so this one is unlinked and keeps renewing beside it. Refund it, or move it to the right team.`,
-		});
-	}
-	return {
-		kind: "refused",
-		clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}`,
-	};
-}
 
 /**
  * The plan state of a create-a-team subscription (#5522): its status, plus — for `incomplete`,
@@ -2915,11 +2927,17 @@ async function newOrgSetupStateFor(
 			await markPendingOrgSetupDeclared(userId, org.id, sub.id);
 		}
 	}
+	// A setup an open payment hold names is reported WITH that hold, and with no payment link (§5.6,
+	// C84): the hold may be voiding that invoice, or refunding a payment of it.
+	const hold = await openPaymentHoldOn(sub.id);
+	const report = await readNewOrgPlanState(sub);
 	return {
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
-		...(await readNewOrgPlanState(sub)),
+		...report,
+		...(hold ? { paymentUrl: null } : {}),
+		hold: hold && hold.state !== "released" ? { state: hold.state, notice: heldNotice(hold, userId) } : null,
 		org,
 		linked: !!linkedTo,
 		declared,
@@ -2928,6 +2946,14 @@ async function newOrgSetupStateFor(
 		billing: row.billing ?? null,
 		currency: sub.currency,
 	};
+}
+
+/**
+ * What a resume lookup tells `userId` about the open hold on their setup: the hold's clause (§5.5) when
+ * the hold is theirs, else the generic one — another payer's hold is never described (S4's warning).
+ */
+function heldNotice(hold: PaymentHoldRow, userId: string): string {
+	return (hold.payer_key === userId ? holdClause(hold, { refusing: true }) : null) ?? NOT_CONFIRMED_CLOSED;
 }
 
 /**
