@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, count, eq, gte, inArray, lt, sum } from "drizzle-orm";
+import { and, count, eq, inArray, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectCluster, projects } from "@/lib/db/schema";
 
@@ -80,25 +80,6 @@ export async function queryProjectResourceCounts(
 	};
 }
 
-/** Jobs a project ran in a window (by creation time) — the cumulative "Jobs" counter. */
-export async function queryProjectJobCount(
-	projectId: string,
-	from: Date,
-	to: Date,
-): Promise<number> {
-	const [row] = await getServiceDb()
-		.select({ n: count() })
-		.from(jobs)
-		.where(
-			and(
-				eq(jobs.project_id, projectId),
-				gte(jobs.created_at, from),
-				lt(jobs.created_at, to),
-			),
-		);
-	return row?.n ?? 0;
-}
-
 /** Jobs currently in flight for a project (CLAIMED/PROCESSING) — the concurrency gauge. */
 export async function queryProjectRunningJobs(projectId: string): Promise<number> {
 	const [row] = await getServiceDb()
@@ -108,25 +89,6 @@ export async function queryProjectRunningJobs(projectId: string): Promise<number
 			and(
 				eq(jobs.project_id, projectId),
 				inArray(jobs.status, ["CLAIMED", "PROCESSING"]),
-			),
-		);
-	return row?.n ?? 0;
-}
-
-/** Jobs an org ran in a window (by creation time) — the cumulative "Jobs" counter. */
-export async function queryJobCount(
-	orgId: string,
-	from: Date,
-	to: Date,
-): Promise<number> {
-	const [row] = await getServiceDb()
-		.select({ n: count() })
-		.from(jobs)
-		.where(
-			and(
-				eq(jobs.org_id, orgId),
-				gte(jobs.created_at, from),
-				lt(jobs.created_at, to),
 			),
 		);
 	return row?.n ?? 0;

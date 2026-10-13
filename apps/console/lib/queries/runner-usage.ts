@@ -77,30 +77,6 @@ export async function queryProvisionedHours(
 	`);
 }
 
-/**
- * Idle managed runners serving a provider that carry a cloud instance id — the
- * scale-down candidates for a cloud `FleetProvider` (no in-flight CLAIMED/PROCESSING
- * job, so deleting their VM is safe). Service path.
- */
-export type IdleRunnerRow = { runner_id: string; instance_id: string };
-
-export async function idleManagedRunnersForProvider(
-	db: ServiceDb,
-	provider: string,
-): Promise<IdleRunnerRow[]> {
-	return db.execute<IdleRunnerRow>(sql`
-		select r.id as runner_id, r.metadata->>'cloud_instance_id' as instance_id
-		from public.runners r
-		where r.operator = 'managed' and r.status = 'ONLINE'
-		  and r.metadata->>'cloud_instance_id' is not null
-		  and (r.supported_providers is null or ${provider}::cloud_provider = any(r.supported_providers))
-		  and not exists (
-		    select 1 from public.jobs j
-		    where j.runner_id = r.id and j.status in ('CLAIMED', 'PROCESSING')
-		  )
-	`);
-}
-
 /** Provisioned-hours rolled up per cloud provider — the per-pool COGS input for the Fleet
  *  economics view. Managed runners are per-cloud, so a runner's provider is its first
  *  `supported_providers` entry (NULL → "any", surfaced only in totals). Same clamped-session
