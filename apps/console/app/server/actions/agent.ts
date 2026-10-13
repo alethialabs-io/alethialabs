@@ -148,19 +148,18 @@ export async function createThread(
  * empty, so it is listed even when that turn failed. A row created WITHOUT a turn (an artifact
  * opened in a new chat, and every row written before the turn was stored) has zero messages; we
  * never surface those, and reap this owner's stale ones (older than an hour, so a row a turn is
- * about to fill is never swept) on the way through. A turn that finishes into a reaped row
- * recreates it (`saveThreadTranscript`).
+ * about to fill is never swept) on the way through. A turn later sent into a reaped id recreates
+ * the thread under that id (`reserveTurn`'s `lockThread`, `lib/agent/turn-claims.ts`), in the same
+ * transaction that stores the turn.
  *
  * A deleted thread's tombstone (`deleteThread`) is never listed, and is reaped a day after the
- * delete — far past the longest a turn that was streaming at the delete can run, so such a turn's
- * save always finds it. That bound is ADR 0003 §8.2's, and it holds from ADR 0003 slice 6 on: a
- * turn is aborted at `TURN_BUDGET_MS` (15 minutes) after its acceptance, and a claim whose route
- * died is expired after its 90 s lease goes silent, so a turn streaming at the delete finalizes
- * within about 16 minutes. Until slice 6 lands no route takes a claim and no turn is bounded (the
- * routes' `maxDuration` of 300 s bounds nothing on a standalone Node server), so the day is a margin,
- * not a proven bound. A NEW turn sent into the deleted id
- * from a tab that still shows the thread is not bounded that way: within the day it is saved into
- * a "Recovered: …" thread, and after the reap it recreates the thread under its id.
+ * delete — far past the longest a turn that was streaming at the delete can run (ADR 0003 §8.2): the
+ * route aborts it at `TURN_BUDGET_MS` (15 minutes) after its acceptance, and a claim whose route
+ * died stops being renewed and is expired once its 90 s lease (`TURN_LEASE_MS`) goes silent. Such a
+ * turn's `finalizeTurn` puts its answer into a "Recovered: …" thread, and it does so for a missing
+ * row as well as for the tombstone, so the reap cannot bring the deleted thread back either. A NEW
+ * turn sent into the deleted id from a tab that still shows the thread is refused while the
+ * tombstone stands (`thread-deleted`, 410), and after the reap it recreates the thread under its id.
  */
 export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	const owner = await requireOwner();
@@ -255,11 +254,12 @@ const purgedRowsSchema = z.array(z.object({ n: z.number().int().min(0) }));
  * Delete a thread: its row goes (and with it, by cascade, everything hung on it — its widgets and
  * message feedback), and a TOMBSTONE takes its id — no title, no messages, `status` deleted.
  *
- * The tombstone exists for one reader: a turn that was still streaming when the user deleted the
- * thread. Its route saves the transcript when the turn finishes, and with no row at all that save
- * cannot tell a delete from the hourly reap of an empty row, which it answers by recreating the row
- * — undoing the user's delete. Finding the tombstone, it puts the transcript in a new thread instead
- * (`saveTranscript`). Every other read treats a tombstone as no thread; `listThreads` reaps it.
+ * The tombstone exists for one reader: a new turn sent into the deleted id (a tab that still shows
+ * the thread). With no row at all, `reserveTurn` cannot tell a delete from the hourly reap of an
+ * empty row, which it answers by recreating the row — undoing the user's delete. Finding the
+ * tombstone, it refuses the turn (`thread-deleted`) instead. A turn that was still streaming at the
+ * delete does not need it: its `finalizeTurn` recovers the answer into a new thread whether it finds
+ * the tombstone or no row. Every other read treats a tombstone as no thread; `listThreads` reaps it.
  *
  * In the same transaction, and FIRST, it purges the caller's Elench drafts of this conversation in
  * EVERY org (ADR 0001 §6.3): an org-level thread is listed in every org, so a draft of it may
