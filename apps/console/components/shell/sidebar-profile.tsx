@@ -83,9 +83,10 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const [unsavedOnSignOut, setUnsavedOnSignOut] = useState<number | null>(null);
 
   // "organizations" is the paid-plan floor; show the upgrade CTA only to free orgs on
-  // the hosted control plane (self-hosters have no Stripe).
+  // the hosted control plane (self-hosters have no Stripe). Only on a KNOWN `false`: `null` is the
+  // workspace store not having answered yet, and a paying org must not be offered an upgrade (#5864).
   const onPaidPlan = useEntitlement("organizations");
-  const showUpgrade = isHosted && !onPaidPlan;
+  const showUpgrade = isHosted && onPaidPlan === false;
 
   /** Signs out and returns to the marketing root. */
   const handleLogout = async () => {
