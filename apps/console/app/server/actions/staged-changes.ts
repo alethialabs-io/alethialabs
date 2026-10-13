@@ -28,21 +28,6 @@ function changeScope(projectId: string, environmentId: string) {
 	);
 }
 
-/** An environment's durable staged changes (canvas diff), newest patches last. */
-export async function listStagedChanges(
-	projectId: string,
-	environmentId: string,
-) {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, (tx) =>
-		tx
-			.select()
-			.from(projectChanges)
-			.where(changeScope(projectId, environmentId))
-			.orderBy(projectChanges.created_at),
-	);
-}
-
 /**
  * Replace an environment's staged changes with the diff of the desired canvas config against
  * that environment's live config — so the Pending Changes bar is durable + shared across sessions.

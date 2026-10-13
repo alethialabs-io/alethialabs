@@ -3,8 +3,10 @@
 
 // GET /api/cli/projects/:id/staged — an environment's durable staged (pending) canvas changes
 // (defaults to the project's default environment; pass ?env= for another). Gated on project
-// `view`; org-scoped via an explicit projects.org_id filter (RLS bypassed here). Mirrors
-// listStagedChanges (web); the per-change payload delta stays console-only (kind + op + target).
+// `view`; org-scoped via an explicit projects.org_id filter (RLS bypassed here). Reads the
+// project_changes rows the canvas's stageChanges writes (app/server/actions/staged-changes.ts);
+// the console has no list action of its own over them. Each change is returned without its
+// payload: id, component_type, op, component_id and created_at only.
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";

@@ -20,12 +20,6 @@ export async function getAzureConnectionStatus(): Promise<AzureConnectionStatus>
 	return conn.getStatus(actor, "azure");
 }
 
-/** Lists every connected Azure account for the org (multi-account). */
-export async function listAzureIdentities(): Promise<conn.ConnectionStatus[]> {
-	const actor = await currentActor();
-	return conn.listIdentities(actor, "azure");
-}
-
 /**
  * Gets or creates a pending Azure identity (manage-gated, not activity-logged). Azure is keyless +
  * customer-side now: the customer's setup script creates a managed identity and returns its client id,
