@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Single source of truth for the marketing zone's owned paths: the hosted build reads
-// apps/console/microfrontends.json directly (Vercel needs it static), so we derive
-// everything else from it. RESERVED_SLUGS (lib/routing.ts) is computed from here, so a
-// path added to microfrontends.json is reserved automatically — it can never drift from
+// Single source of truth for the marketing zone's owned paths: apps/console/marketing-zones.json.
+// It is an internal path map, read only by this module and scripts/check-marketing-routes.mjs;
+// it was renamed off the Vercel-magic microfrontends filename (c44b00793) because turbo
+// auto-parses that name and rejects its assetPrefix key. Everything else derives from it. RESERVED_SLUGS (lib/routing.ts) is computed from here, so a
+// path added to marketing-zones.json is reserved automatically — it can never drift from
 // the routing. The Caddy mirror (deploy/caddy/marketing.caddy.example) and the
 // filesystem (apps/marketing/app/) are kept honest by scripts/check-marketing-routes.mjs.
 
 import { ORG_SLUG_PATTERN } from "@repo/org-slug";
 import microfrontends from "@/marketing-zones.json";
 
-/** The marketing zone's routing paths, exactly as declared in microfrontends.json
+/** The marketing zone's routing paths, exactly as declared in marketing-zones.json
  * (e.g. "/", "/pricing", "/contact/:path*", "/mkt-assets/:path*", "/favicon.ico"). */
 export const MARKETING_PATHS: string[] =
 	microfrontends.applications.marketing.routing.flatMap((r) => r.paths);
