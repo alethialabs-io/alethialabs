@@ -184,7 +184,8 @@ export async function recordMintResult(
 				),
 			)
 			.returning({ id: kubeconfigMintRequests.id });
-		// Lost a race with the sweep or a second post: write nothing, complete nothing.
+		// Lost a race with the sweep, the window closing, or a second post: write nothing, complete
+		// nothing. Which one it was is read back below, outside the transaction.
 		if (!moved) return false;
 
 		await tx.execute(
@@ -192,6 +193,23 @@ export async function recordMintResult(
 		);
 		return true;
 	});
-	if (!landed) return { ok: false, refusal: "mint-settled" };
+	if (!landed) return { ok: false, refusal: await lostRaceRefusal(owned.id) };
 	return { ok: true, storedReason };
+}
+
+/**
+ * Names why the guarded UPDATE matched nothing, from the row as it now stands. `expired` (the sweep
+ * got there first) or a row still `pending` (so the `expires_at > now()` predicate is what failed —
+ * the window closed between the head read and the write) is `mint-expired`. Anything else — `ready`
+ * or `failed`, or a row already gone (a `ready` row is deleted on its first read) — means another
+ * post landed first: `mint-settled`.
+ */
+async function lostRaceRefusal(mintId: string): Promise<RunnerMintRefusal> {
+	const [now] = await getServiceDb()
+		.select({ status: kubeconfigMintRequests.status })
+		.from(kubeconfigMintRequests)
+		.where(eq(kubeconfigMintRequests.id, mintId))
+		.limit(1);
+	if (now?.status === "pending" || now?.status === "expired") return "mint-expired";
+	return "mint-settled";
 }

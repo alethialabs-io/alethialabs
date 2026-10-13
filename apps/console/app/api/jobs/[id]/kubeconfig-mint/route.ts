@@ -125,8 +125,10 @@ export async function POST(
 		return noStore(cliJson(cliOkResponse, { ok: true }));
 	} catch (err: unknown) {
 		// The job left this runner between the gate and the write (stale-job recovery requeued it).
+		// A 403, like the gate's own not-owner refusal: the runner reads 403 as ownership lost and stops
+		// without a terminal post, where a 409 would read as "the mint already has a result" (#5945).
 		if (pgErrorCode(err) === JOB_NOT_OWNED_SQLSTATE) {
-			return mintError(409, "Job not found or not owned by this runner");
+			return mintError(403, "Job not found or not owned by this runner");
 		}
 		mlog.error("kubeconfig mint result failed", {
 			job_id: jobId,
