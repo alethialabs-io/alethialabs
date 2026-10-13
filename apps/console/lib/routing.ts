@@ -14,7 +14,7 @@ export const PERSONAL_ORG_SLUG = "~";
 /** Console route shadows + sibling apps (docs/blog) that aren't owned by the marketing
  * zone. The marketing-owned segments (`pricing`, `enterprise`, `contact`, the legal
  * pages, `mkt-assets`, …) are NOT listed here — they're derived from
- * microfrontends.json (see RESERVED_SLUGS) so they can never drift from the routing. */
+ * marketing-zones.json (see RESERVED_SLUGS) so they can never drift from the routing. */
 const STATIC_RESERVED_SLUGS = [
 	PERSONAL_ORG_SLUG,
 	"dashboard",
@@ -53,8 +53,8 @@ const STATIC_RESERVED_SLUGS = [
 ];
 
 /** Org-segment values that must never be a real org slug — the static console/sibling
- * shadows plus the marketing zone's owned segments derived from microfrontends.json. A path
- * added to microfrontends.json is reserved automatically; scripts/check-marketing-routes.mjs
+ * shadows plus the marketing zone's owned segments derived from marketing-zones.json. A path
+ * added to marketing-zones.json is reserved automatically; scripts/check-marketing-routes.mjs
  * guards the rest of the chain (the marketing app/ routes + the Caddy mirror). */
 export const RESERVED_SLUGS = new Set([
 	...STATIC_RESERVED_SLUGS,
