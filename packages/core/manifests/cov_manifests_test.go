@@ -521,9 +521,8 @@ func TestTail_CellStateForIsEmptyForAnUnknownCell(t *testing.T) {
 // reported — never injected empty.
 func TestTail_ResolveBindingsKeylessUsernameFailureIsReported(t *testing.T) {
 	opts := Options{
-		Provider:      providerGCP,
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders", IamAuth: tailBoolPtr(true)}},
+		Provider:  providerGCP,
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders", IamAuth: tailBoolPtr(true)}},
 		Outputs: map[string]string{
 			"cloud_sql_connection_name": "p:us-central1:inst",
 			"cloud_sql_app_gsa_email":   "app@p.iam.gserviceaccount.com",

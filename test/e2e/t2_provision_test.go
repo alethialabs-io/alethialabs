@@ -624,21 +624,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		"ALETHIA_CLUSTER_READY_TIMEOUT="+resolveT2ClusterReadyTimeout(p),
 		"ALETHIA_ARGOCD_TEMPLATES_DIR="+filepath.Join(root, "infra", "templates", "argocd"),
 	)
-	if keylessOn {
-		// #1511: keyless DB auth is still a DARK FLAG, so the runner must be told. Set HERE rather
-		// than in the workflow deliberately: it is not an ALETHIA_E2E_* variable, so
-		// TestScenarioEnablesReachTheNightly cannot protect it — a workflow-side setting could
-		// silently stop being passed and every leg would quietly prove the password path instead.
-		// Wiring it to the scenario's own switch makes that impossible, and #1513 deletes both
-		// together.
-		cmd.Env = append(cmd.Env, "ALETHIA_KEYLESS_DB_AUTH_ENABLED=true")
-	}
+	// Keyless DB auth needs no runner switch: since #1513 an iam_auth binding is keyless
+	// unconditionally, so a keyless leg cannot quietly prove the password path for want of a flag.
 	if registryOn {
 		// #1047: the cross-account registry refresher is DARK by default
 		// (provisioner.writeRegistryRefresher returns before rendering anything unless this is
 		// "true"), so with the flag off the generated manifests are byte-identical and the scenario
 		// would poll for a Deployment that was never written. Set HERE, wired to the scenario's own
-		// switch, for the same reason as the keyless flag above: it is not an ALETHIA_E2E_* variable,
+		// switch, deliberately: it is not an ALETHIA_E2E_* variable,
 		// so TestScenarioEnablesReachTheNightly cannot protect it, and a workflow-side setting could
 		// silently stop being passed while every leg still reported green.
 		cmd.Env = append(cmd.Env, "ALETHIA_XACCT_REGISTRY_ENABLED=true")
