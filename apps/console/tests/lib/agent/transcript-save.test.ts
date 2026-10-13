@@ -10,6 +10,7 @@
 import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
 import {
+	recoverTranscript,
 	saveTranscript,
 	THREAD_DELETED,
 	type TranscriptRows,
@@ -23,6 +24,8 @@ interface Row {
 	status: string;
 	projectId: string | null;
 	messages: UIMessage[];
+	/** ADR 0003 §4.2: every write of `messages` adds one. Absent reads as 1. */
+	revision?: number;
 }
 
 /** The owner's rows, in memory. `hidden` ids are held by rows this owner cannot see. */
@@ -35,7 +38,37 @@ function table(rows: Row[] = [], hidden: string[] = []) {
 			);
 			if (!row) return false;
 			row.messages = messages;
+			row.revision = (row.revision ?? 1) + 1;
 			return true;
+		},
+		async appendLive(id, kind, projectId, baseRevision, messages) {
+			const row = rows.find(
+				(r) =>
+					r.id === id &&
+					r.kind === kind &&
+					r.projectId === projectId &&
+					r.status !== THREAD_DELETED &&
+					(r.revision ?? 1) === baseRevision,
+			);
+			if (!row) return null;
+			row.messages = [...row.messages, ...messages];
+			row.revision = baseRevision + 1;
+			return row.revision;
+		},
+		async replaceLast(id, kind, projectId, baseRevision, message) {
+			const row = rows.find(
+				(r) =>
+					r.id === id &&
+					r.kind === kind &&
+					r.projectId === projectId &&
+					r.status !== THREAD_DELETED &&
+					(r.revision ?? 1) === baseRevision &&
+					r.messages.length > 0,
+			);
+			if (!row) return null;
+			row.messages = [...row.messages.slice(0, -1), message];
+			row.revision = baseRevision + 1;
+			return row.revision;
 		},
 		async find(id) {
 			const row = rows.find((r) => r.id === id);
@@ -235,5 +268,63 @@ describe("saveTranscript", () => {
 			/not this owner's/,
 		);
 		expect(rows).toEqual([]);
+	});
+});
+
+// ADR 0003 §5.3's `deleted` outcome: the claim's finalize recovers the answer of a deleted thread
+// through this one branch, on its own transaction.
+describe("recoverTranscript", () => {
+	it("never writes into the deleted thread: a new Recovered thread holds the transcript", async () => {
+		const { rows, impl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+		]);
+		const messages = transcript("deploy staging", "Planned.");
+		const outcome = await recoverTranscript(impl, target, messages);
+		const recovered = rows.filter((r) => r.id !== T);
+		expect(recovered).toEqual([expect.objectContaining({ title: "Recovered: deploy staging", messages })]);
+		expect(outcome).toEqual({ kind: "recovered", threadId: recovered[0].id });
+		expect(rows.find((r) => r.id === T)).toMatchObject({ status: THREAD_DELETED, messages: [] });
+	});
+
+	it("recovers a thread whose row is gone too, rather than recreating it under its id", async () => {
+		const { rows, impl } = table();
+		const outcome = await recoverTranscript(impl, target, transcript("deploy staging", "Planned."));
+		expect(outcome.threadId).not.toBe(T);
+		expect(rows.map((r) => r.id)).toEqual([outcome.threadId]);
+	});
+
+	it("writes the next turn of the conversation into the thread an earlier recovery made", async () => {
+		const { rows, impl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+		]);
+		const first = await recoverTranscript(impl, target, transcript("deploy staging", "Planned."));
+		const longer = transcript("deploy staging", "Planned.", "and prod?", "Planned too.");
+		expect(await recoverTranscript(impl, target, longer)).toEqual(first);
+		expect(rows.filter((r) => r.id !== T)).toEqual([expect.objectContaining({ messages: longer, revision: 2 })]);
+	});
+});
+
+// The rows contract the claim relies on (ADR 0003 §7): an append and a replace of the last message
+// that hold only at the revision the caller read.
+describe("TranscriptRows: appendLive and replaceLast (the in-memory contract)", () => {
+	it("appendLive appends at the base revision and refuses a moved one", async () => {
+		const stored = transcript("what failed?");
+		const { rows, impl } = table([
+			{ id: T, title: "t", kind: "agent", status: "active", projectId: null, messages: stored, revision: 3 },
+		]);
+		const answer = transcript("what failed?", "Two jobs.")[1];
+		expect(await impl.appendLive(T, "agent", null, 2, [answer])).toBeNull();
+		expect(await impl.appendLive(T, "agent", null, 3, [answer])).toBe(4);
+		expect(rows[0].messages).toEqual([...stored, answer]);
+	});
+
+	it("replaceLast replaces only the last message", async () => {
+		const stored = transcript("what failed?", "Two jobs.");
+		const { rows, impl } = table([
+			{ id: T, title: "t", kind: "agent", status: "active", projectId: null, messages: stored, revision: 5 },
+		]);
+		const regenerated: UIMessage = { id: "m-9", role: "assistant", parts: [{ type: "text", text: "Three." }] };
+		expect(await impl.replaceLast(T, "agent", null, 5, regenerated)).toBe(6);
+		expect(rows[0].messages).toEqual([stored[0], regenerated]);
 	});
 });

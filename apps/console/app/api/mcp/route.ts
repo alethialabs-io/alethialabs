@@ -16,7 +16,6 @@ import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
 
 // Node runtime: the actor seam uses AsyncLocalStorage + the tools reach postgres-js.
 export const runtime = "nodejs";
-export const maxDuration = 300;
 
 /**
  * Remote MCP endpoint (B7) — exposes the same PDP-gated tool SSOT the in-app agent

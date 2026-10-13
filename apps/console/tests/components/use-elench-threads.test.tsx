@@ -8,7 +8,8 @@
 // Asserts: org context lists org-level threads → resumes the latest; an EMPTY list resolves
 // to an ephemeral conversation (nothing persisted — no createThread); PROJECT context does
 // the SAME, scoped by projectId; `ready` flips true only after the initial list→resume
-// settles; and the late resume never overrides what the user did while it was in flight.
+// settles; the late resume never overrides what the user did while it was in flight; and a
+// context switch or close mid-load neither wedges the skeleton nor writes the stale resume (#5680).
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { UIMessage } from "ai";
@@ -16,10 +17,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createThread,
 	getThread,
+	type LoadedThread,
 	listThreads,
 } from "@/app/server/actions/agent";
 import type { AgentThread } from "@/lib/db/schema";
-import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { type ElenchCtxRequest, useElenchStore } from "@/lib/stores/use-elench-store";
 import { useElenchThreads } from "@/components/agent/elench/use-elench-threads";
 
 vi.mock("@/app/server/actions/agent", () => ({
@@ -30,8 +32,8 @@ vi.mock("@/app/server/actions/agent", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-/** A persisted thread row with the given id (and transcript), every other column filled. */
-function thread(id: string, messages: UIMessage[] = []): AgentThread {
+/** A persisted thread row with the given id (and transcript), every other column filled, as getThread loads it. */
+function thread(id: string, messages: UIMessage[] = []): LoadedThread {
 	const at = new Date("2026-10-08T00:00:00Z");
 	return {
 		id,
@@ -42,8 +44,11 @@ function thread(id: string, messages: UIMessage[] = []): AgentThread {
 		status: "active",
 		kind: "agent",
 		messages,
+		billing_org_id: null,
+		revision: 1,
 		created_at: at,
 		updated_at: at,
+		inFlight: null,
 	};
 }
 
@@ -193,7 +198,7 @@ describe("useElenchThreads — ready gating", () => {
 describe("useElenchThreads — the late initial resume (#5677)", () => {
 	it("leaves the view the user switched to while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockReturnValue(held.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
@@ -212,7 +217,7 @@ describe("useElenchThreads — the late initial resume (#5677)", () => {
 
 	it("stands down when the user picked another thread while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest"), thread("t-older")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		// The resume's round trip (t-newest) is held; the user's pick (t-older) answers at once.
 		vi.mocked(getThread).mockImplementation((id) =>
 			id === "t-newest" ? held.promise : Promise.resolve(thread(id)),
@@ -239,7 +244,7 @@ describe("useElenchThreads — the late initial resume (#5677)", () => {
 
 	it("stands down when the user started a new chat while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockReturnValue(held.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
@@ -295,4 +300,173 @@ describe("useElenchStore — opening lands on the chat (#5677)", () => {
 			expect(useElenchStore.getState().mainView).toBe("artifacts");
 		},
 	);
+});
+
+// #5680: the assistant can change context while it is open (openPanel/openModal with another
+// project, or org ↔ project), and it can close, while the initial load is in flight. A switch
+// must load the NEW context the way opening there from closed would; a close must leave the
+// store alone.
+describe("useElenchThreads — a context switch or close mid-load (#5680)", () => {
+	const PROJECT: ElenchCtxRequest = { kind: "project", projectId: "proj-2" };
+
+	it("a switch while the list is loading loads the new context instead of sticking on the skeleton", async () => {
+		const orgList = deferred<AgentThread[]>();
+		vi.mocked(listThreads).mockImplementation((projectId) =>
+			projectId === "proj-2" ? Promise.resolve([thread("pt-1")]) : orgList.promise,
+		);
+		vi.mocked(getThread).mockImplementation(async (id) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(listThreads).toHaveBeenCalledWith(undefined));
+
+		act(() => useElenchStore.getState().openPanel(PROJECT));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(listThreads).toHaveBeenCalledWith("proj-2");
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
+		expect(result.current.threads.map((t) => t.id)).toEqual(["pt-1"]);
+
+		// The org list arriving late changes nothing: its load stood down at the switch.
+		await act(async () => orgList.resolve([thread("t-org")]));
+		expect(result.current.threads.map((t) => t.id)).toEqual(["pt-1"]);
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
+	});
+
+	it("a switch while the transcript is loading loads the new context instead of sticking on the skeleton", async () => {
+		vi.mocked(listThreads).mockImplementation(async (projectId) =>
+			projectId === "proj-2" ? [thread("pt-1")] : [thread("t-org")],
+		);
+		const held = deferred<LoadedThread | null>();
+		vi.mocked(getThread).mockImplementation((id) =>
+			id === "t-org" ? held.promise : Promise.resolve(thread(id)),
+		);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(getThread).toHaveBeenCalledWith("t-org"));
+
+		act(() => useElenchStore.getState().openModal(PROJECT));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
+
+		// The org transcript arriving late is not resumed over the project's thread.
+		await act(async () =>
+			held.resolve(thread("t-org", [{ id: "m1", role: "user", parts: [] }])),
+		);
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
+		expect(result.current.initialMessages).toHaveLength(0);
+	});
+
+	it("a switch into a context with no threads lands on an EMPTY conversation, not the old transcript", async () => {
+		vi.mocked(listThreads).mockImplementation(async (projectId) =>
+			projectId === "proj-2" ? [] : [thread("t-org")],
+		);
+		vi.mocked(getThread).mockImplementation(async (id) =>
+			thread(id, [{ id: "m1", role: "user", parts: [] }]),
+		);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.initialMessages).toHaveLength(1));
+
+		act(() => useElenchStore.getState().openPanel(PROJECT));
+		await waitFor(() => expect(listThreads).toHaveBeenCalledWith("proj-2"));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(useElenchStore.getState().threadId).toBeNull();
+		expect(result.current.threads).toHaveLength(0);
+		expect(result.current.initialMessages).toHaveLength(0);
+	});
+
+	it("a switch after the load shows the skeleton until the new context resolves, then its threads", async () => {
+		const projectList = deferred<AgentThread[]>();
+		vi.mocked(listThreads).mockImplementation((projectId) =>
+			projectId === "proj-2" ? projectList.promise : Promise.resolve([thread("t-org")]),
+		);
+		vi.mocked(getThread).mockImplementation(async (id) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+
+		act(() => useElenchStore.getState().openPanel(PROJECT));
+		// Exactly as opening there from closed: the skeleton, not the org conversation.
+		await waitFor(() => expect(result.current.ready).toBe(false));
+
+		await act(async () => projectList.resolve([thread("pt-1")]));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.threads.map((t) => t.id)).toEqual(["pt-1"]);
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
+	});
+
+	it("a transcript that arrives after the surface closed writes nothing into the store", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
+		const held = deferred<LoadedThread | null>();
+		vi.mocked(getThread).mockReturnValue(held.promise);
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(getThread).toHaveBeenCalledWith("t-newest"));
+
+		act(() => useElenchStore.getState().close());
+		const atClose = useElenchStore.getState();
+		await act(async () =>
+			held.resolve(thread("t-newest", [{ id: "m1", role: "user", parts: [] }])),
+		);
+
+		expect(useElenchStore.getState().threadId).toBe(atClose.threadId);
+		expect(useElenchStore.getState().epoch).toBe(atClose.epoch);
+		expect(result.current.initialMessages).toHaveLength(0);
+		expect(result.current.ready).toBe(false);
+	});
+});
+
+// G10 (ADR 0001 slice 10): a rejected list or resume used to leave the body on its skeleton for
+// good — the rejection escaped the effect and `ready` never flipped. Both are caught into `loadError`.
+describe("useElenchThreads — a load that fails (G10)", () => {
+	it("a rejected listThreads resolves with loadError, and retryLoad lists again", async () => {
+		vi.mocked(listThreads).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		vi.mocked(listThreads).mockResolvedValueOnce([thread("t-1")]);
+		vi.mocked(getThread).mockResolvedValue(thread("t-1"));
+
+		const { result } = renderHook(() => useElenchThreads());
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toEqual({ step: "list", conversationId: null });
+		expect(result.current.threads).toEqual([]);
+
+		act(() => result.current.retryLoad());
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-1"));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toBeNull();
+		expect(result.current.threads.map((t) => t.id)).toEqual(["t-1"]);
+	});
+
+	it("a rejected resume getThread resolves with loadError and leaves the conversation as it was", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-1")]);
+		vi.mocked(getThread).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+		const { result } = renderHook(() => useElenchThreads());
+
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.loadError).toEqual({ step: "resume", conversationId: "t-1" });
+		// Nothing was resumed: a thread selected with an empty transcript would read as loaded.
+		expect(useElenchStore.getState().threadId).toBeNull();
+		expect(useElenchStore.getState().epoch).toBe(0);
+	});
+
+	it("retryLoad after a failed pick retries THAT conversation, not the open-time resume", async () => {
+		vi.mocked(listThreads).mockResolvedValue([thread("t-1"), thread("t-2"), thread("t-3")]);
+		vi.mocked(getThread).mockImplementation(async (id: string) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(useElenchStore.getState().threadId).toBe("t-1");
+
+		act(() => result.current.selectThread("t-3"));
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-3"));
+
+		vi.mocked(getThread).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+		act(() => result.current.selectThread("t-2"));
+		await waitFor(() => expect(result.current.loadError).toEqual({ step: "select", conversationId: "t-2" }));
+		expect(useElenchStore.getState().threadId).toBe("t-3");
+
+		act(() => result.current.retryLoad());
+		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-2"));
+		expect(result.current.loadError).toBeNull();
+	});
 });

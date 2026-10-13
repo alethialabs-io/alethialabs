@@ -514,7 +514,10 @@ function membersColumns(canManage: boolean): ColumnDef<MemberRowView>[] {
 
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
-  const canManage = useEntitlement("organizations");
+  // Unlocks on a KNOWN `true` only: `null` while the workspace store has not answered (#5864). The
+  // management columns are then absent — not disabled, and no upsell — which is also what an
+  // unentitled org sees, so nothing gated is rendered for the unknown state.
+  const canManage = useEntitlement("organizations") === true;
   const { org } = useParams<{ org: string }>();
   const qc = useQueryClient();
 

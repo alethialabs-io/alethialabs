@@ -44,7 +44,7 @@ test.describe("Evidence surface", () => {
 		// The posture surfaces belong to the other branch. Asserting they are ABSENT is what makes
 		// this a test of the onboarding state rather than of "some evidence page rendered".
 		await expect(
-			page.getByPlaceholder(/Filter by project or environment/i),
+			page.getByRole("textbox", { name: "Filter by project or environment…", exact: true }),
 		).toHaveCount(0);
 		await expect(page.getByText("Recorded waivers")).toHaveCount(0);
 		await expect(

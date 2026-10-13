@@ -14,7 +14,7 @@
 
 import { cloudProvider } from "@/lib/db/schema/enums";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
-import type { CloudCredentials } from "@/types/jsonb.types";
+import type { CloudCredentials, DriftDetail, DriftResourceKind } from "@/types/jsonb.types";
 
 import { db } from "./db";
 
@@ -281,6 +281,39 @@ export async function seedJob(
 	return row;
 }
 
+/** The Terraform resources a seeded drift record names, cycled when more are asked for. */
+const DRIFTED_RESOURCES: readonly Pick<DriftDetail, "type" | "address">[] = [
+	{ type: "aws_security_group", address: "aws_security_group.node" },
+	{ type: "aws_eks_node_group", address: "aws_eks_node_group.default" },
+	{ type: "aws_subnet", address: "aws_subnet.private" },
+];
+
+/**
+ * One seeded drift detail. A type alias of `DriftDetail`'s required fields rather than the interface
+ * itself, because postgres' `sql.json` takes an index-signatured `JSONValue`, which an interface
+ * never satisfies; `satisfies DriftDetail` below keeps the compile-time tie to the column's type.
+ */
+type SeedDriftDetail = { address: string; type: string; kind: DriftResourceKind };
+
+/**
+ * The `environment_drift.details` of a seeded record with `drifted` resources, in the shape the
+ * runner's `drift.Analyze` writes (`address`, `type`, `kind`). `getEnvironmentComponentStatus`
+ * attributes each detail by its `type` on every project route, so a detail without one makes that
+ * action answer 500 (#5865).
+ */
+export function seedDriftDetails(drifted: number): SeedDriftDetail[] {
+	return Array.from({ length: drifted }, (_, i) => {
+		const resource = DRIFTED_RESOURCES[i % DRIFTED_RESOURCES.length];
+		const suffix = i < DRIFTED_RESOURCES.length ? "" : `[${i}]`;
+		const detail: SeedDriftDetail = {
+			type: resource.type,
+			address: `${resource.address}${suffix}`,
+			kind: "modified",
+		};
+		return detail satisfies DriftDetail;
+	});
+}
+
 /** Inserts a drift record for an environment (in_sync=false with N drifted resources by default). */
 export async function seedDrift(
 	project: Pick<SeededProject, "projectId" | "envId">,
@@ -295,14 +328,7 @@ export async function seedDrift(
 			environment_id: project.envId,
 			in_sync: inSync,
 			drifted,
-			details: sql.json(
-				inSync
-					? []
-					: [
-							{ resource: "aws_security_group.node", change: "modified" },
-							{ resource: "aws_iam_role.cluster", change: "modified" },
-						],
-			),
+			details: sql.json(seedDriftDetails(drifted)),
 		})}
 		on conflict (project_id, environment_id) do update set
 			in_sync = excluded.in_sync, drifted = excluded.drifted, details = excluded.details, updated_at = now()`;

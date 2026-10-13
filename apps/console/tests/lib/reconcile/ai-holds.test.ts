@@ -1,104 +1,177 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Unit cover for the stranded-hold reconciler (#2683), with the query boundary faked.
+// Unit cover for the `release-ai-holds` sweep (#2683, ADR 0003 §8.2), with the query boundary faked.
 //
 // BE CLEAR ABOUT WHAT THIS PROVES, because a stub that matches the SHAPE of a query rather than
 // the shape of the data is how a real defect slipped through this repo before. It proves the
-// module is wired: the predicate is built from BOTH conditions, the update sets credits to 0 AND
-// stamps settled_at, the batch is bounded, and `released` reports the rows actually returned
-// rather than a count computed some other way.
+// module is wired: the three passes run in order and each is counted from what it actually did
+// (pass 1 from `expireSilentTurns`, passes 2 and 3 from the rows the database returned); pass 2 sets
+// credits to 0 AND stamps settled_at; both batches are bounded and their candidates locked
+// `SKIP LOCKED`. That each write ALSO repeats its predicate on the row it writes is asserted nowhere:
+// the fake cannot read SQL, and no test can open the window it closes, because the subquery's own
+// `FOR UPDATE` already re-checks a row that changed after the snapshot. It is defence in depth.
 //
 // It does NOT prove the SQL is right. That is what tests/integration/ai-hold-sweep.test.ts does,
-// against real Postgres — an old hold released, a recent one left alone, a settled row never
-// touched at any age, idempotence, and a mixed ledger. Those are the behavioural guarantees.
+// against real Postgres: an old hold released, a recent one left alone, a settled row never touched,
+// idempotence, a mixed ledger; and for the claims, C8 on a silent or over-age claim, a live claim
+// left alone (also when its lease is renewed after the scan), the age pass skipping a claimed hold,
+// and 30-day retention. Those are the behavioural guarantees.
 //
 // This file exists because the coverage instrument cannot see that suite (it needs a database, and
-// the unit run has none), and the honest response to "these 17 statements are unmeasured" is to
-// measure them rather than to lower a shared floor — especially a floor whose neighbours are under
-// active dispute in the #2649 programme.
+// the unit run has none), and the honest response to "these statements are unmeasured" is to
+// measure them rather than to lower a shared floor.
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const expireSilentTurns = vi.hoisted(() => vi.fn(async () => ({ expired: 0 })));
+vi.mock("@/lib/agent/turn-claims", () => ({ expireSilentTurns }));
 vi.mock("@/lib/db/schema", () => ({
 	aiUsageLedger: { id: "id", credits: "credits", settled_at: "settled_at", created_at: "created_at" },
+	agentTurnClaims: { id: "id", hold_id: "hold_id", state: "state", finished_at: "finished_at" },
 }));
 
-import { releaseStrandedAiHolds, STRANDED_HOLD_AGE_MINUTES } from "@/lib/reconcile/ai-holds";
+import type { Db } from "@/lib/db";
+import {
+	CLAIM_RETENTION_DAYS,
+	releaseStrandedAiHolds,
+	STRANDED_HOLD_AGE_MINUTES,
+} from "@/lib/reconcile/ai-holds";
+
+/** What one write statement (an UPDATE or a DELETE) and the subquery before it were asked to do. */
+interface Recorded {
+	op: "update" | "delete";
+	set: unknown;
+	wheres: unknown[];
+	limit: number | undefined;
+	lock: { strength: unknown; config: unknown } | undefined;
+}
 
 /**
- * A chainable stand-in for the drizzle builder that records what it was asked to do.
- * `returning()` resolves to `rows`, which is what the released count must come from.
+ * A chainable stand-in for the drizzle builder that records what it was asked to do. Each write's
+ * `returning()` resolves to the next entry of `results`, which is what the counts must come from.
  */
-function fakeDb(rows: { id: string }[]) {
-	const calls: Record<string, unknown> = { limit: undefined, set: undefined, wheres: [] as unknown[] };
-	const chain: Record<string, unknown> = {};
-	Object.assign(chain, {
-		select: () => chain,
+function fakeDb(results: { id: string }[][]): { db: Db; writes: Recorded[]; order: string[] } {
+	const writes: Recorded[] = [];
+	const order: string[] = [];
+	let current: Recorded = { op: "update", set: undefined, wheres: [], limit: undefined, lock: undefined };
+	let pending: Pick<Recorded, "limit" | "lock"> & { wheres: unknown[] } = {
+		wheres: [],
+		limit: undefined,
+		lock: undefined,
+	};
+	const chain = {
+		select: () => {
+			pending = { wheres: [], limit: undefined, lock: undefined };
+			return chain;
+		},
 		from: () => chain,
 		where: (w: unknown) => {
-			(calls.wheres as unknown[]).push(w);
+			pending.wheres.push(w);
 			return chain;
 		},
 		limit: (n: number) => {
-			calls.limit = n;
+			pending.limit = n;
 			return chain;
 		},
-		update: () => chain,
+		for: (strength: unknown, config: unknown) => {
+			pending.lock = { strength, config };
+			return chain;
+		},
+		update: () => {
+			current = { op: "update", set: undefined, wheres: [], limit: pending.limit, lock: pending.lock };
+			pending = { wheres: current.wheres, limit: undefined, lock: undefined };
+			return chain;
+		},
+		delete: () => {
+			current = { op: "delete", set: undefined, wheres: [], limit: pending.limit, lock: pending.lock };
+			pending = { wheres: current.wheres, limit: undefined, lock: undefined };
+			return chain;
+		},
 		set: (v: unknown) => {
-			calls.set = v;
+			current.set = v;
 			return chain;
 		},
-		returning: async () => rows,
-	});
-	return { db: chain as never, calls };
+		returning: async () => {
+			writes.push(current);
+			order.push(current.op);
+			return results[writes.length - 1] ?? [];
+		},
+	};
+	// The fake implements only the builder calls the module makes, as the file's earlier fake did.
+	return { db: chain as never, writes, order };
 }
 
 describe("releaseStrandedAiHolds", () => {
-	it("reports the rows the database actually returned", async () => {
-		const { db } = fakeDb([{ id: "a" }, { id: "b" }, { id: "c" }]);
-		expect(await releaseStrandedAiHolds(db)).toEqual({ released: 3 });
+	beforeEach(() => {
+		expireSilentTurns.mockReset();
+		expireSilentTurns.mockResolvedValue({ expired: 0 });
 	});
 
-	// A pass that releases nothing must say zero, not throw and not guess — the reconcile loop
-	// surfaces this number on the heartbeat, and a wrong zero would read as "nothing was stranded".
-	it("reports zero when nothing was stranded", async () => {
+	it("reports what each pass actually did", async () => {
+		expireSilentTurns.mockResolvedValue({ expired: 2 });
+		const { db } = fakeDb([[{ id: "a" }, { id: "b" }, { id: "c" }], [{ id: "x" }]]);
+		expect(await releaseStrandedAiHolds(db)).toEqual({ expired: 2, released: 3, removed: 1 });
+	});
+
+	// A pass that does nothing must say zero, not throw and not guess: the reconcile loop surfaces
+	// these numbers on the heartbeat, and a wrong zero would read as "nothing was stranded".
+	it("reports zeros when nothing was stranded", async () => {
 		const { db } = fakeDb([]);
-		expect(await releaseStrandedAiHolds(db)).toEqual({ released: 0 });
+		expect(await releaseStrandedAiHolds(db)).toEqual({ expired: 0, released: 0, removed: 0 });
+	});
+
+	// C8 first: a claim it expires has its hold released on its own transaction, so pass 2 then
+	// never sees it as outstanding. Then the age pass, then retention.
+	it("runs C8, then the age pass, then retention", async () => {
+		const seen: string[] = [];
+		expireSilentTurns.mockImplementation(async () => {
+			seen.push("expire");
+			return { expired: 0 };
+		});
+		const { db, order } = fakeDb([]);
+		await releaseStrandedAiHolds(db);
+		expect(expireSilentTurns).toHaveBeenCalledTimes(1);
+		expect([...seen, ...order]).toEqual(["expire", "update", "delete"]);
+	});
+
+	// A pass 1 that throws aborts the run (runTask records it) rather than releasing by age holds
+	// whose claims were never examined.
+	it("does not run the age pass when C8 throws", async () => {
+		expireSilentTurns.mockRejectedValue(new Error("db down"));
+		const { db, writes } = fakeDb([]);
+		await expect(releaseStrandedAiHolds(db)).rejects.toThrow("db down");
+		expect(writes).toHaveLength(0);
 	});
 
 	// RELEASING means credits → 0 AND settled_at stamped. Stamping without zeroing would leave the
-	// headroom held; zeroing without stamping would leave the row eligible forever, so the next
-	// pass would keep "releasing" it and the count would never settle.
-	it("zeroes the credits AND stamps settled_at in one update", async () => {
-		const { db, calls } = fakeDb([{ id: "a" }]);
+	// headroom held; zeroing without stamping would leave the row eligible forever.
+	it("the age pass zeroes the credits AND stamps settled_at in one update", async () => {
+		const { db, writes } = fakeDb([]);
 		await releaseStrandedAiHolds(db);
-		const set = calls.set as Record<string, unknown>;
-		expect(set).toBeDefined();
-		expect(set.credits).toBe(0);
-		expect(set.settled_at).toBeDefined();
+		const [release] = writes;
+		expect(release.op).toBe("update");
+		expect(release.set).toMatchObject({ credits: 0 });
+		expect(release.set).toHaveProperty("settled_at");
 	});
 
-	// Bounded, like the retention GCs beside it — a backlog drains over passes instead of taking a
-	// long lock on the ledger.
-	it("bounds the batch", async () => {
-		const { db, calls } = fakeDb([]);
+	// Bounded, like the retention GCs beside it, and locked SKIP LOCKED so a hold or a claim another
+	// transaction holds is left for the next run instead of waited on.
+	it("bounds and locks both batches", async () => {
+		const { db, writes } = fakeDb([]);
 		await releaseStrandedAiHolds(db);
-		expect(typeof calls.limit).toBe("number");
-		expect(calls.limit as number).toBeGreaterThan(0);
+		expect(writes.map((w) => w.op)).toEqual(["update", "delete"]);
+		for (const w of writes) {
+			expect(w.limit).toBeGreaterThan(0);
+			expect(w.lock).toEqual({ strength: "update", config: { skipLocked: true } });
+		}
 	});
 
-	// Two conditions, not one: outstanding AND old enough. Dropping the age half would release
-	// holds out from under live turns, which then reconcile a second time and double-book.
-	it("filters on both conditions, not just one", async () => {
-		const { db, calls } = fakeDb([]);
-		await releaseStrandedAiHolds(db);
-		expect((calls.wheres as unknown[]).length).toBeGreaterThanOrEqual(1);
-	});
-
-	// The threshold is a real bound derived from stepCountIs(8) and the function timeout, not a
-	// number someone liked. Pinning it means changing it is a visible, deliberate edit.
-	it("keeps the stranded-age threshold well clear of any live turn", () => {
-		expect(STRANDED_HOLD_AGE_MINUTES).toBeGreaterThanOrEqual(30);
+	// 60 minutes is longer than TURN_BUDGET_MS + the lease + one sweep interval (about 32 minutes),
+	// so the age pass cannot reach a live claimed hold even without its exclusion (ADR 0003 §8.2).
+	// Pinning it means changing it is a visible, deliberate edit.
+	it("keeps the age window above a claimed turn's bound, and retention at 30 days", () => {
+		expect(STRANDED_HOLD_AGE_MINUTES).toBeGreaterThanOrEqual(33);
+		expect(CLAIM_RETENTION_DAYS).toBe(30);
 	});
 });

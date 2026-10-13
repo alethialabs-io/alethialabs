@@ -10,8 +10,13 @@
 # repo's HEAD with the commit scripts/lib/template-proofs.mjs reads from the newest PASS bundle under
 # demos/proofs/templates/; this runs it daily.
 #
-# IT ONLY REPORTS. No cloud, no credential beyond the run's own token, no dispatch, no paid
-# dimension: whether drift should trigger an automatic re-prove (epic #2766 unit 3) is undecided.
+# IT ONLY REPORTS, BY RULING. No cloud, no credential beyond the run's own token, no dispatch, no
+# paid dimension. On 2026-10-08 the maintainer decided epic #2766 unit 3 (#5686): drift opens an
+# issue only and never re-proves automatically
+# (https://github.com/alethialabs-io/alethialabs/issues/2766#issuecomment-6055301759). A re-prove
+# buys a hetzner cluster for the `templates` dimension, so a person decides when to pay for it; the
+# tracker body carries the one command to run (REPROVE_COMMAND in the script, asserted by its
+# --self-test). Adding a dispatch here reverses that ruling — it is not a missing piece.
 #
 # THREE OUTCOMES, all on the run's colour:
 #   0  every HEAD is the proven commit           → green; an open tracker is closed
@@ -135,7 +140,15 @@ jobs:
             exit 0
           fi
 
-          { printf '%s\n' "$REPORT"; printf "\n_Refreshed by \`.github/workflows/template-proof-currency.yml\` on %s ([run](%s)). It reports only — nothing is re-proved or dispatched. It closes itself once every HEAD is proven again._\n" "$now" "$run_url"; } > body.md
+          # The footer depends on WHICH red this is. Only drift (1) is fixed by a re-prove, and only a
+          # drift report carries the command. An unanswered check (2) is fixed by repairing the
+          # instrument, and pointing its reader at paid spend would be the wrong action.
+          if [ "$CODE" = "1" ]; then
+            next="Nothing is re-proved or dispatched automatically, by ruling (#5686): re-proving costs real spend, so a person runs the command above."
+          else
+            next="This run could not answer for every template. Fix what the Unanswered table names first: a re-prove does not repair an unread HEAD or an unreadable proof. Nothing is re-proved or dispatched automatically, by ruling (#5686)."
+          fi
+          { printf '%s\n' "$REPORT"; printf "\n_Refreshed by \`.github/workflows/template-proof-currency.yml\` on %s ([run](%s)). %s It closes itself once every HEAD is proven again._\n" "$now" "$run_url" "$next"; } > body.md
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file body.md
             echo "updated #$existing"

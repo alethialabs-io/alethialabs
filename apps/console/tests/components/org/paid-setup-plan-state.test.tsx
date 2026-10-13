@@ -121,7 +121,7 @@ describe("a finished paid setup reports the plan state the LINK read (#5522)", (
 			const other: NewOrgPlanState = state === "not_active" ? "active" : "not_active";
 			resolveNewOrgSetup.mockResolvedValue(serverSays(sub, false, other));
 			const paymentUrl = state === "action_needed" ? PAY_URL : null;
-			linkSubscriptionToNewOrg.mockResolvedValue({ planState: state, paymentUrl });
+			linkSubscriptionToNewOrg.mockResolvedValue({ kind: "linked", planState: state, paymentUrl });
 
 			const outcome = await finishPaidSetup("user-1", record(sub), hooks);
 
@@ -133,6 +133,26 @@ describe("a finished paid setup reports the plan state the LINK read (#5522)", (
 			expect(/Subscription active/.test(toasted().join(" "))).toBe(state === "active");
 		});
 	}
+});
+
+// ADR 0002 C88, the sheet half (#5714): a link refused beside the team's other live plan used to come
+// back as a plan report — on dev the link ignored its refused sync and the run ended "Subscription
+// active". Now the link returns `{ kind: "refused", clause }`, and the run must end there: failed, NOT
+// retryable (a retry is refused again), with the server's clause, and no success toast.
+describe("a refused link stops the run with its clause (ADR 0002 C88)", () => {
+	it("ends failed and non-retryable with the clause; nothing says the subscription is active", async () => {
+		const sub = "sub_refused";
+		resolveNewOrgSetup.mockResolvedValue(serverSays(sub, false, "active"));
+		const clause =
+			"This team already has an active plan, so this payment was not linked to it. Contact support at support@alethialabs.io, who will refund it or move it to the right team.";
+		linkSubscriptionToNewOrg.mockResolvedValue({ kind: "refused", clause });
+
+		const outcome = await finishPaidSetup("user-1", record(sub), hooks);
+
+		expect(outcome).toMatchObject({ kind: "failed", message: clause, retryable: false });
+		expect(toast.success).not.toHaveBeenCalled();
+		expect(/Subscription active/.test(toasted().join(" "))).toBe(false);
+	});
 });
 
 describe("an already-linked setup reports the state from the RESUME lookup (#5522)", () => {

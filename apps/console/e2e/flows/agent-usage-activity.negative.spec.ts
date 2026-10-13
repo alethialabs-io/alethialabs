@@ -14,6 +14,7 @@
 // — `apps/console/lib/billing/plan.ts`, `activityRetentionDays`.
 
 import fs from "node:fs";
+import { untilFilterBarHydrated } from "../helpers/hydration";
 import { seedProject } from "../helpers/seed";
 import { personaMetaPath, type PersonaRecord } from "../helpers/personas";
 import { expect, test } from "../fixtures/qa";
@@ -55,9 +56,8 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 		owner,
 	}) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		await expect(
-			owner.page.getByRole("button", { name: /^Last 7 days$/i }),
-		).toBeVisible({ timeout: 30_000 });
+		// Visible is not interactive: the trigger paints before it hydrates (see the helper).
+		await untilFilterBarHydrated(owner.page, /^Last 7 days$/i);
 
 		// Captured while the filters are provably pristine, so the assertion at the end can be
 		// an EQUALITY rather than a list of keys someone has to remember to extend.
@@ -128,7 +128,7 @@ test.describe("Activity — retention window gating (Hobby)", () => {
 test.describe("Activity — empty state (owner)", () => {
 	test("an unmatched search narrows the feed to its empty state", async ({ owner }) => {
 		await owner.page.goto(activityPath(owner.orgSlug));
-		const search = owner.page.getByPlaceholder(/search actor, action or resource/i);
+		const search = owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true });
 		await expect(search).toBeVisible({ timeout: 30_000 });
 		// A unique token no seeded row can contain → server refetch returns nothing.
 		await search.fill(`zzz-nomatch-${Date.now()}`);
@@ -165,7 +165,7 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 		await owner.page.goto(`/${owner.orgSlug}/${projectSlug}/settings/activity`);
 		// The reusable filter bar still renders (search present)…
 		await expect(
-			owner.page.getByPlaceholder(/search actor, action or resource/i),
+			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
 		// …but the org-only Export + Project facet are gone when pinned to a project.
 		await expect(owner.page.getByRole("button", { name: /export csv/i })).toHaveCount(0);

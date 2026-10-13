@@ -113,6 +113,17 @@ describe("CountrySelect", () => {
 		expect(queryLabel("United States")).not.toBeInTheDocument();
 	});
 
+	it("names the search box, so it can be found by role (#5803)", async () => {
+		const user = userEvent.setup({ delay: null });
+		render(<CountrySelect value="" onChange={vi.fn()} />);
+		await user.click(screen.getByRole("button"));
+		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
+		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		expect(
+			await screen.findByRole("combobox", { name: "Search country" }),
+		).toHaveAttribute("placeholder", "Search country…");
+	});
+
 	it("shows the empty state for a query that matches nothing", async () => {
 		const user = userEvent.setup({ delay: null });
 		render(<CountrySelect value="" onChange={vi.fn()} />);

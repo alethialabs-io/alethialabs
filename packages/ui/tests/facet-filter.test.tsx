@@ -141,6 +141,33 @@ describe("FacetFilter", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("names the search box after the facet when the placeholder is the generic one (#5803)", async () => {
+		const user = userEvent.setup({ delay: null });
+		await open(user);
+		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
+		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		expect(
+			screen.getByRole("combobox", { name: "Search User" }),
+		).toHaveAttribute("placeholder", "Search…");
+	});
+
+	it("names the search box after a caller's placeholder, less its ellipsis (#5803)", async () => {
+		const user = userEvent.setup({ delay: null });
+		render(
+			<FacetFilter
+				label="Group"
+				options={OPTIONS}
+				value={[]}
+				onChange={vi.fn()}
+				searchPlaceholder="Search groups…"
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /^group/i }));
+		expect(
+			screen.getByRole("combobox", { name: "Search groups" }),
+		).toHaveAttribute("placeholder", "Search groups…");
+	});
+
 	it("filters options via the search input and shows the empty fallback", async () => {
 		const user = userEvent.setup();
 		await open(user);

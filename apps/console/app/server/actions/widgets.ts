@@ -5,8 +5,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { buildAgentTools } from "@/lib/ai/tools";
-import { dashboardBlockSchema } from "@/lib/ai/tools/visualize";
 import { REFRESHABLE_TOOLS } from "@/lib/ai/tools/widgets";
+import { pinInputSchema, WIDGET_MODES } from "@/lib/ai/widget-schema";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { type ThreadWidget, threadWidgets } from "@/lib/db/schema";
@@ -16,9 +16,6 @@ import type {
 	WidgetMode,
 	WidgetSource,
 } from "@/types/jsonb.types";
-
-const KINDS = ["table", "stat", "bar", "line", "keyvalue"] as const;
-const MODES = ["live", "frozen"] as const;
 
 /** Uniform call shape for replaying a read tool's execute (the tool defs' union of
  * concrete signatures is uncallable; each input is validated by its own schema first). */
@@ -32,27 +29,6 @@ function isToolExecute(fn: unknown): fn is ToolExecute {
 	return typeof fn === "function";
 }
 
-const sourceSchema = z
-	.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).nullable() })
-	.nullable();
-
-const pinInputSchema = z.object({
-	threadId: z.string().uuid(),
-	kind: z.enum(KINDS),
-	title: z.string().min(1).max(120),
-	source: sourceSchema.optional(),
-	data: z
-		.object({ output: z.unknown().optional(), block: dashboardBlockSchema.optional() })
-		.optional(),
-	posX: z.number().int().min(0).max(4),
-	posY: z.number().int().min(0),
-	colspan: z.number().int().min(1).max(5),
-	rowspan: z.number().int().min(1).max(12),
-	mode: z.enum(MODES),
-	/** Auto-pin dedupe key (the producing toolCallId); omitted for user pins. */
-	toolCallId: z.string().optional(),
-});
-
 export type PinWidgetInput = z.infer<typeof pinInputSchema>;
 
 const updateInputSchema = z.object({
@@ -61,7 +37,7 @@ const updateInputSchema = z.object({
 	posY: z.number().int().min(0).optional(),
 	colspan: z.number().int().min(1).max(5).optional(),
 	rowspan: z.number().int().min(1).max(12).optional(),
-	mode: z.enum(MODES).optional(),
+	mode: z.enum(WIDGET_MODES).optional(),
 	title: z.string().min(1).max(120).optional(),
 });
 
@@ -90,7 +66,7 @@ export async function pinWidget(input: PinWidgetInput): Promise<ThreadWidget> {
 	const parsed = pinInputSchema.parse(input);
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
-		// zod's KINDS/MODES enums are exactly the WidgetKind/WidgetMode unions.
+		// zod's kind/mode enums (lib/ai/widget-schema.ts) are exactly the WidgetKind/WidgetMode unions.
 		const kind: WidgetKind = parsed.kind;
 		const mode: WidgetMode = parsed.mode;
 		const source: WidgetSource | null = parsed.source ?? null;

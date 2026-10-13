@@ -15,6 +15,10 @@
 //   `gc-function`  — a bounded-batch SQL function this repo ships and the reconcile loop calls. The
 //                    window here IS the window passed to it (lib/reconcile/gc.ts reads both from the
 //                    same constants), so the document, the code and the schedule cannot disagree.
+//   `reconcile-task` — a bounded, paged TypeScript sweep on the reconcile loop (lib/reconcile/loop.ts)
+//                    rather than a SQL function, because deciding what to do with a row needs app
+//                    code (the Elench drafts sweep settles a silent claim before it deletes). The
+//                    window here IS the sweep's window: the sweep imports it from this file.
 //   `provider`     — held by a third party under their configuration. We do not enforce it and must
 //                    not imply we do; the entry records what has to be verified with them.
 //   `contractual`  — kept for as long as a legal obligation requires, and deliberately NOT deleted
@@ -30,6 +34,7 @@
 /** How a window is actually enforced — the difference between a promise and a control. */
 export type RetentionMechanism =
 	| "gc-function"
+	| "reconcile-task"
 	| "provider"
 	| "contractual"
 	| "not-enforced";
@@ -72,6 +77,9 @@ export const RETENTION_DEFAULT_DAYS = {
 	jobLogs: 30,
 	fleetActions: 90,
 	authzActivity: 365,
+	// ADR 0001 §9 / Q2: an Elench draft nobody writes, and a discarded one (its 24 h Undo window).
+	elenchDrafts: 30,
+	elenchDraftsDiscarded: 1,
 } as const;
 
 /**
@@ -129,6 +137,31 @@ export const RETENTION_REGISTRY: readonly RetentionEntry[] = [
 			"Enforced by public.gc_pending_identities (24 hours). A connection abandoned mid-flow " +
 			"holds an account identifier the customer never finished authorising, so it is removed " +
 			"rather than kept as an orphan.",
+	},
+	{
+		id: "elench-drafts",
+		subject: "Unsent Elench chat messages (drafts), which may hold pasted secrets",
+		table: "elench_drafts",
+		windowDays: RETENTION_DEFAULT_DAYS.elenchDrafts,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the elench-drafts-sweep task (lib/elench/drafts-sweep.ts), run daily by the " +
+			"reconcile loop: a draft not written for 30 days is deleted, whether or not its user is " +
+			"still a member of the org. A draft being sent under a live claim is never deleted. " +
+			"Erased on account deletion in every org (lib/privacy/erasure-plan.ts).",
+	},
+	{
+		id: "elench-drafts-discarded",
+		subject: "Discarded Elench drafts, kept only for the Undo window",
+		table: "elench_drafts",
+		windowDays: RETENTION_DEFAULT_DAYS.elenchDraftsDiscarded,
+		mechanism: "reconcile-task",
+		gcFunction: null,
+		evidence:
+			"Enforced by the same elench-drafts-sweep task: a discarded draft is deleted 24 hours " +
+			"after it was discarded. The task runs daily, so a discarded draft can stay up to about " +
+			"two days.",
 	},
 	{
 		id: "legal-acceptance",

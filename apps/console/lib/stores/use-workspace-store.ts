@@ -10,6 +10,24 @@ import {
 } from "@/app/server/actions/workspace";
 import type { Entitlements } from "@/lib/authz/types";
 
+/**
+ * Where the workspace load stands (#5895).
+ *
+ * - `idle` — never asked. The server render and every first client paint are here, so a surface
+ *   keyed on this state renders the same thing on both and cannot cause a hydration mismatch.
+ * - `loading` — a `fetchWorkspace()` is in flight.
+ * - `loaded` — the last load answered; `entitlements` and the rest are the server's.
+ * - `failed` — the last load threw. Whatever an earlier load set is kept (a stale answer is still
+ *   an answer); if none ever succeeded, `entitlements` is still `null`, so every `useEntitlement`
+ *   gate keeps failing closed — no paid content, no upsell. This state exists so a surface can say
+ *   so and offer a retry instead of waiting forever on a load that will not come: before it, a
+ *   failure put the store back in exactly the never-fetched shape.
+ */
+export type WorkspaceLoadStatus = "idle" | "loading" | "loaded" | "failed";
+
+/** Bumped by every `fetchWorkspace()`, so only the latest call's answer settles the store. */
+let loadGeneration = 0;
+
 interface WorkspaceStore {
 	/** The org the session is scoped to (drives the PDP + RLS); null until loaded. */
 	activeOrgId: string | null;
@@ -19,7 +37,11 @@ interface WorkspaceStore {
 	entitlements: Entitlements | null;
 	/** Hosted SaaS vs self-managed deployment — gates platform-fleet surfaces. */
 	isHosted: boolean;
+	/** Where the workspace load stands — see `WorkspaceLoadStatus`. */
+	loadStatus: WorkspaceLoadStatus;
+	/** `loadStatus === "loading"`, kept for existing readers; it cannot tell idle from failed. */
 	isLoading: boolean;
+	/** Load (or re-load) the workspace context. Safe to call again after a failure: it is the retry. */
 	fetchWorkspace: () => Promise<void>;
 	/** Persist the active org server-side, then update local state. */
 	switchOrg: (orgId: string) => Promise<void>;
@@ -30,21 +52,29 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 	organizations: [],
 	entitlements: null,
 	isHosted: false,
+	loadStatus: "idle",
 	isLoading: false,
 	fetchWorkspace: async () => {
-		set({ isLoading: true });
+		loadGeneration += 1;
+		const generation = loadGeneration;
+		set({ loadStatus: "loading", isLoading: true });
 		try {
 			const ctx = await getWorkspaceContext();
+			// A later call (a retry, or a refresh after a billing change) owns the outcome.
+			if (generation !== loadGeneration) return;
 			set({
 				activeOrgId: ctx.activeOrgId,
 				organizations: ctx.organizations,
 				entitlements: ctx.entitlements,
 				isHosted: ctx.isHosted,
+				loadStatus: "loaded",
+				isLoading: false,
 			});
 		} catch {
-			// Unauthenticated / transient — keep defaults; the layout still renders.
-		} finally {
-			set({ isLoading: false });
+			// Unauthenticated / transient — keep what we had, so the layout still renders, but say
+			// the load FAILED rather than falling back to the never-fetched shape (#5895).
+			if (generation !== loadGeneration) return;
+			set({ loadStatus: "failed", isLoading: false });
 		}
 	},
 	switchOrg: async (orgId) => {
@@ -52,6 +82,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 		set({ activeOrgId: orgId });
 	},
 }));
+
+/** Where the workspace load stands — `failed` is the one state a surface must not wait out. */
+export function useWorkspaceLoadStatus(): WorkspaceLoadStatus {
+	return useWorkspaceStore((s) => s.loadStatus);
+}
 
 /** Whether the console is the hosted SaaS (vs a self-managed/community deployment). */
 export function useIsHosted(): boolean {

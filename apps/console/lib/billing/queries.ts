@@ -7,7 +7,7 @@
 // passing the resolved actor.orgId — never user input.
 
 import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import {
 	organizationBilling,
 	type OrganizationBilling,
@@ -23,11 +23,19 @@ import {
 	resolvePlanEntitlements,
 } from "./plan";
 
-/** Returns an org's billing record, or null if it has none (→ implicitly community). */
+/**
+ * Returns an org's billing record, or null if it has none (→ implicitly community).
+ *
+ * `tx` reads the row on the caller's transaction instead of a pooled service connection. The AI
+ * hold (`reserveAiHold`, ADR 0003 §5.1 step 7) reads the plan this way, after its advisory lock:
+ * a second pooled connection taken while the transaction holds one is the pool deadlock
+ * `ai-guard.ts` warns against. Omitted, the read is exactly what it always was.
+ */
 export async function getOrgBilling(
 	orgId: string,
+	tx?: Tx,
 ): Promise<OrganizationBilling | null> {
-	const [row] = await getServiceDb()
+	const [row] = await (tx ?? getServiceDb())
 		.select()
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, orgId))

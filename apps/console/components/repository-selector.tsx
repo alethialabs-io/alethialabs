@@ -547,7 +547,7 @@ export function RepositorySelector({
                 }
               />
               <PopoverContent className="w-[400px] p-0" align="start">
-                <Command>
+                <Command label="Search repositories">
                   <CommandInput placeholder="Search repositories..." />
                   <CommandList>
                     <CommandEmpty>No repository found.</CommandEmpty>

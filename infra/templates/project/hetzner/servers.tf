@@ -97,27 +97,61 @@ resource "hcloud_server" "workers" {
 # IPv4 + IPv6 the default workers have, which talos_machine_configuration_apply needs to reach them.
 # Nothing here is created when extra_node_pools is empty (the default).
 #
-# SIZE: a FIXED group of desired_size servers, or min_size when desired_size is left out. Hetzner has
-# no autoscaler yet (#5538); max_size is validated but adds no servers today.
+# SIZE: a FIXED group of desired_size servers, or min_size when desired_size is left out. Hetzner
+# worker autoscaling is deferred (#5538, maintainer ruling 2026-10-08: the autoscaler would need the
+# Talos join config in-cluster); max_size is validated but adds no servers.
 #
-# ADDRESSING: each pool gets its own /24 on the cluster's network, and its servers take .101 onwards
-# in it (at most 100 per pool, so it always fits). The /24 is chosen from the pool's NAME, never from
-# its position in extra_node_pools, so adding, removing or reordering pools never moves another pool:
+# ADDRESSING (#5595): each pool gets its own /24 on the cluster's network, and its servers take .101
+# onwards in it (at most 100 per pool, so it always fits). Once a pool holds a /24 it KEEPS it, and no
+# two pools are ever given the same one:
 #
 #   free /24s  = the network's /24s numbered 1 .. min(count, 1024) - 1 (0 is the node subnet) that
 #                overlap neither the pod CIDR nor the service CIDR, in ascending order;
-#   pool's /24 = free[ parseint(first 8 hex digits of sha256(name), 16) mod length(free) ],
-#                or the /24 numbered node_pool_subnet_index[name] when that is set.
+#   hash slot  = free[ parseint(first 8 hex digits of sha256(name), 16) mod length(free) ].
 #
-# Two names can land on the same /24. That is refused at plan, naming both pools, and the fix is to
-# set node_pool_subnet_index for the pool being added (setting it on a pool that already exists moves
-# that pool's subnet, which replaces its servers).
+#   A pool's /24, in order of precedence:
+#     1. node_pool_subnet_index[name], when set (a pin; it moves an existing pool);
+#     2. the number RECORDED for it in the ledger (below), when that number is still a free /24;
+#     3. the /24 its servers already sit in, for a pool built before the ledger existed (upgrade);
+#     4. otherwise it is NEW: its hash slot, if no 1-3 pool holds it, no pool this plan removes is
+#        still recorded on it, and no new pool that sorts before it by name has the same hash slot;
+#        else the lowest free /24 nobody holds, handed to those pools in name order.
+#   1-3 can still collide with each other (two pins, a pin onto a recorded pool, a hand-edited
+#   ledger); that is refused at plan, naming the pools. Step 4 cannot collide, by construction.
 #
-# There is deliberately NO ignore_changes on the subnet's ip_range: the address a pool computes is
-# stable on its own, so the plan shows exactly the /24 each pool will hold and the checks below read
-# that same value. A computed /24 changes only when node_pool_subnet_index, the network's range, or
-# the pod/service CIDRs change, and the plan then shows the subnet and its servers being replaced
-# rather than hiding it.
+# THE LEDGER lives in the cloud, not in state (maintainer ruling on #5595, option c). State cannot
+# hold it: a value written from the allocation and read back by the allocation is a reference, and
+# every reference is a graph edge, so each state-based shape is an OpenTofu cycle (the findings on
+# #5595). The record is a label per pool on hcloud_firewall.this, which every cluster has (the network
+# may be the user's), and it is read back through data.hcloud_firewalls with a selector built only
+# from the cluster name — known at plan, depending on no resource — so the read has no edge to the
+# write. A fresh cluster reads an empty list, so a fresh plan is deterministic.
+#
+#   key   = "subnet.alethia.io/<pool>"  (a pool name is ^[a-z][a-z0-9]{0,11}$, a legal key name)
+#   value = the /24 NUMBER, such as "41". Never the CIDR: hcloud label values allow only letters,
+#           digits, '-', '_' and '.', so '/' is illegal (hcloud-go labels.go valueRegexp).
+#
+# Removing a pool drops its label, so its /24 is free again. Someone who edits the labels by hand can
+# move a pool: its subnet and servers are then replaced, and the plan shows it. That is the accepted
+# cost of keeping the record outside state.
+#
+# There is deliberately NO ignore_changes on the subnet's ip_range: the plan shows exactly the /24
+# each pool will hold, and the checks below read that same value.
+#
+# DEFAULTS: with extra_node_pools empty, neither data source is read and the firewall's labels are
+# exactly local.default_labels, so the default plan is unchanged.
+data "hcloud_firewalls" "node_pool_ledger" {
+  count         = length(var.extra_node_pools) > 0 ? 1 : 0
+  with_selector = "cluster=${local.cluster_name}"
+}
+
+# The servers of pools built before the ledger existed (step 3). Read by the `pool` label every pool
+# server carries; a pool with no servers (min_size = 0) is invisible here and is allocated as new.
+data "hcloud_servers" "node_pool_ledger" {
+  count         = length(var.extra_node_pools) > 0 ? 1 : 0
+  with_selector = "cluster=${local.cluster_name},pool"
+}
+
 locals {
   node_pools = {
     for p in var.extra_node_pools : p.name => {
@@ -147,15 +181,90 @@ locals {
     ])
   }
 
-  # Each pool's /24 number: its override, or the free /24 its name hashes to (null when the network
-  # has no free /24 at all; the precondition below says so).
-  node_pool_subnet_slot = {
-    for name, p in local.node_pools : name => (
-      contains(keys(var.node_pool_subnet_index), name) ? var.node_pool_subnet_index[name] : (
-        length(local.node_pool_free_slots) == 0 ? null :
-        local.node_pool_free_slots[parseint(substr(sha256(name), 0, 8), 16) % length(local.node_pool_free_slots)]
-      )
+  # The ledger's key prefix, and this cluster's firewall as the ledger read found it (null on a fresh
+  # cluster, and whenever there are no pools, because the read is then skipped). Matched by NAME as
+  # well as by the cluster label, so another firewall carrying the label can never be read as ours.
+  node_pool_ledger_prefix   = "subnet.alethia.io/"
+  node_pool_ledger_firewall = one([for fw in flatten(data.hcloud_firewalls.node_pool_ledger[*].firewalls) : fw if fw.name == local.cluster_name])
+
+  # Step 2: pool name => the /24 number recorded for it. A value that is not a whole number, or that
+  # is no longer a free /24 of this network (the network or the pod/service CIDRs changed), is not a
+  # record.
+  node_pool_recorded_slot = {
+    for k, v in(local.node_pool_ledger_firewall == null ? {} : local.node_pool_ledger_firewall.labels) :
+    trimprefix(k, local.node_pool_ledger_prefix) => tonumber(v)
+    if startswith(k, local.node_pool_ledger_prefix) && contains(local.node_pool_free_slots, can(regex("^[1-9][0-9]{0,3}$", v)) ? tonumber(v) : -1)
+  }
+
+  # Step 3: pool name => the /24 number its existing servers sit in (the lowest, if they disagree).
+  node_pool_slot_by_cidr = {
+    for n in local.node_pool_free_slots : cidrsubnet(local.network_ip_range, local.node_pool_subnet_newbits, n) => n
+  }
+  node_pool_server_slots = {
+    for srv in flatten(data.hcloud_servers.node_pool_ledger[*].servers) : srv.labels["pool"] => [
+      for net in srv.network : local.node_pool_slot_by_cidr[cidrsubnet("${net.ip}/24", 0, 0)]
+      if can(local.node_pool_slot_by_cidr[cidrsubnet("${net.ip}/24", 0, 0)])
+    ]...
+  }
+  node_pool_existing_slot = {
+    for name, slots in local.node_pool_server_slots : name => min(flatten(slots)...)
+    if length(flatten(slots)) > 0
+  }
+
+  # Steps 1-3: the pools whose /24 is already decided.
+  node_pool_held_slot = {
+    for name in keys(local.node_pools) : name => (
+      contains(keys(var.node_pool_subnet_index), name) ? var.node_pool_subnet_index[name] :
+      contains(keys(local.node_pool_recorded_slot), name) ? local.node_pool_recorded_slot[name] :
+      local.node_pool_existing_slot[name]
     )
+    if contains(keys(var.node_pool_subnet_index), name) || contains(keys(local.node_pool_recorded_slot), name) || contains(keys(local.node_pool_existing_slot), name)
+  }
+
+  # The /24s a NEW pool may not take: every held one, AND every one still recorded for a pool that this
+  # plan removes. A removed pool's subnet is destroyed in the same apply that would create the new one,
+  # and nothing orders the two, so Hetzner could refuse the overlap part-way through. Its label is
+  # dropped by this plan (node_pool_ledger_labels lists only current pools), so the /24 is free again
+  # on the next plan.
+  node_pool_reserved_slots = distinct(concat(values(local.node_pool_held_slot), values(local.node_pool_recorded_slot)))
+
+  # Step 4, the new pools in name order, each with its hash slot (-1 when the network has no free /24).
+  node_pool_new_names = sort([for name in keys(local.node_pools) : name if !contains(keys(local.node_pool_held_slot), name)])
+  node_pool_hash_slot = {
+    for name in local.node_pool_new_names : name => (
+      length(local.node_pool_free_slots) == 0 ? -1 :
+      local.node_pool_free_slots[parseint(substr(sha256(name), 0, 8), 16) % length(local.node_pool_free_slots)]
+    )
+  }
+
+  # A new pool keeps its hash slot when no held pool takes it and no new pool sorted before it has the
+  # same one. Winners are therefore distinct from each other and from every held /24.
+  node_pool_hash_winners = {
+    for i, name in local.node_pool_new_names : name => local.node_pool_hash_slot[name]
+    if local.node_pool_hash_slot[name] > 0 &&
+    !contains(local.node_pool_reserved_slots, local.node_pool_hash_slot[name]) &&
+    !contains([for earlier in slice(local.node_pool_new_names, 0, i) : local.node_pool_hash_slot[earlier]], local.node_pool_hash_slot[name])
+  }
+
+  # The rest take the lowest free /24s that nobody holds, in name order: the i-th one gets the i-th.
+  # null when the network has run out of free /24s (the fit check then says so).
+  node_pool_spare_slots = [
+    for n in local.node_pool_free_slots : n
+    if !contains(local.node_pool_reserved_slots, n) && !contains(values(local.node_pool_hash_winners), n)
+  ]
+  node_pool_hash_losers = [for name in local.node_pool_new_names : name if !contains(keys(local.node_pool_hash_winners), name)]
+
+  # Each pool's /24 number.
+  node_pool_subnet_slot = merge(
+    local.node_pool_held_slot,
+    local.node_pool_hash_winners,
+    { for i, name in local.node_pool_hash_losers : name => try(local.node_pool_spare_slots[i], null) },
+  )
+
+  # What this plan records in the ledger: every pool with a /24. Merged onto the firewall's labels.
+  node_pool_ledger_labels = {
+    for name, slot in local.node_pool_subnet_slot : "${local.node_pool_ledger_prefix}${name}" => tostring(slot)
+    if slot != null
   }
 
   # The /24 each pool holds, or null when its number is outside the network.
@@ -188,7 +297,11 @@ locals {
   node_pool_subnet_misfit_message = {
     for name, slot in local.node_pool_subnet_slot : name => try(
       slot == null
-      ? "extra_node_pools pool \"${name}\" has no /24 to take: every /24 of the network (${local.network_ip_range}) after the node subnet overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). Use a larger network (a /16, the default, has 95 free /24s), or smaller pod and service CIDRs."
+      ? (
+        length(local.node_pool_free_slots) == 0
+        ? "extra_node_pools pool \"${name}\" has no /24 to take: every /24 of the network (${local.network_ip_range}) after the node subnet overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). Use a larger network (a /16, the default, has 95 free /24s), or smaller pod and service CIDRs."
+        : "extra_node_pools pool \"${name}\" has no /24 to take: other pools hold all ${length(local.node_pool_free_slots)} free /24s of the network (${local.network_ip_range}). Use a larger network, or fewer pools."
+      )
       : "extra_node_pools pool \"${name}\" would take /24 number ${coalesce(slot, -1)} of the network (${local.network_ip_range})${contains(keys(var.node_pool_subnet_index), name) ? ", set by node_pool_subnet_index" : ""}, and that /24 is outside the network, is the node subnet (number 0), or overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). ${length(local.node_pool_free_slots) > 0 ? "The free /24 numbers lie between ${local.node_pool_free_slots[0]} and ${local.node_pool_free_slots[length(local.node_pool_free_slots) - 1]}; set node_pool_subnet_index for this pool to one that no other pool takes." : "The network has no free /24: use a larger network."}",
       "extra_node_pools pool \"${name}\" has no /24 it can take in the network (${local.network_ip_range}).",
     )
@@ -197,9 +310,9 @@ locals {
   # The lowest free /24 no pool takes: the number the clash message suggests.
   node_pool_spare_slot = try([for n in local.node_pool_free_slots : n if !contains(values(local.node_pool_subnet_slot), n)][0], null)
 
-  # What the clash check says when it fails, per pool. It says HOW the pools came to share the /24:
-  # by the hash of their names, by node_pool_subnet_index, or some of each, so that the message is
-  # true when both pools were set by hand.
+  # What the clash check says when it fails, per pool. A NEW pool never clashes (step 4), so a clash is
+  # between pools whose /24 was already decided: pinned by node_pool_subnet_index, or held (recorded in
+  # the ledger, or where its servers already are). The message says which, so it is true either way.
   node_pool_subnet_clash_message = {
     for name, others in local.node_pool_subnet_clashes : name => format(
       "extra_node_pools pools %s would all take /24 number %d (%s) of the network. %s Do not set node_pool_subnet_index on a pool that already exists: that moves the pool's subnet and replaces its servers.",
@@ -209,8 +322,8 @@ locals {
       alltrue([for p in concat([name], others) : contains(keys(var.node_pool_subnet_index), p)])
       ? "node_pool_subnet_index sets each of them to this /24. Give each pool a different free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}."
       : anytrue([for p in concat([name], others) : contains(keys(var.node_pool_subnet_index), p)])
-      ? "${jsonencode(sort([for p in concat([name], others) : p if contains(keys(var.node_pool_subnet_index), p)]))} take it by node_pool_subnet_index, and ${jsonencode(sort([for p in concat([name], others) : p if !contains(keys(var.node_pool_subnet_index), p)]))} by the hash of the name. Set node_pool_subnet_index for the pool you are adding to a different free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}, or rename it."
-      : "A pool's /24 is chosen from its name, and these names land on the same one. Set node_pool_subnet_index for the pool you are adding, to a free /24 number${local.node_pool_spare_slot == null ? "" : " such as ${local.node_pool_spare_slot}"} (for example node_pool_subnet_index = { ${name} = ${coalesce(local.node_pool_spare_slot, 1)} }), or rename it."
+      ? "${jsonencode(sort([for p in concat([name], others) : p if contains(keys(var.node_pool_subnet_index), p)]))} take it by node_pool_subnet_index, and ${jsonencode(sort([for p in concat([name], others) : p if !contains(keys(var.node_pool_subnet_index), p)]))} already hold it. Remove that node_pool_subnet_index entry, or set it to a different free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}."
+      : "Each of them already holds it, by the labels \"${local.node_pool_ledger_prefix}<pool>\" on the firewall \"${local.cluster_name}\" or by where its servers are. Those labels record each pool's /24 and are not meant to be edited by hand. Set node_pool_subnet_index for one of these pools to a free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}, which replaces that pool's servers."
     )
   }
 
@@ -228,6 +341,10 @@ resource "hcloud_network_subnet" "node_pools" {
   type         = "cloud"
   network_zone = data.hcloud_location.selected.network_zone
   ip_range     = local.node_pool_subnet_cidrs[each.key]
+
+  # The ledger is written before any pool subnet exists, so an apply that fails part-way has already
+  # recorded the /24s it was creating, and the next plan keeps them.
+  depends_on = [hcloud_firewall.this]
 
   lifecycle {
     # The pool's /24 must be inside the network, must not be the node subnet (number 0), and must stay

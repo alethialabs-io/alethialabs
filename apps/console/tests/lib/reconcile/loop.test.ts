@@ -19,6 +19,9 @@ vi.mock("@/lib/kubeconfig-mint/sweep", () => ({
 vi.mock("@/lib/rate-limit", () => ({
 	sweepExpiredRateLimitBuckets: vi.fn(async () => ({ deleted: 0 })),
 }));
+vi.mock("@/lib/elench/drafts-sweep", () => ({
+	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, settleFailed: 0, discardedDeleted: 0, staleDeleted: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -31,6 +34,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
@@ -89,10 +93,12 @@ describe("tick — fan-out", () => {
 		expect(releaseStrandedAiHolds).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
+		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
 			"drift-schedule",
+			"elench-drafts-sweep",
 			"env-convergence",
 			"ephemeral-reaper",
 			"gc-authz-activity",
@@ -132,6 +138,17 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredRateLimitBuckets).not.toHaveBeenCalled();
 		expect(gcJobLogs).not.toHaveBeenCalled();
 		expect(gcFleetActions).not.toHaveBeenCalled();
+		// Draft retention is counted in days: the sweep is daily.
+		expect(sweepElenchDrafts).not.toHaveBeenCalled();
+	});
+
+	it("runs the drafts sweep again only once a day has passed", async () => {
+		await tick(new Date());
+		vi.clearAllMocks();
+		await tick(new Date(Date.now() + 23 * 60 * 60_000));
+		expect(sweepElenchDrafts).not.toHaveBeenCalled();
+		await tick(new Date(Date.now() + 24 * 60 * 60_000 + 1_000));
+		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
 	});
 
 	it("keeps the loop DEGRADED across not-due ticks while a cold task stays in failed state", async () => {

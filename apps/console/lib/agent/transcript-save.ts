@@ -34,12 +34,19 @@ export const transcriptTargetSchema = z.object({
 /** See {@link transcriptTargetSchema}. */
 export type TranscriptTarget = z.infer<typeof transcriptTargetSchema>;
 
-/** The row writes {@link saveTranscript} needs, over the caller's owner-scoped connection. */
+/**
+ * The row writes of one owner's threads, over a transaction: the owner-scoped one the routes' save
+ * runs on, or the service-role one of ADR 0003's claim (`turn-claims.ts`). Every statement names the
+ * owner explicitly, so the service-role caller is held to the same rows RLS would allow.
+ */
 export interface TranscriptRows {
 	/**
 	 * Write `messages` over the live (not deleted) row `id` of `kind` in project `projectId` (null: in
 	 * no project, an org thread); true when a row matched. The project is matched so one route cannot
 	 * write over a thread of another context — the org route over a project thread, or the reverse.
+	 * It writes `messages`, so it adds one to `revision` (ADR 0003 §4.2). Its callers are the recover
+	 * branch, which writes a server-built transcript into a recovered thread, and the chat routes'
+	 * wholesale save until ADR 0003 slice 6 moves them onto the claim's append.
 	 */
 	updateLive(
 		id: string,
@@ -47,6 +54,34 @@ export interface TranscriptRows {
 		projectId: string | null,
 		messages: UIMessage[],
 	): Promise<boolean>;
+	/**
+	 * Append `messages` to the STORED transcript of the live row `id` (ADR 0003 §7), only while its
+	 * revision is `baseRevision`, and add one to the revision in the same statement. The append is
+	 * done by the database (`messages || $new`), so the stored list is never replaced by one the
+	 * caller holds. Returns the new revision, or null when no row matched (not live, another kind
+	 * or project, or the revision moved).
+	 */
+	appendLive(
+		id: string,
+		kind: TranscriptTarget["kind"],
+		projectId: string | null,
+		baseRevision: number,
+		messages: UIMessage[],
+	): Promise<number | null>;
+	/**
+	 * Replace the LAST stored message of the live row `id` with `message`, only while its revision is
+	 * `baseRevision`, and add one to the revision (ADR 0003 §7): a regenerate replaces its answer, a
+	 * continuation replaces the answer it continued, and a resume replaces the continued answer whose
+	 * tail it re-ran. Every earlier message stays as stored. Returns the new revision, or null when no
+	 * row matched (as {@link appendLive}) or the transcript is empty.
+	 */
+	replaceLast(
+		id: string,
+		kind: TranscriptTarget["kind"],
+		projectId: string | null,
+		baseRevision: number,
+		message: UIMessage,
+	): Promise<number | null>;
 	/** The row `id` in any state, or null when there is none this owner can see. */
 	find(id: string): Promise<{ status: string } | null>;
 	/**
@@ -94,6 +129,34 @@ function firstUserText(messages: UIMessage[]): string | undefined {
 }
 
 /**
+ * Put the transcript of a thread the user DELETED into another thread, never back into the deleted
+ * one (the recover branch of {@link saveTranscript}, and ADR 0003 §5.3's `deleted` outcome, whose
+ * finalize calls it on its own transaction). A later turn of the same conversation finds the thread
+ * an earlier recovery made by its first message and writes into it; otherwise a NEW thread titled
+ * "Recovered: …" is inserted, which the rail lists. Throws when no thread could be written.
+ */
+export async function recoverTranscript(
+	rows: TranscriptRows,
+	target: TranscriptTarget,
+	messages: UIMessage[],
+): Promise<{ kind: "recovered"; threadId: string }> {
+	const { threadId, kind, projectId } = target;
+	const first = messages[0]?.id;
+	const earlier = first ? await rows.findRecovered(threadId, kind, projectId, first) : null;
+	if (earlier && (await rows.updateLive(earlier, kind, projectId, messages))) {
+		return { kind: "recovered", threadId: earlier };
+	}
+	const recovered = await rows.insert({
+		title: threadTitle(`Recovered: ${firstUserText(messages) ?? ""}`),
+		kind,
+		projectId,
+		messages,
+	});
+	if (!recovered) throw new Error(`Thread ${threadId} was deleted and its transcript could not be recovered.`);
+	return { kind: "recovered", threadId: recovered };
+}
+
+/**
  * Save a finished turn's transcript into its thread, without losing it and without undoing a delete.
  *
  * - The live row is updated: the common case.
@@ -110,7 +173,7 @@ function firstUserText(messages: UIMessage[]): string | undefined {
  *   a turn sent into that id after the reap finds no row and recreates the thread under its id.
  *
  * Throws when the transcript could not be stored: the id is held by a row this owner cannot see, or
- * a support thread has no row. The routes log that (`transcriptNotSaved`).
+ * a support thread has no row; the caller decides what that failure means.
  */
 export async function saveTranscript(
 	rows: TranscriptRows,
@@ -120,21 +183,7 @@ export async function saveTranscript(
 	const { threadId, kind, projectId } = target;
 	if (await rows.updateLive(threadId, kind, projectId, messages)) return { kind: "saved" };
 	const existing = await rows.find(threadId);
-	if (existing?.status === THREAD_DELETED) {
-		const first = messages[0]?.id;
-		const earlier = first ? await rows.findRecovered(threadId, kind, projectId, first) : null;
-		if (earlier && (await rows.updateLive(earlier, kind, projectId, messages))) {
-			return { kind: "recovered", threadId: earlier };
-		}
-		const recovered = await rows.insert({
-			title: threadTitle(`Recovered: ${firstUserText(messages) ?? ""}`),
-			kind,
-			projectId,
-			messages,
-		});
-		if (!recovered) throw new Error(`Thread ${threadId} was deleted and its transcript could not be recovered.`);
-		return { kind: "recovered", threadId: recovered };
-	}
+	if (existing?.status === THREAD_DELETED) return recoverTranscript(rows, target, messages);
 	if (existing) {
 		// A live row the update did not match: a thread of another kind or project, or one written
 		// between the update and this read. Never overwritten.

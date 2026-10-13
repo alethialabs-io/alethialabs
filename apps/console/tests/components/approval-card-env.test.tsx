@@ -12,12 +12,17 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/server/actions/projects", () => ({
+	getApprovedJob: vi.fn(),
 	tryPlanProject: vi.fn(),
 	tryProvisionProject: vi.fn(),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
+import {
+	getApprovedJob,
+	tryPlanProject,
+	tryProvisionProject,
+} from "@/app/server/actions/projects";
 import { ApprovalCard } from "@/components/agent/approval-card";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
@@ -60,7 +65,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(tryPlanProject).mockResolvedValue({ ok: true, jobId: "job-1" });
 	vi.mocked(tryProvisionProject).mockResolvedValue({ ok: true, jobId: "job-2" });
-	useElenchStore.setState({ ctx: { kind: "org" } });
+	vi.mocked(getApprovedJob).mockResolvedValue(null);
+	useElenchStore.setState({ ctx: { kind: "org" }, threadId: null });
 });
 
 describe("ApprovalCard — environment", () => {
@@ -69,7 +75,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} onResolve={onResolve} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV, "call-1"),
 		);
 		expect(onResolve).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "approved", environmentId: PROPOSAL_ENV, jobId: "job-1" }),
@@ -80,7 +86,13 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
 		await waitFor(() =>
-			expect(tryProvisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
+			expect(tryProvisionProject).toHaveBeenCalledWith(
+				PROJECT,
+				"job-plan",
+				undefined,
+				PROPOSAL_ENV,
+				"call-2",
+			),
 		);
 	});
 
@@ -89,7 +101,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan()} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, SURFACE_ENV),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, SURFACE_ENV, "call-1"),
 		);
 	});
 
@@ -98,7 +110,13 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
 		await waitFor(() =>
-			expect(tryProvisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
+			expect(tryProvisionProject).toHaveBeenCalledWith(
+				PROJECT,
+				"job-plan",
+				undefined,
+				PROPOSAL_ENV,
+				"call-2",
+			),
 		);
 	});
 
@@ -108,7 +126,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan()} onResolve={onResolve} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, undefined),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, undefined, "call-1"),
 		);
 		expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ environmentId: null }));
 	});
@@ -130,5 +148,46 @@ describe("ApprovalCard — a refusal the user can act on", () => {
 		expect(onResolve).not.toHaveBeenCalledWith(
 			expect.objectContaining({ status: "approved" }),
 		);
+	});
+});
+
+// #5797 — one approval, one job. The card keys each approval by its proposing tool call, so the server
+// can answer a second Approve with the job the first one queued; and on a re-render whose transcript
+// lost the approval's output, the card shows that job instead of an active Approve.
+describe("ApprovalCard — one approval, one job", () => {
+	it("keys the approval by the thread and the proposing tool call", async () => {
+		useElenchStore.setState({ threadId: "thread-9" });
+		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
+		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
+		await waitFor(() =>
+			expect(tryProvisionProject).toHaveBeenCalledWith(
+				PROJECT,
+				"job-plan",
+				undefined,
+				PROPOSAL_ENV,
+				"thread-9:call-2",
+			),
+		);
+		expect(getApprovedJob).toHaveBeenCalledWith(
+			PROJECT,
+			"provision_project",
+			"thread-9:call-2",
+		);
+	});
+
+	it("shows the job a previous approval queued instead of an active Approve", async () => {
+		vi.mocked(getApprovedJob).mockResolvedValue({ jobId: "job-earlier" });
+		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} />);
+
+		expect(await screen.findByText(/already approved/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /view logs/i })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /approve & plan/i })).toBeNull();
+		expect(tryPlanProject).not.toHaveBeenCalled();
+	});
+
+	it("keeps Approve when the proposal queued nothing yet", async () => {
+		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} />);
+		await waitFor(() => expect(getApprovedJob).toHaveBeenCalled());
+		expect(screen.getByRole("button", { name: /approve & plan/i })).toBeEnabled();
 	});
 });

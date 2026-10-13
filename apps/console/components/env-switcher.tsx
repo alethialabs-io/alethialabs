@@ -154,7 +154,7 @@ export function EnvSwitcher() {
 					label={active?.name ?? ""}
 				/>
 				<PopoverContent className="w-64 p-0" align="start">
-					<Command>
+					<Command label="Find environment">
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No environment found.</CommandEmpty>

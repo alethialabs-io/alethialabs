@@ -22,7 +22,9 @@ The runner copies this template verbatim, feeds it a `.tfvars.json`, then runs
    (`data "hcloud_images"`, selector `alethia.io/cache==talos-image` plus the
    four key dimensions) nothing is built at all. On a **miss** a Talos
    [Image Factory](https://factory.talos.dev/) schematic is built with the
-   `siderolabs/qemu-guest-agent` extension; the `hcloud` disk image (`raw.xz`)
+   `siderolabs/qemu-guest-agent` extension, named directly rather than looked
+   up, so a plan never calls the factory (#5618) and a hit does not call it at
+   all; the `hcloud` disk image (`raw.xz`)
    URL is derived per architecture and uploaded + snapshotted into Hetzner via
    the `hcloud-talos/imager` provider (`imager_image`), and the result is stamped
    with the cache labels so the next apply is a hit. Only the architecture(s)

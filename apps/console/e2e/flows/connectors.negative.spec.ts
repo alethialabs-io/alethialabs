@@ -15,10 +15,14 @@ import { test, expect } from "../fixtures/qa";
 // The connectors route runs a heavy server-side setup on every load — allow generous headroom.
 test.describe.configure({ timeout: 120_000 });
 
-/** Navigates to the connectors board and waits for the filter bar's search box. */
+/**
+ * Navigates to the connectors board and waits for the filter bar's search box — asked for BY ROLE:
+ * `getByLabel` also matches the hidden streamed copy of the bar a full-page load can leave in the
+ * DOM, and `fill()` on that copy applies no search (#5777, #5800).
+ */
 async function gotoConnectors(page: Page, orgSlug: string): Promise<void> {
 	await page.goto(`/${orgSlug}/~/connectors`, { waitUntil: "commit" });
-	await expect(page.getByLabel("Search connectors")).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByRole("textbox", { name: "Search connectors", exact: true })).toBeVisible({ timeout: 60_000 });
 }
 
 /**
@@ -37,7 +41,7 @@ async function gotoConnectors(page: Page, orgSlug: string): Promise<void> {
  * sibling assertion true about the wrong card. That is the reason this is not a `.first()`.
  */
 async function filterTo(page: Page, term: string, rows: number): Promise<void> {
-	await page.getByLabel("Search connectors").fill(term);
+	await page.getByRole("textbox", { name: "Search connectors", exact: true }).fill(term);
 	await expect(
 		page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]'),
 	).toHaveText(String(rows));

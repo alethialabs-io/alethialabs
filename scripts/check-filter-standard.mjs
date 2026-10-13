@@ -82,9 +82,17 @@
 //             through `useDebouncedValue(`. A surface with no search box is not asked for a
 //             debounce — decided from the store's DEFAULTS module, which is structural, not from
 //             whether a search input is rendered, which is the thing being measured;
-//         (b) an identifier bound from `normalize*Query(` appears INSIDE a `qk.*(…)` call.
+//         (b) an identifier bound from `normalize*Query(` appears INSIDE a `qk.*(…)` call;
+//         (c) every `useDebouncedValue(` over a store's `.search` is handed `urlRead` — what
+//             `useFilterUrlSync` returned — so a search the LINK carried lands at once and only
+//             typing waits. Without it the debounce starts from the store's default `""` and the
+//             key is the UNFILTERED one for the whole delay (#5861: seven of fifteen surfaces).
 //       FAILS — measured on `dev` — where a page computes the normalized query and then keys on
-//       `qk.teams(org)` anyway: every filtered view then shares one cache entry.
+//       `qk.teams(org)` anyway: every filtered view then shares one cache entry; and (c), measured
+//       on `dev` at #5861, on `~/evidence?search=…` fetching and showing every environment in the
+//       org for 300ms. Clause (c) reads the call's ARGUMENT LIST up to its closing `);`, so a
+//       `urlRead` elsewhere in the file does not satisfy it; it does not ask about a debounce over
+//       a local input (`searchInput`), which is not a filter a link can set.
 //
 //   F4  the bar is built from the shared primitives.
 //       The sanctioned set is DERIVED from `packages/ui/src/*.tsx` (the modules whose names carry
@@ -991,13 +999,20 @@ export function scoreSurface(surface, sources, barPrimitives) {
 	// distinction the standard actually draws — "unsorted arrays fragment the cache" is about
 	// what is IN the key — and it survives the rename.
 	const normalizes = has(/normalize\w*Query\s*\(/);
+	// Clause (c): the argument list of each debounce over a filter store's `.search`.
+	const unread = [...text.matchAll(/useDebouncedValue\s*\(([^;]*?)\)\s*;/g)]
+		.map((m) => m[1])
+		.filter((args) => /\.search\b/.test(args) && !/\burlRead\b/.test(args));
 	const parameterisedKey = neighbourhood.some((file) => keysOnQuery(file, sources.get(file) ?? ""));
 	verdict(
 		"F3",
-		debounced && normalizes && parameterisedKey,
+		debounced && unread.length === 0 && normalizes && parameterisedKey,
 		!debounced
 			? "the surface has a free-text `search` filter that never goes through `useDebouncedValue` — every keystroke is a request"
-			: !normalizes
+			: unread.length > 0
+				? `\`useDebouncedValue(${unread[0].trim()})\` is not handed \`urlRead\` — a search the link carried waits ` +
+					"out the debounce, so the first key is the UNFILTERED one (#5861). Pass `{ urlRead }`, what `useFilterUrlSync` returned"
+				: !normalizes
 				? "no `normalize*Query()` — the filters reach the server (and the cache key) in whatever shape the store holds them"
 				: "the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's " +
 					"neighbourhood takes the org and nothing else, so every filtered view shares one cache entry",
@@ -1392,9 +1407,9 @@ function fixtureIo(overrides = {}) {
 		"apps/console/components/widgets-client.tsx": [
 			"import { useWidgetFilters } from '@/lib/stores/use-widgets-filters';",
 			'const DEFAULTS = { search: "", kinds: [] };',
-			"useFilterUrlSync(useWidgetFilters, DEFAULTS);",
+			"const urlRead = useFilterUrlSync(useWidgetFilters, DEFAULTS);",
 			"const q = useMemo(() => normalizeWidgetsQuery({ ...filters, search }), []);",
-			"const search = useDebouncedValue(filters.search, 300);",
+			"const search = useDebouncedValue(filters.search, 300, { urlRead });",
 			"useQuery({ queryKey: qk.widgets(org, q), placeholderData: keepPreviousData });",
 			'<SectionHeading title="Widgets" count={n} />',
 			'<div className={isPlaceholderData ? "opacity-60" : ""}>',
@@ -1497,14 +1512,33 @@ export function positiveControl() {
 	);
 	drive(
 		"F3 fires when a free-text surface never debounces",
-		{ [CLIENT]: clean.readFile(CLIENT).replace("const search = useDebouncedValue(filters.search, 300);", "const search = filters.search;") },
+		{ [CLIENT]: clean.readFile(CLIENT).replace("const search = useDebouncedValue(filters.search, 300, { urlRead });", "const search = filters.search;") },
 		(v) => v.F3.verdict === "FAIL",
+	);
+	drive(
+		"F3 fires when the search debounce is not told the URL was read (#5861)",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("useDebouncedValue(filters.search, 300, { urlRead });", "useDebouncedValue(filters.search, 300);") },
+		(v) => v.F3.verdict === "FAIL" && v.F2.verdict === "PASS",
+	);
+	drive(
+		"F3 is not satisfied by a `urlRead` OUTSIDE the debounce's own arguments",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("useDebouncedValue(filters.search, 300, { urlRead });", "useDebouncedValue(filters.search, 300);\nconst busy = !urlRead;"),
+		},
+		(v) => v.F3.verdict === "FAIL",
+	);
+	drive(
+		"F3 does not ask a debounce over a LOCAL input for `urlRead`",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("const q = useMemo(", "const typed = useDebouncedValue(searchInput.trim());\nconst q = useMemo(") },
+		(v) => v.F3.verdict === "PASS",
 	);
 	drive(
 		"F3 does NOT ask a search-less surface to debounce",
 		{
 			[STORE]: 'export const useWidgetFilters = createFilterStore({ name: "w", defaults: { kinds: [] } });',
-			[CLIENT]: clean.readFile(CLIENT).replace("const search = useDebouncedValue(filters.search, 300);", ""),
+			[CLIENT]: clean.readFile(CLIENT).replace("const search = useDebouncedValue(filters.search, 300, { urlRead });", ""),
 		},
 		(v) => v.F3.verdict === "PASS",
 	);
@@ -1554,7 +1588,7 @@ export function positiveControl() {
 	// in its own header three times, so without comment stripping seven surfaces pass F2 on prose.
 	const commented = scan(
 		fixtureIo({
-			[CLIENT]: clean.readFile(CLIENT).replace("useFilterUrlSync(useWidgetFilters, DEFAULTS);", "// useFilterUrlSync(useWidgetFilters, DEFAULTS);"),
+			[CLIENT]: clean.readFile(CLIENT).replace("const urlRead = useFilterUrlSync(useWidgetFilters, DEFAULTS);", "// const urlRead = useFilterUrlSync(useWidgetFilters, DEFAULTS);"),
 		}),
 		{},
 		{},

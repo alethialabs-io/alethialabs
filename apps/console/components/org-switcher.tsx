@@ -137,7 +137,7 @@ export function OrgSwitcher() {
 					}
 				/>
 				<PopoverContent className="w-72 p-0" align="start">
-					<Command>
+					<Command label="Find organization">
 						<CommandInput placeholder="Find organization…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No organization found.</CommandEmpty>

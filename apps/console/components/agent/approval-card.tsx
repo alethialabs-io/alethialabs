@@ -3,17 +3,68 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Check, ShieldCheck, X } from "lucide-react";
-import { useState } from "react";
-import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
+import { useEffect, useState } from "react";
+import {
+	getApprovedJob,
+	tryPlanProject,
+	tryProvisionProject,
+} from "@/app/server/actions/projects";
 import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
+import { type ClientToolName, parseClientToolOutput } from "@/lib/ai/client-tools";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
 
-type Phase = "idle" | "running" | "done" | "rejected" | "denied";
+type Phase = "idle" | "running" | "done" | "rejected" | "denied" | "already";
+
+/**
+ * The idempotency key of an approval (#5797): the proposing tool call, qualified by its thread
+ * when the conversation has one. The server stores it on the job it queues, so a second Approve
+ * of this proposal — after a reload, or after its output was refused — returns that job instead
+ * of queuing another plan or deploy.
+ */
+export function approvalKeyOf(threadId: string | null, toolCallId: string): string {
+	return threadId ? `${threadId}:${toolCallId}` : toolCallId;
+}
+
+/**
+ * The longest prefix of `text` (whole code points, with an ellipsis when cut) for which
+ * `build(prefix)` passes `toolName`'s output schema and its 4,096-byte cap (ADR 0003 §5.1 step
+ * 8). A card's free text (an error message, a model-written label) can exceed either bound, and
+ * an output that fails them is refused before it is stored (#5796): without this, a long error would make
+ * the approval itself unsendable. Returns `text` itself when it already fits.
+ */
+export function fitClientToolText(
+	toolName: ClientToolName,
+	text: string,
+	build: (text: string) => unknown,
+): string {
+	if (parseClientToolOutput(toolName, build(text)).ok) return text;
+	const points = Array.from(text);
+	const fits = (n: number) =>
+		parseClientToolOutput(toolName, build(`${points.slice(0, n).join("")}…`)).ok;
+	let lo = 0;
+	let hi = points.length;
+	// The largest n in [0, length) that fits, by binary search (fitting is monotone in n).
+	while (lo < hi) {
+		const mid = Math.ceil((lo + hi) / 2);
+		if (fits(mid)) lo = mid;
+		else hi = mid - 1;
+	}
+	return `${points.slice(0, lo).join("")}…`;
+}
+
+/** A denial's output, its reason cut to fit the stored output's bounds. */
+function deniedOutput(reason: string): { status: "denied"; reason: string } {
+	const fitted = fitClientToolText("propose_operation", reason, (r) => ({
+		status: "denied",
+		reason: r,
+	}));
+	return { status: "denied", reason: fitted };
+}
 
 /**
  * HITL approval for an agent-proposed plan/deploy. Approve calls the PDP-gated
@@ -36,10 +87,33 @@ export function ApprovalCard({
 }) {
 	const open = useArtifactStore((s) => s.open);
 	const ctx = useElenchStore((s) => s.ctx);
+	const threadId = useElenchStore((s) => s.threadId);
 	const [phase, setPhase] = useState<Phase>("idle");
 	const [reason, setReason] = useState<string | null>(null);
+	// The job this proposal already queued, found on mount (a re-render after a reload).
+	const [existingJobId, setExistingJobId] = useState<string | null>(null);
 
 	const isDeploy = proposal.operation.operation === "provision_project";
+	const approvalKey = approvalKeyOf(threadId, proposal.id);
+	const { operation: opName, projectId: opProjectId } = proposal.operation;
+
+	// A transcript can come back without this approval's output (its continuation refused, or the
+	// page reloaded first), which leaves the card actionable again. Ask the server whether this
+	// proposal already queued a job, and show that job instead of an active Approve. A failed
+	// lookup leaves Approve in place: the server dedupes a second Approve on the same key anyway.
+	useEffect(() => {
+		let cancelled = false;
+		getApprovedJob(opProjectId, opName, approvalKey)
+			.then((found) => {
+				if (cancelled || !found) return;
+				setExistingJobId(found.jobId);
+				setPhase((p) => (p === "idle" ? "already" : p));
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [opProjectId, opName, approvalKey]);
 
 	const approve = async () => {
 		track("elench_tool_approved", { tool: "propose_operation" });
@@ -53,13 +127,19 @@ export function ApprovalCard({
 				undefined;
 			const res =
 				op.operation === "plan_project"
-					? await tryPlanProject(op.projectId, undefined, envId)
-					: await tryProvisionProject(op.projectId, op.planJobId, undefined, envId);
+					? await tryPlanProject(op.projectId, undefined, envId, approvalKey)
+					: await tryProvisionProject(
+							op.projectId,
+							op.planJobId,
+							undefined,
+							envId,
+							approvalKey,
+						);
 			if (!res.ok) {
 				// The gate's own sentence (#5445) — thrown, a production build reduced it to a digest.
 				setPhase("denied");
 				setReason(res.error);
-				onResolve?.({ status: "denied", reason: res.error });
+				onResolve?.(deniedOutput(res.error));
 				return;
 			}
 			const { jobId } = res;
@@ -76,7 +156,7 @@ export function ApprovalCard({
 			const message = err instanceof Error ? err.message : "Operation failed.";
 			setPhase("denied");
 			setReason(message);
-			onResolve?.({ status: "denied", reason: message });
+			onResolve?.(deniedOutput(message));
 		}
 	};
 
@@ -148,7 +228,23 @@ export function ApprovalCard({
 					</div>
 				)}
 
-				{phase === "done" ? (
+				{phase === "already" && existingJobId ? (
+					<div className="flex items-center justify-between gap-3">
+						<span className="font-mono text-ui-xs text-muted-foreground">
+							Already approved — this proposal queued its job.
+						</span>
+						<Button
+							variant="outline"
+							size="sm"
+							className="h-8 rounded-none"
+							onClick={() =>
+								open({ projectId: opProjectId, jobId: existingJobId }, "logs")
+							}
+						>
+							View logs
+						</Button>
+					</div>
+				) : phase === "done" ? (
 					<div className="flex items-center gap-2 font-mono text-ui-xs text-muted-foreground">
 						<span className="h-1.5 w-1.5 rounded-full bg-foreground" />
 						{isDeploy ? "Approved · deploying…" : "Planning…"} — logs in the panel.

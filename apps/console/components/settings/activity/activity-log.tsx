@@ -21,10 +21,12 @@ import {
 } from "@/app/server/actions/activity";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
 import { ErrorState } from "@/components/errors/error-state";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useActivityFilters } from "@/lib/stores/use-settings-filters";
@@ -96,10 +98,14 @@ export function ActivityLog({
 	exportPermitted = false,
 }: { projectId?: string; exportPermitted?: boolean } = {}) {
 	const orgSlug = useActiveOrgSlug();
+	// `null` while the workspace store has not answered (#5864): the Export button is then not
+	// rendered at all, rather than shown disabled with the "requires Enterprise" reason to an org
+	// that may well have it.
 	const exportEntitled = useEntitlement("activityExport");
-	const canExport = exportEntitled && exportPermitted;
+	const canExport = exportEntitled === true && exportPermitted;
+	// The plan's retention, or `null` while it is unknown — the same store, the same third state.
 	const retentionDays = useWorkspaceStore(
-		(s) => s.entitlements?.quotas.activityRetentionDays ?? 7,
+		(s) => s.entitlements?.quotas.activityRetentionDays ?? null,
 	);
 	const { data: projects = [] } = useProjectsQuery();
 
@@ -115,7 +121,8 @@ export function ActivityLog({
 	const patch = useActivityFilters((s) => s.patch);
 	const reset = useActivityFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
-	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+	const hydrated = useHydrated();
+	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 
 	// The default window is resolved ONCE. Resolving it per render would move `to` forward
 	// every time and produce a query key that never settles, refetching on every paint.
@@ -201,12 +208,15 @@ export function ActivityLog({
 		}
 	}, [activity, nextCursor, loadingMore]);
 
-	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. */
+	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. While the
+	 * retention is unknown, a range inside the community floor applies and an older one does
+	 * neither — it unlocks no paid history and offers no upgrade to an org that may have it. */
 	const applyRange = useCallback(
 		(next: DateRange, label: string) => {
-			const minFrom = Date.now() - retentionDays * DAY - RETENTION_GRACE;
+			const days = retentionDays ?? COMMUNITY_ENTITLEMENTS.quotas.activityRetentionDays;
+			const minFrom = Date.now() - days * DAY - RETENTION_GRACE;
 			if (next.from.getTime() < minFrom) {
-				setUpgradeOpen(true);
+				if (retentionDays !== null) setUpgradeOpen(true);
 				return;
 			}
 			patch({
@@ -288,7 +298,10 @@ export function ActivityLog({
 		}
 	}
 
-	const projectName = projectId ? lookups.projectName.get(projectId) : undefined;
+	// The topbar's project switcher reads the same projects query and may have fetched it by the
+	// time this feed hydrates; the server rendered "this project". Name it only once hydration is
+	// over, or React discards the page's server HTML with #418 (see `useHydrated`, #5786).
+	const projectName = projectId && hydrated ? lookups.projectName.get(projectId) : undefined;
 
 	return (
 		<div aria-busy={busy}>
@@ -319,13 +332,13 @@ export function ActivityLog({
 				end={
 					// `end` is the primitive's slot for a page-level action; export dumps the
 					// WHOLE org log, so it only belongs on the org-scoped feed.
-					!projectId ? (
+					!projectId && exportEntitled !== null ? (
 						<Button
 							variant="outline"
 							size="sm"
 							disabled={!canExport || exporting}
 							title={
-								!exportEntitled
+								exportEntitled === false
 									? "Activity export requires the Enterprise plan"
 									: !exportPermitted
 										? "Your role does not include exporting the Activity log"

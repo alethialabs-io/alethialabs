@@ -122,7 +122,9 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		// What the strip used to say, said once: the toolbar carries the description and the count,
 		// and the figures are the Status facet's option counts.
 		await expect(owner.page.getByText("Organization members and pending invitations.")).toBeVisible();
-		await expect(owner.page.getByPlaceholder("Search name or email")).toBeVisible();
+		// Filter inputs by role, never placeholder — a placeholder query also matches the hidden
+		// streamed copy of the bar (#5777, #5800). FilterSearch names the input by its placeholder.
+		await expect(owner.page.getByRole("textbox", { name: "Search name or email…", exact: true })).toBeVisible();
 		await expect(facetTrigger(owner.page, /^Role/)).toBeVisible();
 		// The deleted strip, asserted as deleted. Its headings were the only "Seats" / "Pending
 		// invites" text on the page, so their absence is what says the strip did not come back.
@@ -169,7 +171,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 
 	test("search that matches nothing shows the empty state", async ({ owner }) => {
 		await membersReady(owner);
-		await owner.page.getByPlaceholder("Search name or email").fill(`zzz-none-${Date.now()}`);
+		await owner.page.getByRole("textbox", { name: "Search name or email…", exact: true }).fill(`zzz-none-${Date.now()}`);
 		await expect(owner.page.getByText("No matching members")).toBeVisible();
 	});
 
@@ -463,7 +465,7 @@ test.describe("RBAC — Roles", () => {
 	test("searching the rail filters the built-in roles", async ({ owner }) => {
 		await owner.page.goto(rolesUrl(owner.orgSlug));
 		await expect(rail(owner.page, "Owner")).toBeVisible({ timeout: 30_000 });
-		await owner.page.getByPlaceholder("Search roles").fill("admin");
+		await owner.page.getByRole("textbox", { name: "Search roles…", exact: true }).fill("admin");
 		await expect(rail(owner.page, "Admin")).toBeVisible();
 		await expect(rail(owner.page, "Owner")).toHaveCount(0);
 	});

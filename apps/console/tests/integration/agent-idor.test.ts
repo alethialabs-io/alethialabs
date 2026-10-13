@@ -7,8 +7,8 @@
 // read path — app/server/actions/agents.ts (getAgent/listAgents) and the agent-scoped chat
 // route (POST /api/agent/[agentId]). This proves that predicate is load-bearing: seeded via
 // the service connection (bypasses RLS), read back through the real code under an INJECTED
-// actor (the same runWithActor seam the MCP server uses), so the actions/route run unchanged
-// under the test identity.
+// actor (the same runWithActor seam the MCP server uses) for the actions, and under the
+// session's user and the request's org for the route.
 //
 // Pre-fix (org-blind select, no predicate) these assertions FAIL: getAgent(orgB.id) returns
 // org B's row, listAgents() returns both, and the route streams org B's persona. Post-fix they
@@ -16,7 +16,20 @@
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+
+// The agent-scoped route reads the verified session (`getOwner`) and resolves the request's org with
+// `resolveTurnActor` (ADR 0003 slice 8). Both are stubbed to the community model (orgId === userId);
+// everything else, the agent lookup included, is real.
+const session = vi.hoisted((): { user: string | null } => ({ user: null }));
+vi.mock("@/lib/auth/owner", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/auth/owner")>()),
+	getOwner: vi.fn(async () => session.user),
+}));
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/guard")>()),
+	resolveTurnActor: vi.fn(async (userId: string, orgId: string) => (orgId === userId ? { userId, orgId } : null)),
+}));
 import { getAgent, listAgents } from "@/app/server/actions/agents";
 import { POST } from "@/app/api/agent/[agentId]/route";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -125,10 +138,19 @@ describeIfDb("agent_identities cross-tenant isolation (IDOR audit #6)", () => {
 
 	// ── the chat route: the reachable entrypoint ───────────────────────────────
 	it("POST /api/agent/[agentId] returns 404 for another org's agent (no persona leak)", async () => {
-		const res = await runWithActor(actorFor(ORG_A), () =>
-			POST(new Request("http://localhost/api/agent", { method: "POST" }), {
-				params: Promise.resolve({ agentId: agentBId }),
+		session.user = ORG_A;
+		const turn = { id: "u1", role: "user", parts: [{ type: "text", text: "who are you?" }] };
+		const res = await POST(
+			new Request(`http://localhost/api/agent/${agentBId}`, {
+				method: "POST",
+				body: JSON.stringify({
+					messages: [turn],
+					threadId: randomUUID(),
+					orgId: ORG_A,
+					turn: { trigger: "submit-message", turnId: "u1", baseRevision: 1 },
+				}),
 			}),
+			{ params: Promise.resolve({ agentId: agentBId }) },
 		);
 		expect(res.status).toBe(404);
 		const body = await res.text();

@@ -16,6 +16,13 @@ interface ProjectsFavoritesStore {
 	toggleFavorite: (projectId: string) => void;
 }
 
+/**
+ * The favourites store. In render, read the ids through this hook (`useProjectsStore(...)`), never
+ * `getState()`: the hook hands React `persist`'s pre-storage state as the server snapshot, so a
+ * hydrating render shows nothing starred, as the server did, and the stored ids arrive a commit
+ * later. Read live, a browser with a starred project hydrates a different list than the server
+ * sent (React #418, #5840). `tests/components/projects-favourites-hydration.test.tsx` holds this.
+ */
 export const useProjectsStore = create<ProjectsFavoritesStore>()(
 	persist(
 		(set) => ({

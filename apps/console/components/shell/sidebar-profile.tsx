@@ -29,6 +29,18 @@ import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { displayName, userInitials } from "@/lib/user-display";
+import { signOutWarning, unsavedCount } from "@/components/agent/elench/draft-status/copy";
+import { useRegisteredDraftsStore } from "@/components/agent/elench/draft-status/registry";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@repo/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import { Button } from "@repo/ui/button";
 import {
@@ -54,7 +66,8 @@ const DEFAULT_ISSUES_URL =
  * (with a gear → settings), the menu list (Feedback, an inline theme toggle, the
  * help/docs links, Sign out), an optional "Upgrade to Pro" CTA, and a platform-status
  * widget. Feedback is hosted-only (a dialog that emails us); self-managed builds link to
- * GitHub issues instead.
+ * GitHub issues instead. Sign out asks first while Elench holds messages the server has not
+ * saved (ADR 0001 D25): signing out clears them from this tab.
  */
 export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const router = useRouter();
@@ -65,11 +78,15 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const drafts = useRegisteredDraftsStore();
+  // The count the sign-out confirm names; null while it is closed.
+  const [unsavedOnSignOut, setUnsavedOnSignOut] = useState<number | null>(null);
 
   // "organizations" is the paid-plan floor; show the upgrade CTA only to free orgs on
-  // the hosted control plane (self-hosters have no Stripe).
+  // the hosted control plane (self-hosters have no Stripe). Only on a KNOWN `false`: `null` is the
+  // workspace store not having answered yet, and a paying org must not be offered an upgrade (#5864).
   const onPaidPlan = useEntitlement("organizations");
-  const showUpgrade = isHosted && !onPaidPlan;
+  const showUpgrade = isHosted && onPaidPlan === false;
 
   /** Signs out and returns to the marketing root. */
   const handleLogout = async () => {
@@ -80,6 +97,20 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
     // provider this account uses and what its address is.
     useAuthPrefsStore.getState().forget();
     router.push("/");
+  };
+
+  /**
+   * The menu's Log Out: signs out at once, unless Elench holds unsaved, held or sending messages,
+   * which a sign-out loses (D25); then it asks first, naming how many.
+   */
+  const requestLogout = () => {
+    const count = drafts === null ? 0 : unsavedCount(drafts.view.getState());
+    if (count === 0) {
+      void handleLogout();
+      return;
+    }
+    setMenuOpen(false);
+    setUnsavedOnSignOut(count);
   };
 
   const issuesUrl = env("NEXT_PUBLIC_FEEDBACK_REPO_URL") || DEFAULT_ISSUES_URL;
@@ -233,7 +264,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
 
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={handleLogout}
+            onClick={requestLogout}
             className="cursor-pointer text-destructive focus:text-destructive"
           >
             Log Out
@@ -286,6 +317,33 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
       />
+      <AlertDialog
+        open={unsavedOnSignOut !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnsavedOnSignOut(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign out with unsaved messages?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {signOutWarning(unsavedOnSignOut ?? 0)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Stay signed in</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setUnsavedOnSignOut(null);
+                void handleLogout();
+              }}
+            >
+              Sign out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

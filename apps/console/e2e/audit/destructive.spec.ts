@@ -518,11 +518,27 @@ async function stagedContent(table: string, orgId: string): Promise<{ rows: numb
  * fails. Waiting for the first tick before snapshotting was the alternative, and it is the weaker
  * one: it spends up to a minute of wall clock on every run to make a platform timer's schedule part
  * of the assertion, and it silently goes back to racing the day `TICK_INTERVAL_MS` changes.
+ *
+ * `rate_limit_buckets` is not background work but a READ's bookkeeping, and it is excused for the
+ * same reason: a row there is a counter, never anything a control destroys or creates. Every Elench
+ * drafts action — reads included — passes `runDraftGate` (lib/elench/draft-gate.ts), which counts a
+ * hit with `checkRateLimit` in FIXED 1 s windows (`DRAFT_RATE_WINDOW_MS`), and a hit in a window with
+ * no row yet INSERTS one (lib/rate-limit.ts). So any drafts read inside a dialog's window grows the
+ * table by one. Measured on #5847's gate run 37917216923: `agent.thread.delete` failed with "Cancel
+ * was pressed and rows still moved: rate_limit_buckets 34→35" — its confirm now asks
+ * `countDraftsOfConversation` how many unsent messages the delete would discard (ADR 0001 §6.3), a
+ * read the click starts by design — and `runners.remove` with "29→30" in the same run. That second
+ * writer is INFERRED, not read off a row: the drafts root runs on every shell page and its store
+ * calls `listDrafts` at load, on window focus and on `visibilitychange` (lib/stores/elench-drafts/
+ * store.ts), and nothing else on the runners page reaches a 1 s limiter. Only
+ * growth is excused; the reconcile loop's `rate-limit-sweep` DELETES expired buckets, so a fall can
+ * still fail a run that lands on a sweep, exactly as before this entry.
  */
 const AMBIENT_GROWTH: ReadonlyMap<string, string> = new Map([
 	["fleet_actions", "the fleet scaler records each pass's decision (lib/fleet)"],
 	["runner_bootstrap_tokens", "the fleet scaler mints a token for each runner it would create (lib/fleet)"],
 	["fleet_leader", "the fleet scaler's first tick inserts its singleton leader lease, ~60 s after boot (lib/fleet)"],
+	["rate_limit_buckets", "a rate-limited read (every Elench drafts action, 1 s windows) inserts a bucket row per new window (lib/rate-limit.ts)"],
 ]);
 
 function diffFingerprints(before: Map<string, number>, after: Map<string, number>): string[] {
