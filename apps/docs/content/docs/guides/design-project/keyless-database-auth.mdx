@@ -154,13 +154,15 @@ leave IAM authentication off and use the generated-password path, which is fully
 
 ## Runtime requirements
 
-Keyless database auth is always on. There is no flag to set: a binding to a database with IAM
-authentication turned on uses the `db-authproxy` path on every deploy. To use the generated-password
-path instead, turn IAM authentication off on the database.
+Keyless database auth is always on. There is no flag to set: on every deploy, a binding to a database
+with IAM authentication turned on gets the keyless path for its cloud. That is the `db-authproxy`
+sidecar on AWS and Azure, and the Cloud SQL Auth Proxy on GCP. On Alibaba Cloud and Hetzner the
+deploy fails instead (see [Where it doesn't apply](#where-it-doesnt-apply)). To use the
+generated-password path, turn IAM authentication off on the database.
 
 <Callout type="warn">
-Keyless renders schedule the runner image twice: as the `db-authproxy` sidecar, and as the bootstrap
-Job. A published runner image carries its own reference, so there is nothing to set. Set
+Keyless renders run the runner image as the bootstrap Job on every cloud, and on AWS and Azure also as
+the `db-authproxy` sidecar. A published runner image carries its own reference, so there is nothing to set. Set
 `ALETHIA_RUNNER_IMAGE` only to name a different image than the one running — a private mirror or an
 air-gapped registry. A runner built from source has no published reference, so keyless renders fail
 closed there; run a published image to exercise this path.
