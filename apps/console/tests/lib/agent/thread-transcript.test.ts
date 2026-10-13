@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The drizzle side of the transcript save the chat routes call (`saveThreadTranscript`): it writes
-// under the owner the ROUTE authenticated, validates the target before touching the database, and
-// each query reads only what `saveTranscript` asked for. Mocked boundary: `withOwnerScope` runs the
-// real callback against a chain that records the predicates and values it is handed.
+// The drizzle side of the transcript writes (`transcriptRows`), driven the way `finalizeTurn` drives
+// them — `recoverTranscript` for a deleted thread's answer, `appendLive` / `replaceLast` for a live
+// one: every statement names the owner, matches the turn's kind and project, and reads only what
+// its caller asked for. Mocked boundary: `withOwnerScope` runs the real callback against a chain
+// that records the predicates and values it is handed.
 
 import type { UIMessage } from "ai";
 import { SQL } from "drizzle-orm";
@@ -54,12 +55,10 @@ vi.mock("@/lib/db", () => {
 		}),
 	};
 });
-vi.mock("@/lib/observability/log", () => ({ log: { warn: vi.fn(), error: vi.fn() } }));
 
-import { saveThreadTranscript, transcriptRows } from "@/lib/agent/thread-transcript";
-import { transcriptTargetSchema } from "@/lib/agent/transcript-save";
+import { transcriptRows } from "@/lib/agent/thread-transcript";
+import { recoverTranscript, type TranscriptTarget, transcriptTargetSchema } from "@/lib/agent/transcript-save";
 import { withOwnerScope } from "@/lib/db";
-import { log } from "@/lib/observability/log";
 
 /** Queue the results of the queries the next save awaits, in order. */
 function useChain(results: unknown[][]) {
@@ -84,16 +83,20 @@ const messages: UIMessage[] = [
 
 beforeEach(() => vi.clearAllMocks());
 
-describe("saveThreadTranscript", () => {
+/** Recover `messages` of the deleted `target` through `transcriptRows`, as `finalizeTurn` does. */
+function recover(target: TranscriptTarget, msgs: UIMessage[]) {
+	return withOwnerScope(target.owner, (tx) => recoverTranscript(transcriptRows(tx, target.owner), target, msgs));
+}
+
+describe("transcriptRows: updateLive, insert and the recover path", () => {
 	// #5423 review: the update matched on id and kind only, so the org route (`/api/agent`), named a
 	// project thread's id, wrote over that thread's transcript. The route's project is matched too.
-	it("updates only the live thread of the route's kind and project, under the route's owner", async () => {
+	it("updateLive writes only the live thread of the given kind and project, under the owner", async () => {
 		useChain([[{ id: T }]]);
-		const outcome = await saveThreadTranscript(
-			{ owner: "user-1", threadId: T, kind: "agent", projectId: null },
-			messages,
+		const updated = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").updateLive(T, "agent", null, messages),
 		);
-		expect(outcome).toEqual({ kind: "saved" });
+		expect(updated).toBe(true);
 		expect(db.owners).toEqual(["user-1"]);
 		const q = compiled(db.where[0]);
 		expect(q.sql).toMatch(
@@ -104,29 +107,32 @@ describe("saveThreadTranscript", () => {
 		expect(compiled(db.sets[0].revision).sql).toBe('"agent_threads"."revision" + 1');
 	});
 
-	it("a project route's update and recovery lookup match only that project's threads", async () => {
+	it("a project thread's update and recovery lookup match only that project's threads", async () => {
 		const P = "7f1d2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b";
 		const NEW = "0d6c1e2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a";
-		// update: no live row; find: the tombstone; findRecovered: none; insert: the new id.
-		useChain([[], [{ status: "deleted" }], [], [{ id: NEW }]]);
-		await saveThreadTranscript({ owner: "user-1", threadId: T, kind: "agent", projectId: P }, messages);
+		// updateLive: no live row.
+		useChain([[]]);
+		const updated = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").updateLive(T, "agent", P, messages),
+		);
+		expect(updated).toBe(false);
 		const update = compiled(db.where[0]);
 		expect(update.sql).toMatch(/"agent_threads"\."project_id" = \$4/);
 		expect(update.params).toEqual([T, "user-1", "agent", P, "deleted"]);
-		const recovered = compiled(db.where[2]);
+		// findRecovered: none; insert: the new id.
+		useChain([[], [{ id: NEW }]]);
+		await recover({ owner: "user-1", threadId: T, kind: "agent", projectId: P }, messages);
+		const recovered = compiled(db.where[0]);
 		expect(recovered.sql).toMatch(/"agent_threads"\."user_id" = \$2/);
 		expect(recovered.sql).toMatch(/"agent_threads"\."project_id" = \$4/);
 		expect(recovered.params).toContain(P);
 	});
 
-	it("recovers a deleted thread's turn into a new row it inserts, and logs that", async () => {
-		// update: no live row; find: the tombstone; findRecovered: none; insert: the new id.
+	it("recovers a deleted thread's turn into a new row it inserts", async () => {
+		// findRecovered: none; insert: the new id.
 		const NEW = "0d6c1e2a-3b4c-4d5e-8f6a-7b8c9d0e1f2a";
-		useChain([[], [{ status: "deleted" }], [], [{ id: NEW }]]);
-		const outcome = await saveThreadTranscript(
-			{ owner: "user-1", threadId: T, kind: "agent", projectId: null },
-			messages,
-		);
+		useChain([[], [{ id: NEW }]]);
+		const outcome = await recover({ owner: "user-1", threadId: T, kind: "agent", projectId: null }, messages);
 		expect(outcome).toEqual({ kind: "recovered", threadId: NEW });
 		const row = db.values[0];
 		expect(row).not.toHaveProperty("id");
@@ -137,32 +143,28 @@ describe("saveThreadTranscript", () => {
 			title: "Recovered: deploy staging",
 		});
 		expect(row.messages).toBe(messages);
-		expect(vi.mocked(log.warn)).toHaveBeenCalledTimes(1);
 	});
 
-	it("recreates a reaped thread under its own id in the route's project", async () => {
+	it("insert with an id creates the row under that id in the given project", async () => {
 		const P = "7f1d2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b";
-		useChain([[], [], [{ id: T }]]);
-		await saveThreadTranscript({ owner: "user-1", threadId: T, kind: "agent", projectId: P }, messages);
+		useChain([[{ id: T }]]);
+		const id = await withOwnerScope("user-1", (tx) =>
+			transcriptRows(tx, "user-1").insert({ id: T, title: "t", kind: "agent", projectId: P, messages }),
+		);
+		expect(id).toBe(T);
 		expect(db.values[0]).toMatchObject({ id: T, project_id: P, kind: "agent" });
 	});
 
-	it("refuses a target that is not a route's own context before touching the database", async () => {
-		useChain([]);
+	it("the target schema refuses a target that is not a thread's own context", () => {
 		const bad = [
 			{ owner: "user-1", threadId: "t-1", kind: "agent", projectId: null },
 			{ owner: "user-1", threadId: T, kind: "agent", projectId: "not-a-project" },
 			{ owner: "", threadId: T, kind: "agent", projectId: null },
-		] satisfies Parameters<typeof saveThreadTranscript>[0][];
+			{ owner: "user-1", threadId: T, kind: "admin", projectId: null },
+		];
 		for (const target of bad) {
-			await expect(saveThreadTranscript(target, messages)).rejects.toThrow();
+			expect(transcriptTargetSchema.safeParse(target).success).toBe(false);
 		}
-		// A kind the type does not admit is refused by the same schema the save parses with.
-		expect(
-			transcriptTargetSchema.safeParse({ owner: "user-1", threadId: T, kind: "admin", projectId: null })
-				.success,
-		).toBe(false);
-		expect(withOwnerScope).not.toHaveBeenCalled();
 	});
 });
 

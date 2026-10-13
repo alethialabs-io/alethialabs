@@ -50,7 +50,6 @@ vi.mock("ai", () => ({
 	streamText: (args: StreamTextArgs) => streamText(args),
 }));
 
-vi.mock("@/lib/agent/thread-transcript", () => ({ saveThreadTranscript: vi.fn(async () => ({ kind: "saved" })) }));
 vi.mock("@/app/server/actions/resolve", () => ({
 	resolveActiveEnvironmentId: vi.fn(),
 }));
