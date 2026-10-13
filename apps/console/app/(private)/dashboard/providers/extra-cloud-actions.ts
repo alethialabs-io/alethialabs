@@ -22,14 +22,6 @@ export async function getExtraCloudStatus(
 	return conn.getStatus(actor, provider);
 }
 
-/** Lists every connected account for one of the extra clouds (multi-account). */
-export async function listExtraCloudIdentities(
-	provider: ExtraCloud,
-): Promise<conn.ConnectionStatus[]> {
-	const actor = await currentActor();
-	return conn.listIdentities(actor, provider);
-}
-
 /**
  * Gets or creates a pending identity (Alibaba also gets a stable external_id).
  * Manage-gated but not activity-logged — this only seeds the connect sheet.
