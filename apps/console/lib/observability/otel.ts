@@ -42,7 +42,6 @@ const olog = log.child({ component: "otel" });
 export const OTEL_SERVICE_NAME = "alethia-console";
 
 let tracerProvider: NodeTracerProvider | undefined;
-let meterProvider: MeterProvider | undefined;
 let loggerProvider: LoggerProvider | undefined;
 
 /**
@@ -123,7 +122,7 @@ export function startOtel(): boolean {
 		// logged by the SDK and the next interval simply overwrites — a collector outage can
 		// never block or backpressure a provision.
 		const metricExporter = new OTLPMetricExporter();
-		meterProvider = new MeterProvider({
+		const meterProvider = new MeterProvider({
 			resource,
 			readers: [
 				new PeriodicExportingMetricReader({
@@ -145,19 +144,4 @@ export function startOtel(): boolean {
 		});
 		return false;
 	}
-}
-
-/**
- * Flushes + shuts down the OTel providers (used by tests and graceful shutdown).
- * A no-op when telemetry was never started.
- */
-export async function shutdownOtel(): Promise<void> {
-	await Promise.allSettled([
-		tracerProvider?.shutdown(),
-		meterProvider?.shutdown(),
-		loggerProvider?.shutdown(),
-	]);
-	tracerProvider = undefined;
-	meterProvider = undefined;
-	loggerProvider = undefined;
 }

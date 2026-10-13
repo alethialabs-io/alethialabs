@@ -18,11 +18,6 @@ const AUDIENCE = "alethia-state";
 /** Long enough to outlive an apply (job timeout is 2h) — the http backend never re-auths mid-apply. */
 const DEFAULT_TTL_SECONDS = 3 * 60 * 60;
 
-/** Whether state tokens can be minted/verified on this instance. */
-export function stateTokenConfigured(): boolean {
-	return !!process.env.BETTER_AUTH_SECRET;
-}
-
 /** HKDF-SHA256 subkey of BETTER_AUTH_SECRET, domain-separated for state tokens. */
 function signingKey(): Uint8Array {
 	const base = process.env.BETTER_AUTH_SECRET;
