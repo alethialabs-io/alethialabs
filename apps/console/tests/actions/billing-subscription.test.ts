@@ -44,6 +44,7 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		pendingOrgSetupSlugSchema: actual.pendingOrgSetupSlugSchema,
 		REPLACEABLE_SUBSCRIPTION_STATUSES: actual.REPLACEABLE_SUBSCRIPTION_STATUSES,
 		UNLINKED_SETUP_CUSTOMER_CAP: actual.UNLINKED_SETUP_CUSTOMER_CAP,
+		FORGETTABLE_RELEASES: actual.FORGETTABLE_RELEASES,
 		// The open-setup guard and its closer (#5714). By default no open setup names the org and the
 		// closer changes nothing; the tests of ADR 0002's C-cases opt into the REAL closer
 		// (`useRealCloser`), which then runs its compare-and-set writes over the queue below.
@@ -61,8 +62,75 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		savePendingOrgSetupDetails: vi.fn(),
 		unfinishedPendingOrgSetups: vi.fn(),
 		unlinkedPendingOrgSetupCustomers: vi.fn(),
+		// ADR 0002 S8: by default the user has no payment hold and no other record to live-check.
+		liveCheckSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
+		openPaymentHoldOn: vi.fn(async () => null),
+		paymentHoldsOfPayer: vi.fn(async () => [...holdFake.remembered.values()]),
 	};
 });
+// The create-a-team purchase closes a subscription only under a payment hold (ADR 0002 S8). The hold
+// machine and its store are pinned on their own (tests/lib/billing/payment-holds.test.ts, and against
+// Postgres in tests/integration/payment-holds.test.ts), and the purchase's hold cases run against the
+// real machine in billing-new-org-holds.test.ts. Here a hold opens, and `advanceHold` settles it the way
+// the machine does for a provably unpaid checkout — the lease fence, a void, then a cancel stamped with
+// the hold — so these tests pin the purchase's orchestration around it.
+vi.mock("@/lib/billing/payment-holds/store", () => ({
+	payerLeaseKey: (payer: string) => `user:${payer}`,
+	openHold: vi.fn(async (_lease: unknown, input: { subscriptionId: string; customerId: string; invoiceId: string }) => ({
+		kind: "opened",
+		hold: {
+			id: `hold_${input.subscriptionId}`,
+			subscription_id: input.subscriptionId,
+			customer_id: input.customerId,
+			invoice_id: input.invoiceId,
+			state: "closing",
+			release_reason: null,
+		},
+	})),
+	writeHoldState: vi.fn(),
+	reserveRefundAttempt: vi.fn(),
+	releaseHold: vi.fn(),
+	nudgeHold: vi.fn(),
+	claimHoldNotice: vi.fn(),
+	unclaimHoldNotice: vi.fn(),
+}));
+// A test that needs the hold to stay OPEN sets `holdFake.stays`; every hold left open is remembered and
+// read back as the user's holds by the next purchase (`paymentHoldsOfPayer`), as the table would.
+const holdFake = vi.hoisted(() => ({
+	stays: null as null | { state: string; lastPay: string },
+	remembered: new Map<string, unknown>(),
+}));
+vi.mock("@/lib/billing/payment-holds/machine", async (importActual) => {
+	const actual = await importActual<typeof import("@/lib/billing/payment-holds/machine")>();
+	return {
+		...actual,
+		advanceHold: vi.fn(
+			async (
+				hold: { id: string; subscription_id: string; invoice_id: string },
+				deps: { fence: () => Promise<void>; writer: StripeWriterForHolds },
+			) => {
+				if (holdFake.stays) {
+					const open = { ...hold, state: holdFake.stays.state, last_pay: holdFake.stays.lastPay };
+					holdFake.remembered.set(open.id, open);
+					return { outcome: "open", hold: open, rows: [], observation: null, alerted: false };
+				}
+				await deps.fence();
+				await deps.writer.invoices.voidInvoice(hold.invoice_id);
+				await deps.fence();
+				await deps.writer.subscriptions.cancel(hold.subscription_id, {
+					cancellation_details: { comment: `alethia:checkout_closed:${hold.id}` },
+				});
+				const released = { ...hold, state: "released", release_reason: "voided_unpaid" };
+				return { outcome: "released", hold: released, rows: [], observation: null, alerted: false };
+			},
+		),
+	};
+});
+/** The two Stripe writes the fake `advanceHold` makes. */
+interface StripeWriterForHolds {
+	invoices: { voidInvoice(id: string): Promise<unknown> };
+	subscriptions: { cancel(id: string, params: unknown): Promise<unknown> };
+}
 // `alertPaymentNeedsSupport` awaits `emitAlertEvent` and reports whether a delivery was queued (#5489).
 // Default: nothing was queued — no rule is bound to a channel — so no copy may claim an alert was raised.
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEvent: vi.fn(async () => 0), emitAlertEventSafe: vi.fn() }));
@@ -330,6 +398,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	purchaseLockTails.clear();
 	purchaseLease.tails.clear();
+	holdFake.stays = null;
+	holdFake.remembered.clear();
 	purchaseLease.renewLease.mockReset();
 	purchaseLease.renewLease.mockResolvedValue(true);
 	stripe = makeStripe();
@@ -1150,37 +1220,24 @@ describe("createNewOrgSubscriptionIntent", () => {
 	});
 
 	// #5489 review blocker: a prior whose cancel FAILED was minted beside — still `incomplete`, its
-	// PaymentIntent confirmable from the old sheet, so the customer could pay both. A failed cancel is now
-	// re-read once; still not ended, it is alerted on and refused. It stays `incomplete`, so a retry
-	// reads it again.
-	it("a prior whose cancel fails and still reads incomplete is refused — nothing new is minted, its record kept", async () => {
-		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+	// PaymentIntent confirmable from the old sheet, so the customer could pay both. Its hold now stays
+	// `cancel_unproven` (the machine's T3a), which refuses, and remembers it.
+	it("a prior whose cancel cannot be proven is refused — nothing new is minted, its record kept", async () => {
 		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 		stripe.subscriptions.retrieve.mockResolvedValue(
 			newOrgSub({ created_by: "user-1" }, "incomplete", "sub_old") as never,
 		);
 		stripe.customers.create.mockResolvedValue({ id: "cus_new" } as never);
-		stripe.subscriptions.cancel.mockRejectedValue(new Error("Stripe is unavailable"));
-		stripe.subscriptions.create.mockResolvedValue({
-			id: "sub_5",
-			latest_invoice: { confirmation_secret: { client_secret: "cs_5" } },
-		} as never);
+		holdFake.stays = { state: "cancel_unproven", lastPay: "awaiting" };
 
 		await expect(
 			createNewOrgSubscriptionIntent("team" as never, {
 				orgName: "NewCo",
 				priorSubscriptionId: "sub_old",
 			}),
-		).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/nothing new was started/) });
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_old");
+		).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/could not confirm an earlier checkout was closed/) });
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
-		expect(emitAlertEvent).toHaveBeenCalledWith(
-			"org-platform",
-			"system.platform.payment_needs_support",
-			expect.objectContaining({ resource_id: "sub_old", summary: expect.stringContaining("the cancel failed") }),
-		);
-		vi.unstubAllEnvs();
 	});
 
 	// #5445 review blocker: `priorSubscriptionId` is the BROWSER's, and a payment Stripe took whose
@@ -1247,7 +1304,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 				priorSubscriptionId: "sub_inflight",
 			});
 
-			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/still being processed/) });
+			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/nothing new was started/) });
 			expect(stripe.invoicePayments.list).toHaveBeenCalledWith({
 				invoice: "in_sub_inflight",
 				limit: 100,
@@ -1300,7 +1357,9 @@ describe("createNewOrgSubscriptionIntent", () => {
 
 		expect(r).toMatchObject({ kind: "refused" });
 		expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_unpaid");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_unpaid", {
+			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_unpaid" },
+		});
 		expect(forgetPendingOrgSetup).toHaveBeenCalledTimes(1);
 		expect(forgetPendingOrgSetup).toHaveBeenCalledWith("user-1", unpaid, "never_paid");
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
@@ -1407,7 +1466,9 @@ describe("createNewOrgSubscriptionIntent", () => {
 		} as never);
 
 		await createNewOrgSubscriptionIntent("team" as never, { orgName: "NewCo" });
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_dangling");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_dangling", {
+			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_dangling" },
+		});
 		expect(forgetPendingOrgSetup).toHaveBeenCalledWith("user-1", dangling, "never_paid");
 	});
 
@@ -1437,23 +1498,26 @@ describe("createNewOrgSubscriptionIntent", () => {
 			name: "Acme Cloud",
 			slug: "acme",
 		});
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_old");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_old", {
+			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_old" },
+		});
 		expect(forgetPendingOrgSetup).toHaveBeenCalledWith("user-1", prior, "never_paid");
 	});
 
-	it("cancels the subscription and returns NOTHING payable when the record cannot be written", async () => {
+	it("closes the subscription out and returns NOTHING payable when the record cannot be written", async () => {
 		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 		stripe.customers.create.mockResolvedValue({ id: "cus_new" } as never);
 		stripe.subscriptions.create.mockResolvedValue({
 			id: "sub_8",
-			latest_invoice: { confirmation_secret: { client_secret: "cs_8" } },
+			latest_invoice: { id: "in_8", confirmation_secret: { client_secret: "cs_8" } },
 		} as never);
 		vi.mocked(recordPendingOrgSetup).mockRejectedValueOnce(new Error("db down"));
 
 		await expect(
 			createNewOrgSubscriptionIntent("team" as never, { orgName: "Acme Cloud" }),
 		).rejects.toThrow(/couldn't start the purchase/i);
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_8");
+		expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_8");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_8", { cancellation_details: { comment: "alethia:closeout" } });
 	});
 
 	it("throws when Stripe returns no invoice secret", async () => {
@@ -1468,33 +1532,23 @@ describe("createNewOrgSubscriptionIntent", () => {
 		).rejects.toThrow(/did not return an invoice/);
 	});
 	// #5463: the prior was read as never paid, then the customer completed the payment before the
-	// cancel landed. Its record was forgotten anyway; now the post-cancel read keeps it and refuses.
+	// cancel landed. Its hold now sees the payment (`payment_in_flight`), keeps the record and refuses.
 	it("a prior whose payment starts processing between the read and the cancel keeps its record, and nothing new is minted", async () => {
 		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 		stripe.subscriptions.retrieve.mockResolvedValue(
 			newOrgSub({ created_by: "user-1" }, "incomplete", "sub_racing"),
 		);
-		stripe.invoicePayments.list
-			.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
-			.mockResolvedValueOnce(invoicePayments("processing"));
 		stripe.customers.create.mockResolvedValue({ id: "cus_new" });
-		stripe.subscriptions.create.mockResolvedValue({
-			id: "sub_second",
-			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
-		});
+		holdFake.stays = { state: "payment_in_flight", lastPay: "in_flight" };
 
 		const r = await createNewOrgSubscriptionIntent("team", {
 			orgName: "NewCo",
 			priorSubscriptionId: "sub_racing",
 		});
 
-		expect(r).toEqual({
-			kind: "refused",
-			message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
-		});
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_racing");
+		expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/still being processed/) });
 		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
-		// Processing is not refundable yet; it is left to support, with its record kept.
+		// Processing is not refundable yet; the hold refunds it only once it succeeds (T5).
 		expect(stripe.refunds.create).not.toHaveBeenCalled();
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
@@ -1594,34 +1648,23 @@ describe("createNewOrgSubscriptionIntent", () => {
 			vi.unstubAllEnvs();
 		});
 
-		// Refused WITHOUT memory (#5506): nothing records this refusal. The retry passes the same prior,
-		// now `canceled`, so the only thing between it and a mint is its invoice void.
-		it("still processing: refused and alerted; the retry voids the prior's invoice before it mints, and is not otherwise remembered", async () => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		// The #5506 gap, FLIPPED (ADR 0002 S8, C1): this used to be refused WITHOUT memory, and the retry —
+		// the same prior, now `canceled` — minted once its invoice was voided. The hold remembers now: the
+		// retry advances it, it is still `payment_in_flight`, and nothing is minted.
+		it("still processing: refused, and the retry is refused too — the hold remembers", async () => {
 			raceThen(() => "processing");
+			holdFake.stays = { state: "payment_in_flight", lastPay: "in_flight" };
 
 			const first = await createNewOrgSubscriptionIntent("team", opts);
-			expect(first).toEqual({
+			expect(first).toEqual({ kind: "refused", message: expect.stringMatching(/still being processed/) });
+			expect(first).not.toEqual({ kind: "refused", message: expect.stringMatching(/charged (twice|again)/) });
+
+			await expect(createNewOrgSubscriptionIntent("team", opts)).resolves.toEqual({
 				kind: "refused",
-				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+				message: expect.stringMatching(/still being processed/),
 			});
-			expect(first).not.toEqual({ kind: "refused", message: expect.stringMatching(/stays blocked|won't be charged twice/) });
 			expect(stripe.refunds.create).not.toHaveBeenCalled();
 			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
-			expect(emitAlertEvent).toHaveBeenCalledWith(
-				"org-platform",
-				"system.platform.payment_needs_support",
-				expect.objectContaining({ resource_id: "sub_racing", summary: expect.stringContaining("pi_1") }),
-			);
-
-			await expect(createNewOrgSubscriptionIntent("team", opts)).resolves.toMatchObject({
-				kind: "intent",
-				subscriptionId: "sub_second",
-			});
-			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_racing");
-			expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
-				stripe.subscriptions.create.mock.invocationCallOrder[0],
-			);
 		});
 
 		it("two create-a-team purchases started at once run one after the other under the user's lock", async () => {
@@ -1652,27 +1695,13 @@ describe("createNewOrgSubscriptionIntent", () => {
 			expect(stripe.subscriptions.create).toHaveBeenCalledTimes(2);
 		});
 
-		it("a refund that fails raises an operator alert and tells the customer to contact support, claiming no block and no alert", async () => {
-			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
-			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+		it("a refund that has not gone through refuses with its clause, claiming no block and no alert", async () => {
 			raceThen(() => "succeeded");
-			stripe.refunds.create.mockRejectedValue(new Error("Stripe is unavailable"));
+			holdFake.stays = { state: "refund_due", lastPay: "succeeded" };
 
 			const r = await createNewOrgSubscriptionIntent("team", opts);
-			expect(r).toEqual({
-				kind: "refused",
-				message: expect.stringMatching(/could not be refunded automatically.*Contact support/),
-			});
+			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/Its refund has not gone through yet/) });
 			expect(r).not.toEqual({ kind: "refused", message: expect.stringMatching(/stays blocked|alert/) });
-			expect(emitAlertEvent).toHaveBeenCalledWith(
-				"org-platform",
-				"system.platform.payment_needs_support",
-				expect.objectContaining({
-					severity: "critical",
-					resource_id: "sub_racing",
-					summary: expect.stringContaining("pi_1"),
-				}),
-			);
 			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		});
 	});
@@ -1694,8 +1723,9 @@ describe("createNewOrgSubscriptionIntent", () => {
 
 			await expect(
 				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
-			).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/Nothing new was started/) });
-			expect(stripe.invoicePayments.list).toHaveBeenCalledTimes(2);
+			).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/nothing new was started/) });
+			// Twice by `readFirstPayment`, then twice more for the kept subscription's copy.
+			expect(stripe.invoicePayments.list).toHaveBeenCalledTimes(4);
 			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
 			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		});
@@ -1722,7 +1752,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(
 				newOrgSub({ created_by: "user-1" }, "incomplete_expired", "sub_prior"),
 			);
-			stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+			holdFake.stays = { state: "invoice_payable", lastPay: "awaiting" };
 			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
 			mint();
 
@@ -1730,7 +1760,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
 			).resolves.toEqual({
 				kind: "refused",
-				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+				message: expect.stringMatching(/could not yet close an earlier checkout's invoice/),
 			});
 			expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
 			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
@@ -1739,7 +1769,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 		it("a canceled prior whose open invoice cannot be voided is refused", async () => {
 			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 			stripe.subscriptions.retrieve.mockResolvedValue(newOrgSub({ created_by: "user-1" }, "canceled", "sub_prior"));
-			stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+			holdFake.stays = { state: "invoice_payable", lastPay: "awaiting" };
 			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
 			mint();
 
@@ -1747,7 +1777,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
 			).resolves.toEqual({
 				kind: "refused",
-				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+				message: expect.stringMatching(/could not yet close an earlier checkout's invoice/),
 			});
 			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		});
@@ -3833,6 +3863,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 		const purchaseClient = makeStripe();
 		purchaseClient.customers.retrieve.mockResolvedValue(ownedCustomer);
 		purchaseClient.subscriptions.create.mockResolvedValue(minted);
+		purchaseClient.subscriptions.list.mockResolvedValue({ data: [] });
 		vi.mocked(getPurchaseStripe).mockReturnValue(purchaseClient as never);
 		await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
 		expect(purchaseClient.subscriptions.create).toHaveBeenCalledTimes(1);
@@ -3848,7 +3879,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 		expect(getPurchaseStripe).not.toHaveBeenCalled();
 	});
 
-	it("rule 1: the cancel of a subscription whose record could not be written renews the lease first", async () => {
+	it("a subscription whose record could not be written is closed out (§5.2): void first, cancel stamped, nothing renewed after the gate", async () => {
 		stripe.customers.retrieve.mockResolvedValue(ownedCustomer);
 		stripe.subscriptions.create.mockResolvedValue(minted);
 		vi.mocked(recordPendingOrgSetup).mockRejectedValueOnce(new Error("db down"));
@@ -3857,14 +3888,18 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 			createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
 		).rejects.toThrow(/couldn't start the purchase/i);
 
-		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z");
-		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
-		// The gate renewal, then the fence of the cancel: two renewals after the create, the last before it.
+		expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_z");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z", {
+			cancellation_details: { comment: "alethia:closeout" },
+		});
+		expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+			stripe.subscriptions.cancel.mock.invocationCallOrder[0],
+		);
+		// The close-out renews nothing: the only renewal after the create is the gate itself.
 		const afterCreate = purchaseLease.renewLease.mock.invocationCallOrder.filter(
 			(order) => order > stripe.subscriptions.create.mock.invocationCallOrder[0],
 		);
-		expect(afterCreate).toHaveLength(2);
-		expect(afterCreate[1]).toBeLessThan(stripe.subscriptions.cancel.mock.invocationCallOrder[0]);
+		expect(afterCreate).toHaveLength(1);
 	});
 
 	it("rules 1 and 4: a lease lost before that cancel turns it into the close-out — void first, cancel stamped", async () => {
@@ -4138,7 +4173,9 @@ describe("ADR 0002 S3 (#5754)", () => {
 
 			expect(r).toMatchObject({ kind: "intent", customerId: "cus_new" });
 			expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
-			expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_mine");
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_mine", {
+			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_mine" },
+		});
 			expect(stripe.invoices.voidInvoice).toHaveBeenCalledTimes(1);
 			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_mine");
 			// Not even read: the first-payment read is only for the user's own.

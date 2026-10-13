@@ -87,13 +87,30 @@ import {
 } from "@/lib/billing/new-org-plan-state";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
+	composeNewOrgHoldCopy,
+	HOLD_NOT_RECORDED,
+	holdClause,
+	type KeptPayment,
+	LIVE_CHECK_FAILED,
+	NOT_CONFIRMED_CLOSED,
+	PAID_SETUP_ELSEWHERE,
+} from "@/lib/billing/new-org-hold-copy";
+import { advanceHold, decideOpen } from "@/lib/billing/payment-holds/machine";
+import { type HoldStripeReader, observeHold } from "@/lib/billing/payment-holds/observe";
+import { type OpenHoldResult, openHold } from "@/lib/billing/payment-holds/store";
+import { liveSweepDeps, machineDepsFor } from "@/lib/billing/payment-holds/sweeper";
+import {
 	closePendingOrgSetup,
+	FORGETTABLE_RELEASES,
 	findSetupOrg,
 	forgetPendingOrgSetup,
+	liveCheckSetupCustomers,
 	logBillingEvent,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
+	openPaymentHoldOn,
 	openPendingOrgSetupsForOrg,
+	paymentHoldsOfPayer,
 	pendingOrgSetupBillingSchema,
 	pendingOrgSetupFor,
 	pendingOrgSetupSlugSchema,
@@ -138,6 +155,7 @@ import {
 	member,
 	organization,
 	organizationBilling,
+	type PaymentHoldRow,
 	user,
 } from "@/lib/db/schema";
 
@@ -699,10 +717,11 @@ async function ensureCustomer(
 }
 
 /**
- * What the purchase flow's sweep found about one earlier subscription, as the answer to "may a new one
- * be minted beside it?" (#5463, #5489). NOTHING HERE IS REMEMBERED BETWEEN REQUESTS: no hold is
- * recorded, so each outcome is only what THIS request saw. A persisted hold lifecycle is designed
- * first in #5506 before any of it is built.
+ * What the org-plan purchase's sweep found about one earlier subscription, as the answer to "may a new
+ * one be minted beside it?" (#5463, #5489). NOTHING HERE IS REMEMBERED BETWEEN REQUESTS: the org-plan
+ * purchase opens no payment hold (ADR 0002 §7), so each outcome is only what THIS request saw. The
+ * create-a-team purchase does not use these: it closes its subscriptions under payment holds, which
+ * remember (ADR 0002 S8).
  *   - `settled` — no money is moving: none was taken and the latest invoice can no longer be paid
  *     (voided, already void, or none), or what was taken is already refunded. Only this one mints;
  *   - `processing` — an `incomplete` subscription the sweep KEPT because its first payment is not proven
@@ -743,16 +762,14 @@ function unconfirmed(alerted: boolean): "unconfirmed" | "unconfirmed_alerted" {
  * with the `readFirstPayment` verdict that allowed it); the `incomplete` ones it KEPT because their
  * first payment is not provably unpaid — in flight, taken, or unreadable; for each one it tried to
  * cancel that did not end `cancelled` — a payment found afterwards, or a cancel that could not be
- * proven (#5489) — what became of it; and the ones it LEFT ALONE because they are not the purchase's
- * to touch (`foreign`, ADR 0002 §4.2). Anything in `kept` or `unsettled` refuses the purchase; `foreign`
- * does not. `overCap` means the customer has more `incomplete` subscriptions than the sweep reads
- * (`SWEEP_SUBSCRIPTION_CAP`): nothing was cancelled, every list is empty, and the purchase refuses.
+ * proven (#5489) — what became of it. Anything in `kept` or `unsettled` refuses the purchase. `overCap`
+ * means the customer has more `incomplete` subscriptions than the sweep reads (`SWEEP_SUBSCRIPTION_CAP`):
+ * nothing was cancelled, every list is empty, and the purchase refuses.
  */
 interface IncompleteSweep {
 	cancelled: { sub: Stripe.Subscription; firstPayment: FirstPayment }[];
 	kept: Stripe.Subscription[];
 	unsettled: PaymentOutcome[];
-	foreign: Stripe.Subscription[];
 	overCap: boolean;
 }
 
@@ -886,8 +903,14 @@ const PURCHASE_IN_PROGRESS =
 const LINK_REFUSED_ORG_HAS_PLAN = `This team already has an active plan, so this payment was not linked to it. Contact support at ${SUPPORT_EMAIL}, who will refund it or move it to the right team.`;
 const LINK_REFUSED_ALERTED = " We have raised this with support.";
 
-/** The open-setup guard's refusal, to the setup's creator (ADR 0002 §5.5). */
-const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a plan cannot be started here yet. Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
+/** Where the open-setup guard sends the setup's creator (ADR 0002 §5.5). */
+const OPEN_SETUP_CREATOR_NEXT = `Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
+
+/**
+ * The open-setup guard's refusal, to the setup's creator (ADR 0002 §5.5). When an open payment hold
+ * names the setup's subscription, that hold's clause replaces the first sentence (`holdClause`).
+ */
+const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a plan cannot be started here yet. ${OPEN_SETUP_CREATOR_NEXT}`;
 
 /**
  * The open-setup guard's refusal, to anyone but the creator (ADR 0002 §5.5): it names who started the
@@ -929,10 +952,20 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 		if (verdict !== "open") continue;
 		// Message selection, not access control: the purchase is refused either way, and `actor` was
 		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
-		if (row.user_id === actor.userId) return OPEN_SETUP_CREATOR; // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
+		if (row.user_id === actor.userId) return creatorRefusal(row.subscription_id); // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
 		return openSetupOtherMember(await setupCreatorName(actor.orgId, row.user_id));
 	}
 	return null;
+}
+
+/**
+ * The guard's refusal to the setup's creator: the clause of the open payment hold on the setup's
+ * subscription, when one is open, then where to go — else `OPEN_SETUP_CREATOR`.
+ */
+async function creatorRefusal(subscriptionId: string): Promise<string> {
+	const hold = await openPaymentHoldOn(subscriptionId);
+	const clause = hold ? holdClause(hold) : null;
+	return clause ? `${clause} ${OPEN_SETUP_CREATOR_NEXT}` : OPEN_SETUP_CREATOR;
 }
 
 /**
@@ -1251,21 +1284,22 @@ const SWEEP_SUBSCRIPTION_CAP = 1000;
 const SWEEP_PAGE = 100;
 
 /**
- * Every `incomplete` subscription of `customerId`, paged to the end with `starting_after` (ADR 0002
- * §4.5, C20) — or `over_cap` when there are more than `SWEEP_SUBSCRIPTION_CAP`. Never a list it stopped
- * reading early: one more page beyond the cap is what `over_cap` means, and the caller refuses on it. A
- * page that fails is thrown.
+ * Every subscription of `customerId` in `status` (`incomplete` for a sweep, `all` for the create-a-team
+ * live check), paged to the end with `starting_after` (ADR 0002 §4.5, C20) — or `over_cap` when there are
+ * more than `SWEEP_SUBSCRIPTION_CAP`. Never a list it stopped reading early: one more page beyond the cap
+ * is what `over_cap` means, and the caller refuses on it. A page that fails is thrown.
  */
-async function listIncompleteSubscriptions(
+async function listCustomerSubscriptions(
 	stripe: Stripe,
 	customerId: string,
+	status: "incomplete" | "all",
 ): Promise<{ kind: "all"; subs: Stripe.Subscription[] } | { kind: "over_cap" }> {
 	const subs: Stripe.Subscription[] = [];
 	let startingAfter: string | undefined;
 	for (;;) {
 		const page = await stripe.subscriptions.list({
 			customer: customerId,
-			status: "incomplete",
+			status,
 			limit: SWEEP_PAGE,
 			...(startingAfter ? { starting_after: startingAfter } : {}),
 		});
@@ -1287,31 +1321,22 @@ function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">,
 }
 
 /**
- * Cancels a customer's dangling `incomplete` subscriptions — the never-paid first-invoice
- * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
- * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
- * DB, so it cleans up even the subs that were never persisted to organization_billing — the
- * exact leak the old DB-only guard missed. A list that fails is thrown, so nothing is minted.
+ * THE ORG-PLAN SWEEP: cancels the org customer's dangling `incomplete` subscriptions — the never-paid
+ * first-invoice subs that a re-opened upgrade sheet would otherwise pile up (each one Stripe
+ * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the DB, so it
+ * cleans up even the subs that were never persisted to organization_billing — the exact leak the old
+ * DB-only guard missed. A list that fails is thrown, so nothing is minted. It touches every one on the
+ * customer, which is the org's own. (The create-a-team purchase has its own sweep, under payment holds:
+ * `closeOrKeep`.)
  *
- * Every page is read (`listIncompleteSubscriptions`); a customer with more than
- * `SWEEP_SUBSCRIPTION_CAP` of them is not swept at all and answers `overCap`, which refuses.
+ * Every page is read (`listCustomerSubscriptions`); a customer with more than `SWEEP_SUBSCRIPTION_CAP`
+ * of them is not swept at all and answers `overCap`, which refuses.
  *
- * `scope` says which of them this purchase may touch. `{ createATeamOf: userId }` — the create-a-team
- * purchase — touches only that user's create-a-team subscriptions (`isCreateATeamSubscriptionOf`); any
- * other `incomplete` subscription on the customer (an org's plan or AI checkout, another user's) is
- * left alone and returned in `foreign`, for the caller to report. `"customer"` — the org-plan purchase,
- * whose customer is the org's own — touches every one, as before ADR 0002.
- *
- * WHICH CLIENT (ADR 0002 S2 hand-off, decided in S3). This sweep and the helpers it shares with the
- * create-a-team prior's replacement — `cancelNeverPaid`, `voidPayableInvoice`, `refundTakenPayment` —
- * stay on the shared client (`getStripe()`, the SDK's 80s / 2 retries), not the purchase client. They
- * also serve the org-plan purchase, which `lib/billing/stripe.ts` keeps on the shared client's defaults;
- * the first-payment reads they depend on (`lib/billing/first-payment.ts`) are on the shared client
- * anyway. The cost is that a silent call can hold the purchase longer (about 240s at worst against
- * about 40s). That is a wait, not a double charge: every write here renews the lease first, and a write
- * whose request stalls past the lease and lands after another holder took over only cancels or voids a
- * subscription this request listed (so minted before that holder's), or refunds a payment under its
- * per-PaymentIntent idempotency key. The other holder's mint is behind its own sweep and artifact gate.
+ * WHICH CLIENT (ADR 0002 S2 hand-off, decided in S3). This sweep and its helpers — `cancelNeverPaid`,
+ * `voidPayableInvoice`, `refundTakenPayment` — stay on the shared client (`getStripe()`, the SDK's
+ * 80s / 2 retries), not the purchase client: `lib/billing/stripe.ts` keeps the org-plan purchase on the
+ * shared client's defaults, and the first-payment reads they depend on (`lib/billing/first-payment.ts`)
+ * are on the shared client anyway.
  *
  * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
  * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
@@ -1321,19 +1346,11 @@ function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">,
  * completed between the read and the cancel, or a cancel that could not be proven — is reported in
  * `unsettled` with what became of it.
  */
-async function cancelIncompleteSubscriptions(
-	customerId: string,
-	fence: StripeWriteFence,
-	scope: { createATeamOf: string } | "customer",
-): Promise<IncompleteSweep> {
-	const sweep: IncompleteSweep = { cancelled: [], kept: [], unsettled: [], foreign: [], overCap: false };
-	const listed = await listIncompleteSubscriptions(getStripe(), customerId);
+async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWriteFence): Promise<IncompleteSweep> {
+	const sweep: IncompleteSweep = { cancelled: [], kept: [], unsettled: [], overCap: false };
+	const listed = await listCustomerSubscriptions(getStripe(), customerId, "incomplete");
 	if (listed.kind === "over_cap") return { ...sweep, overCap: true };
 	for (const s of listed.subs) {
-		if (scope !== "customer" && !isCreateATeamSubscriptionOf(s, scope.createATeamOf)) {
-			sweep.foreign.push(s);
-			continue;
-		}
 		let firstPayment: FirstPayment;
 		try {
 			firstPayment = await readTwice(() => readFirstPayment(s));
@@ -1483,7 +1500,7 @@ async function startOrgSubscription(
 	// re-opening the upgrade sheet can never pile up never-paid subs (and their draft
 	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
 	// which is why the old organization_billing-only guard leaked.
-	const swept = await cancelIncompleteSubscriptions(customerId, UNFENCED, "customer");
+	const swept = await cancelIncompleteSubscriptions(customerId, UNFENCED);
 	if (swept.overCap) {
 		await alertSweepOverCap(customerId);
 		return { error: TOO_MANY_EARLIER_CHECKOUTS };
@@ -1777,13 +1794,15 @@ interface NewOrgSubscriptionOpts {
 }
 
 /**
- * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay; or — when the attempt it
- * replaces turns out to be PAID already — that setup to finish, with nothing new to pay; or a refusal
- * to start anything, with the reason to show, when an earlier payment may be under way or was taken
- * for a setup this user cannot finish here.
+ * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay, with an optional `notice` (ADR
+ * 0002 §5.5: an earlier refund, or one on its way back — the clauses that do not block a purchase). The
+ * sheet does not show `notice` yet; the slice that owns the sheet will show it above the payment form.
+ * Or — 
+ * when an earlier attempt turns out to be PAID already — that setup to finish, with nothing new to pay;
+ * or a refusal to start anything, with the reason to show.
  */
 export type NewOrgSubscriptionStart =
-	| ({ kind: "intent" } & NewOrgSubscriptionIntent)
+	| ({ kind: "intent"; notice?: string } & NewOrgSubscriptionIntent)
 	| { kind: "resume"; setup: NewOrgSetupState }
 	| { kind: "refused"; message: string };
 
@@ -1797,38 +1816,24 @@ export type NewOrgSubscriptionStart =
  * to replace the previous attempt (e.g. after "← Back" or a currency switch), so a Stripe
  * customer is never duplicated and incomplete subscriptions don't pile up. When the browser lost the
  * `customerId` (#5463), the customer of the caller's newest unfinished, unlinked setup record is
- * reused instead, and the sweep below covers the customers of all of them — so a first purchase whose
- * payment is still `processing` (SEPA, ACH) on another customer is seen, and blocks a second one.
+ * reused instead, and the sweep covers the customers of all of them.
  *
- * `priorSubscriptionId` comes from the browser, which can be wrong about it — a payment Stripe took
- * whose confirmation never reached the page leaves the pay view on screen with "← Back" and the
- * currency toggle. So the prior subscription is READ from Stripe first (#5445), and:
- *   - one this user did not mint is ignored — never cancelled, its record never touched;
- *   - one that is `incomplete` / `incomplete_expired` is cancelled and its record dropped ONLY when its
- *     first payment provably never happened (`readFirstPayment`: the PaymentIntent awaits the
- *     customer). One whose payment is `processing`, `succeeded` or `requires_capture` is never
- *     cancelled: nothing new is minted, and the action returns `kind: "refused"` — once the payment
- *     settles it is paid and resumes, and until then every retry is refused. A payment that completes
- *     between the read and the cancel is caught after the cancel (`cancelNeverPaid`): its record is
- *     kept, money it took is refunded, and a payment still processing (or one whose refund failed)
- *     refuses THIS request and alerts an operator. Nothing remembers it: a retry finds the subscription
- *     `canceled`, which only the `canceled` arm below (its invoice void) can still refuse on;
- *   - one that is PAID is never cancelled and no new subscription is minted: the setup it belongs to is
- *     returned (`kind: "resume"`) and the sheet finishes it. When there is no setup this user can
- *     finish (it is linked to a team they are not an owner of), the action returns `kind: "refused"` —
- *     a second purchase is never minted beside a paid one;
- *   - one that is `canceled` has its latest invoice voided if it can still be paid; a void that cannot be
- *     proven refuses and alerts (#5489). One whose invoice reads `paid` is left alone, as before: telling
- *     a payment that landed after our own cancel from a finished purchase is #5506's design;
- *   - any other status (it was paid once) is left alone.
- * A cancel that fails is never read as "gone" (#5489): the prior is re-read once, and unless Stripe then
- * shows it `canceled` or `incomplete_expired` it is alerted on and the action refuses. A first payment
- * that cannot be read, twice, refuses too. Both leave the prior `incomplete`, so a retry reads it again.
- * The same proof guards the sweep of the customer's other `incomplete` subscriptions: one it cannot
- * prove unpaid is kept, and the action refuses rather than mint beside it.
+ * ON PAYMENT HOLDS (ADR 0002 S8). It mints only through I1, in this order, under the user's lease:
+ *   (a) every open payment hold of the user — found by the session user, never from the browser (C7) —
+ *       is advanced once (`advanceHold`), and any that still blocks refuses;
+ *   (b) the prior and the sweep: a subscription of the user's own create-a-team flow (§4.2) is closed
+ *       ONLY under a hold written first (I4, `closeUnderHold`), and only when `readFirstPayment` proves
+ *       it never paid; the machine then voids its invoice and cancels only after a proven void (§3.4).
+ *       One not proven unpaid is KEPT, untouched, and refuses. A `canceled` prior is closed under a hold
+ *       only while its invoice can still be paid; a paid one is a finished purchase and is left alone
+ *       (only a hold may refund, I3);
+ *   (c) the live check (`liveCreateATeamSubscription`), read last: a live create-a-team subscription of
+ *       the user's on any customer their records or holds name is resumed, never minted beside.
+ * Every refusal is one message for everything seen (`composeNewOrgHoldCopy`). A paid prior is resumed
+ * first (`kind: "resume"`), or refused when it is linked to a team the user is not an owner of.
  *
  * The whole of it runs under the user's purchase lease (`withUserPurchaseLease`, ADR 0002 §4.4), so a
- * second request from another tab or another instance waits for this one and then sweeps what it
+ * second request from another tab or another instance waits for this one and then sees what it
  * minted. Every Stripe write renews the lease first (§4.4 rule 1), and one that finds it lost stops and
  * refuses — except the writes of the close-out (rule 4), which run after a lost lease by design and
  * touch only the subscription this request minted and never handed out.
@@ -1981,11 +1986,201 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: Mi
 }
 
 /**
- * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lease: replaces the prior
- * attempt, resolves the customer, sweeps, mints, and records the setup. Every Stripe write renews
- * `lease` first (`fence`, §4.4 rule 1) and a lost lease is thrown as `PurchaseLeaseLostError`; the mint
- * and its artifact gate follow rules 2–4. The one exception is the close-out (rule 4): its writes run
- * after the lease is lost, and close only the subscription this request minted.
+ * What the create-a-team purchase has seen of its user's earlier checkouts in this request (ADR 0002
+ * §5.5): every hold it read or opened, as its last write left it, by id; and what the payment showed on
+ * every subscription its sweep KEPT. The composer turns the whole set into one message.
+ */
+interface CheckoutsSeen {
+	holds: Map<string, PaymentHoldRow>;
+	kept: KeptPayment[];
+}
+
+/** The subscriptions an OPEN hold in `seen` names: the purchase never opens a second hold on one (T0h). */
+function heldSubscriptions(seen: CheckoutsSeen): Set<string> {
+	const open = [...seen.holds.values()].filter((h) => h.state !== "released");
+	return new Set(open.map((h) => h.subscription_id));
+}
+
+/** One message for everything `seen` (§5.5): the refusal when anything blocks, else the mint's notice. */
+function copyOf(seen: CheckoutsSeen): { refusal: string | null; notice: string | null } {
+	return composeNewOrgHoldCopy({ holds: [...seen.holds.values()], kept: seen.kept, now: new Date() });
+}
+
+/** The id of a subscription's latest invoice, expanded or not; null when it has none. */
+function latestInvoiceId(sub: Pick<Stripe.Subscription, "latest_invoice">): string | null {
+	return typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+}
+
+/**
+ * E1 for one hold under this request's lease (§3.2 E1 (a)): `advanceHold`, the only code that moves a
+ * hold, with the sweeper's own dependencies. Returns the hold as its last write left it. A lost lease, or
+ * a state write that matched no row — under this lease nothing else writes this payer's holds, so that
+ * too means the lease was taken over — stops the purchase (§4.4 rule 1).
+ */
+async function advanceUnderLease(hold: PaymentHoldRow, lease: PurchaseLease): Promise<PaymentHoldRow> {
+	const result = await advanceHold(hold, machineDepsFor(lease, liveSweepDeps()));
+	if (result.outcome === "lease_lost" || result.outcome === "stale") {
+		throw new PurchaseLeaseLostError(lease.key);
+	}
+	return result.hold;
+}
+
+/**
+ * I4, THE WRITE-AHEAD: closes `sub` (whose held invoice is `invoiceId`) only under a hold. E0 opens the
+ * hold in `closing` under the lease BEFORE anything is voided or cancelled; then the machine advances
+ * it — voiding first, cancelling only after a proven void (§3.4). Returns the hold as the machine left
+ * it, or a refusal that ends the purchase with nothing touched: T0f, the hold could not be written (no
+ * block is promised); T0h, an open hold already names `sub` (its clause, when it is this payer's).
+ */
+async function closeUnderHold(
+	sub: Stripe.Subscription,
+	invoiceId: string,
+	userId: string,
+	lease: PurchaseLease,
+): Promise<{ kind: "held"; hold: PaymentHoldRow } | { kind: "refused"; message: string }> {
+	let opened: OpenHoldResult;
+	try {
+		opened = await openHold(lease, {
+			subscriptionId: sub.id,
+			customerId: subscriptionCustomerId(sub),
+			payerKey: userId,
+			invoiceId,
+			state: "closing",
+			nextCheckAt: new Date(Date.now() + 5 * 60_000),
+			openedBy: "purchase",
+			openedByUserId: userId,
+		});
+	} catch (e) {
+		console.error(`[billing] could not open a payment hold on ${sub.id}; nothing was closed:`, e);
+		return { kind: "refused", message: HOLD_NOT_RECORDED };
+	}
+	if (opened.kind === "lease_lost") throw new PurchaseLeaseLostError(lease.key);
+	const decision = decideOpen(opened, userId);
+	if (decision.kind === "proceed") {
+		return { kind: "held", hold: await advanceUnderLease(decision.hold, lease) };
+	}
+	const own = decision.kind === "refuse_held" ? decision.hold : null;
+	return { kind: "refused", message: (own ? holdClause(own) : null) ?? NOT_CONFIRMED_CLOSED };
+}
+
+/**
+ * What a KEPT subscription's payment shows, for the copy (§5.5): its latest invoice's payments, read
+ * the way a hold reads them (`observeHold`, with the subscription answered from the one in hand) — but
+ * no hold is opened and nothing is written, because nothing is being closed. A read that fails is
+ * `unproven`.
+ */
+async function keptPaymentOf(sub: Stripe.Subscription): Promise<KeptPayment> {
+	const invoiceId = latestInvoiceId(sub);
+	if (!invoiceId) return "unproven";
+	const stripe = getPurchaseStripe();
+	const reader: HoldStripeReader = {
+		subscriptions: { retrieve: async () => ({ status: sub.status }) },
+		invoices: stripe.invoices,
+		invoicePayments: stripe.invoicePayments,
+		paymentIntents: stripe.paymentIntents,
+		refunds: stripe.refunds,
+	};
+	try {
+		const { pay } = await observeHold({ id: "", subscription_id: sub.id, invoice_id: invoiceId }, reader);
+		const shown = pay.kind;
+		return shown === "in_flight" || shown === "capturable" || shown === "succeeded" ? shown : "unproven";
+	} catch {
+		return "unproven";
+	}
+}
+
+/**
+ * The create-a-team close of one of the user's own `incomplete` / `incomplete_expired` subscriptions
+ * (the prior, or one the sweep found). Closed — under a hold (`closeUnderHold`) — only when
+ * `readFirstPayment` proves its first payment never happened; its record is dropped only once the hold
+ * is released as never payable (§8), never after a bare cancel. Any other is KEPT, untouched, and what
+ * its payment shows goes to `seen`. Returns a refusal that ends the purchase now (T0f, T0h), or null.
+ */
+async function closeOrKeep(
+	sub: Stripe.Subscription,
+	userId: string,
+	lease: PurchaseLease,
+	seen: CheckoutsSeen,
+): Promise<string | null> {
+	let firstPayment: FirstPayment;
+	try {
+		firstPayment = await readTwice(() => readFirstPayment(sub));
+	} catch {
+		firstPayment = "not_proven_unpaid";
+	}
+	if (firstPayment !== "never_paid") {
+		seen.kept.push(await keptPaymentOf(sub));
+		return null;
+	}
+	const invoiceId = latestInvoiceId(sub);
+	// An expired subscription with no invoice: nothing can be paid, voided or cancelled.
+	if (!invoiceId) {
+		await forgetPendingOrgSetup(userId, sub, firstPayment);
+		return null;
+	}
+	const closed = await closeUnderHold(sub, invoiceId, userId, lease);
+	if (closed.kind === "refused") return closed.message;
+	seen.holds.set(closed.hold.id, closed.hold);
+	const reason = closed.hold.release_reason;
+	if (closed.hold.state === "released" && reason && FORGETTABLE_RELEASES.has(reason)) {
+		await forgetPendingOrgSetup(userId, sub, firstPayment);
+	}
+	return null;
+}
+
+/** Statuses under which a subscription still exists and may bill (ADR 0002 §2, "Live subscription"). */
+const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+	"active",
+	"trialing",
+	"past_due",
+	"unpaid",
+	"paused",
+]);
+
+/**
+ * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94), read AFTER the hold pass and the sweep so that a
+ * subscription either one adopted is still seen: every subscription, of every status, on every customer
+ * the user's unlinked records name (`liveCheckSetupCustomers`, whether or not the team exists or the
+ * record is closed) and on `alsoOn`, fully paged. A LIVE create-a-team subscription of the user's — one
+ * whose webhook has not been seen yet, or one that went straight to `active` — is returned. A list that
+ * fails, or a set over its cap, refuses (§5.1): the purchase never mints on a read it did not make.
+ */
+async function liveCreateATeamSubscription(
+	userId: string,
+	alsoOn: Iterable<string>,
+): Promise<{ kind: "none" } | { kind: "live"; sub: Stripe.Subscription } | { kind: "refused"; message: string }> {
+	const recorded = await liveCheckSetupCustomers(userId);
+	if (recorded.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
+	for (const customer of new Set([...recorded.customers, ...alsoOn])) {
+		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
+		try {
+			listed = await listCustomerSubscriptions(getPurchaseStripe(), customer, "all");
+		} catch (e) {
+			console.error(`[billing] the create-a-team live check could not list ${customer}:`, e);
+			return { kind: "refused", message: LIVE_CHECK_FAILED };
+		}
+		if (listed.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
+		const live = listed.subs.find(
+			(s) => isCreateATeamSubscriptionOf(s, userId) && LIVE_SUBSCRIPTION_STATUSES.has(s.status),
+		);
+		if (live) return { kind: "live", sub: live };
+	}
+	return { kind: "none" };
+}
+
+/** The setup of a paid create-a-team subscription to resume, or the refusal when the user cannot finish it here. */
+async function resumeOrRefuse(sub: Stripe.Subscription, userId: string): Promise<NewOrgSubscriptionStart> {
+	const setup = await newOrgSetupStateFor(sub, userId);
+	return setup ? { kind: "resume", setup } : { kind: "refused", message: PAID_SETUP_ELSEWHERE };
+}
+
+/**
+ * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lease: resumes a paid
+ * prior, advances the user's holds (I1 (a)), closes the prior and sweeps under holds (I1 (b)), runs the
+ * live check (I1 (c)), then mints and records the setup. Every Stripe write renews `lease` first
+ * (`fence`, §4.4 rule 1) and a lost lease is thrown as `PurchaseLeaseLostError`; the mint and its
+ * artifact gate follow rules 2–4. The one exception is the close-out (rule 4): its writes run after the
+ * lease is lost, and close only the subscription this request minted.
  */
 async function startNewOrgSubscription(
 	actor: { userId: string },
@@ -2008,57 +2203,43 @@ async function startNewOrgSubscription(
 	}
 	const recordedCustomers = recorded.customers;
 
-	if (opts.priorSubscriptionId) {
-		const prior = await ownNewOrgSubscription(opts.priorSubscriptionId, actor.userId);
-		if (prior && PAID_SUBSCRIPTION_STATUSES.has(prior.status)) {
-			const setup = await newOrgSetupStateFor(prior, actor.userId);
-			if (setup) return { kind: "resume", setup };
-			return {
-				kind: "refused",
-				message:
-					"Your earlier payment went through, but it is linked to a team you are not an owner of, so it can't be finished here and nothing new was started. Contact support with the time of the payment — you won't be charged again.",
-			};
-		} else if (prior && !isCreateATeamSubscriptionOf(prior, actor.userId)) {
-			// Classification (ADR 0002 §4.2): a prior a link already wrote `organization_id` onto is that
-			// org's subscription now, not this purchase's to cancel, settle or void. It is left alone.
-		} else if (prior && REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
-			let firstPayment: FirstPayment;
-			try {
-				firstPayment = await readTwice(() => readFirstPayment(prior));
-			} catch {
-				// It may be the paid one (#5489). It was not cancelled, so a retry reads it again.
-				return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
+	// The prior is READ from Stripe (#5445): the browser's id is a hint. A paid one is resumed; one this
+	// user did not mint, or one a link already gave an `organization_id` (§4.2), is left alone.
+	const prior = opts.priorSubscriptionId
+		? await ownNewOrgSubscription(opts.priorSubscriptionId, actor.userId)
+		: null;
+	if (prior && PAID_SUBSCRIPTION_STATUSES.has(prior.status)) return resumeOrRefuse(prior, actor.userId);
+
+	// I1 (a): every open hold of the user, advanced once. Released ones are kept for their notice.
+	const seen: CheckoutsSeen = { holds: new Map(), kept: [] };
+	for (const hold of await paymentHoldsOfPayer(actor.userId)) {
+		seen.holds.set(hold.id, hold.state === "released" ? hold : await advanceUnderLease(hold, lease));
+	}
+	const held = copyOf(seen).refusal;
+	if (held) return { kind: "refused", message: held };
+
+	// I1 (b), the prior: closed under a hold, or kept. A `canceled` one is closed under a hold only while
+	// its invoice can still be paid (the machine voids it, T8, or deletes a draft, T8d); a paid one is a
+	// finished purchase cancelled later, and is left alone (C6, C34).
+	if (prior && isCreateATeamSubscriptionOf(prior, actor.userId) && !heldSubscriptions(seen).has(prior.id)) {
+		if (REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
+			const refusal = await closeOrKeep(prior, actor.userId, lease, seen);
+			if (refusal) return { kind: "refused", message: refusal };
+		} else if (prior.status === "canceled") {
+			const invoiceId = latestInvoiceId(prior);
+			let status: string | null = null;
+			if (invoiceId) {
+				try {
+					status = (await readTwice(() => getPurchaseStripe().invoices.retrieve(invoiceId))).status;
+				} catch (e) {
+					// A deleted draft was never payable; any other failure proves nothing, and refuses.
+					if (!isStripeResourceMissing(e)) return { kind: "refused", message: NOT_CONFIRMED_CLOSED };
+				}
 			}
-			if (firstPayment !== "never_paid") {
-				return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
-			}
-			// Gone is PROVEN, never assumed (#5489): an `incomplete` prior must be cancelled, and an
-			// `incomplete_expired` one — which Stripe already ended — still has its latest invoice checked and
-			// voided if it can be paid. Anything short of that refuses, and its record stays.
-			const outcome =
-				prior.status === "incomplete"
-					? await cancelNeverPaid(prior, subscriptionCustomerId(prior), fence)
-					: await settleCancelledSubscription(prior, subscriptionCustomerId(prior), fence);
-			if (outcome !== "cancelled" && outcome !== "settled") {
-				return { kind: "refused", message: refusalFor([outcome]) ?? PAYMENT_MAY_BE_UNDER_WAY };
-			}
-			await forgetPendingOrgSetup(actor.userId, prior, firstPayment);
-		} else if (prior && prior.status === "canceled") {
-			// Cancelled already — by an earlier request, or after it was paid once. Its latest invoice is
-			// still checked (#5489): cancelling never voids it, so an open one is voided before anything new
-			// is minted. A void that cannot be proven refuses. A paid one is left alone, as before this
-			// change: telling a payment that landed after our own cancel from a finished purchase needs the
-			// hold lifecycle designed in #5506.
-			const voided = await voidPayableInvoice(prior, fence);
-			if (voided.result === "failed") {
-				const alerted = await alertPaymentNeedsSupport({
-					subscriptionId: prior.id,
-					customerId: subscriptionCustomerId(prior),
-					paymentIntentId: null,
-					detail: "its latest invoice could not be voided, so its payment may still be completed from a page that holds it.",
-					error: voided.error,
-				});
-				return { kind: "refused", message: refusalFor([unsettled(alerted)]) ?? EARLIER_PAYMENT_UNSETTLED };
+			if (invoiceId && (status === "open" || status === "uncollectible" || status === "draft")) {
+				const closed = await closeUnderHold(prior, invoiceId, actor.userId, lease);
+				if (closed.kind === "refused") return { kind: "refused", message: closed.message };
+				seen.holds.set(closed.hold.id, closed.hold);
 			}
 		}
 	}
@@ -2092,32 +2273,46 @@ async function startNewOrgSubscription(
 	}
 	const mintedOn: MintedCustomer = { customerId, origin };
 
-	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
-	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
-	// invoices — and drop their records, under the same guard as the prior one above. One whose
-	// payment may be under way is kept, and nothing new is minted beside it.
-	// Every customer the caller's unfinished records name is swept too, not only the one reused: a
-	// purchase still settling on any of them blocks a second one.
-	// A subscription the sweep cancelled whose payment then turned up is refunded, or refuses this
-	// purchase (`cancelNeverPaid`), and its record is kept.
-	// Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else on these
-	// customers — an org's plan or AI checkout on a shared customer — is left alone and alerted on, and
-	// does not refuse. A customer with more `incomplete` subscriptions than the sweep reads refuses.
-	const sweptOutcomes: PaymentOutcome[] = [];
+	// I1 (b), the sweep: every `incomplete` subscription on the customer this purchase uses and on every
+	// customer the caller's unfinished records name — a purchase still settling on any of them blocks a
+	// second one. Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else
+	// on these customers is left alone, alerted on, and does not refuse. Each of the user's own is closed
+	// under a hold or kept (`closeOrKeep`). A customer with more than the sweep reads refuses, and so does
+	// a list that fails (§5.1).
 	for (const sweepCustomer of new Set([customerId, ...recordedCustomers])) {
-		const swept = await cancelIncompleteSubscriptions(sweepCustomer, fence, { createATeamOf: actor.userId });
-		if (swept.overCap) {
+		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
+		try {
+			listed = await listCustomerSubscriptions(getStripe(), sweepCustomer, "incomplete");
+		} catch (e) {
+			console.error(`[billing] the create-a-team sweep could not list ${sweepCustomer}:`, e);
+			return { kind: "refused", message: LIVE_CHECK_FAILED };
+		}
+		if (listed.kind === "over_cap") {
 			await alertSweepOverCap(sweepCustomer);
 			return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 		}
-		for (const foreign of swept.foreign) await alertForeignSubscription(foreign, sweepCustomer, actor.userId);
-		for (const { sub: cancelled, firstPayment } of swept.cancelled) {
-			await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
+		for (const s of listed.subs) {
+			if (!isCreateATeamSubscriptionOf(s, actor.userId)) {
+				await alertForeignSubscription(s, sweepCustomer, actor.userId);
+				continue;
+			}
+			if (heldSubscriptions(seen).has(s.id)) continue;
+			const refusal = await closeOrKeep(s, actor.userId, lease, seen);
+			if (refusal) return { kind: "refused", message: refusal };
 		}
-		sweptOutcomes.push(...sweepOutcomes(swept));
 	}
-	const sweptRefusal = refusalFor(sweptOutcomes);
-	if (sweptRefusal) return { kind: "refused", message: sweptRefusal };
+	const copy = copyOf(seen);
+	if (copy.refusal) return { kind: "refused", message: copy.refusal };
+
+	// I1 (c), read last.
+	const holdCustomers = [...seen.holds.values()].map((h) => h.customer_id);
+	const live = await liveCreateATeamSubscription(actor.userId, [
+		customerId,
+		...recordedCustomers,
+		...holdCustomers,
+	]);
+	if (live.kind === "refused") return { kind: "refused", message: live.message };
+	if (live.kind === "live") return resumeOrRefuse(live.sub, actor.userId);
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -2189,35 +2384,19 @@ async function startNewOrgSubscription(
 			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
 		});
 	} catch (e) {
-		await cancelUnrecordedSubscription(sub, fence, mintedOn);
+		// §5.2: closed out, as after a failed gate — void, then cancel stamped `alethia:closeout`, no hold
+		// row (its secret never left the server, so no payment can land on it).
+		await closeOutMintedSubscription(sub, mintedOn);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
-	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
-}
-
-/**
- * Cancels `sub`, which this request minted and whose setup record could not be written, so its secret
- * never left the server. The cancel is a Stripe write, so it renews the lease first (§4.4 rule 1). A
- * lease lost by then — or a renewal that throws — leaves this request a stale holder, and the only writes
- * it may still make are the close-out's (rule 4): void first, cancel only after a proven void.
- */
-async function cancelUnrecordedSubscription(
-	sub: Stripe.Subscription,
-	fence: StripeWriteFence,
-	mintedOn: MintedCustomer,
-): Promise<void> {
-	try {
-		await fence();
-	} catch (e) {
-		console.error(`[billing] the lease was not held before cancelling ${sub.id}; closing it out instead:`, e);
-		await closeOutMintedSubscription(sub, mintedOn);
-		return;
-	}
-	try {
-		await getPurchaseStripe().subscriptions.cancel(sub.id);
-	} catch {
-		// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
-	}
+	return {
+		kind: "intent",
+		clientSecret,
+		subscriptionId: sub.id,
+		customerId,
+		currency,
+		...(copy.notice ? { notice: copy.notice } : {}),
+	};
 }
 
 /**
