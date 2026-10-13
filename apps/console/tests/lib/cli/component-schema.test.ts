@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// The PUBLISHED component-kind schema (#3671) — the document that turns the CLI's
-// `componentKinds` / `singletonKinds` literals (apps/cli/cmd/project_component.go) from a second
-// opinion into a cache.
+// The PUBLISHED component-kind schema (#3671) — the document the CLI fetches for its component
+// vocabulary. It replaced the CLI's `componentKinds` / `singletonKinds` literals, which #4444
+// deleted from apps/cli/cmd/project_component.go with no fallback.
 //
 // The kind census below is a GOLDEN LIST, written out on purpose rather than derived from
 // COMPONENT_KINDS: a test that reads the registry to check the registry passes whatever the
@@ -111,14 +111,15 @@ describe("the published kind census", () => {
 		expect(doc().kinds.map((k) => k.kind)).toEqual([...PUBLISHED_KINDS]);
 	});
 
-	// The drift this lane exists to remove, named rather than implied. `helm_registries` is in the
-	// server registry and is NOT in the Go literal, so `alethia project component kinds` omits a
-	// kind the server will happily author — a fork that has already diverged, not one that might.
-	it("publishes helm_registries, which the CLI's hardcoded list omits", () => {
+	// The drift this document was built to remove, named rather than implied. `helm_registries` is
+	// in the server registry and was NOT in the Go literal, so `alethia project component kinds`
+	// omitted a kind the server would author. The literal is gone (#4444) and the CLI now lists
+	// whatever this document publishes, so this pin is what keeps the kind on that list.
+	it("publishes helm_registries, which the CLI's deleted hardcoded list omitted", () => {
 		expect(doc().kinds.map((k) => k.kind)).toContain("helm_registries");
 	});
 
-	it("publishes the cardinality the CLI hardcodes as singletonKinds", () => {
+	it("publishes the cardinality the CLI reads in place of its deleted singletonKinds literal", () => {
 		const singletons = doc().kinds
 			.filter((k) => k.singleton)
 			.map((k) => k.kind);
