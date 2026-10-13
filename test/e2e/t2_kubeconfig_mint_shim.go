@@ -14,7 +14,9 @@
 //   - The gate mirrors gateMintJob + readMintSpec + recordMintResult: the job exists, this runner holds
 //     it, it is a MINT_KUBECONFIG job, it is executing (CLAIMED/PROCESSING); the request row is the one
 //     THAT job serves, pending, inside its window; a result names that row's mint_id. The status codes
-//     are the console route's (404/403/410/409).
+//     are the console route's (404/403/410/409), in recordMintResult's order, and a lost guarded write
+//     or a refused completion answers what the route answers since #5945 (mintLostRaceRefusal,
+//     mintCompletionRefusal) — the runner's mintStatusError reads each code as a different ending.
 //   - The result lands in ONE transaction with the job's completion through the real
 //     update_job_status, as recordMintResult does.
 //   - A failure reason is stored as the runner sent it, bounded by the wire validator. The console
@@ -39,6 +41,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -102,6 +105,46 @@ func mintRowRefusal(row *mintRequestRow) (int, string) {
 		return http.StatusConflict, "The kubeconfig mint already has a result"
 	}
 	return 0, ""
+}
+
+// mintResultRowRefusal is recordMintResult's answer for the row a result post names, in its order: a
+// missing row, then a mint_id that is not this job's mint, and only then the row's own state. So a
+// result naming another mint is a 403 even when this job's mint has expired or settled.
+func mintResultRowRefusal(row *mintRequestRow, mintID string) (int, string) {
+	switch {
+	case row == nil:
+		return http.StatusNotFound, "Kubeconfig mint not found for this job"
+	case row.ID != mintID:
+		return http.StatusForbidden, "mint_id is not the mint this job serves"
+	}
+	return mintRowRefusal(row)
+}
+
+// mintLostRaceRefusal is the route's lostRaceRefusal: why the guarded UPDATE matched nothing, read from
+// the row as it now stands (nil = gone). A row still pending (the window closed between the head read
+// and the write) or swept to expired is a 410; ready, failed, or deleted (a ready row is deleted on its
+// first read) means another post landed first, a 409.
+func mintLostRaceRefusal(row *mintRequestRow) (int, string) {
+	if row != nil && (row.Status == "pending" || row.Status == "expired") {
+		return http.StatusGone, "The kubeconfig mint's window has closed"
+	}
+	return http.StatusConflict, "The kubeconfig mint already has a result"
+}
+
+// jobNotOwnedSQLState mirrors JOB_NOT_OWNED_SQLSTATE (apps/console/lib/db/pg-error.ts): what
+// update_job_status raises when the job is no longer the calling runner's.
+const jobNotOwnedSQLState = "AL409"
+
+// mintCompletionRefusal is the route's answer when update_job_status fails inside the result
+// transaction. AL409 — the job left this runner between the gate and the write — is a 403, which the
+// runner reads as ownership lost and stops without a terminal post; a 409 there would read as "the mint
+// already has a result" and be followed by a SUCCESS post (#5945). Any other error is a 500.
+func mintCompletionRefusal(err error) (int, string) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == jobNotOwnedSQLState {
+		return http.StatusForbidden, "Job not found or not owned by this runner"
+	}
+	return http.StatusInternalServerError, "Internal Server Error"
 }
 
 // mintStore is the database half of the runner channel, an interface so both handlers — every
@@ -213,7 +256,9 @@ func (cp *ControlPlane) mintRunner(w http.ResponseWriter, r *http.Request) (runn
 }
 
 // gatedMint runs the job gate and the row read shared by both routes, writing the refusal itself.
-func (cp *ControlPlane) gatedMint(w http.ResponseWriter, r *http.Request, runnerID string) (*mintJobGate, *mintRequestRow, bool) {
+// rowRefusal is the route's row check: mintRowRefusal for the spec read, mintResultRowRefusal for the
+// result post.
+func (cp *ControlPlane) gatedMint(w http.ResponseWriter, r *http.Request, runnerID string, rowRefusal func(*mintRequestRow) (int, string)) (*mintJobGate, *mintRequestRow, bool) {
 	jobID := r.PathValue("id")
 	job, err := cp.mintDB().job(r.Context(), jobID)
 	if err != nil {
@@ -229,7 +274,7 @@ func (cp *ControlPlane) gatedMint(w http.ResponseWriter, r *http.Request, runner
 		http.Error(w, "could not read the mint", http.StatusInternalServerError)
 		return nil, nil, false
 	}
-	if code, msg := mintRowRefusal(row); code != 0 {
+	if code, msg := rowRefusal(row); code != 0 {
 		writeJSON(w, code, map[string]any{"error": msg})
 		return nil, nil, false
 	}
@@ -242,7 +287,7 @@ func (cp *ControlPlane) handleGetKubeconfigMint(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	job, row, ok := cp.gatedMint(w, r, runnerID)
+	job, row, ok := cp.gatedMint(w, r, runnerID, mintRowRefusal)
 	if !ok {
 		return
 	}
@@ -292,12 +337,10 @@ func (cp *ControlPlane) handlePostKubeconfigMint(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid kubeconfig mint result"})
 		return
 	}
-	_, row, ok := cp.gatedMint(w, r, runnerID)
+	_, row, ok := cp.gatedMint(w, r, runnerID, func(row *mintRequestRow) (int, string) {
+		return mintResultRowRefusal(row, result.MintID)
+	})
 	if !ok {
-		return
-	}
-	if row.ID != result.MintID {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "mint_id is not the mint this job serves"})
 		return
 	}
 	code, msg := cp.mintDB().land(r.Context(), runnerID, tokenHash, r.PathValue("id"), row.ID, result)
@@ -310,7 +353,9 @@ func (cp *ControlPlane) handlePostKubeconfigMint(w http.ResponseWriter, r *http.
 
 // landMintResult is recordMintResult's transaction: the row moves pending → ready/failed only while it
 // is still pending and inside its window, and the job completes through update_job_status with the
-// runner's own credentials. Nothing is written when either half refuses.
+// runner's own credentials. Nothing is written when either half refuses. A lost UPDATE is named by
+// re-reading the row outside the transaction, as the route does (mintLostRaceRefusal); a refused
+// completion is mintCompletionRefusal.
 func (cp *ControlPlane) landMintResult(ctx context.Context, runnerID, tokenHash, jobID, mintID string, result types.RunnerKubeconfigMintResult) (int, string) {
 	tx, err := cp.pool.Begin(ctx)
 	if err != nil {
@@ -338,14 +383,19 @@ func (cp *ControlPlane) landMintResult(ctx context.Context, runnerID, tokenHash,
 		RETURNING id::text`,
 		string(result.Status), sealed, reason, result.PrivateEndpoint, mintID, jobID).Scan(&moved)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return http.StatusConflict, "The kubeconfig mint already has a result"
+		_ = tx.Rollback(ctx)
+		now, err := cp.KubeconfigMintRow(ctx, mintID)
+		if err != nil {
+			return http.StatusInternalServerError, "Internal Server Error"
+		}
+		return mintLostRaceRefusal(now)
 	}
 	if err != nil {
 		return http.StatusInternalServerError, "Internal Server Error"
 	}
 	if _, err := tx.Exec(ctx, `SELECT public.update_job_status($1::uuid, $2, $3::uuid, $4, $5, NULL::jsonb)`,
 		runnerID, tokenHash, jobID, jobStatus, reason); err != nil {
-		return http.StatusConflict, "Job not found or not owned by this runner"
+		return mintCompletionRefusal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return http.StatusInternalServerError, "Internal Server Error"
