@@ -74,11 +74,6 @@ function asPem(raw: string): string {
 	return raw.includes("-----BEGIN") ? raw : Buffer.from(raw, "base64").toString("utf8");
 }
 
-/** The sha256 of a receipt's canonical bytes — what the anchor signs + what the log records. */
-export function anchorDigest(receipt: SignedReceipt): Buffer {
-	return createHash("sha256").update(canonicalReceiptJson(receipt.receipt), "utf8").digest();
-}
-
 /** The minimal Rekor v1 `LogEntry` shape we consume from a create-entry response (zod-validated
  * because it is untrusted external input). */
 const rekorLogEntrySchema = z.object({
