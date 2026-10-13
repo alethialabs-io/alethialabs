@@ -42,7 +42,11 @@ import {
 	useSetPoolEnabled,
 	useDeletePool,
 } from "@/lib/query/use-fleet-query";
-import { useIsHosted } from "@/lib/stores/use-workspace-store";
+import {
+	useIsHosted,
+	useWorkspaceLoadStatus,
+	useWorkspaceStore,
+} from "@/lib/stores/use-workspace-store";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import type { FleetPool, ProvisionJobType as PublicProvisionJobType } from "@/lib/db/schema";
@@ -62,6 +66,8 @@ export function RunnersClient() {
 	// need the byoRunners entitlement (Pro+) for the runner surface, and never see managed pools.
 	const isHosted = useIsHosted();
 	const canByoRunners = useEntitlement("byoRunners");
+	const workspaceLoad = useWorkspaceLoadStatus();
+	const retryWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 
 	const { data: allJobs = [] } = useJobsQuery();
 	const activeJobs: ActiveJob[] = useMemo(
@@ -229,6 +235,25 @@ export function RunnersClient() {
 	// known (#5864) — `isHosted` reads `false` meanwhile, so the page would be shown to a hosted
 	// tenant who is about to be told it is a paid surface, and the upsell to one who is entitled.
 	// Show the runner column's skeleton instead: nothing gated, either way.
+	//
+	// Unless the load FAILED (#5895): then it is not coming, and a skeleton would wait forever.
+	// Say so and offer the retry — still neither the page nor the upsell, since the answer is
+	// as unknown as before.
+	if (canByoRunners === null && workspaceLoad === "failed") {
+		return (
+			<EmptyState
+				role="alert"
+				icon={<Server />}
+				title="Couldn't load your workspace"
+				description="We couldn't check what this workspace includes, so runners can't be shown yet."
+				action={
+					<Button variant="outline" size="sm" onClick={() => void retryWorkspace()}>
+						Retry
+					</Button>
+				}
+			/>
+		);
+	}
 	if (canByoRunners === null) {
 		return (
 			<div className="min-w-0 space-y-4" aria-busy>
