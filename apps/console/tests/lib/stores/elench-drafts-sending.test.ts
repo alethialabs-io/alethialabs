@@ -868,6 +868,24 @@ describe("D22 / D30 / D31 / D33 listed rows", () => {
 		]);
 	});
 
+	it("D23 › a list answered for an older generation of the SAME scope is dropped by the reducer, whatever it carries", () => {
+		// A → A again: the scope is equal, so `sameScope` admits every row and the generation is the
+		// only thing that can tell this answer is late. The store's own check is bypassed here.
+		const again = reduce(storeWith(), { type: "SCOPE_CHANGE", scope: SCOPE_A }, ENV).state;
+		expect(again.generation).toBe(2);
+		const late: DraftsStoreEvent = {
+			type: "SERVER_ROWS",
+			seq: 5,
+			generation: 1,
+			result: { outcome: "ok", orgId: ORG_A, drafts: [{ row: row(c("stale"), 1), thread: thread({ status: "none" }), threadTitle: null }] },
+			restored: [],
+		};
+		const t = reduce(again, late, ENV);
+		expect(t.state).toBe(again);
+		expect(t.state.entries[keyId(K)]).toBeUndefined();
+		expect(t.effects).toEqual([]);
+	});
+
 	it("property: no SERVER_ROWS removes an entry whose local ≠ null or whose server = null (G29)", () => {
 		const unsaved = entry({ local: c("mine"), server: row(c("x"), 1) });
 		const unseen = { ...newEntry({ ...SCOPE_A, conversationId: "c-2" }, "none") };
