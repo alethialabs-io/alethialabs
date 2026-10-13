@@ -77,7 +77,11 @@
 //
 // Usage:
 //   node scripts/ci/check-pr-scope.mjs --self-test    # hermetic: fixtures + mutation controls
-//   node scripts/ci/check-pr-scope.mjs                # live: reads PR_NUMBER / PR_TITLE / PR_BODY
+//   node scripts/ci/check-pr-scope.mjs                # live: reads PR_NUMBER / PR_TITLE / PR_BODY / PR_BASE
+//
+// A PR whose base is not `dev` is skipped loudly before any `gh` call: only a dev merge closes
+// issues (close-on-dev-merge.yml), so the closing refs of a promotion, a hotfix, or a PR stacked on
+// another feature branch name no unit (#5948).
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -296,6 +300,52 @@ function liveChangedFiles(pr) {
 	return changedFilesForPR(pr, gh);
 }
 
+/**
+ * Why this run measures nothing because of the PR's BASE branch, or null when it measures as usual.
+ *
+ * The check reads a PR's closing refs because merging into `dev` closes those issues —
+ * `.github/workflows/close-on-dev-merge.yml` fires on `pull_request: closed, branches: [dev]` and
+ * nothing else. A PR into any other base closes nothing — `staging` or `main` (a promotion, or a
+ * hotfix), and equally a PR stacked on another `feat/*` branch — so holding its diff against the
+ * scope of an issue its body happens to name asks a question that does not apply: promotion #5654
+ * failed this step seven times for that reason (#5948). A stacked PR is checked when the branch it
+ * lands in opens its own PR into `dev`, whose diff then contains the stacked work.
+ *
+ * An EMPTY base means the caller did not pass one, and is treated as `dev`, so a caller that has not
+ * been updated keeps the old behaviour rather than silently measuring nothing.
+ *
+ * @param {string} base the PR's base ref (`github.event.pull_request.base.ref`), possibly empty
+ * @returns {string | null} the loud skip line, or null when the scope check applies
+ */
+export function baseSkipReason(base) {
+	const b = base.trim();
+	if (b === "" || b === "dev") return null;
+	return (
+		`check-pr-scope: PR base is \`${b}\`, not \`dev\` — measured nothing. ` +
+		`close-on-dev-merge.yml closes issues only when a PR merges into dev, so a PR into \`${b}\` ` +
+		`closes nothing and its "closes #N" refs name no unit whose scope applies. Nothing claimed.`
+	);
+}
+
+/**
+ * Decides what a live run does before any `gh` call: skip (no PR, or a non-dev base) or check the
+ * closing refs found in the title and body. `main()` acts on exactly this result, so the self-test
+ * drives the same decision with no network.
+ *
+ * The keywords are read through a thunk so a skipped run never reads `board-pr.sh` at all: a skip
+ * must not be able to fail on a file it has no use for.
+ *
+ * @param {{ pr: string, base: string, title: string, body: string, readKeywords: () => string[] }} input
+ * @returns {{ action: "skip-no-pr" } | { action: "skip-base", reason: string } | { action: "check", refs: number[] }}
+ * @throws whatever `readKeywords` throws, on the check path only
+ */
+export function planRun({ pr, base, title, body, readKeywords }) {
+	if (!pr.trim()) return { action: "skip-no-pr" };
+	const reason = baseSkipReason(base);
+	if (reason !== null) return { action: "skip-base", reason };
+	return { action: "check", refs: closingRefs(`${title}\n${body}`, readKeywords()) };
+}
+
 function main() {
 	const argv = process.argv.slice(2);
 	if (argv.includes("--self-test")) process.exit(selfTest() ? 0 : 1);
@@ -307,25 +357,35 @@ function main() {
 	const pr = (process.env.PR_NUMBER ?? "").trim();
 	const title = process.env.PR_TITLE ?? "";
 	const body = process.env.PR_BODY ?? "";
+	const base = process.env.PR_BASE ?? "";
 
-	// NOT a PR build. Skipped loudly: silence here is indistinguishable from a pass.
-	if (!pr) {
+	let plan;
+	try {
+		plan = planRun({
+			pr,
+			base,
+			title,
+			body,
+			readKeywords: () => closingKeywords(readFileSync(resolve(ROOT, BOARD_PR), "utf8")),
+		});
+	} catch (err) {
+		console.error(`::error::check-pr-scope: ${err instanceof Error ? err.message : String(err)}`);
+		process.exit(1);
+	}
+	// NOT a PR build, or a PR into a branch whose merge closes nothing. Skipped loudly: silence here
+	// is indistinguishable from a pass.
+	if (plan.action === "skip-no-pr") {
 		console.log(
 			"check-pr-scope: no PR_NUMBER in the environment — this runs on `pull_request` only. " +
 				"Nothing measured, nothing claimed.",
 		);
 		process.exit(0);
 	}
-
-	let keywords;
-	try {
-		keywords = closingKeywords(readFileSync(resolve(ROOT, BOARD_PR), "utf8"));
-	} catch (err) {
-		console.error(`::error::check-pr-scope: ${err instanceof Error ? err.message : String(err)}`);
-		process.exit(1);
+	if (plan.action === "skip-base") {
+		console.log(plan.reason);
+		process.exit(0);
 	}
-
-	const refs = closingRefs(`${title}\n${body}`, keywords);
+	const refs = plan.refs;
 	let changedFiles = [];
 	const scopes = new Map();
 	let board = [];
@@ -477,6 +537,46 @@ function selfTest() {
 	);
 	ok("#84 is not #842", closingRefs("Closes #842", KW).join() === "842");
 	ok("two refs are both found, ascending", closingRefs("Closes #9 and fixes #4", KW).join() === "4,9");
+
+	// ── the base branch: only a dev merge closes issues (#5948) ──
+	//
+	// Promotion #5654 (base staging) failed seven times on a "closes #5621" in its body. The fixture
+	// is that shape; the mutation control is the SAME input with a dev base, which must still reach
+	// the scope check — without it, a planRun wired to skip everything would pass the first case.
+	const promo = { pr: "5654", title: "promote dev → staging", body: "closes #5621" };
+	const kwThunk = () => KW;
+	const onStaging = planRun({ ...promo, base: "staging", readKeywords: kwThunk });
+	ok(
+		"a staging base with `closes #N` is skipped, not an error",
+		onStaging.action === "skip-base",
+		`got ${onStaging.action}`,
+	);
+	ok(
+		"...and the skip never reads the keywords, so it cannot fail on them",
+		planRun({
+			...promo,
+			base: "main",
+			readKeywords: () => {
+				throw new Error("read on a skip path");
+			},
+		}).action === "skip-base",
+	);
+	const onDev = planRun({ ...promo, base: "dev", readKeywords: kwThunk });
+	ok(
+		"MUTATION: the same input with a dev base still reaches the scope check",
+		onDev.action === "check" && onDev.refs.join() === "5621",
+		`got ${onDev.action}`,
+	);
+	const noBase = planRun({ ...promo, base: "", readKeywords: kwThunk });
+	ok(
+		"...and so does an EMPTY base — a caller that passes none keeps the old behaviour",
+		noBase.action === "check" && noBase.refs.join() === "5621",
+		`got ${noBase.action}`,
+	);
+	ok(
+		"no PR number is skip-no-pr whatever the base",
+		planRun({ ...promo, pr: " ", base: "dev", readKeywords: kwThunk }).action === "skip-no-pr",
+	);
 
 	// ── the decision ──
 	ok(

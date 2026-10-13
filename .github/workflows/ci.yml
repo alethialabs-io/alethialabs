@@ -1827,7 +1827,19 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # A PR into staging/main closes nothing (close-on-dev-merge.yml fires on dev only), so the
+          # script measures nothing for it and says so (#5948).
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
         run: node scripts/ci/check-pr-scope.mjs
+      # Every go.work module gets Dependabot version updates. test/e2e replaces packages/core, so a
+      # core bump that skips it leaves test/e2e/go.mod untidy and the GOWORK=off tidy check red
+      # until someone hand-pushes a tidy (#5948). Hermetic: reads two files, no network.
+      - name: Dependabot gomod covers every go.work module (self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-dependabot-gomod.mjs --self-test
+      - name: ...and every go.work module is in the gomod directories
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-dependabot-gomod.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
@@ -2876,6 +2888,19 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # The Go matrix job's packages/core pins: helm v3.21.4 and tofu 1.9.0. This job runs
+      # `go test ./...` over packages/core and apps/runner, so any test that treats a missing binary
+      # as a CI failure fails here too: without tofu, TestNodePoolContract_ReferenceRunsEveryCase
+      # t.Fatal'd on every main push and the Go badge was never published (#5948). Unconditional,
+      # because this job always covers both modules. One helm serves both: the matrix job gives
+      # apps/runner helm v3.16.3, so here the runner suites run against v3.21.4, a pairing no
+      # per-PR job exercises. Keep these pins in step with the matrix job's packages/core leg.
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.21.4
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: "1.9.0"
       - name: Cover each Go module
         run: |
           for m in apps/cli apps/runner packages/core; do
