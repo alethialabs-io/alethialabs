@@ -62,8 +62,11 @@ vi.mock("@/app/server/actions/agent", () => ({
 }));
 vi.mock("@/app/server/actions/billing", () => ({ getAiUsageSummary: vi.fn(async () => null) }));
 vi.mock("@/app/server/actions/artifacts", () => ({
-	openArtifactOnGrid: vi.fn(),
+	openArtifactOnGrid: vi.fn(async () => undefined),
 	syncArtifactWidgets: vi.fn(),
+	getArtifact: vi.fn(async (id: string) =>
+		id === "00000000-0000-4000-8000-0000000000c0" ? { id, name: "Cost board" } : null,
+	),
 }));
 vi.mock("@/app/server/actions/agent-feedback", () => ({
 	getThreadFeedback: vi.fn(async () => ({})),
@@ -75,7 +78,15 @@ vi.mock("@/app/server/actions/projects", () => ({
 	tryPlanProject: vi.fn(),
 	tryProvisionProject: vi.fn(),
 }));
-vi.mock("@/components/agent/agent-artifact-gallery", () => ({ AgentArtifactGallery: () => null }));
+// The library's own list is not under test: its "Open in new chat" is one button that calls the
+// conversation's handler for one artifact, as the viewer's does.
+vi.mock("@/components/agent/agent-artifact-gallery", () => ({
+	AgentArtifactGallery: (p: { onOpenInNewChat: (id: string, name: string) => Promise<void> }) => (
+		<button type="button" onClick={() => void p.onOpenInNewChat("00000000-0000-4000-8000-0000000000c0", "Cost board")}>
+			Open artifact in new chat
+		</button>
+	),
+}));
 vi.mock("@/components/agent/agent-knowledge-panel", () => ({ AgentKnowledgePanel: () => null }));
 vi.mock("@/components/agent/artifact-panel", () => ({ ArtifactPanel: () => null }));
 vi.mock("@/components/agent/widgets/widget-grid", () => ({ WidgetGrid: () => null }));
@@ -102,7 +113,8 @@ vi.mock("@/components/agent/elench/mention-typeahead", () => ({
 }));
 vi.mock("@/components/agent/elench/suggestion-carousel", () => ({ SuggestionCarousel: () => null }));
 
-import { getThread } from "@/app/server/actions/agent";
+import { createThread, getThread } from "@/app/server/actions/agent";
+import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import { createDraftsTab, type DraftsTab, ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurface } from "@/components/agent/elench/elench-surface";
 import type { DraftKey } from "@/lib/stores/elench-drafts/types";
@@ -644,10 +656,47 @@ describe("S10 › the Unsent group", () => {
 		again.unmount();
 	});
 
-	// AC14's artifact draft (D3: `OPEN_ARTIFACT_NEW` and the composer's artifact chip) is a gap in
-	// ADR 0001 §14: no slice's scope holds `openArtifactInNewChat` or the chip. Ruled out of slice 10
-	// (S10 lands at 13/14); the follow-up slice #5848 builds it and turns this into a test.
-	it.todo("artifact new chat creates no thread; the chip survives a reload; the first send places it");
+	it("artifact new chat creates no thread; the chip survives a reload; the first send places it", async () => {
+		const ART = "00000000-0000-4000-8000-0000000000c0";
+		storedThread(crypto.randomUUID(), "older thread");
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		const before = useElenchStore.getState().conversationId;
+		act(() => useElenchStore.getState().setMainView("artifacts"));
+		await flush();
+		act(() => screen.getByRole("button", { name: "Open artifact in new chat" }).click());
+		await flush();
+		// D3: a new conversation whose draft holds the placement, back on the chat, with no thread.
+		const k = shown(tab);
+		expect(k.conversationId).not.toBe(before);
+		expect(useElenchStore.getState().mainView).toBe("chat");
+		expect(useElenchStore.getState().threadId).toBeNull();
+		expect(createThread).not.toHaveBeenCalled();
+		expect(server.threads.has(k.conversationId)).toBe(false);
+		expect(openArtifactOnGrid).not.toHaveBeenCalled();
+		const chips = screen.getByRole("list", { name: "Attached artifacts" });
+		expect(within(chips).getByRole("listitem").textContent).toBe("Cost board");
+		expect(box()).toBe("");
+		await flush(1_000);
+		expect(server.row(k)?.content.artifacts).toEqual([ART]);
+		expect(unsentRows().map((r) => r.label)).toEqual(["New chat with an artifact"]);
+		// A reload (and the reap, which has no thread row to remove) keeps it: the chip is read back from
+		// the row, its name from the artifact.
+		const again = await reload(tab, unmount);
+		expect(useElenchStore.getState().conversationId).toBe(k.conversationId);
+		await flush();
+		const kept = screen.getByRole("list", { name: "Attached artifacts" });
+		expect(within(kept).getByRole("listitem").textContent).toBe("Cost board");
+		// The first send creates the thread (D12) and places the artifact on it.
+		type("what does this cost?");
+		await enter();
+		expect(userTurns(k.conversationId).map(textOf)).toEqual(["what does this cost?"]);
+		expect(openArtifactOnGrid).toHaveBeenCalledWith(ART, k.conversationId);
+		expect(openArtifactOnGrid).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("list", { name: "Attached artifacts" })).toBeNull();
+		expect(server.row(k)?.content.artifacts ?? []).toEqual([]);
+		again.unmount();
+	});
 
 	it("the panel's switcher lists the same entries", async () => {
 		const tab = newTab(ORG_A);
