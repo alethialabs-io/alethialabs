@@ -32,7 +32,7 @@ function SheetPortal({
   return <SheetPrimitive.Portal {...props} />;
 }
 
-/** Radix `Overlay` → base-ui `Backdrop`; export name kept. */
+/** The scrim behind a sheet (Radix `Overlay` → base-ui `Backdrop`; export name kept). */
 function SheetOverlay({
   className,
   ...props
@@ -49,20 +49,40 @@ function SheetOverlay({
   );
 }
 
+/**
+ * Props forwarded to the sheet's overlay (the scrim). Opt-in and empty by default, so every
+ * existing sheet renders exactly the overlay it always did.
+ *
+ * The case it exists for is a NESTED sheet — one whose `Sheet` root mounts inside another open
+ * dialog. base-ui then marks the dialog `nested` and renders its backdrop only when
+ * `forceRender` is set (`DialogBackdrop`: `enabled: forceRender || !nested`), so without this a
+ * nested sheet has no scrim at all: nothing dims, and nothing outside the panel reads as the
+ * place to tap to dismiss (#5706). A nested caller passes `forceRender` and lifts the overlay to
+ * `--z-overlay-nested` with its popup.
+ */
+type SheetOverlayProps = Omit<
+  React.ComponentProps<typeof SheetPrimitive.Backdrop>,
+  "children"
+>;
+
+/** The sheet panel, portalled, with its overlay; `overlayProps` reaches the overlay only. */
 function SheetContent({
   className,
   children,
   side = "right",
   showCloseButton = true,
+  overlayProps,
   ...props
 }: Omit<React.ComponentProps<typeof SheetPrimitive.Popup>, "children"> & {
   side?: "top" | "right" | "bottom" | "left";
   showCloseButton?: boolean;
   children?: React.ReactNode;
+  /** Forwarded to the overlay — see {@link SheetOverlayProps}. */
+  overlayProps?: SheetOverlayProps;
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      <SheetOverlay {...overlayProps} />
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         className={cn(
