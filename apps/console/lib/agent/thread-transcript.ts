@@ -72,14 +72,6 @@ export function transcriptRows(tx: Tx, owner: string): TranscriptRows {
 				.returning({ revision: agentThreads.revision });
 			return row?.revision ?? null;
 		},
-		async find(id) {
-			const [row] = await tx
-				.select({ status: agentThreads.status })
-				.from(agentThreads)
-				.where(and(eq(agentThreads.id, id), eq(agentThreads.user_id, owner)))
-				.limit(1);
-			return row ?? null;
-		},
 		async findRecovered(deletedId, kind, projectId, firstMessageId) {
 			const [row] = await tx
 				.select({ id: agentThreads.id })
