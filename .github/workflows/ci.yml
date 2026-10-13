@@ -2523,6 +2523,78 @@ jobs:
         with:
           version: v2.13.2
           working-directory: ${{ matrix.module }}
+      # The step above lints the DEFAULT build of each matrix module and nothing else (#5967). A
+      # file behind a `//go:build` tag is not in that build, so it was never linted at all — and
+      # test/e2e, the fourth Go module, was not in the matrix either. When this landed, the e2e_t2
+      # build alone carried 23 findings no check could see.
+      #
+      # packages/core's two tags (e2e_local, integration) are purely additive, so one build with
+      # both compiles every file either one selects.
+      - name: golangci-lint — packages/core tagged builds (e2e_local, integration)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: packages/core
+          args: --build-tags=e2e_local,integration
+      # The `!cancelled()` on each: one red lint step must not hide the next build's findings.
+      #
+      # test/e2e is outside go.work (GOWORK=off, as its vet step above). It is linted once per tag
+      # and once untagged — the untagged build is a different file set, because three pure tests
+      # carry `!e2e_t1 && !e2e_t2 && !e2e_b6`.
+      #
+      # `unused` is OFF in those four builds, and that is the only linter that is. A helper defined
+      # in an untagged file and called only from an e2e_t2 file is unused in every build but
+      # e2e_t2's, and runPromotionGateShim (called only under e2e_b6) is unused under e2e_t2: in a
+      # single-tag build `unused` reports tag-only symbols, not dead ones (55 under e2e_t1 alone).
+      # It runs instead in the UNION build below, which compiles every tagged file at once and so
+      # is the only build where "no caller" means no caller. Its stated boundary: a symbol defined
+      # only in one of the three `!e2e_*` files is outside the union, and `unused` cannot see it.
+      - name: golangci-lint — test/e2e untagged (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --disable=unused
+      - name: golangci-lint — test/e2e e2e_t1 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t1 --disable=unused
+      - name: golangci-lint — test/e2e e2e_t2 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t2 --disable=unused
+      - name: golangci-lint — test/e2e e2e_b6 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_b6 --disable=unused
+      - name: golangci-lint — test/e2e union of tags (e2e_t1,e2e_t2,e2e_b6 — the unused gate)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t1,e2e_t2,e2e_b6
 
   coverage-determinism:
     name: Coverage determinism probe (manual)

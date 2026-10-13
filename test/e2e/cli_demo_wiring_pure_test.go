@@ -25,6 +25,7 @@ import (
 
 func TestCLIDemoDimensionCannotSilentlyProveNothing(t *testing.T) {
 	fset := token.NewFileSet()
+	//nolint:staticcheck // SA1019: ParseDir ignores build tags, which is the point: the scan must read every tagged file too.
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
 		return strings.HasSuffix(fi.Name(), ".go")
 	}, parser.ParseComments)

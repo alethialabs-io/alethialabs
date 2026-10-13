@@ -958,7 +958,7 @@ const (
 )
 
 // templatesShapeWhy is the sizing argument for cluster_json.templates.hetzner.json, stated where
-// its numbers live.
+// its numbers live. TestTemplatesShapeFixture prints it when the fixture leaves cpx32.
 //
 // cpx32 × 2 WORKERS (the control plane takes the same type on its own server): 8 vCPU / 16 GiB of
 // workers for ~4 vCPU / ~7.5 GiB of requests. The cheaper candidates, and why each loses:

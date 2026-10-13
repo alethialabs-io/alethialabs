@@ -447,7 +447,7 @@ func TestTemplatesShapeFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(shape.InstanceTypes) != 1 || shape.InstanceTypes[0] != "cpx32" {
-		t.Errorf("instance_types = %v — the sizing argument (templatesShapeWhy) is for cpx32", shape.InstanceTypes)
+		t.Errorf("instance_types = %v — the sizing argument is for cpx32: %s", shape.InstanceTypes, templatesShapeWhy)
 	}
 	if shape.Min != shape.Desired || shape.Max != shape.Desired {
 		t.Errorf("min/max/desired %d/%d/%d — Hetzner reads worker_count from desired; keep them equal so the shape is what is bought", shape.Min, shape.Max, shape.Desired)
