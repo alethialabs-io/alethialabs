@@ -292,9 +292,12 @@ func (w *Runner) executeMintKubeconfig(ctx context.Context, job *Job, provider s
 	return nil
 }
 
-// endMintOnRefusal turns a console answer into the job's ending. A 409 (the mint already has a result)
-// ends cleanly; a 410 (window closed) and a 404 (mint gone) end with their fixed sentinel; a 403 keeps
-// its ErrJobNotOwned wrap so the dispatcher posts nothing; anything else ends with fallback.
+// endMintOnRefusal turns a console answer into the job's ending, for the statuses the route emits
+// (listed above the refusal sentinels in kubeconfig_mint_api.go). A 409 means only that the mint already
+// has a result, so it ends cleanly; a 410 (window closed) and a 404 (job or mint row absent) end with
+// their fixed sentinel; a 403 — including the job leaving this runner between the console's gate and
+// its write — keeps its ErrJobNotOwned wrap so the dispatcher posts nothing; anything else (a 401, a
+// 400, a 500, the network) ends with fallback.
 func (w *Runner) endMintOnRefusal(olog *slog.Logger, stage string, err error, fallback error) error {
 	switch {
 	case errors.Is(err, errMintSettled):
