@@ -512,6 +512,19 @@ describe("listDrafts (§6.4, D22, D23, D30)", () => {
 		expect(h.store.view.getState().drafts.pageOrg).toBeNull();
 	});
 
+	it("a late answer for an older scope never becomes the next list's org hint (D23, the store's check)", async () => {
+		// The reducer drops the late rows on its own; what only the store's check guards is the state it
+		// keeps OUTSIDE the reducer: `lastListedOrg`, which the next call sends as `orgHint`.
+		const h = setup();
+		h.store.load(SCOPE_A);
+		h.store.dispatch({ type: "SCOPE_CHANGE", scope: SCOPE_B });
+		h.list.calls[0]?.resolve({ outcome: "ok", orgId: ORG_A, drafts: [] });
+		await flush();
+		h.store.dispatch({ type: "SCOPE_CHANGE", scope: SCOPE_A });
+		expect(h.list.calls).toHaveLength(3);
+		expect(h.list.calls[2]?.input).toEqual({ projectId: null });
+	});
+
 	it("polls every 10 s while a row is being sent from another tab (D30)", async () => {
 		const h = setup();
 		const sending = row("frozen", 4, {
