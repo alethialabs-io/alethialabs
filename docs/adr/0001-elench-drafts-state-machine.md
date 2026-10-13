@@ -8,6 +8,9 @@
 `sessionStorage` store) and the draft store reverted from #5423 (head 2c1314267) · **Consumed by:**
 ADR 0003 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`, #5548, issue #5515), revision 5.1
 
+**Amendment (2026-10-13, #5848).** §14 gains slice 12, the artifact "Open in new chat" draft (D3, AC14):
+no earlier slice's scope held `openArtifactInNewChat` or the composer's artifact chip.
+
 **Amendment (2026-10-08, as shipped in #5724).** §4.1 only: `contentToEditor` writes the gaps
 with its own split on `\n` and `\t`, not Lexical's `insertRawText`; and a mention's `id` and `label`
 must be normalized like the text.
@@ -1703,6 +1706,7 @@ dependencies** (ADR 0003's slices are "0003/<n>") are stated identically in ADR 
 | 9 | Composer and conversation on the store, the drafts root, the mount points | `components/agent/elench/elench-composer.tsx`, `components/agent/elench/use-elench-send.ts`, `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/elench-surface.tsx`, `components/agent/elench/elench-drafts-root.tsx`, `components/agent/elench/draft-status/slots.tsx`, `components/shell/app-shell.tsx`, `lib/stores/use-elench-store.ts`, `tests/components/elench-drafts-surface.test.tsx`, `tests/components/elench-composer-limit.test.tsx`, `tests/components/elench-composer-submit.test.tsx`, `tests/components/use-elench-send.test.tsx`, `tests/components/elench-conversation-retry.test.tsx`, `tests/components/agent-turn-refusal.test.tsx` | 8, **0003/6** (same files; its revision setter and `onTurnRefused`) | no | no |
 | 10 | Threads, the rail's Unsent group and the delete confirm (`class:ui`, draft) | `components/agent/elench/use-elench-threads.ts`, `components/agent/thread-rail.tsx`, `components/agent/elench/elench-modal.tsx`, `components/agent/elench/elench-conversation-switcher.tsx`, `tests/components/elench-drafts-threads.test.tsx`, `tests/components/use-elench-threads.test.tsx` | 9 | no | no |
 | 11 | Footer status, bars and notices (`class:ui`, draft) | `components/agent/elench/draft-status/**`, `components/shell/sidebar-profile.tsx`, `tests/components/elench-draft-notices.test.tsx` | 10 (and 9's mount points) | no | no |
+| 12 | The artifact "Open in new chat" draft (`class:ui`, draft) | `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/elench-composer.tsx`, `components/agent/elench/draft-artifact-chips.tsx`, `tests/components/elench-drafts-threads.test.tsx` | 10, 11 (same conversation and composer) | no | no |
 
 **Cross-ADR, the other direction:** 0003/6 is blocked by slices 4 and 7b here; 0003/9 is blocked by
 slices 7b and 9 here.
@@ -1782,6 +1786,13 @@ slices 7b and 9 here.
     is filed only after slice 9 merges, because `draft-status/**` contains slice 9's `slots.tsx`
     (an open issue's scope may not name a file an in-flight PR touches). Opens as a draft PR; the
     maintainer marks it ready.
+12. "Open in new chat" from an artifact dispatches `OPEN_ARTIFACT_NEW` (D3) for a freshly minted
+    conversation: a draft row with the artifact in `artifacts` and no thread row, so the reap of
+    empty threads has nothing to remove. The composer shows each pending artifact as a chip above
+    the box, named from the artifact, and the chip comes back with the draft after a reload. The
+    first send creates the thread (D12) and places the artifact on its grid. S10's `artifact new
+    chat creates no thread; the chip survives a reload; the first send places it` passes (AC14).
+    Opens as a draft PR; the maintainer marks it ready.
 
 Slices 1 (after 0003/1) and 2 run in parallel. After 4, slices 5 and 6 run in parallel, and 7a can
-start once 3 is on dev. 9, 10 and 11 are serial.
+start once 3 is on dev. 9, 10, 11 and 12 are serial.

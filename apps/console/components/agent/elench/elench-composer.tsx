@@ -24,6 +24,7 @@ import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { EMPTY_CONTENT, shownContent } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type { DraftEntry } from "@/lib/stores/elench-drafts/types";
 import { cn } from "@repo/ui/utils";
+import { DraftArtifactChips } from "./draft-artifact-chips";
 import { DraftBarSlot, DraftFooterSlot } from "./draft-status/slots";
 import { contentToEditor, editorToContent } from "./draft-editor";
 import {
@@ -59,7 +60,8 @@ const RESEED_TAG = "elench-draft-reseed";
  * Enter is `SUBMIT` (D9 / D10): the store claims exactly what the box shows, trims it and sends it,
  * and a refused or failed send puts the words back here. The box is read-only while the claim is
  * pending (one round trip) and while another tab or device is sending the same draft (D30).
- * Rendered inside a conversation, which provides the draft; without one it is read-only.
+ * The artifacts the draft will place when it is sent (an "Open in new chat", D3) show as chips above
+ * the text. Rendered inside a conversation, which provides the draft; without one it is read-only.
  */
 export function ElenchComposer(props: {
 	/** Abort the in-flight stream — wired to the Square button while generating. */
@@ -257,6 +259,7 @@ function ComposerBody({
 		<div ref={boxRef} className="relative">
 			{draft !== null && <DraftBarSlot draftKey={draft.key} />}
 			<div className="border border-border bg-background shadow-sm focus-within:ring-3 focus-within:ring-ring/25">
+				<DraftArtifactChips artifactIds={shown.artifacts} />
 				<div className="relative">
 					<PlainTextPlugin
 						contentEditable={
