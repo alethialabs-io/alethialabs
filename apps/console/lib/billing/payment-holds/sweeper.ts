@@ -25,9 +25,10 @@
 // at once, under the same lease (`relinkAdoptedSetup`): the visit here, the create-a-team purchase (its
 // hold pass and its sweep) and `payment-holds release` all call it. The core (`linkSetupToOrg`) lives in this file because
 // the sweeper is its caller with no session, and the session's link (app/server/actions/billing.ts)
-// runs the same function. A setup with no org stays open for the creator's resume. A setup whose org is
-// recorded but not usable (gone, or the creator no longer in it) is alerted on and left open. This path
-// only READS membership: it never adds anyone to an org.
+// runs the same function. A setup with no org stays open for the creator's resume — and that includes a
+// setup whose team was DELETED: `created_org_id` is `ON DELETE SET NULL` and the marker goes with the org
+// row, so it reads as no org. A setup whose team exists but whose creator is no longer an active member
+// of it is alerted on and left open. This path only READS membership: it never adds anyone to an org.
 //
 // Booted from instrumentation.ts every 5 minutes (`startPaymentHoldSweeper`, the `registerLoop` shape),
 // with the optional twin route app/api/internal/payment-holds/sweep behind ALETHIA_CRON_SECRET, and
@@ -555,9 +556,11 @@ function isAdopted(hold: PaymentHoldRow): boolean {
 /**
  * The org a sessionless re-link may link `row` to, read-only: by `created_org_id`, else by the org whose
  * server-stamped marker names the subscription and the creator (`findSetupOrg`'s two ways, without its
- * membership repair). `none`: no org was ever made for it, so the setup waits for the creator's resume.
- * `unusable`: an org is recorded, but it no longer exists, or the creator is not an ACTIVE member of it
- * (removed, suspended, or the org has no members at all) — nothing here adds them.
+ * membership repair). `none`: no org names the setup — none was made, or it was deleted (deleting the
+ * team nulls `created_org_id` and removes the marker with the org row) — so the setup waits for the
+ * creator's resume. `unusable`: the org exists, but the creator is not an ACTIVE member of it (removed,
+ * suspended, or the org has no members at all) — nothing here adds them; or `created_org_id` named an org
+ * that was gone by the next read, which only a deletion racing this read produces.
  */
 async function relinkOrgOf(
 	row: PendingOrgSetupRow,
@@ -593,8 +596,8 @@ async function relinkOrgOf(
 /**
  * §5.6 "When a hold ends", for an `adopted` hold under its payer's lease: the payer's open setup for the
  * hold's subscription is re-linked (`relinkSetup`) to its org (`relinkOrgOf`, read-only). With no open
- * setup, or no org ever made for it, nothing runs: such a setup stays open for the creator's resume. An
- * org recorded but unusable runs no core either: the operator is alerted with X as the subject, and the
+ * setup, or no org naming it (none made, or deleted), nothing runs: such a setup stays open for the
+ * creator's resume, and the sweeper owes its Q3 email. An org the creator cannot act in runs no core either: the operator is alerted with X as the subject, and the
  * setup stays open (`not_linked`). Called by the visit here, the create-a-team purchase and `payment-holds
  * release`.
  */

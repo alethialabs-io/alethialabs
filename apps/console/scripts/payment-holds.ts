@@ -276,7 +276,7 @@ export async function releaseHoldCommand(
 				const read = "error" in live ? "could not be read" : `reads ${live.sub.kind}`;
 				return refuse(
 					print,
-					`the subscription ${read}, and an open setup names it${relinked?.kind === "no_org" ? " with no team yet" : ""}. Releasing would close that setup and hide a subscription that may still go live. Cancel it in Stripe first (refund it if it was paid); the machine then settles the hold.`,
+					`the subscription ${read}, and an open setup names it${relinked?.kind === "no_org" ? " with no team (none was made, or it was deleted)" : ""}. Releasing would close that setup and hide a subscription that may still go live. Cancel it in Stripe first (refund it if it was paid); the machine then settles the hold.`,
 				);
 			}
 		}

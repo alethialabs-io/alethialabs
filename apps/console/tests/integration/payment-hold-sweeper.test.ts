@@ -815,6 +815,23 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /no longer an active member/.test(c[0].detail))).toBe(true);
 	});
 
+	it("a team deleted before the visit reads as no org (created_org_id is ON DELETE SET NULL): the setup stays open and the Q3 email is owed", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		const h = await hold(payer, sub, { state: "needs_operator" });
+		await getServiceDb().delete(organization).where(eq(organization.id, orgId));
+
+		await tick(payer, stripe);
+		expect(await read(h.id)).toMatchObject({ release_reason: "adopted" });
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ created_org_id: null, closed_at: null, linked_at: null });
+		expect(deliver.mock.calls.map((c) => [c[0].id, c[1]])).toContainEqual([h.id, "released:adopted"]);
+	});
+
 	it("advisory 6: a team with NO members is never repaired by the sweeper — no member row is written, no link, an alert", async () => {
 		const stripe = new FakeStripe();
 		const payer = await newUser();

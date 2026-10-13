@@ -8,7 +8,7 @@
 // active org — never a client-supplied org id. Stripe then drives the
 // organization_billing record through the webhook; entitlements follow.
 
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, gte, ne, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
@@ -159,6 +159,7 @@ import type {
 	InvoiceStatus,
 } from "@/lib/db/schema/enums";
 import {
+	alertDeliveries,
 	type Invoice,
 	member,
 	organization,
@@ -2738,12 +2739,16 @@ async function refuseHeldLink(userId: string, subscriptionId: string, hold: Paym
  *     X): the §5.5 refund clause, and no alert. That release read every covering refund `succeeded`.
  *   - Otherwise the payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved)
  *     is the "not charged" clause and no alert; anything else — money may have moved, or the read failed
- *     — is the "contact support" clause and an alert with X as the subject, on every such refusal. An
- *     earlier reader that closed this setup read the payments at ITS moment; money can move on a
- *     cancelled X's open invoice after that (a stale tab), and the webhook opens no hold for it, so an
- *     earlier close is no reason to stay quiet now. The alert rule's throttle collapses repeats for X.
- * It refunds nothing: only a hold may refund (I3). The clause claims an alert only when this call's
- * reached a channel (I8).
+ *     — is the "contact support" clause and an alert with X as the subject, UNLESS an alert about X has
+ *     already reached a channel since X ended or its setup closed (`alertedAboutSince`). An earlier
+ *     close is no reason by itself to stay quiet: the closer reads the payments at ITS moment, money can
+ *     move on a cancelled X's open invoice later (a stale tab), and the webhook opens no hold for it. So
+ *     a close that alerted nothing is followed by this alert, and a retried refusal after a delivered
+ *     alert is not — whatever the alert rule's throttle is (its default is none). An alert the closer did
+ *     deliver also silences this one, even when money moved after it: nothing in this scope records
+ *     what the closer's read saw, so that change cannot be told from a repeat.
+ * It refunds nothing: only a hold may refund (I3). The clause claims an alert only when one reached a
+ * channel — this call's, or the delivered one that silenced it (I8).
  */
 async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
 	const released = await latestReleasedHoldOn(sub.id);
@@ -2761,7 +2766,9 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 	if (refunded) return { kind: "refused", clause: LINK_REFUSED_REFUNDED };
 	if (planState === "not_charged") return { kind: "refused", clause: LINK_REFUSED_NOT_CHARGED };
 	const record = closed ?? (await pendingOrgSetupFor(userId, sub.id));
-	const alerted = await alertPaymentNeedsSupport({
+	const endedAt = typeof sub.ended_at === "number" ? new Date(sub.ended_at * 1000) : null;
+	const already = await alertedAboutSince(sub.id, record?.closed_at ?? endedAt);
+	const alerted = already || await alertPaymentNeedsSupport({
 		subscriptionId: sub.id,
 		customerId: subscriptionCustomerId(sub),
 		paymentIntentId: null,
@@ -2772,6 +2779,28 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 		kind: "refused",
 		clause: `${LINK_REFUSED_UNCONFIRMED}${alerted ? LINK_REFUSED_ALERT_RAISED : ""}${LINK_REFUSED_FREE_PLAN}`,
 	};
+}
+
+/**
+ * Whether an operator alert about subscription `subscriptionId` (`system.platform.payment_needs_support`,
+ * `resource_id` = X) has reached a channel at or after `since` — or ever, when `since` is null: a
+ * delivery row exists, not dead. A delivery row is written only for an alert routed to a channel, so an
+ * alert that reached none never silences a later one.
+ */
+async function alertedAboutSince(subscriptionId: string, since: Date | null): Promise<boolean> {
+	const [hit] = await getServiceDb()
+		.select({ id: alertDeliveries.id })
+		.from(alertDeliveries)
+		.where(
+			and(
+				eq(alertDeliveries.event_key, OPERATOR_ALERT_EVENT),
+				sql`${alertDeliveries.context}->>'resource_id' = ${subscriptionId}`,
+				ne(alertDeliveries.status, "dead"),
+				since ? gte(alertDeliveries.created_at, since) : undefined,
+			),
+		)
+		.limit(1);
+	return hit !== undefined;
 }
 
 /**

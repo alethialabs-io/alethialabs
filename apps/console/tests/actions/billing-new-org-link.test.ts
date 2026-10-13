@@ -62,6 +62,8 @@ const world = vi.hoisted(() => {
 		members: [{ userId: "user-1", status: "active" }] as { userId: string; status: string }[],
 		/** Every direct database write the paths under test made (an INSERT of a member would land here). */
 		dbWrites: [] as string[],
+		/** `alert_deliveries`: one row per alert that reached a channel (what `emitAlertEvent` inserts). */
+		deliveries: [] as { id: string; resource_id: string }[],
 		/** The lease is gone when the store opens a hold (the lease row's FOR SHARE read finds nothing). */
 		openLeaseLost: false,
 		/** The next subscription the sweep's machine reads goes `active`: its payment landed. */
@@ -198,7 +200,9 @@ vi.mock("@/lib/db", async () => {
 				? [{ id: "org-1", slug: "acme", metadata: null }]
 				: table === schema.member
 					? world.state.members.map((m) => ({ ...m }))
-					: [];
+					: table === schema.alertDeliveries
+						? world.state.deliveries.map((d) => ({ ...d }))
+						: [];
 		table = null;
 		return Promise.resolve(rows).then(resolve);
 	};
@@ -224,7 +228,14 @@ vi.mock("@/lib/billing/sync", () => ({
 		return "applied";
 	}),
 }));
-vi.mock("@/lib/alerts/emit", () => ({ emitAlertEvent: vi.fn(async () => 1), emitAlertEventSafe: vi.fn() }));
+// An alert reaches one channel, and leaves its delivery row, as the real emitter's insert does.
+vi.mock("@/lib/alerts/emit", () => ({
+	emitAlertEvent: vi.fn(async (_org: string, _event: string, context: { resource_id?: string }) => {
+		world.state.deliveries.push({ id: `delivery_${world.state.deliveries.length + 1}`, resource_id: context.resource_id ?? "" });
+		return 1;
+	}),
+	emitAlertEventSafe: vi.fn(),
+}));
 vi.mock("@/lib/billing/purchase-lease", () => {
 	class PurchaseLeaseLostError extends Error {}
 	return {
@@ -520,6 +531,7 @@ beforeEach(() => {
 		orgExists: true,
 		members: [{ userId: "user-1", status: "active" }],
 		dbWrites: [],
+		deliveries: [],
 		openLeaseLost: false,
 		activatesOnRead: null,
 		holds: [],
@@ -673,6 +685,26 @@ describe("§5.6 — an ended X with no open hold", () => {
 		expect(await refusedClause()).toMatch(/We have raised an alert\./);
 		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(emitAlertEvent).mock.calls[0]?.[2]?.summary).toMatch(/Its setup record is closed \(ended\)\./);
+	});
+
+	it("delta advisory 1: a retried refusal of the same ended X does not alert again once an alert reached a channel", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+
+		expect(await refusedClause()).toMatch(/We have raised an alert\./);
+		expect(await refusedClause()).toMatch(/We have raised an alert\./);
+		expect(await refusedClause()).toMatch(/We have raised an alert\./);
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it("delta advisory 1: an alert that reached NO channel does not silence the next one", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		subX("canceled", ["succeeded"]);
+		setup();
+
+		expect(await refusedClause()).not.toMatch(/raised/);
+		expect(await refusedClause()).not.toMatch(/raised/);
+		expect(emitAlertEvent).toHaveBeenCalledTimes(2);
 	});
 
 	it("advisory 8: with NO setup record, the alert says no setup was closed", async () => {
@@ -882,7 +914,9 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 		expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
 	});
 
-	it("BLOCKER: the recorded team no longer exists — no link, an alert, the setup open", async () => {
+	// `created_org_id` is ON DELETE SET NULL (migration 0159), so a team deleted BEFORE the setup is read
+	// reads as `no_org`. Only a deletion between the setup read and the org read reaches this branch.
+	it("race: the team is deleted between the setup read and the org read — no link, an alert, the setup open", async () => {
 		adoptable();
 		setup();
 		world.state.orgExists = false;
