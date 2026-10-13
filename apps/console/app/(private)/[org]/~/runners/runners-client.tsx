@@ -225,6 +225,19 @@ export function RunnersClient() {
 		pageItems.map((r) => r.id),
 	);
 
+	// Until the workspace store has answered, neither the deployment mode nor the entitlement is
+	// known (#5864) — `isHosted` reads `false` meanwhile, so the page would be shown to a hosted
+	// tenant who is about to be told it is a paid surface, and the upsell to one who is entitled.
+	// Show the runner column's skeleton instead: nothing gated, either way.
+	if (canByoRunners === null) {
+		return (
+			<div className="min-w-0 space-y-4" aria-busy>
+				<RunnerCardSkeleton />
+				<RunnerCardSkeleton />
+			</div>
+		);
+	}
+
 	// Hosted tenants without the BYO-runners entitlement get the upsell in place of the page.
 	// (Self-managed operators are never gated here.)
 	if (isHosted && !canByoRunners) {

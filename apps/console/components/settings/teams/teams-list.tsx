@@ -76,7 +76,9 @@ function monogram(name: string): string {
 export function TeamsList() {
 	// Teams are an Enterprise capability. Without it the page stays fully visible —
 	// existing teams render read-only and creation is replaced by an upsell — matching
-	// the server-side `beforeCreateTeam` gate (no hard wall).
+	// the server-side `beforeCreateTeam` gate (no hard wall). `null` until the workspace store has
+	// answered (#5864): then the page shows neither the create action nor the upsell, and the row
+	// menus are absent rather than disabled — an entitled org is never shown the free tier first.
 	const entitled = useEntitlement("teams");
 	const { org } = useParams<{ org: string }>();
 	const qc = useQueryClient();
@@ -130,7 +132,7 @@ export function TeamsList() {
 	}, [qc, org]);
 
 	const create = async () => {
-		if (!entitled || !name.trim()) return;
+		if (entitled !== true || !name.trim()) return;
 		const { error } = await authClient.organization.createTeam({
 			name: name.trim(),
 		});
@@ -215,6 +217,7 @@ export function TeamsList() {
 			enableSorting: false,
 			cell: ({ row }) => {
 				const t = row.original;
+				if (entitled === null) return null;
 				return (
 					<div className="text-right">
 						<DropdownMenu>
@@ -261,22 +264,24 @@ export function TeamsList() {
 		);
 	}
 
-	const createAction = entitled ? (
-		<Button size="sm" onClick={() => setCreating((v) => !v)}>
-			<Plus size={13} />
-			Create team
-		</Button>
-	) : (
-		<UpgradeDialog
-			feature="teams"
-			trigger={
-				<Button size="sm">
-					<Plus size={13} />
-					Create team
-				</Button>
-			}
-		/>
-	);
+	// Unknown → no action at all (PageToolbar renders none); known → the button or its upgrade.
+	const createAction =
+		entitled === null ? undefined : entitled ? (
+			<Button size="sm" onClick={() => setCreating((v) => !v)}>
+				<Plus size={13} />
+				Create team
+			</Button>
+		) : (
+			<UpgradeDialog
+				feature="teams"
+				trigger={
+					<Button size="sm">
+						<Plus size={13} />
+						Create team
+					</Button>
+				}
+			/>
+		);
 
 	return (
 		<div aria-busy={busy}>
@@ -311,7 +316,7 @@ export function TeamsList() {
 			</FilterBar>
 
 			{/* inline create panel */}
-			{entitled && creating && (
+			{entitled === true && creating && (
 				<div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
 					<p className="mb-3 text-ui-md font-medium text-text-primary">New team</p>
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -353,7 +358,7 @@ export function TeamsList() {
 
 			{/* table */}
 			{rows.length === 0 ? (
-				!entitled && total === 0 ? (
+				entitled === false && total === 0 ? (
 					<FeatureUpsell feature="teams" />
 				) : (
 					<EmptyState

@@ -26,6 +26,7 @@ import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-quer
 import { ErrorState } from "@/components/errors/error-state";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useActivityFilters } from "@/lib/stores/use-settings-filters";
@@ -97,10 +98,14 @@ export function ActivityLog({
 	exportPermitted = false,
 }: { projectId?: string; exportPermitted?: boolean } = {}) {
 	const orgSlug = useActiveOrgSlug();
+	// `null` while the workspace store has not answered (#5864): the Export button is then not
+	// rendered at all, rather than shown disabled with the "requires Enterprise" reason to an org
+	// that may well have it.
 	const exportEntitled = useEntitlement("activityExport");
-	const canExport = exportEntitled && exportPermitted;
+	const canExport = exportEntitled === true && exportPermitted;
+	// The plan's retention, or `null` while it is unknown — the same store, the same third state.
 	const retentionDays = useWorkspaceStore(
-		(s) => s.entitlements?.quotas.activityRetentionDays ?? 7,
+		(s) => s.entitlements?.quotas.activityRetentionDays ?? null,
 	);
 	const { data: projects = [] } = useProjectsQuery();
 
@@ -203,12 +208,15 @@ export function ActivityLog({
 		}
 	}, [activity, nextCursor, loadingMore]);
 
-	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. */
+	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. While the
+	 * retention is unknown, a range inside the community floor applies and an older one does
+	 * neither — it unlocks no paid history and offers no upgrade to an org that may have it. */
 	const applyRange = useCallback(
 		(next: DateRange, label: string) => {
-			const minFrom = Date.now() - retentionDays * DAY - RETENTION_GRACE;
+			const days = retentionDays ?? COMMUNITY_ENTITLEMENTS.quotas.activityRetentionDays;
+			const minFrom = Date.now() - days * DAY - RETENTION_GRACE;
 			if (next.from.getTime() < minFrom) {
-				setUpgradeOpen(true);
+				if (retentionDays !== null) setUpgradeOpen(true);
 				return;
 			}
 			patch({
@@ -324,13 +332,13 @@ export function ActivityLog({
 				end={
 					// `end` is the primitive's slot for a page-level action; export dumps the
 					// WHOLE org log, so it only belongs on the org-scoped feed.
-					!projectId ? (
+					!projectId && exportEntitled !== null ? (
 						<Button
 							variant="outline"
 							size="sm"
 							disabled={!canExport || exporting}
 							title={
-								!exportEntitled
+								exportEntitled === false
 									? "Activity export requires the Enterprise plan"
 									: !exportPermitted
 										? "Your role does not include exporting the Activity log"
