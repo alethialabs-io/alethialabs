@@ -2,19 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import type { UIMessage } from "ai";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
-import { type Tx, withOwnerScope } from "@/lib/db";
+import type { Tx } from "@/lib/db";
 import { agentThreads } from "@/lib/db/schema";
-import { log } from "@/lib/observability/log";
-import {
-	saveTranscript,
-	THREAD_DELETED,
-	type TranscriptRows,
-	type TranscriptSaveOutcome,
-	type TranscriptTarget,
-	transcriptTargetSchema,
-} from "./transcript-save";
+import { THREAD_DELETED, type TranscriptRows } from "./transcript-save";
 
 /** The predicate "this row is in `projectId`" — or in no project, for an org thread. */
 function inProject(projectId: string | null) {
@@ -23,9 +14,8 @@ function inProject(projectId: string | null) {
 
 /**
  * {@link TranscriptRows} of `owner`'s threads over `tx`. Every statement names `user_id = owner`
- * explicitly: on the owner-scoped app connection RLS already holds it to those rows, and on the
- * service-role transaction of ADR 0003's claim (`turn-claims.ts`), which bypasses RLS, the
- * predicate is the only thing that does (§4.3).
+ * explicitly: its caller is the service-role transaction of ADR 0003's claim (`turn-claims.ts`),
+ * which bypasses RLS, so the predicate is the only thing holding it to the owner's rows (§4.3).
  */
 export function transcriptRows(tx: Tx, owner: string): TranscriptRows {
 	/** The live (not deleted) row `id` of `owner`, of `kind`, in `projectId`. */
@@ -124,31 +114,4 @@ export function transcriptRows(tx: Tx, owner: string): TranscriptRows {
 			return inserted?.id ?? null;
 		},
 	};
-}
-
-/**
- * Persist a chat route's finished turn (`onFinish`) — see `saveTranscript` for what happens when
- * the thread's row is gone or was deleted.
- *
- * NOT a server action, on purpose: this module has no "use server" directive, so it is not
- * reachable from a browser. It used to be one (`saveThreadMessages` in `app/server/actions/agent.ts`),
- * and once it could INSERT, any client could create rows with an id, kind, project and transcript
- * of its choosing (#5423 review). Only the chat routes call it, with the owner they authenticated
- * and the kind and project of their own context; `target` is validated before anything is written.
- */
-export async function saveThreadTranscript(
-	target: TranscriptTarget,
-	messages: UIMessage[],
-): Promise<TranscriptSaveOutcome> {
-	const t = transcriptTargetSchema.parse(target);
-	const outcome = await withOwnerScope(t.owner, (tx) =>
-		saveTranscript(transcriptRows(tx, t.owner), t, messages),
-	);
-	if (outcome.kind === "recovered") {
-		log.warn("chat transcript saved into a new thread: the user deleted its thread mid-turn", {
-			thread_id: t.threadId,
-			recovered_thread_id: outcome.threadId,
-		});
-	}
-	return outcome;
 }

@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Integration: a thread the user deleted is never brought back by a late save, and the late turn is
-// not lost either (#5423 review). Real Postgres, under the owner's RLS scope: the actions run under
-// an INJECTED actor (`runWithActor`, the seam the MCP server uses), and the save runs as the chat
-// routes call it. Before the tombstone, `deleteThread` removed the row outright and the late save
-// recreated it under the same id — the deleted conversation reappeared in the rail.
+// not lost either (#5423 review). Real Postgres: the actions run under the owner's RLS scope through
+// an INJECTED actor (`runWithActor`, the seam the MCP server uses), and the late save runs as
+// `finalizeTurn`'s `deleted` outcome does — `recoverTranscript` over `transcriptRows` on a
+// service-role transaction. Before the tombstone, `deleteThread` removed the row outright and the
+// late save recreated it under the same id — the deleted conversation reappeared in the rail. (A
+// NEW turn into a reaped id recreating the thread is `reserveTurn`'s, and is tested in
+// `agent-turn-claims.test.ts`.)
 
 import { randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
@@ -17,7 +20,8 @@ import {
 	getThread,
 	listThreads,
 } from "@/app/server/actions/agent";
-import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptRows } from "@/lib/agent/thread-transcript";
+import { recoverTranscript, type TranscriptTarget } from "@/lib/agent/transcript-save";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { getServiceDb } from "@/lib/db";
 import { agentThreads } from "@/lib/db/schema";
@@ -30,6 +34,11 @@ const actor = { userId: OWNER, orgId: OWNER };
 /** Run `fn` as the owner. */
 function asOwner<T>(fn: () => Promise<T>): Promise<T> {
 	return runWithActor(actor, fn);
+}
+
+/** Save a late turn's transcript as `finalizeTurn` does when it finds its thread deleted. */
+function lateSave(target: TranscriptTarget, messages: UIMessage[]) {
+	return getServiceDb().transaction((tx) => recoverTranscript(transcriptRows(tx, target.owner), target, messages));
 }
 
 /** A finished transcript: the first turn, its reply, and any further turns. */
@@ -53,7 +62,7 @@ describeIfDb("agent thread delete vs. a late transcript save", () => {
 		expect(await asOwner(() => getThread(thread.id))).toBeNull();
 
 		const finished = transcript(firstId, "deploy staging", "Planned.");
-		const outcome = await saveThreadTranscript(
+		const outcome = await lateSave(
 			{ owner: OWNER, threadId: thread.id, kind: "agent", projectId: null },
 			finished,
 		);
@@ -69,7 +78,7 @@ describeIfDb("agent thread delete vs. a late transcript save", () => {
 
 		// The next turn of the same conversation lands in that thread, not in a second one.
 		const longer = transcript(firstId, "deploy staging", "Planned.", "and prod?", "Planned too.");
-		const again = await saveThreadTranscript(
+		const again = await lateSave(
 			{ owner: OWNER, threadId: thread.id, kind: "agent", projectId: null },
 			longer,
 		);
@@ -86,18 +95,6 @@ describeIfDb("agent thread delete vs. a late transcript save", () => {
 		expect(tombstone).toMatchObject({ status: "deleted", title: "", messages: [] });
 	});
 
-	it("a save into a row that is simply gone (reaped) recreates it under the same id", async () => {
-		const id = randomUUID();
-		const finished = transcript(`m-${randomUUID()}`, "what failed?", "Two jobs.");
-		const outcome = await saveThreadTranscript(
-			{ owner: OWNER, threadId: id, kind: "agent", projectId: null },
-			finished,
-		);
-		expect(outcome).toEqual({ kind: "recreated" });
-		const row = await asOwner(() => getThread(id));
-		expect(row?.messages).toEqual(finished);
-	});
-
 	it("a save never writes into another owner's thread", async () => {
 		const other = randomUUID();
 		const [theirs] = await getServiceDb()
@@ -105,17 +102,21 @@ describeIfDb("agent thread delete vs. a late transcript save", () => {
 			.values({ user_id: other, org_id: other, title: "theirs" })
 			.returning({ id: agentThreads.id });
 		try {
-			await expect(
-				saveThreadTranscript(
-					{ owner: OWNER, threadId: theirs.id, kind: "agent", projectId: null },
-					transcript(`m-${randomUUID()}`, "hi", "hello"),
-				),
-			).rejects.toThrow(/could not be saved/);
+			const outcome = await lateSave(
+				{ owner: OWNER, threadId: theirs.id, kind: "agent", projectId: null },
+				transcript(`m-${randomUUID()}`, "hi", "hello"),
+			);
+			expect(outcome.threadId).not.toBe(theirs.id);
 			const [row] = await getServiceDb()
 				.select()
 				.from(agentThreads)
 				.where(eq(agentThreads.id, theirs.id));
 			expect(row.messages).toEqual([]);
+			const [mine] = await getServiceDb()
+				.select()
+				.from(agentThreads)
+				.where(eq(agentThreads.id, outcome.threadId));
+			expect(mine.user_id).toBe(OWNER);
 		} finally {
 			await getServiceDb().delete(agentThreads).where(eq(agentThreads.user_id, other));
 		}
