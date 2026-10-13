@@ -468,11 +468,13 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.GCPDNSZoneName = ExtractOutput(outputs, "cloud_dns_zone_name")
 		f.GCPIngressSA = ExtractOutput(outputs, "ingress_service_account")
 		f.GCPExternalSecretsSA = ExtractOutput(outputs, "external_secrets_service_account")
-		// Both keys are exported by infra/templates/project/gcp/outputs.tf and both are null when
-		// their canvas switch is off — ExtractOutput yields "" for a null, which is exactly the
-		// "render no ingress" / "attach nothing" signal argocdURLGates and wafWebACLRef want.
-		// The spelling is pinned from BOTH sides: checks_ingress_armor.tftest.hcl asserts the output
-		// names in the template, and TestGCPIngressFactsMatchTemplateOutputs asserts them here.
+		// `cloud_armor_policy_name` is exported by infra/templates/project/gcp/outputs.tf and is null
+		// when the Cloud Armor canvas switch is off — ExtractOutput yields "" for a null, which is
+		// exactly the "attach nothing" signal wafWebACLRef wants. The spelling is pinned from BOTH
+		// sides: checks_ingress_armor.tftest.hcl asserts the output name in the template, and here
+		// TestBuildFromOutputs_GCPIngressFacts locks the output→fact wiring while
+		// TestGCPFactsReadOnlyDeclaredRootOutputs requires every key this case reads to be a
+		// declared root output (both in gke_ingress_test.go).
 		f.GCPArmorPolicy = ExtractOutput(outputs, "cloud_armor_policy_name")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
