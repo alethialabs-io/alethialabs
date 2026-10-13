@@ -21,7 +21,9 @@ export function threadTitle(firstMessage?: string): string {
 /**
  * A thread and where it lives: its owner, its id (a uuid, which every thread id is), its kind and
  * its project (null: in no project, an org thread). `finalizeTurn` (`turn-claims.ts`) builds one
- * from the claim row to recover a deleted thread's answer through {@link recoverTranscript}.
+ * from the in-memory `AcceptedTurn` (its `threadKind` and `projectId` are the route's
+ * `ReserveTurnInput`, copied at acceptance) to recover a deleted thread's answer through
+ * {@link recoverTranscript}.
  */
 export const transcriptTargetSchema = z.object({
 	owner: z.string().min(1),
