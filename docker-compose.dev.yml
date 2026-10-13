@@ -204,7 +204,7 @@ services:
     # blog's dev script runs velite then `next dev --port 3002`.
     command: ["pnpm", "--filter", "blog", "dev"]
 
-  # ── Ingress: stitch the zones (mirrors microfrontends.json) ──
+  # ── Ingress: stitch the zones (mirrors apps/console/marketing-zones.json) ──
   caddy:
     image: caddy:2-alpine
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile.dev"]

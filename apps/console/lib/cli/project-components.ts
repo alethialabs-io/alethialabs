@@ -396,16 +396,17 @@ export function isSingletonKind(kind: string): boolean {
 // The PUBLISHED schema (#3671)
 //
 // Everything above this line is the server's private opinion of what a component kind is. The
-// CLI holds a SECOND opinion — `componentKinds` and `singletonKinds`, two literals in
-// apps/cli/cmd/project_component.go — and the two have already drifted: `helm_registries` is in
-// this registry and is not in that list, so `alethia project component kinds` does not name a
-// kind the server will happily author.
+// CLI holds no opinion of its own: it fetches a wire projection of THIS registry from
+// `GET /api/cli/schema/components` and types no kind literals. It used to hold a second opinion —
+// two literals, `componentKinds` and `singletonKinds`, in apps/cli/cmd/project_component.go —
+// and the two had drifted: `helm_registries` was in this registry and not in that list, so
+// `alethia project component kinds` did not name a kind the server would author. #4444 deleted
+// both literals (#4332), with no fallback.
 //
-// A wire projection of THIS registry is what turns that literal into a cache. It carries the
-// three things the CLI reads a registry for:
+// The projection carries the three things the CLI reads a registry for:
 //
-//   • which kinds exist, in a stable order   (`componentKinds`)
-//   • which of them are 1:1 per environment  (`singletonKinds`)
+//   • which kinds exist, in a stable order
+//   • which of them are 1:1 per environment
 //   • what `--set key=value` may assign, and AT WHAT TYPE
 //
 // The third closes the `--set` split-brain. Today coercion lives in Go — `coerceSetValue` JSON-
@@ -424,7 +425,8 @@ export function isSingletonKind(kind: string): boolean {
 /** One published component kind. */
 export interface PublishedComponentKind {
 	kind: string;
-	/** 1:1 per (project, environment) — the CLI's `singletonKinds`, no longer hand-typed. */
+	/** 1:1 per (project, environment). The CLI reads singleton-ness from here; the hand-typed
+	 *  `singletonKinds` literal it used to hold was deleted in #4444. */
 	singleton: boolean;
 	/** Settable field names, in registry order. DERIVED from `schema.properties` — never
 	 *  written out separately, so the list and the schema cannot disagree. */
