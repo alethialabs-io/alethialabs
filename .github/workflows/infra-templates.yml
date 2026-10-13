@@ -8,6 +8,9 @@ on:
       - 'infra/.trivy.yaml'
       - '.github/actions/iac-checks/**'
       - 'scripts/check-templates-refresh-safe.mjs'
+      # This file itself: a change to which engine runs a template's `tofu test` is only measured
+      # if the workflow runs on the PR that makes it (#5709 had no other path to a run).
+      - '.github/workflows/infra-templates.yml'
   push:
     branches: [main]
     paths:
@@ -54,12 +57,20 @@ env:
   TOFU_VERSION: "1.9.0"
 
   # ── DOCUMENTED CLOUD-PARITY EXCLUSION: hetzner, `tofu test` only ─────────────────────────────
-  # OpenTofu 1.9.0 CRASHES running hetzner's suite at all — nil pointer in cty.testConformance via
-  # readDataSource, composing a mock value for data.talos_image_factory_extensions_versions.this.
-  # Root cause upstream: MockValueComposer built a cty.NilType for any schema attribute declared
-  # with a structural NestedType — opentofu/opentofu#2993, fixed by opentofu/opentofu#2994
-  # (#2599 closed as a duplicate). It is a `tofu test` MOCK bug: a real provider read never goes
-  # through MockValueComposer, so this is not something a real hetzner plan hits.
+  # OpenTofu 1.9.0 CRASHES running hetzner's suite at all — nil pointer in cty.Type.FriendlyName,
+  # from cty.testConformance, from NodeAbstractResourceInstance.plan (node_resource_abstract_instance.go
+  # :1034) — i.e. while PLANNING A MANAGED RESOURCE against a mocked provider. Root cause upstream:
+  # MockValueComposer built a cty.NilType for any schema attribute declared with a structural
+  # NestedType — opentofu/opentofu#2993, fixed by opentofu/opentofu#2994 (#2599 closed as a
+  # duplicate). It is a `tofu test` MOCK bug: a real provider never goes through MockValueComposer,
+  # so this is not something a real hetzner plan hits.
+  #
+  # RE-MEASURED in #5709 (run 38390501649, job 115272839393). This block used to name the trigger as
+  # data.talos_image_factory_extensions_versions — a data-source READ. #5708 deleted that data
+  # source; 1.9.0 still crashes, now from a managed resource's plan. So the data source was ONE
+  # trigger, not THE cause. The stack (a zero cty.Type reaching FriendlyName inside conformance) is
+  # the #2993 signature; that it is #2993 again is inferred, not proven. The crash log does not name
+  # the resource, so which one is not stated here as if it were measured.
   #
   # So hetzner's `tofu test` runs 1.9.4: the newest patch on the runner's OWN 1.9 minor. It carries
   # the mock fix and still does NOT short-circuit `||` (measured: `true || []{0}.x` errors on both
@@ -135,8 +146,8 @@ jobs:
         if: matrix.cloud == env.TOFU_TEST_EXCLUDED_CLOUD
         run: |
           msg="hetzner's 'tofu test' runs OpenTofu ${TOFU_TEST_EXCLUSION_VERSION}, not the runner's ${TOFU_VERSION}."
-          msg="$msg ${TOFU_VERSION} crashes composing a mock for data.talos_image_factory_extensions_versions"
-          msg="$msg (opentofu/opentofu#2993, fixed by #2994) — a tofu-test mock bug, not a plan bug."
+          msg="$msg ${TOFU_VERSION} crashes composing a mock value while planning a managed resource"
+          msg="$msg (opentofu/opentofu#2993, fixed by #2994; re-measured in #5709) — a tofu-test mock bug, not a plan bug."
           msg="$msg Same 1.9 minor, same non-short-circuiting '||'; 'tofu validate' still ran on ${TOFU_VERSION}."
           msg="$msg Retire when the runner's tofu reaches ${TOFU_TEST_EXCLUSION_VERSION}."
           echo "::warning title=hetzner tofu test exclusion (#1931)::$msg"
