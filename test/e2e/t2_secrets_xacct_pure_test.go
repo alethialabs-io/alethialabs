@@ -117,7 +117,7 @@ func TestSecretsXacctLaneReasonsAreSubstantive(t *testing.T) {
 		if len(reason) < 80 {
 			t.Errorf("%s: the blocked reason must explain WHY and what would unblock it, got %q", p, reason)
 		}
-		if !strings.Contains(reason, strings.Title(p)) && !strings.Contains(reason, strings.ToUpper(p)) {
+		if !strings.Contains(reason, strings.ToUpper(p[:1])+p[1:]) && !strings.Contains(reason, strings.ToUpper(p)) {
 			t.Errorf("%s: the reason should name the cloud, got %q", p, reason)
 		}
 	}

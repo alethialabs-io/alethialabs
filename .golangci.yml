@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# golangci-lint v2 config for the Go workspace (apps/cli, apps/runner, packages/core).
+# golangci-lint v2 config for the Go workspace (apps/cli, apps/runner, packages/core) and for the
+# test/e2e harness module, which ci.yml lints once per build tag.
 # A strong default set; errcheck ignores the idiomatic best-effort cleanups
 # (deferred Close/Remove, fmt.Fprint* to stdout) so it flags only real dropped errors.
 
@@ -75,6 +76,21 @@ linters:
         text: SA5011
         linters:
           - staticcheck
+      # test/e2e (linted from ci.yml's `go` job since #5967) states its ordering invariants as a
+      # negated conjunction — `!(ctx < go < step < job)` — because that IS the invariant as the
+      # comment above each one writes it. De Morgan's rewrite turns it into four `>=` clauses
+      # nobody can read back against the comment, so the quickfix is off for that module only.
+      - path: ^test/e2e/
+        text: QF1001
+        linters:
+          - staticcheck
+      # keylessLane's default clause IS the KeylessCellExcluded case: the cell's blocked reason is
+      # the sentence the canvas shows, returned verbatim. A config exclusion, not an ignore comment,
+      # because that file belongs to another lane.
+      - path: ^test/e2e/t2_keyless_db\.go$
+        text: manifests\.KeylessCellState
+        linters:
+          - exhaustive
 
 formatters:
   enable:

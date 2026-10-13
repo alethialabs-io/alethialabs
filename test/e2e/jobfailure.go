@@ -45,7 +45,7 @@ func FormatJobFailure(errMsg string, metaRaw []byte) string {
 		} `json:"gitops_status"`
 	}
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
-		b.WriteString(fmt.Sprintf("execution_metadata: (undecodable: %v)\n", err))
+		fmt.Fprintf(&b, "execution_metadata: (undecodable: %v)\n", err)
 		return b.String()
 	}
 	if meta.GitopsStatus == nil {
