@@ -215,20 +215,6 @@ export async function assignmentsForKind(
 	return out;
 }
 
-/** The resource references (kind + id) currently carrying a given value. */
-export async function listResourceIdsByValue(
-	tx: Tx,
-	valueId: string,
-): Promise<{ resource_kind: ResourceKind; resource_id: string }[]> {
-	return tx
-		.select({
-			resource_kind: classificationAssignment.resource_kind,
-			resource_id: classificationAssignment.resource_id,
-		})
-		.from(classificationAssignment)
-		.where(eq(classificationAssignment.value_id, valueId));
-}
-
 // ── Usage / coverage counts (powers the settings coverage view) ──────────────────────
 
 /**

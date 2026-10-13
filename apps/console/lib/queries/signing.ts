@@ -4,13 +4,9 @@
 // Typed reads for org receipt-signing keys (#884) + the pure "honest posture" resolver the receipt
 // panel uses to say WHICH key would sign a project's receipts (and why it's not the org's key yet).
 
-import { and, desc, eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
 import { orgSigningKey } from "@/lib/db/schema";
-import { cloudProvider } from "@/lib/db/schema/enums";
-
-/** A cloud_provider enum value. */
-export type CloudProviderValue = (typeof cloudProvider.enumValues)[number];
 
 /** An org signing key as surfaces read it — reference + PUBLIC key only (never private material). */
 export interface OrgSigningKeyView {
@@ -56,19 +52,6 @@ export async function getOrgSigningKeys(tx: Tx): Promise<OrgSigningKeyView[]> {
 		.from(orgSigningKey)
 		.orderBy(desc(orgSigningKey.created_at));
 	return rows.map(toView);
-}
-
-/** The single active signing key for a given cloud, or null (RLS-scoped via `tx`). */
-export async function getActiveOrgSigningKey(
-	tx: Tx,
-	provider: CloudProviderValue,
-): Promise<OrgSigningKeyView | null> {
-	const [row] = await tx
-		.select()
-		.from(orgSigningKey)
-		.where(and(eq(orgSigningKey.active, true), eq(orgSigningKey.provider, provider)))
-		.limit(1);
-	return row ? toView(row) : null;
 }
 
 /**
