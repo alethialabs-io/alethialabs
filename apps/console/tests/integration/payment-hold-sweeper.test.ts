@@ -374,10 +374,14 @@ async function setupOf(sub: string) {
 	return row;
 }
 
-/** Puts X, live and minted by `payer`, in both fakes: the machine's (status only) and the core's. */
+/**
+ * Puts X, live and minted by `payer`, in both fakes: the machine's (status only) and the core's. X's
+ * customer is its own, as a create-a-team customer is: the link syncs X to its team's row, and
+ * `organization_billing.stripe_customer_id` is unique across teams.
+ */
 function liveX(stripe: FakeStripe, payer: string, sub: string): void {
-	stripe.add({ id: sub, status: "active", metadata: { created_by: payer } }, { status: "paid", pis: [] });
-	linkWorld.subs.set(sub, { id: sub, status: "active", customer: "cus_it_sweep", latest_invoice: `in_${sub}`, metadata: { created_by: payer } });
+	stripe.add({ id: sub, status: "active", customer: `cus_${sub}`, metadata: { created_by: payer } }, { status: "paid", pis: [] });
+	linkWorld.subs.set(sub, { id: sub, status: "active", customer: `cus_${sub}`, latest_invoice: `in_${sub}`, metadata: { created_by: payer } });
 }
 
 /** Records `payer`'s create-a-team setup for `sub`, open unless `linkedAt` is given. */
@@ -760,7 +764,7 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 
 		expect(await tick(payer, stripe)).toMatchObject({ advanced: 1, released: 1 });
 		expect(await read(h.id)).toMatchObject({ state: "released", release_reason: "adopted" });
-		expect(linkWorld.updates).toEqual([`customers.update:cus_it_sweep`, `subscriptions.update:${sub}`]);
+		expect(linkWorld.updates).toEqual([`customers.update:cus_${sub}`, `subscriptions.update:${sub}`]);
 		expect(linkWorld.subs.get(sub)?.metadata).toEqual({ created_by: payer, organization_id: orgId });
 		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: expect.any(Date) });
 		const [row] = await getServiceDb().select().from(organizationBilling).where(eq(organizationBilling.organizationId, orgId));
@@ -859,7 +863,7 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 			organizationId: orgId,
 			plan: "team",
 			status: "active",
-			stripeCustomerId: "cus_it_y",
+			stripeCustomerId: `cus_${sub}_y`,
 			stripeSubscriptionId: `${sub}_y`,
 			seats: null,
 			currentPeriodEnd: null,
@@ -899,7 +903,7 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 			organizationId: orgId,
 			plan: "team",
 			status: "active",
-			stripeCustomerId: "cus_it_y",
+			stripeCustomerId: `cus_${sub}_y`,
 			stripeSubscriptionId: `${sub}_y`,
 			seats: null,
 			currentPeriodEnd: null,
