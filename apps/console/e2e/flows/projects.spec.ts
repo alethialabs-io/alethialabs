@@ -344,7 +344,7 @@ test.describe("Projects — org overview grid", () => {
 			timeout: 15_000,
 		});
 		// A no-match query yields the empty-filter copy.
-		const search = owner.page.getByPlaceholder(/search/i).first();
+		const search = owner.page.getByRole("textbox", { name: "Search projects", exact: true });
 		await search.fill(`zzz-no-such-project-${Date.now()}`);
 		await expect(owner.page.getByText(/no projects match your filters/i)).toBeVisible();
 	});

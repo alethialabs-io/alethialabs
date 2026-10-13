@@ -115,7 +115,7 @@ test.describe("Runners — destroy", () => {
 		const card = cardFor(team.page, name);
 		await expect(card).toBeVisible({ timeout: 15_000 });
 
-		await card.getByRole("button", { name: "Destroy" }).click();
+		await card.getByRole("button", { name: "Destroy", exact: true }).click();
 		const popover = destroyPopover(team.page);
 		await expect(popover.getByText("Select runner")).toBeVisible();
 		await expect(
@@ -147,10 +147,16 @@ test.describe("Runners — destroy", () => {
 
 		// Open the destroy popover from the card, then confirm. The confirm control shares the
 		// "Destroy" label with its trigger, so it is reached inside the popover, never positionally.
-		await card.getByRole("button", { name: "Destroy" }).click();
+		//
+		// EXACT, because the popover is also a runner PICKER (`RunnerSelectPopover`): it lists every
+		// runner in the org as a button named after it, and a role name matches as a case-insensitive
+		// SUBSTRING by default. The sibling test's `e2e-destroy-cancel-…` runner therefore matched
+		// `{ name: "Destroy" }` too — a strict-mode violation whenever both tests' runners were alive
+		// at once (#5892). No runner row is named exactly "Destroy"; the confirm is.
+		await card.getByRole("button", { name: "Destroy", exact: true }).click();
 		const popover = destroyPopover(team.page);
 		await expect(popover.getByText("Select runner")).toBeVisible();
-		await popover.getByRole("button", { name: "Destroy" }).click();
+		await popover.getByRole("button", { name: "Destroy", exact: true }).click();
 
 		// The job is inserted QUEUED. Assert only that it EXISTS — a live runner sharing this
 		// database could claim and then fail it against the fake credentials, and pinning a

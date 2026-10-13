@@ -32,6 +32,7 @@ import type {
 // `wave:compat` scope disjoint; re-referenced here only for the ExecutionMetadata field.
 import type { CompatReport } from "@/types/compat.types";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
+import type { MentionType } from "@/lib/ai/mentions";
 
 export type { ServiceBindingKind, ServiceBindingFacet };
 
@@ -1659,4 +1660,64 @@ export interface PendingOrgSetupBilling {
 	taxType: TaxIdType;
 	taxValue: string;
 	useAsPrimary: boolean;
+}
+
+// ── Elench drafts (ADR 0001 §3.1, `elench_drafts`) ───────────────────────────
+//
+// A draft's content is `text` (held once, as a column) plus the three JSONB fields below. The
+// shapes are the ones `contentSchema` in lib/elench/draft-content.ts admits; that schema, not this
+// file, is what validates a write. None of these carries draft text except as offsets into it, and
+// the two markers carry none at all.
+
+/** Which send a draft claim is: the thread's first message, or a later turn of a listed thread. */
+export type ElenchDraftSendKind = "first" | "later";
+
+/**
+ * One mention pill on `elench_drafts.mentions`: the resource it names and the span `[start, end)`
+ * of the draft text, in UTF-16 offsets, that holds its `"@" + label`. One entry per pill, not per
+ * distinct resource.
+ */
+export interface ElenchDraftMention {
+	id: string;
+	type: MentionType;
+	label: string;
+	start: number;
+	end: number;
+}
+
+/**
+ * `elench_drafts.cell_target`: the widget-grid cell the draft's text is aimed at (the routes'
+ * `{ x, y }` shape, x in 0-4). Part of the content: set only by a failed cell prompt, kept by a
+ * release, emptied with the text by a consume.
+ */
+export interface ElenchCellTarget {
+	x: number;
+	y: number;
+}
+
+/**
+ * `elench_drafts.failed_send`: a send of this draft was claimed and then released. It holds no
+ * text; the text is the draft's. `turnId` is null only when the thread already holds the claimed
+ * turn id with another text, so the next claim must mint a fresh one. `uncertain` is true only when
+ * the server cannot know whether a later turn's route accepted it.
+ */
+export interface ElenchFailedSend {
+	turnId: string | null;
+	kind: ElenchDraftSendKind;
+	/** A failure code, never model output or the user's text. */
+	error: string;
+	/** ISO-8601, the server's clock. */
+	at: string;
+	uncertain: boolean;
+}
+
+/**
+ * `elench_drafts.last_sent`: the last claim of this draft that was consumed (became a turn). It
+ * holds no text; it is how another tab learns that the draft it showed was sent elsewhere.
+ */
+export interface ElenchLastSent {
+	turnId: string;
+	kind: ElenchDraftSendKind;
+	/** ISO-8601, the server's clock. */
+	at: string;
 }

@@ -15,6 +15,10 @@ import { notFound } from "next/navigation";
 
 vi.mock("@/app/server/actions/resolve", () => ({ resolveOrgScope: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn() }));
+// The page's actor: in community it collapses to the personal org (`orgId === userId`).
+vi.mock("@/lib/authz/guard", () => ({
+	currentActor: vi.fn(async () => ({ userId: "user-1", orgId: "user-1" })),
+}));
 vi.mock("@/lib/billing/config", () => ({ deploymentMode: () => "self-hosted" }));
 vi.mock("@/lib/queries/runner-capabilities", () => ({
 	orgHasSelfRunners: vi.fn(async () => false),
@@ -60,6 +64,14 @@ describe("[org]/layout — what a resolveOrgScope failure renders", () => {
 	it("renders the shell when the org resolves", async () => {
 		vi.mocked(resolveOrgScope).mockResolvedValue({ orgId: "org-1", isPersonal: false });
 		await expect(thrownBy()).resolves.toBeNull();
+	});
+
+	it("hands the shell the page's currentActor().orgId, not resolveOrgScope's id (ADR 0003 §6.1)", async () => {
+		// Community, a team-org URL: the real org's id would be refused by the turn resolver.
+		vi.mocked(resolveOrgScope).mockResolvedValue({ orgId: "org-1", isPersonal: false });
+		const tree = await OrgLayout({ children: null, params: Promise.resolve({ org: "acme" }) });
+		const shell: unknown = tree.props.children;
+		expect(shell).toMatchObject({ props: { pageOrgId: "user-1" } });
 	});
 
 	// ── The two failures that are TRUE statements about the org → the org 404 ────────────────

@@ -110,8 +110,9 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	const filters = useRolesFilters((s) => s.filters);
 	const set = useRolesFilters((s) => s.set);
 	const reset = useRolesFilters((s) => s.reset);
-	useFilterUrlSync(useRolesFilters, DEFAULT_ROLES_FILTERS);
-	const search = useDebouncedValue(filters.search.trim());
+	const urlRead = useFilterUrlSync(useRolesFilters, DEFAULT_ROLES_FILTERS);
+	// `urlRead`: a search the link carried lands at once; only typing is debounced (#5861).
+	const search = useDebouncedValue(filters.search.trim(), 250, { urlRead });
 	const query = useMemo(
 		() => normalizeRolesQuery(filters, search),
 		[filters, search],

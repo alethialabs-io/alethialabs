@@ -218,8 +218,10 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
 		// `MultiCombobox` surfaces its label as the input's PLACEHOLDER (the input is the trigger),
-		// so the facets have no visible text of their own to match on.
-		await expect(owner.page.getByLabel("Search jobs")).toBeVisible({ timeout: 25_000 });
+		// which is also the input's accessible name — so each facet is asked for BY ROLE under that
+		// name. Never `getByPlaceholder`/`getByLabel` on a filter-bar input: they match the server's
+		// hidden streamed copy of the bar too (#5777, #5800; scripts/ci/check-e2e-filter-locators.mjs).
+		await expect(owner.page.getByRole("textbox", { name: "Search jobs", exact: true })).toBeVisible({ timeout: 25_000 });
 		for (const facet of [
 			"All authors",
 			"All environments",
@@ -227,7 +229,7 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 			"All statuses",
 			"All types",
 		]) {
-			await expect(owner.page.getByPlaceholder(facet), `${facet} facet`).toBeVisible();
+			await expect(owner.page.getByRole("textbox", { name: facet, exact: true }), `${facet} facet`).toBeVisible();
 		}
 	});
 
@@ -265,7 +267,7 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
 		).toHaveCount(2, { timeout: 25_000 });
 		// The input IS the trigger — focusing it opens the list.
-		await owner.page.getByPlaceholder("All statuses").click();
+		await owner.page.getByRole("textbox", { name: "All statuses", exact: true }).click();
 		await owner.page.getByRole("button", { name: /^Failed/ }).click();
 		await expect(owner.page).toHaveURL(/[?&]statuses=FAILED\b/);
 		// The URL is written synchronously; the ROWS are a debounce plus a refetch behind it, so
@@ -286,7 +288,7 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
 		).toHaveCount(2, { timeout: 25_000 });
-		await owner.page.getByPlaceholder("All statuses").click();
+		await owner.page.getByRole("textbox", { name: "All statuses", exact: true }).click();
 		// An option click `preventDefault`s its mousedown to keep focus in the input, so the list
 		// stays open — which is what lets the SAME list be re-read after the selection lands.
 		await owner.page.getByRole("button", { name: /^Failed/ }).click();
@@ -329,8 +331,8 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		).toBeVisible({ timeout: 25_000 });
 		// `projectId` overrides the Project selection server-side, so offering the facet would be
 		// offering a control that cannot change the result.
-		await expect(owner.page.getByPlaceholder("All projects")).toHaveCount(0);
-		await expect(owner.page.getByPlaceholder("All statuses")).toBeVisible();
+		await expect(owner.page.getByRole("textbox", { name: "All projects", exact: true })).toHaveCount(0);
+		await expect(owner.page.getByRole("textbox", { name: "All statuses", exact: true })).toBeVisible();
 	});
 
 	test("clicking a job row opens its detail page", async ({ owner }) => {

@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Elench composer refuses an over-limit message VISIBLY and keeps it (#5423). Before this, a
-// first message over the cap `createThread` enforces threw inside `startThread`, which `onSend`
-// awaits before `sendMessage` — so the send was dropped with no message and no error on screen.
-// The limit is the one the chat routes 413 on (lib/ai/message-limits.ts). The editor is filled
-// through Lexical's own API (jsdom cannot type 100k characters in reasonable time); the
-// controls and the @-mention typeahead are stubbed, as they read stores and server actions.
+// The Elench composer refuses an over-limit message VISIBLY and keeps it (#5423), and since ADR
+// 0001 slice 9 it caps ONE string: the box as typed, untrimmed (§4.1, R6), so a message the box
+// allows always saves and always passes the routes' 413; the send trims and only shortens it. It
+// also normalizes on input and paste (U+0000 and lone surrogates never reach the store). The
+// composer here is the real one over a real drafts store, whose server is the in-memory fake; the
+// editor is filled through Lexical's own API (jsdom cannot type 100k characters in reasonable
+// time), and the controls and the @-mention typeahead are stubbed.
 
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -18,9 +19,14 @@ import {
 	KEY_ENTER_COMMAND,
 	type LexicalEditor,
 } from "lexical";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ElenchComposer } from "@/components/agent/elench/elench-composer";
+import { createDraftsTab, type DraftsTab } from "@/components/agent/elench/elench-drafts-root";
+import { ElenchDraftContext } from "@/components/agent/elench/use-elench-send";
 import { MAX_USER_MESSAGE_CHARS, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
+import type { DraftKey } from "@/lib/stores/elench-drafts/types";
+import { FakeElenchServer } from "@/tests/fixtures/elench-drafts-server";
 
 vi.mock("@/components/agent/elench/elench-controls", () => ({
 	ElenchAskMode: () => null,
@@ -30,6 +36,45 @@ vi.mock("@/components/agent/elench/elench-controls", () => ({
 vi.mock("@/components/agent/elench/mention-typeahead", () => ({
 	MentionTypeaheadPlugin: () => null,
 }));
+// The real actions are server code; the store here is handed the fake server's transport.
+vi.mock("@/app/server/actions/elench-drafts", () => ({
+	listDrafts: vi.fn(),
+	saveDraft: vi.fn(),
+	restoreDraft: vi.fn(),
+	discardDraft: vi.fn(),
+	claimDraft: vi.fn(),
+	consumeDraft: vi.fn(),
+	releaseClaim: vi.fn(),
+	startConversation: vi.fn(),
+}));
+
+const ORG = "00000000-0000-4000-8000-00000000000a";
+const KEY: DraftKey = { orgId: ORG, projectId: null, conversationId: "00000000-0000-4000-8000-0000000000c1" };
+
+let server: FakeElenchServer;
+let tab: DraftsTab;
+
+/** A tab's store over the fake server, its scope listed and KEY selected (a new conversation). */
+async function renderComposer(): Promise<void> {
+	server = new FakeElenchServer();
+	tab = createDraftsTab({
+		viewerId: "00000000-0000-4000-8000-0000000000aa",
+		transport: server.transport(() => ORG),
+		heartbeat: async () => Response.json({ outcome: "touched" }),
+		storage: () => null,
+		tabId: "tab-1",
+		mint: () => crypto.randomUUID(),
+	});
+	tab.store.load({ orgId: ORG, projectId: null });
+	await act(async () => {});
+	tab.store.dispatch({ type: "SELECT", key: KEY, thread: "none" });
+	render(
+		<ElenchDraftContext.Provider value={{ store: tab.store, key: KEY }}>
+			<ElenchComposer status="ready" />
+		</ElenchDraftContext.Provider>,
+	);
+	await act(async () => {});
+}
 
 /** The live Lexical editor behind the rendered composer. */
 function composerEditor(): LexicalEditor {
@@ -57,10 +102,18 @@ function content(): string {
 	return composerEditor().getEditorState().read(() => $getRoot().getTextContent());
 }
 
+/** The draft's text as the store holds it. */
+function stored(): string | undefined {
+	const e = tab.store.view.getState().drafts.entries[keyId(KEY)];
+	return (e?.local ?? e?.server?.content)?.text;
+}
+
+beforeEach(async () => {
+	await renderComposer();
+});
+
 describe("ElenchComposer — the per-message limit", () => {
-	it("refuses one character over the limit visibly, sends nothing, and keeps the text", () => {
-		const onSend = vi.fn();
-		render(<ElenchComposer onSend={onSend} status="ready" />);
+	it("refuses one character over the limit visibly, sends nothing, and keeps the text", async () => {
 		const over = "a".repeat(MAX_USER_MESSAGE_CHARS + 1);
 		fill(over);
 
@@ -69,28 +122,36 @@ describe("ElenchComposer — the per-message limit", () => {
 		expect(alert).toHaveTextContent(MESSAGE_TOO_LONG);
 		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 
-		// Enter reaches `submit` even while the button is disabled — it must refuse too.
+		// Enter reaches the send even while the button is disabled — it must refuse too.
 		act(() => {
 			composerEditor().dispatchCommand(KEY_ENTER_COMMAND, null);
 		});
-		expect(onSend).not.toHaveBeenCalled();
+		await act(async () => {});
+		expect(server.callsOf("claimDraft")).toHaveLength(0);
 		expect(content()).toBe(over);
+	});
+
+	it("caps the untrimmed box: a message of the limit plus a trailing newline is refused here, never by the server", async () => {
+		fill(`${"a".repeat(MAX_USER_MESSAGE_CHARS)}\n`);
+		expect(screen.getByTestId("elench-composer-too-long")).toBeInTheDocument();
+		act(() => {
+			composerEditor().dispatchCommand(KEY_ENTER_COMMAND, null);
+		});
+		await act(async () => {});
+		expect(server.callsOf("claimDraft")).toHaveLength(0);
 	});
 
 	it("sends a message of exactly the limit, with no alert", async () => {
 		const user = userEvent.setup();
-		const onSend = vi.fn();
-		render(<ElenchComposer onSend={onSend} status="ready" />);
 		const atLimit = "a".repeat(MAX_USER_MESSAGE_CHARS);
 		fill(atLimit);
 
 		expect(screen.queryByTestId("elench-composer-too-long")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Send" }));
-		expect(onSend).toHaveBeenCalledWith(atLimit, [], expect.any(String));
+		expect(server.callsOf("claimDraft")).toMatchObject([{ content: { text: atLimit } }]);
 	});
 
 	it("clears the alert once the message is shortened back under the limit", () => {
-		render(<ElenchComposer onSend={vi.fn()} status="ready" />);
 		fill("a".repeat(MAX_USER_MESSAGE_CHARS + 1));
 		expect(screen.getByTestId("elench-composer-too-long")).toBeInTheDocument();
 		fill("short");
@@ -99,24 +160,10 @@ describe("ElenchComposer — the per-message limit", () => {
 	});
 });
 
-// #5423 review: a send that did NOT go out (its conversation could not be started) must leave
-// the text in the composer — clearing it first is what lost the message.
-describe("ElenchComposer — a send that did not go out", () => {
-	it("keeps the text when onSend resolves false", async () => {
-		const user = userEvent.setup();
-		const onSend = vi.fn(async () => false);
-		render(<ElenchComposer onSend={onSend} status="ready" />);
-		fill("keep me");
-		await user.click(screen.getByRole("button", { name: "Send" }));
-		expect(onSend).toHaveBeenCalledWith("keep me", [], expect.any(String));
-		expect(content()).toBe("keep me");
-	});
-
-	it("clears the text once onSend resolves true", async () => {
-		const user = userEvent.setup();
-		render(<ElenchComposer onSend={vi.fn(async () => true)} status="ready" />);
-		fill("sent");
-		await user.click(screen.getByRole("button", { name: "Send" }));
-		expect(content()).toBe("");
+describe("ElenchComposer — normalization on input and paste (§4.1)", () => {
+	it("drops U+0000 and repairs a lone surrogate in the box itself, before the store reads it", () => {
+		fill("ab\u0000c \ud800 d");
+		expect(content()).toBe("abc � d");
+		expect(stored()).toBe("abc � d");
 	});
 });

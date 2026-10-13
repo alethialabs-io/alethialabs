@@ -60,8 +60,17 @@ import {
 	type LiveAiPriceMap,
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
-import { getStripe } from "@/lib/billing/stripe";
+import { getPurchaseStripe, getStripe, STRIPE_MAX_NETWORK_RETRIES, STRIPE_REQUEST_TIMEOUT_MS } from "@/lib/billing/stripe";
 import { withPurchaseLock } from "@/lib/billing/purchase-lock";
+import {
+	fenceFor,
+	type PurchaseLease,
+	PurchaseLeaseLostError,
+	renewPurchaseLease,
+	type StripeWriteFence,
+	UNFENCED,
+	withPurchaseLease,
+} from "@/lib/billing/purchase-lease";
 import {
 	type FirstPayment,
 	type PaymentAfterCancel,
@@ -77,10 +86,13 @@ import {
 } from "@/lib/billing/new-org-plan-state";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
+	closePendingOrgSetup,
 	findSetupOrg,
 	forgetPendingOrgSetup,
+	logBillingEvent,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
+	openPendingOrgSetupsForOrg,
 	pendingOrgSetupBillingSchema,
 	pendingOrgSetupFor,
 	pendingOrgSetupSlugSchema,
@@ -88,11 +100,13 @@ import {
 	REPLACEABLE_SUBSCRIPTION_STATUSES,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
+	settleOpenSetup,
 	type UnfinishedSetupCursor,
 	unfinishedPendingOrgSetups,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import { displayName } from "@/lib/user-display";
 import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
@@ -794,6 +808,76 @@ const PURCHASE_IN_PROGRESS =
 	"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.";
 
 /**
+ * The link's refusal beside the team's other live plan (ADR 0002 §5.5, #5714). The second sentence is
+ * added only when `alertPaymentNeedsSupport` returned true (I8).
+ */
+const LINK_REFUSED_ORG_HAS_PLAN = `This team already has an active plan, so this payment was not linked to it. Contact support at ${SUPPORT_EMAIL}, who will refund it or move it to the right team.`;
+const LINK_REFUSED_ALERTED = " We have raised this with support.";
+
+/** The open-setup guard's refusal, to the setup's creator (ADR 0002 §5.5). */
+const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a plan cannot be started here yet. Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
+
+/**
+ * The open-setup guard's refusal, to anyone but the creator (ADR 0002 §5.5): it names who started the
+ * setup and offers support. It never says "finish" or "finished", in any form — the setup is the
+ * creator's to complete, and this member can do nothing with that word but misread it as an action.
+ */
+function openSetupOtherMember(creator: string): string {
+	return `${creator} started paying for this team's plan and it is still being set up, so a plan cannot be started here yet. Ask them, or contact support at ${SUPPORT_EMAIL}.`;
+}
+
+/** The open-setup guard's refusal when its Stripe read failed — it fails closed (ADR 0002 §5.7). */
+const OPEN_SETUP_UNCHECKED =
+	"We could not check this team's earlier paid setup just now, so a plan cannot be started yet. Try again in a few minutes.";
+
+/**
+ * THE OPEN-SETUP GUARD (ADR 0002 §5.7, #5714). An org is created before its paid create-a-team
+ * subscription X is linked to it, so its billing row cannot show X yet; a plan, a Checkout or a trial
+ * started there in that window minted a second subscription Y beside X, and X then renewed unseen.
+ * `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` call this before any Stripe
+ * write and refuse with what it returns; null lets the purchase proceed.
+ *
+ * It reads every OPEN setup naming the org (service role: the buyer may be a co-owner, whom RLS shows
+ * nothing of the creator's row) and runs the setup closer on each first, so an ended X, or one already
+ * linked in Stripe, never blocks the org. A setup still open after that refuses — the creator is sent to
+ * Create a team or support, anyone else is told who started it. Only the creator's display name, from
+ * the org's own member list, leaves the creator's row. A closer that THROWS refuses the purchase with
+ * the try-again clause: a failed read never passes it (fail closed).
+ */
+async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
+	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
+	for (const row of rows) {
+		let verdict: Awaited<ReturnType<typeof settleOpenSetup>>;
+		try {
+			verdict = await settleOpenSetup(row, { orgId: actor.orgId });
+		} catch (e) {
+			console.error(`[billing] open-setup guard could not check ${row.subscription_id}:`, e);
+			return OPEN_SETUP_UNCHECKED;
+		}
+		if (verdict !== "open") continue;
+		// Message selection, not access control: the purchase is refused either way, and `actor` was
+		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
+		if (row.user_id === actor.userId) return OPEN_SETUP_CREATOR; // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
+		return openSetupOtherMember(await setupCreatorName(actor.orgId, row.user_id));
+	}
+	return null;
+}
+
+/**
+ * The setup creator's name as the org's member list shows it, or "Another member of this team" when
+ * the creator is no longer a member of the org.
+ */
+async function setupCreatorName(orgId: string, userId: string): Promise<string> {
+	const [creator] = await getServiceDb()
+		.select({ name: user.name, email: user.email, username: user.username })
+		.from(member)
+		.innerJoin(user, eq(user.id, member.userId))
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return creator ? displayName(creator) : "Another member of this team";
+}
+
+/**
  * The refusal for a set of `PaymentOutcome`s — the most serious one wins — or null when none refuses.
  * A form whose alert reached nobody outranks the one whose alert did, so the copy never says "we have
  * raised an alert" while any of the payments it covers was not alerted on.
@@ -819,7 +903,9 @@ function refusalFor(outcomes: readonly PaymentOutcome[]): string | null {
  */
 async function refundTakenPayment(
 	paymentIntentId: string,
+	fence: StripeWriteFence,
 ): Promise<{ result: "refunded" | "already_refunded" } | { result: "failed"; error: unknown }> {
+	await fence();
 	try {
 		await getStripe().refunds.create(
 			{ payment_intent: paymentIntentId },
@@ -865,6 +951,7 @@ async function readTwice<T>(read: () => Promise<T>): Promise<T> {
  */
 async function voidPayableInvoice(
 	sub: Pick<Stripe.Subscription, "latest_invoice">,
+	fence: StripeWriteFence,
 ): Promise<{ result: "voided" | "nothing_payable" | "paid" } | { result: "failed"; error: unknown }> {
 	const invoiceId =
 		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
@@ -884,6 +971,7 @@ async function voidPayableInvoice(
 			error: new Error(`invoice ${invoiceId} is ${status ?? "of no status"}; nothing proves it can never be paid`),
 		};
 	}
+	await fence();
 	try {
 		await stripe.invoices.voidInvoice(invoiceId);
 		return { result: "voided" };
@@ -925,6 +1013,34 @@ function subscriptionCustomerId(sub: Pick<Stripe.Subscription, "customer">): str
 async function settleCancelledSubscription(
 	sub: Pick<Stripe.Subscription, "id" | "latest_invoice">,
 	customerId: string,
+	fence: StripeWriteFence,
+): Promise<PaymentOutcome> {
+	try {
+		return await settleCancelledSubscriptionUnderFence(sub, customerId, fence);
+	} catch (e) {
+		if (!(e instanceof PurchaseLeaseLostError)) throw e;
+		// The purchase lost its lease between the cancel and the writes that settle it (ADR 0002 §4.4
+		// rule 1): it stops, so the invoice may still be open, or a payment unrefunded. Nothing records
+		// this subscription, so the alert is the trace a person acts on. Then the stop is thrown on.
+		await alertPaymentNeedsSupport({
+			subscriptionId: sub.id,
+			customerId,
+			paymentIntentId: null,
+			detail: "the purchase that ended it lost its lease before it could void its latest invoice or refund its payment, so that invoice may still be payable, or a payment unrefunded.",
+			error: e,
+		});
+		throw e;
+	}
+}
+
+/**
+ * The body of `settleCancelledSubscription`: every Stripe write in it runs behind `fence`, which throws
+ * `PurchaseLeaseLostError` when the purchase's lease is lost.
+ */
+async function settleCancelledSubscriptionUnderFence(
+	sub: Pick<Stripe.Subscription, "id" | "latest_invoice">,
+	customerId: string,
+	fence: StripeWriteFence,
 ): Promise<PaymentOutcome> {
 	let read: PaymentAfterCancel;
 	try {
@@ -943,7 +1059,7 @@ async function settleCancelledSubscription(
 		case "no_money": {
 			// No money now — but an open invoice can still be paid from a stale page. It is voided before
 			// this subscription is called settled (#5489).
-			const voided = await voidPayableInvoice(sub);
+			const voided = await voidPayableInvoice(sub, fence);
 			if (voided.result === "failed") {
 				const alerted = await alertPaymentNeedsSupport({
 					subscriptionId: sub.id,
@@ -986,7 +1102,7 @@ async function settleCancelledSubscription(
 		case "took_money": {
 			let refunded = false;
 			for (const paymentIntentId of read.succeeded) {
-				const refund = await refundTakenPayment(paymentIntentId);
+				const refund = await refundTakenPayment(paymentIntentId, fence);
 				if (refund.result === "failed") {
 					await alertPaymentNeedsSupport({
 						subscriptionId: sub.id,
@@ -1028,8 +1144,10 @@ const ENDED_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["canceled", "i
 async function cancelNeverPaid(
 	sub: Stripe.Subscription,
 	customerId: string,
+	fence: StripeWriteFence,
 ): Promise<"cancelled" | Exclude<PaymentOutcome, "settled">> {
 	const stripe = getStripe();
+	await fence();
 	try {
 		await stripe.subscriptions.cancel(sub.id);
 	} catch (cancelError) {
@@ -1050,7 +1168,7 @@ async function cancelNeverPaid(
 			return unsettled(alerted);
 		}
 	}
-	const outcome = await settleCancelledSubscription(sub, customerId);
+	const outcome = await settleCancelledSubscription(sub, customerId, fence);
 	return outcome === "settled" ? "cancelled" : outcome;
 }
 
@@ -1069,7 +1187,10 @@ async function cancelNeverPaid(
  * completed between the read and the cancel, or a cancel that could not be proven — is reported in
  * `unsettled` with what became of it.
  */
-async function cancelIncompleteSubscriptions(customerId: string): Promise<IncompleteSweep> {
+async function cancelIncompleteSubscriptions(
+	customerId: string,
+	fence: StripeWriteFence,
+): Promise<IncompleteSweep> {
 	const stripe = getStripe();
 	const subs = await stripe.subscriptions.list({
 		customer: customerId,
@@ -1088,7 +1209,7 @@ async function cancelIncompleteSubscriptions(customerId: string): Promise<Incomp
 			sweep.kept.push(s);
 			continue;
 		}
-		const outcome = await cancelNeverPaid(s, customerId);
+		const outcome = await cancelNeverPaid(s, customerId, fence);
 		if (outcome === "cancelled") sweep.cancelled.push({ sub: s, firstPayment });
 		else sweep.unsettled.push(outcome);
 	}
@@ -1128,6 +1249,9 @@ export async function createCheckoutSession(
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before subscribing to a plan.");
 	}
+	// Before any Stripe write (#5714): the org's unlinked paid setup must not get a plan beside it.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) throw new Error(openSetup);
 	await gatePaidConversion(actor);
 
 	const cfg = getStripeConfig();
@@ -1193,6 +1317,10 @@ export async function createSubscriptionIntent(
 			error: "This organization already has an active subscription — change the plan instead.",
 		};
 	}
+	// After the live-plan check (so a live plan still reads "change the plan instead"), before any
+	// Stripe write (#5714): the org's unlinked paid setup must not get a second plan beside it.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) return { error: openSetup };
 	await gatePaidConversion(actor);
 	// One purchase per org at a time (#5489): two tabs that each read "nothing in flight" before either
 	// minted would otherwise each mint a payable subscription.
@@ -1220,7 +1348,7 @@ async function startOrgSubscription(
 	// re-opening the upgrade sheet can never pile up never-paid subs (and their draft
 	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
 	// which is why the old organization_billing-only guard leaked.
-	const swept = await cancelIncompleteSubscriptions(customerId);
+	const swept = await cancelIncompleteSubscriptions(customerId, UNFENCED);
 	const sweptRefusal = refusalFor(sweepOutcomes(swept));
 	if (sweptRefusal) return { error: sweptRefusal };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
@@ -1379,6 +1507,9 @@ export async function startProTrial(opts?: {
 	) {
 		throw new Error("This organization already has an active subscription.");
 	}
+	// Before any Stripe write (#5714): no trial beside the org's unlinked paid setup.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) throw new Error(openSetup);
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	// Pin the currency now so the trial's eventual paid invoice bills correctly (Stripe
@@ -1557,8 +1688,11 @@ export type NewOrgSubscriptionStart =
  * The same proof guards the sweep of the customer's other `incomplete` subscriptions: one it cannot
  * prove unpaid is kept, and the action refuses rather than mint beside it.
  *
- * The whole of it runs under the caller's purchase lock (`withPurchaseLock`, #5489), so a second request
- * from another tab waits for this one and then sweeps what it minted.
+ * The whole of it runs under the user's purchase lease (`withUserPurchaseLease`, ADR 0002 §4.4), so a
+ * second request from another tab or another instance waits for this one and then sweeps what it
+ * minted. Every Stripe write renews the lease first (§4.4 rule 1), and one that finds it lost stops and
+ * refuses — except the writes of the close-out (rule 4), which run after a lost lease by design and
+ * touch only the subscription this request minted and never handed out.
  */
 export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
@@ -1579,21 +1713,123 @@ export async function createNewOrgSubscriptionIntent(
 
 	// One create-a-team purchase per user at a time (#5489): two tabs that each read "nothing in flight"
 	// before either minted would otherwise each mint a payable subscription.
-	const locked = await withPurchaseLock(`new-org:${actor.userId}`, () =>
-		startNewOrgSubscription(actor, plan, opts),
+	const leased = await withUserPurchaseLease(actor.userId, (lease) =>
+		startNewOrgSubscription(actor, plan, opts, lease),
 	);
-	return locked.acquired ? locked.value : { kind: "refused", message: PURCHASE_IN_PROGRESS };
+	return leased.ran ? leased.value : { kind: "refused", message: PURCHASE_IN_PROGRESS };
 }
 
 /**
- * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lock: replaces the prior
- * attempt, resolves the customer, sweeps, mints, and records the setup.
+ * Runs `fn` under the user's purchase lease, `user:<userId>` (ADR 0002 §4.4), taken by the
+ * create-a-team purchase and its link. `{ ran: false }` when another request holds it past the wait,
+ * or when `fn` lost it (a fence threw `PurchaseLeaseLostError`) — both mean "another purchase of this
+ * user is under way". Anything else `fn` throws is thrown.
+ *
+ * FOR ONE RELEASE it also takes the advisory key the older build takes, `new-org:<userId>`
+ * (`withPurchaseLock`), inside the lease, so during a rolling deploy an old pod's purchase and a new
+ * pod's exclude each other (ADR 0002 §8 step 1). That half holds a pooled connection for the purchase,
+ * as before. S3 will remove it, and S3 deploys only after this release has rolled out to every pod;
+ * until then both are taken.
+ */
+async function withUserPurchaseLease<T>(
+	userId: string,
+	fn: (lease: PurchaseLease) => Promise<T>,
+): Promise<{ ran: true; value: T } | { ran: false }> {
+	try {
+		const leased = await withPurchaseLease(`user:${userId}`, (lease) =>
+			withPurchaseLock(`new-org:${userId}`, () => fn(lease)),
+		);
+		if (!leased.acquired || !leased.value.acquired) return { ran: false };
+		return { ran: true, value: leased.value.value };
+	} catch (e) {
+		if (e instanceof PurchaseLeaseLostError) return { ran: false };
+		throw e;
+	}
+}
+
+/** What the renewal before the mint must leave on the lease beyond the mint's worst case (§4.4 rule 2). */
+const MINT_DEADLINE_MARGIN_MS = 10_000;
+
+/**
+ * What the renewal before the mint must leave on the lease (§4.4 rule 2): one silent window of the
+ * purchase client's timeout per attempt (lib/billing/stripe.ts) plus `MINT_DEADLINE_MARGIN_MS`.
+ *
+ * This is NOT the longest `subscriptions.create` can take. On Node the timeout is socket inactivity that
+ * resets at each stage, so a response that trickles in runs past it, and a closed connection is retried
+ * beyond the retry count. And a renewal always sets the full lease lifetime (120s), so the check is met
+ * by construction; it bites only if the lifetime is ever lowered below this. A slow mint is made safe by
+ * the artifact gate (rule 3), not by this number.
+ */
+function mintDeadlineMs(): number {
+	return (1 + STRIPE_MAX_NETWORK_RETRIES) * STRIPE_REQUEST_TIMEOUT_MS + MINT_DEADLINE_MARGIN_MS;
+}
+
+/** The `cancellation_details.comment` that marks a close-out's cancel (ADR 0002 §4.4 rule 4, S12). */
+const CLOSEOUT_STAMP = "alethia:closeout";
+
+/**
+ * THE CLOSE-OUT (ADR 0002 §4.4 rule 4). The artifact gate failed after `subscriptions.create`: this
+ * request lost its lease, so another may already have minted, and the client secret of `sub` must never
+ * leave the server. Exactly the writes that close `sub` follow, and nothing else — no renewal, no hold
+ * row: no payment can land on a subscription whose secret was never handed out.
+ *
+ * VOID FIRST, AND CANCEL ONLY AFTER A PROVEN VOID. Stripe voids only an unpaid invoice, so a void that
+ * succeeded — or a re-read that shows `void` — proves the first invoice was not paid, and only then is
+ * the subscription cancelled, stamped `alethia:closeout`. When the void cannot be proven, nothing is
+ * cancelled: a subscription whose first invoice may be paid is never cancelled here. It stays
+ * `incomplete` with no secret anywhere, and the user's next purchase sweeps it (after `readFirstPayment`
+ * proves it unpaid), or Stripe expires it. A cancel that fails is logged and left the same way.
+ */
+async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<void> {
+	const stripe = getPurchaseStripe();
+	const invoiceId =
+		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+	let voided = false;
+	if (invoiceId) {
+		try {
+			voided = (await stripe.invoices.voidInvoice(invoiceId)).status === "void";
+		} catch {
+			voided = false;
+		}
+		if (!voided) {
+			try {
+				voided = (await stripe.invoices.retrieve(invoiceId)).status === "void";
+			} catch {
+				voided = false;
+			}
+		}
+	}
+	let cancelled = false;
+	if (voided) {
+		try {
+			await stripe.subscriptions.cancel(sub.id, { cancellation_details: { comment: CLOSEOUT_STAMP } });
+			cancelled = true;
+		} catch (e) {
+			console.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete for the next sweep:`, e);
+		}
+	}
+	logBillingEvent("billing.purchase_lease.closeout", {
+		subscription_id: sub.id,
+		invoice_id: invoiceId,
+		voided: voided ? "true" : "false",
+		cancelled: cancelled ? "true" : "false",
+	});
+}
+
+/**
+ * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lease: replaces the prior
+ * attempt, resolves the customer, sweeps, mints, and records the setup. Every Stripe write renews
+ * `lease` first (`fence`, §4.4 rule 1) and a lost lease is thrown as `PurchaseLeaseLostError`; the mint
+ * and its artifact gate follow rules 2–4. The one exception is the close-out (rule 4): its writes run
+ * after the lease is lost, and close only the subscription this request minted.
  */
 async function startNewOrgSubscription(
 	actor: { userId: string },
 	plan: PaidPlan,
 	opts: NewOrgSubscriptionOpts,
+	lease: PurchaseLease,
 ): Promise<NewOrgSubscriptionStart> {
+	const fence = fenceFor(lease);
 	// The Stripe customers of the caller's own unfinished setup records (server-written, keyed on the
 	// session user): reused when the browser lost its `customerId`, and swept below (#5463).
 	const recordedCustomers = await unlinkedPendingOrgSetupCustomers(actor.userId);
@@ -1624,8 +1860,8 @@ async function startNewOrgSubscription(
 			// voided if it can be paid. Anything short of that refuses, and its record stays.
 			const outcome =
 				prior.status === "incomplete"
-					? await cancelNeverPaid(prior, subscriptionCustomerId(prior))
-					: await settleCancelledSubscription(prior, subscriptionCustomerId(prior));
+					? await cancelNeverPaid(prior, subscriptionCustomerId(prior), fence)
+					: await settleCancelledSubscription(prior, subscriptionCustomerId(prior), fence);
 			if (outcome !== "cancelled" && outcome !== "settled") {
 				return { kind: "refused", message: refusalFor([outcome]) ?? PAYMENT_MAY_BE_UNDER_WAY };
 			}
@@ -1636,7 +1872,7 @@ async function startNewOrgSubscription(
 			// is minted. A void that cannot be proven refuses. A paid one is left alone, as before this
 			// change: telling a payment that landed after our own cancel from a finished purchase needs the
 			// hold lifecycle designed in #5506.
-			const voided = await voidPayableInvoice(prior);
+			const voided = await voidPayableInvoice(prior, fence);
 			if (voided.result === "failed") {
 				const alerted = await alertPaymentNeedsSupport({
 					subscriptionId: prior.id,
@@ -1655,7 +1891,7 @@ async function startNewOrgSubscription(
 	// Otherwise mint a fresh bare customer (no organization_id until the org exists and is linked).
 	let customerId: string | null = null;
 	if (opts.customerId) {
-		const existing = await getStripe().customers.retrieve(opts.customerId);
+		const existing = await getPurchaseStripe().customers.retrieve(opts.customerId);
 		if (
 			!existing.deleted &&
 			existing.metadata?.created_by === actor.userId
@@ -1672,7 +1908,8 @@ async function startNewOrgSubscription(
 			.from(user)
 			.where(eq(user.id, actor.userId))
 			.limit(1);
-		const customer = await getStripe().customers.create({
+		await fence();
+		const customer = await getPurchaseStripe().customers.create({
 			email: u?.email,
 			name: opts.orgName,
 			metadata: { created_by: actor.userId },
@@ -1690,7 +1927,7 @@ async function startNewOrgSubscription(
 	// purchase (`cancelNeverPaid`), and its record is kept.
 	const sweptOutcomes: PaymentOutcome[] = [];
 	for (const sweepCustomer of new Set([customerId, ...recordedCustomers])) {
-		const swept = await cancelIncompleteSubscriptions(sweepCustomer);
+		const swept = await cancelIncompleteSubscriptions(sweepCustomer, fence);
 		for (const { sub: cancelled, firstPayment } of swept.cancelled) {
 			await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
 		}
@@ -1705,18 +1942,43 @@ async function startNewOrgSubscription(
 	// Resolve the billing currency before creating the sub (Stripe locks it): explicit
 	// selection wins, else the request geo.
 	const currency = opts.currency ?? (await currencyFromRequest());
+	// THE MINT DEADLINE (§4.4 rule 2): the renewal right before the mint must leave the lease more than
+	// `mintDeadlineMs()`. It does not stop the lease lapsing while Stripe is still answering — the timeout
+	// is per-stage inactivity, not a total cap — so a mint that outlives the lease is caught by the
+	// artifact gate below (rule 3), which is what keeps a second secret from leaving.
+	await fenceFor(lease, mintDeadlineMs())();
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
-	const sub = await getStripe().subscriptions.create({
-		customer: customerId,
-		items: planCreateItems(plan, 1),
-		currency,
-		payment_behavior: "default_incomplete",
-		payment_settings: { save_default_payment_method: "on_subscription" },
-		expand: ["latest_invoice.confirmation_secret"],
-		metadata: { created_by: actor.userId },
-		...taxParam,
-	});
+	// The idempotency key names this HOLDER, on purpose: a key shared between holders would replay A's
+	// subscription to B after B's sweep had cancelled it.
+	const sub = await getPurchaseStripe().subscriptions.create(
+		{
+			customer: customerId,
+			items: planCreateItems(plan, 1),
+			currency,
+			payment_behavior: "default_incomplete",
+			payment_settings: { save_default_payment_method: "on_subscription" },
+			expand: ["latest_invoice.confirmation_secret"],
+			metadata: { created_by: actor.userId },
+			...taxParam,
+		},
+		{ idempotencyKey: `mint-${lease.key}-${lease.holder}` },
+	);
+
+	// THE ARTIFACT GATE (§4.4 rule 3, I9). The secret leaves the server only after a renewal made AFTER
+	// the create returned still finds this holder. A request that stalled past its lease may have been
+	// taken over, and the new holder may have minted already: then this subscription is closed out
+	// (rule 4) and nothing is handed out. A renewal that throws proves nothing, and is treated the same.
+	let gateHeld = false;
+	try {
+		gateHeld = await renewPurchaseLease(lease);
+	} catch (e) {
+		console.error(`[billing] the artifact gate could not renew ${lease.key}:`, e);
+	}
+	if (!gateHeld) {
+		await closeOutMintedSubscription(sub);
+		return { kind: "refused", message: PURCHASE_IN_PROGRESS };
+	}
 
 	const invoice = sub.latest_invoice;
 	if (!invoice || typeof invoice === "string") {
@@ -1740,14 +2002,31 @@ async function startNewOrgSubscription(
 			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
 		});
 	} catch (e) {
-		try {
-			await getStripe().subscriptions.cancel(sub.id);
-		} catch {
-			// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
-		}
+		await cancelUnrecordedSubscription(sub, fence);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
 	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
+}
+
+/**
+ * Cancels `sub`, which this request minted and whose setup record could not be written, so its secret
+ * never left the server. The cancel is a Stripe write, so it renews the lease first (§4.4 rule 1). A
+ * lease lost by then — or a renewal that throws — leaves this request a stale holder, and the only writes
+ * it may still make are the close-out's (rule 4): void first, cancel only after a proven void.
+ */
+async function cancelUnrecordedSubscription(sub: Stripe.Subscription, fence: StripeWriteFence): Promise<void> {
+	try {
+		await fence();
+	} catch (e) {
+		console.error(`[billing] the lease was not held before cancelling ${sub.id}; closing it out instead:`, e);
+		await closeOutMintedSubscription(sub);
+		return;
+	}
+	try {
+		await getPurchaseStripe().subscriptions.cancel(sub.id);
+	} catch {
+		// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
+	}
 }
 
 /**
@@ -1757,7 +2036,7 @@ async function startNewOrgSubscription(
 async function ownedCustomer(customerId: string, userId: string): Promise<string | null> {
 	let existing: Stripe.Customer | Stripe.DeletedCustomer;
 	try {
-		existing = await getStripe().customers.retrieve(customerId);
+		existing = await getPurchaseStripe().customers.retrieve(customerId);
 	} catch (e) {
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
@@ -1777,7 +2056,7 @@ async function ownNewOrgSubscription(
 ): Promise<Stripe.Subscription | null> {
 	let sub: Stripe.Subscription;
 	try {
-		sub = await getStripe().subscriptions.retrieve(subscriptionId, { expand: ["customer"] });
+		sub = await getPurchaseStripe().subscriptions.retrieve(subscriptionId, { expand: ["customer"] });
 	} catch (e) {
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
@@ -1857,7 +2136,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	 * coverage test found exactly that gap.
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-}): Promise<NewOrgPlanReport> {
+}): Promise<NewOrgLinkResult> {
 	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
 	// just created — so the address and the target genuinely differ, and always did. It used to work
 	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
@@ -1866,13 +2145,32 @@ export async function linkSubscriptionToNewOrg(input: {
 	const actor = await authorizeInOrg("manage_billing", { type: "billing" }, input.orgId);
 	requireHostedBilling();
 
-	const sub = await getStripe().subscriptions.retrieve(input.subscriptionId);
+	// Under the user's purchase lease (ADR 0002 §4.4), like the purchase it finishes: a busy or lost
+	// lease is THROWN, not refused — a refusal is final for the setup, and this is only "not now", so
+	// the sheet's retry is the right answer.
+	const leased = await withUserPurchaseLease(actor.userId, (lease) =>
+		linkSubscriptionToNewOrgUnderLease(actor, input, fenceFor(lease)),
+	);
+	if (!leased.ran) throw new Error(PURCHASE_IN_PROGRESS);
+	return leased.value;
+}
+
+/**
+ * The body of `linkSubscriptionToNewOrg`, run under the user's purchase lease: each Stripe write renews
+ * the lease first (`fence`, §4.4 rule 1), and a lost lease stops the link before that write.
+ */
+async function linkSubscriptionToNewOrgUnderLease(
+	actor: { userId: string },
+	input: Parameters<typeof linkSubscriptionToNewOrg>[0],
+	fence: StripeWriteFence,
+): Promise<NewOrgLinkResult> {
+	const sub = await getPurchaseStripe().subscriptions.retrieve(input.subscriptionId);
 	const subCustomerId =
 		typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 	if (subCustomerId !== input.customerId) {
 		throw new Error("Subscription does not match the expected customer.");
 	}
-	const customer = await getStripe().customers.retrieve(input.customerId);
+	const customer = await getPurchaseStripe().customers.retrieve(input.customerId);
 	if (customer.deleted || customer.metadata?.created_by !== actor.userId) {
 		throw new Error("Not allowed to link this subscription.");
 	}
@@ -1884,11 +2182,26 @@ export async function linkSubscriptionToNewOrg(input: {
 	// (both of which converge: the sync re-applies the same subscription, the payer write is an update).
 	// A subscription naming a DIFFERENT org is still refused.
 	const linkedTo = sub.metadata?.organization_id;
+	if (linkedTo && (linkedTo !== input.orgId || sub.metadata?.created_by !== actor.userId)) {
+		throw new Error("Subscription is already linked to an organization.");
+	}
+
+	// The setup closer runs before the link answers (ADR 0002 §5.7): an ended X closes its setup, and
+	// one a lost response left linked in Stripe is adopted.
+	const setup = await pendingOrgSetupFor(actor.userId, sub.id);
+	if (setup) await settleOpenSetup(setup, { sub, orgId: input.orgId });
+
+	// THE REFUSED SYNC (ADR 0002 §5.6, #5714). The org may already hold another live plan Y — bought
+	// in it, or trialled, while this link had not yet run. Linking X beside it left X renewing next to
+	// Y while the sheet reported "active". Checked here, BEFORE any Stripe write, and again after a sync
+	// the row's guard refused (Y took the row in between).
+	const before = await getOrgBilling(input.orgId);
+	if (namesOtherLivePlan(before, sub.id)) {
+		return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: before?.stripeSubscriptionId ?? null });
+	}
+
 	let linked: Stripe.Subscription;
 	if (linkedTo) {
-		if (linkedTo !== input.orgId || sub.metadata?.created_by !== actor.userId) {
-			throw new Error("Subscription is already linked to an organization.");
-		}
 		linked = sub;
 	} else {
 		const [org] = await getServiceDb()
@@ -1900,17 +2213,27 @@ export async function linkSubscriptionToNewOrg(input: {
 		// Customer first, subscription second: the subscription's `organization_id` is what the
 		// idempotent branch above (and the webhook) read, so it is written LAST — a failure between
 		// the two leaves an unlinked subscription, which a retry links normally.
-		await getStripe().customers.update(input.customerId, {
+		await fence();
+		await getPurchaseStripe().customers.update(input.customerId, {
 			name: org?.name,
 			metadata: { created_by: actor.userId, organization_id: input.orgId },
 		});
-		linked = await getStripe().subscriptions.update(input.subscriptionId, {
+		await fence();
+		linked = await getPurchaseStripe().subscriptions.update(input.subscriptionId, {
 			metadata: { created_by: actor.userId, organization_id: input.orgId },
 		});
 	}
 
-	// Deterministic activation — don't wait for the (already-fired) webhook.
-	await syncSubscriptionToBilling(linked);
+	// Deterministic activation — don't wait for the (already-fired) webhook. An "ignored" sync is no
+	// longer discarded: beside another live plan it is the refusal above, reached by a race. Beside a
+	// row naming X itself it is #5549's rank guard keeping a later state (C76), and X is linked.
+	const synced = await syncSubscriptionToBilling(linked);
+	if (synced === "ignored") {
+		const after = await getOrgBilling(input.orgId);
+		if (namesOtherLivePlan(after, sub.id)) {
+			return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: after?.stripeSubscriptionId ?? null });
+		}
+	}
 
 	// Then carry the declared payer facts onto the row syncSubscriptionToBilling just created. After
 	// it, never before: the row does not exist until then, and writing them first would either race
@@ -1932,7 +2255,87 @@ export async function linkSubscriptionToNewOrg(input: {
 	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
 	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
 	// often be false.
-	return readNewOrgPlanState(linked);
+	return { kind: "linked", ...(await readNewOrgPlanState(linked)) };
+}
+
+/**
+ * What `linkSubscriptionToNewOrg` did (ADR 0002 §5.6): linked, with the plan state it read (#5539's
+ * report, unchanged), or refused, with the sentence the sheet shows. A refusal is final for this
+ * setup — the sheet does not offer a retry.
+ */
+export type NewOrgLinkResult =
+	| ({ kind: "linked" } & NewOrgPlanReport)
+	| { kind: "refused"; clause: string };
+
+/**
+ * The org's billing row names a subscription other than `subscriptionId` that still bills: active,
+ * trialing, or past_due. `past_due` is a deliberate widening of "live" for THIS refusal only (#5715
+ * review): the sync's row guard also refuses an X that does not supersede a past_due Y, so without it
+ * the link would mark X linked while X and Y both bill. Refusing here sends both to a person instead.
+ */
+function namesOtherLivePlan(
+	billing: Awaited<ReturnType<typeof getOrgBilling>>,
+	subscriptionId: string,
+): boolean {
+	return (
+		!!billing?.stripeSubscriptionId &&
+		billing.stripeSubscriptionId !== subscriptionId &&
+		(billing.status === "active" || billing.status === "trialing" || billing.status === "past_due")
+	);
+}
+
+/**
+ * The link's refusal beside the org's other live plan (ADR 0002 §5.6 "The refused sync", #5714). It
+ * writes nothing to the plan and never marks the setup linked: it closes the setup with
+ * `refused_reason = 'org_has_plan'` (one compare-and-set), logs `billing.new_org_link.refused`, and
+ * alerts the operator with X as the subject — X is paid or may be, unlinked, and renews until a person
+ * refunds it or moves it.
+ *
+ * The alert is skipped in exactly one case: this call's compare-and-set closed nothing AND the setup's
+ * `closed_reason` is already `org_has_plan` — an earlier refusal of this same X, which raised this same
+ * alert with this subject. Every other case alerts: the setup closed now; no setup record at all; a
+ * setup closed as `ended` (the closer alerts there only when a payment may have moved, so a `never_paid`
+ * close raised nothing) or as `operator` (`close-setup` never alerts); a setup already linked. A new
+ * closer does NOT inherit the skip — it alerts here unless it writes `org_has_plan`. The customer is
+ * told the alert was raised only when it reached a channel (I8).
+ */
+async function refuseNewOrgLink(input: {
+	actor: { userId: string };
+	sub: Stripe.Subscription;
+	customerId: string;
+	orgId: string;
+	rowSubscriptionId: string | null;
+}): Promise<NewOrgLinkResult> {
+	const closed = await closePendingOrgSetup({
+		subscriptionId: input.sub.id,
+		userId: input.actor.userId,
+		reason: "org_has_plan",
+		refusedReason: "org_has_plan",
+	});
+	const record = closed ?? (await pendingOrgSetupFor(input.actor.userId, input.sub.id));
+	logBillingEvent("billing.new_org_link.refused", {
+		subscription_id: input.sub.id,
+		customer_id: input.customerId,
+		org_id: input.orgId,
+		org_subscription_id: input.rowSubscriptionId,
+		setup_closed_now: closed ? "true" : "false",
+	});
+	// The one skip: an earlier refusal of this X already raised this alert (see the JSDoc).
+	const alreadyRefused = !closed && record?.closed_reason === "org_has_plan";
+	let alerted = false;
+	if (!alreadyRefused) {
+		alerted = await alertPaymentNeedsSupport({
+			subscriptionId: input.sub.id,
+			customerId: input.customerId,
+			paymentIntentId: null,
+			context: "link_refused",
+			detail: `the link to team ${input.orgId} was refused because its billing row holds another live subscription (${input.rowSubscriptionId ?? "unknown"}), so this one is unlinked and keeps renewing beside it. Refund it, or move it to the right team.`,
+		});
+	}
+	return {
+		kind: "refused",
+		clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}`,
+	};
 }
 
 /**
@@ -2061,6 +2464,12 @@ async function newOrgSetupStateFor(
 		org = { id: owned.id, slug: owned.slug ?? "" };
 	}
 
+	// The setup closer runs before the lookup answers (ADR 0002 §5.6, §5.7): an open setup whose X
+	// reads ended is closed, and one a lost response left linked in Stripe is adopted. The answer
+	// below is about X and does not depend on it, so a closer that cannot read is logged, not thrown —
+	// the setup stays open and the next reader tries again.
+	await settleOpenSetupQuietly(row, sub, org?.id ?? null);
+
 	let declared = false;
 	if (org) {
 		const [billing] = await db
@@ -2093,6 +2502,23 @@ async function newOrgSetupStateFor(
 		billing: row.billing ?? null,
 		currency: sub.currency,
 	};
+}
+
+/**
+ * Runs the setup closer for a lookup, which must answer whether or not it could: a failure is logged
+ * and the setup stays open for the next reader (the guard, which does fail closed, or another lookup).
+ */
+async function settleOpenSetupQuietly(
+	row: PendingOrgSetupRow,
+	sub: Stripe.Subscription,
+	orgId: string | null,
+): Promise<void> {
+	if (row.closed_at || row.linked_at) return;
+	try {
+		await settleOpenSetup(row, { sub, orgId });
+	} catch (e) {
+		console.error(`[billing] setup closer could not check ${row.subscription_id}:`, e);
+	}
 }
 
 /**
@@ -2186,6 +2612,13 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 						continue;
 					}
 					await forgetPendingOrgSetup(actor.userId, sub, firstPayment);
+				}
+				// A record still there — it has an organization, or its payment is not proven unmoved, or it
+				// was cancelled — is CLOSED once it reads ended (#5714), so it no longer blocks that
+				// organization's plan purchases; it used to be skipped and kept open for good. One the line
+				// above deleted matches nothing in the closer's compare-and-set, so nothing is logged twice.
+				if (ENDED_SUBSCRIPTION_STATUSES.has(sub.status)) {
+					await settleOpenSetupQuietly(row, sub, row.created_org_id);
 				}
 				continue;
 			}

@@ -21,6 +21,7 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope, withOwnerScope } from "@/lib/db";
 import { agentContext } from "@/lib/db/schema";
 import type { AgentContext } from "@/lib/db/schema";
+import { documentSchema } from "@/lib/ai/knowledge-schema";
 import { orgAgentContextEnabled } from "@/lib/ai/org-agent-context-flag";
 import {
 	buildProjectKnowledge,
@@ -29,14 +30,6 @@ import {
 } from "@/lib/ai/project-knowledge";
 
 const scopeSchema = z.string().uuid().nullish();
-
-/** One pinned knowledge document. Titles are required — an unnamed doc is unusable in a list. */
-const documentSchema = z.object({
-	id: z.string().min(1),
-	title: z.string().trim().min(1).max(200),
-	content: z.string().max(KNOWLEDGE_LIMIT),
-	updated_at: z.string(),
-});
 
 const upsertSchema = z.object({
 	projectId: z.string().uuid().nullish(),

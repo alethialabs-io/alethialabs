@@ -66,8 +66,9 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const filters = useSsoFilters((s) => s.filters);
 	const set = useSsoFilters((s) => s.set);
 	const reset = useSsoFilters((s) => s.reset);
-	useFilterUrlSync(useSsoFilters, DEFAULT_SSO_FILTERS);
-	const search = useDebouncedValue(filters.search);
+	const urlRead = useFilterUrlSync(useSsoFilters, DEFAULT_SSO_FILTERS);
+	// `urlRead`: a search the link carried lands at once; only typing is debounced (#5861).
+	const search = useDebouncedValue(filters.search, 250, { urlRead });
 	const query = useMemo(
 		() => normalizeSsoQuery(filters, search),
 		[filters, search],

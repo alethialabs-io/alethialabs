@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { createHash } from "node:crypto";
 import { notFound } from "next/navigation";
+import { z } from "zod";
 import { evaluate, resolveK8sVersion } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
@@ -35,7 +37,9 @@ import {
 	auditLog,
 	cloudIdentities,
 	type EnvironmentStage,
+	type Job,
 	jobs,
+	type NewJob,
 	type PlacementMode,
 	type Project,
 	type ProjectEnvironment,
@@ -2215,6 +2219,135 @@ async function refusalAsValue<T extends object>(
 }
 
 /**
+ * An approval key as the agent's approval card sends it: `threadId:toolCallId` of the tool call
+ * that proposed the operation (#5797). Bounded, because it is client input to a POST-addressable
+ * action; what is stored is a fixed-length digest of it, never the text.
+ */
+const approvalKeySchema = z.string().min(1).max(512);
+
+/** The two operations an approval can queue; each hashes its keys into its own namespace. */
+type ApprovalOperation = "plan" | "deploy";
+
+/**
+ * Where an approval key is looked up and enforced: the actor's org, the project and the actor
+ * themselves, plus the stored digest. Every lookup carries all four, so a key — which the client
+ * chooses — can only ever resolve to a job THIS person queued in THIS project of THIS org.
+ */
+interface ApprovalKeyScope {
+	orgId: string;
+	projectId: string;
+	userId: string;
+	storedKey: string;
+}
+
+/**
+ * Builds the {@link ApprovalKeyScope} for an approval key, or null when no key was passed (every
+ * caller but the approval card). The stored form is SHA-256 over the operation and the key, so a
+ * plan approval and a deploy approval can never resolve to each other's job, and a thread id never
+ * sits in plain text on a job row other org members can list. A malformed key is a refusal.
+ */
+function approvalKeyScope(
+	operation: ApprovalOperation,
+	key: string | null | undefined,
+	scope: { orgId: string; projectId: string; userId: string },
+): ApprovalKeyScope | null {
+	if (key === undefined || key === null) return null;
+	const parsed = approvalKeySchema.safeParse(key);
+	if (!parsed.success) {
+		throw new JobRefusalError(
+			"This approval's key is malformed — reload the conversation and approve again.",
+		);
+	}
+	const storedKey = createHash("sha256")
+		.update(`${operation}\n${parsed.data}`)
+		.digest("hex");
+	return { ...scope, storedKey };
+}
+
+/**
+ * The job an approval already queued, if any — matched on org, project, user AND key (the shape of
+ * `uq_jobs_idempotency_key`), never on the key alone.
+ */
+async function findApprovedJob(
+	tx: Tx,
+	key: ApprovalKeyScope,
+): Promise<{ id: string; job_type: Job["job_type"] } | undefined> {
+	const [row] = await tx
+		.select({ id: jobs.id, job_type: jobs.job_type })
+		.from(jobs)
+		.where(
+			and(
+				eq(jobs.org_id, key.orgId),
+				eq(jobs.project_id, key.projectId),
+				eq(jobs.user_id, key.userId), // authz-scope-ok: narrows a dedupe key to the actor's own job; the PDP authorized first
+				eq(jobs.idempotency_key, key.storedKey),
+			),
+		)
+		.limit(1);
+	return row;
+}
+
+/**
+ * Inserts a job. Without a key it is the plain insert every enqueue path always made. With one it
+ * is at most once per key: `ON CONFLICT … DO NOTHING` on `uq_jobs_idempotency_key`, then — when
+ * nothing was inserted — the existing row is read back in the SAME transaction. A concurrent call
+ * with the same key blocks on the unique index until the first commits, so its read-back sees the
+ * committed row. `created: false` means nothing was written and the caller must not move the
+ * environment or write an audit row for it.
+ */
+async function insertJobOnce(
+	tx: Tx,
+	values: NewJob,
+	key: ApprovalKeyScope | null,
+): Promise<{ id: string; jobType: Job["job_type"]; created: boolean }> {
+	if (!key) {
+		const [job] = await tx
+			.insert(jobs)
+			.values(values)
+			.returning({ id: jobs.id });
+		return { id: job.id, jobType: values.job_type, created: true };
+	}
+	const [job] = await tx
+		.insert(jobs)
+		.values({ ...values, idempotency_key: key.storedKey })
+		.onConflictDoNothing({
+			target: [jobs.org_id, jobs.project_id, jobs.user_id, jobs.idempotency_key],
+			where: sql`idempotency_key IS NOT NULL`,
+		})
+		.returning({ id: jobs.id });
+	if (job) return { id: job.id, jobType: values.job_type, created: true };
+	const existing = await findApprovedJob(tx, key);
+	// Unreachable while the index and this lookup agree on their columns; a loud failure if not.
+	if (!existing) throw new Error("approval key conflicted but matched no job");
+	return { id: existing.id, jobType: existing.job_type, created: false };
+}
+
+/**
+ * The job an approval of `operation` on `projectId` already queued, for the approval card to show
+ * on a re-render instead of an active Approve (#5797). Authorized as a project read, and scoped to
+ * the caller's org and the caller themselves, so a key resolves to nothing but the caller's own job.
+ */
+export async function getApprovedJob(
+	projectId: string,
+	operation: "plan_project" | "provision_project",
+	approvalKey: string,
+): Promise<{ jobId: string } | null> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	const op = z.enum(["plan_project", "provision_project"]).parse(operation);
+	if (!approvalKeySchema.safeParse(approvalKey).success) return null;
+	const key = approvalKeyScope(op === "plan_project" ? "plan" : "deploy", approvalKey, {
+		orgId: actor.orgId,
+		projectId,
+		userId: actor.userId,
+	});
+	if (!key) return null;
+	const row = await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
+		findApprovedJob(tx, key),
+	);
+	return row ? { jobId: row.id } : null;
+}
+
+/**
  * {@link planProject} for the console: the same authorization, gates and job, with a refusal the
  * user can act on RETURNED rather than thrown (#5445). `planProject` itself keeps throwing — `POST
  * /api/jobs` relies on that, and a route handler's message is not redacted.
@@ -2246,15 +2379,35 @@ export async function tryQueueDriftDetection(
 	return refusalAsValue(() => queueDriftDetection(...args));
 }
 
+/**
+ * Queues a PLAN job for the project's target environment. `approvalKey` (the agent's approval card
+ * passes `threadId:toolCallId`, #5797) makes it at most once per key: a repeated call returns the
+ * job the key already queued — before any gate runs, and without queuing another.
+ */
 export async function planProject(
 	projectId: string,
 	runnerId?: string | null,
 	environmentId?: string | null,
+	approvalKey?: string | null,
 ) {
 	const actor = await authorize("plan", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
+	const key = approvalKeyScope("plan", approvalKey, {
+		orgId: actor.orgId,
+		projectId,
+		userId: actor.userId,
+	});
+	if (key) {
+		// Already approved: answer with that job. Ahead of the usage and quota gates on purpose —
+		// a repeat of a queued approval spends nothing, so it must not be refused as if it would.
+		const existing = await withScope(
+			{ ownerId: actor.userId, orgId: actor.orgId },
+			(tx) => findApprovedJob(tx, key),
+		);
+		if (existing) return { jobId: existing.id };
+	}
 	await assertUsageAllowed(actor.orgId);
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
@@ -2271,25 +2424,26 @@ export async function planProject(
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },
 		async (tx) => {
-			const [job] = await tx
-				.insert(jobs)
-				.values(
-					signedJob({
-						user_id: owner,
-						org_id: actor.orgId,
-						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
-						initiated_by: "user",
-						job_type: "PLAN",
-						config_snapshot: configSnapshot,
-						status: "QUEUED",
-						// New trace root for this provisioning operation (enqueue → claim → runner).
-						traceparent: newTraceparent(),
-						...(runnerId ? { assigned_runner_id: runnerId } : {}),
-					}),
-				)
-				.returning({ id: jobs.id });
+			const job = await insertJobOnce(
+				tx,
+				signedJob({
+					user_id: owner,
+					org_id: actor.orgId,
+					project_id: projectId,
+					environment_id: environment.id,
+					cloud_identity_id: identity.id,
+					initiated_by: "user",
+					job_type: "PLAN",
+					config_snapshot: configSnapshot,
+					status: "QUEUED",
+					// New trace root for this provisioning operation (enqueue → claim → runner).
+					traceparent: newTraceparent(),
+					...(runnerId ? { assigned_runner_id: runnerId } : {}),
+				}),
+				key,
+			);
+			// A concurrent approval of the same proposal committed first: its job IS this one.
+			if (!job.created) return { jobId: job.id };
 
 			await enqueueEnvTransition(tx, environment.id, "enqueuePlan", job.id, {
 				orgId: actor.orgId,
@@ -2397,16 +2551,46 @@ export async function buildProject(
 	return result;
 }
 
+/**
+ * What {@link provisionProject} answers for a job an approval key already queued: the same shape a
+ * fresh enqueue of that job type answers, so the caller cannot tell a repeat from a first call.
+ */
+function keyedDeployResult(
+	jobId: string,
+	jobType: Job["job_type"],
+): { jobId: string; jobType?: "BUILD" } {
+	return jobType === "BUILD" ? { jobId, jobType: "BUILD" } : { jobId };
+}
+
+/**
+ * Queues a DEPLOY job (or, for a redeploy with repo-sourced services, the BUILD that chains it).
+ * `approvalKey` makes it at most once per key, as in {@link planProject} (#5797): a repeated
+ * approval of one deploy proposal returns the job it already queued and applies nothing twice.
+ */
 export async function provisionProject(
 	projectId: string,
 	planJobId?: string,
 	runnerId?: string | null,
 	environmentId?: string | null,
+	approvalKey?: string | null,
 ) {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
+	const key = approvalKeyScope("deploy", approvalKey, {
+		orgId: actor.orgId,
+		projectId,
+		userId: actor.userId,
+	});
+	if (key) {
+		// Already approved: answer with that job, ahead of the spend gates (see planProject).
+		const existing = await withScope(
+			{ ownerId: actor.userId, orgId: actor.orgId },
+			(tx) => findApprovedJob(tx, key),
+		);
+		if (existing) return keyedDeployResult(existing.id, existing.job_type);
+	}
 	await assertUsageAllowed(actor.orgId);
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
@@ -2434,24 +2618,25 @@ export async function provisionProject(
 		const result = await withScope(
 			{ ownerId: owner, orgId: actor.orgId },
 			async (tx) => {
-				const [job] = await tx
-					.insert(jobs)
-					.values(
-						signedJob({
-							user_id: owner,
-							org_id: actor.orgId,
-							project_id: projectId,
-							environment_id: environment.id,
-							cloud_identity_id: identity.id,
-							initiated_by: "user",
-							job_type: "BUILD",
-							config_snapshot: configSnapshot,
-							status: "QUEUED",
-							traceparent: newTraceparent(),
-							...(runnerId ? { assigned_runner_id: runnerId } : {}),
-						}),
-					)
-					.returning({ id: jobs.id });
+				const job = await insertJobOnce(
+					tx,
+					signedJob({
+						user_id: owner,
+						org_id: actor.orgId,
+						project_id: projectId,
+						environment_id: environment.id,
+						cloud_identity_id: identity.id,
+						initiated_by: "user",
+						job_type: "BUILD",
+						config_snapshot: configSnapshot,
+						status: "QUEUED",
+						traceparent: newTraceparent(),
+						...(runnerId ? { assigned_runner_id: runnerId } : {}),
+					}),
+					key,
+				);
+				// A concurrent approval of the same proposal committed first: its job IS this one.
+				if (!job.created) return keyedDeployResult(job.id, job.jobType);
 
 				await enqueueEnvTransition(
 					tx,
@@ -2486,26 +2671,27 @@ export async function provisionProject(
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },
 		async (tx) => {
-			const [job] = await tx
-				.insert(jobs)
-				.values(
-					signedJob({
-						user_id: owner,
-						org_id: actor.orgId,
-						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
-						initiated_by: "user",
-						job_type: "DEPLOY",
-						config_snapshot: configSnapshot,
-						status: "QUEUED",
-						// New trace root for this provisioning operation (enqueue → claim → runner).
-						traceparent: newTraceparent(),
-						...(planJobId ? { plan_job_id: planJobId } : {}),
-						...(runnerId ? { assigned_runner_id: runnerId } : {}),
-					}),
-				)
-				.returning({ id: jobs.id });
+			const job = await insertJobOnce(
+				tx,
+				signedJob({
+					user_id: owner,
+					org_id: actor.orgId,
+					project_id: projectId,
+					environment_id: environment.id,
+					cloud_identity_id: identity.id,
+					initiated_by: "user",
+					job_type: "DEPLOY",
+					config_snapshot: configSnapshot,
+					status: "QUEUED",
+					// New trace root for this provisioning operation (enqueue → claim → runner).
+					traceparent: newTraceparent(),
+					...(planJobId ? { plan_job_id: planJobId } : {}),
+					...(runnerId ? { assigned_runner_id: runnerId } : {}),
+				}),
+				key,
+			);
+			// A concurrent approval of the same proposal committed first: its job IS this one.
+			if (!job.created) return keyedDeployResult(job.id, job.jobType);
 
 			await enqueueEnvTransition(tx, environment.id, "enqueueDeploy", job.id, {
 				orgId: actor.orgId,

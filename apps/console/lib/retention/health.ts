@@ -8,12 +8,12 @@
 // leaves the register looking correct and the data still there — which is precisely the failure a
 // "policy-only retention promise" produces, just with more machinery in front of it.
 //
-// So health is measured from the DATA, not from the scheduler: the oldest surviving row in each
-// governed table, compared against that table's effective window. A GC that is running answers
+// So health is measured from the DATA, not from the scheduler: the oldest surviving row each entry
+// governs, compared against that entry's effective window. A GC that is running answers
 // "oldest row is inside the window" no matter how it is scheduled; a GC that has silently stopped
 // answers with a growing overrun, and says by how much.
 
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db";
 import { EFFECTIVE_RETENTION_DAYS } from "@/lib/reconcile/gc";
 import {
@@ -52,18 +52,43 @@ export interface RetentionHealthRow {
  */
 const OVERRUN_SLACK_DAYS = 1;
 
+/**
+ * The slack for a `reconcile-task` entry: the GC's one day plus the task's cadence.
+ *
+ * The only `reconcile-task` today, `elench-drafts-sweep`, runs once a day (its interval in
+ * lib/reconcile/loop.ts), so a row may legitimately sit up to a day past its window before the next
+ * pass deletes it — the register itself says a discarded draft "can stay up to about two days". With
+ * the GC's one-day slack alone, the limit for the 1-day discarded-drafts window would be two days,
+ * exactly that legitimate maximum, so any ordinary delay (a restart, a backlog draining over several
+ * passes) would read as overdue. Nothing derives this from the loop's interval: a task given a
+ * longer cadence needs this raised with it.
+ */
+const RECONCILE_TASK_SLACK_DAYS = OVERRUN_SLACK_DAYS + 1;
+
+/**
+ * Runs one fixed age query and returns its `age_days`, or null when no row matched. The seam the
+ * measurement runs through: `retentionHealth` answers it from the database, and a unit test answers
+ * it directly.
+ */
+export type AgeQuery = (query: SQL) => Promise<number | null>;
+
 /** Age in days of the oldest row in `table`, or null when the table is empty. */
-async function oldestRowAgeDays(db: Db, table: string): Promise<number | null> {
+async function oldestRowAgeDays(age: AgeQuery, table: string): Promise<number | null> {
 	// The column differs per table only in name; every governed table stamps its insert time. Chosen
 	// from a fixed map rather than interpolated from caller input — this is raw SQL identifier
 	// interpolation, and a table name that reached it from anywhere but the register would be an
 	// injection point.
 	const column = TIMESTAMP_COLUMN[table];
 	if (!column) return null;
-	const rows = await db.execute<{ age_days: number | null }>(
+	return age(
 		sql`select extract(epoch from (now() - min(${sql.identifier(column)}))) / 86400 as age_days
 		    from ${sql.identifier(table)}`,
 	);
+}
+
+/** Runs one fixed age query and reads its single `age_days` value; null when no row matched. */
+async function ageOfOldest(db: Db, query: SQL): Promise<number | null> {
+	const rows = await db.execute<{ age_days: number | null }>(query);
 	const raw = rows[0]?.age_days;
 	return raw === null || raw === undefined ? null : Number(raw);
 }
@@ -83,6 +108,41 @@ const TIMESTAMP_COLUMN: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The age query per `reconcile-task` entry, keyed by entry id rather than by table.
+ *
+ * Two entries share `elench_drafts`, and neither window runs from the insert time: a discarded draft
+ * is aged from `discarded_at`, and an active one from `updated_at` (lib/elench/drafts-sweep.ts deletes
+ * on exactly these predicates). Taking `min(created_at)` over the whole table would report a draft
+ * written yesterday but created two months ago as overdue, and a discarded one as inside its window.
+ * A `sending` row is in neither query: the sweep never deletes one, so its age is not a breach.
+ *
+ * Fixed SQL, for the same reason as `TIMESTAMP_COLUMN`: nothing from outside this file reaches it.
+ */
+const RECONCILE_TASK_AGE: Readonly<Record<string, SQL>> = {
+	"elench-drafts": sql`select extract(epoch from (now() - min(updated_at))) / 86400 as age_days
+	    from elench_drafts where status = 'active'`,
+	"elench-drafts-discarded": sql`select extract(epoch from (now() - min(discarded_at))) / 86400 as age_days
+	    from elench_drafts where status = 'discarded'`,
+};
+
+/** Whether this entry is enforced by code this product runs, as opposed to a documented gap. */
+function selfEnforced(entry: RetentionEntry): boolean {
+	return entry.mechanism === "gc-function" || entry.mechanism === "reconcile-task";
+}
+
+/** Age in days of the oldest row `entry`'s enforcement would delete, or null when not measurable. */
+async function measureEntry(age: AgeQuery, entry: RetentionEntry): Promise<number | null> {
+	if (entry.mechanism === "gc-function") {
+		return entry.table ? oldestRowAgeDays(age, entry.table) : null;
+	}
+	if (entry.mechanism === "reconcile-task") {
+		const query = RECONCILE_TASK_AGE[entry.id];
+		return query ? age(query) : null;
+	}
+	return null;
+}
+
+/**
  * The live retention picture for this instance.
  *
  * Best-effort per row: a table that cannot be measured reports `oldestRowAgeDays: null` rather than
@@ -90,25 +150,34 @@ const TIMESTAMP_COLUMN: Readonly<Record<string, string>> = {
  * tells an operator less than a partial one that names the hole.
  */
 export async function retentionHealth(db: Db): Promise<RetentionHealthRow[]> {
+	return measureRetention((query) => ageOfOldest(db, query));
+}
+
+/** The live retention picture, measured through `age` — `retentionHealth` without the database. */
+export async function measureRetention(age: AgeQuery): Promise<RetentionHealthRow[]> {
 	const out: RetentionHealthRow[] = [];
 	for (const entry of RETENTION_REGISTRY) {
+		// A `reconcile-task` reads its window from the register itself (no env override), so the
+		// published window is the effective one.
 		const effective =
 			entry.mechanism === "gc-function"
 				? (EFFECTIVE_RETENTION_DAYS[entry.id] ?? entry.windowDays)
-				: null;
+				: entry.mechanism === "reconcile-task"
+					? entry.windowDays
+					: null;
 
 		let oldest: number | null = null;
-		if (entry.table && entry.mechanism === "gc-function") {
-			try {
-				oldest = await oldestRowAgeDays(db, entry.table);
-			} catch {
-				// Unreadable table (permissions, a rename mid-migration): report it as unmeasured
-				// rather than throwing away every other row's answer.
-				oldest = null;
-			}
+		try {
+			oldest = await measureEntry(age, entry);
+		} catch {
+			// Unreadable table (permissions, a rename mid-migration): report it as unmeasured
+			// rather than throwing away every other row's answer.
+			oldest = null;
 		}
 
-		const limit = effective === null ? null : effective + OVERRUN_SLACK_DAYS;
+		const slack =
+			entry.mechanism === "reconcile-task" ? RECONCILE_TASK_SLACK_DAYS : OVERRUN_SLACK_DAYS;
+		const limit = effective === null ? null : effective + slack;
 		const overdue = oldest !== null && limit !== null && oldest > limit;
 		out.push({
 			id: entry.id,
@@ -122,7 +191,7 @@ export async function retentionHealth(db: Db): Promise<RetentionHealthRow[]> {
 				overdue && oldest !== null && effective !== null
 					? Math.floor(oldest - effective)
 					: 0,
-			gap: entry.mechanism === "gc-function" ? null : entry.evidence,
+			gap: selfEnforced(entry) ? null : entry.evidence,
 		});
 	}
 	return out;
@@ -131,9 +200,9 @@ export async function retentionHealth(db: Db): Promise<RetentionHealthRow[]> {
 /**
  * Whether any self-enforced retention is behind — the one-line answer for a status surface.
  *
- * Only `gc-function` entries can be behind. A `provider` or `not-enforced` entry is not "unhealthy";
- * it is a documented gap, and folding the two together would let a real GC failure hide inside a
- * count that is never zero anyway.
+ * Only self-enforced entries (`gc-function`, `reconcile-task`) can be behind. A `provider` or
+ * `not-enforced` entry is not "unhealthy"; it is a documented gap, and folding the two together
+ * would let a real GC failure hide inside a count that is never zero anyway.
  */
 export function retentionBreaches(rows: RetentionHealthRow[]): RetentionHealthRow[] {
 	return rows.filter((r) => r.overdue);

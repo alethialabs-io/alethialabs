@@ -31,14 +31,19 @@ const AWAITING_CUSTOMER: ReadonlySet<string> = new Set([
 
 /**
  * Reads the latest invoice's payments from Stripe and decides `FirstPayment` for `sub`:
- *   - `incomplete`: never paid only when the invoice has at least one payment, none of them `paid`, and
+ *   - `incomplete`: never paid when the invoice has at least one payment, none of them `paid`, and
  *     every one is a PaymentIntent awaiting the customer (`requires_payment_method`,
- *     `requires_confirmation`, `requires_action`).
+ *     `requires_confirmation`, `requires_action`). Also never paid when the invoice itself reads
+ *     `void` and every payment, if there is any, is a PaymentIntent awaiting the customer or
+ *     `canceled` (ADR 0002 §3.4, C47): a void invoice cannot be paid (S2), and voiding it cancels its
+ *     PaymentIntent, so after a void-first close nothing has moved and nothing can.
  *   - `incomplete_expired`: never paid when there is no payment at all, or every one is a PaymentIntent
  *     awaiting the customer or `canceled` (Stripe cancels it when the subscription expires) and none is
  *     `paid`.
  *   - any other status: not proven unpaid.
- * A failure to read Stripe is thrown, never read as "unpaid".
+ * A payment `succeeded`, `processing` or `requires_capture`, a payment that is not a PaymentIntent, and
+ * a list with more than one page are never proven unpaid, whatever the invoice reads. A failure to read
+ * Stripe is thrown, never read as "unpaid".
  */
 export async function readFirstPayment(
 	sub: Pick<Stripe.Subscription, "id" | "status" | "latest_invoice">,
@@ -55,24 +60,26 @@ export async function readFirstPayment(
 		expand: ["data.payment.payment_intent"],
 	});
 	if (payments.has_more) return "not_proven_unpaid";
-	if (payments.data.length === 0) {
-		return sub.status === "incomplete_expired" ? "never_paid" : "not_proven_unpaid";
-	}
-	const allowed =
-		sub.status === "incomplete_expired"
-			? new Set([...AWAITING_CUSTOMER, "canceled"])
-			: AWAITING_CUSTOMER;
+	const statuses: string[] = [];
 	for (const p of payments.data) {
 		if (p.status === "paid") return "not_proven_unpaid";
 		const intent = p.payment.payment_intent;
 		if (p.payment.type !== "payment_intent" || !intent) return "not_proven_unpaid";
-		const status =
-			typeof intent === "string"
-				? (await stripe.paymentIntents.retrieve(intent)).status
-				: intent.status;
-		if (!allowed.has(status)) return "not_proven_unpaid";
+		statuses.push(
+			typeof intent === "string" ? (await stripe.paymentIntents.retrieve(intent)).status : intent.status,
+		);
 	}
-	return "never_paid";
+	const awaitingOrCanceled = statuses.every((s) => AWAITING_CUSTOMER.has(s) || s === "canceled");
+	if (sub.status === "incomplete_expired") return awaitingOrCanceled ? "never_paid" : "not_proven_unpaid";
+	if (statuses.length > 0 && statuses.every((s) => AWAITING_CUSTOMER.has(s))) return "never_paid";
+	// C47: the one more case an `incomplete` subscription is never paid — its invoice is void. Read only
+	// here, where the answer would otherwise be "not proven", so no other path makes an extra call.
+	if (!awaitingOrCanceled) return "not_proven_unpaid";
+	const invoice =
+		typeof sub.latest_invoice === "object" && sub.latest_invoice !== null
+			? sub.latest_invoice
+			: await stripe.invoices.retrieve(invoiceId);
+	return invoice.status === "void" ? "never_paid" : "not_proven_unpaid";
 }
 
 /**

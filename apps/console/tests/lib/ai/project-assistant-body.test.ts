@@ -24,7 +24,17 @@ describe("projectAssistantBodySchema", () => {
 		expect(parsed.environmentId).toBeNull();
 		expect(parsed.deepReasoning).toBe(false);
 		expect(parsed.view).toBeUndefined();
-		expect(parsed.mentions).toBeUndefined();
+	});
+
+	it("carries no body-level mentions: the route reads them from the stored user message", () => {
+		// A well-formed list, so only the absence of the field can drop it. The route never read the
+		// parsed one (lib/agent/turn-route.ts takes a turn's mentions from its stored message), so the
+		// schema keeps none — a client that still sends one has it stripped, not rejected.
+		const parsed = projectAssistantBodySchema.parse({
+			messages: [],
+			mentions: [{ id: "p1", type: "project", label: "shop" }],
+		});
+		expect(Object.keys(parsed)).not.toContain("mentions");
 	});
 
 	it("carries a well-formed environment id and view", () => {
@@ -90,7 +100,6 @@ describe("parseProjectAssistantBody", () => {
 		if (!result.ok) return;
 		expect(result.value.environmentId).toBeNull();
 		expect(result.value.deepReasoning).toBe(false);
-		expect(result.value.mentions).toBeUndefined();
 	});
 
 	it("reports the offending path rather than throwing, so the route can answer 400", () => {

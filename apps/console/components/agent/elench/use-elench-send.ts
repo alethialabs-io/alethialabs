@@ -2,134 +2,131 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { generateId, type UIMessage } from "ai";
-import { useCallback, useRef, useState } from "react";
-import type { FirstTurn } from "@/app/server/actions/agent";
-import { ThreadStartError } from "@/components/agent/chat-error";
-import type { Mention } from "@/lib/ai/mentions";
-import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+// The Elench send path, on the drafts store (ADR 0001 §7.2, §14 slice 9). Every send is an event:
+// Enter on the box is `SUBMIT` (D9 / D10), and a prompt that is not the box's text (a suggestion
+// card, a seed prompt, an empty-cell prompt) is `SUBMIT_EXTERNAL` (D10x / D10y). The store decides
+// what is sent, under which turn id, and what happens to the words when it fails; nothing here
+// holds a message, a pending turn or a failure of its own, so nothing here can lose one.
 
-/** A first send whose thread is not created yet — kept so a Retry re-sends it under one id. */
-interface PendingFirstTurn {
-	id: string;
-	text: string;
-	mentions: Mention[];
-	/** The composer's serialized editor state when the turn was typed there (mention pills
-	 * included); undefined for a suggestion card, seed prompt or grid cell. */
-	state?: string;
-}
+import type { ChatStatus } from "ai";
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from "react";
+import type { DraftMention } from "@/lib/elench/draft-content";
+import { keyId } from "@/lib/stores/elench-drafts/reducer-drafting";
+import { selectDraft } from "@/lib/stores/elench-drafts/selectors";
+import type { DraftsStoreHandle } from "@/lib/stores/elench-drafts/store";
+import type { DraftEntry, DraftKey } from "@/lib/stores/elench-drafts/types";
+import type { ElenchCellTarget } from "@/types/jsonb.types";
 
-export interface ElenchSendDeps {
-	/** True once the conversation is attached to a stored thread. Read FRESH at send time (the
-	 * store, not a render's closure): `startThread` attaches before the next render. */
-	hasThread: () => boolean;
-	/** Create + attach the thread, storing `firstTurn` with it. May throw. */
-	startThread: (title: string, firstTurn?: FirstTurn) => Promise<unknown>;
-	/** Hand the user message to the chat transport. */
-	sendMessage: (message: UIMessage) => void;
-	/** Runs immediately before every send that goes out (stage mentions, analytics). */
-	beforeSend?: (mentions: Mention[]) => void;
-}
-
-export interface ElenchSend {
-	/** Send `text`. Resolves `true` when it went out, `false` when it did NOT — the caller (the
-	 * composer) then keeps the text, so a refused or failed send never loses the message. */
-	send: (text: string, mentions?: Mention[], state?: string) => Promise<boolean>;
-	/** Why the last send did not go out, or null: a `ThreadStartError`, or the too-long error. */
-	error: Error | null;
-	/** Re-send the failed first turn AS IT WAS (thread, then message), or undefined when none
-	 * failed. Only for a turn the composer does not hold: when it does, Retry submits the composer
-	 * instead — its text may have been edited since, and `send` with that text reuses the same
-	 * pending id. */
-	retry: (() => Promise<boolean>) | undefined;
-	/** The failed first turn's serialized composer state, while one is pending and it was typed in
-	 * the composer; null otherwise. A composer that MOUNTS while it is pending (a minimize or
-	 * maximize remounts it) starts from this, so the box shows what Retry would send. */
-	failedState: string | null;
-	/** Forget the failure and the pending turn — a new conversation starts clean. */
-	reset: () => void;
+/** The draft a composer writes to: the tab's store and the conversation's key. */
+export interface ElenchDraftBinding {
+	store: DraftsStoreHandle;
+	key: DraftKey;
 }
 
 /**
- * The Elench send path. A message is sent ONLY once the conversation has a thread id: both chat
- * routes persist the transcript in `onFinish` only when the request carries one, so a send
- * without it is a reply that is never stored — a conversation that looks normal and is gone on
- * reload. So the first send of an ephemeral conversation creates the thread FIRST; if that
- * throws, nothing is sent, the failure is surfaced (`error`, a {@link ThreadStartError}), and
- * the message is kept — the composer keeps its text (`send` resolves false), and the next
- * `send` (Enter, or Retry submitting the composer) re-attempts it, edits included.
- *
- * The first turn's message id is minted once and REUSED by every retry of it, so `createThread`
- * (idempotent on that id) returns the row a lost response already committed instead of
- * inserting a second thread with a second copy of the turn.
+ * Provided by the conversation for the conversation on screen. Null while there is no draft to
+ * write to: before the tab's store exists, or while the page's org is not known yet.
  */
-export function useElenchSend({
-	hasThread,
-	startThread,
-	sendMessage,
-	beforeSend,
-}: ElenchSendDeps): ElenchSend {
-	const [error, setError] = useState<Error | null>(null);
-	const [pending, setPending] = useState<PendingFirstTurn | null>(null);
-	// The same pending turn, readable synchronously inside `send` (state lags a render).
-	const pendingRef = useRef<PendingFirstTurn | null>(null);
-	// One thread creation at a time: a second send while the first awaits `startThread` would
-	// create a second thread for the same conversation.
-	const startingRef = useRef(false);
+export const ElenchDraftContext = createContext<ElenchDraftBinding | null>(null);
 
-	const send = useCallback(
-		async (text: string, mentions: Mention[] = [], state?: string): Promise<boolean> => {
-			// Refused here, before any thread is created: an over-limit first send must not
-			// leave an empty row behind, and the route would only 413 it.
-			if (isMessageTooLong(text)) {
-				setError(new Error(MESSAGE_TOO_LONG));
-				return false;
-			}
-			let id: string;
-			if (!hasThread()) {
-				if (startingRef.current) return false;
-				const turn: PendingFirstTurn = {
-					id: pendingRef.current?.id ?? generateId(),
-					text,
-					mentions,
-					state,
-				};
-				pendingRef.current = turn;
-				startingRef.current = true;
-				try {
-					await startThread(text, text.trim() ? { id: turn.id, text } : undefined);
-				} catch {
-					// Nothing is sent: a send with no thread id is never stored. The turn stays
-					// pending (same id) for Retry, and the composer keeps the text.
-					setPending(turn);
-					setError(new ThreadStartError());
-					return false;
-				} finally {
-					startingRef.current = false;
-				}
-				pendingRef.current = null;
-				setPending(null);
-				id = turn.id;
-			} else {
-				id = generateId();
-			}
-			setError(null);
-			beforeSend?.(mentions);
-			sendMessage({ id, role: "user", parts: [{ type: "text", text }] });
+/** The draft the surrounding conversation shows, or null. */
+export function useElenchDraft(): ElenchDraftBinding | null {
+	return useContext(ElenchDraftContext);
+}
+
+/** Subscribes to nothing: the snapshot of an absent binding never changes. */
+function subscribeNothing(): () => void {
+	return () => undefined;
+}
+
+/** The entry of `binding`'s key, re-rendering on its every change; null when this tab holds none. */
+export function useDraftEntry(binding: ElenchDraftBinding | null): DraftEntry | null {
+	const subscribe = useCallback(
+		(onChange: () => void) =>
+			binding === null ? subscribeNothing() : binding.store.view.subscribe(onChange),
+		[binding],
+	);
+	const snapshot = useCallback(
+		() => (binding === null ? null : selectDraft(binding.store.view.getState(), binding.key)),
+		[binding],
+	);
+	return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+/** A prompt that is not the box's text (D10x / D10y). */
+export interface ExternalPrompt {
+	text: string;
+	mentions?: DraftMention[];
+	/** The widget-grid cell the prompt is aimed at; the empty-cell prompt's (ADR 0003 §9.4 change 3). */
+	cellTarget?: ElenchCellTarget | null;
+	/** Where it came from (`suggestion`, `seed`, `cell`): never its text. */
+	origin: string;
+}
+
+/** What the conversation and the composer send through. */
+export interface ElenchSend {
+	/** D9 / D10: Enter on the box. False when there is no draft to send from. */
+	submit: () => boolean;
+	/** D10x / D10y: send `prompt`; the box is untouched. False when there is no draft to send from. */
+	submitExternal: (prompt: ExternalPrompt) => boolean;
+}
+
+/**
+ * True when the chat can take a request now (R3): `ready` or `error`. A request of this Chat in
+ * flight (`submitted`, `streaming`) means a send would interleave with it.
+ */
+export function chatReady(status: ChatStatus | undefined): boolean {
+	return status === "ready" || status === "error";
+}
+
+/** A new send supersedes whatever the store last said about this draft: its notices are acknowledged. */
+function ackNotices(binding: ElenchDraftBinding): void {
+	const id = keyId(binding.key);
+	const ids = binding.store.view
+		.getState()
+		.notices.filter((n) => keyId(n.key) === id)
+		.map((n) => n.id);
+	if (ids.length > 0) binding.store.ackNotices(ids);
+}
+
+/**
+ * The send path of the conversation in `binding`: each call dispatches one event to the store and
+ * does nothing else. `status` is the chat's, read for R3's guard at the moment of the send.
+ */
+export function useElenchSend(
+	binding: ElenchDraftBinding | null,
+	status: ChatStatus | undefined,
+): ElenchSend {
+	const ready = chatReady(status);
+	const submit = useCallback((): boolean => {
+		if (binding === null) return false;
+		ackNotices(binding);
+		binding.store.dispatch({
+			type: "ENTRY",
+			key: binding.key,
+			event: { type: "SUBMIT", chatReady: ready },
+		});
+		return true;
+	}, [binding, ready]);
+	const submitExternal = useCallback(
+		(prompt: ExternalPrompt): boolean => {
+			if (binding === null) return false;
+			ackNotices(binding);
+			binding.store.dispatch({
+				type: "ENTRY",
+				key: binding.key,
+				event: {
+					type: "SUBMIT_EXTERNAL",
+					text: prompt.text,
+					mentions: prompt.mentions ?? [],
+					cellTarget: prompt.cellTarget ?? null,
+					origin: prompt.origin,
+					chatReady: ready,
+				},
+			});
 			return true;
 		},
-		[hasThread, startThread, sendMessage, beforeSend],
+		[binding, ready],
 	);
-
-	const retry = pending
-		? () => send(pending.text, pending.mentions, pending.state)
-		: undefined;
-
-	const reset = useCallback(() => {
-		pendingRef.current = null;
-		setPending(null);
-		setError(null);
-	}, []);
-
-	return { send, error, retry, failedState: pending?.state ?? null, reset };
+	return useMemo(() => ({ submit, submitExternal }), [submit, submitExternal]);
 }

@@ -3,6 +3,7 @@
 
 import { sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
+import { holdRequest } from "@/lib/http/hold-request";
 import { getCancelTransport, getWakeTransport } from "@/lib/realtime";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 
@@ -30,12 +31,20 @@ export async function GET(req: Request) {
 			.execute(sql`select runner_lost(${runnerId}::uuid)`)
 			.catch(() => {});
 
+	// The runner's disconnect, read once here. The `Request` must stay reachable while the runner is
+	// connected: its signal stops following the disconnect once the `Request` is collected, and nothing
+	// below reads `req` again except the `holdRequest` in teardown (see lib/http/hold-request.ts).
+	const signal = req.signal;
 	const encoder = new TextEncoder();
 	let closed = false;
 	let unsubscribe = () => {};
 	let unsubscribeCancel = () => {};
 	let heartbeat: ReturnType<typeof setInterval> | undefined;
+	/** End the connection's work — heartbeat, both fan-outs — and mark the runner lost. Runs once. */
 	const teardown = () => {
+		// Keeps `req` reachable — and so `signal` live — until the connection is torn down. Without it a
+		// GC unhooks `signal` from the disconnect, and the drop no longer fires runner_lost through it.
+		holdRequest(req);
 		if (closed) return;
 		closed = true;
 		if (heartbeat) clearInterval(heartbeat);
@@ -71,7 +80,7 @@ export async function GET(req: Request) {
 				present();
 			}, 10_000);
 
-			req.signal.addEventListener("abort", () => {
+			signal.addEventListener("abort", () => {
 				teardown();
 				try {
 					controller.close();

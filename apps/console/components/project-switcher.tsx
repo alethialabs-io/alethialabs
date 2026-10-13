@@ -76,7 +76,7 @@ export function ProjectSwitcher() {
 				label={active?.project_name ?? "All projects"}
 			/>
 			<PopoverContent className="w-72 p-0" align="start">
-				<Command>
+				<Command label="Find project">
 					{projects.length > 0 ? (
 						<>
 							<CommandInput placeholder="Find project…" className="h-9" />

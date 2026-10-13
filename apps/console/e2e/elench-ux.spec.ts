@@ -66,6 +66,34 @@ test.afterAll(async () => {
 	await closeDb();
 });
 
+/** The message the mid-mention send test types; the claim helper finds its draft row by it. */
+const MID_MENTION = "edit the @connectors thing";
+
+/**
+ * Waits until no draft of the persona is held `sending` with `text` — the claim its send took has
+ * ended (consumed, or released). Reads the row directly: the claim is server state with no UI of
+ * its own in the tab that holds it.
+ */
+async function expectNoClaimHeld(text: string): Promise<void> {
+	await expect
+		.poll(
+			async () => {
+				const rows = await db()<{ n: number }[]>`
+					select count(*)::int as n from elench_drafts where status = 'sending' and text = ${text}`;
+				return rows[0]?.n ?? -1;
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe(0);
+}
+
+/** The status of the draft row holding `text`, or null when no row holds it. */
+async function draftStatusOf(text: string): Promise<string | null> {
+	const rows = await db()<{ status: string }[]>`
+		select status from elench_drafts where text = ${text} order by revision desc limit 1`;
+	return rows[0]?.status ?? null;
+}
+
 async function openElench(page: Page): Promise<void> {
 	await page.goto("/");
 	await page.getByRole("button", { name: "Ask AI" }).click();
@@ -75,12 +103,20 @@ async function openElench(page: Page): Promise<void> {
 }
 
 /**
- * Opens Elench on a GUARANTEED-EMPTY thread.
+ * Opens Elench on a GUARANTEED-EMPTY thread — its own conversation, so its own draft key.
  *
  * `openElench` lands on whatever thread is active, and the whole suite shares one persona
  * and org across four workers — so "active" routinely means a thread another test just
  * finished talking in. Any test that COUNTS something the transcript produces has to start
  * from a known grid, or it is measuring the persona's history.
+ *
+ * Every test that TYPES into the composer starts here too, for the same reason one level down.
+ * The composer belongs to the conversation's draft (ADR 0001), and a draft another test left
+ * mid-send is frozen under that test's claim for its 120 s lease — read-only, "Being sent from
+ * another tab or device" (D30). A test that sends a later turn and ends before the client consumed
+ * the claim leaves exactly that, and the next test resumed the same conversation and typed into a
+ * box that took no input: its `@` menu never opened (#5852). A fresh conversation has no row, so
+ * no claim another test took can reach it.
  *
  * That is not hypothetical: the artifact test below asserted four widget cards from the
  * scripted dashboard's four blocks and got five. The fifth was "Connectors", pinned by an
@@ -101,7 +137,7 @@ test.describe("Elench composer · @-mention menu", () => {
 	test("opens ABOVE the composer and never covers the text you're typing", async ({
 		page,
 	}) => {
-		await openElench(page);
+		await openFreshChat(page);
 		const editor = composer(page);
 		await editor.click();
 		await editor.pressSequentially("tell me about @");
@@ -129,7 +165,7 @@ test.describe("Elench composer · @-mention menu", () => {
 		// assertion below would be measuring the fixture, not the container.
 		await seedTaggableResources(page, 12);
 
-		await openElench(page);
+		await openFreshChat(page);
 		const editor = composer(page);
 		await editor.click();
 		await editor.pressSequentially("@");
@@ -171,23 +207,28 @@ test.describe("Elench composer · @-mention menu", () => {
 		// Regression: typing PAST a mention ("edit the @connectors thing") closes the menu, but
 		// Lexical's onClose didn't fire, so the composer's menu-open guard stayed stuck and Enter
 		// inserted a newline instead of sending. Any @-mention mid-message could not be sent.
-		await openElench(page);
+		await openFreshChat(page);
 		const editor = composer(page);
 		await editor.click();
-		await editor.pressSequentially("edit the @connectors thing");
+		await editor.pressSequentially(MID_MENTION);
 		await page.waitForTimeout(300);
 		await editor.press("Enter");
 		// If it sent, the composer clears; if Enter made a newline, the text is still there.
 		await expect(editor).toHaveText(/^\s*$/, { timeout: 5000 });
-		await expect(
-			page.getByText("edit the @connectors thing", { exact: true }).first(),
-		).toBeVisible();
+		await expect(page.getByText(MID_MENTION, { exact: true }).first()).toBeVisible();
+
+		// Let the send FINISH before the page closes. The message renders only after the claim is
+		// granted (the store claims, then starts the turn), so the row was `sending` by now; it
+		// leaves that state only when this tab consumes the claim after the route answers. Closing
+		// earlier held the claim for its 120 s lease (#5852) — harmless to the fresh conversations
+		// the other tests use, but a test should not leave a live claim behind it.
+		await expectNoClaimHeld(MID_MENTION);
 	});
 
 	test("↓ then Enter inserts an atomic pill; Backspace deletes it whole", async ({
 		page,
 	}) => {
-		await openElench(page);
+		await openFreshChat(page);
 		const editor = composer(page);
 		await editor.click();
 		await editor.pressSequentially("@");
@@ -307,5 +348,75 @@ test.describe("Elench artifacts", () => {
 		await expect(page.getByTestId("artifact-viewer")).toBeVisible();
 		await expect(page.getByTestId("artifact-viewer")).toContainText(name);
 		expect(await page.getByTestId("thread-rail-row").count()).toBe(threadsBefore);
+	});
+});
+
+test.describe("Elench drafts · a send cut off mid-flight", () => {
+	test("a tab closed mid-send leaves the draft 'being sent elsewhere' until the lease settles it as sent", async ({
+		page,
+	}) => {
+		// The lease is 120 s (lib/elench/draft-claims.ts, ADR 0001 §3.4 S5) and the reopened tab
+		// re-lists every 10 s while a row is claimed elsewhere, so the settle lands inside ~135 s.
+		test.setTimeout(240_000);
+
+		// Its own conversation: the claim this test leaves must be the only one it can see.
+		await openFreshChat(page);
+		const stamp = Date.now();
+		const first = `lease probe ${stamp}`;
+		const second = `lease probe ${stamp} again`;
+		const reply = "Alethia provisions infrastructure as Projects";
+
+		// A FIRST turn cannot leave a held claim: `startConversation` consumes it in the transaction
+		// that stores the turn. So the turn that is cut off is a later one, as in #5852.
+		const editor = composer(page);
+		await editor.click();
+		await editor.pressSequentially(first);
+		await editor.press("Enter");
+		await expect(page.getByText(reply).first()).toBeVisible({ timeout: 60_000 });
+		await expectNoClaimHeld(first);
+
+		// Cut the later send off mid-flight, deterministically: the server runs the turn to the end
+		// and stores it (`route.fetch` reads the whole stream), but this tab never gets the answer,
+		// so it never consumes its claim. A real close lands at some point in that window; this
+		// pins it after the turn is stored, the case a lease settle consumes rather than releases.
+		let routeStatus = 0;
+		let markStored: () => void = () => undefined;
+		const stored = new Promise<void>((resolve) => {
+			markStored = resolve;
+		});
+		await page.route("**/api/agent", async (route) => {
+			const res = await route.fetch();
+			routeStatus = res.status();
+			markStored();
+		});
+		await editor.click();
+		await editor.pressSequentially(second);
+		await editor.press("Enter");
+		await stored;
+		expect(routeStatus).toBe(200);
+		// The claim is held: the row is still `sending` with the words of the stored turn.
+		expect(await draftStatusOf(second)).toBe("sending");
+		await page.close();
+
+		// Reopen the same conversation in another tab.
+		const reopened = await page.context().newPage();
+		await openElench(reopened);
+		await reopened.getByTestId("thread-rail-row").filter({ hasText: first }).first().click();
+		const box = composer(reopened);
+		const status = reopened.getByTestId("elench-draft-status");
+
+		// D30: the box is read-only and says why.
+		await expect(status).toContainText("Being sent from another tab or device.", {
+			timeout: 30_000,
+		});
+		await expect(box).toHaveAttribute("contenteditable", "false");
+
+		// The lease runs out; the next list settles the silent claim and, the turn being stored,
+		// consumes it. The box opens again, the tab says the message went out from elsewhere, and
+		// the turn it never saw answered is in the transcript.
+		await expect(box).toHaveAttribute("contenteditable", "true", { timeout: 180_000 });
+		await expect(status).toContainText("This message was sent from another tab or device.");
+		await expect(reopened.getByText(second, { exact: true }).first()).toBeVisible();
+		expect(await draftStatusOf(second)).not.toBe("sending");
 	});
 });

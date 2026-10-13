@@ -244,6 +244,13 @@ interface NonFatalOptions {
 	 * rather than passed over in silence.
 	 */
 	expectHook?: boolean;
+	/**
+	 * The config to build with if resolving a config FUNCTION throws — the app's own config, without
+	 * the PostHog wrapper. Since `@posthog/nextjs-config` 1.11.2 the plugin talks to the PostHog API
+	 * while Next is still resolving the config (see {@link withNonFatalSourcemapUpload}), so a bad key
+	 * can fail the build before any hook exists to wrap. Absent, such a failure is rethrown.
+	 */
+	fallback?: NextConfig;
 }
 
 /** True when `hook` is a hook this module has made non-fatal. */
@@ -355,6 +362,15 @@ function wrapResolved(config: NextConfig, expectHook: boolean): NextConfig {
  *
  * So resolve first, wrap second — and never assume the shape, check it.
  *
+ * The hook is no longer the only place the upload can fail. From `@posthog/nextjs-config` 1.11.2
+ * (`@posthog/plugin-utils` 2.0.1) the return value has the same shape, but in the default `event`
+ * release mode, on a Turbopack production build, the config function itself runs
+ * `posthog-cli release resolve` against the PostHog API before it returns. An invalid key now rejects
+ * THERE, while Next is resolving the config, and no hook wrapper can see it. So the resolution is
+ * guarded too: on failure the build continues on `options.fallback` — the app's config without
+ * PostHog, which also never sets `productionBrowserSourceMaps`, so no map is emitted to leak.
+ *
+
  * Telemetry is not worth a release. A failed upload costs symbolicated stack traces until the key is
  * fixed; a failed build costs every deploy.
  */
@@ -374,9 +390,25 @@ export function withNonFatalSourcemapUpload(
 	options: NonFatalOptions = {},
 ): NextConfigInput {
 	const expectHook = options.expectHook ?? false;
+	const fallback = options.fallback;
 
 	if (typeof config === "function") {
-		return async (phase, ctx) => wrapResolved(await config(phase, ctx), expectHook);
+		return async (phase, ctx) => {
+			let resolved: NextConfig;
+			try {
+				resolved = await config(phase, ctx);
+			} catch (err) {
+				if (!fallback) throw err;
+				// Same bargain as the hook: loud in the build log, never fatal.
+				console.warn(
+					`[posthog] source-map setup failed while resolving the Next config; building WITHOUT ` +
+						`source-map upload. Stack traces will not symbolicate until this is fixed: ` +
+						`${err instanceof Error ? err.message : String(err)}`,
+				);
+				return fallback;
+			}
+			return wrapResolved(resolved, expectHook);
+		};
 	}
 	return wrapResolved(config, expectHook);
 }
@@ -394,6 +426,6 @@ export default posthogApiKey
 					deleteAfterUpload: true,
 				},
 			}),
-			{ expectHook: Boolean(releaseVersion) },
+			{ expectHook: Boolean(releaseVersion), fallback: nextConfig },
 		)
 	: nextConfig;

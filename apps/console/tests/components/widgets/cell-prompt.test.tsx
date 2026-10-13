@@ -36,7 +36,6 @@ beforeEach(() => {
 		pinned: new Set<string>(),
 		cellPrompt: { x: 2, y: 1, span: 2 },
 		pendingCellRequest: null,
-		pendingCellTarget: null,
 	});
 });
 

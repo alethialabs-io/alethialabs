@@ -22,6 +22,7 @@
 
 import { isBillingActive } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
+import type { Tx } from "@/lib/db";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 
 /** An org's standalone AI subscription tier. `ai_free` is the implicit default. */
@@ -161,9 +162,20 @@ export interface AiPlanContext {
  * Resolve the effective AI tier, the org's AI-spend hard-cap policy, and any admin spend
  * limits in a single billing read — the guard needs them per call. No row → free tier,
  * hard-cap off, no admin caps.
+ *
+ * `tx` runs the billing read on the caller's transaction (ADR 0003 §5.1 step 7: the hold reads
+ * the plan after its lock, on its own connection). A read that FAILS there is still answered as
+ * the free tier here, but Postgres has aborted the transaction, so the caller's next statement
+ * fails and the whole transaction rolls back: on `tx` a billing-read error refuses the turn
+ * rather than admitting it on a guessed plan. Without `tx` the behaviour is unchanged.
  */
-export async function resolveAiPlan(orgId: string): Promise<AiPlanContext> {
-	const billing = await getOrgBilling(orgId).catch(() => null);
+export async function resolveAiPlan(
+	orgId: string,
+	tx?: Tx,
+): Promise<AiPlanContext> {
+	const billing = await (tx ? getOrgBilling(orgId, tx) : getOrgBilling(orgId)).catch(
+		() => null,
+	);
 	if (!billing) {
 		return {
 			tier: "ai_free",

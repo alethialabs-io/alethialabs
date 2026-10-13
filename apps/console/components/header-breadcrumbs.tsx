@@ -10,7 +10,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from "@repo/ui/breadcrumb";
-import { JOB_TYPES } from "@/components/jobs/columns";
+import { JOB_TYPES } from "@/lib/jobs/format";
 import { buildCrumbs } from "@/components/shell/breadcrumb-trail";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import Link from "next/link";

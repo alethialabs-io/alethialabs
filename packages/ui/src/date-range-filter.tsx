@@ -46,6 +46,16 @@ interface DateRangeFilterProps {
 // in a zone that is not theirs.
 const TRIGGER_PLACEHOLDER = "Date range";
 
+// The width the trigger holds before mount: the SHAPE of a default label ("Oct 2, 10:44am – Oct 9,
+// 10:44am") in fixed characters, rendered invisibly under the placeholder (#5849). Without it the
+// trigger grew by ~20 characters the moment it mounted, and a filter bar whose search box is
+// `flex-1` gave that width back by sliding every control between the two LEFT — on Activity the
+// "Last 7 days" trigger moved 136 px, its own width, so a click aimed at it in that window landed
+// on the bar (release-gate run 37919762246, 4 of 4 cold loads). It is a fixed string, not a
+// formatted one, so the server and the hydrating client still render the same text; the real
+// label differs from it by a few characters, which moves its neighbours a few pixels, not a width.
+const TRIGGER_SIZER = "Mmm 00, 00:00xx - Mmm 00, 00:00xx";
+
 /** A bare date/time input pair styled to match the design system. */
 function inputCls() {
   return "h-8 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-2 text-[12px] text-text-primary outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/50";
@@ -123,7 +133,16 @@ export function DateRangeFilter({
         render={
           <Button variant="outline" size="sm" className="gap-1.5">
             <CalendarDays size={14} />
-            {mounted ? formatRangeLabel(value, tz) : TRIGGER_PLACEHOLDER}
+            {mounted ? (
+              formatRangeLabel(value, tz)
+            ) : (
+              <span className="inline-grid">
+                <span aria-hidden className="invisible col-start-1 row-start-1">
+                  {TRIGGER_SIZER}
+                </span>
+                <span className="col-start-1 row-start-1">{TRIGGER_PLACEHOLDER}</span>
+              </span>
+            )}
           </Button>
         }
       />

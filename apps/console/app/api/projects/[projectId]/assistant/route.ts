@@ -1,17 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	convertToModelMessages,
-	createUIMessageStream,
-	createUIMessageStreamResponse,
-	stepCountIs,
-	streamText,
-} from "ai";
-import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
-import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
+import { serveTurn } from "@/lib/agent/turn-route";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 import { summarizeCanvas } from "@/lib/ai/canvas-context";
 import {
@@ -19,7 +10,6 @@ import {
 	type EnvironmentKnowledge,
 } from "@/lib/ai/environment-knowledge";
 import { formatMentionsForPrompt } from "@/lib/ai/mentions";
-import { refuseUserMessage } from "@/lib/ai/message-limits";
 import {
 	type AssistantView,
 	parseProjectAssistantBody,
@@ -29,26 +19,19 @@ import {
 	formatContextBlock,
 	readAgentContext,
 } from "@/lib/ai/project-knowledge";
-import {
-	cachedSystemMessage,
-	thinkingOptions,
-} from "@/lib/ai/provider-options";
 import { buildProjectAgentTools } from "@/lib/ai/tools";
-import { getOwner } from "@/lib/auth/owner";
-import { currentActor } from "@/lib/authz/guard";
-import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
-import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
-import {
-	AiBudgetError,
-	type AiHoldContext,
-	assertAiAllowed,
-	releaseAiHold,
-} from "@/lib/billing/ai-guard";
 import { resolveAiTier } from "@/lib/billing/ai-plan";
-import { getAdvisorModel, getExecutorModel, isAiConfigured } from "@/lib/config/ai";
+import { getAdvisorModel, getExecutorModel } from "@/lib/config/ai";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+
+/** The project route's own fields, as `prepare` reads them. */
+interface AssistantRouteFields {
+	canvas: CanvasContext | undefined;
+	deepReasoning: boolean;
+	environmentId: string | null;
+	view: AssistantView | undefined;
+}
 
 /**
  * What the conversation is scoped to: the resolved environment (null when the project has none
@@ -164,228 +147,96 @@ function systemPrompt(
 	].join("\n");
 }
 
+/**
+ * POST /api/projects/[projectId]/assistant — one Elench turn in a project. The claim, the billing org,
+ * the project check (the project must be in the billing org and visible to the caller, §6.2), the hold
+ * and the stream are the shared route body's (`serveTurn`); this route supplies its body and prompt.
+ */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ projectId: string }> },
 ): Promise<Response> {
-	const owner = await getOwner();
-	if (!owner) return new Response("Unauthorized", { status: 401 });
-	if (!isAiConfigured()) {
-		return new Response(
-			"AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
-			{ status: 503 },
-		);
-	}
-
 	const { projectId } = await params;
-	const actor = await currentActor();
-	// The body shape is shared with the client's `prepareBody` (lib/ai/project-assistant-body.ts),
-	// so the two cannot drift. It degrades rather than throws — a shape this route used to accept
-	// must not become a 500, and this runs BEFORE the AI budget hold, so a rejection here costs
-	// nothing. Only `messages` is genuinely required. `environmentId` is the environment the user
-	// is looking at (a malformed one degrades to null) and `view` is where in the product they are.
-	const body = parseProjectAssistantBody(await req.json().catch(() => null));
-	if (!body.ok) return new Response(body.message, { status: 400 });
-	const {
-		messages,
-		canvas,
-		threadId,
-		mentions,
-		deepReasoning,
-		environmentId: requestedEnvironmentId,
-		view,
-	} = body.value;
-	// The one per-message limit the composer and `createThread` also enforce — refused here,
-	// still before the budget hold, so an over-limit (or unreadable: 400) turn reserves nothing.
-	const refusal = refuseUserMessage(messages);
-	if (refusal) return refusal;
+	return serveTurn<AssistantRouteFields>(req, {
+		aiDisabledMessage: "AI is not configured. Set ANTHROPIC_API_KEY to enable the assistant.",
+		projectId,
+		// The project prompt has no grid hint (an empty-cell prompt is an org-chat feature), so a turn's
+		// cell target is never stored here; its mentions are.
+		turnMetadata: { mentions: true },
+		// The body shape is shared with the client (lib/ai/project-assistant-body.ts), so the two cannot
+		// drift. It degrades rather than throws: only `messages` is genuinely required. `environmentId`
+		// is the environment the user is looking at (a malformed one degrades to null).
+		parseBody: (raw) => {
+			const body = parseProjectAssistantBody(raw);
+			if (!body.ok) return body;
+			const v = body.value;
+			return {
+				ok: true,
+				value: {
+					messages: v.messages,
+					threadId: v.threadId,
+					route: {
+						canvas: v.canvas,
+						deepReasoning: v.deepReasoning,
+						environmentId: v.environmentId,
+						view: v.view,
+					},
+				},
+			};
+		},
+		prepare: async ({ actor, mentions, route }) => {
+			// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
+			// EXECUTOR runs the tool loop. On ai_max the per-message `deepReasoning` opt-in upgrades the
+			// advisor to Opus. The tier is the BILLING org's.
+			const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
+			const executor = getExecutorModel();
+			const advisor = getAdvisorModel(tier, { deepReasoning: route.deepReasoning });
+			const mentionBlock = formatMentionsForPrompt(mentions);
 
-	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
-	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
-	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
-		if (e instanceof AiBudgetError) return e;
-		throw e;
+			// The environment this turn is about. `resolveActiveEnvironmentId` validates the requested
+			// id belongs to THIS project under the actor's org (the billing org: this runs inside
+			// `runWithActor`) and falls back to the project's default, so a foreign or stale id from the
+			// client can never scope the prompt to another tenant's environment. A project with no
+			// visible default resolves to null and the prompt says so.
+			const environmentId = await resolveActiveEnvironmentId(
+				projectId,
+				route.environmentId ?? undefined,
+			).catch(() => null);
+			const noEnvironment: EnvironmentKnowledge = { name: null, block: "" };
+
+			// The Claude-Projects model: this chat inherits the project's pinned instructions and
+			// knowledge, layered UNDER the org-level ones, plus a derived block of the project's live
+			// state. A project's context never leaks out to org chats.
+			const [orgCtx, projectCtx, derived, environment] = await Promise.all([
+				readAgentContext(actor, null).catch(() => null),
+				readAgentContext(actor, projectId).catch(() => null),
+				buildProjectKnowledge(actor, projectId, environmentId).catch(() => ""),
+				environmentId
+					? buildEnvironmentKnowledge(actor, projectId, environmentId).catch(
+							() => noEnvironment,
+						)
+					: Promise.resolve(noEnvironment),
+			]);
+
+			const system = [
+				systemPrompt(projectId, route.canvas, {
+					environmentId,
+					environmentName: environment.name,
+					view: route.view,
+				}),
+				formatContextBlock("Organization", orgCtx),
+				formatContextBlock("Project", projectCtx),
+				derived,
+				environment.block,
+				mentionBlock,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			return {
+				system,
+				tools: buildProjectAgentTools(route.canvas, { environmentId }),
+				models: { advisor, executor, base: executor, clientPick: false },
+			};
+		},
 	});
-	if (charge instanceof AiBudgetError) {
-		return new Response(
-			JSON.stringify({
-				error: charge.message,
-				reason: charge.reason,
-				resetAt: charge.resetAt,
-				upgradable: charge.upgradable,
-			}),
-			{ status: 402, headers: { "content-type": "application/json" } },
-		);
-	}
-
-	// Everything from here through the streamText registration runs AFTER the hold was reserved; a
-	// throw in this window (tier/mentions resolution, message conversion, tool build) would strand
-	// the ≈$0.10 hold — nothing downstream releases it — so release it in the catch.
-	const holdCtx: AiHoldContext = {
-		orgId: actor.orgId,
-		userId: actor.userId,
-		kind: "agent",
-		refId: threadId ?? projectId,
-	};
-	try {
-		// Cost-optimized orchestration: a tier-derived ADVISOR plans step 0, then a cheap Haiku
-		// EXECUTOR runs the tool loop (ai_free = Haiku throughout — no distinct advisor). The advisor
-		// is Sonnet by default; on ai_max the per-message `deepReasoning` opt-in upgrades it to Opus.
-		const tier = await resolveAiTier(actor.orgId).catch(() => "ai_free" as const);
-		const executor = getExecutorModel();
-		const advisor = getAdvisorModel(tier, { deepReasoning });
-		/** The canonical key metered for a given step (step 0 = advisor; the rest = executor). */
-		const modelForStep = (stepNumber: number): string =>
-			stepNumber === 0 ? advisor.key : executor.key;
-
-		// No second validation here. `mentions` has already been through the SAME `mentionsSchema` in
-		// the body parser, so this `safeParse` could not fail and its `: ""` fallback was
-		// unreachable — dead code that read as a safety net. The behaviour it looked like it was
-		// protecting is intact and lives at the schema instead: the field is
-		// `mentionsSchema.catch(undefined)`, so an over-long or malformed list degrades to no
-		// mentions rather than rejecting the turn. Losing the @-mentions is a smaller failure than
-		// losing the message, which is why that field catches and `messages` does not. Found in
-		// review.
-		const mentionBlock = mentions ? formatMentionsForPrompt(mentions) : "";
-
-		// The Claude-Projects model: this chat lives inside an infra project, so it inherits that
-		// project's pinned instructions + knowledge — layered UNDER the org-level ones (org policy
-		// first, project specifics second) — plus a derived block of the project's live state, so
-		// the very first answer is grounded without a tool round-trip. A project's context never
-		// leaks out to org chats.
-		// Pass the actor (not just owner): the agent-context reads are scope-flag-aware — off, they
-		// read under the user id (unchanged); on, org/project rows are org-shared. See
-		// lib/ai/org-agent-context-flag.ts.
-		// The environment this turn is about. `resolveActiveEnvironmentId` validates the requested
-		// id belongs to THIS project under the caller's org and falls back to the project's default
-		// — so a foreign or stale id from the client can never scope the prompt to another tenant's
-		// environment. A project with no visible default resolves to null and the prompt says so.
-		const environmentId = await resolveActiveEnvironmentId(
-			projectId,
-			requestedEnvironmentId ?? undefined,
-		).catch(() => null);
-		const noEnvironment: EnvironmentKnowledge = { name: null, block: "" };
-
-		const [orgCtx, projectCtx, derived, environment] = await Promise.all([
-			readAgentContext(actor, null).catch(() => null),
-			readAgentContext(actor, projectId).catch(() => null),
-			buildProjectKnowledge(actor, projectId, environmentId).catch(() => ""),
-			environmentId
-				? buildEnvironmentKnowledge(actor, projectId, environmentId).catch(
-						() => noEnvironment,
-					)
-				: Promise.resolve(noEnvironment),
-		]);
-
-		const system = [
-			systemPrompt(projectId, canvas, {
-				environmentId,
-				environmentName: environment.name,
-				view,
-			}),
-			formatContextBlock("Organization", orgCtx),
-			formatContextBlock("Project", projectCtx),
-			derived,
-			environment.block,
-			mentionBlock,
-		]
-			.filter(Boolean)
-			.join("\n\n");
-
-		const modelMessages = await convertToModelMessages(messages);
-
-		// Wrap streamText in a UI message stream so orchestration markers (`data-agent-step`
-		// parts) interleave with the model's own parts (PLAN/EXECUTE separators).
-		const stream = createUIMessageStream({
-			originalMessages: messages,
-			execute: ({ writer }) => {
-				const result = streamText({
-					model: executor.model,
-					// Cache the (stable) system prompt so repeated turns read it from cache.
-					messages: [cachedSystemMessage(system), ...modelMessages],
-					// Our own system prompt (cached) is intentionally a system message; user turns are
-					// never system-role, so this is not a prompt-injection surface.
-					allowSystemInMessages: true,
-					// Wire the request's abort signal so a client disconnect aborts generation (and fires
-					// onAbort) instead of streaming — and paying — into the void with the hold left open.
-					abortSignal: req.signal,
-					tools: buildProjectAgentTools(canvas, { environmentId }),
-					stopWhen: stepCountIs(8),
-					// Step 0 runs on the advisor; the rest use the executor. The planning step gets
-					// extended thinking on EVERY tier so reasoning streams to the transcript.
-					prepareStep: ({ stepNumber }) => {
-						const marker = agentStepMarker({
-							stepNumber,
-							clientPick: false,
-							advisorKey: advisor.key,
-							executorKey: executor.key,
-							baseKey: executor.key,
-						});
-						if (marker) {
-							writer.write({
-								type: AGENT_STEP_PART_TYPE,
-								id: `step-${stepNumber}`,
-								data: marker,
-							});
-						}
-						return stepNumber === 0
-							? { model: advisor.model, providerOptions: thinkingOptions(advisor) }
-							: {};
-					},
-					// Meter PER MODEL: advisor + executor tokens are ledgered separately (correct cost_micros).
-					onFinish: ({ steps }) => {
-						void recordAgentTurnUsage({
-							orgId: actor.orgId,
-							userId: actor.userId,
-							kind: "agent",
-							charge,
-							refId: threadId ?? projectId,
-							steps: steps.map((s, i) => ({
-								model: modelForStep(i),
-								usage: {
-									inputTokens: s.usage.inputTokens,
-									outputTokens: s.usage.outputTokens,
-									cachedInputTokens: s.usage.cachedInputTokens,
-								},
-							})),
-						});
-					},
-					// A failed turn RELEASES its reserved hold (reconciled to 0) so it never leaks headroom.
-					onError: ({ error }) => {
-						void recordAiUsage({
-							orgId: actor.orgId,
-							userId: actor.userId,
-							kind: "agent",
-							source: charge.source,
-							holdId: charge.settle ? charge.holdId : undefined,
-							refId: threadId ?? projectId,
-							model: executor.key,
-							isError: true,
-							error: error instanceof Error ? error.message : String(error),
-						}).catch(meteringFailed(actor.orgId));
-					},
-					// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
-					// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
-					onAbort: () => {
-						void releaseAiHold(charge, holdCtx);
-					},
-				});
-				writer.merge(result.toUIMessageStream());
-			},
-			onFinish: ({ messages: finished }) => {
-				if (threadId) {
-					void saveThreadTranscript(
-						{ owner: actor.userId, threadId, kind: "agent", projectId },
-						finished,
-					).catch(transcriptNotSaved(threadId));
-				}
-			},
-		});
-
-		return createUIMessageStreamResponse({ stream });
-	} catch (e) {
-		// A throw between the gate and stream registration strands the hold — release it before rethrow.
-		await releaseAiHold(charge, holdCtx);
-		throw e;
-	}
 }
