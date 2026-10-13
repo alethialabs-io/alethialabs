@@ -196,7 +196,7 @@ const nextConfig: NextConfig = {
 // Console is the default zone: it owns the residual (incl. the `/{org}` wildcard). The
 // marketing-owned root paths are stitched to the marketing app by Caddy at the edge
 // (deploy/prod/Caddyfile.tunnel + deploy/caddy/marketing.caddy), NOT by Next — the path
-// map still lives in microfrontends.json (source for RESERVED_SLUGS + the Caddy mirror).
+// map still lives in marketing-zones.json (source for RESERVED_SLUGS + the Caddy mirror).
 // PostHog source-map upload for Error tracking: when a build-time personal API key is present (CI, via
 // a BuildKit secret), withPostHogConfig injects chunk ids + uploads source maps during `next build` so
 // prod stack traces symbolicate. Gated on the key so OSS/local builds are a plain no-op (never fail).

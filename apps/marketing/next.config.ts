@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
 	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/plan-catalog", "@repo/email"],
 	// Marketing owns the bare root, so NO basePath. A custom asset prefix keeps its
 	// /_next/* assets off the console's root (the console owns the `/{org}` wildcard).
-	// Must match the assetPrefix in apps/console/microfrontends.json and the Caddy
+	// Must match the assetPrefix in apps/console/marketing-zones.json and the Caddy
 	// /mkt-assets route. public/ files referenced at the prefix live under public/mkt-assets/.
 	assetPrefix: "/mkt-assets",
 };
