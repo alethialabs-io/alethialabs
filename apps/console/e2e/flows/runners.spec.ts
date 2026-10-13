@@ -32,6 +32,7 @@ import {
 	trackUiRunner,
 	type SeededFleetPool,
 } from "../helpers/seed-runners";
+import { signUpHobby } from "../helpers/personas";
 
 // The runners route is a cold-compiled bundle on first hit (navigation p95 ≈ 25s), so the default
 // 30s test budget is too tight for the multi-navigation flows. Give every test headroom.
@@ -64,12 +65,25 @@ test.describe("Runners — page & entitlement", () => {
 		await expect(team.page.getByText("No runner releases yet.")).toBeVisible();
 	});
 
-	test("shows the empty-runners first-run state when the org has no runners", async ({ team }) => {
-		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		await expect(team.page.getByRole("heading", { name: "No runners yet" })).toBeVisible({
+	test("shows the empty-runners first-run state when the org has no runners", async ({ page }) => {
+		// A THROWAWAY ACCOUNT, NOT THE TEAM PERSONA (#5892). Every other test in this file seeds
+		// runners into the team org and the suite is fullyParallel, so "the team org has no runners"
+		// was only true when this test happened to run alone — it failed its first attempt and passed
+		// on retry. The Hobby persona is no better: navigation-shell.spec.ts seeds a self runner into
+		// it for the length of one test. A fresh signup owns an org nothing else in the run knows
+		// exists, which is the only way the precondition holds by construction rather than by timing.
+		// Same pattern, and same OTP patience, as onboarding.spec.ts's sign-out walk. On a
+		// self-managed leg the byoRunners gate is inert (see the header), so a Hobby org reaches the
+		// runner surface rather than the upsell.
+		test.setTimeout(240_000);
+		const email = `e2e-runners-empty-${Date.now()}-${Math.floor(Math.random() * 1e4)}@alethia.test`;
+		const { orgSlug } = await signUpHobby(page, email, { otpTimeoutMs: 150_000 });
+
+		await page.goto(RUNNERS_PATH(orgSlug));
+		await expect(page.getByRole("heading", { name: "No runners yet" })).toBeVisible({
 			timeout: 15_000,
 		});
-		await expect(team.page.getByText(/Runners execute provisioning jobs\./)).toBeVisible();
+		await expect(page.getByText(/Runners execute provisioning jobs\./)).toBeVisible();
 	});
 
 	test("the grid renders one card per runner in the org", async ({ team }) => {
