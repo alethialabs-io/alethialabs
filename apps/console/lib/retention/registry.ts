@@ -28,8 +28,9 @@
 //                    `retention-registry.test.ts` refuses an entry that claims more.
 //
 // The point of the register is not to be long. It is that nothing may be retained by this product
-// without appearing here, and `TestEveryGcFunctionIsRegistered` (in the sibling test) fails when a
-// new `gc_*` lands in programmables.sql without an entry.
+// without appearing here, and the "registers every gc_* function the database defines" case in
+// apps/console/tests/privacy/retention-registry.test.ts fails when a new `gc_*` lands in
+// programmables.sql without an entry.
 
 /** How a window is actually enforced — the difference between a promise and a control. */
 export type RetentionMechanism =
