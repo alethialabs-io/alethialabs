@@ -2,20 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import {
-	useMutation,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
-import {
-	cancelJob,
-	getJob,
-	getJobs,
-	rerunJob,
-	type JobWithMeta,
-} from "@/app/server/actions/jobs";
+import { getJob, getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
 import type { Job } from "@/lib/db/schema";
 import { qk } from "./keys";
 
@@ -58,25 +47,5 @@ export function useJobQuery(jobId: string): UseQueryResult<Job | null> {
 				? 3_000
 				: false;
 		},
-	});
-}
-
-/** Re-runs a job, then invalidates the jobs cache so the new row appears. */
-export function useRerunJob() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return useMutation({
-		mutationFn: (jobId: string) => rerunJob(jobId),
-		onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(org) }),
-	});
-}
-
-/** Cancels a job, then invalidates the jobs cache to reflect the new status. */
-export function useCancelJob() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return useMutation({
-		mutationFn: (jobId: string) => cancelJob(jobId),
-		onSuccess: () => qc.invalidateQueries({ queryKey: qk.jobs(org) }),
 	});
 }

@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import {
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
-import { useCallback } from "react";
 import {
 	getProjects,
 	type ProjectWithProvider,
@@ -26,16 +21,4 @@ export function useProjectsQuery(): UseQueryResult<ProjectWithProvider[]> {
 		queryKey: qk.projects(org),
 		queryFn: () => getProjects(),
 	});
-}
-
-/**
- * Returns a callback that invalidates the projects cache, forcing a refetch — used after
- * mutations (create/duplicate/delete) so every projects surface reconciles.
- */
-export function useRefreshProjects(): () => void {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return useCallback(() => {
-		void qc.invalidateQueries({ queryKey: qk.projects(org) });
-	}, [qc, org]);
 }
