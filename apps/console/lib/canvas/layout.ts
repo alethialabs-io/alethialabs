@@ -20,7 +20,7 @@
 //
 // Deterministic: same graph in, same board out. No layout engine, no async pass, no new dependency.
 
-import type { CanvasNode, NodeKind } from "@/components/design-project/canvas/graph/types";
+import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { zoneForNode } from "./zones";
 
@@ -143,12 +143,4 @@ export function applyLayout(nodes: CanvasNode[], layout: Layout): CanvasNode[] {
 		const position = layout.get(node.id);
 		return position ? { ...node, position } : node;
 	});
-}
-
-/** The kinds that sit outside every zone. Exported for tests + the layout's own use. */
-export function isPeripheryKind(
-	kind: NodeKind,
-	provider: CloudProviderSlug | null,
-): boolean {
-	return zoneForNode(kind, provider) === null;
 }
