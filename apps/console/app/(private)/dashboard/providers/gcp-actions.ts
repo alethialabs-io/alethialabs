@@ -19,12 +19,6 @@ export async function getGcpConnectionStatus(): Promise<GcpConnectionStatus> {
 	return conn.getStatus(actor, "gcp");
 }
 
-/** Lists every connected GCP account for the org (multi-account). */
-export async function listGcpIdentities(): Promise<conn.ConnectionStatus[]> {
-	const actor = await currentActor();
-	return conn.listIdentities(actor, "gcp");
-}
-
 /** Gets or creates a pending GCP identity (manage-gated, not activity-logged). */
 export async function initGcpIdentity() {
 	const actor = await authorizeQuiet("manage_identities", {
