@@ -261,14 +261,19 @@ export function ElenchModal({
 				    a chat, New chat, Artifacts, Knowledge — closes it, because the destination is
 				    what the user wanted to see and the sheet covers most of a phone. Deleting does
 				    NOT: the row disappears in place, and the user may be clearing several.
-				    NO SCRIM: the sheet mounts inside the modal, so base-ui treats it as a nested
-				    dialog and its backdrop renders only with `forceRender`, which `SheetContent`
-				    does not pass. The modal behind it is therefore not dimmed — a recorded choice
-				    of this unit, since a scrim needs an @repo/ui change. */}
+				    THE SCRIM (#5706): the sheet mounts inside the modal, so base-ui treats it as a
+				    nested dialog and renders its backdrop only with `forceRender`. Passing it dims
+				    the modal behind, and a tap on the dimmed area closes the sheet (focus returns
+				    to the toggle). The scrim sits on the sheet's own layer — the earlier sibling,
+				    so the panel paints over it — and is `lg:hidden` with the panel. */}
 				<Sheet open={narrowRailOpen} onOpenChange={setNarrowRailOpen}>
 					<SheetContent
 						side="left"
 						showCloseButton={false}
+						overlayProps={{
+							forceRender: true,
+							className: "z-[var(--z-overlay-nested)] lg:hidden",
+						}}
 						data-testid="elench-narrow-rail"
 						className="z-[var(--z-overlay-nested)] w-[284px] gap-0 bg-card p-0 lg:hidden"
 					>
