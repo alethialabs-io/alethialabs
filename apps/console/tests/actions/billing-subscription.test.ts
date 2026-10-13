@@ -3822,6 +3822,8 @@ describe("ADR 0002 S1 (#5714)", () => {
 describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 	const PURCHASE_IN_PROGRESS =
 		"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.";
+	const PURCHASE_STOPPED =
+		"This purchase took too long and was stopped, or another one on this account took over, so nothing new was started. Wait a moment and try again.";
 	const minted = {
 		id: "sub_z",
 		latest_invoice: { id: "in_z", confirmation_secret: { client_secret: "cs_z" } },
@@ -3962,7 +3964,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 
 		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
 
-		expect(r).toEqual({ kind: "refused", message: PURCHASE_IN_PROGRESS });
+		expect(r).toEqual({ kind: "refused", message: PURCHASE_STOPPED });
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
 
@@ -3975,7 +3977,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 
 		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
 
-		expect(r).toEqual({ kind: "refused", message: PURCHASE_IN_PROGRESS });
+		expect(r).toEqual({ kind: "refused", message: PURCHASE_STOPPED });
 		expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
 		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
 		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
@@ -3987,7 +3989,7 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 
 		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
 
-		expect(r).toEqual({ kind: "refused", message: PURCHASE_IN_PROGRESS });
+		expect(r).toEqual({ kind: "refused", message: PURCHASE_STOPPED });
 		expect(stripe.customers.create).not.toHaveBeenCalled();
 	});
 

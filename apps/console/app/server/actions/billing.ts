@@ -892,9 +892,17 @@ async function alertSweepOverCap(customerId: string): Promise<void> {
 	});
 }
 
-/** What a caller tells the customer when another purchase for the same payer held the lock too long. */
+/** What a caller tells the customer when another purchase for the same payer holds the lock or lease past the wait. */
 const PURCHASE_IN_PROGRESS =
 	"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.";
+
+/**
+ * What the create-a-team purchase tells the customer when it lost its lease mid-request (a fence threw
+ * `PurchaseLeaseLostError`): another request took it over, OR it simply lapsed while this one was waiting
+ * on Stripe and nobody took it. Either way this request stopped before its next Stripe write.
+ */
+const PURCHASE_STOPPED =
+	"This purchase took too long and was stopped, or another one on this account took over, so nothing new was started. Wait a moment and try again.";
 
 /**
  * The link's refusal beside the team's other live plan (ADR 0002 §5.5, #5714). The second sentence is
@@ -910,7 +918,9 @@ const OPEN_SETUP_CREATOR_NEXT = `Open Create a team to see where it stands, or c
  * The open-setup guard's refusal, to the setup's creator (ADR 0002 §5.5). When an open payment hold
  * names the setup's subscription, that hold's clause replaces the first sentence (`holdClause`).
  */
-const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a plan cannot be started here yet. ${OPEN_SETUP_CREATOR_NEXT}`;
+const OPEN_SETUP_CREATOR_FIRST =
+	"Your paid setup for this team has not finished, so a plan cannot be started here yet.";
+const OPEN_SETUP_CREATOR = `${OPEN_SETUP_CREATOR_FIRST} ${OPEN_SETUP_CREATOR_NEXT}`;
 
 /**
  * The open-setup guard's refusal, to anyone but the creator (ADR 0002 §5.5): it names who started the
@@ -960,12 +970,17 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 
 /**
  * The guard's refusal to the setup's creator: the clause of the open payment hold on the setup's
- * subscription, when one is open, then where to go — else `OPEN_SETUP_CREATOR`.
+ * subscription in place of the first sentence, then where to go — else `OPEN_SETUP_CREATOR`. A
+ * `refund_pending` hold does not block (Q10), so its clause cannot say why the plan is refused: the
+ * refusal keeps its own first sentence, and the clause says only that the refund was issued.
  */
 async function creatorRefusal(subscriptionId: string): Promise<string> {
 	const hold = await openPaymentHoldOn(subscriptionId);
-	const clause = hold ? holdClause(hold) : null;
-	return clause ? `${clause} ${OPEN_SETUP_CREATOR_NEXT}` : OPEN_SETUP_CREATOR;
+	const clause = hold ? holdClause(hold, { refusing: true }) : null;
+	if (!hold || !clause) return OPEN_SETUP_CREATOR;
+	return hold.state === "refund_pending"
+		? `${OPEN_SETUP_CREATOR_FIRST} ${clause} ${OPEN_SETUP_CREATOR_NEXT}`
+		: `${clause} ${OPEN_SETUP_CREATOR_NEXT}`;
 }
 
 /**
@@ -1797,9 +1812,8 @@ interface NewOrgSubscriptionOpts {
  * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay, with an optional `notice` (ADR
  * 0002 §5.5: an earlier refund, or one on its way back — the clauses that do not block a purchase). The
  * sheet does not show `notice` yet; the slice that owns the sheet will show it above the payment form.
- * Or — 
- * when an earlier attempt turns out to be PAID already — that setup to finish, with nothing new to pay;
- * or a refusal to start anything, with the reason to show.
+ * Or — when an earlier attempt turns out to be PAID already — that setup to finish, with nothing new to
+ * pay; or a refusal to start anything, with the reason to show.
  */
 export type NewOrgSubscriptionStart =
 	| ({ kind: "intent"; notice?: string } & NewOrgSubscriptionIntent)
@@ -1860,14 +1874,15 @@ export async function createNewOrgSubscriptionIntent(
 	const leased = await withUserPurchaseLease(actor.userId, (lease) =>
 		startNewOrgSubscription(actor, plan, opts, lease),
 	);
-	return leased.ran ? leased.value : { kind: "refused", message: PURCHASE_IN_PROGRESS };
+	if (leased.ran) return leased.value;
+	return { kind: "refused", message: leased.lost ? PURCHASE_STOPPED : PURCHASE_IN_PROGRESS };
 }
 
 /**
  * Runs `fn` under the user's purchase lease, `user:<userId>` (ADR 0002 §4.4), taken by the
- * create-a-team purchase and its link. `{ ran: false }` when another request holds it past the wait,
- * or when `fn` lost it (a fence threw `PurchaseLeaseLostError`) — both mean "another purchase of this
- * user is under way". Anything else `fn` throws is thrown.
+ * create-a-team purchase and its link. `{ ran: false }` when another request holds it past the wait, or
+ * `{ ran: false, lost: true }` when `fn` lost it (a fence threw `PurchaseLeaseLostError`: the lease was
+ * taken over, or lapsed). Anything else `fn` throws is thrown.
  *
  * The lease is the only exclusion. S2's build also took the older advisory key, `new-org:<userId>`
  * (`withPurchaseLock`), for one release so that its pods and the pods before it excluded each other
@@ -1878,13 +1893,13 @@ export async function createNewOrgSubscriptionIntent(
 async function withUserPurchaseLease<T>(
 	userId: string,
 	fn: (lease: PurchaseLease) => Promise<T>,
-): Promise<{ ran: true; value: T } | { ran: false }> {
+): Promise<{ ran: true; value: T } | { ran: false; lost?: true }> {
 	try {
 		const leased = await withPurchaseLease(`user:${userId}`, fn);
 		if (!leased.acquired) return { ran: false };
 		return { ran: true, value: leased.value };
 	} catch (e) {
-		if (e instanceof PurchaseLeaseLostError) return { ran: false };
+		if (e instanceof PurchaseLeaseLostError) return { ran: false, lost: true };
 		throw e;
 	}
 }
@@ -2014,8 +2029,9 @@ function latestInvoiceId(sub: Pick<Stripe.Subscription, "latest_invoice">): stri
 /**
  * E1 for one hold under this request's lease (§3.2 E1 (a)): `advanceHold`, the only code that moves a
  * hold, with the sweeper's own dependencies. Returns the hold as its last write left it. A lost lease, or
- * a state write that matched no row — under this lease nothing else writes this payer's holds, so that
- * too means the lease was taken over — stops the purchase (§4.4 rule 1).
+ * a state write that matched no row, stops the purchase (§4.4 rule 1). Under this lease nothing else
+ * writes this payer's holds, so a write matches no row only when the store's lease fence failed: the
+ * lease was taken over, or it LAPSED (`expires_at` passed) while this request was reading Stripe.
  */
 async function advanceUnderLease(hold: PaymentHoldRow, lease: PurchaseLease): Promise<PaymentHoldRow> {
 	const result = await advanceHold(hold, machineDepsFor(lease, liveSweepDeps()));
@@ -2139,19 +2155,18 @@ const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 
 /**
  * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94), read AFTER the hold pass and the sweep so that a
- * subscription either one adopted is still seen: every subscription, of every status, on every customer
- * the user's unlinked records name (`liveCheckSetupCustomers`, whether or not the team exists or the
- * record is closed) and on `alsoOn`, fully paged. A LIVE create-a-team subscription of the user's — one
- * whose webhook has not been seen yet, or one that went straight to `active` — is returned. A list that
- * fails, or a set over its cap, refuses (§5.1): the purchase never mints on a read it did not make.
+ * subscription either one adopted is still seen: every subscription, of every status, on each of
+ * `customers` — the customers of the user's unlinked records (`liveCheckSetupCustomers`, whether or not
+ * the team exists or the record is closed), of the holds this request saw, and the one it would mint on —
+ * fully paged. A LIVE create-a-team subscription of the user's — one whose webhook has not been seen yet,
+ * or one that went straight to `active` — is returned. A list that fails, or one over its cap, refuses
+ * (§5.1): the purchase never mints on a read it did not make.
  */
 async function liveCreateATeamSubscription(
 	userId: string,
-	alsoOn: Iterable<string>,
+	customers: Iterable<string>,
 ): Promise<{ kind: "none" } | { kind: "live"; sub: Stripe.Subscription } | { kind: "refused"; message: string }> {
-	const recorded = await liveCheckSetupCustomers(userId);
-	if (recorded.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
-	for (const customer of new Set([...recorded.customers, ...alsoOn])) {
+	for (const customer of new Set(customers)) {
 		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
 		try {
 			listed = await listCustomerSubscriptions(getPurchaseStripe(), customer, "all");
@@ -2202,6 +2217,12 @@ async function startNewOrgSubscription(
 		return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 	}
 	const recordedCustomers = recorded.customers;
+	// The live check's own record set (§4.3, C94): it includes records whose team exists and closed ones,
+	// which the reuse set above leaves out. The sweep reads it too, so an `incomplete` subscription still
+	// settling on such a customer is KEPT and refuses — the live check alone would read it "not live" and
+	// mint beside it, seconds before it activated.
+	const liveRecorded = await liveCheckSetupCustomers(actor.userId);
+	if (liveRecorded.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 
 	// The prior is READ from Stripe (#5445): the browser's id is a hint. A paid one is resumed; one this
 	// user did not mint, or one a link already gave an `organization_id` (§4.2), is left alone.
@@ -2274,12 +2295,12 @@ async function startNewOrgSubscription(
 	const mintedOn: MintedCustomer = { customerId, origin };
 
 	// I1 (b), the sweep: every `incomplete` subscription on the customer this purchase uses and on every
-	// customer the caller's unfinished records name — a purchase still settling on any of them blocks a
-	// second one. Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else
+	// customer the caller's unlinked records name, whether or not their team exists — a purchase still
+	// settling on any of them blocks a second one. Only this user's create-a-team subscriptions are touched (ADR 0002 §4.2): anything else
 	// on these customers is left alone, alerted on, and does not refuse. Each of the user's own is closed
 	// under a hold or kept (`closeOrKeep`). A customer with more than the sweep reads refuses, and so does
 	// a list that fails (§5.1).
-	for (const sweepCustomer of new Set([customerId, ...recordedCustomers])) {
+	for (const sweepCustomer of new Set([customerId, ...recordedCustomers, ...liveRecorded.customers])) {
 		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
 		try {
 			listed = await listCustomerSubscriptions(getStripe(), sweepCustomer, "incomplete");
@@ -2307,9 +2328,9 @@ async function startNewOrgSubscription(
 	// I1 (c), read last.
 	const holdCustomers = [...seen.holds.values()].map((h) => h.customer_id);
 	const live = await liveCreateATeamSubscription(actor.userId, [
-		customerId,
-		...recordedCustomers,
+		...liveRecorded.customers,
 		...holdCustomers,
+		customerId,
 	]);
 	if (live.kind === "refused") return { kind: "refused", message: live.message };
 	if (live.kind === "live") return resumeOrRefuse(live.sub, actor.userId);

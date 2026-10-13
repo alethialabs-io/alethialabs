@@ -8,14 +8,18 @@
 // state AND by `last_pay`, the payment the last observation saw, so a hold whose bank debit is under
 // way never reads "try again in a few minutes". Every clause is true for what was read (I8):
 //   - "we have raised an alert" appears only when every `needs_operator` hold behind it alerted a
-//     channel (`alerted_at` is written only when `alertPaymentNeedsSupport` returned true);
+//     channel IN ITS CURRENT STATE ENTRY (`alerted_at` is written only when the alert returned true, and
+//     only an `alerted_at` at or after `state_since` belongs to this entry — the sweeper's own rule);
 //   - "refunded" appears only for a hold released `refunded` or `already_refunded`, which the machine
 //     writes only once every covering refund reads `succeeded`;
 //   - "you won't be charged twice / again" appears nowhere (C32): nothing proves it.
 //
 // Holds in `refund_pending` do not block (Q10), and a refund released in the last 14 days is appended
 // to every response (C26). When nothing blocks, those clauses travel as the `notice` of the purchase
-// that mints (C56), so a customer who buys again is told of the two-charges window before paying.
+// that mints (C56). The sheet does not show `notice` yet: the slice that owns the sheet will show it
+// above the payment form, and only from then is a customer who buys again told of the two-charges
+// window before paying. A response that REFUSES never carries "if you buy again now": in a refusal the
+// `refund_pending` clause says only that the refund was issued.
 //
 // Pure: the purchase in app/server/actions/billing.ts reads the rows and this decides the words.
 
@@ -28,7 +32,10 @@ const SUPPORT_EMAIL = LEGAL_ENTITY.supportEmail;
 export const REFUND_NOTICE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 /** The columns of a hold its clause is chosen from. */
-export type HoldForCopy = Pick<PaymentHoldRow, "state" | "last_pay" | "alerted_at" | "release_reason" | "released_at">;
+export type HoldForCopy = Pick<
+	PaymentHoldRow,
+	"state" | "state_since" | "last_pay" | "alerted_at" | "release_reason" | "released_at"
+>;
 
 /**
  * What the sweep saw on a subscription it KEPT (did not close, because its first payment is not proven
@@ -52,8 +59,11 @@ const INVOICE_PAYABLE =
 	"We could not yet close an earlier checkout's invoice, so nothing new was started. Try again in a few minutes.";
 const REFUND_DUE =
 	"An earlier payment went through after that checkout was cancelled. Its refund has not gone through yet; nothing new can be started until it has.";
-const REFUND_PENDING =
-	"An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you. If you buy again now and that refund fails, you may see both charges until we have refunded it again.";
+/** `refund_pending`, as a refusal reads it: the refund was issued. */
+const REFUND_ISSUED =
+	"An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you.";
+/** `refund_pending`, as a minting response reads it: the §3.1 two-charges window, stated (rev 7). */
+const REFUND_PENDING = `${REFUND_ISSUED} If you buy again now and that refund fails, you may see both charges until we have refunded it again.`;
 const NEEDS_OPERATOR = `We could not settle an earlier checkout's payment automatically, so nothing new was started. Contact support at ${SUPPORT_EMAIL} with the time of the payment.`;
 const ALERTED = " We have raised an alert.";
 const REFUNDED = "An earlier payment was refunded in full; it can take 5–10 business days to reach you.";
@@ -80,11 +90,17 @@ function paymentClause(pay: string | null): string {
 	return NOT_CONFIRMED_CLOSED;
 }
 
+/** Whether the hold's alert reached a channel in its CURRENT state entry (I8; the sweeper's `alerted_at >= state_since`). */
+function alertedThisEntry(hold: HoldForCopy): boolean {
+	return hold.alerted_at !== null && hold.alerted_at >= hold.state_since;
+}
+
 /**
  * The clause of one OPEN hold (§5.5), or null for a released one. `needs_operator` claims an alert
- * only when this hold's alert reached a channel.
+ * only when this hold's alert reached a channel in its current state entry. `refusing` is for a
+ * response that refuses: there a `refund_pending` hold says only that its refund was issued.
  */
-export function holdClause(hold: HoldForCopy): string | null {
+export function holdClause(hold: HoldForCopy, opts: { refusing?: boolean } = {}): string | null {
 	switch (hold.state) {
 		case "closing":
 		case "cancel_unproven":
@@ -96,9 +112,9 @@ export function holdClause(hold: HoldForCopy): string | null {
 		case "refund_due":
 			return REFUND_DUE;
 		case "refund_pending":
-			return REFUND_PENDING;
+			return opts.refusing ? REFUND_ISSUED : REFUND_PENDING;
 		case "needs_operator":
-			return NEEDS_OPERATOR + (hold.alerted_at ? ALERTED : "");
+			return NEEDS_OPERATOR + (alertedThisEntry(hold) ? ALERTED : "");
 		case "released":
 			return null;
 	}
@@ -137,18 +153,25 @@ export function composeNewOrgHoldCopy(input: {
 	now: Date;
 }): NewOrgHoldCopy {
 	const blocking = new Set<string>();
-	const passing = new Set<string>();
-	// "We have raised an alert" only when EVERY needs_operator hold alerted (I8).
-	const operator = input.holds.filter((h) => h.state === "needs_operator");
 	for (const hold of input.holds) {
-		if (hold.state === "needs_operator") continue;
+		if (hold.state === "needs_operator" || !holdBlocks(hold)) continue;
 		const clause = holdClause(hold);
-		if (clause) (holdBlocks(hold) ? blocking : passing).add(clause);
+		if (clause) blocking.add(clause);
 	}
-	if (operator.length > 0) blocking.add(NEEDS_OPERATOR + (operator.every((h) => h.alerted_at) ? ALERTED : ""));
+	// "We have raised an alert" only when EVERY needs_operator hold alerted in its current entry (I8).
+	const operator = input.holds.filter((h) => h.state === "needs_operator");
+	if (operator.length > 0) blocking.add(NEEDS_OPERATOR + (operator.every(alertedThisEntry) ? ALERTED : ""));
 	for (const pay of input.kept) blocking.add(pay === "unproven" ? KEPT_UNPROVEN : paymentClause(pay));
+	// The non-blocking clauses, worded for a refusal when anything blocks.
+	const passing = new Set<string>();
+	const refusing = blocking.size > 0;
+	for (const hold of input.holds) {
+		if (hold.state !== "refund_pending") continue;
+		const clause = holdClause(hold, { refusing });
+		if (clause) passing.add(clause);
+	}
 	if (input.holds.some((h) => refundedRecently(h, input.now))) passing.add(REFUNDED);
 
-	if (blocking.size > 0) return { refusal: [...blocking, ...passing].join(" "), notice: null };
+	if (refusing) return { refusal: [...blocking, ...passing].join(" "), notice: null };
 	return { refusal: null, notice: passing.size > 0 ? [...passing].join(" ") : null };
 }

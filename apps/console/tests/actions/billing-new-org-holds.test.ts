@@ -47,6 +47,10 @@ const world = vi.hoisted(() => {
 		openFails: false,
 		/** The next N state writes throw (a database error after a Stripe write). */
 		writeFailures: 0,
+		/** Every lease renewal fails: the lease was taken over, or lapsed. */
+		leaseLost: false,
+		/** A subscription whose first read goes `active`: its payment lands as the machine reads it. */
+		activatesOnRead: null as string | null,
 	};
 	const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing" });
 	const piOf = (invoice: string, i: number) => `pi_${invoice}_${i}`;
@@ -60,6 +64,11 @@ const world = vi.hoisted(() => {
 			retrieve: vi.fn(async (id: string) => {
 				const sub = state.subs.get(id);
 				if (!sub) throw missing();
+				if (state.activatesOnRead === id) {
+					sub.status = "active";
+					state.payments.set(sub.latest_invoice, ["succeeded"]);
+					state.invoices.set(sub.latest_invoice, "paid");
+				}
 				return { ...sub };
 			}),
 			list: vi.fn(async (p: { customer: string; status: string }) => ({
@@ -155,7 +164,9 @@ vi.mock("@/lib/billing/purchase-lease", () => {
 		PurchaseLeaseLostError,
 		UNFENCED: async () => undefined,
 		renewPurchaseLease: renew,
-		fenceFor: () => async () => undefined,
+		fenceFor: () => async () => {
+			if (world.state.leaseLost) throw new PurchaseLeaseLostError("user:user-1");
+		},
 		tryAcquirePurchaseLease: vi.fn(),
 		releasePurchaseLease: vi.fn(),
 		withPurchaseLease: async <T,>(key: string, fn: (lease: { key: string; holder: string }) => Promise<T>) => ({
@@ -384,7 +395,9 @@ const buy = (opts: { priorSubscriptionId?: string; customerId?: string } = { cus
 	createNewOrgSubscriptionIntent("team", { orgName: "NewCo", ...opts });
 
 beforeEach(() => {
-	vi.clearAllMocks();
+	// RESET, not clear: a `mockRejectedValue` or `mockImplementation` one test sets must not leak into the
+	// next. Every fake above is a `vi.fn(impl)`, which a reset returns to `impl`.
+	vi.resetAllMocks();
 	world.state.subs.clear();
 	world.state.invoices.clear();
 	world.state.payments.clear();
@@ -394,6 +407,8 @@ beforeEach(() => {
 	world.state.cancelFails = false;
 	world.state.openFails = false;
 	world.state.writeFailures = 0;
+	world.state.leaseLost = false;
+	world.state.activatesOnRead = null;
 	vi.unstubAllEnvs();
 });
 
@@ -462,6 +477,8 @@ describe("I1 (a) — every open hold of the user blocks the mint, wherever the b
 		expect(holdOn("sub_prior")?.state).toBe("cancel_unproven");
 		expect(refusalOf(await buy())).toMatch(/could not confirm an earlier checkout was closed/);
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+		// §8: a record is dropped only after a release that proves it never payable — not under an open hold.
+		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
 	});
 
 	it("C16: a failed cancel AND a failed state write after it leave the hold open — the next purchase is refused", async () => {
@@ -551,6 +568,11 @@ describe("the sweep's kept subscriptions, and the copy (§5.5)", () => {
 		world.state.holds = [];
 		seedHold({ state: "needs_operator", alerted_at: new Date() });
 		expect(refusalOf(await buy())).toMatch(/raised an alert/);
+
+		// An alert from an EARLIER state entry (T3b in cancel_unproven) is not this entry's.
+		world.state.holds = [];
+		seedHold({ state: "needs_operator", alerted_at: new Date(Date.now() - 3_600_000), state_since: new Date() });
+		expect(refusalOf(await buy())).not.toMatch(/raised an alert/);
 	});
 
 	it("C56: an invoice_payable hold refuses with its own clause", async () => {
@@ -606,12 +628,33 @@ describe("I1 (c) — the live check, read last (§4.3)", () => {
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
 
-	it("an adoption in the hold pass is seen by the live check that runs after it", async () => {
-		sub("sub_x", "active", ["succeeded"]);
-		seedHold({ state: "cancel_unproven", last_pay: "succeeded" });
+	it("an adoption in the hold pass is seen by the live check that runs after it — on the hold's own customer", async () => {
+		// The hold's customer is named by nothing else: neither the browser, nor a record.
+		sub("sub_x", "active", ["succeeded"], { created_by: "user-1" }, "cus_hold");
+		seedHold({ state: "cancel_unproven", last_pay: "succeeded", customer_id: "cus_hold" });
 
 		await expect(buy()).resolves.toMatchObject({ kind: "resume", setup: { subscriptionId: "sub_x" } });
 		expect(holdOn("sub_x")).toMatchObject({ state: "released", release_reason: "adopted" });
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("an adoption by the SWEEP's own close is seen too: the live check runs after the sweep", async () => {
+		sub("sub_landing", "incomplete");
+		world.state.activatesOnRead = "sub_landing";
+
+		await expect(buy()).resolves.toMatchObject({ kind: "resume", setup: { subscriptionId: "sub_landing" } });
+		expect(holdOn("sub_landing")).toMatchObject({ state: "released", release_reason: "adopted" });
+		expect(world.stripe.subscriptions.cancel).not.toHaveBeenCalled();
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("advisory 1: an incomplete X still settling on a record whose team exists is swept too — never minted beside", async () => {
+		// The browser lost its customer; the only record names a team, so the reuse helper leaves it out.
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_with_org"] });
+		sub("sub_settling", "incomplete", ["processing"], { created_by: "user-1" }, "cus_with_org");
+
+		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
 	});
 
@@ -626,6 +669,20 @@ describe("I1 (c) — the live check, read last (§4.3)", () => {
 	});
 });
 
+describe("§4.4 rule 1 — a lease lost under the hold pass", () => {
+	it("stops before any Stripe write, refuses as not this request's to finish, and leaves the hold open", async () => {
+		sub("sub_x", "incomplete");
+		seedHold({ state: "closing" });
+		world.state.leaseLost = true;
+
+		expect(refusalOf(await buy())).toMatch(/took too long and was stopped/);
+		expect(world.stripe.invoices.voidInvoice).not.toHaveBeenCalled();
+		expect(world.stripe.subscriptions.cancel).not.toHaveBeenCalled();
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+		expect(holdOn("sub_x")?.state).toBe("closing");
+	});
+});
+
 describe("§5.7 — the guard's creator message carries an open hold's clause", () => {
 	it("the creator of a held setup reads the hold's clause, then where to go", async () => {
 		vi.mocked(getOrgBilling).mockResolvedValue(null);
@@ -636,5 +693,30 @@ describe("§5.7 — the guard's creator message carries an open hold's clause", 
 
 		expect(r).toEqual({ error: expect.stringMatching(/^An earlier checkout's payment is still being processed.*Open Create a team/) });
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("a refund_pending hold keeps the refusal's own sentence, and never says 'if you buy again now'", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([{ ...setupRow("user-1", "sub_x"), created_org_id: "org-1" }]);
+		seedHold({ state: "refund_pending", last_pay: "succeeded" });
+
+		const r = await createSubscriptionIntent("team");
+
+		expect(r).toEqual({ error: expect.stringMatching(/^Your paid setup .* cannot be started here yet\. .*issued its refund/) });
+		expect(r).not.toEqual({ error: expect.stringMatching(/buy again/) });
+	});
+});
+
+describe("§5.5 — a refusal never invites a purchase", () => {
+	it("a refund_pending hold beside a blocking one says the refund was issued, not 'if you buy again now'", async () => {
+		sub("sub_a", "canceled", ["succeeded"]);
+		world.state.refunds.set("pi_in_sub_a_0", [{ status: "pending", amount: 1000 }]);
+		seedHold({ subscription_id: "sub_a", invoice_id: "in_sub_a", state: "refund_pending", last_pay: "succeeded" });
+		sub("sub_b", "canceled", ["processing"]);
+		seedHold({ subscription_id: "sub_b", invoice_id: "in_sub_b", state: "payment_in_flight", last_pay: "in_flight" });
+
+		const message = refusalOf(await buy());
+		expect(message).toMatch(/issued its refund/);
+		expect(message).not.toMatch(/buy again/);
 	});
 });
