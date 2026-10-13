@@ -445,7 +445,84 @@ describeIfDb("pending_org_setups — keyset pages while records are deleted", ()
 			slug: "pager",
 		});
 		// The first test left records of both customers; cus_page_old now has the newest one.
-		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual(["cus_page_old", "cus_page_new"]);
+		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual({ kind: "all", customers: ["cus_page_old", "cus_page_new"] });
+	});
+});
+
+// ── ADR 0002 S3 (#5754), C21: `unlinkedPendingOrgSetupCustomers` reads every record, or refuses ──────
+//
+// It used to answer the newest 5 customers and drop the rest, so the create-a-team sweep never read a
+// payment still settling on the 6th. It now pages over EVERY unlinked record by keyset (100 a page) and
+// answers `over_cap` — with no list — beyond 50 distinct customers. Each user below owns only its own
+// records, so the files running beside this one cannot change what it reads.
+describeIfDb("pending_org_setups — C21: every unlinked customer, or over_cap", () => {
+	const users: string[] = [];
+
+	/** A user with one unlinked record per entry of `customers`, the first entry the NEWEST record. */
+	async function userWithRecords(customers: readonly string[], at: (i: number) => string): Promise<string> {
+		const id = randomUUID();
+		users.push(id);
+		const db = getServiceDb();
+		await db.insert(user).values({ id, email: `it-c21-${id}@example.test` });
+		await db.insert(pendingOrgSetups).values(
+			customers.map((customer, i) => ({
+				user_id: id,
+				subscription_id: `sub_c21_${randomUUID()}`,
+				customer_id: customer,
+				intended_name: "C21",
+				intended_slug: "c21",
+				created_at: new Date(at(i)),
+			})),
+		);
+		return id;
+	}
+
+	/** One second earlier per index: index 0 is the newest record. */
+	const secondsBefore = (i: number) => new Date(Date.UTC(2026, 9, 9, 12, 0, 0) - i * 1000).toISOString();
+
+	afterAll(async () => {
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.user_id, users));
+		await db.delete(user).where(inArray(user.id, users));
+	});
+
+	it("returns all 7 customers of 7 unlinked records, newest first — not the newest 5", async () => {
+		const customers = Array.from({ length: 7 }, (_, i) => `cus_c21_seven_${i}`);
+		const id = await userWithRecords(customers, secondsBefore);
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({ kind: "all", customers });
+	});
+
+	it("pages past the first 100 records: a customer named only by the oldest record, past a tie, is still returned", async () => {
+		// 1 newest record on cus_head, 249 on cus_bulk all in ONE microsecond (so pages break inside a
+		// tie, which only the id orders), and the oldest on cus_tail — the 251st record, on page 3.
+		const customers = ["cus_c21_head", ...Array.from({ length: 249 }, () => "cus_c21_bulk"), "cus_c21_tail"];
+		const id = await userWithRecords(customers, (i) =>
+			i === 0 ? "2026-10-09T12:00:01.000Z" : i === customers.length - 1 ? "2026-10-09T11:59:59.000Z" : "2026-10-09T12:00:00.000Z",
+		);
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({
+			kind: "all",
+			customers: ["cus_c21_head", "cus_c21_bulk", "cus_c21_tail"],
+		});
+	});
+
+	it("exactly 50 customers are all returned; a 51st answers over_cap, with no list", async () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => `cus_c21_fifty_${i}`);
+		const atCap = await userWithRecords(fifty, secondsBefore);
+		const all = await unlinkedPendingOrgSetupCustomers(atCap);
+		expect(all.kind === "all" ? all.customers : []).toHaveLength(50);
+
+		const overCap = await userWithRecords([...fifty, "cus_c21_fifty_first"], secondsBefore);
+		expect(await unlinkedPendingOrgSetupCustomers(overCap)).toEqual({ kind: "over_cap" });
+	});
+
+	it("leaves out records that are linked, declared, or have an org — they do not count toward the cap", async () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => `cus_c21_live_${i}`);
+		const id = await userWithRecords([...fifty, "cus_c21_done"], secondsBefore);
+		await getServiceDb()
+			.update(pendingOrgSetups)
+			.set({ linked_at: new Date() })
+			.where(and(eq(pendingOrgSetups.user_id, id), eq(pendingOrgSetups.customer_id, "cus_c21_done")));
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({ kind: "all", customers: fifty });
 	});
 });
 
