@@ -11,11 +11,6 @@ export function toStr(v: unknown): string {
 	return typeof v === "string" ? v : "";
 }
 
-/** An unknown value as a number, or "" — the empty form a numeric <input> wants when unset. */
-export function toNum(v: unknown): number | "" {
-	return typeof v === "number" ? v : "";
-}
-
 /** An unknown value as a string[], dropping any non-string members (never null/undefined). */
 export function toStrArray(v: unknown): string[] {
 	return Array.isArray(v)

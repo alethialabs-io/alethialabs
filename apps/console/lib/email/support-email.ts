@@ -3,7 +3,7 @@
 
 // Support-case transactional emails. Mirrors notify-email.ts: product/general stream,
 // suppression-aware via sendGuardedEmail. Covers the customer-facing
-// ack/reply/resolved/reopened/closed/assigned notifications plus the internal "new
+// ack/reply/resolved/reopened/closed notifications plus the internal "new
 // case" ping to the support inbox. The `url` for a case is resolved by the caller
 // (app/server/actions/support.ts caseUrl) so every link deep-links to the real case.
 
@@ -11,10 +11,6 @@ import { getAuthConfig } from "@/lib/config/auth";
 import type { SupportContactPrefs } from "@/types/jsonb.types";
 import { getEmailConfig } from "@repo/email/config";
 import { sendGuardedEmail } from "./guard";
-import {
-	SupportCaseAssignedEmail,
-	subject as assignedSubject,
-} from "@repo/support/emails/support-case-assigned";
 import {
 	SupportCaseClosedEmail,
 	subject as closedSubject,
@@ -156,26 +152,6 @@ export async function sendCaseClosedEmail(
 		cc: args.cc,
 		subject: closedSubject(args.caseNumber),
 		react: SupportCaseClosedEmail({ caseNumber: args.caseNumber, url: args.url }),
-	});
-}
-
-/** Notifies the customer that an agent picked up their case. */
-export async function sendCaseAssignedEmail(
-	to: string,
-	args: { caseNumber: number; agentName?: string; url: string; cc?: string[] },
-): Promise<void> {
-	const config = getEmailConfig();
-	await sendGuardedEmail({
-		from: config.from.general,
-		configurationSetName: config.configSet.general,
-		to,
-		cc: args.cc,
-		subject: assignedSubject(args.caseNumber),
-		react: SupportCaseAssignedEmail({
-			caseNumber: args.caseNumber,
-			agentName: args.agentName,
-			url: args.url,
-		}),
 	});
 }
 

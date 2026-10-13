@@ -19,7 +19,7 @@
 
 import type { CanvasNode, NodeKind } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { collectionNodeId, isCollectionKind, type BoardNode } from "./collections";
+import type { BoardNode } from "./collections";
 
 /** Where a resource actually runs. */
 export type ZoneId = "cluster" | "network";
@@ -353,11 +353,6 @@ export function dragMemberIds(
 		else if (containerId === zoneNodeId("network") && c === zoneNodeId("cluster")) take(node);
 	}
 	return owned;
-}
-
-/** The id a zone-aware layout should use for a kind's card (a collection collapses to one). */
-export function cardIdForKind(kind: NodeKind, nodeId: string): string {
-	return isCollectionKind(kind) ? collectionNodeId(kind) : nodeId;
 }
 
 /** A card's footprint, for layout callers. */
