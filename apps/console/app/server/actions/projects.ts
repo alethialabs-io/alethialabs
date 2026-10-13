@@ -1464,8 +1464,8 @@ async function buildConfigSnapshot(
 		// mirror every one of its conditions, not just the ones that were easy to see.
 		//
 		// AND ONLY ON THE PATHS THAT CREATE. `buildConfigSnapshot` is shared by planProject,
-		// buildProject, provisionProject, destroyProject, queueDriftDetection and detectDrift. Throwing
-		// on all six wedges exactly the projects this gate exists for: the `.io`-on-hetzner project
+		// buildProject, provisionProject, destroyProject and queueDriftDetection. Throwing
+		// on all five wedges exactly the projects this gate exists for: the `.io`-on-hetzner project
 		// that produced #2568 already exists, half-applied, and would hit this on Destroy — leaving a
 		// user holding cloud resources they cannot tear down from the console. Teardown and drift must
 		// stay reachable for a config that is already broken; refusing to CREATE more of it is the
@@ -2962,62 +2962,6 @@ export async function getDestroyTree(
 		const tenants = await readLiveFabricTenants(tx, environment);
 		return { tree: buildDestroyTree(environment, tenants) };
 	});
-}
-
-/**
- * Queue a DETECT_DRIFT job (elench): a refresh-only plan that reports drift between
- * recorded state and the live cloud for an environment, storing a drift posture on
- * the job's execution_metadata. Read-only against the cloud — it never applies.
- * A scheduler can call this per environment on a tiered cadence; it's also
- * invocable on demand.
- */
-export async function detectDrift(
-	projectId: string,
-	environmentId?: string | null,
-	runnerId?: string | null,
-) {
-	const actor = await authorize("plan", { type: "project", id: projectId });
-	// Defense-in-depth: a client-supplied assigned runner must belong to the
-	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
-	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
-	await assertUsageAllowed(actor.orgId);
-	await assertJobQuotaAllowed(actor.orgId);
-	const owner = actor.userId;
-	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
-		projectId,
-		environmentId,
-	);
-
-	const result = await withScope(
-		{ ownerId: owner, orgId: actor.orgId },
-		async (tx) => {
-			const [job] = await tx
-				.insert(jobs)
-				.values(
-					signedJob({
-						user_id: owner,
-						org_id: actor.orgId,
-						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
-						initiated_by: "user",
-						job_type: "DETECT_DRIFT",
-						config_snapshot: configSnapshot,
-						status: "QUEUED",
-						// New trace root for this drift-detection operation (enqueue → claim → runner).
-						traceparent: newTraceparent(),
-						...(runnerId ? { assigned_runner_id: runnerId } : {}),
-					}),
-				)
-				.returning({ id: jobs.id });
-			return { jobId: job.id };
-		},
-	);
-
-	notifyScaler();
-	return result;
 }
 
 // ============================================================

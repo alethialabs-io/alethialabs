@@ -4,9 +4,11 @@
 /**
  * Drift scheduling (elench). Picks which environments are due for a refresh-only
  * drift check, on a cadence tiered by criticality so the provider-API cost stays
- * bounded. Pure and deterministic — the cron route (app/api/cron/drift) supplies
- * the candidates (each env + the timestamp of its last DETECT_DRIFT job) and enqueues
- * `detectDrift` for the ones this returns.
+ * bounded. Pure and deterministic — `sweepDriftSchedule` (lib/drift/dispatch) supplies
+ * the candidates (each env + the timestamp of its last DETECT_DRIFT job) and inserts a
+ * DETECT_DRIFT job for each one this returns. That sweep is driven in-process by the
+ * reconcile loop's `drift-schedule` reconciler (lib/reconcile/loop.ts), and is also
+ * exposed to an external scheduler through the internal route `/api/internal/drift/sweep`.
  */
 
 export type DriftTier = "prod" | "staging" | "dev";
