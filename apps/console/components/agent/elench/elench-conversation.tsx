@@ -23,7 +23,7 @@ import {
 } from "@/components/agent/chat-error";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
 import { getThread } from "@/app/server/actions/agent";
-import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
+import { getArtifact, openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
 	setMessageFeedback,
@@ -59,6 +59,7 @@ import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
 } from "./elench-empty-landing";
+import { ArtifactNameContext, type ArtifactNameResolver } from "./draft-artifact-chips";
 import { type DraftConversationFacts, DraftConversationContext } from "./draft-status/conversation";
 import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { ElenchModal } from "./elench-modal";
@@ -830,14 +831,37 @@ export function ElenchConversation({
 		[activeId, materializeOnto],
 	);
 
-	// EXPLICIT action: start a fresh conversation for this artifact and materialize it there.
+	// The names of the artifacts this mount opened in a new chat, so their chips are named at once;
+	// any other (a draft read back after a reload) is read from the artifact.
+	const artifactNames = useRef(new Map<string, string>());
+	const resolveArtifactName = useCallback<ArtifactNameResolver>(async (artifactId) => {
+		const known = artifactNames.current.get(artifactId);
+		if (known !== undefined) return known;
+		const artifact = await getArtifact(artifactId);
+		return artifact?.name ?? null;
+	}, []);
+
+	/**
+	 * EXPLICIT action: a new conversation whose draft holds this artifact (D3). No thread row exists
+	 * until its first message is sent, which places the artifact on the new thread's grid (D12), so
+	 * nothing is left for the reap of empty threads. Without a draft for the new conversation (no
+	 * drafts store, or its scope is not this conversation's yet) the thread is created at once and the
+	 * artifact placed on it.
+	 */
 	const openArtifactInNewChat = useCallback(
 		async (artifactId: string, name: string) => {
+			artifactNames.current.set(artifactId, name);
 			newChat();
+			const conversation = useElenchStore.getState().conversationId;
+			if (tab !== null && pageOrgId !== null) {
+				const fresh: DraftKey = { orgId: pageOrgId, projectId: anchorProject, conversationId: conversation };
+				tab.store.dispatch({ type: "OPEN_ARTIFACT_NEW", conversationId: conversation, artifactId });
+				if (selectDraft(tab.store.view.getState(), fresh) !== null) return;
+			}
 			const thread = await startThread(name);
 			await materializeOnto(artifactId, thread.id);
 		},
-		[newChat, startThread, materializeOnto],
+		[newChat, tab, pageOrgId, anchorProject, startThread, materializeOnto],
 	);
 
 	/** Delete a thread, including one this mount started (it is not in the hook's list yet). */
@@ -999,7 +1023,9 @@ export function ElenchConversation({
 
 	return (
 		<ElenchDraftContext.Provider value={binding}>
-			<DraftConversationContext.Provider value={draftFacts}>{chrome}</DraftConversationContext.Provider>
+			<DraftConversationContext.Provider value={draftFacts}>
+				<ArtifactNameContext.Provider value={resolveArtifactName}>{chrome}</ArtifactNameContext.Provider>
+			</DraftConversationContext.Provider>
 		</ElenchDraftContext.Provider>
 	);
 }
