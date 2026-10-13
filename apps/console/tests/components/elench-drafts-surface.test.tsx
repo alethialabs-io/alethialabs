@@ -1223,6 +1223,128 @@ describe("S9 › orgs, accounts and pages", () => {
 	});
 });
 
+// ── ADR 0001 close-out of #5464: AC7's mid-load org switch, AC10's discarded and cleared words,
+// and §11.2 #21's selection-only updates ──────────────────────────────────────────────────────
+
+describe("S9 › close-out of the acceptance matrix (#5464)", () => {
+	it("an org switch while A's listDrafts is held: B's box is live and saves under B, and A's late answer writes nothing into B (AC7)", async () => {
+		// The fake server reads a call's page when it answers; a real action answers for the page it
+		// was POSTed from. So listDrafts is pinned to the page at the moment of the call.
+		const base = newTab(ORG_A);
+		const page = base.page;
+		const pinned = server.transport(() => page.org);
+		const tab: Tab = {
+			...base,
+			drafts: createDraftsTab({
+				viewerId: VIEWER,
+				transport: {
+					...pinned,
+					listDrafts: (input) => {
+						const at = page.org;
+						return server.transport(() => at).listDrafts(input);
+					},
+				},
+				heartbeat: (body, signal) =>
+					server.fetch("/api/elench/drafts/heartbeat", { method: "POST", body: JSON.stringify(body), signal }),
+				storage: () => base.storage,
+				tabId: crypto.randomUUID(),
+				mint: () => crypto.randomUUID(),
+			}),
+		};
+		base.drafts.store.dispose();
+		const aKey: DraftKey = { orgId: ORG_A, projectId: null, conversationId: crypto.randomUUID() };
+		await server.transport(() => ORG_A).saveDraft({ ...aKey, baseRevision: 0, content: { text: "A's words", mentions: [], artifacts: [], cellTarget: null }, tabId: "earlier" });
+		useElenchStore.setState({ conversationId: aKey.conversationId });
+		server.plan("listDrafts", "hold");
+		const unmountA = await mount(tab);
+		// A's list has not answered: the switch to B happens mid-load.
+		const unmountB = rerenderPage(tab, ORG_B, unmountA);
+		await flush();
+		server.release("listDrafts"); // A's late answer
+		await flush();
+		const drafts = tab.drafts.store.view.getState().drafts;
+		expect(drafts.scope).toEqual({ orgId: ORG_B, projectId: null });
+		expect(Object.values(drafts.entries).filter((e) => e.key.orgId === ORG_A)).toEqual([]);
+		// Not wedged: B's box takes words and saves them, under B and nowhere else.
+		expect(editor().isEditable()).toBe(true);
+		expect(box()).toBe("");
+		type("B's words");
+		await flush(1_000);
+		const b = shown(tab);
+		expect(b.orgId).toBe(ORG_B);
+		expect(server.row(b)?.content.text).toBe("B's words");
+		// A's row is untouched: B's words never landed in it (one conversation in two orgs is two rows).
+		expect(server.row(aKey)?.content.text).toBe("A's words");
+		expect(server.callsOf("saveDraft").filter((c) => JSON.stringify(c).includes(ORG_A) && JSON.stringify(c).includes("B's words"))).toEqual([]);
+		unmountB();
+	});
+
+	it("a word discarded after a failed write does not come back on reload (AC10, discarded)", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		type("deploy");
+		await flush(1_000);
+		const k = shown(tab);
+		expect(server.row(k)?.content.text).toBe("deploy");
+		// "deploy now" fails to save: it is only in this tab (memory and cache).
+		for (let i = 0; i < 4; i++) server.plan("saveDraft", "reject");
+		type("deploy now");
+		await flush(1_000);
+		expect(server.row(k)?.content.text).toBe("deploy");
+		act(() => tab.drafts.store.dispatch({ type: "ENTRY", key: k, event: { type: "DISCARD" } }));
+		await flush();
+		expect(server.row(k)?.state).toBe("discarded");
+		expect(box()).toBe("");
+		const again = await reload(tab, unmount, k.conversationId);
+		await flush(1_000);
+		expect(shown(again.tab).conversationId).toBe(k.conversationId);
+		expect(box()).toBe("");
+		expect(JSON.stringify(again.tab.drafts.store.view.getState().drafts.entries)).not.toContain("deploy");
+		expect(server.row(k)?.state).toBe("discarded");
+		again.unmount();
+	});
+
+	it("a box cleared after a failed write stays cleared on reload (AC10, cleared)", async () => {
+		const tab = newTab(ORG_A);
+		const unmount = await mount(tab);
+		type("deploy");
+		await flush(1_000);
+		const k = shown(tab);
+		server.plan("saveDraft", "reject");
+		type("");
+		await flush(1_000);
+		expect(server.row(k)?.content.text).toBe("deploy"); // the clearing write failed
+		const again = await reload(tab, unmount, k.conversationId);
+		await flush(1_000);
+		expect(box()).toBe("");
+		expect(server.row(k)?.content.text ?? "").toBe("");
+		again.unmount();
+	});
+
+	it("selection-only updates write nothing: moving the caret neither saves nor postpones a pending save (§11.2 #21)", async () => {
+		const tab = newTab(ORG_A);
+		await mount(tab);
+		type("drain node-3");
+		await flush(1_000);
+		const k = shown(tab);
+		const saved = server.callsOf("saveDraft").length;
+		expect(saved).toBe(1);
+		// A saved box: the caret moves, nothing is written.
+		act(() => editor().update(() => $getRoot().selectStart(), { discrete: true }));
+		act(() => editor().update(() => $getRoot().selectEnd(), { discrete: true }));
+		await flush(2_000);
+		expect(server.callsOf("saveDraft")).toHaveLength(saved);
+		expect(tab.drafts.store.view.getState().drafts.entries[keyId(k)]?.local).toBeNull();
+		// An unsaved edit: a caret move 500 ms in does not restart the 800 ms debounce.
+		type("drain node-4");
+		await flush(500);
+		act(() => editor().update(() => $getRoot().selectStart(), { discrete: true }));
+		await flush(300);
+		expect(server.callsOf("saveDraft")).toHaveLength(saved + 1);
+		expect(server.row(k)?.content.text).toBe("drain node-4");
+	});
+});
+
 // ── A long paste (§4.1's bound) ─────────────────────────────────────────────────────────────
 
 describe("S9 › a 50,000-line paste", () => {

@@ -568,3 +568,80 @@ describe("selectors", () => {
 		expect(h.store.readActive(SCOPE_A)).toBe(K.conversationId); // §7.3's per-tab mirror
 	});
 });
+
+// ── ADR 0001 §11.2, the close-out of #5464: #21 and #23 ──────────────────────────────────────
+
+describe("writes are debounced (§11.2 #21)", () => {
+	it("a burst of edits sends one save, 800 ms after the last, carrying the last text", async () => {
+		const h = setup();
+		await loadA(h);
+		openNew(h.store);
+		type(h.store, "d");
+		await vi.advanceTimersByTimeAsync(500);
+		type(h.store, "de");
+		await vi.advanceTimersByTimeAsync(500);
+		type(h.store, "deploy");
+		// 1 s after the first keystroke and 500 ms after the second: still nothing on the wire.
+		expect(h.save.calls).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(799);
+		expect(h.save.calls).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(h.save.calls.map((c) => c.input.content.text)).toEqual(["deploy"]);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(h.save.calls).toHaveLength(1);
+	});
+
+	it("the tab's cache item is written once, 300 ms after the last edit", async () => {
+		const item = `${CACHE_PREFIX}${VIEWER}:${keyId(K)}`;
+		const writes: string[] = [];
+		const real = Storage.prototype.setItem;
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+			if (k === item) writes.push(v);
+			real.call(this, k, v);
+		});
+		const h = setup();
+		await loadA(h);
+		openNew(h.store);
+		type(h.store, "d");
+		await vi.advanceTimersByTimeAsync(200);
+		type(h.store, "de");
+		await vi.advanceTimersByTimeAsync(200);
+		type(h.store, "deploy");
+		await vi.advanceTimersByTimeAsync(299);
+		expect(writes).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(writes).toHaveLength(1);
+		expect(writes[0]).toContain("deploy");
+		expect(window.sessionStorage.getItem(item)).toContain("deploy");
+	});
+});
+
+describe("notices are acknowledged by id (§11.2 #23)", () => {
+	const K2: DraftKey = { ...SCOPE_A, conversationId: "00000000-0000-4000-8000-0000000000c2" };
+
+	/** Types into `key` as a new conversation and fails its first save on the network. */
+	async function failSave(h: Harness, key: DraftKey, text: string): Promise<void> {
+		openNew(h.store, key);
+		type(h.store, text, key);
+		await vi.advanceTimersByTimeAsync(800);
+		h.save.calls.at(-1)?.reject(new TypeError("Failed to fetch"));
+		await flush();
+	}
+
+	it("ack removes only the shown notice ids; one raised after the read is kept", async () => {
+		const h = setup();
+		await loadA(h);
+		await failSave(h, K, "deploy");
+		const shownNow = h.store.view.getState().notices;
+		expect(shownNow.map((n) => n.key.conversationId)).toEqual([K.conversationId]);
+		// A second key fails between the read and the acknowledgement: it has not been shown.
+		await failSave(h, K2, "rollback");
+		expect(h.store.view.getState().notices).toHaveLength(2);
+		h.store.ackNotices(shownNow.map((n) => n.id));
+		const left = h.store.view.getState().notices;
+		expect(left.map((n) => n.key.conversationId)).toEqual([K2.conversationId]);
+		// An id that is not (or no longer) there removes nothing.
+		h.store.ackNotices([...shownNow.map((n) => n.id), 9_999]);
+		expect(h.store.view.getState().notices).toEqual(left);
+	});
+});
