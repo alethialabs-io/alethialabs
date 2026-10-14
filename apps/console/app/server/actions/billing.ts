@@ -104,7 +104,7 @@ import {
 	linkSetupToOrg,
 	liveSweepDeps,
 	machineDepsFor,
-	relinkAdoptedSetup,
+	relinkAdoptedHold,
 } from "@/lib/billing/payment-holds/sweeper";
 import {
 	FORGETTABLE_RELEASES,
@@ -2433,10 +2433,11 @@ async function advanceResultUnderLease(hold: PaymentHoldRow, lease: PurchaseLeas
 /**
  * §5.6 "When a hold ends", in the create-a-team purchase: when `before` was open and this request's
  * advance left it released `adopted` (`after`), the setup that names it is re-linked under this lease
- * (`relinkAdoptedSetup`) when it has an org. Returns the `needs_operator` hold a refused re-link opened,
- * which the caller adds to what it has seen, so it blocks this purchase as it blocks the next one (I1
- * (a)); else null. A lost lease is thrown. Any other failure is logged and the purchase goes on: the
- * setup stays open, and the live check after this still sees X while X is unlinked.
+ * when it has an org, and the outcome is recorded on the hold (`relinkAdoptedHold`, #6078). Returns the
+ * `needs_operator` hold a refused re-link opened, which the caller adds to what it has seen, so it blocks
+ * this purchase as it blocks the next one (I1 (a)); else null. A lost lease is thrown. Any other failure
+ * is logged and the purchase goes on: the setup stays open, the live check after this still sees X while
+ * X is unlinked, and the hold's relink check stays scheduled, so the sweeper's relink pass retries it.
  */
 async function relinkIfAdopted(
 	before: PaymentHoldRow,
@@ -2445,8 +2446,8 @@ async function relinkIfAdopted(
 ): Promise<PaymentHoldRow | null> {
 	if (before.state === "released" || after.state !== "released" || after.release_reason !== "adopted") return null;
 	try {
-		const relinked = await relinkAdoptedSetup(lease, after, liveSweepDeps().alert);
-		return relinked.kind === "refused" ? relinked.hold : null;
+		const relinked = await relinkAdoptedHold(lease, after, liveSweepDeps());
+		return relinked?.kind === "refused" ? relinked.hold : null;
 	} catch (e) {
 		if (e instanceof PurchaseLeaseLostError) throw e;
 		console.error(`[billing] could not re-link the setup of adopted hold ${after.id}:`, e);

@@ -15,7 +15,9 @@
 // CALLERS. Outside the tests, this module's functions are imported only here:
 //   - app/server/actions/billing.ts: `openHold` — E0 in the create-a-team purchase (`closeUnderHold`,
 //     `opened_by = purchase`), before anything is voided or cancelled.
-//   - sweeper.ts: `openHold` — the link's refusal in `linkSetupToOrg` (`opened_by = link`), the core the
+//   - sweeper.ts: `writeAdoptedRelinkState`, which records each relink of an adopted hold's setup
+//     (`relinkAdoptedHold`: the visit, the create-a-team purchase and the sweeper's relink pass);
+//     `openHold` — the link's refusal in `linkSetupToOrg` (`opened_by = link`), the core the
 //     session's link in billing.ts also runs; and the three state writes
 //     `writeHoldState`, `reserveRefundAttempt` and `releaseHold`, which `machineDepsFor` binds to a lease
 //     and hands to `advanceHold` and `operatorRelease`. The purchase, the link and the operator command
@@ -47,6 +49,11 @@
 //   NOTICE CLAIM  `claimHoldNotice` / `unclaimHoldNotice`: `notified_state` and `notified_at` only. No
 //                 version, no bump, no lease; its own compare-and-set makes each email at most once per
 //                 hold and state.
+//   RELINK WRITE  `writeAdoptedRelinkState` (amendment 2026-10-14, #6078): the one write on a RELEASED
+//                 row, and only on a `new_org` hold released `adopted`. `attempts`, `last_error`,
+//                 `next_check_at` and `alerted_at` only — the relink retry's count, last failure, next
+//                 retry, and when its alert reached a channel. Fenced like a state write (`version` and the payer's
+//                 lease, one statement) and bumps `version`; never changes `state` or `release_*`.
 // Neither a hint nor a claim touches `version`, so neither can make a state write miss (C74).
 //
 // THE NOTICE WINDOW'S CLOCK. `released_at` is stamped by the database's `now()`, so the 14-day refund
@@ -61,7 +68,10 @@
 // subscription, goes on to link that setup itself (`linkSetupToOrg`). `relinkAdoptedSetup` (sweeper.ts)
 // re-links a setup whose team exists under the caller's lease, and leaves one with no team open for the
 // resume; the sweeper's visit, the create-a-team purchase (`relinkIfAdopted`) and `payment-holds release`
-// call it.
+// call it. Since #6078 the `adopted` release of a `new_org` hold also sets `next_check_at = now()` and
+// restarts `attempts` and `last_error`: that schedules the relink check the sweeper's pass retries until
+// the relink is recorded as decided (`writeAdoptedRelinkState`). Every other release clears
+// `next_check_at`.
 //
 // THE MOVED RELEASE'S ROW CHECK (§5.8 step 9). `releaseHold` with `expectOrgRow` — passed only by
 // `payment-holds release --moved-to`, through `operatorRelease` — reads the team's `organization_billing`
@@ -250,6 +260,53 @@ export async function writeHoldState(
 }
 
 /**
+ * What the relink bookkeeping (§4.1 amendment 2026-10-14, #6078) may change on a released `adopted`
+ * hold: the retry count, the last failure, the next retry (null: no more retries), and when its alert
+ * reached a channel.
+ */
+export interface AdoptedRelinkPatch {
+	attempts?: number;
+	lastError?: string | null;
+	nextCheckAt: Date | null;
+	alertedAt?: Date;
+}
+
+/**
+ * The relink bookkeeping write (§4.1 amendment 2026-10-14, #6078): the ONE write on a released row. It
+ * matches only a `new_org` hold released `adopted`, at the `version` the caller read, behind the payer's
+ * live lease, in one statement, and bumps `version`, so of two callers prepared on one version only one
+ * records the retry or claims the alert decision. It changes `attempts`, `last_error`, `next_check_at` and `alerted_at`
+ * and nothing else: never `state` or a `release_*` column. Returns the new row, or null when nothing was
+ * written (the version moved, the hold is not a released `adopted` `new_org` hold, or the lease is lost).
+ */
+export async function writeAdoptedRelinkState(
+	lease: PurchaseLease,
+	ref: HoldRef,
+	patch: AdoptedRelinkPatch,
+): Promise<PaymentHoldRow | null> {
+	const [row] = await getServiceDb()
+		.update(paymentHolds)
+		.set({
+			...(patch.attempts !== undefined ? { attempts: patch.attempts } : {}),
+			...(patch.lastError !== undefined ? { last_error: patch.lastError } : {}),
+			next_check_at: patch.nextCheckAt,
+			...(patch.alertedAt !== undefined ? { alerted_at: patch.alertedAt } : {}),
+			version: sql`${paymentHolds.version} + 1`,
+			updated_at: sql`now()`,
+		})
+		.where(
+			and(
+				stateWriteFence(lease, ref),
+				eq(paymentHolds.state, "released"),
+				eq(paymentHolds.release_reason, "adopted"),
+				eq(paymentHolds.scope, "new_org"),
+			),
+		)
+		.returning();
+	return row ?? null;
+}
+
+/**
  * T5's reservation (§3.5): a state write that consumes one refund attempt number BEFORE the refund is
  * made, so a crash after it wastes a number and never reuses an idempotency key. Returns the number
  * consumed (the first is 0) with the new row, or null when nothing was written; no refund may be created
@@ -342,7 +399,17 @@ export async function releaseHold(
 				released_at: sql`now()`,
 				released_by: input.releasedBy ?? null,
 				release_note: input.note ?? null,
-				next_check_at: null,
+				// An `adopted` `new_org` release schedules its relink check at once and starts the retry count
+				// afresh (§4.1 amendment 2026-10-14, #6078): the caller's own relink usually settles it first,
+				// and one that never ran, or failed with nothing recorded, is picked up by the sweeper's pass.
+				// Every other release is unscheduled.
+				...(input.reason === "adopted"
+					? {
+							next_check_at: sql`CASE WHEN ${paymentHolds.scope} = 'new_org' THEN now() ELSE NULL END`,
+							attempts: sql`CASE WHEN ${paymentHolds.scope} = 'new_org' THEN 0 ELSE ${paymentHolds.attempts} END`,
+							last_error: sql`CASE WHEN ${paymentHolds.scope} = 'new_org' THEN NULL ELSE ${paymentHolds.last_error} END`,
+						}
+					: { next_check_at: null }),
 				...(input.observedAt !== undefined ? { observed_at: input.observedAt } : {}),
 				...(input.lastPay !== undefined ? { last_pay: input.lastPay } : {}),
 				version: sql`${paymentHolds.version} + 1`,

@@ -196,6 +196,12 @@ has sat in one state longer than its bound:
 Each age alert is raised once per state and bound, whether or not it reached a channel. Only
 `needs_operator` re-alerts on its own.
 
+**Production must set `ALETHIA_PLATFORM_ALERT_ORG_ID`.** The relink retry (ADR 0002 §4.1 "The relink
+retry") records its give-up alert, and a failed relink check's alert, only once the alert reaches a
+channel. Without the variable no alert ever reaches one. Each such adopted hold then re-runs its relink
+once a day, for good, and the only signal is a `[billing] payment needs support` error line in the
+console log.
+
 ### The command
 
 Run it with the service connection (`ALETHIA_DATABASE_URL`) and the Stripe key, on Node 22.15 or later:

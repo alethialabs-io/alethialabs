@@ -15,7 +15,8 @@
 //   3. under the lease, re-reads the row, runs `advanceHold` (up to 3 Stripe writes), and then the AGE
 //      ALERT (§5.4, I11): once per hold and state entry, when the hold has sat in its state past the
 //      bound its state and last observation give it (`ageAlertFor`);
-//   4. sends the Q3 emails (`sendDueHoldNotices`, emails.ts) — the sweeper is their ONLY sender.
+//   4. retries the relink of every adopted hold whose relink check is due (`retryAdoptedRelinks`, below);
+//   5. sends the Q3 emails (`sendDueHoldNotices`, emails.ts) — the sweeper is their ONLY sender.
 //
 // It runs on every instance: the lease serialises them per scope and payer, every state write is the store's
 // compare-and-set on `version` and on that lease, and each email is claimed before it is sent. So two
@@ -25,12 +26,28 @@
 // WHEN A HOLD ENDS (§5.6, I16 (b)). An `adopted` release of a `new_org` hold whose setup has an org runs
 // the link's core
 // at once, under the same lease (`relinkAdoptedSetup`): the visit here, the create-a-team purchase (its
-// hold pass and its sweep) and `payment-holds release` all call it. The core (`linkSetupToOrg`) lives in this file because
+// hold pass and its sweep) and `payment-holds release` all call it — the first two through
+// `relinkAdoptedHold`, which records the outcome for the retry below. The core (`linkSetupToOrg`) lives in this file because
 // the sweeper is its caller with no session, and the session's link (app/server/actions/billing.ts)
 // runs the same function. A setup with no org stays open for the creator's resume — and that includes a
 // setup whose team was DELETED: `created_org_id` is `ON DELETE SET NULL` and the marker goes with the org
 // row, so it reads as no org. A setup whose team exists but whose creator is no longer an active member
 // of it is alerted on and left open. This path only READS membership: it never adds anyone to an org.
+//
+// THE RELINK IS RETRIED (ADR 0002 §4.1 amendment 2026-10-14, #6078). The `adopted` release schedules a
+// relink check on the hold (`next_check_at = now()`, store.ts). Every caller runs the relink through
+// `relinkAdoptedHold`, which records its outcome on the hold with the store's fenced relink write:
+//   - linked, refused, no open setup, no org, or a check that failed (`not_linked`): decided — the check
+//     is cleared; a failed check's alert is raised by the caller whose claim write landed, and the check
+//     is cleared and `alerted_at` stamped only when that alert reached a channel (else it is raised
+//     again a day later);
+//   - thrown (Stripe, the database): one more attempt, retried after `RELINK_RETRY_DELAYS_MS`; the
+//     `RELINK_MAX_ATTEMPTS`-th failure raises the give-up alert the same way;
+//   - a lost lease: nothing can be written under it, so the relink pass takes the lease afresh and counts
+//     it as a failed attempt.
+// Each tick's relink pass selects the holds released `adopted` whose check is due, whose setup is open
+// and not refused `org_has_plan`, and on whose subscription no hold is open, and runs `relinkAdoptedHold`
+// under the payer's lease, taken with a zero wait, like the visit.
 //
 // Booted from instrumentation.ts every 5 minutes (`startPaymentHoldSweeper`, the `registerLoop` shape),
 // with the optional twin route app/api/internal/payment-holds/sweep behind ALETHIA_CRON_SECRET, and
@@ -60,6 +77,7 @@ import {
 	type PurchaseLease,
 	PurchaseLeaseLostError,
 	releasePurchaseLease,
+	renewPurchaseLease,
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
@@ -71,6 +89,7 @@ import {
 	type PaymentHoldRow,
 	type PaymentHoldScope,
 	paymentHolds,
+	pendingOrgSetups,
 } from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { type DeliverHoldNotice, deliverHoldNotice, sendDueHoldNotices } from "./emails";
@@ -82,7 +101,14 @@ import {
 	LINK_REFUSED_NOTE,
 } from "./machine";
 import type { HoldStripeReader } from "./observe";
-import { openHold, openHoldOn, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
+import {
+	openHold,
+	openHoldOn,
+	releaseHold,
+	reserveRefundAttempt,
+	writeAdoptedRelinkState,
+	writeHoldState,
+} from "./store";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -668,8 +694,8 @@ async function relinkOrgOf(
  * setup for the hold's subscription is re-linked (`relinkSetup`) to its org (`relinkOrgOf`, read-only). With no open
  * setup, or no org naming it (none made, or deleted), nothing runs: such a setup stays open for the
  * creator's resume, and the sweeper owes its Q3 email. An org the creator cannot act in runs no core either: the operator is alerted with X as the subject, and the
- * setup stays open (`not_linked`). Called by the visit here, the create-a-team purchase and `payment-holds
- * release`.
+ * setup stays open (`not_linked`). Called by `relinkAdoptedHold` (the visit here, the relink pass and the
+ * create-a-team purchase), and directly by `payment-holds release` before it releases an open hold.
  */
 export async function relinkAdoptedSetup(
 	lease: PurchaseLease,
@@ -693,21 +719,267 @@ export async function relinkAdoptedSetup(
 }
 
 /**
- * The visit's re-link of an adopted hold. The sweeper never visits that hold again — it is released — so
- * a failure is logged AND alerted with X as the subject, and the setup stays open.
+ * The visit's re-link of an adopted hold, recorded on the hold (`relinkAdoptedHold`). A failure is
+ * logged; the hold's relink check stays scheduled, so the relink pass retries it.
  */
 async function relinkAfterVisit(lease: PurchaseLease, hold: PaymentHoldRow, deps: SweepDeps): Promise<RelinkResult | null> {
 	try {
-		return await relinkAdoptedSetup(lease, hold, deps.alert);
+		return await relinkAdoptedHold(lease, hold, deps);
 	} catch (err) {
 		console.error(`[billing] payment-hold sweeper could not re-link the setup of adopted hold ${hold.id}:`, err);
-		await deps.alert({
-			subscriptionId: hold.subscription_id,
-			customerId: hold.customer_id,
-			paymentIntentId: null,
-			detail: `its payment hold ${hold.id} was released as adopted, and re-linking its team setup failed (${err instanceof Error ? err.message : String(err)}). The setup stays open; link it to the team, or refund it, by hand.`,
-		});
 		return null;
+	}
+}
+
+// ── The relink retry (§4.1 amendment 2026-10-14, #6078) ─────────────────────────────────────────────
+
+const MINUTE = 60_000;
+
+/**
+ * How long the relink pass waits after the n-th failed relink before the next attempt: after the first,
+ * `RELINK_RETRY_DELAYS_MS[0]`, and so on.
+ */
+export const RELINK_RETRY_DELAYS_MS: readonly number[] = [5 * MINUTE, 15 * MINUTE, HOUR, 4 * HOUR, 12 * HOUR];
+
+/** The most relink attempts of one adopted hold: the failure that reaches it gives up, with an alert. */
+export const RELINK_MAX_ATTEMPTS = RELINK_RETRY_DELAYS_MS.length + 1;
+
+/**
+ * How long a relink decision whose alert reached no channel waits before the relink pass runs it again:
+ * the relink is retried, and, when it is decided the same way, alerted again. The `needs_operator` entry
+ * alert's first re-alert bound (§5.4).
+ */
+export const RELINK_UNDELIVERED_ALERT_RETRY_MS = DAY;
+
+/**
+ * What follows the `attempts`-th failed relink (counted from 1): another attempt after a delay, or the
+ * give-up with its alert once `RELINK_MAX_ATTEMPTS` is reached. Pure.
+ */
+export function relinkRetryAfter(attempts: number): { kind: "retry"; delayMs: number } | { kind: "give_up" } {
+	if (attempts >= RELINK_MAX_ATTEMPTS) return { kind: "give_up" };
+	const delayMs = RELINK_RETRY_DELAYS_MS[Math.max(attempts, 1) - 1];
+	return delayMs === undefined ? { kind: "give_up" } : { kind: "retry", delayMs };
+}
+
+/** The input of one operator alert, as `SweepDeps.alert` takes it. */
+type AlertInput = Parameters<SweepDeps["alert"]>[0];
+
+/**
+ * The store's relink write for `hold`, under `lease` renewed first. A renewal that finds the lease taken
+ * over throws `PurchaseLeaseLostError` with nothing written, so a lost lease is never mistaken for a write
+ * that matched nothing; a lease that only lapsed is renewed and the write goes ahead. Any other failure —
+ * of the renewal or of the write — is logged and reads as a write that matched nothing: the relink's own
+ * result still reaches its caller, no alert is raised on it, and the relink pass decides it again.
+ */
+async function recordRelink(
+	lease: PurchaseLease,
+	hold: PaymentHoldRow,
+	patch: Parameters<typeof writeAdoptedRelinkState>[2],
+): Promise<PaymentHoldRow | null> {
+	let held: boolean;
+	try {
+		held = await renewPurchaseLease(lease);
+	} catch (err) {
+		console.error(`[billing] could not renew the lease to record the relink of adopted hold ${hold.id}; the relink pass decides it again:`, err);
+		return null;
+	}
+	if (!held) throw new PurchaseLeaseLostError(lease.key);
+	try {
+		return await writeAdoptedRelinkState(lease, { id: hold.id, version: hold.version }, patch);
+	} catch (err) {
+		console.error(`[billing] could not record the relink of adopted hold ${hold.id}; the relink pass decides it again:`, err);
+		return null;
+	}
+}
+
+/**
+ * A relink decision that alerts (§4.1 "The relink retry", the alert decision): claims the decision with a relink
+ * write that keeps the check scheduled `RELINK_UNDELIVERED_ALERT_RETRY_MS` out, raises `alerts` only when
+ * that claim returned the row, and clears the check and stamps `alerted_at` only when an alert reached a
+ * channel. So a caller whose claim matched nothing raises nothing, and an alert that reached no channel
+ * (or a crash after it) is raised again when the check falls due.
+ */
+async function decideWithAlerts(
+	lease: PurchaseLease,
+	hold: PaymentHoldRow,
+	patch: { attempts?: number; lastError: string },
+	alerts: readonly AlertInput[],
+	deps: Pick<SweepDeps, "alert" | "now">,
+): Promise<void> {
+	const now = deps.now();
+	const claimed = await recordRelink(lease, hold, { ...patch, nextCheckAt: new Date(now.getTime() + RELINK_UNDELIVERED_ALERT_RETRY_MS) });
+	if (!claimed) return;
+	let delivered = false;
+	for (const input of alerts) {
+		if (await deps.alert(input)) delivered = true;
+	}
+	if (delivered) await recordRelink(lease, claimed, { nextCheckAt: null, alertedAt: now });
+}
+
+/**
+ * Runs the relink of an `adopted` `new_org` hold's setup (`relinkAdoptedSetup`) under the payer's lease,
+ * and records what it did on the hold with the store's fenced relink write, so that it is retried until
+ * it is decided:
+ *   - linked, refused, `no_setup`, `no_org`, or a `not_linked` that raised no alert (X reads ended):
+ *     decided; `next_check_at` is cleared;
+ *   - a `not_linked` whose check alerted: decided, and its alerts — HELD while the relink runs — are
+ *     raised through `decideWithAlerts`;
+ *   - a thrown failure: `attempts + 1` and `last_error`, and the next attempt after `relinkRetryAfter`'s
+ *     delay; at `RELINK_MAX_ATTEMPTS` the give-up alert, through `decideWithAlerts`. Returns null then;
+ *   - a lost lease, from the relink or from the renewal before a record, is thrown with nothing written:
+ *     the check stays scheduled, and the relink pass counts it (`retryAdoptedRelinks`).
+ * `hold` must be the row as last read or written (its `version` fences the write).
+ */
+export async function relinkAdoptedHold(
+	lease: PurchaseLease,
+	hold: PaymentHoldRow,
+	deps: Pick<SweepDeps, "alert" | "now">,
+): Promise<RelinkResult | null> {
+	const held: AlertInput[] = [];
+	let result: RelinkResult;
+	try {
+		result = await relinkAdoptedSetup(lease, hold, async (input) => {
+			held.push(input);
+			return false;
+		});
+	} catch (err) {
+		if (err instanceof PurchaseLeaseLostError) throw err;
+		await recordFailedRelink(lease, hold, err, deps);
+		return null;
+	}
+	if (result.kind === "not_linked" && held.length > 0) {
+		await decideWithAlerts(lease, hold, { lastError: result.why }, held, deps);
+		return result;
+	}
+	await recordRelink(lease, hold, { nextCheckAt: null, ...(result.kind === "not_linked" ? { lastError: result.why } : {}) });
+	return result;
+}
+
+/** Records one failed relink on `hold`: the next attempt, or the give-up and its alert (`decideWithAlerts`). */
+async function recordFailedRelink(
+	lease: PurchaseLease,
+	hold: PaymentHoldRow,
+	err: unknown,
+	deps: Pick<SweepDeps, "alert" | "now">,
+): Promise<void> {
+	const message = err instanceof Error ? err.message : String(err);
+	const attempts = hold.attempts + 1;
+	const next = relinkRetryAfter(attempts);
+	console.error(`[billing] re-linking the setup of adopted hold ${hold.id} failed (attempt ${attempts}; the limit is ${RELINK_MAX_ATTEMPTS}):`, err);
+	if (next.kind === "retry") {
+		await recordRelink(lease, hold, { attempts, lastError: message, nextCheckAt: new Date(deps.now().getTime() + next.delayMs) });
+		return;
+	}
+	await decideWithAlerts(
+		lease,
+		hold,
+		{ attempts, lastError: message },
+		[
+			{
+				subscriptionId: hold.subscription_id,
+				customerId: hold.customer_id,
+				paymentIntentId: null,
+				detail: `its payment hold ${hold.id} was released as adopted, and re-linking its team setup failed ${attempts} times (the last: ${message}). The setup stays open; link it to the team, or refund it, by hand.`,
+			},
+		],
+		deps,
+	);
+}
+
+/**
+ * The relink pass's predicate (§4.1 amendment 2026-10-14): a `new_org` hold released `adopted` whose
+ * relink check is due, whose payer's setup for its subscription is open (neither linked nor closed) and
+ * not refused `org_has_plan`, and on whose subscription no hold is open.
+ */
+function relinkDue(): SQL | undefined {
+	return and(
+		eq(paymentHolds.scope, "new_org"),
+		eq(paymentHolds.state, "released"),
+		eq(paymentHolds.release_reason, "adopted"),
+		lte(paymentHolds.next_check_at, sql`now()`),
+		sql`EXISTS (SELECT 1 FROM ${pendingOrgSetups} s
+			WHERE s.subscription_id = ${paymentHolds.subscription_id}
+			  AND s.user_id::text = ${paymentHolds.payer_key}
+			  AND s.linked_at IS NULL
+			  AND s.closed_at IS NULL
+			  AND s.refused_reason IS DISTINCT FROM 'org_has_plan')`,
+		sql`NOT EXISTS (SELECT 1 FROM payment_holds o
+			WHERE o.subscription_id = ${paymentHolds.subscription_id}
+			  AND o.state <> 'released')`,
+	);
+}
+
+/** The hold `id` as the database has it now, when the relink pass may still act on it; else null. */
+async function readRelinkDue(id: string): Promise<PaymentHoldRow | null> {
+	const [row] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.id, id), relinkDue()));
+	return row ?? null;
+}
+
+/**
+ * One relink of the pass, under `hold`'s payer's lease taken with a zero wait (busy: skipped until the next
+ * tick) and the hold re-read under it. A LOST LEASE COUNTS AS A FAILED ATTEMPT (§4.1 "The relink retry",
+ * the bounds): nothing could be written under the lost lease, so the lease is taken afresh, again with a
+ * zero wait, and the attempt is recorded under it like any other failure — so a relink that always
+ * outlives its lease still reaches the give-up alert. When the fresh lease is busy, another caller holds
+ * the payer, and the next tick tries again.
+ */
+async function retryOneRelink(hold: PaymentHoldRow, deps: SweepDeps): Promise<void> {
+	const key = leaseKeyFor("new_org", hold.payer_key);
+	let lost: PurchaseLeaseLostError | null = null;
+	const lease = await tryAcquirePurchaseLease(key);
+	if (!lease) return;
+	try {
+		const fresh = await readRelinkDue(hold.id);
+		if (!fresh) return;
+		await relinkAdoptedHold(lease, fresh, deps);
+	} catch (err) {
+		if (!(err instanceof PurchaseLeaseLostError)) throw err;
+		lost = err;
+	} finally {
+		await giveBack(lease);
+	}
+	if (!lost) return;
+	const again = await tryAcquirePurchaseLease(key);
+	if (!again) return;
+	try {
+		const fresh = await readRelinkDue(hold.id);
+		if (fresh) await recordFailedRelink(again, fresh, lost, deps);
+	} finally {
+		await giveBack(again);
+	}
+}
+
+/** Gives `lease` back; a failure is logged, and the lease lapses on its own. */
+async function giveBack(lease: PurchaseLease): Promise<void> {
+	try {
+		await releasePurchaseLease(lease);
+	} catch (err) {
+		console.error("[billing] payment-hold sweeper could not release a lease; it lapses on its own:", err);
+	}
+}
+
+/**
+ * The relink pass of one tick: every hold `relinkDue` selects, oldest check first, at most `SWEEP_BATCH`,
+ * each through `retryOneRelink`. One hold's failure is logged and does not stop the rest. Only a tick that
+ * may touch `new_org` holds runs it, and a `payerKey` tick only that payer's.
+ */
+async function retryAdoptedRelinks(options: SweepOptions, deps: SweepDeps): Promise<void> {
+	if (options.scope && options.scope !== "new_org") return;
+	const due = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(and(relinkDue(), options.payerKey ? eq(paymentHolds.payer_key, options.payerKey) : undefined))
+		.orderBy(asc(paymentHolds.next_check_at), asc(paymentHolds.created_at))
+		.limit(SWEEP_BATCH);
+	for (const hold of due) {
+		try {
+			await retryOneRelink(hold, deps);
+		} catch (err) {
+			console.error(`[billing] payment-hold sweeper's relink pass failed on hold ${hold.id}:`, err);
+		}
 	}
 }
 
@@ -730,7 +1002,7 @@ export interface SweepOptions {
 
 /**
  * One sweeper tick (§5.4): advances every due open hold under its own lease, raises the age alerts,
- * then sends the Q3 emails. Never throws for one hold's failure; a database failure in the selection
+ * retries the due relinks of adopted holds (`retryAdoptedRelinks`, #6078), then sends the Q3 emails. Never throws for one hold's failure; a database failure in the selection
  * itself is thrown to the loop's supervisor.
  */
 export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<SweepResult> {
@@ -775,6 +1047,13 @@ export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<S
 			// hold stays open and due, so the next tick retries it.
 			console.error(`[billing] payment-hold sweeper failed on hold ${hold.id}:`, err);
 		}
+	}
+
+	try {
+		await retryAdoptedRelinks(options, deps);
+	} catch (err) {
+		// The pass's own selection failed; the checks stay due, so the next tick retries them.
+		console.error("[billing] payment-hold sweeper's relink pass could not select its holds:", err);
 	}
 
 	result.notices = await sendDueHoldNotices({ deliver: deps.deliver, scope: options.scope, payerKey: options.payerKey });

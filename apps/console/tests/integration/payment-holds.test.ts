@@ -34,6 +34,12 @@
 //        off on either side moves neither edge; `holdClockNow` is the database's clock.
 //   ---  `stampHoldNotice` is a hint write: no lease, no version bump, no `updated_at`, open or released.
 //   C104 (control) `latestReleasedHoldOn` has no time bound: a refund 30 days old is still returned.
+//
+// #6078, the relink retry (§4.1 amendment 2026-10-14):
+//   C111 an `adopted` `new_org` release schedules its relink check (`next_check_at = now()`) and restarts
+//        `attempts` and `last_error`; every other release, and an `org_plan` adoption, is unscheduled.
+//        `writeAdoptedRelinkState` lands only on a released `adopted` `new_org` hold, at its version and
+//        behind its payer's live lease, bumps `version`, and changes only its four columns.
 
 import { randomUUID } from "node:crypto";
 import { vi } from "vitest";
@@ -998,6 +1004,81 @@ describeIfDb("payment_holds — #6025: the refund notice window is the database'
 		expect((await readHold(hold.id)).notice_last_sent_at).not.toBeNull();
 		expect(await stampHoldNotice([])).toBe(0);
 		await releasePurchaseLease(lease);
+	});
+});
+
+describeIfDb("payment_holds — #6078: the relink write, the one write on a released adopted hold (§4.1 amendment)", () => {
+	it("C111: an adopted new_org release schedules its relink check at once and restarts attempts; every other release is unscheduled", async () => {
+		const { payer, lease } = await payerWithLease();
+		const adopted = await opened(lease, e0(payer, newSubscription()));
+		const failing = await writeHoldState(lease, refOf(adopted), { attempts: 3, lastError: "observe failed" });
+		if (!failing) throw new Error("fixture: the attempts write missed");
+		const released = await releaseHold(lease, refOf(failing), { reason: "adopted" });
+		const clock = await store.holdClockNow();
+		expect(released?.hold).toMatchObject({ state: "released", release_reason: "adopted", attempts: 0, last_error: null });
+		expect(released?.hold.next_check_at).toBeInstanceOf(Date);
+		expect(released?.hold.next_check_at?.getTime()).toBeLessThanOrEqual(clock.getTime());
+
+		const voided = await opened(lease, e0(payer, newSubscription()));
+		expect((await releaseHold(lease, refOf(voided), { reason: "voided_unpaid" }))?.hold).toMatchObject({ next_check_at: null });
+		await releasePurchaseLease(lease);
+
+		const { org, lease: orgLease } = await orgWithLease();
+		const orgHold = await opened(orgLease, e0OrgPlan(org, newSubscription()));
+		expect((await releaseHold(orgLease, refOf(orgHold), { reason: "adopted" }))?.hold).toMatchObject({ next_check_at: null });
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C111: the relink write lands on a released adopted new_org hold, bumps version, and changes only its four columns", async () => {
+		const { payer, lease } = await payerWithLease();
+		const hold = await opened(lease, e0(payer, newSubscription()));
+		const released = await releaseHold(lease, refOf(hold), { reason: "adopted" });
+		if (!released) throw new Error("fixture: the release missed");
+		const next = new Date(Date.now() + 5 * 60_000);
+		const alertedAt = new Date();
+		const written = await store.writeAdoptedRelinkState(lease, refOf(released.hold), {
+			attempts: 2,
+			lastError: "Stripe is down",
+			nextCheckAt: next,
+			alertedAt,
+		});
+		expect(written).toMatchObject({
+			state: "released",
+			release_reason: "adopted",
+			released_at: released.hold.released_at,
+			attempts: 2,
+			last_error: "Stripe is down",
+			next_check_at: next,
+			alerted_at: alertedAt,
+			version: released.hold.version + 1,
+		});
+		// A write prepared on the old version is a no-op (C65's rule, on the released row).
+		expect(await store.writeAdoptedRelinkState(lease, refOf(released.hold), { nextCheckAt: null })).toBeNull();
+		expect((await readHold(hold.id)).next_check_at).toEqual(next);
+		await releasePurchaseLease(lease);
+	});
+
+	it("C111: the relink write writes nothing on an OPEN hold, on another release reason, on an org_plan hold, or under a lost lease", async () => {
+		const { payer, lease } = await payerWithLease();
+		const open = await opened(lease, e0(payer, newSubscription()));
+		expect(await store.writeAdoptedRelinkState(lease, refOf(open), { nextCheckAt: null })).toBeNull();
+		expect(await readHold(open.id)).toMatchObject({ version: open.version, next_check_at: open.next_check_at });
+
+		const voided = await releaseHold(lease, refOf(await opened(lease, e0(payer, newSubscription()))), { reason: "voided_unpaid" });
+		if (!voided) throw new Error("fixture: the release missed");
+		expect(await store.writeAdoptedRelinkState(lease, refOf(voided.hold), { nextCheckAt: new Date() })).toBeNull();
+
+		const adopted = await releaseHold(lease, refOf(await opened(lease, e0(payer, newSubscription()))), { reason: "adopted" });
+		if (!adopted) throw new Error("fixture: the release missed");
+		await expireLease(payerLeaseKey(payer));
+		expect(await store.writeAdoptedRelinkState(lease, refOf(adopted.hold), { nextCheckAt: null })).toBeNull();
+		expect((await readHold(adopted.hold.id)).version).toBe(adopted.hold.version);
+
+		const { org, lease: orgLease } = await orgWithLease();
+		const orgAdopted = await releaseHold(orgLease, refOf(await opened(orgLease, e0OrgPlan(org, newSubscription()))), { reason: "adopted" });
+		if (!orgAdopted) throw new Error("fixture: the release missed");
+		expect(await store.writeAdoptedRelinkState(orgLease, refOf(orgAdopted.hold), { nextCheckAt: new Date() })).toBeNull();
+		await releasePurchaseLease(orgLease);
 	});
 });
 
