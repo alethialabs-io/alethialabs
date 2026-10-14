@@ -19,13 +19,20 @@ vi.mock("@/lib/billing/sync", async (importActual) => ({
 	syncSubscriptionToBilling: vi.fn(async () => "applied"),
 }));
 
-import { alertOperator } from "@/lib/billing/operator-alert";
+// org-plan-row is imported BEFORE sync on purpose. The two modules import each other, and the sync mock's
+// factory loads the real sync: imported first, the real sync would load org-plan-row while the mock is
+// still being built, and org-plan-row would bind the real sync instead of the mock.
 import {
 	chooseSuccessor,
 	isOrgPlanSubscriptionOf,
+	type OrgPlanStripe,
+	reconcileAfterSync,
 	reportReplacedLivePlan,
 	reportTwoLive,
 } from "@/lib/billing/org-plan-row";
+import { alertOperator } from "@/lib/billing/operator-alert";
+import type { PlanSlotWrite } from "@/lib/billing/queries";
+import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 
 /** True when a fixture carries what the module reads off a subscription. */
 function isSubscriptionFixture(x: unknown): x is Stripe.Subscription {
@@ -130,5 +137,47 @@ describe("reportTwoLive and reportReplacedLivePlan (D6)", () => {
 		await reportReplacedLivePlan("org_1", x, { subscriptionId: "sub_y", status: "none", currentPeriodEnd: null });
 		await reportReplacedLivePlan("org_1", x, null);
 		expect(alertOperator).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("reconcileAfterSync — R2 returns the ended Y only when its end applied and no PAID successor took the row", () => {
+	/** A Stripe that reads only Y, as ended. */
+	const stripe: OrgPlanStripe = {
+		subscriptions: {
+			list: async () => ({ data: [], has_more: false }),
+			retrieve: async (id: string) => sub(id, "canceled", 1),
+		},
+	};
+	/** The refused write of `x` beside a row that names live Y. */
+	const refusedBesideY: PlanSlotWrite = {
+		applied: false,
+		before: { subscriptionId: "sub_y", status: "active", currentPeriodEnd: null },
+	};
+
+	/** Scripts the two syncs R2 makes: Y's end, then X again. */
+	function syncs(yOutcome: "applied" | "ignored", xOutcome: "applied" | "ignored"): void {
+		vi.mocked(syncSubscriptionToBilling).mockReset().mockResolvedValueOnce(yOutcome).mockResolvedValueOnce(xOutcome);
+	}
+
+	it("Y's end applied and an unpaid X took the row: Y is returned, so its cancellation is reported", async () => {
+		syncs("applied", "applied");
+		const y = await reconcileAfterSync(stripe, sub("sub_x", "past_due", 2), "ignored", refusedBesideY, {});
+		expect(y?.id).toBe("sub_y");
+	});
+
+	it("Y's end applied and a PAID X took the row: nothing is returned (the plan did not end)", async () => {
+		syncs("applied", "applied");
+		expect(await reconcileAfterSync(stripe, sub("sub_x", "active", 2), "ignored", refusedBesideY, {})).toBeNull();
+	});
+
+	it("Y's end did NOT apply (the row moved meanwhile): nothing is returned, so nothing is reported", async () => {
+		syncs("ignored", "applied");
+		expect(await reconcileAfterSync(stripe, sub("sub_x", "past_due", 2), "ignored", refusedBesideY, {})).toBeNull();
+	});
+
+	it("a PAID X whose re-sync was refused did not take the row: Y's end is still reported", async () => {
+		syncs("applied", "ignored");
+		const y = await reconcileAfterSync(stripe, sub("sub_x", "active", 2), "ignored", refusedBesideY, {});
+		expect(y?.id).toBe("sub_y");
 	});
 });

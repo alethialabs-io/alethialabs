@@ -12,10 +12,11 @@
 // THE ORG-PLAN ROW (ADR 0004 D4, D6, lib/billing/org-plan-row.ts). After a deletion applies to the row,
 // R1 names a live org-plan sibling; after a sync of a subscription read fresh from Stripe, R2 re-reads
 // the subscription the row names when a live write was refused, and D6b′ reads a replaced stored-`none`
-// one. Their writes go through the same guarded sync. R1's list and R1's and R2's retrieves throw on
-// failure, so the event fails and is redelivered, and the re-run is safe; D6b′'s retrieve is caught and
-// alerts instead, because the row already names the new subscription. None of them cancels, refunds or
-// voids anything.
+// one. Their writes go through the same guarded sync. R1's list and R2's retrieve run before any of
+// their writes and throw on failure, so the event fails and is redelivered, and the re-run is safe.
+// R1's re-read of its successor and D6b′'s retrieve run after a write has applied, so they are caught
+// and alert the operator instead: a redelivery would be refused before reaching them. None of them
+// cancels, refunds or voids anything.
 //
 // PAYMENT HOLDS (ADR 0002 §5.3, S7). The webhook never moves a hold and makes no Stripe call for one:
 // it never calls `advanceHold`, whose callers are the sweeper (payment-holds/sweeper.ts `visitHold`) and
@@ -313,7 +314,8 @@ export async function handleStripeEvent(
 	// reconciliations on what the guarded write reported (ADR 0004 D4 R2, D6a, D6b′,
 	// lib/billing/org-plan-row.ts). A failed Stripe read in R2 throws, failing the event before any email.
 	// When R2 wrote the end of the row's subscription Y and no paid successor took the row, Y's own
-	// deletion will be refused, so Y's cancellation is reported here instead.
+	// deletion will be refused, so Y's cancellation is reported here instead (see `reconcileAfterSync`
+	// for the one race in which Y's deletion lands between R2's two writes and both report it).
 	const syncFresh = async (sub: Stripe.Subscription): Promise<void> => {
 		const seen: { write: PlanSlotWrite | null } = { write: null };
 		const outcome = await syncSubscriptionToBilling(sub, {

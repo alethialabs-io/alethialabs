@@ -21,8 +21,10 @@
 //
 // R1, R2 and D6b′ run in the webhook handler (lib/billing/webhook-handler.ts) after its own syncs, and
 // nowhere else. Nothing here cancels, refunds or voids anything: which of two live plans the customer
-// keeps is a person's call (ADR 0004 D6, Q4). A failed read in R1 or R2 throws, so the event fails
-// before any email and Stripe redelivers it; the two-live alert never throws.
+// keeps is a person's call (ADR 0004 D6, Q4). R1's list and R2's retrieve run before any of their writes
+// and throw on failure, so the event fails before any email and Stripe redelivers it. R1's re-read of
+// its successor runs after that write has applied, so a failure there alerts the operator instead of
+// throwing. The two-live alert never throws.
 
 import type Stripe from "stripe";
 import { alertOperator } from "@/lib/billing/operator-alert";
@@ -221,6 +223,35 @@ function customerIdOf(sub: Stripe.Subscription): string {
 }
 
 /**
+ * R1's re-read of the successor it just wrote. On a failed read it logs, raises an operator alert naming
+ * the successor and the ended subscription, and returns the read R1 listed, so the caller's email
+ * decision still runs. It never throws: failing the event could not help, because the row already names
+ * the successor and the redelivered deletion is refused before R1.
+ */
+async function rereadSuccessor(
+	stripe: OrgPlanStripe,
+	orgId: string,
+	ended: Stripe.Subscription,
+	named: Stripe.Subscription,
+): Promise<Stripe.Subscription> {
+	try {
+		return await stripe.subscriptions.retrieve(named.id);
+	} catch (err) {
+		console.error(`[billing] R1 could not re-read successor ${named.id} for org ${orgId}:`, err);
+		await alertOperator({
+			title: "A re-pointed org plan could not be re-read",
+			subject: { type: "stripe_subscription", id: named.id },
+			summary:
+				`Subscription ${ended.id} of organization ${orgId} ended, and the billing row now names ` +
+				`${named.id} (${named.status} when listed), written with no event time. Re-reading ${named.id} ` +
+				"from Stripe failed, so whether it has also ended is unconfirmed: check it in Stripe, and if it " +
+				"has ended, replay its customer.subscription.deleted event.",
+		});
+		return named;
+	}
+}
+
+/**
  * R1, after `customer.subscription.deleted` for `ended` APPLIED to its org's row. When `ended` is an
  * org-plan subscription of its org, lists its customer fully and names one live org-plan sibling (see
  * `chooseSuccessor`) by syncing it with no event time: the row now reads `canceled`, which is not live,
@@ -230,7 +261,9 @@ function customerIdOf(sub: Stripe.Subscription): string {
  * when it has ended, syncs that read too, whose `canceled` applies because the row now names it.
  * With two or more live, and the named one still live, it raises the two-live alert (D6c). Returns the
  * named subscription as last read, or null when there was none to name (the row then stays
- * `canceled` / `community`). A failed list or retrieve throws.
+ * `canceled` / `community`). A failed list throws, before any write. A failed re-read does NOT throw:
+ * the successor's write has applied by then, so a redelivered deletion is refused and never reaches R1
+ * again; R1 alerts the operator instead and carries on with the listed read (`rereadSuccessor`).
  */
 export async function repointAfterEnd(
 	stripe: OrgPlanStripe,
@@ -244,7 +277,7 @@ export async function repointAfterEnd(
 	const named = chooseSuccessor(live);
 	if (!named) return null;
 	await syncSubscriptionToBilling(named);
-	const now = await stripe.subscriptions.retrieve(named.id);
+	const now = await rereadSuccessor(stripe, orgId, ended, named);
 	if (ENDED_STATUSES.has(now.status)) {
 		await syncSubscriptionToBilling(now);
 		return now;
@@ -267,7 +300,8 @@ export async function repointAfterEnd(
  *   `canceled` applies to the row that names it), then sync `x` again with the same event time, which
  *   now applies. Live → the row stays on Y, and the two-live alert names `x` and Y (D6a).
  *   Y's own `customer.subscription.deleted` is refused once `x` holds the row, so it can no longer tell
- *   the customer Y ended. When R2 wrote Y's end and `x` is not a PAID successor on the row, R2 returns
+ *   the customer Y ended. (One race is not covered: a deletion of Y processed between R2's two syncs
+ *   applies, and with an unpaid `x` both it and R2 report Y, so the customer gets two emails.) When R2 wrote Y's end and `x` is not a PAID successor on the row, R2 returns
  *   Y, and the caller sends Y's cancellation as an applied deletion would (R1's email rule, D4).
  * - Refused, `x` live, and the row names no subscription: nothing to re-read; when the row is a live
  *   off-Stripe grant, the two-live alert names `x` and the grant.

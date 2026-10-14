@@ -564,6 +564,37 @@ describe("ADR 0004 D4 and D6 in the webhook (W)", () => {
 		expectNoStripeWrite();
 	});
 
+	it("R1's re-read of its successor fails AFTER the write applied: no throw, an operator alert, and the email decision uses the listed read", async () => {
+		rowNames("sub_y", "active");
+		subscription("sub_x", "active", 2_000);
+		const y = subscription("sub_y", "canceled", 1_000);
+		stripeMock.retrieve.mockRejectedValue(new Error("Stripe is unreachable"));
+		await expect(handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds)).resolves.toEqual({
+			nudged: 0,
+		});
+		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "active", plan: "team" });
+		const reread = vi
+			.mocked(emitAlertEvent)
+			.mock.calls.filter(([, , ctx]) => /could not be re-read/.test(ctx.title));
+		expect(reread).toHaveLength(1);
+		expect(reread[0]?.[2].resource_id).toBe("sub_x");
+		expect(reread[0]?.[2].summary).toContain("sub_y");
+		// The listed read says X is active: a paid successor, so Y's cancellation is not reported.
+		expect(sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+		expectNoStripeWrite();
+	});
+
+	it("R1's failed re-read with a past_due successor still sends Y's email", async () => {
+		rowNames("sub_y", "active");
+		subscription("sub_x", "past_due", 2_000);
+		const y = subscription("sub_y", "canceled", 1_000);
+		stripeMock.retrieve.mockRejectedValue(new Error("Stripe is unreachable"));
+		await handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds);
+		expect(rowNow()?.subscriptionId).toBe("sub_x");
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+		expectNoStripeWrite();
+	});
+
 	it("R1 race: the named sibling is deleted between R1's list and its write — R1 re-reads it and writes its end, and the email goes", async () => {
 		rowNames("sub_y", "active");
 		const listed = subscription("sub_x", "active", 2_000);
