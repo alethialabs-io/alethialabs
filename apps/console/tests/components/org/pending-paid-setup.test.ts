@@ -317,6 +317,24 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 		expect(outcome).toMatchObject({ kind: "done", planState: "active" });
 	});
 
+	// Review of #6002 (blocker): the lookup reports no `ended` for a LINKED setup, so a retry of a run that
+	// linked and then failed (here: the declaration) finishes as on dev, after X has ended.
+	it("a linked setup whose X ended later finishes without the link: no stop, the declaration lands", async () => {
+		const sub = "sub_linked_ended";
+		actions.resolveNewOrgSetup.mockResolvedValue({
+			...lookup(sub, { org: true }),
+			linked: true,
+			paid: false,
+			planState: "not_active",
+		});
+
+		const outcome = await finishPaidSetup(RUN_USER, { ...runRecord(sub, "org-1"), linked: true }, runHooks);
+
+		expect(actions.linkSubscriptionToNewOrg).not.toHaveBeenCalled();
+		expect(actions.declarePayer).toHaveBeenCalledTimes(1);
+		expect(outcome).toMatchObject({ kind: "done", orgId: "org-1", planState: "not_active" });
+	});
+
 	// C57, the S half: the link's typed refusal.
 	it("C57: a refused link ends failed, not retryable, with its clause, and clears the record", async () => {
 		const sub = "sub_c57";
@@ -421,6 +439,13 @@ describe("a held setup is never recovered as resumable (ADR 0002 §5.6)", () => 
 		const released = lookup("sub_adopted", { org: true, hold: null });
 		actions.findUnfinishedNewOrgSetup.mockResolvedValueOnce(released);
 		expect(await recoverUnfinishedPaidSetup(null)).toEqual({ kind: "found", state: released });
+	});
+
+	it("recovering by ids a linked setup whose X ended answers none, and is not reported ended", async () => {
+		const state: NewOrgSetupState = { ...lookup("sub_linked_ended", { org: true }), linked: true, paid: false, planState: "not_active" };
+		actions.resolveNewOrgSetup.mockResolvedValue(state);
+
+		expect(await recoverUnfinishedPaidSetup({ subscriptionId: "sub_linked_ended", customerId: "cus_1" })).toEqual({ kind: "none" });
 	});
 
 	it("a hold the link advances itself (closing) is still recovered to finish", async () => {

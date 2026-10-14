@@ -3474,6 +3474,7 @@ describe("ADR 0002 S1 (#5714)", () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
 			vi.mocked(pendingOrgSetupFor).mockResolvedValue(openRow());
 			vi.mocked(findSetupOrg).mockResolvedValue({ id: "org-1", slug: "acme" });
+			db.queue.push([{ now: new Date() }]); // the database's clock, read before the closer (S10b)
 			db.queue.push([openRow({ closed_at: new Date(), closed_reason: "ended" })]); // the close CAS
 			db.queue.push([]); // the declaration read
 			await expect(resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" })).resolves.toMatchObject({

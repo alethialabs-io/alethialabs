@@ -167,6 +167,7 @@ import {
 	organization,
 	organizationBilling,
 	type PaymentHoldRow,
+	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
 
@@ -2842,6 +2843,8 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
  * link's, under the link's rule"), for the link (`{ link: orgId }`) and for the resume lookup
  * (`"resume"`), which stops the sheet before the link and so carries the same watch. Call it only for an
  * `unconfirmed` read. `record` is X's setup record as it stands now, or null when there is none.
+ * `closedSince` replaces `record.closed_at` as the dedupe's start when the caller knows a database-clock
+ * instant at or before the close (the lookup, when its own closer just closed the record).
  *
  * It raises nothing, and answers true, when an alert about X has already reached a channel since its
  * setup closed, or since X ended when the record is not closed (`alertedAboutSince`). An earlier close is
@@ -2857,10 +2860,14 @@ async function alertEndedUnconfirmed(
 	sub: Stripe.Subscription,
 	record: PendingOrgSetupRow | null,
 	trigger: { link: string } | "resume",
+	closedSince: Date | null = null,
 ): Promise<boolean> {
 	const endedAt = typeof sub.ended_at === "number" ? new Date(sub.ended_at * 1000) : null;
-	if (await alertedAboutSince(sub.id, record?.closed_at ?? endedAt)) return true;
-	const who = trigger === "resume" ? "a resume of the setup was stopped" : `the link to team ${trigger.link} was refused`;
+	if (await alertedAboutSince(sub.id, closedSince ?? record?.closed_at ?? endedAt)) return true;
+	const who =
+		trigger === "resume"
+			? "a resume lookup of the setup reported it ended"
+			: `the link to team ${trigger.link} was refused`;
 	return alertPaymentNeedsSupport({
 		subscriptionId: sub.id,
 		customerId: subscriptionCustomerId(sub),
@@ -3041,7 +3048,11 @@ async function newOrgSetupStateFor(
 	// The setup closer runs before the lookup answers (ADR 0002 §5.6, §5.7): an open setup whose X
 	// reads ended is closed, and one a lost response left linked in Stripe is adopted. The answer
 	// below is about X and does not depend on it, so a closer that cannot read is logged, not thrown —
-	// the setup stays open and the next reader tries again.
+	// the setup stays open and the next reader tries again. When the closer may close it here, the
+	// database's clock is read first: an alert the closer raises is dated by that clock, and the ended
+	// report below must see that alert (`endedSetupFor`).
+	const beforeClose =
+		!row.closed_at && !row.linked_at && ENDED_SUBSCRIPTION_STATUSES.has(sub.status) ? await databaseNow(row.id) : null;
 	await settleOpenSetupQuietly(row, sub, org?.id ?? null);
 
 	let declared = false;
@@ -3074,7 +3085,10 @@ async function newOrgSetupStateFor(
 		...report,
 		...(hold ? { paymentUrl: null } : {}),
 		hold: hold && hold.state !== "released" ? { state: hold.state, notice: heldNotice(hold, userId) } : null,
-		ended: hold && hold.state !== "released" ? null : await endedSetupFor(sub, userId, report.planState, org !== null),
+		ended:
+			hold && hold.state !== "released"
+				? null
+				: await endedSetupFor({ sub, userId, row, linked: !!linkedTo, beforeClose, planState: report.planState, teamExists: org !== null }),
 		org,
 		linked: !!linkedTo,
 		declared,
@@ -3088,26 +3102,56 @@ async function newOrgSetupStateFor(
 /**
  * What a resume lookup reports about an ENDED X with no open hold (§5.6 "The lookup reports an ended
  * setup"): exactly the sentence the link would refuse it with (`refuseEndedLink`), so the sheet can stop
- * before the link. Null for an X that has not ended — a `paused` one, or one of a status Stripe may add,
- * is linked by the link, so the test is the link's own (`ENDED_SUBSCRIPTION_STATUSES`), never
- * `planState`. Call it only when no open hold names X: the link reads holds first, and so does the lookup.
+ * before the link. Call it only when no open hold names X: the link reads holds first, and so does the
+ * lookup. Null:
+ *   - for an X that has not ended. A `paused` one, or one of a status Stripe may add, is linked by the
+ *     link, so the test is the link's own (`ENDED_SUBSCRIPTION_STATUSES`), never `planState`;
+ *   - for a setup already LINKED: X's metadata names an organization (`linked`), or the setup record
+ *     carries `linked_at`. The sheet does not call the link for a setup the server reports linked to its
+ *     org, so it must not stop there either; a linked X that ended later is a plan that ran, not a
+ *     checkout that was closed.
  *
  * For an `unconfirmed` read it raises the link's alert through `alertEndedUnconfirmed`, under the link's
  * dedupe. The setup record is read again for it, because the closer the lookup ran just before may have
- * closed it. It writes nothing else.
+ * closed it. When it did, the dedupe counts from `beforeClose`, the database's clock read before the
+ * closer ran, rather than from `closed_at`, which the closer stamps with this server's clock: an alert
+ * the closer raised is dated by the database, and must silence this one whatever the two clocks say.
+ * It writes nothing else.
  */
-async function endedSetupFor(
-	sub: Stripe.Subscription,
-	userId: string,
-	planState: NewOrgPlanState,
-	teamExists: boolean,
-): Promise<{ clause: string } | null> {
+async function endedSetupFor(input: {
+	sub: Stripe.Subscription;
+	userId: string;
+	/** The setup record as the lookup read it, before the closer ran. */
+	row: PendingOrgSetupRow;
+	linked: boolean;
+	beforeClose: Date | null;
+	planState: NewOrgPlanState;
+	teamExists: boolean;
+}): Promise<{ clause: string } | null> {
+	const { sub } = input;
 	if (!ENDED_SUBSCRIPTION_STATUSES.has(sub.status)) return null;
+	const record = await pendingOrgSetupFor(input.userId, sub.id);
+	if (input.linked || input.row.linked_at || record?.linked_at) return null;
 	const released = await latestReleasedHoldOn(sub.id);
-	const read = endedSetupRead(released?.release_reason ?? null, planState);
+	const read = endedSetupRead(released?.release_reason ?? null, input.planState);
+	const closedNow = !input.row.closed_at && !!record?.closed_at;
 	const alerted =
-		read === "unconfirmed" && (await alertEndedUnconfirmed(sub, await pendingOrgSetupFor(userId, sub.id), "resume"));
-	return { clause: endedSetupClause(read, { alerted, teamExists }) };
+		read === "unconfirmed" &&
+		(await alertEndedUnconfirmed(sub, record, "resume", closedNow ? input.beforeClose : null));
+	return { clause: endedSetupClause(read, { alerted, teamExists: input.teamExists }) };
+}
+
+/**
+ * The database's clock now, read through the setup record `setupId` (a row that exists), or null when
+ * the row is gone. What `alert_deliveries.created_at` is stamped by.
+ */
+async function databaseNow(setupId: string): Promise<Date | null> {
+	const [hit] = await getServiceDb()
+		.select({ now: sql<Date>`now()`.mapWith((v: string | Date) => new Date(v)) })
+		.from(pendingOrgSetups)
+		.where(eq(pendingOrgSetups.id, setupId))
+		.limit(1);
+	return hit?.now ?? null;
 }
 
 /**
