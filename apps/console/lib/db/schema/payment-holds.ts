@@ -97,9 +97,14 @@ const LEASE_KEY_PREFIX: Readonly<Record<PaymentHoldScope, string>> = {
 	org_plan: "org-plan:",
 };
 
-/** The purchase-lease key that fences the state writes of a hold in `scope` whose payer is `payerKey`. */
+/**
+ * The purchase-lease key that fences the state writes of a hold in `scope` whose payer is `payerKey`.
+ * A scope with no prefix (a value that reached here untyped) throws rather than name a lease.
+ */
 export function leaseKeyFor(scope: PaymentHoldScope, payerKey: string): string {
-	return `${LEASE_KEY_PREFIX[scope]}${payerKey}`;
+	const prefix: string | undefined = LEASE_KEY_PREFIX[scope];
+	if (prefix === undefined) throw new Error(`leaseKeyFor: ${String(scope)} is not a payment-hold scope.`);
+	return `${prefix}${payerKey}`;
 }
 
 /**
