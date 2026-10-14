@@ -6,7 +6,7 @@
 //
 // ONE TICK (`runPaymentHoldSweep`):
 //   1. selects the open holds that are DUE — `next_check_at <= now()`, or nudged since their last
-//      observation (`nudged_at > observed_at`; the webhook nudges from slice 7) — oldest first, at most
+//      observation (`nudged_at > observed_at`; the webhook sets `nudged_at` through `nudgeHold`) — oldest first, at most
 //      `SWEEP_BATCH`;
 //   2. for each, takes its payer's lease (`user:<payer>`) with a ZERO wait: a lease another caller holds
 //      (the operator, another instance's tick, a create-a-team purchase) skips that hold until the
