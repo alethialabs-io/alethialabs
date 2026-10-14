@@ -51,6 +51,10 @@ const world = vi.hoisted(() => {
 		leaseLost: false,
 		/** A subscription whose first read goes `active`: its payment lands as the machine reads it. */
 		activatesOnRead: null as string | null,
+		/** The newest `created_at` of user-1's unlinked setup records, as the over-cap dedupe reads it (#5989). */
+		newestRecordAt: null as Date | null,
+		/** The operator-alert delivery rows written so far: one per alert routed to a channel. */
+		deliveries: [] as { resource_id: string; created_at: Date }[],
 	};
 	const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing" });
 	const piOf = (invoice: string, i: number) => `pi_${invoice}_${i}`;
@@ -141,12 +145,34 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeInOrg: vi.fn(),
 	authorizeQuiet: vi.fn(),
 }));
-// The only direct read left in these paths is the payer's email before a customer is minted: none here.
-vi.mock("@/lib/db", () => {
-	const chain: Record<string, unknown> = {};
-	for (const m of ["select", "from", "where", "limit", "innerJoin"]) chain[m] = () => chain;
-	chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve([]).then(resolve);
-	return { getServiceDb: () => chain };
+// The direct reads in these paths: the payer's email before a customer is minted (none here), and the
+// over-cap dedupe's two (#5989) — the newest unlinked setup record, and the operator-alert deliveries
+// about the user since then. Each query answers by the table it reads `from`; the deliveries answer
+// applies the same predicate as `alertedAboutSince` (same resource, at or after `newestRecordAt`).
+vi.mock("@/lib/db", async () => {
+	const schema = await import("@/lib/db/schema");
+	const answer = (table: unknown): unknown[] => {
+		if (table === schema.pendingOrgSetups) return [{ at: world.state.newestRecordAt }];
+		if (table === schema.alertDeliveries) {
+			const since = world.state.newestRecordAt;
+			return world.state.deliveries
+				.filter((d) => d.resource_id === "user-1" && (!since || d.created_at >= since))
+				.map((_, i) => ({ id: `delivery_${i}` }));
+		}
+		return [];
+	};
+	const query = () => {
+		let table: unknown = null;
+		const chain: Record<string, unknown> = {};
+		for (const m of ["select", "where", "limit", "innerJoin"]) chain[m] = () => chain;
+		chain.from = (t: unknown) => {
+			table = t;
+			return chain;
+		};
+		chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve(answer(table)).then(resolve);
+		return chain;
+	};
+	return { getServiceDb: () => ({ select: () => query() }) };
 });
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn(async () => null), upsertOrgBilling: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({
@@ -410,6 +436,8 @@ beforeEach(() => {
 	world.state.writeFailures = 0;
 	world.state.leaseLost = false;
 	world.state.activatesOnRead = null;
+	world.state.newestRecordAt = null;
+	world.state.deliveries = [];
 	vi.unstubAllEnvs();
 });
 
@@ -743,5 +771,133 @@ describe("§5.5 — a refusal never invites a purchase", () => {
 		const message = refusalOf(await buy());
 		expect(message).toMatch(/issued its refund/);
 		expect(message).not.toMatch(/buy again/);
+	});
+});
+
+describe("#5989 — the over-cap refusal alerts once per cap state, and says what fixes it", () => {
+	/** An `emitAlertEvent` that routes to one channel: it writes a delivery row, as the real one does. */
+	const deliverAlerts = () =>
+		vi.mocked(emitAlertEvent).mockImplementation(async (_org, _event, context) => {
+			world.state.deliveries.push({ resource_id: context.resource_id ?? "", created_at: new Date() });
+			return 1;
+		});
+	/** The operator alerts raised about user-1, in order. */
+	const userAlerts = () => vi.mocked(emitAlertEvent).mock.calls.filter(([, , c]) => c.resource_id === "user-1");
+
+	beforeEach(() => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		world.state.newestRecordAt = new Date(Date.now() - 60_000);
+	});
+
+	it("the live check over its cap: the first refusal alerts with the fix, a user who stays at the cap is not paged again, and the refusal never changes", async () => {
+		deliverAlerts();
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		const first = refusalOf(await buy());
+		const second = refusalOf(await buy());
+		const third = refusalOf(await buy({}));
+
+		expect(first).toMatch(/more unfinished checkouts than we can check automatically/);
+		expect([second, third]).toEqual([first, first]);
+		expect(userAlerts()).toHaveLength(1);
+		expect(userAlerts()[0]?.[2]).toMatchObject({
+			resource_type: "user",
+			summary: expect.stringMatching(/To fix it: .*linked_at IS NULL.*at most 50 distinct Stripe customers/),
+		});
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("a newer setup record starts a new cap state: the next refusal alerts again", async () => {
+		deliverAlerts();
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		refusalOf(await buy());
+		world.state.newestRecordAt = new Date(Date.now() + 1_000);
+		refusalOf(await buy());
+
+		expect(userAlerts()).toHaveLength(2);
+	});
+
+	it("an alert that reached no channel silences nothing: the next refusal alerts again", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		refusalOf(await buy());
+		refusalOf(await buy());
+
+		expect(userAlerts()).toHaveLength(2);
+	});
+
+	it("the reuse set over its cap refuses the same way, alerts once with the fix, and shares the live check's cap state", async () => {
+		deliverAlerts();
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		const first = refusalOf(await buy());
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+		const second = refusalOf(await buy());
+
+		expect(second).toBe(first);
+		expect(userAlerts()).toHaveLength(1);
+		expect(userAlerts()[0]?.[2]).toMatchObject({ summary: expect.stringMatching(/To fix it: /) });
+	});
+});
+
+describe("#5989 — a refused purchase mints no Stripe customer", () => {
+	/** The browser lost its customer, and no record names one this purchase may reuse: a customer would be minted. */
+	const noReusableCustomer = () => {
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_with_org"] });
+	};
+
+	it("a payment still settling refuses the purchase and its retry, and neither creates a customer", async () => {
+		noReusableCustomer();
+		sub("sub_settling", "incomplete", ["processing"], { created_by: "user-1" }, "cus_with_org");
+
+		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
+		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("a sweep that cannot list refuses and creates no customer", async () => {
+		noReusableCustomer();
+		world.stripe.subscriptions.list.mockRejectedValue(new Error("Stripe is unavailable"));
+
+		expect(refusalOf(await buy({}))).toMatch(/could not check your earlier checkouts/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a live check that cannot list refuses and creates no customer", async () => {
+		noReusableCustomer();
+		world.stripe.subscriptions.list.mockImplementation(async (p: { status: string }) => {
+			if (p.status === "all") throw new Error("Stripe is unavailable");
+			return { has_more: false, data: [] };
+		});
+
+		expect(refusalOf(await buy({}))).toMatch(/could not check your earlier checkouts/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a live subscription the live check finds is resumed, and no customer is created for it", async () => {
+		noReusableCustomer();
+		sub("sub_live", "active", ["succeeded"], { created_by: "user-1" }, "cus_with_org");
+
+		await expect(buy({})).resolves.toMatchObject({ kind: "resume" });
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a purchase that mints still creates exactly one customer — after every check — and mints on it", async () => {
+		noReusableCustomer();
+
+		await expect(buy({})).resolves.toMatchObject({ kind: "intent", customerId: "cus_created" });
+		expect(world.stripe.customers.create).toHaveBeenCalledTimes(1);
+		const created = world.stripe.customers.create.mock.invocationCallOrder[0] ?? 0;
+		const lastList = Math.max(...world.stripe.subscriptions.list.mock.invocationCallOrder);
+		expect(created).toBeGreaterThan(lastList);
+		expect(world.stripe.subscriptions.create).toHaveBeenCalledWith(
+			expect.objectContaining({ customer: "cus_created" }),
+			expect.anything(),
+		);
 	});
 });
