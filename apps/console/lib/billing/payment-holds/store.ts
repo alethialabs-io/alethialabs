@@ -42,6 +42,11 @@
 // resume; the sweeper's visit, the create-a-team purchase (`relinkIfAdopted`) and `payment-holds release`
 // call it.
 //
+// THE MOVED RELEASE'S ROW CHECK (§5.8 step 9). `releaseHold` with `expectOrgRow` — passed only by
+// `payment-holds release --moved-to`, through `operatorRelease` — reads the team's `organization_billing`
+// row `FOR SHARE` in its own transaction before the hold's update, and writes nothing unless that row
+// names the subscription.
+//
 // Every write runs through getServiceDb(): the table is service-role only (programmables.sql).
 
 import "server-only";
@@ -52,6 +57,7 @@ import {
 	type PaymentHoldNotifiedState,
 	type PaymentHoldOpener,
 	type PaymentHoldReleaseReason,
+	organizationBilling,
 	type PaymentHoldRow,
 	paymentHolds,
 	pendingOrgSetups,
@@ -243,6 +249,25 @@ export interface ReleaseHoldInput {
 	/** When the observation behind this release started; an operator release has none. */
 	observedAt?: Date;
 	lastPay?: string | null;
+	/**
+	 * The moved release only (ADR 0002 §5.8 step 9): the team's billing row must still name this
+	 * subscription when the release commits. No other caller passes it.
+	 */
+	expectOrgRow?: { orgId: string; subscriptionId: string };
+}
+
+/** The team's billing row as a release's `expectOrgRow` check read it: its subscription and status. */
+export interface CheckedOrgRow {
+	subscriptionId: string | null;
+	status: string;
+}
+
+/** What a release wrote: the released row, the setup it closed (or null), and the row its check read. */
+export interface ReleasedHold {
+	hold: PaymentHoldRow;
+	closedSetupId: string | null;
+	/** Set only when the release was given `expectOrgRow`. */
+	checkedOrgRow?: CheckedOrgRow;
 }
 
 /**
@@ -251,15 +276,32 @@ export interface ReleaseHoldInput {
  * `pending_org_setups` row with the hold's subscription is closed with `closed_reason = 'hold_released'`.
  * An `adopted` release leaves the setup as it is.
  *
+ * With `expectOrgRow` (§5.8 step 9), the transaction first reads the team's `organization_billing` row
+ * `FOR SHARE`, before the hold's update. When that row does not name the expected subscription (or there
+ * is no row), nothing is written and the result is null. While the lock is held, an `UPDATE` of that row
+ * (a webhook sync) waits for this commit, so the row cannot change between the check and the commit.
+ * Without `expectOrgRow` no such read is made.
+ *
  * Returns the released row and whether this call closed a setup, or null when nothing was written (the
- * version moved, the hold is already released, or the lease is lost) — and then no setup is touched.
+ * version moved, the hold is already released, the lease is lost, or the team's row no longer names the
+ * subscription) — and then no setup is touched.
  */
 export async function releaseHold(
 	lease: PurchaseLease,
 	ref: HoldRef,
 	input: ReleaseHoldInput,
-): Promise<{ hold: PaymentHoldRow; closedSetupId: string | null } | null> {
+): Promise<ReleasedHold | null> {
 	return getServiceDb().transaction(async (tx) => {
+		let checkedOrgRow: CheckedOrgRow | undefined;
+		if (input.expectOrgRow) {
+			const [row] = await tx
+				.select({ subscriptionId: organizationBilling.stripeSubscriptionId, status: organizationBilling.status })
+				.from(organizationBilling)
+				.where(eq(organizationBilling.organizationId, input.expectOrgRow.orgId))
+				.for("share");
+			if (!row || row.subscriptionId !== input.expectOrgRow.subscriptionId) return null;
+			checkedOrgRow = { subscriptionId: row.subscriptionId, status: row.status };
+		}
 		const [hold] = await tx
 			.update(paymentHolds)
 			.set({
@@ -278,7 +320,7 @@ export async function releaseHold(
 			.where(and(stateWriteFence(lease, ref), ne(paymentHolds.state, "released")))
 			.returning();
 		if (!hold) return null;
-		if (input.reason === "adopted") return { hold, closedSetupId: null };
+		if (input.reason === "adopted") return { hold, closedSetupId: null, ...(checkedOrgRow ? { checkedOrgRow } : {}) };
 
 		// "Still open" is the setup's own definition (lib/db/schema/pending-org-setups.ts): neither linked
 		// nor closed. A linked setup is finished and is not reopened or re-closed here.
@@ -293,7 +335,7 @@ export async function releaseHold(
 				),
 			)
 			.returning({ id: pendingOrgSetups.id });
-		return { hold, closedSetupId: closed?.id ?? null };
+		return { hold, closedSetupId: closed?.id ?? null, ...(checkedOrgRow ? { checkedOrgRow } : {}) };
 	});
 }
 

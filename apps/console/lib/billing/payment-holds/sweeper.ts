@@ -492,9 +492,10 @@ async function refuseBesideLivePlan(input: {
  * scope `userId` resolves to when it names `orgId` must BE `orgId` (a substituted scope is a no), and
  * the PDP must allow `manage_billing` there. It is the question the session's link asks with
  * `authorizeInOrg`, asked about the setup's creator rather than about whoever runs the caller, and
- * asked with `can`, so nothing is recorded.
+ * asked with `can`, so nothing is recorded. `relinkSetup` here asks it, and so does the moved release
+ * (`payment-holds release --moved-to`, ADR 0002 §5.8 row 4) about the hold's payer and the team named.
  */
-async function holdsManageBilling(userId: string, orgId: string): Promise<boolean> {
+export async function holdsManageBilling(userId: string, orgId: string): Promise<boolean> {
 	const actor = await getActiveScope(userId, orgId);
 	if (actor.orgId !== orgId) return false;
 	return (await getPdp().can(actor, "manage_billing", { type: "billing" })).allowed;
