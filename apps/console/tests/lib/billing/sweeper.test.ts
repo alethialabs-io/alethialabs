@@ -13,8 +13,13 @@
 // What is faked is what the link's core writes through: Stripe (`world.subs`), the org's billing row
 // (`world.row`), the sync, the hold store, the setup record module and the alert. The store's SQL, and
 // the same race against real Postgres, are in tests/integration/payment-hold-sweeper.test.ts.
+//
+// #6078: the relink retry's bookkeeping (`relinkRetryAfter`, `relinkAdoptedHold`) over a faked store —
+// the backoff schedule, the one give-up alert raised only by the caller whose write landed, a decided
+// outcome clearing the check, a lost lease writing nothing, and a failed write never hiding the result.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PendingOrgSetupRow } from "@/lib/billing/pending-org-setup";
 import type { PaymentHoldRow } from "@/lib/db/schema";
 
 /** A subscription as the fake Stripe holds it. */
@@ -84,6 +89,7 @@ vi.mock("@/lib/billing/purchase-lease", () => {
 	return {
 		PurchaseLeaseLostError,
 		fenceFor: () => async () => undefined,
+		renewPurchaseLease: vi.fn(async () => true),
 		tryAcquirePurchaseLease: vi.fn(),
 		releasePurchaseLease: vi.fn(),
 	};
@@ -95,6 +101,7 @@ vi.mock("@/lib/billing/payment-holds/store", () => ({
 		return world.openOnX;
 	}),
 	writeHoldState: vi.fn(async () => null),
+	writeAdoptedRelinkState: vi.fn(async () => null),
 	releaseHold: vi.fn(),
 	reserveRefundAttempt: vi.fn(),
 }));
@@ -112,10 +119,17 @@ vi.mock("@/lib/observability/heartbeats", () => ({ registerLoop: vi.fn(), superv
 
 import type Stripe from "stripe";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
-import { openHold } from "@/lib/billing/payment-holds/store";
-import { linkSetupToOrg } from "@/lib/billing/payment-holds/sweeper";
-import { PurchaseLeaseLostError } from "@/lib/billing/purchase-lease";
-import { markPendingOrgSetupLinked, recordSetupRefusal } from "@/lib/billing/pending-org-setup";
+import { openHold, writeAdoptedRelinkState } from "@/lib/billing/payment-holds/store";
+import {
+	linkSetupToOrg,
+	RELINK_MAX_ATTEMPTS,
+	RELINK_RETRY_DELAYS_MS,
+	RELINK_UNDELIVERED_ALERT_RETRY_MS,
+	relinkAdoptedHold,
+	relinkRetryAfter,
+} from "@/lib/billing/payment-holds/sweeper";
+import { PurchaseLeaseLostError, renewPurchaseLease } from "@/lib/billing/purchase-lease";
+import { markPendingOrgSetupLinked, pendingOrgSetupFor, recordSetupRefusal } from "@/lib/billing/pending-org-setup";
 import { getPurchaseStripe } from "@/lib/billing/stripe";
 
 const USER = "user-1";
@@ -232,5 +246,172 @@ describe("#6043: a lease lost in the link's refusal after X's metadata names O",
 		expect(world.subs.get(X)?.metadata.organization_id).toBeUndefined();
 		expect(alertsOnX()).toHaveLength(0);
 		expect(recordSetupRefusal).not.toHaveBeenCalled();
+	});
+});
+
+describe("#6078: the relink retry's bookkeeping", () => {
+	const LEASE = { key: `user:${USER}`, holder: "holder-1" };
+	const NOW = new Date("2026-10-14T12:00:00Z");
+	const alert = vi.fn(async () => true);
+	const deps = { alert, now: () => NOW };
+
+	/** A `new_org` hold on X released `adopted`, after `attempts` failed relinks. */
+	function adopted(attempts: number): PaymentHoldRow {
+		const at = new Date("2026-10-14T11:00:00Z");
+		return {
+			id: "hold_x",
+			subscription_id: X,
+			customer_id: "cus_x",
+			scope: "new_org",
+			payer_key: USER,
+			invoice_id: "in_x",
+			payment_intent_id: null,
+			state: "released",
+			release_reason: "adopted",
+			released_at: at,
+			released_by: null,
+			release_note: null,
+			refund_attempt: 0,
+			attempts,
+			last_error: null,
+			next_check_at: at,
+			alerted_at: null,
+			notice_last_sent_at: null,
+			notified_state: null,
+			notified_at: null,
+			opened_by_user_id: USER,
+			opened_by: "purchase",
+			open_note: null,
+			state_since: at,
+			last_pay: "succeeded",
+			refund_action_since: null,
+			age_alerted_at: null,
+			observed_at: at,
+			nudged_at: null,
+			version: 4,
+			created_at: at,
+			updated_at: at,
+		};
+	}
+
+	/** USER's open setup for X, recorded for team ORG. */
+	function setupRow(): PendingOrgSetupRow {
+		const at = new Date("2026-10-14T10:00:00Z");
+		return {
+			id: "setup_x",
+			user_id: USER,
+			subscription_id: X,
+			customer_id: "cus_x",
+			intended_name: "Acme",
+			intended_slug: "acme",
+			billing: null,
+			created_org_id: ORG,
+			creating_at: null,
+			linked_at: null,
+			declared_at: null,
+			closed_at: null,
+			closed_reason: null,
+			closed_by: null,
+			closed_note: null,
+			refused_reason: null,
+			created_at: at,
+			updated_at: at,
+		};
+	}
+
+	beforeEach(() => {
+		alert.mockReset();
+		alert.mockResolvedValue(true);
+	});
+
+	it("the schedule: 5m, 15m, 1h, 4h, 12h, and the sixth failure gives up", () => {
+		expect(RELINK_RETRY_DELAYS_MS).toEqual([5, 15, 60, 240, 720].map((m) => m * 60_000));
+		expect(RELINK_MAX_ATTEMPTS).toBe(6);
+		expect([1, 2, 3, 4, 5].map((n) => relinkRetryAfter(n))).toEqual(
+			RELINK_RETRY_DELAYS_MS.map((delayMs) => ({ kind: "retry", delayMs })),
+		);
+		expect(relinkRetryAfter(6)).toEqual({ kind: "give_up" });
+		expect(relinkRetryAfter(9)).toEqual({ kind: "give_up" });
+		expect(relinkRetryAfter(0)).toEqual({ kind: "retry", delayMs: RELINK_RETRY_DELAYS_MS[0] });
+	});
+
+	it("a thrown relink records the next attempt on the hold's version, and alerts nothing", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		await expect(relinkAdoptedHold(LEASE, adopted(1), deps)).resolves.toBeNull();
+		expect(writeAdoptedRelinkState).toHaveBeenCalledWith(LEASE, { id: "hold_x", version: 4 }, {
+			attempts: 2,
+			lastError: "connection reset",
+			nextCheckAt: new Date(NOW.getTime() + 15 * 60_000),
+		});
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("the sixth failure claims the decision FIRST, alerts, and clears the check with alerted_at only when the alert reached a channel", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		const claimed = { ...adopted(6), version: 5 };
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(claimed);
+		await relinkAdoptedHold(LEASE, adopted(5), deps);
+		expect(vi.mocked(writeAdoptedRelinkState).mock.calls).toEqual([
+			[LEASE, { id: "hold_x", version: 4 }, { attempts: 6, lastError: "connection reset", nextCheckAt: new Date(NOW.getTime() + RELINK_UNDELIVERED_ALERT_RETRY_MS) }],
+			[LEASE, { id: "hold_x", version: 5 }, { nextCheckAt: null, alertedAt: NOW }],
+		]);
+		expect(alert).toHaveBeenCalledTimes(1);
+		expect(alert.mock.calls[0]).toEqual([expect.objectContaining({ subscriptionId: X, customerId: "cus_x", paymentIntentId: null })]);
+		expect(vi.mocked(alert).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(writeAdoptedRelinkState).mock.invocationCallOrder[1] ?? 0);
+		expect(vi.mocked(alert).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(writeAdoptedRelinkState).mock.invocationCallOrder[0] ?? Infinity);
+	});
+
+	it("an alert that reached no channel stamps nothing: the claim's day-later check stays, so it is raised again", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(adopted(6));
+		alert.mockResolvedValueOnce(false);
+		await relinkAdoptedHold(LEASE, adopted(5), deps);
+		expect(alert).toHaveBeenCalledTimes(1);
+		expect(writeAdoptedRelinkState).toHaveBeenCalledTimes(1);
+	});
+
+	it("a claim that matched nothing (another caller decided first) raises nothing", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(null);
+		await relinkAdoptedHold(LEASE, adopted(5), deps);
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("a not_linked check's held alert is NOT raised when the claim write's compare-and-set loses", async () => {
+		// The creator's team has no active membership for them, so the check fails and its alert is held.
+		vi.mocked(pendingOrgSetupFor).mockResolvedValueOnce(setupRow());
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(null);
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toMatchObject({ kind: "not_linked" });
+		expect(writeAdoptedRelinkState).toHaveBeenCalledTimes(1);
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("a not_linked check's held alert IS raised when the claim lands, and stamped when it reached a channel", async () => {
+		vi.mocked(pendingOrgSetupFor).mockResolvedValueOnce(setupRow());
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce({ ...adopted(0), version: 5 });
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toMatchObject({ kind: "not_linked" });
+		expect(alert).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(writeAdoptedRelinkState).mock.calls[1]).toEqual([LEASE, { id: "hold_x", version: 5 }, { nextCheckAt: null, alertedAt: NOW }]);
+	});
+
+	it("a lease taken over before the record is thrown, with nothing written and no alert", async () => {
+		vi.mocked(renewPurchaseLease).mockResolvedValueOnce(false);
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		expect(writeAdoptedRelinkState).not.toHaveBeenCalled();
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("a lost lease is thrown with nothing written", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new PurchaseLeaseLostError(LEASE.key));
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		expect(writeAdoptedRelinkState).not.toHaveBeenCalled();
+	});
+
+	it("a decided relink (no open setup) clears the check, and its result survives a failed write", async () => {
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toEqual({ kind: "no_setup" });
+		expect(writeAdoptedRelinkState).toHaveBeenCalledWith(LEASE, { id: "hold_x", version: 4 }, { nextCheckAt: null });
+		vi.mocked(writeAdoptedRelinkState).mockRejectedValueOnce(new Error("database is unavailable"));
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toEqual({ kind: "no_setup" });
+		expect(alert).not.toHaveBeenCalled();
 	});
 });

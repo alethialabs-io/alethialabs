@@ -30,8 +30,17 @@
 //   - a hint write sets one hint column and nothing else: the webhook's nudge sets `nudged_at` and
 //     `updated_at`; the notice stamp (`stampHoldNotice`, #6029) sets `notice_last_sent_at` alone, with
 //     no lease and no state predicate, so it stamps a `released` hold too;
-//   - a notice claim sets `notified_state` and `notified_at` and nothing else.
-// Only state writes touch `version`, so a hint or a claim can never make a state write miss (C74).
+//   - a notice claim sets `notified_state` and `notified_at` and nothing else;
+//   - the relink write (`writeAdoptedRelinkState`, ADR 0002 §4.1 amendment 2026-10-14, #6078) is the one
+//     write on a RELEASED row: on a `new_org` hold released `adopted` only, it sets `attempts`,
+//     `last_error`, `next_check_at` and `alerted_at` for the retries of its setup's relink, fenced and
+//     bumping `version` as a state write is.
+// Only state writes and the relink write touch `version`, so a hint or a claim can never make either
+// miss (C74).
+//
+// `next_check_at` on a RELEASED row is null, except on a `new_org` hold released `adopted`: there it is
+// when the sweeper's relink pass next retries the relink of the hold's open setup (#6078), and null once
+// that relink is decided.
 //
 // TENANCY. Service-role only: RLS is enabled with NO app policy (programmables.sql), the
 // purchase_leases / cli_logins idiom. A hold is about money across users and the operator; no user
