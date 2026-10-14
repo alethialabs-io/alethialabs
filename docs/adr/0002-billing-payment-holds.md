@@ -293,7 +293,10 @@ relative to the repo root, as the board's `scope:` lines are.
   (decision on #6078, option (a)). §4.1 gains one more kind of write, the **relink write**, on a
   released `adopted` `new_org` hold only. The `adopted` release now schedules a relink check, and the
   sweeper gains a relink pass (§5.4) that retries on a backoff until the relink is decided. A
-  permanent failure ends in one alert. New cases C111–C116.
+  permanent failure ends in an alert, recorded once it reaches a channel. Money review of #6079
+  (2026-10-14) fixed three things: the alert is raised before it is recorded; a lost lease counts as
+  an attempt; and the tests cover the open-setup and open-hold predicates and the lost claim. New
+  cases C111–C119.
 
 ---
 
@@ -699,7 +702,8 @@ Each invariant is tested (§6).
   ended and no open hold names X (I16). Rev 7.1: the one other close is the operator's, on an X that
   Stripe reports `resource_missing` (§5.4), which no automatic writer does. An adoption re-links a setup that has an org (§5.6 "When a
   hold ends"), and since #6078 (amendment 2026-10-14) a re-link that throws is retried by the sweeper
-  on a bounded backoff and ends, if it never succeeds, in one alert (§4.1 "The relink retry"). **Amendment (2026-10-14, #5974):** there is one more close while X is live: the moved
+  on a bounded backoff and ends, if it never succeeds, in an alert that is repeated daily until it reaches
+  a channel (§4.1 "The relink retry"). **Amendment (2026-10-14, #5974):** there is one more close while X is live: the moved
   release (§5.8). It is the operator's too. It closes only after fresh reads show three things: X,
   its customer and team T's billing row all name T; nothing else bills or is buying T (§5.8 rows
   11–13, under T's purchase lock); and the payer U is an
@@ -794,26 +798,49 @@ and nothing reopens the hold.
   | The relink | The write | Alert |
   |---|---|---|
   | `linked`, `refused` (§5.6: a `link_refused` hold names X, or, with no invoice to hold, the refusal alerted), `no_setup` (linked or closed meanwhile), `no_org` (the creator's resume finishes it, §5.6) | `next_check_at = NULL` | none here: a refusal alerts as it always has (§5.6) |
-  | `not_linked`: a check failed (another creator, a customer not minted by U, X linked to another team, U without `manage_billing`, an org U is not an active member of) | `next_check_at = NULL`, `last_error = why`, and `alerted_at = now` when the check alerts | the check's alert, **once**: held while the relink runs and raised only when the write returned the row |
+  | `not_linked`: a check failed (another creator, a customer not minted by U, X linked to another team, U without `manage_billing`, an org U is not an active member of) | the alert decision below, with `last_error = why` | the check's own alert, held while the relink runs and raised through the alert decision |
   | `not_linked` because X reads ended | `next_check_at = NULL`, `last_error = why` | none: the setup closer closes that setup (§5.7) |
   | thrown, attempt *n* < 6 | `attempts = n`, `last_error`, `next_check_at = now + delay(n)` | none |
-  | thrown, attempt 6 | `attempts = 6`, `last_error`, `next_check_at = NULL`, `alerted_at = now` | **one** alert with X as the subject (`context: "payment_hold"`), raised only when the write returned the row |
-  | the lease is lost (thrown `PurchaseLeaseLostError`) | none: nothing can be written without the lease | none. The check stays as it was and the pass retries it. A lost lease is not counted as an attempt. |
+  | thrown, attempt *n* ≥ 6 | the alert decision below, with `attempts = n` and `last_error` | the give-up alert, with X as the subject (`context: "payment_hold"`), "failed *n* times" |
+  | the lease is lost: the relink throws `PurchaseLeaseLostError`, or the renewal made before every relink write finds the lease taken over | none under the lost lease | none. The relink pass takes the payer's lease afresh, with a 0s wait, re-reads the hold, and records the loss as a **thrown attempt** (the two rows above). The visit and the purchase only log it, and leave the check for the pass. A fresh lease that is busy means another caller holds the payer, and the next tick tries again. |
 
   The session's link (`linkSubscriptionToNewOrg`) adopts under its own advance and then runs the
   link's core itself (§5.6, the `closing` / `cancel_unproven` row). It records nothing on the hold.
   A link that succeeds or refuses takes the setup out of the pass's selection (linked, or
   `refused_reason = org_has_plan`). A link that throws leaves the release's check in place, so the
   pass retries it with no session, through `relinkAdoptedHold` and every check that makes.
-- **The bounds.** At most `RELINK_MAX_ATTEMPTS = 6` thrown attempts. The delays after attempts 1–5 are
+- **The alert decision.** It follows the order the machine and the link's refusal use (I8): alert
+  first, and record the alert only when it reached a channel.
+  1. **Claim.** One relink write records the decision (`last_error`, and `attempts` for a give-up)
+     and sets `next_check_at = now + RELINK_UNDELIVERED_ALERT_RETRY_MS` (24 h). When the claim matches
+     nothing (another caller recorded first, prepared on a newer `version`), nothing is raised.
+  2. **Alert.** The caller whose claim returned the row raises the alert. `alertPaymentNeedsSupport`
+     returns whether it reached a channel.
+  3. **Stamp.** Only when it did, a second relink write sets `next_check_at = NULL` and
+     `alerted_at = now`. Nothing selects the hold again. When it did not (no operator org, no rule or
+     channel, a throttle, an emit failure), the claim's check stays: 24 h later the pass runs the
+     relink again, which may now link X, and otherwise decides and alerts again.
+- **The bounds.** At most `RELINK_MAX_ATTEMPTS = 6` thrown attempts, a lost lease included, before the
+  give-up. The delays after attempts 1–5 are
   `RELINK_RETRY_DELAYS_MS` = 5 min, 15 min, 1 h, 4 h and 12 h. So the sixth attempt runs about 17h20m
   after the first, and the alert follows it. Each delay counts from the app clock of the failed
   attempt. The pass runs on the 5-minute tick, so an attempt may run up to one tick late.
-- **One alert.** The alert is raised only by the caller whose relink write returned the row. That
-  write clears `next_check_at`, so nothing selects the hold again. Two ticks on two instances are
-  serialised by the payer's lease, and the second's write, prepared on the old `version`, matches
-  nothing. A relink write that fails is logged and raises nothing. The check stays scheduled, and the
-  pass decides it again.
+  So every attempt costs at most one relink, and a relink that always outlives its lease still
+  reaches the give-up. After the give-up, a decision whose alert reaches no channel repeats once
+  every 24 h until one does. That is one relink and one alert attempt per day for each such hold,
+  for as long as no channel takes it.
+- **What is guaranteed about the alert.** One caller raises each decision's alert: the one whose
+  claim returned the row. Two ticks on two instances are serialised by the payer's lease, and the
+  second's claim, prepared on the old `version`, matches nothing. `alerted_at` set means an alert
+  reached a channel, and then nothing is raised again. While no alert has reached a channel, the
+  decision is alerted again every 24 h. The alert can be raised **more than once** for one decision
+  in two cases:
+  - it reached no channel, so it is raised again by design;
+  - the process stopped, or the lease was lost or a write failed, between the alert and its stamp.
+
+  So the guarantee is **at least one delivered alert** whenever a channel takes it, and normally
+  exactly one. It is not "exactly one". A relink write that fails is logged and raises nothing, and
+  the check it would have moved stays as it was.
 - **What the retry cannot do.** It runs `relinkAdoptedSetup`, so every check that function makes is
   made on every attempt, under the payer's lease and fence: X's and its customer's `created_by` are U,
   X names no other team, and `holdsManageBilling(U, O)`. It never links to a team U cannot manage. It
@@ -1079,7 +1106,8 @@ Four changes:
   `next_check_at <= now()`. The payer's setup for the hold's subscription must be open (`linked_at` and
   `closed_at` null) and not refused `org_has_plan`, and no open hold may name the subscription. For
   each one, it takes the payer's lease with a 0s wait, re-reads the hold under it with the same
-  predicate, and runs `relinkAdoptedHold` (§4.1 "The relink retry"). The query joins `payment_holds`
+  predicate, and runs `relinkAdoptedHold` (§4.1 "The relink retry"). A lost lease is recorded as a
+  failed attempt under a lease taken afresh with a 0s wait. The query joins `payment_holds`
   to `pending_org_setups` on `subscription_id` and `user_id::text = payer_key`. It needs no migration.
 
 It runs on every instance, and the lease serialises them. It has the optional twin route behind
@@ -1294,8 +1322,9 @@ creator's next Create a team links it through today's link.
 
 **Note (amendment 2026-10-14, #6078):** "at once" is the first attempt, not the only one. A re-link
 that throws is retried by the sweeper's relink pass on a bounded backoff, and a permanent failure ends
-in one alert (§4.1 "The relink retry"). A `not_linked` check alerts once, recorded on the hold, and is
-not retried: it is a decision for an operator, not a transient failure.
+in an alert, recorded once it reaches a channel (§4.1 "The relink retry"). A `not_linked` check is a
+decision for an operator, not a transient failure. It alerts through the same decision and is not
+retried, except a day later when its alert reached no channel.
 
 **The resume lookups report a held setup.** `NewOrgSetupState` (`lib/billing/new-org-setup.ts:72-103`)
 gains `hold: { state; notice } | null`, and `resolveNewOrgSetup` (`billing.ts:2107`) and
@@ -1961,10 +1990,13 @@ Stripe, so they reach every row regardless.
 | C110 | **Note 2026-10-14 (#6059, closing #6052; S8 follow-up 4).** The closer runs without the payer's lease; E0 inserts a hold on the same ended X and commits after the closer's `NOT EXISTS` read its snapshot, so the setup is closed while a hold names X. | #6052; review of #6059 A1–A3 | §5.7 "Who alerts" (note 2026-10-14); I14; I16 (a). | `tests/integration/pending-org-setups.test.ts` (real Postgres, "#6052" block, two connections).<br>**The race.** Connection E inserts an open hold on a `canceled` X and does not commit; `settleOpenSetup` runs; E commits only once the closer has finished or shows in `pg_stat_activity` waiting on a lock on `payment_holds`. The verdict is `open`, the setup and the hold stay open, and the closer was seen waiting. With the pre-#6059 closer it fails: `closed_at` is set while the hold is open.<br>**The lock timeout.** Another uncommitted hold write keeps ROW EXCLUSIVE: `closePendingOrgSetup`, `settleOpenSetup` and `close-setup` each get `55P03` or the refusal, with nothing written; after that write rolls back, the same close lands.<br>**The fast path.** With a committed open hold on X and the same blocking write open, the close returns null at once, and `close-setup` refuses with the open-hold message.<br>`tests/scripts/pending-org-setups.test.ts`: the statement order (timeout, probe, `LOCK`, then the write), the fast path (no `LOCK`, no write), and the `55P03` refusal with nothing written. |
 | C111 | **Amendment 2026-10-14 (#6078).** The `adopted` release schedules the relink check, and the relink write is fenced to a released `adopted` `new_org` hold. | #6078 | §4.1 "The relink retry"; I14. | `tests/integration/payment-holds.test.ts` ("#6078" block). An `adopted` `new_org` release sets `next_check_at` at or before the database's `now()` and restarts `attempts` and `last_error`. A `voided_unpaid` release and an `org_plan` adoption leave `next_check_at` null. `writeAdoptedRelinkState` lands at the hold's `version` and bumps it, changing only its four columns. A write on the old version, on an open hold, on another release reason, on an `org_plan` hold, or under a lapsed lease writes nothing. |
 | C112 | A re-link after an adoption throws once (Stripe is down), then succeeds. | #6078 | §4.1 "The relink retry"; §5.4 the relink pass. | `tests/integration/payment-hold-sweeper.test.ts` ("#6078" block). The visit's re-link throws: `attempts = 1`, `last_error` set, and `next_check_at` 5 minutes out. The setup stays open and no alert is raised. A tick before the check is due makes no Stripe read. Once it is due, the pass links X: `linked_at` set, X names O, `next_check_at` null, no alert. `tests/actions/billing-new-org-holds.test.ts`: the purchase's re-link throws, so the hold records attempt 1 and the 5-minute check, the purchase still resumes, and no alert is raised. `tests/lib/billing/sweeper.test.ts`: the record is written on the hold's `version`, with the next delay. |
-| C113 | A re-link keeps throwing. | #6078 | §4.1 "The relink retry" (the bounds, one alert). | `tests/integration/payment-hold-sweeper.test.ts`. After attempts 1–5, `next_check_at` is 5m, 15m, 1h, 4h and 12h out, with no alert. Attempt 6 runs from two overlapping ticks and gives up: `attempts = 6`, `next_check_at` null, `alerted_at` set, exactly one alert ("failed 6 times"), and six Stripe reads in all. Two more ticks read nothing and alert nothing. `tests/lib/billing/sweeper.test.ts`: the schedule. The alert is raised only when the give-up write returned the row. A failed write alerts nothing. A lost lease is thrown with nothing written. |
-| C114 | The setup of a scheduled hold was linked by another path (the creator's own link). | #6078 | §5.4 the relink pass (its setup predicate). | `tests/integration/payment-hold-sweeper.test.ts`. Of two holds whose checks are due, the one whose setup is linked gets no Stripe read and no write. The open one beside it is linked. |
-| C115 | A re-link check fails for good: the creator no longer holds `manage_billing`. | #6078 | §4.1 "The relink retry" (`not_linked`). | `tests/integration/payment-hold-sweeper.test.ts`. One alert naming `manage_billing` across three ticks, with `alerted_at` set and `last_error` naming it. No Stripe write. The setup stays open. |
+| C113 | A re-link keeps throwing. | #6078 | §4.1 "The relink retry" (the bounds, one alert). | `tests/integration/payment-hold-sweeper.test.ts`. After attempts 1–5, `next_check_at` is 5m, 15m, 1h, 4h and 12h out, with no alert. Attempt 6 runs from two overlapping ticks and gives up, with an alert that reaches a channel: `attempts = 6`, `next_check_at` null, `alerted_at` set, exactly one alert ("failed 6 times"), and six Stripe reads in all. Two more ticks read nothing and alert nothing. `tests/lib/billing/sweeper.test.ts`: the schedule; the order claim, alert, stamp; an undelivered alert stamps nothing; a claim that matched nothing, or that failed, alerts nothing; a lease taken over before the record is thrown with nothing written. |
+| C114 | The setup of a scheduled hold was linked by another path (the creator's own link). | #6078 | §5.4 the relink pass (its setup predicate). | `tests/integration/payment-hold-sweeper.test.ts`. Of two holds whose checks are due, the one whose setup is linked gets no Stripe read and no write: its `version` and `next_check_at` are unchanged. The open one beside it is linked. Without the open-setup predicate it fails. |
+| C115 | A re-link check fails for good: the creator no longer holds `manage_billing`. | #6078 | §4.1 "The relink retry" (`not_linked`, the alert decision). | `tests/integration/payment-hold-sweeper.test.ts`. One delivered alert naming `manage_billing` across three ticks, with `alerted_at` set and `last_error` naming it. No Stripe write. The setup stays open. `tests/lib/billing/sweeper.test.ts`: when the claim's compare-and-set loses, the held alert is **not** raised. When it lands, the alert is raised and then stamped. |
 | C116 | The process stopped between an `adopted` release and its re-link. | #6078 | §4.1 "The relink retry" (the schedule). | `tests/integration/payment-hold-sweeper.test.ts`. A hold released `adopted` through the store, with no re-link run, is linked by the next tick's pass, and its check is cleared. |
+| C117 | An adopted hold's check falls due while an open hold names X (a refusal's `link_refused` hold). | #6079 money review, advisory 3 | §5.4 the relink pass (its open-hold predicate). | `tests/integration/payment-hold-sweeper.test.ts`. No Stripe read. The adopted hold's `version`, `next_check_at` and `attempts` are unchanged. Without the predicate it fails. |
+| C118 | The decision's alert reaches no channel. | #6079 money review, advisory 1 | §4.1 "The relink retry" (the alert decision). | `tests/integration/payment-hold-sweeper.test.ts`. `alerted_at` stays null and the check is about a day out. A tick before then raises nothing. Once it is due, the relink is decided and alerted again, then stamped when that alert is delivered, and nothing follows. |
+| C119 | Every relink outlives its lease (another holder takes it over mid-read). | #6079 money review, advisory 2 | §4.1 "The relink retry" (the lost lease, the bounds). | `tests/integration/payment-hold-sweeper.test.ts`. Each loss is recorded as an attempt under a lease taken afresh (`last_error` names the lease), on the backoff. The sixth gives up with exactly one alert and no Stripe write, and later ticks raise nothing. |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 

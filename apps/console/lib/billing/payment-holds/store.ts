@@ -52,7 +52,7 @@
 //   RELINK WRITE  `writeAdoptedRelinkState` (amendment 2026-10-14, #6078): the one write on a RELEASED
 //                 row, and only on a `new_org` hold released `adopted`. `attempts`, `last_error`,
 //                 `next_check_at` and `alerted_at` only — the relink retry's count, last failure, next
-//                 retry and its one give-up alert. Fenced like a state write (`version` and the payer's
+//                 retry, and when its alert reached a channel. Fenced like a state write (`version` and the payer's
 //                 lease, one statement) and bumps `version`; never changes `state` or `release_*`.
 // Neither a hint nor a claim touches `version`, so neither can make a state write miss (C74).
 //
@@ -261,7 +261,8 @@ export async function writeHoldState(
 
 /**
  * What the relink bookkeeping (§4.1 amendment 2026-10-14, #6078) may change on a released `adopted`
- * hold: the retry count, the last failure, the next retry (null: no more retries), and the one alert.
+ * hold: the retry count, the last failure, the next retry (null: no more retries), and when its alert
+ * reached a channel.
  */
 export interface AdoptedRelinkPatch {
 	attempts?: number;
@@ -273,8 +274,8 @@ export interface AdoptedRelinkPatch {
 /**
  * The relink bookkeeping write (§4.1 amendment 2026-10-14, #6078): the ONE write on a released row. It
  * matches only a `new_org` hold released `adopted`, at the `version` the caller read, behind the payer's
- * live lease, in one statement, and bumps `version`, so two callers can never both record one retry or
- * both raise the give-up alert. It changes `attempts`, `last_error`, `next_check_at` and `alerted_at`
+ * live lease, in one statement, and bumps `version`, so of two callers prepared on one version only one
+ * records the retry or claims the alert decision. It changes `attempts`, `last_error`, `next_check_at` and `alerted_at`
  * and nothing else: never `state` or a `release_*` column. Returns the new row, or null when nothing was
  * written (the version moved, the hold is not a released `adopted` `new_org` hold, or the lease is lost).
  */

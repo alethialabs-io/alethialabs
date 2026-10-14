@@ -47,6 +47,11 @@
 //        retried: the check is cleared and `alerted_at` stamped.
 //   C116 an adopted hold whose relink never ran (the release's own schedule, nothing recorded) is linked by
 //        the next tick's pass.
+//   C117 the pass never retries while an open hold names X: the adopted hold is left as it was.
+//   C118 an alert that reaches no channel stamps nothing; the check stays a day out, and the decision is
+//        made, and alerted, again then.
+//   C119 a relink that always loses its lease is counted as a failed attempt under a lease taken afresh,
+//        and the sixth gives up with ONE alert.
 //
 // The link's core reaches Stripe through the purchase client (`getPurchaseStripe`), faked here over
 // `linkWorld`; the sync applies X to the org's row with the real guarded write
@@ -71,12 +76,15 @@ const linkWorld = vi.hoisted(() => ({
 	retrieveFailures: 0,
 	/** Every `subscriptions.retrieve` the link's core made. */
 	retrieves: [] as string[],
+	/** Runs at every `subscriptions.retrieve`, before it answers: the lease loss a test stages (#6078). */
+	onRetrieve: null as null | ((id: string) => Promise<void>),
 }));
 vi.mock("@/lib/billing/stripe", () => {
 	const client = {
 		subscriptions: {
 			retrieve: async (id: string) => {
 				linkWorld.retrieves.push(id);
+				await linkWorld.onRetrieve?.(id);
 				if (linkWorld.retrieveFailures > 0) {
 					linkWorld.retrieveFailures -= 1;
 					throw new Error("An error occurred with our connection to Stripe.");
@@ -1207,6 +1215,8 @@ describeIfDb("payment-hold sweeper — #6078: a failed re-link is retried with b
 		linkWorld.allowed = true;
 		linkWorld.retrieveFailures = 0;
 		linkWorld.retrieves = [];
+		linkWorld.onRetrieve = null;
+		alert.mockImplementation(async () => true);
 	});
 
 	/** The sweep alerts raised with `sub` as the subject. */
@@ -1309,12 +1319,14 @@ describeIfDb("payment-hold sweeper — #6078: a failed re-link is retried with b
 		await getServiceDb().update(pendingOrgSetups).set({ linked_at: new Date() }).where(eq(pendingOrgSetups.subscription_id, linked.sub));
 		await makeDue(linked.h.id);
 		await makeDue(open.h.id);
+		const due = await read(linked.h.id);
 
 		await tick(linked.payer, stripe);
 		await tick(open.payer, stripe);
 		expect(linkWorld.retrieves).toEqual([linked.sub, open.sub, open.sub]);
 		expect(linkWorld.updates).toEqual([`customers.update:cus_${open.sub}`, `subscriptions.update:${open.sub}`]);
-		expect(await read(linked.h.id)).toMatchObject({ attempts: 1 });
+		// No write at all on the linked setup's hold: its version and its due check are as they were.
+		expect(await read(linked.h.id)).toMatchObject({ attempts: 1, version: due.version, next_check_at: due.next_check_at });
 		expect(await setupOf(open.sub)).toMatchObject({ linked_at: expect.any(Date) });
 		expect(alertsOn(linked.sub)).toEqual([]);
 	});
@@ -1351,6 +1363,81 @@ describeIfDb("payment-hold sweeper — #6078: a failed re-link is retried with b
 		expect(await setupOf(sub)).toMatchObject({ linked_at: expect.any(Date) });
 		expect(await read(h.id)).toMatchObject({ next_check_at: null });
 		expect(alertsOn(sub)).toEqual([]);
+	});
+
+	it("C117: no retry while an open hold names X — the adopted hold's due check is not touched", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.retrieveFailures = 1;
+		await tick(payer, stripe);
+		// A new hold on X opens (a refusal's link_refused hold), not due for a day; then the check falls due.
+		await hold(payer, sub, { state: "needs_operator", open_note: "link_refused", next_check_at: new Date(Date.now() + DAY) });
+		await makeDue(h.id);
+		const due = await read(h.id);
+
+		await tick(payer, stripe);
+		expect(linkWorld.retrieves).toEqual([sub]);
+		expect(await read(h.id)).toMatchObject({ version: due.version, next_check_at: due.next_check_at, attempts: 1 });
+		expect(alertsOn(sub)).toEqual([]);
+	});
+
+	it("C118: an alert that reaches no channel stamps nothing and is raised again when its day-later check falls due", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.allowed = false;
+		alert.mockImplementation(async () => false);
+
+		await tick(payer, stripe);
+		const undelivered = await read(h.id);
+		expect(undelivered.alerted_at).toBeNull();
+		expect(msUntil(undelivered.next_check_at)).toBeGreaterThan(DAY - 60_000);
+		expect(alertsOn(sub)).toHaveLength(1);
+
+		// Not due: nothing more. Due: decided again, and alerted again — this time it reaches a channel.
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(1);
+		alert.mockImplementation(async () => true);
+		await makeDue(h.id);
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(2);
+		const delivered = await read(h.id);
+		expect(delivered.alerted_at).toBeInstanceOf(Date);
+		expect(delivered.next_check_at).toBeNull();
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(2);
+	});
+
+	it("C119: a relink that always loses its lease counts as a failed attempt, and the sixth gives up with ONE alert", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		// Every relink outlives its lease: another holder takes it over and lets it lapse mid-read.
+		linkWorld.onRetrieve = async () => {
+			await getServiceDb()
+				.update(purchaseLeases)
+				.set({ holder: randomUUID(), expires_at: sql`now() - interval '1 second'` })
+				.where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		};
+
+		await tick(payer, stripe);
+		const first = await read(h.id);
+		expect(first.attempts).toBe(1);
+		expect(first.last_error).toMatch(/lease/);
+		expect(msUntil(first.next_check_at)).toBeGreaterThan(4 * 60_000);
+		expect(alertsOn(sub)).toEqual([]);
+
+		for (let attempt = 2; attempt <= 6; attempt += 1) {
+			await makeDue(h.id);
+			await tick(payer, stripe);
+			expect((await read(h.id)).attempts).toBe(attempt);
+		}
+		const gaveUp = await read(h.id);
+		expect(gaveUp.next_check_at).toBeNull();
+		expect(gaveUp.alerted_at).toBeInstanceOf(Date);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(alertsOn(sub)[0]?.detail).toMatch(/failed 6 times/);
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(linkWorld.updates).toEqual([]);
 	});
 });
 
