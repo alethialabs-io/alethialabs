@@ -14,6 +14,10 @@
 //
 // ADR 0004 C42 (O1, #6001): `list --scope org_plan` lists only those holds, and `release <sub>` of an
 // `org_plan` hold takes `org-plan:<O>` and writes `released(operator)`.
+//
+// ADR 0004 C43 (O5, #6022): `reconcile --backfill` widens B1 to org-plan subscriptions and opens each hit
+// as an `org_plan` hold of its org, under `org-plan:<org>`; the rest of B2–B6 still lists anything it
+// cannot prove never live.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -739,7 +743,7 @@ describe("backfillVerdict (§8 B1–B6)", () => {
 			payer: "payer-1",
 			customerId: "cus_x",
 			invoiceId: "in_a",
-			evidence: expect.stringMatching(/^backfill: B2 .* B4 invoice open/),
+			evidence: expect.stringMatching(/^backfill: B1 create-a-team subscription of payer-1; B2 .* B4 invoice open/),
 			toOperator: false,
 		});
 	});
@@ -758,12 +762,12 @@ describe("backfillVerdict (§8 B1–B6)", () => {
 		});
 	});
 
-	it("B1: an org's subscription, or one with no creator, is not create-a-team", async () => {
+	it("B1: an AI subscription, or one with no creator and no org, is not covered (C43 has the org-plan half)", async () => {
 		const stripe = backfillStripe([], {}, {});
-		expect(await backfillVerdict(ended("s", { metadata: { created_by: "u", organization_id: "o" } }), stripe)).toEqual({
-			kind: "not_create_a_team",
-		});
-		expect(await backfillVerdict(ended("s", { metadata: {} }), stripe)).toEqual({ kind: "not_create_a_team" });
+		expect(
+			await backfillVerdict(ended("s", { metadata: { created_by: "u", organization_id: "o", product_type: "ai_subscription" } }), stripe),
+		).toEqual({ kind: "not_covered" });
+		expect(await backfillVerdict(ended("s", { metadata: {} }), stripe)).toEqual({ kind: "not_covered" });
 	});
 
 	it("lists, naming the failed test: B2 not requested, B3 renewed, B4 paid before it ended, B5 a bank debit, B6 withdrawn", async () => {
@@ -794,7 +798,7 @@ describe("backfillVerdict (§8 B1–B6)", () => {
 
 describe("runBackfill (C58)", () => {
 	it("holds and advances each hit under its payer's lease, lists the rest, and writes nothing for them", async () => {
-		const subs = [ended("sub_hit"), ended("sub_legit"), ended("sub_org", { metadata: { created_by: "u", organization_id: "o" } })];
+		const subs = [ended("sub_hit"), ended("sub_legit"), ended("sub_ai", { metadata: { organization_id: "o", product_type: "ai_subscription" } })];
 		const bf = backfillStripe(subs, { sub_hit: one("in_hit", "open"), sub_legit: one("in_legit", "paid", 500) }, {
 			in_hit: [{ id: "pi_h", status: "requires_payment_method", pm: null }],
 			in_legit: [{ id: "pi_l", status: "succeeded", pm: "card" }],
@@ -805,10 +809,11 @@ describe("runBackfill (C58)", () => {
 		// sub_hit: B6, no known hold, none under the lease either; sub_legit: no known hold (it is listed).
 		db.queue.push([], [], [], [], []);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 1, toOperator: 0, listed: 1, alreadyHeld: 0, notCreateATeam: 1 });
+		expect(summary).toEqual({ held: 1, toOperator: 0, listed: 1, alreadyHeld: 0, notCovered: 1 });
 		expect(store.openHold).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(store.openHold).mock.calls[0]?.[1]).toMatchObject({
 			subscriptionId: "sub_hit",
+			scope: "new_org",
 			payerKey: "payer-1",
 			invoiceId: "in_hit",
 			state: "closing",
@@ -825,7 +830,7 @@ describe("runBackfill (C58)", () => {
 		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
 		db.queue.push([], [{ id: "hold-old", state: "released" }]);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCreateATeam: 0 });
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCovered: 0 });
 		expect(store.openHold).not.toHaveBeenCalled();
 		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
 		expect(log).toEqual([]);
@@ -839,7 +844,7 @@ describe("runBackfill (C58)", () => {
 		// B6; the first look finds nothing; the look under the lease finds the other run's hold.
 		db.queue.push([], [], [{ id: "hold-other", state: "released" }]);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCreateATeam: 0 });
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCovered: 0 });
 		expect(lease.acquirePurchaseLease).toHaveBeenCalledTimes(1);
 		expect(store.openHold).not.toHaveBeenCalled();
 		expect(log).toEqual([]);
@@ -852,7 +857,7 @@ describe("runBackfill (C58)", () => {
 		vi.mocked(store.openHold).mockResolvedValue({ kind: "opened", hold: opened });
 		db.queue.push([], [], []);
 		const summary = await runBackfill(serverDeps(machine), bf, print);
-		expect(summary).toEqual({ held: 0, toOperator: 1, listed: 0, alreadyHeld: 0, notCreateATeam: 0 });
+		expect(summary).toEqual({ held: 0, toOperator: 1, listed: 0, alreadyHeld: 0, notCovered: 0 });
 		expect(vi.mocked(store.openHold).mock.calls[0]?.[1]).toMatchObject({
 			state: "needs_operator",
 			openNote: expect.stringMatching(/B5 unproven/),
@@ -862,6 +867,169 @@ describe("runBackfill (C58)", () => {
 		expect(store.writeHoldState).toHaveBeenCalledWith(LEASE, { id: "hold-op", version: 0 }, { alertedAt: expect.any(Date) });
 		expect(log).toEqual([]);
 		expect(store.releaseHold).not.toHaveBeenCalled();
+	});
+});
+
+// ── ADR 0004 C43 (O5, §9 step 5): the backfill widened to org-plan subscriptions ───────────────────
+
+describe("ADR 0004 C43: the backfill holds only a never-live org-plan checkout, as an org_plan hold", () => {
+	/** An org-plan subscription of `org` (ADR 0004 §2: its own `organization_id`, no `product_type`). */
+	const orgEnded = (id: string, org = "org-o", over: Partial<BackfillSubscription> = {}) =>
+		ended(id, { metadata: { organization_id: org }, ...over });
+
+	it("B1 widened: an org-plan subscription, and a linked create-a-team one, are held as org_plan with the org as payer", async () => {
+		const stripe = backfillStripe(
+			[],
+			{ sub_op: one("in_op", "open"), sub_link: one("in_link", "open") },
+			{
+				in_op: [{ id: "pi_op", status: "requires_payment_method", pm: null }],
+				in_link: [{ id: "pi_link", status: "requires_payment_method", pm: "card" }],
+			},
+		);
+		db.queue.push([], []); // B6 for each: no withdrawn order
+		expect(await backfillVerdict(orgEnded("sub_op"), stripe)).toMatchObject({
+			kind: "hold",
+			scope: "org_plan",
+			payer: "org-o",
+			invoiceId: "in_op",
+			evidence: expect.stringMatching(/^backfill: B1 org-plan subscription of org-o; B2 .* B4 invoice open/),
+			toOperator: false,
+		});
+		// A linked create-a-team subscription carries `organization_id`, so it is the org's (ADR 0004 §2).
+		expect(
+			await backfillVerdict(ended("sub_link", { metadata: { created_by: "payer-1", organization_id: "org-o" } }), stripe),
+		).toMatchObject({ kind: "hold", scope: "org_plan", payer: "org-o" });
+	});
+
+	it("B1 still holds a create-a-team subscription as new_org, with its creator as payer", async () => {
+		const stripe = backfillStripe([], { sub_a: one("in_a", "open") }, { in_a: [{ id: "pi_a", status: "requires_payment_method", pm: null }] });
+		db.queue.push([]);
+		expect(await backfillVerdict(ended("sub_a"), stripe)).toMatchObject({
+			kind: "hold",
+			scope: "new_org",
+			payer: "payer-1",
+			evidence: expect.stringMatching(/^backfill: B1 create-a-team subscription of payer-1; B2 /),
+		});
+	});
+
+	it("B1: an AI subscription, any product_type, or one naming neither an org nor a creator is not covered, and nothing is read", async () => {
+		const stripe = backfillStripe([], {}, {});
+		const invoices = vi.spyOn(stripe.invoices, "list");
+		const metadatas: Array<Record<string, string>> = [
+			{ organization_id: "org-o", product_type: "ai_subscription" },
+			{ organization_id: "org-o", created_by: "payer-1", product_type: "ai_subscription" },
+			{ organization_id: "org-o", product_type: "credit_pack" },
+			{},
+		];
+		for (const metadata of metadatas) {
+			expect(await backfillVerdict(ended("s", { metadata }), stripe)).toEqual({ kind: "not_covered" });
+		}
+		expect(await backfillVerdict(ended("s", { metadata: null }), stripe)).toEqual({ kind: "not_covered" });
+		expect(invoices).not.toHaveBeenCalled();
+		expect(db.db.select).not.toHaveBeenCalled();
+	});
+
+	it("lists every org-plan subscription it cannot prove never live: a customer's cancel of a paid plan, a renewal, a $0 trial invoice paid at creation, a bank debit, a withdrawal", async () => {
+		const stripe = backfillStripe(
+			[],
+			{
+				sub_dunned: one("in_d", "open"),
+				sub_renewed: [
+					{ id: "in_r1", status: "paid", billing_reason: "subscription_create", paid_at: 10 },
+					{ id: "in_r2", status: "open", billing_reason: "subscription_cycle", paid_at: null },
+				],
+				sub_paid: one("in_paid", "paid", 500),
+				sub_trial: one("in_trial", "paid", 100),
+				sub_sepa: one("in_sepa", "open"),
+				sub_withdrawn: one("in_w", "open"),
+			},
+			{
+				in_paid: [{ id: "pi_paid", status: "succeeded", pm: "card" }],
+				in_sepa: [{ id: "pi_sepa", status: "processing", pm: "sepa_debit" }],
+				in_w: [{ id: "pi_w", status: "requires_payment_method", pm: null }],
+			},
+		);
+		expect(await backfillVerdict(orgEnded("sub_dunned", "org-o", { cancellation_details: { reason: "payment_failed" } }), stripe)).toMatchObject({
+			kind: "listed",
+			failed: expect.stringMatching(/^B2/),
+		});
+		expect(await backfillVerdict(orgEnded("sub_renewed"), stripe)).toMatchObject({ kind: "listed", failed: expect.stringMatching(/^B3/) });
+		expect(await backfillVerdict(orgEnded("sub_paid"), stripe)).toMatchObject({ kind: "listed", failed: expect.stringMatching(/^B4/) });
+		expect(await backfillVerdict(orgEnded("sub_trial"), stripe)).toMatchObject({ kind: "listed", failed: expect.stringMatching(/^B4/) });
+		expect(await backfillVerdict(orgEnded("sub_sepa"), stripe)).toMatchObject({ kind: "listed", failed: expect.stringMatching(/^B5/) });
+		db.queue.push([{ id: "order-9" }]);
+		expect(await backfillVerdict(orgEnded("sub_withdrawn"), stripe)).toMatchObject({
+			kind: "listed",
+			failed: expect.stringMatching(/^B6/),
+		});
+	});
+
+	it("runBackfill opens the org-plan hit as scope org_plan under org-plan:<org>, advances it, lists the rest and skips the AI one", async () => {
+		const subs = [
+			orgEnded("sub_op"),
+			orgEnded("sub_paid"),
+			ended("sub_ai", { metadata: { organization_id: "org-o", product_type: "ai_subscription" } }),
+		];
+		const bf = backfillStripe(subs, { sub_op: one("in_op", "open"), sub_paid: one("in_paid", "paid", 500) }, {
+			in_op: [{ id: "pi_op", status: "requires_payment_method", pm: null }],
+			in_paid: [{ id: "pi_paid", status: "succeeded", pm: "card" }],
+		});
+		const { stripe: machine } = fakeStripe({ sub: "canceled", invoice: "open" });
+		const orgLease = { key: "org-plan:org-o", holder: "holder-1" };
+		vi.mocked(lease.acquirePurchaseLease).mockResolvedValue(orgLease);
+		const opened = hold({ id: "hold-org", scope: "org_plan", payer_key: "org-o", subscription_id: "sub_op", invoice_id: "in_op", opened_by: "backfill", opened_by_user_id: null });
+		vi.mocked(store.openHold).mockResolvedValue({ kind: "opened", hold: opened });
+		// sub_op: B6, no known hold, none under the lease; sub_paid: no known hold (it is listed).
+		db.queue.push([], [], [], []);
+		const summary = await runBackfill(serverDeps(machine), bf, print);
+		expect(summary).toEqual({ held: 1, toOperator: 0, listed: 1, alreadyHeld: 0, notCovered: 1 });
+		expect(lease.acquirePurchaseLease).toHaveBeenCalledTimes(1);
+		expect(lease.acquirePurchaseLease).toHaveBeenCalledWith("org-plan:org-o", 30_000);
+		expect(store.openHold).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(store.openHold).mock.calls[0]).toEqual([
+			orgLease,
+			expect.objectContaining({
+				scope: "org_plan",
+				subscriptionId: "sub_op",
+				payerKey: "org-o",
+				invoiceId: "in_op",
+				state: "closing",
+				openedBy: "backfill",
+				openNote: expect.stringMatching(/^backfill: B1 org-plan subscription of org-o; /),
+			}),
+		]);
+		expect(store.releaseHold).toHaveBeenCalledWith(orgLease, expect.anything(), expect.objectContaining({ reason: "voided_unpaid" }));
+		expect(lease.releasePurchaseLease).toHaveBeenCalledWith(orgLease);
+		expect(printed.some((l) => l.startsWith("HELD sub_op: hold hold-org, org_plan of org-o,"))).toBe(true);
+		expect(printed.some((l) => l.startsWith("LISTED sub_paid: B4"))).toBe(true);
+		expect(printed.some((l) => l.includes("sub_ai"))).toBe(false);
+	});
+
+	it("is safe to run twice: an org-plan subscription any hold has named, of either scope, is skipped with no lease and no write", async () => {
+		const bf = backfillStripe([orgEnded("sub_op")], { sub_op: one("in_op", "open") }, {
+			in_op: [{ id: "pi_op", status: "requires_payment_method", pm: null }],
+		});
+		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
+		db.queue.push([], [{ id: "hold-earlier", state: "released" }]); // B6; the first look finds a hold
+		const summary = await runBackfill(serverDeps(machine), bf, print);
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 0, alreadyHeld: 1, notCovered: 0 });
+		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
+		expect(store.openHold).not.toHaveBeenCalled();
+		expect(log).toEqual([]);
+	});
+
+	it("an org-plan hit whose org's lease stays busy is listed, and nothing is opened", async () => {
+		const bf = backfillStripe([orgEnded("sub_op")], { sub_op: one("in_op", "open") }, {
+			in_op: [{ id: "pi_op", status: "requires_payment_method", pm: null }],
+		});
+		const { stripe: machine, log } = fakeStripe({ sub: "canceled", invoice: "open" });
+		vi.mocked(lease.acquirePurchaseLease).mockResolvedValue(null);
+		db.queue.push([], []);
+		const summary = await runBackfill(serverDeps(machine), bf, print);
+		expect(summary).toEqual({ held: 0, toOperator: 0, listed: 1, alreadyHeld: 0, notCovered: 0 });
+		expect(lease.acquirePurchaseLease).toHaveBeenCalledWith("org-plan:org-o", 30_000);
+		expect(store.openHold).not.toHaveBeenCalled();
+		expect(log).toEqual([]);
 	});
 });
 
