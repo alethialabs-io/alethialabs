@@ -15,7 +15,8 @@ narrowed its scope (ADR 0002 §7, Q13):
 
 1. **A hold scope per flow.** `payment_holds` gains a `scope` column (`new_org`, `org_plan`). Every hold is
    keyed, fenced, swept and read by `(scope, payer_key)`. An org-plan hold never blocks or reroutes a
-   create-a-team purchase, and the reverse also holds (AC 8, §3 D1).
+   create-a-team purchase (AC 8, §3 D1). The reverse has one deliberate exception: a create-a-team hold on a
+   linked, still-`incomplete` subscription refuses the org's plan purchase until that hold decides it (D2 (b) 4).
 2. **The org-plan purchase on holds.** It mints only through I1 for its scope: advance the org's holds, close
    the org's own unpaid checkouts under a hold, then a live check read last (§3 D2). It moves from a
    transaction-held advisory lock to a lease row, `org-plan:<orgId>`, with ADR 0002's fence, artifact gate and
@@ -41,8 +42,11 @@ separately, and this design builds on them as they are specified:
   subscriptions, fully paged, before minting, and refuse beside a live org-plan one (`active`, `trialing`,
   `past_due`).
 
-Where this ADR changes something F2 or F3 ships (the `org-plan:` advisory key becomes a lease, F3's live set is
-widened, F3's check moves to after the sweep), the slice that does it says so (§11).
+F3 is PR #5979 and lands on `dev` before any slice here. Where this ADR changes something F2 or F3 ships, the slice
+that does it says so (§11): the `org-plan:` advisory key becomes a lease (O4, O6), F3's live set gains `unpaid` and
+`paused` and its `past_due` copy changes (O2), and Checkout and the trial gain the hold pass and the sweep before F3's
+check (O6). F3's check already runs after the org-plan sweep in `startOrgSubscription`; what O6 changes is that the
+sweep before it runs under holds.
 
 **Citations.** Every claim about today's code cites `file:line` at `origin/dev` `6f050e0b7` (2026-10-14). Every
 path is relative to `apps/console/`, except this ADR's own folder, `docs/adr/`, and §11's `scope:` globs, which
@@ -52,6 +56,25 @@ are relative to the repo root. "ADR 0002 §n" and "0002-Cn" name that ADR's sect
 ## Revisions
 
 - **Rev 1** (2026-10-14). The first draft, written before any code, as #5506 and ADR 0002 Q13 require.
+- **Rev 2** (2026-10-14, the money review of `f98672737`: three blockers, sixteen advisories).
+  - **B1 (blocker): a session with no session-level key, plus Stripe's 24h default expiry, gave two plans.** (a′)
+    now expires every `open` subscription-mode session on O's customer that has O's key **or no key**. Expiring a
+    session only ever costs a checkout a restart, never a charge. As a second guard, O6 deploys only 24h after O4's
+    rollout has completed. New case C44.
+  - **B2 (blocker): D7's `past_due` arm caught off-Stripe grants.** D7's row arm now needs a non-null
+    `stripeSubscriptionId`. Every subscription-less row goes through D5 only: a live grant gets the contract copy,
+    and a lapsed one is not refused. C30 gains its `past_due` variants. New case C45.
+  - **B3 (blocker): the cross-scope refusal was one fixed sentence.** It is now ADR 0002 §5.5's clause for that
+    hold's state and `last_pay`: verbatim when the buyer is the hold's payer, and a payer-neutral rewording of the
+    same clause otherwise (D8 table). C16 checks one case per state.
+  - **Advisories, all taken.** (1)–(3) F3 is aligned: (c) keeps F3's price-based classifier, and O2 names the F3
+    assertion it changes. (4) D6b′ reports a replaced `paused` subscription. (5) The trial runs (a′) and (b)
+    under its lease. (6) Needed no change. (7) The D1 summary and O1 now name the cross-scope exception. (8) O1
+    builds the org-plan reader and the scope-free lookup. (9) `scope` is optional in `openHold` until O8.
+    (10) O3 adds a server-only `lib/billing/operator-alert.ts`, and O6 moves `billing.ts` onto it. (11) "Paid" is
+    used consistently for R1's email rule. (12) C1 and C30's base case are labelled pins. (13) C21 moves to O6.
+    (14) O4 takes the advisory key first, then the lease. (15) R1 prefers `active` over `trialing`. (16) O8
+    removes the `scope` default.
 
 ---
 
@@ -180,7 +203,7 @@ ADR 0002 §1.3 S1–S15 hold unchanged here, with the same caveats. Two more are
 | **Scope** | The product a hold is about: `new_org` (create-a-team, ADR 0002) or `org_plan` (this ADR). Written at E0 and never changed. |
 | **Payer key** | Who pays in that scope. `new_org`: the user id. `org_plan`: the org id. The pair `(scope, payer_key)` is the key. `payer_key` alone is never a key. |
 | **Lease key** | `leaseKeyFor(scope, payer_key)`: `user:<payer>` for `new_org`, `org-plan:<payer>` for `org_plan`. One function, used by the store's fence, the sweeper, the operator script and every flow. |
-| **Org-plan subscription of O** | A subscription whose **own** metadata has `organization_id = O` and no `product_type` (`billing.ts:1560`, `:1457`, `:1712`). A linked create-a-team subscription carries `organization_id = O` too (`sweeper.ts:388-392`), so it is one (ADR 0002 §2: "it becomes an ordinary org subscription once the link writes `organization_id`"). An AI subscription (`product_type = "ai_subscription"`, `billing.ts:1624`) is not. Neither is another org's subscription on a shared customer. The customer is never evidence. |
+| **Org-plan subscription of O** | A subscription whose **own** metadata has `organization_id = O` and no `product_type` (`billing.ts:1560`, `:1457`, `:1712`). A linked create-a-team subscription carries `organization_id = O` too (`sweeper.ts:388-392`), so it is one (ADR 0002 §2: "it becomes an ordinary org subscription once the link writes `organization_id`"). An AI subscription (`product_type = "ai_subscription"`, `billing.ts:1624`) is not. Neither is another org's subscription on a shared customer. The customer is never evidence. This is what (b) may **close**. The live check (c) deliberately counts more: F3's classifier, every live non-AI subscription on O's customer (D2 (c)). |
 | **Live** | ADR 0002 §2's set: `active`, `trialing`, `past_due`, `unpaid`, `paused` (`LIVE_SUBSCRIPTION_STATUSES`, `billing.ts:2196-2202`). |
 | **Paid** | `active` or `trialing` (`isBillingActive`, `lib/billing/plan.ts:80-82`). The row guard's superseder test uses this set (`queries.ts:262`). |
 | **Off-Stripe grant** | An org row whose `stripeSubscriptionId` is null and whose status is `active`, `trialing` or `past_due`. It is **live** unless `isManualGrantExpired` (`plan.ts:94-103`) says its term has passed. |
@@ -197,7 +220,8 @@ the SRE paying, where it is also safe. Money correctness, security and tenant is
 ### D1. A hold scope per flow (AC 8)
 
 **Decision.** `payment_holds` gains `scope text NOT NULL DEFAULT 'new_org'`, checked to `('new_org',
-'org_plan')`. The open-payer index becomes `(scope, payer_key) WHERE state <> 'released'`. Every existing row is
+'org_plan')`. The default exists only to carry the existing rows and callers through the rollout. O8 drops it once
+every opener passes `scope`, so a later insert that forgets `scope` fails instead of being filed as `new_org`. The open-payer index becomes `(scope, payer_key) WHERE state <> 'released'`. Every existing row is
 `new_org`, which is true by construction: every opener on `dev` is create-a-team (`opened_by` is `purchase`,
 `backfill` or `link`, `schema/payment-holds.ts:63-64`, and all three are ADR 0002's).
 
@@ -206,12 +230,15 @@ The scope is enforced in five places:
 1. **The fence.** The state-write fence requires the lease named by `leaseKeyFor(scope, payer_key)`, computed in
    the same statement (`store.ts:59-69` today hard-codes `'user:'`). A request holding `user:U` can never write an
    org-plan hold, and a request holding `org-plan:O` can never write a create-a-team hold.
-2. **The open.** `openHold` takes `scope`, and refuses a lease whose key is not `leaseKeyFor(scope, payerKey)`
-   (`store.ts:114` today checks `user:` only).
+2. **The open.** `openHold` takes an optional `scope`, defaulting to `new_org`, and refuses a lease whose key is
+   not `leaseKeyFor(scope, payerKey)` (`store.ts:114` today checks `user:` only). Because it is optional, the
+   create-a-team callers (`billing.ts:2105`, `sweeper.ts:454`'s link opener, `scripts/payment-holds.ts:565`'s backfill) are unchanged
+   in O1. O8 makes it required, and updates those callers then.
 3. **The create-a-team readers.** The readers that **block or route** a create-a-team purchase read
    `scope = 'new_org'` only: `paymentHoldsOfPayer`, `openPaymentHoldOn` and `latestReleasedHoldOn` as the link, the
    resume lookups and the guard's creator copy call them (`pending-org-setup.ts:177-222`; `billing.ts:994-1000`).
-   The org-plan flow has its own reader with `scope = 'org_plan'`.
+   The org-plan flow has its own reader, `paymentHoldsOf('org_plan', orgId)`. O1 builds it in `store.ts`, beside
+   the scope-free `openHoldOn(subscriptionId)` that D2 (b) 4 needs; O6 is their first caller.
 4. **The setup predicates that wait on holds stay scope-free, on purpose.** The closer's "no open hold names X"
    (`noOpenHold`, `pending-org-setup.ts:848-850`, ADR 0002 I16) and `forgetPendingOrgSetup`'s hold condition
    (`:166-167`) keep matching every scope. Narrowing either could only close or forget a setup the design means to
@@ -233,19 +260,32 @@ can enforce that.
 
 ### D2. The org-plan purchase on holds
 
-**Decision.** Under the `org-plan:<O>` lease (D3), `createSubscriptionIntent` calls `subscriptions.create` only when,
-in this order (I1 for `org_plan`):
+**Decision.** Under the `org-plan:<O>` lease (D3), `createSubscriptionIntent` calls `subscriptions.create` only when the
+steps below pass, in this order (I1 for `org_plan`). `createCheckoutSession` runs the same steps before it creates a
+session, and `startProTrial` before it mints its trial (D3):
 
-- **(row)** The row checks of D5 and D7 pass, before the lease is taken: no live Stripe plan on the row, no
-  `past_due`, no live grant.
+- **(row)** `orgRowBlocksNewPlan` passes, before the lease is taken: the row names no `active` or `trialing`
+  subscription, no `past_due` one (D7), and is not a live grant (D5).
 - **(a) Holds.** Every open `org_plan` hold of O, advanced once by `advanceHold`, is `released` or
   `refund_pending` (ADR 0002 Q10 holds here too). Released `refunded` holds within 14 days are kept for the
   notice (D8).
-- **(a′) Earlier Checkout sessions.** Every `open` subscription-mode Checkout Session on O's customer whose own
-  `metadata.organization_id` is O is expired, then re-read (S16, S17). A re-read showing `complete` means the
-  customer finished it first: its subscription now exists, and (b) and (c) see it. One still `open` refuses
-  (`UNSETTLED`). A session without that key predates this design, is left alone, and expires on its own within
-  24h of its creation (Stripe's default). The detector (D6) covers one that completes.
+- **(a′) Earlier Checkout sessions.** Every `open` subscription-mode Checkout Session on O's customer is expired,
+  then re-read (S16, S17), when its own `metadata.organization_id` is O **or it has no such key**. A re-read
+  showing `complete` means the customer finished it first: its subscription now exists, and (b) and (c) see it.
+  One still `open` refuses (`UNSETTLED`). A session keyed to another org is left alone: it is that org's checkout
+  on a shared customer, and it cannot give O a plan.
+
+  **Why a keyless session is expired too (B1).** Before O4, no session carries the key (`billing.ts:1452-1466`), and
+  each one stays payable for Stripe's default 24h (S16). Left alone, a keyless Enterprise session opened before O4
+  and finished after an embedded purchase gives the org two paid plans. D6 would only report that. Expiring it is
+  safe for three reasons. `createCheckoutSession` is the only code that creates a session (`billing.ts:1452`, the
+  one call site). On O's customer, a keyless session was made for the org whose row named that customer, which is
+  O, or another org on a legacy shared customer (ADR 0002 §1.1). And an expired session costs that checkout only a
+  restart, never a charge: a session that completed first re-reads `complete` and is counted by (b) and (c).
+
+  **A second guard.** O6 deploys only once O4's rollout has been complete for more than 24h, so every keyless
+  session has expired by then whatever (a′) reads. That bound is part of the deploy order (§9). (a′) does not
+  depend on it.
 - **(b) The sweep.** Every `incomplete` subscription on O's customer, fully paged (F2's boundary): an org-plan
   subscription of O is closed **only under a hold** (ADR 0002 I4), written first in `closing`. The machine then
   voids, and cancels only after a proven void (ADR 0002 §3.4), stamped `alethia:checkout_closed:<hold id>`
@@ -257,20 +297,27 @@ in this order (I1 for `org_plan`):
   3. A subscription with **no** `organization_id` is not O's. The ones this repo mints are unlinked create-a-team
      subscriptions (ADR 0002 §2), which that flow's holds own. It is never touched here.
   4. A subscription that an open hold of **another scope** names (a linked create-a-team X under a `new_org`
-     hold) is kept, untouched. The purchase refuses with the neutral clause (D8), because that hold decides X.
+     hold, found by the scope-free `openHoldOn`) is kept, untouched. The purchase refuses with **that hold's**
+     clause, chosen by its state and `last_pay` (D8, "The cross-scope clause"), because that hold decides X.
      Without this rule, the E0 insert would conflict on the cross-scope unique index (ADR 0002 T0h), and the
-     result would be the same refusal with a less precise message.
-- **(c) The live check, read last.** A full `subscriptions.list({ customer, status: "all" })` of O's customer,
-  filtered to org-plan subscriptions of O, finds none **live** (§2). This is F3's check, moved after (a)–(b) and
-  widened from `active`/`trialing`/`past_due` to the full live set. A subscription adopted in (a) is seen here.
-  `active` and `trialing` refuse with "change the plan instead". `past_due` and `unpaid` refuse with D7's copy,
-  and `paused` with the contact-support copy.
+     result would be a refusal with a less precise message. This is the one place an org-plan purchase reads a
+     `new_org` hold (O1).
+- **(c) The live check, read last.** F3's `liveOrgPlanCheck`: a full `subscriptions.list({ customer, status:
+  "all" })` of O's customer. **Its classifier is F3's, unchanged:** every subscription whose plan line does not
+  carry an AI price counts (`planItem`, then `aiTierForPriceId`), with no `organization_id` filter, on purpose (it
+  refuses on what it cannot place). That is wider than §2's org-plan subscription of O, which only (b) uses to
+  decide what it may **close**. Refusing beside another org's live plan on a legacy shared customer is the safe
+  side. The copy names support there, and the purchase does not mint. Only the status set changes: F3 counts
+  `active`, `trialing`, `past_due` (`PAID_SUBSCRIPTION_STATUSES`), and (c) counts the full live set (§2), adding
+  `unpaid` and `paused`. `active` and `trialing` refuse with "change the plan instead". `past_due` and `unpaid`
+  refuse with D7's copy. `paused` refuses with the contact-support copy. A subscription adopted in (a) is seen
+  here. F3 already reads (c) after the sweep. O6 puts (a), (a′) and (b) under holds in front of it.
 
 The mint then follows ADR 0002 §4.4 rules 1–4: renew before every Stripe write, the mint deadline, the artifact gate
 before the client secret leaves, and the close-out after a failed gate. The close-out voids, then cancels stamped
-`alethia:closeout`, and writes no hold. With (b), **at most one payable org-plan artifact exists per org at a time**
-(I9 for `org_plan`). The org-plan flow then stops calling `cancelNeverPaid` and `settleCancelledSubscription`
-(`billing.ts:1150-1310`). They, `cancelIncompleteSubscriptions`, `voidPayableInvoice`, `refundTakenPayment`,
+`alethia:closeout`, and writes no hold. With (a′) and (b), **at most one payable org-plan artifact exists per org at a
+time** (I9 for `org_plan`), and the trial mints only into that same state (D3). The org-plan flow then stops calling
+`cancelNeverPaid` and `settleCancelledSubscription` (`billing.ts:1150-1310`). They, `cancelIncompleteSubscriptions`, `voidPayableInvoice`, `refundTakenPayment`,
 `refusalFor` and `PaymentOutcome` then have no caller (each is used only on this path today), and are deleted.
 
 **Classification of a linked create-a-team subscription (Q1).** An org-plan subscription of O, linked or not, is
@@ -294,8 +341,10 @@ between the read and the cancel is forgotten, and the retry mints beside it.
 Checkout `org-plan:<org>` on `withPurchaseLock`) to a `purchase_leases` row keyed `org-plan:<orgId>`
 (`purchase-lease.ts:77-166`). The org-plan purchase client (`getPurchaseStripe`, `lib/billing/stripe.ts:51`, with
 `STRIPE_REQUEST_TIMEOUT_MS` and one retry, `:27`, `:30`) replaces the shared client on the purchase path.
-`startProTrial` takes the same lease for serialisation only: it runs (row), (a) and (c), and refuses on a blocking
-hold or a live org-plan subscription. It neither sweeps nor gates (Q5).
+`startProTrial` takes the same lease and runs (row), (a), (a′), (b) and (c) under it, as the purchase does. So a
+trial never starts beside a payable client secret or an open session in another tab: (b) closes a never-paid
+`incomplete` subscription under a hold, and keeps and refuses any other. Only the trial's own artifact has no gate
+(Q5): it is a `trialing` subscription that takes no payment.
 
 **Why the lease.** A hold's state writes are fenced on a `purchase_leases` row (ADR 0002 §4.1). An advisory lock
 cannot fence them, and it holds a pooled connection for the whole Stripe sequence (§1.1, "The lock").
@@ -304,8 +353,11 @@ cannot fence them, and it holds a pooled connection for the whole Stripe sequenc
 each other. If only one flow moved, an intent and a Checkout in two tabs would stop excluding each other.
 
 **Rolling deploy.** For one release, both flows take the lease **and** the old advisory key, as ADR 0002 S2 did
-for create-a-team (§8 step 1 there). The release after drops the advisory key, and deploys only after the first
-one's rollout has completed (§9).
+for create-a-team (§8 step 1 there). Every new pod takes them in one order: the advisory key first
+(`withPurchaseLock` is the outer call), then the lease inside it, released in reverse. Two new pods therefore
+queue on the advisory key and never hold one each while waiting for the other. An old pod takes only the advisory
+key, so it is excluded either way. The trial takes the lease alone: it had no advisory key to keep. The release
+after drops the advisory key (O6), and deploys only after the first one's rollout has completed (§9).
 
 **Checkout's artifact.** The URL is the payable artifact. Its gate runs after `checkout.sessions.create` and before
 `session.url` is returned. Its close-out is `checkout.sessions.expire`. The session is created with its own
@@ -323,7 +375,9 @@ fresh Stripe read, in one new module (`lib/billing/org-plan-row.ts`):
 
 - **R1, re-point on end.** When `customer.subscription.deleted` for Y **applied** to O's row (`webhook-handler.ts:316`
   returned `"applied"`), the handler lists O's customer, fully paged, filters to org-plan subscriptions of O that
-  read **live**, and syncs one with no event time: the newest **paid** one by `created`, else the newest live one.
+  read **live**, and syncs one with no event time, chosen in this order: the newest `active` one by `created`, else
+  the newest `trialing` one, else the newest other live one. `active` comes before `trialing` so a card-less trial
+  (which cancels itself without a card, `billing.ts:1711`) is never named over a plan the customer pays for.
   The row now reads `canceled`, which is not live, so the guard lets a different subscription take it
   (`queries.ts:265`). A `past_due` sibling is named rather than left out, so the customer sees its unpaid invoice
   instead of a blank `canceled`. With two or more live, R1 still names one, and raises the two-live alert (D6).
@@ -365,7 +419,9 @@ and before any Stripe call, when O's row is a **live** off-Stripe grant (§2). A
 does not refuse: its term is over, and buying is the way back to a plan. The copy says the team's plan is managed
 under a contract, and names support (D8). One predicate, `orgRowBlocksNewPlan(row)`, carries the row's three refusals
 (a row naming an `active` or `trialing` subscription, D7's `past_due`, and this one), so the three flows cannot
-disagree. Checkout, which has no row check today, gains all three.
+disagree. Checkout, which has no row check today, gains all three. **A subscription-less row is judged by D5
+alone,** whatever its status: live and unexpired gives the contract copy, and lapsed gives no refusal. The operator
+plane can write `past_due` on a grant (`scripts/set-org-plan.mjs:33`), and D7's arm does not apply to it (B2).
 
 **The row rule stays (Q2).** A paid Stripe subscription still takes a row that holds a grant (`queries.ts:262-264`).
 If one ever does, through a race with `setOrgPlan` or a create-a-team link beside a grant, D6 alerts with both named.
@@ -379,14 +435,19 @@ cost.
 ### D6. The two-live detector
 
 **Decision.** One function, `reportTwoLive(orgId, a, b)`, raises `system.platform.payment_needs_support` through
-`alertOperator` (`billing.ts:858-879`, with its own summary, never `alertPaymentNeedsSupport`'s "which the purchase flow
-cancelled" text). The newer subscription is the subject, so the alert rule's throttle collapses repeats. It also logs
-`billing.org_plan.two_live` with both ids. It runs at three points, and nowhere else:
+an operator-alert helper with its own summary, never `alertPaymentNeedsSupport`'s "which the purchase flow cancelled"
+text. That helper is `alertOperator` today (`billing.ts:858-879`), but it is a private function of a `"use server"`
+file (`billing.ts:1`). Exporting it from there would publish it as a server action that any client could call to
+page the operator. So O3 adds `lib/billing/operator-alert.ts`, a `server-only` module (no `"use server"`) with the
+same contract: it emits on `ALETHIA_PLATFORM_ALERT_ORG_ID`, it is true only when a delivery was queued, and it never
+throws. O6, which owns `billing.ts`, deletes the private copy and imports this one. The newer subscription is the subject, so the alert rule's throttle collapses repeats. It also logs
+`billing.org_plan.two_live` with both ids. It runs at four points, and nowhere else:
 
 | Point | Seen when | Cost |
 |---|---|---|
 | **D6a**, R2 finds Y live | a live X's write was refused beside a live Y | the one retrieve R2 already makes |
 | **D6b**, a write **replaced** a live subscription | a paid X took a row that named a different `past_due` Y, or a live grant (`queries.ts:262-264`) | no Stripe call. The guarded write reports the subscription id and status it replaced, read with the row locked in the same transaction as the write (O3 adds this; `RETURNING` alone gives only the new values) |
+| **D6b′**, a write replaced a subscription the row stored as `none` | a paid X took a row naming a different Y whose stored status was `none`, which is how `mapStatus` stores both an `incomplete` and a **`paused`** Y (`sync.ts:44-60`) | one `subscriptions.retrieve(Y)`, in the webhook handler, only when a paid X just replaced a different stored-`none` Y. It alerts only when Y reads `paused`, which is live (§2). An `incomplete` Y is a checkout, not a plan |
 | **D6c**, R1 finds two or more live | Y ended, and more than one sibling is live | the list R1 already makes |
 
 **It never cancels.** Which of two live plans the customer meant to keep is a person's call. The machine never cancels
@@ -396,16 +457,19 @@ ADR adopts it (Q4).
 **Coverage, stated.** A live org-plan subscription emits at least one event per billing period, its renewal invoice,
 and every such event's sync passes through D6a or D6b. So a two-live state that none of the three purchase flows
 created is reported within one billing period at worst. A two-live state created through the paths this ADR closes
-(D2, D5, D7) is not created at all. A Checkout that predates (a′), or a race with `setOrgPlan`, is reported at the
-write that brings it to the row.
+(D2, D5, D7) is not created at all. A race with `setOrgPlan` is reported at the write that brings it to the row. A
+`paused` Y that a paid X replaced is reported at that write (D6b′). Without D6b′ it would surface only when Y
+resumed, which is also when it starts charging again.
 
 **Rejected: a scheduled scan of every org's Stripe customer.** It costs one list per org per tick to find what the
 row's own writes already reveal.
 
 ### D7. A `past_due` org cannot mint a second plan (Q13)
 
-**Decision.** `orgRowBlocksNewPlan` treats a row whose status is `past_due` (Stripe's `past_due` or `unpaid`,
-`sync.ts:51-53`) as having a plan. The three flows refuse with: "This team's plan has an unpaid invoice, so a second
+**Decision.** `orgRowBlocksNewPlan` treats a row that **names a Stripe subscription** (`stripeSubscriptionId` not
+null) and whose status is `past_due` (Stripe's `past_due` or `unpaid`, `sync.ts:51-53`) as having a plan. A
+subscription-less `past_due` row is a grant, and only D5 judges it. Telling a grant org to "update the payment
+method" would be false: no Stripe invoice or payment method stands behind a grant. The three flows refuse with: "This team's plan has an unpaid invoice, so a second
 plan was not started. Update the payment method in Billing, or contact support at <email>." The same holds in
 Stripe through (c): a `past_due` or `unpaid` org-plan subscription refuses even when the row has not caught up.
 
@@ -420,8 +484,29 @@ plan. The path to it that charges once is to fix the card on the existing plan
 - **One message per set,** from ADR 0002 §5.5's clauses, which are written per hold state and `last_pay` and name no
   flow. The org-plan composer reuses the clause table, and adds four rows: "change the plan instead" (live
   `active`/`trialing`), D7's `past_due` row, D5's grant row ("This team's plan is managed under a contract, so a plan
-  cannot be bought here. Contact support at <email>."), and the neutral cross-scope row (D2 (b) 4: "A payment for
-  this team's setup is still being confirmed, so nothing new was started. Try again in a few minutes.").
+  cannot be bought here. Contact support at <email>."), and the cross-scope clauses below. When (c) refuses beside
+  another org's live subscription on a shared customer, the copy is "This team's billing account carries another
+  subscription we cannot place, so nothing new was started. Contact support at <email>.", with an operator alert.
+- **The cross-scope clause (D2 (b) 4).** The refusal carries the clause for **that** `new_org` hold, by its state and
+  `last_pay`, as ADR 0002 §5.5 chooses them. When the buyer is the hold's payer (`payer_key` is the buyer's user
+  id), it is `holdClause(hold, { refusing: true })` verbatim (`lib/billing/new-org-hold-copy.ts:103`). Anyone else
+  gets the same clause reworded so it names no person, amount or card. "An earlier checkout" becomes "this team's
+  setup checkout":
+
+  | Hold state, `last_pay` | Payer-neutral clause |
+  |---|---|
+  | `closing` / `cancel_unproven`, `awaiting`, `failed` or none | "We could not confirm that this team's setup checkout was closed, so nothing new was started. Try again in a few minutes." |
+  | `closing` / `cancel_unproven`, `in_flight`; or `payment_in_flight` | "This team's setup payment is still being processed, so nothing new was started. A bank debit can take several business days; try again once it settles." |
+  | `closing` / `cancel_unproven`, `capturable` | "This team's setup payment was authorised but not completed, so nothing new was started. The authorisation can stay for up to 7 days before it is released or completed; try again once it is." |
+  | `closing` / `cancel_unproven`, `succeeded` | "This team's setup payment has just gone through and is being confirmed, so nothing new was started. Try again in a few minutes." |
+  | `invoice_payable` | "We could not yet close this team's setup checkout's invoice, so nothing new was started. Try again in a few minutes." |
+  | `refund_due` | "This team's setup payment went through after its checkout was cancelled, and its refund has not gone through yet, so nothing new was started. Contact support at <email> if this lasts." |
+  | `needs_operator` | "We could not settle this team's setup payment automatically, so nothing new was started. Contact support at <email>." Then "We have raised an alert." **only when** the hold alerted in its current state entry (ADR 0002 I8). |
+
+  (b) lists only `incomplete` subscriptions, and a hold on an `incomplete` X can only be in `closing`,
+  `cancel_unproven` or `needs_operator` (ADR 0002 §3.3: the other open states need X ended). The other rows are
+  defined so the clause is true wherever else the lookup meets a hold. `refund_pending` never blocks (Q10), so it
+  has no row.
 - **"You won't be charged twice" appears nowhere** in an org-plan response. `PAYMENT_MAY_BE_UNDER_WAY`,
   `EARLIER_PAYMENT_REFUNDED` and the `EARLIER_PAYMENT_*` messages (`billing.ts:793-837`) are used only by the
   memory-less path, and are deleted with it. `TOO_MANY_EARLIER_CHECKOUTS` and `SUPPORT_EMAIL` stay: create-a-team
@@ -463,14 +548,15 @@ The rows are read top to bottom, and the first match decides. "Refuse" makes no 
 |---|---|---|---|---|
 | P1 | an open create-a-team setup names O (ADR 0002 §5.7) | refuse (guard) | refuse (guard) | refuse (guard) |
 | P2 | the row names a subscription that is `active` or `trialing` | refuse: change the plan | refuse: change the plan | refuse |
-| P3 | the row is `past_due` (D7) | refuse: update the payment method | same | same |
-| P4 | the row is a live, unexpired off-Stripe grant (D5) | refuse: contract | same | same |
+| P3 | the row names a Stripe subscription and is `past_due` (D7) | refuse: update the payment method | same | same |
+| P4 | the row names no subscription and is a live, unexpired grant, in any of `active`, `trialing`, `past_due` (D5) | refuse: contract | same | same |
+| P4′ | the row names no subscription and its grant has lapsed | go on to P5 | same | same |
 | P5 | the lease is held past the wait | refuse: in progress | same | same |
 | P6 | (a): an `org_plan` hold of O still blocks after one advance | refuse with the composed clauses | same | same |
-| P7 | (a′): an earlier session of O is still `open` after its expire | refuse: unsettled | same | (not read) |
-| P8 | (b): an `incomplete` org-plan subscription of O not proven `never_paid`, or one under another scope's open hold | keep it; refuse with its clause | same | (not swept) |
-| P9 | (b): a never-paid one whose hold could not be written (T0f) | refuse, no block promised; nothing voided or cancelled | same | (not swept) |
-| P10 | (c): a live org-plan subscription of O in Stripe | refuse by its status (D2 (c)) | same | refuse |
+| P7 | (a′): an earlier session of O's, keyed to O or keyless, is still `open` after its expire | refuse: unsettled | same | same |
+| P8 | (b): an `incomplete` org-plan subscription of O not proven `never_paid`, or one under another scope's open hold | keep it; refuse with its clause (D8) | same | same |
+| P9 | (b): a never-paid one whose hold could not be written (T0f) | refuse, no block promised; nothing voided or cancelled | same | same |
+| P10 | (c): a live non-AI subscription on O's customer (F3's classifier) | refuse by its status (D2 (c)) | same | same |
 | P11 | none of the above | mint under the gate; a `notice` if one is owed | create the session under the gate | mint the trial and sync it |
 
 ### 4.3 The row slot, by write
@@ -485,10 +571,11 @@ this ADR adds after it.
 | a different Y, stored `active`/`trialing` | X live | ignored | **R2**: retrieve Y. Ended → sync Y, then X (applies). Live → **D6a** alert |
 | a different Y, stored `active`/`trialing` | X not live | ignored | nothing (an `incomplete` X is a checkout, not a plan) |
 | a different Y, stored `past_due` | X paid | applies (superseder) | **D6b** alert: Y is still live in Stripe |
+| a different Y, stored `none` (an `incomplete` or a `paused` Y) | X paid | applies | **D6b′**: retrieve Y; alert only when it reads `paused` |
 | a different Y, stored `past_due` | X not paid | ignored | R2 when X is `past_due` (live); else nothing |
 | no subscription id, a live grant | X paid | applies (superseder) | **D6b** alert |
 | no subscription id, a live grant | X not paid | ignored (`billing-sync.test.ts:367`) | nothing |
-| Y, and Y's `deleted` arrives | — | Y's `canceled` applies | **R1**: name the newest paid sibling, else the newest live one; two or more live → **D6c** alert; R1 named a paid one → no cancellation email |
+| Y, and Y's `deleted` arrives | — | Y's `canceled` applies | **R1**: name the newest `active` sibling, else the newest `trialing`, else the newest other live one; two or more live → **D6c** alert; R1 named a paid (`active`/`trialing`) one → no cancellation email |
 
 ---
 
@@ -499,18 +586,21 @@ ADR 0002's invariants I1–I16 hold for `new_org` as written. For `org_plan`, I1
 not apply to `org_plan`. New:
 
 - **O1, scope isolation (AC 8).** No reader that decides a create-a-team purchase, link or resume reads an
-  `org_plan` hold, and no org-plan reader reads a `new_org` hold. The only cross-scope readers are the setup predicates of D1 rule 4,
-  the partial unique index, and the webhook's subscription-keyed lookups (D1).
+  `org_plan` hold. An org-plan reader reads a `new_org` hold in exactly one place: (b)'s scope-free `openHoldOn`, which
+  keeps a subscription another scope's hold is deciding and refuses with that hold's clause (D2 (b) 4). The other
+  cross-scope readers are the setup predicates of D1 rule 4, the partial unique index, and the webhook's
+  subscription-keyed lookups.
 - **O2, scope is fixed.** `scope` and `payer_key` are written at E0 and never change.
 - **O3, the fence names the scope.** A state write succeeds only under the live lease `leaseKeyFor(scope, payer_key)`
   (D1, rule 1).
-- **O4, never beside a live plan, a `past_due` plan or a live grant.** No org-plan flow mints, or hands out a Checkout
-  URL, while `orgRowBlocksNewPlan` is true or (c) finds a live org-plan subscription (D2, D5, D7).
+- **O4, never beside a live plan, a `past_due` plan, a live grant or a payable artifact.** No org-plan flow mints,
+  hands out a Checkout URL or starts a trial while `orgRowBlocksNewPlan` is true, while an `open` session keyed to O
+  or keyless remains on O's customer, while (b) keeps a subscription, or while (c) finds a live one (D2, D3, D5, D7).
 - **O5, the row follows a live subscription.** When the row's subscription ends and a live org-plan subscription of
   O exists, the row names one within the same webhook delivery, a paid one first (R1). When a live subscription's write is refused, the
   row's subscription is re-read before the refusal stands (R2).
 - **O6, two live are always reported, never cancelled.** Every write that reveals two live org-plan subscriptions,
-  or one beside a live grant, alerts (D6). No detector path calls a Stripe write.
+  or one beside a live grant, alerts (D6a, D6b, D6b′, D6c). No detector path calls a Stripe write.
 - **O7, copy is true.** No org-plan response says "charged twice" or "charged again", and every clause comes from
   the set read in that request (ADR 0002 I8).
 
@@ -527,6 +617,7 @@ ADR 0002 §5.1 and §5.2 apply to the org-plan flow, call for call. The addition
 | `checkout.sessions.create` after a failed gate | close out: `expire`; a failed expire leaves a URL that nobody holds, payable until its 30-minute `expires_at` (S16) | return the URL |
 | the trial's `subscriptions.create` | as today: throws, nothing synced | — |
 | R1's list, R2's retrieve | throw; the event is redelivered (D4) | write a guess |
+| D6b′'s retrieve | log; the write already applied is kept; no alert is claimed | fail the event over a report |
 | `reportTwoLive` | log; never throws; never fails the event | cancel anything |
 | the row read before the lease (D5, D7) | throw: the purchase fails before any Stripe write | pass the purchase |
 
@@ -546,12 +637,12 @@ Test files (paths under `apps/console/`):
 - `W` = `tests/lib/billing/webhook-handler.test.ts`
 - `P` = `tests/scripts/payment-holds.test.ts`
 
-Every new test must fail on the `dev` head its slice starts from, on its assertion, unless the row says it is a
-regression guard.
+Every new test must fail on the `dev` head its slice starts from, on its assertion, unless the row labels it a
+**pin**. A pin guards a behaviour `dev` already has, and that this ADR could break. It passes on `dev`.
 
 | ID | Case | Source | Mechanism | Test |
 |---|---|---|---|---|
-| C1 | An org-plan hold blocks the same user's create-a-team purchase. | AC 8; 0002 §1.2 family 3 | D1 rule 3; O1 | N: an open `org_plan` hold in `payment_in_flight` for O, with `opened_by_user_id = U`. U's `createNewOrgSubscriptionIntent` mints. |
+| C1 | An org-plan hold blocks the same user's create-a-team purchase. | AC 8; 0002 §1.2 family 3 | D1 rule 3; O1 | **Pin** (on `dev` no hold has a scope, and `paymentHoldsOfPayer(U)` already misses a hold whose `payer_key` is O). N: an open `org_plan` hold in `payment_in_flight` for O, with `opened_by_user_id = U`. U's `createNewOrgSubscriptionIntent` mints. C3 is this rule's failing-first case. |
 | C2 | An org-plan hold routes a create-a-team resume or link to a refusal. | AC 8; rev 4 C18 | D1 rule 3 | N: an `org_plan` hold names X, a linked create-a-team subscription. `resolveNewOrgSetup` reports `hold: null`, and the link's hold consult does not refuse with that hold's clause. |
 | C3 | Scope, not the key's text, separates holds. | D1 | D1; O1 | I: a `new_org` hold and an `org_plan` hold whose `payer_key` strings are **equal**. Each scope's reader returns only its own. |
 | C4 | A state write under the wrong scope's lease succeeds. | D1 rule 1 | O3 | I: an `org_plan` hold. A write under `user:<O>` changes no row; under `org-plan:<O>` it does. The mirror case for a `new_org` hold. |
@@ -566,21 +657,21 @@ regression guard.
 | C13 | The org-plan sweep closes an AI checkout. | AC 11; F2 | D2 (b) 1 | A2: an `incomplete` AI subscription on O's customer is neither held nor cancelled (F2's test re-run). |
 | C14 | The org-plan sweep closes another org's checkout on a shared customer. | 0002 §4.2 | D2 (b) 2 | A2: an `incomplete` subscription with `organization_id = O2` is untouched, alerted with it as the subject, and O's purchase is not refused for it. |
 | C15 | A linked, never-paid create-a-team X blocks the org for a day. | Q1 | D2, classification | A2: X carries `created_by` and `organization_id = O`, `incomplete`, `never_paid`, no hold. It is closed under an `org_plan` hold (payer O), and the purchase mints. |
-| C16 | The org-plan sweep closes a subscription that a create-a-team hold is deciding. | D2 (b) 4 | cross-scope keep | A2: X as in C15, with an open `new_org` hold. No hold is opened, nothing is voided or cancelled, and the purchase is refused with the neutral clause. |
+| C16 | The org-plan sweep closes a subscription that a create-a-team hold is deciding, or refuses with a false clause. | D2 (b) 4; B3 | cross-scope keep; D8 table | A2: X as in C15, with an open `new_org` hold. No hold is opened, nothing is voided or cancelled, and the purchase is refused. One case per row of D8's table, for a buyer who is not the payer: `closing` with `last_pay` `awaiting`, `in_flight` (matches `/several business days/`, not `/few minutes/`), `capturable` and `succeeded`; `cancel_unproven` with `failed`; and `needs_operator`, with and without an alert in its current entry (matches `/contact support/`; `/raised an alert/` only when alerted). The same hold for a buyer who **is** its payer gets `holdClause(hold, { refusing: true })` verbatim. |
 | C17 | Webhook lag: Stripe lists an `active` plan while the row reads `none`. | AC 12; F3 | D2 (c) | A: F3's test, re-run after the move. `subscriptions.create` is not called. |
 | C18 | (c) reads before the sweep, so a subscription adopted during (a) is missed. | 0002 I1 order | D2 (c) last | A2: a `closing` hold whose X reads `active` is released `adopted` in (a). (c) then refuses with "change the plan instead". No refund, no Q3 email. |
 | C19 | `unpaid` or `paused` in Stripe is not "live" to the check. | D2 (c) | the full live set | A: a `paused` org-plan subscription refuses with the contact-support copy. An `unpaid` one refuses with D7's copy. |
 | C20 | The lease expires mid-purchase: two payable org-plan subscriptions. | 0002-C52 | D3 | L: A's `org-plan:<O>` lease expires before its mint, and B mints. Exactly one secret is returned. A's only writes after the failed gate are `voidInvoice` and a cancel stamped `alethia:closeout`. |
-| C21 | An intent and a Checkout in two tabs are not serialised. | D3 | one lease | L: with `org-plan:<O>` held by an intent, `createCheckoutSession` waits, then sees the intent's subscription in (b). |
+| C21 | An intent and a Checkout in two tabs are not serialised. | D3 | one lease | A2 (O6): with `org-plan:<O>` held by an intent, `createCheckoutSession` waits, then its (b) finds the intent's `incomplete` subscription and closes or keeps it before it creates a session. |
 | C22 | A Checkout URL leaves a request that lost its lease. | D3 | Checkout's gate | A: the renewal after `checkout.sessions.create` matches no row. `session.url` is not returned, and `checkout.sessions.expire` is called. |
 | C23 | An earlier open Checkout of the same org is paid beside a new purchase. | Rev 4 Q11 | D2 (a′) | A2: an `open` session with `metadata.organization_id = O` is expired before the mint. A re-read showing `complete` leads (c) to refuse. A re-read still `open` refuses `UNSETTLED`. |
-| C24 | A pre-release session, without the session-level key, is expired. | S17 | D2 (a′) | A2: an `open` session with no `metadata.organization_id` gets no `expire` call. |
-| C25 | During the rolling deploy, an old pod and a new pod both run an org-plan purchase. | D3 | both keys | A: the slice's flow takes `withPurchaseLock('org-plan:<O>')` and the lease. The next slice takes the lease alone. |
-| C26 | The trial runs beside a blocking hold or a live plan. | D3; Q5 | (a), (c) | A (O4): with `org-plan:<O>` held, the trial waits, and a live org-plan subscription that only Stripe shows refuses it. A2 (O6): an open `refund_due` `org_plan` hold refuses it. |
-| C27 | **Q13: a `past_due` org mints a second plan.** | 0002 retired C44 | D7 | A: the row is `past_due`. `createSubscriptionIntent` returns D7's copy, and calls no `customers.*`, `subscriptions.*` or `checkout.*`. |
+| C24 | A session keyed to another org on a shared customer is expired. | S17 | D2 (a′) | A2: an `open` session with `metadata.organization_id = O2` on O's customer gets no `expire` call, and O's purchase is not refused for it. |
+| C25 | During the rolling deploy, an old pod and a new pod both run an org-plan purchase, or two new pods wait on each other. | D3 | both keys, one order | A: O4's flow takes `withPurchaseLock('org-plan:<O>')` first and acquires the lease inside it; the lease is released before the lock. O6's flow takes the lease alone. |
+| C26 | The trial starts beside a blocking hold, a payable artifact or a live plan. | D3; Q5; advisory 5 | (a), (a′), (b), (c) | A (O4): with `org-plan:<O>` held, the trial waits. A2 (O6): an open `refund_due` `org_plan` hold refuses it; an `open` keyed session is expired first; an `incomplete` org-plan subscription whose payment is `processing` is kept and refuses it; a live one that only Stripe shows refuses it. |
+| C27 | **Q13: a `past_due` org mints a second plan.** | 0002 retired C44 | D7 | A: the row names `sub_y` and is `past_due`. `createSubscriptionIntent` returns D7's copy, and calls no `customers.*`, `subscriptions.*` or `checkout.*`. O2 also changes F3's `it.each(["trialing", "past_due"])` case (#5979): `past_due` now expects D7's copy, `trialing` still expects "change the plan instead", and an `unpaid` case is added. |
 | C28 | Checkout or the trial beside a `past_due` plan. | D7 | one predicate | A: the same row. `createCheckoutSession` and `startProTrial` each refuse with D7's copy. |
 | C29 | **A purchase replaces an off-Stripe grant.** | K2 sequence 2 | D5 | A: the row is `enterprise`, `active`, with no subscription id and a future `currentPeriodEnd`. All three flows refuse with the contract copy, and nothing is minted. |
-| C30 | A lapsed grant blocks a purchase for good. | D5 | `isManualGrantExpired` | A: the same row with a past `currentPeriodEnd` is not refused. |
+| C30 | A lapsed grant blocks a purchase for good. | D5; B2 | `isManualGrantExpired`; D7 needs a subscription id | A: the same row with a past `currentPeriodEnd` is not refused (**pin** for `active`: `dev` refuses no grant). The `past_due` variant, a subscription-less `past_due` row with a past `currentPeriodEnd`, is not refused either, and is not given D7's copy. That variant fails first once D7's arm exists without the subscription-id condition. |
 | C31 | The org-plan copy promises "won't be charged twice". | 0002-C32 | D8; O7 | A2: no org-plan response matches `/charged (twice\|again)/`. |
 | C32 | An org-plan refund is never mailed, or is mailed to the wrong person. | 0002 Q3 | D8 | E: an `org_plan` hold entering `refund_pending` mails the customer's email once (the notice claim). A `released(adopted)` `org_plan` hold mails nothing. |
 | C33 | **K2 sequence 1.** Y ends while a paid X lives, and the org sits on `community`. | K2 | R1 | S and W: the row names `active` Y, and X is `active` (its write was refused). Y's `deleted` writes Y `canceled`, then R1 names X: `team`, `active`. No "subscription canceled" email, and no revenue event. |
@@ -594,8 +685,14 @@ regression guard.
 | C41 | R2's read fails, and the webhook writes a guess. | D4 | throw | W: `subscriptions.retrieve(Y)` rejects. The handler throws before any email, and nothing past the guarded X write changed. |
 | C42 | The operator cannot see or release org-plan holds. | D1 rule 5 | the script | P: `list --scope org_plan` lists only those. `release <sub>` takes `org-plan:<O>` and writes `released(operator)`. |
 | C43 | The backfill holds an org-plan subscription it cannot prove was never live. | 0002 §8 B1–B6 | §9 | P: B1 widened to org-plan subscriptions holds only a never-live, card-paid, single-invoice checkout, and lists the rest. |
+| C44 | **B1: a keyless Checkout session opened before O4 is finished after an embedded purchase.** | money review B1 | D2 (a′) | A2: an `open` subscription-mode session with **no** session-level `metadata.organization_id` on O's customer is expired and re-read before the mint. If it re-reads `complete`, (b) and (c) refuse. If it is still `open`, the purchase refuses `UNSETTLED`. The trial (C26) and Checkout do the same. |
+| C45 | **B2: an unexpired `past_due` grant is told to "update the payment method".** | money review B2 | D5; D7 | A: a row with no subscription id, status `past_due`, and a future `currentPeriodEnd`. All three flows refuse with the contract copy, which does not match `/payment method\|unpaid invoice/`. |
+| C46 | A `paused` Y replaced by a paid X goes unreported until it resumes. | advisory 4 | D6b′ | W: the row names Y, stored `none`. `updated(X, active)` applies, the handler retrieves Y, and Y reads `paused`: one two-live alert. Y reads `incomplete`: no alert. |
+| C47 | R1 names a card-less trial over a paying plan. | advisory 15 | R1 order | W: Y is deleted. X1 is `active` and older, and T is `trialing` and newer. R1 names X1, with one two-live alert. |
+| C48 | `alertOperator` is reachable as a server action. | advisory 10 | `lib/billing/operator-alert.ts` | `tests/lib/billing/operator-alert.test.ts`: the module has no `"use server"` directive, and it resolves false with the variable unset and true only when a delivery was queued. After O6, `billing.ts` exports no `alertOperator` (checked by `check:action-boundary`). |
 
-That is 43 cases. C17 and C38 re-run an existing test, and each adds only what this ADR changes.
+That is 48 cases. C17 and C38 re-run an existing test, and each adds only what this ADR changes. C1 and C30's
+`active` half are pins.
 
 ---
 
@@ -604,8 +701,8 @@ That is 43 cases. C17 and C38 re-run an existing test, and each adds only what t
 | Not covered | Why | What handles it |
 |---|---|---|
 | The AI subscription (`createAiSubscriptionIntent`) | A separate product, written to the AI slot only (`sync.ts:141-146`). It cannot take the plan row. | F2: its own `ai:<org>` lock, and no org-plan sweep touches it. No holds. A future scope `ai` would be an ADR of its own. |
-| Holds for hosted Checkout's own payment | A session has no subscription until it completes, so there is nothing to void or cancel. | D2 (a′) expires earlier sessions; D3 gates the URL; D6 reports one that completes beside a plan. |
-| The trial's gate and close-out | It takes no payment. ADR 0002 K1 showed the gate needs a marker the webhook honours, which is not worth it for a subscription that cancels itself after 30 days without a card (`billing.ts:1711`). | D3: serialised under the lease; refuses on (row), (a), (c). A trial that races a paid X is reported by D6. |
+| Holds for hosted Checkout's own payment | A session has no subscription until it completes, so there is nothing to void or cancel. | D2 (a′) expires earlier sessions, keyed or keyless; D3 gates the URL. |
+| The trial's gate and close-out | It takes no payment. ADR 0002 K1 showed the gate needs a marker the webhook honours, which is not worth it for a subscription that cancels itself after 30 days without a card (`billing.ts:1711`). | D3: under the lease, it runs (row), (a), (a′), (b), (c) before it mints. |
 | Renewals, dunning, plan changes, cancels and resumes | Not first payments (ADR 0002 §7). | As on `dev`. R1 changes what follows a dunning-ended `canceled` only when a paid sibling exists. |
 | Credit packs, disputes, deployments with no Stripe | As in ADR 0002 §7. | As on `dev`. |
 | Choosing which of two live plans to keep | A person's decision (D6, Q4). | The alert, and the operator in Stripe. |
@@ -617,12 +714,13 @@ That is 43 cases. C17 and C38 re-run an existing test, and each adds only what t
 
 The order, with §11 giving each step's PR boundary:
 
-1. **The scope (O1).** The `scope` column, the index, the scope-aware fence, open, readers, sweeper, script and
-   emails. No `org_plan` hold exists yet, so behaviour is unchanged. C1–C8 pass on synthetic rows.
+1. **The scope (O1).** The `scope` column, the index, the scope-aware fence, open, readers (including the org-plan
+   reader and the scope-free `openHoldOn`), sweeper, script and emails. No `org_plan` hold exists yet, so behaviour
+   is unchanged. C1–C8 pass on synthetic rows.
 2. **The row predicates (O2).** D5 and D7 in all three flows, and the widened live set. These close live defects,
    with or without holds.
-3. **The superseder and the detector (O3).** R1, R2 and D6 in the webhook and the row write. Independent of holds,
-   and parallel with 1 and 2.
+3. **The superseder and the detector (O3).** R1, R2 and D6 in the webhook and the row write, and the server-only
+   operator-alert module. Independent of holds, and parallel with 1 and 2.
 4. **The lease (O4).** Both org-plan purchase flows, and the trial, on `org-plan:<O>`, with the gate and the
    close-out, taking the old advisory key as well for one release. Checkout gains its session-level key and the
    30-minute `expires_at`.
@@ -630,11 +728,15 @@ The order, with §11 giving each step's PR boundary:
    becomes "an org-plan subscription of some org (§2), or a create-a-team one", and B2–B6 are unchanged. A held
    org-plan subscription gets `scope = 'org_plan'` and `payer_key` = its `organization_id`. The runbook gains the
    org-plan rows.
-6. **The flow on holds (O6).** D2 in full: drop the advisory key (deploy only after step 4's rollout has
-   completed), I1 (a), (a′), (b), (c), the composer and `notice`, and the deletion of the memory-less path.
-   **Deploy only after an operator has run the widened backfill (step 5), and run it again once the rollout has
-   completed,** for the reason ADR 0002 §8 gives: old pods keep cancelling without holds until then.
+6. **The flow on holds (O6).** D2 in full: drop the advisory key, I1 (a), (a′), (b), (c) for all three flows, the
+   composer and `notice`, and the deletion of the memory-less path. **Deploy only when all three hold:** O4's
+   rollout has been complete for more than 24h, which is the advisory key's precondition and B1's second guard
+   (every keyless session has then reached Stripe's default expiry); an operator has run the widened backfill
+   (step 5); and the backfill runs again once this rollout has completed, for the reason ADR 0002 §8 gives (old
+   pods keep cancelling without holds until then).
 7. **The notice in the sheet (O7, `class:ui`).**
+8. **Scope required (O8).** `openHold` takes `scope` as a required argument, every opener passes it, and a
+   migration drops the column's default. Rebase first (CLAUDE.md §5).
 
 **What the backfill can and cannot find.** The memory-less org-plan path stamped none of its cancels
 (`billing.ts:1287-1289`). B2's `cancellation_requested` therefore also matches a customer's own cancel. B3 (exactly one
@@ -643,7 +745,7 @@ that path that it could not settle (a payment in flight, a payment it could not 
 failed, a cancel it could not prove) alerted an operator (`billing.ts:1186-1252`, `:1298-1305`), so the backfill's
 review list can be checked against those alerts.
 
-**Rollback.** Every step is code, plus one additive column with a default. A reverted build leaves `org_plan` holds
+**Rollback.** Every step is code, plus one additive column (its default dropped in O8). A reverted build leaves `org_plan` holds
 that nothing reads, which block nothing. The sweeper of a later redeploy advances them.
 
 ---
@@ -661,10 +763,11 @@ Each carries a recommendation, so a reviewer can accept or veto it by number.
 - **Q3.** Refuse a `past_due` org's new purchase, and send it to its payment method (D7)? **Recommended: yes.** The
   alternative leaves the old plan dunning beside the new one.
 - **Q4.** Two live plans: alert only, never cancel (D6)? **Recommended: yes**, as rev 4's Q8.
-- **Q5.** The trial: serialise it under the lease, without a gate (D3)? **Recommended: yes.** A gate needs rev 4's
-  gate marker in the webhook, for a subscription that takes no payment.
-- **Q6.** Expire an org's earlier open Checkout Session before a new purchase, rather than refuse until it expires
-  (D2 (a′))? **Recommended: expire**, as rev 4's Q11. The newest purchase is the one the customer wants, and a session
+- **Q5.** The trial: run (row), (a), (a′), (b) and (c) under the lease, without a gate on its own artifact (D3)?
+  **Recommended: yes.** A gate needs rev 4's gate marker in the webhook, for a subscription that takes no payment.
+  Running (a′) and (b) keeps the trial from starting beside a payable artifact in another tab.
+- **Q6.** Expire an org's earlier open Checkout Session, keyed to O or keyless, before a new purchase, rather than
+  refuse until it expires (D2 (a′))? **Recommended: expire**, as rev 4's Q11. The newest purchase is the one the customer wants, and a session
   they finished first is seen by (b) and (c).
 - **Q7.** Q3 email recipient for `org_plan`: the Stripe customer's email (D8)? **Recommended: yes.** It is where
   receipts go, so the refund notice lands beside the charge it refers to.
@@ -682,16 +785,17 @@ security column says.
 
 | # | Slice | Done when | scope | Blocked by | Migration | Security review |
 |---|---|---|---|---|---|---|
-| O1 | **The hold scope (D1)** | `payment_holds.scope` exists with its check and the `(scope, payer_key)` open index. `leaseKeyFor` replaces `payerLeaseKey` in the store, the sweeper and the script. `openHold` takes `scope`. The create-a-team readers filter `new_org`. `releaseHold` closes a setup only for `new_org`. The script lists `--scope`. The Q3 sender resolves the `org_plan` recipient. C1–C8, C32 (sender half) and C42 pass. | `apps/console/lib/db/schema/payment-holds.ts apps/console/lib/db/migrations/** apps/console/lib/billing/payment-holds/store.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/lib/billing/payment-holds/emails.ts apps/console/lib/billing/pending-org-setup.ts apps/console/scripts/payment-holds.ts apps/console/tests/integration/payment-holds.test.ts apps/console/tests/integration/payment-hold-sweeper.test.ts apps/console/tests/scripts/payment-holds.test.ts apps/console/tests/actions/billing-new-org-holds.test.ts` | none (rebase first, CLAUDE.md §5) | **yes** | **yes** (a service-role table's fence and readers) |
-| O2 | **The row predicates (D5, D7)** | `orgRowBlocksNewPlan` refuses a row naming an `active` or `trialing` subscription, a `past_due` row, and a live, unexpired grant, in `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial`, before any Stripe call, each with its copy. F3's live set is widened to §2's. C19, C27–C30 pass. | `apps/console/app/server/actions/billing.ts apps/console/tests/actions/billing-subscription.test.ts` | F2, F3 | no | no (money review yes) |
-| O3 | **The superseder with a fresh read, and the detector (D4, D6)** | `lib/billing/org-plan-row.ts` holds R1, R2, `reportTwoLive` and `isOrgPlanSubscriptionOf`. The guarded write reports the subscription it replaced. The `deleted` handler runs R1, and suppresses the cancellation email when R1 named a live sibling. A refused live sync runs R2. C33–C41 pass, and `billing-sync.test.ts` stays green. | `apps/console/lib/billing/org-plan-row.ts apps/console/lib/billing/sync.ts apps/console/lib/billing/queries.ts apps/console/lib/billing/webhook-handler.ts apps/console/tests/integration/billing-sync.test.ts apps/console/tests/lib/billing/webhook-handler.test.ts apps/console/tests/lib/billing/sync.test.ts apps/console/tests/lib/billing/org-plan-row.test.ts` | none. **Parallel with O1 and O2.** | no | **yes** (the webhook) |
-| O4 | **The `org-plan:` lease (D3)** | `createSubscriptionIntent` and `createCheckoutSession` run under `org-plan:<O>` on `purchase_leases` **and** the old advisory key, with the fence, the mint deadline, the gate and the close-out. Checkout carries its session-level key and a 30-minute `expires_at`. The trial takes the lease. C20–C22, C25 and C26 (the lease half) pass. | `apps/console/app/server/actions/billing.ts apps/console/lib/billing/purchase-lease.ts apps/console/tests/integration/payment-hold-lease.test.ts apps/console/tests/actions/billing-subscription.test.ts` | O2 (`billing.ts`), F2 | no | **yes** (the purchase path) |
+| O1 | **The hold scope (D1)** | `payment_holds.scope` exists with its check, its temporary default and the `(scope, payer_key)` open index. `leaseKeyFor` replaces `payerLeaseKey` in the store, the sweeper and the script. `openHold` takes an **optional** `scope` (default `new_org`), so `billing.ts:2105` is untouched. The create-a-team readers filter `new_org`. `store.ts` gains the org-plan reader `paymentHoldsOf('org_plan', orgId)` and the scope-free `openHoldOn(subscriptionId)`, tested here and first called in O6. `releaseHold` closes a setup only for `new_org`. The script lists `--scope`. The Q3 sender resolves the `org_plan` recipient. C1–C8, C32 (sender half) and C42 pass. | `apps/console/lib/db/schema/payment-holds.ts apps/console/lib/db/migrations/** apps/console/lib/billing/payment-holds/store.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/lib/billing/payment-holds/emails.ts apps/console/lib/billing/pending-org-setup.ts apps/console/scripts/payment-holds.ts apps/console/tests/integration/payment-holds.test.ts apps/console/tests/integration/payment-hold-sweeper.test.ts apps/console/tests/scripts/payment-holds.test.ts apps/console/tests/actions/billing-new-org-holds.test.ts` | none (rebase first, CLAUDE.md §5) | **yes** | **yes** (a service-role table's fence and readers) |
+| O2 | **The row predicates (D5, D7)** | `orgRowBlocksNewPlan` refuses a row naming an `active` or `trialing` subscription, a row naming a subscription and `past_due`, and a subscription-less row that is a live, unexpired grant, in `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial`, before any Stripe call, each with its copy. F3's `liveOrgPlanCheck` keeps its classifier, and its status set gains `unpaid` and `paused`, with copy by status. F3's `it.each(["trialing", "past_due"])` assertion changes for `past_due` only (C27). C19, C27–C30 and C45 pass. | `apps/console/app/server/actions/billing.ts apps/console/tests/actions/billing-subscription.test.ts` | F2, F3 | no | no (money review yes) |
+| O3 | **The superseder with a fresh read, and the detector (D4, D6)** | `lib/billing/org-plan-row.ts` holds R1 (with its `active` → `trialing` → other order), R2, D6b′, `reportTwoLive` and `isOrgPlanSubscriptionOf`. `lib/billing/operator-alert.ts` (server-only, no `"use server"`) carries the operator alert. The guarded write reports the subscription id and status it replaced. The `deleted` handler runs R1, and suppresses the cancellation email when R1 named a **paid** (`active`/`trialing`) sibling. A refused live sync runs R2. C33–C41 and C46–C48 (the module half) pass, and `billing-sync.test.ts` stays green. | `apps/console/lib/billing/org-plan-row.ts apps/console/lib/billing/operator-alert.ts apps/console/tests/lib/billing/operator-alert.test.ts apps/console/lib/billing/sync.ts apps/console/lib/billing/queries.ts apps/console/lib/billing/webhook-handler.ts apps/console/tests/integration/billing-sync.test.ts apps/console/tests/lib/billing/webhook-handler.test.ts apps/console/tests/lib/billing/sync.test.ts apps/console/tests/lib/billing/org-plan-row.test.ts` | none. **Parallel with O1 and O2.** | no | **yes** (the webhook) |
+| O4 | **The `org-plan:` lease (D3)** | `createSubscriptionIntent` and `createCheckoutSession` run under the old advisory key (outer) **and** `org-plan:<O>` on `purchase_leases` (inner), with the fence, the mint deadline, the gate and the close-out. Checkout carries its session-level key and a 30-minute `expires_at`. The trial takes the lease. S17 is checked against the pinned SDK types and recorded in §1.3. C20, C22, C25 and C26 (the lease half) pass. | `apps/console/app/server/actions/billing.ts apps/console/lib/billing/purchase-lease.ts apps/console/tests/integration/payment-hold-lease.test.ts apps/console/tests/actions/billing-subscription.test.ts` | O2 (`billing.ts`), F2 | no | **yes** (the purchase path) |
 | O5 | **The backfill and the runbook (§9 step 5)** | `reconcile --backfill` widens B1 to org-plan subscriptions and opens them as `org_plan` holds. The runbook documents the org-plan rows, the scope flag and the deploy order. C43 passes. | `apps/console/scripts/payment-holds.ts apps/console/docs/stripe-prod-runbook.md apps/console/tests/scripts/payment-holds.test.ts` | O1. **Parallel with O3 and O4.** | no | **yes** (an operator command that opens holds) |
-| O6 | **The org-plan flow on holds (D2, D8)** | I1 (row), (a), (a′), (b), (c) as D2 says. The cross-scope keep. The org-plan composer and `notice`. `cancelNeverPaid`, `settleCancelledSubscription` and the memory-less outcomes and copy are deleted. The advisory key is dropped. `billing-subscription.test.ts:725-760` is flipped. C9–C18, C23, C24, C26 (hold half) and C31 pass. **Deploy only after O4's rollout has completed and the O5 backfill has run, and run the backfill again after this rollout (§9).** | `apps/console/app/server/actions/billing.ts apps/console/lib/billing/org-plan-hold-copy.ts apps/console/lib/billing/new-org-hold-copy.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-org-plan-holds.test.ts` | O1, O3 (`isOrgPlanSubscriptionOf`), O4, O5 | no | **yes** (the purchase path) |
+| O6 | **The org-plan flow on holds (D2, D8)** | I1 (row), (a), (a′) with keyless sessions, (b), (c) as D2 says, in `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial`, calling O1's org-plan reader and `openHoldOn`. The cross-scope clause by state and `last_pay`, and the org-plan composer and `notice`. `billing.ts` imports O3's `operator-alert.ts` and deletes its private `alertOperator`. `cancelNeverPaid`, `settleCancelledSubscription` and the memory-less outcomes and copy are deleted. The advisory key is dropped. `billing-subscription.test.ts:725-760` is flipped. C9–C18, C21, C23, C24, C26 (hold half), C31, C44 and C48 (the `billing.ts` half) pass. **Deploy only when O4's rollout has been complete for more than 24h and the O5 backfill has run, and run the backfill again after this rollout (§9).** | `apps/console/app/server/actions/billing.ts apps/console/lib/billing/org-plan-hold-copy.ts apps/console/lib/billing/new-org-hold-copy.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-org-plan-holds.test.ts` | O1, O3 (`isOrgPlanSubscriptionOf`), O4, O5 | no | **yes** (the purchase path) |
 | O7 | **The notice in the upgrade sheet (D8)** | `components/org/upgrade-org-sheet.tsx` shows `notice` above the payment form. If the board labels it `class:ui`, it opens as a draft and stays one (CLAUDE.md §4). | `apps/console/components/org/upgrade-org-sheet.tsx apps/console/tests/components/org/**` | O6 | no | no |
+| O8 | **`scope` required (D1)** | `openHold`'s `scope` is required, and every opener passes it: the create-a-team purchase (`billing.ts:2105`), the link's opener (`sweeper.ts:454`), the backfill (`scripts/payment-holds.ts:565`) and O6's org-plan opener. A migration drops the column's default. A test inserts a hold without `scope` and expects a `not null` violation. | `apps/console/lib/db/schema/payment-holds.ts apps/console/lib/db/migrations/** apps/console/lib/billing/payment-holds/store.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/scripts/payment-holds.ts apps/console/app/server/actions/billing.ts apps/console/tests/integration/payment-holds.test.ts` | O6 (`billing.ts`, the migration chain) | **yes** | no |
 
 Order: F2 and F3 first. Then O1, O2 and O3 in parallel. Then O4 (after O2) and O5 (after O1). They join at O6, then
-O7. O1, O2 and O3 have disjoint scopes. O4 and O6 reach `billing.ts` after O2, and O5 reaches the script after O1,
+O7 and O8 (in parallel: disjoint scopes). O1, O2 and O3 have disjoint scopes. O4 and O6 reach `billing.ts` after O2, and O5 reaches the script after O1,
 which is sound because each runs after the one it shares a file with.
 
 **What changes in ADR 0002 on acceptance.** §2's "the rev 4 notion of a purchase scope … is gone", §7's "The
