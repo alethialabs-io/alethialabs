@@ -82,6 +82,7 @@ export async function fakeResolve(input: {
 		paid: true,
 		planState: "active",
 		paymentUrl: null,
+		ended: null,
 		org,
 		linked: !!linkedTo && linkedTo === org?.id,
 		declared: false,
