@@ -13,10 +13,12 @@ import { effectiveAiTier } from "@/lib/billing/ai-plan";
 import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import { isBillingActive } from "@/lib/billing/plan";
+import { reportReplacedLivePlan } from "@/lib/billing/org-plan-row";
 import {
 	applyAiSubscriptionToBilling,
-	applySubscriptionToBilling,
 	claimPlanWelcome,
+	type PlanSlotWrite,
+	writeSubscriptionToBilling,
 } from "@/lib/billing/queries";
 import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
 import { billingPlan } from "@/lib/db/schema/enums";
@@ -116,6 +118,13 @@ export interface SyncOptions {
 	 * `sameSubscriptionMayApply` in lib/billing/queries.ts).
 	 */
 	eventAt?: Date;
+	/**
+	 * Told what the guarded org-plan write did, when the sync reached it: whether it applied, and the
+	 * slot it decided against, read with the row locked (`PlanSlotWrite`). Not called for a subscription
+	 * with no `organization_id`, or for the AI product, which writes the AI columns. The webhook handler
+	 * passes it to run R2 and D6b′ (lib/billing/org-plan-row.ts).
+	 */
+	onPlanWrite?: (write: PlanSlotWrite) => void;
 }
 
 /** Whether a sync wrote the row, or was refused by the guard in lib/billing/queries.ts. */
@@ -126,11 +135,12 @@ export type SyncOutcome = "applied" | "ignored";
  * org from `subscription.metadata.organization_id`. Events without it are ignored
  * (logged), so a stray Stripe object can never mutate the wrong tenant.
  *
- * The write is CONDITIONAL (#5514, see `applySubscriptionToBilling`): it is refused when the row
+ * The write is CONDITIONAL (#5514, see `writeSubscriptionToBilling`): it is refused when the row
  * names a different live subscription this one does not supersede, when this is an ended
  * subscription the row does not name, or when the event is older than one already applied. A
  * refused sync has no side effects — no included credit, no welcome email — because the org is
- * not on this subscription.
+ * not on this subscription. An applied org-plan write that replaced a live `past_due` subscription
+ * or a live off-Stripe grant raises the two-live alert (ADR 0004 D6b, `reportReplacedLivePlan`).
  */
 export async function syncSubscriptionToBilling(
 	sub: Stripe.Subscription,
@@ -171,7 +181,7 @@ export async function syncSubscriptionToBilling(
 	// isBillingActive). We still retain stripeSubscriptionId/seats so the panel can show
 	// and clean up a pending sub; Stripe auto-expires an abandoned incomplete one.
 	const live = isBillingActive(status);
-	const applied = await applySubscriptionToBilling({
+	const write = await writeSubscriptionToBilling({
 		organizationId: orgId,
 		plan: live && plan ? plan : "community",
 		status,
@@ -185,10 +195,14 @@ export async function syncSubscriptionToBilling(
 				: null,
 		eventAt,
 	});
-	if (!applied) {
+	opts.onPlanWrite?.(write);
+	if (!write.applied) {
 		warnNotApplied(orgId, sub.id, status);
 		return "ignored";
 	}
+	// D6b (ADR 0004): a paid subscription that just replaced a live `past_due` one or a live off-Stripe
+	// grant is reported here, for every caller of this sync. It never throws and never cancels.
+	await reportReplacedLivePlan(orgId, sub, write.before);
 
 	// Grant the plan's monthly included usage credit for this period (idempotent,
 	// best-effort). Runs on activation + each renewal sync.

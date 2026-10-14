@@ -32,7 +32,8 @@ const stripeMock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/billing/stripe", () => ({
 	getStripe: () => ({
-		subscriptions: { retrieve: stripeMock.retrieve, cancel: stripeMock.cancel },
+		// R1 (ADR 0004 D4) lists the customer after an applied deletion; none of these cases has a sibling.
+		subscriptions: { retrieve: stripeMock.retrieve, cancel: stripeMock.cancel, list: async () => ({ data: [], has_more: false }) },
 		invoices: { pay: stripeMock.pay, voidInvoice: stripeMock.voidInvoice },
 		refunds: { create: stripeMock.refundsCreate },
 		webhooks: { constructEventAsync: stripeMock.constructEventAsync },
@@ -41,7 +42,7 @@ vi.mock("@/lib/billing/stripe", () => ({
 		throw new Error("the webhook must never build the purchase client");
 	},
 }));
-vi.mock("@/lib/billing/sync", () => ({ syncSubscriptionToBilling: vi.fn() }));
+vi.mock("@/lib/billing/sync", () => ({ syncSubscriptionToBilling: vi.fn(), isOrgPlanSubscription: () => true }));
 vi.mock("@/lib/email/billing-email", () => ({
 	sendCreditPackReceiptEmail: vi.fn(),
 	sendPaymentFailedEmail: vi.fn(),
