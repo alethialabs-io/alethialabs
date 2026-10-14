@@ -22,8 +22,19 @@ vi.mock("@/lib/billing/purchase-lease", () => ({
 	tryAcquirePurchaseLease: vi.fn(),
 	acquirePurchaseLease: vi.fn(),
 	releasePurchaseLease: vi.fn(),
+	renewPurchaseLease: vi.fn(),
 	fenceFor: vi.fn(() => async () => undefined),
 }));
+// The real sweeper, with `relinkAdoptedSetup` observable: the moved release must never re-link (C98).
+vi.mock("@/lib/billing/payment-holds/sweeper", async (importOriginal) => {
+	const real = await importOriginal<typeof import("@/lib/billing/payment-holds/sweeper")>();
+	return { ...real, relinkAdoptedSetup: vi.fn(real.relinkAdoptedSetup) };
+});
+// Two fixed prices for F3's classification (`isOrgPlanSubscription`): one AI tier, everything else a plan.
+vi.mock("@/lib/billing/config", async (importOriginal) => {
+	const real = await importOriginal<typeof import("@/lib/billing/config")>();
+	return { ...real, aiTierForPriceId: (id: string) => (id === "price_ai_plus" ? "ai_plus" : null) };
+});
 vi.mock("@/lib/billing/payment-holds/store", () => ({
 	payerLeaseKey: (payer: string) => `user:${payer}`,
 	writeHoldState: vi.fn(),
@@ -40,6 +51,7 @@ vi.mock("@/lib/auth/internal-auth", async (importOriginal) => {
 });
 
 import { render } from "@react-email/components";
+import type Stripe from "stripe";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { is, SQL } from "drizzle-orm";
 import { POST } from "@/app/api/internal/payment-holds/sweep/route";
@@ -54,7 +66,12 @@ import {
 } from "@/lib/billing/payment-holds/sweeper";
 import * as lease from "@/lib/billing/purchase-lease";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import { LINK_REFUSED_NOTE } from "@/lib/billing/payment-holds/machine";
+import type { withPurchaseLock } from "@/lib/billing/purchase-lock";
+import { getPurchaseStripe } from "@/lib/billing/stripe";
+import { isOrgPlanSubscription } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
+import type { BillingStatus } from "@/lib/db/schema/enums";
 import { PAYMENT_HOLD_NOTIFIED_STATES, type PaymentHoldRow } from "@/lib/db/schema";
 import { sendGuardedEmail } from "@/lib/email/guard";
 import {
@@ -62,6 +79,8 @@ import {
 	type BackfillSubscription,
 	backfillVerdict,
 	main,
+	type MovedReleaseDeps,
+	type MovedStripe,
 	releaseHoldCommand,
 	runBackfill,
 	type ServerDeps,
@@ -863,5 +882,672 @@ describe("main", () => {
 		db.queue.push([hold()]);
 		expect(await main(["list", "--open"], print)).toBe(0);
 		expect(printed[0]).toMatch(/^hold hold-1 {2}sub sub_x {2}payer payer-1 {2}state closing/);
+	});
+});
+
+// ── release --moved-to (T16m, E2m; ADR 0002 §5.8; C98–C102, C108) ─────────────────────────────────
+
+const X = "sub_x";
+const T = "org_t";
+const O = "org_o";
+const MIN = 60_000;
+
+/** True when a fixture carries the fields the moved release reads off a subscription. */
+function isSubscription(x: unknown): x is Stripe.Subscription {
+	return typeof x === "object" && x !== null && "id" in x && "status" in x && "customer" in x && "metadata" in x && "items" in x;
+}
+
+/** True when a fixture is a customer or a deleted customer. */
+function isCustomer(x: unknown): x is Stripe.Customer | Stripe.DeletedCustomer {
+	return typeof x === "object" && x !== null && "id" in x && "object" in x && x.object === "customer";
+}
+
+/** A subscription as Stripe returns it, with one plan line (`price`), or only a metered line. */
+function stripeSub(o: {
+	id: string;
+	status: string;
+	orgId?: string | null;
+	customer?: string;
+	price?: string;
+	meteredOnly?: boolean;
+}): Stripe.Subscription {
+	const fixture: unknown = {
+		id: o.id,
+		object: "subscription",
+		status: o.status,
+		customer: o.customer ?? "cus_u",
+		metadata: { created_by: "payer-1", ...(o.orgId ? { organization_id: o.orgId } : {}) },
+		items: {
+			data: [
+				{
+					id: `si_${o.id}`,
+					quantity: 1,
+					price: { id: o.price ?? "price_team", recurring: { usage_type: o.meteredOnly ? "metered" : "licensed" } },
+				},
+			],
+		},
+	};
+	if (!isSubscription(fixture)) throw new Error("fixture: not a subscription");
+	return fixture;
+}
+
+/** What the moved release's Stripe client answers. */
+interface MovedWorld {
+	x: Stripe.Subscription | "missing" | "error";
+	customer: { deleted: boolean; orgId: string | null };
+	/** Per customer, its subscriptions of every status. */
+	lists: Record<string, Stripe.Subscription[]>;
+	listFail: boolean;
+	/** Every page has 100 more: the 1000-per-customer cap is reached. */
+	listOverCap: boolean;
+	/** Customers whose `organization_id` is T. */
+	customerHits: string[];
+	customerOverCap: boolean;
+	search: Stripe.Subscription[];
+	searchFail: boolean;
+	/** Every page has more: the 10-page cap is reached. */
+	searchOverCap: boolean;
+}
+
+/** One ordered log across the lease, the lock, Stripe, the sync and the store. */
+let order: string[] = [];
+
+/** A fake of the moved release's Stripe reads over `w`; each call is logged in `order`. */
+function movedStripeOf(w: MovedWorld): MovedStripe {
+	let minted = 0;
+	return {
+		subscriptions: {
+			retrieve: async (id) => {
+				order.push("stripe:subscriptions.retrieve");
+				if (w.x === "missing") throw Object.assign(new Error(`No such subscription: ${id}`), { code: "resource_missing" });
+				if (w.x === "error") throw new Error("api_connection_error");
+				return w.x;
+			},
+			list: async ({ customer }) => {
+				order.push(`stripe:subscriptions.list:${customer}`);
+				if (w.listFail) throw new Error("rate_limit");
+				if (w.listOverCap) {
+					const data = Array.from({ length: 100 }, () => stripeSub({ id: `sub_cap_${minted++}`, status: "canceled" }));
+					return { has_more: true, data };
+				}
+				return { has_more: false, data: w.lists[customer] ?? [] };
+			},
+			search: async () => {
+				order.push("stripe:subscriptions.search");
+				if (w.searchFail) throw new Error("search unavailable");
+				if (w.searchOverCap) return { has_more: true, next_page: `page_${minted++}`, data: [] };
+				return { has_more: false, next_page: null, data: w.search };
+			},
+		},
+		customers: {
+			retrieve: async (id) => {
+				order.push("stripe:customers.retrieve");
+				const fixture: unknown = w.customer.deleted
+					? { id, object: "customer", deleted: true }
+					: { id, object: "customer", metadata: w.customer.orgId ? { organization_id: w.customer.orgId } : {} };
+				if (!isCustomer(fixture)) throw new Error("fixture: not a customer");
+				return fixture;
+			},
+			search: async () => {
+				order.push("stripe:customers.search");
+				return { has_more: w.customerOverCap, data: w.customerHits.map((id) => ({ id })) };
+			},
+		},
+	};
+}
+
+/** T's billing row naming `sub` (or nothing), written `minutesAgo` before NOW. */
+function billing(sub: string | null, status: BillingStatus = "active", minutesAgo = 20, customer = "cus_u") {
+	return {
+		stripeSubscriptionId: sub,
+		status,
+		stripeCustomerId: customer,
+		updatedAt: new Date(NOW.getTime() - minutesAgo * MIN),
+	};
+}
+
+/** One moved-release fixture: the database facts, the Stripe world, T's row reads, and the lock and lease. */
+interface MovedCase {
+	hold: PaymentHoldRow;
+	/** The re-read under the lease; the first read when absent. */
+	reread?: PaymentHoldRow | null;
+	team: { id: string; metadata: string | null } | null;
+	member: { role: string; status: string } | null;
+	managesBilling: boolean;
+	setupOrgId: string | null;
+	world: MovedWorld;
+	/** T's billing row, read in order: before any sync, then after the sync or after a release that wrote nothing. */
+	rows: Array<ReturnType<typeof billing> | null>;
+	lockBusy: boolean;
+	renew: boolean;
+}
+
+/** C98's fixture: a moved X, U an active owner of T with manage_billing, T's row naming X 20 minutes ago. */
+function movedCase(over: Partial<MovedCase> = {}, world: Partial<MovedWorld> = {}): MovedCase {
+	return {
+		hold: hold({ state: "needs_operator", opened_by: "link", open_note: LINK_REFUSED_NOTE }),
+		team: { id: T, metadata: null },
+		member: { role: "owner", status: "active" },
+		managesBilling: true,
+		setupOrgId: O,
+		world: {
+			x: stripeSub({ id: X, status: "active", orgId: T }),
+			customer: { deleted: false, orgId: T },
+			lists: { cus_u: [stripeSub({ id: X, status: "active", orgId: T })] },
+			listFail: false,
+			listOverCap: false,
+			customerHits: ["cus_u"],
+			customerOverCap: false,
+			search: [stripeSub({ id: X, status: "active", orgId: T })],
+			searchFail: false,
+			searchOverCap: false,
+			...world,
+		},
+		rows: [billing(X)],
+		lockBusy: false,
+		renew: true,
+		...over,
+	};
+}
+
+/** The moved deps over `c`, each call logged in `order`. */
+function movedDepsOf(c: MovedCase) {
+	const rows = [...c.rows];
+	/** `withPurchaseLock`'s shape: busy, or `fn` run between a logged enter and exit. */
+	async function locked<T>(key: string, fn: () => Promise<T>): Promise<{ acquired: true; value: T } | { acquired: false }> {
+		if (c.lockBusy) return { acquired: false };
+		order.push(`lock:enter:${key}`);
+		try {
+			return { acquired: true, value: await fn() };
+		} finally {
+			order.push("lock:exit");
+		}
+	}
+	const lock: { withPurchaseLock: typeof withPurchaseLock } = { withPurchaseLock: locked };
+	const sync = {
+		syncSubscriptionToBilling: vi.fn(async (_sub: Stripe.Subscription): Promise<"applied"> => {
+			order.push("sync");
+			return "applied";
+		}),
+		isOrgPlanSubscription,
+	};
+	const moved: MovedReleaseDeps = {
+		lease: {
+			renewPurchaseLease: vi.fn(async () => {
+				order.push("lease:renew");
+				return c.renew;
+			}),
+		},
+		lock,
+		sync,
+		queries: {
+			getOrgBilling: vi.fn(async () => {
+				order.push("db:getOrgBilling");
+				return rows.length > 1 ? (rows.shift() ?? null) : (rows[0] ?? null);
+			}),
+		},
+		setups: { pendingOrgSetupFor: vi.fn(async () => ({ created_org_id: c.setupOrgId })) },
+		stripe: () => movedStripeOf(c.world),
+	};
+	return { moved, lock, sync };
+}
+
+/** The setup line's row: an open setup of X for the team O. */
+const SETUP_LINE = { id: "setup-1", user_id: "payer-1", created_org_id: O, linked_at: null, closed_at: null, closed_reason: null };
+
+/** Runs `release X --moved-to T --reason r --operator op-1` over `c`. */
+async function runMoved(c: MovedCase, input: { movedTo?: string } = {}) {
+	const { stripe: observed, log } = fakeStripe({ sub: "active", invoice: "paid" });
+	const { moved, lock, sync } = movedDepsOf(c);
+	const holdsManageBilling = vi.fn(async () => c.managesBilling);
+	const deps: ServerDeps = {
+		store,
+		lease,
+		sweeper: { ...sweeper, holdsManageBilling },
+		sweepDeps: depsOver(observed),
+		moved,
+	};
+	const reread = c.reread === undefined ? c.hold : c.reread;
+	db.queue.length = 0;
+	db.queue.push([c.hold], reread ? [reread] : []);
+	if (reread) {
+		db.queue.push([SETUP_LINE]);
+		if (c.team) db.queue.push([c.team], c.member ? [c.member] : []);
+		else db.queue.push([]);
+	}
+	const result = await releaseHoldCommand(
+		{ subscriptionId: X, reason: "r", operator: "op-1", movedTo: input.movedTo ?? T },
+		deps,
+		print,
+	);
+	return { result, log, lock, sync, holdsManageBilling, moved };
+}
+
+/** The audit event lines written, parsed. */
+function auditLines(): unknown[] {
+	return info.mock.calls.flatMap((c: unknown[]) => {
+		const line = String(c[0]);
+		return line.includes('"billing.payment_hold.released"') ? [JSON.parse(line)] : [];
+	});
+}
+
+/** The machine's Stripe writes in the observation fake's log. */
+function holdStripeWrites(log: string[]): string[] {
+	return log.filter((l) => /^(invoices\.(voidInvoice|del)|subscriptions\.cancel|paymentIntents\.cancel|refunds\.create)/.test(l));
+}
+
+/** Nothing was written, alerted or emitted, and the lease (and the lock, when taken) were given back. */
+function expectNothingWritten(out: Awaited<ReturnType<typeof runMoved>>) {
+	expect(store.releaseHold).not.toHaveBeenCalled();
+	expect(store.writeHoldState).not.toHaveBeenCalled();
+	expect(alert).not.toHaveBeenCalled();
+	expect(alertPaymentNeedsSupport).not.toHaveBeenCalled();
+	expect(holdStripeWrites(out.log)).toEqual([]);
+	expect(getPurchaseStripe).not.toHaveBeenCalled();
+	expect(auditLines()).toEqual([]);
+	expect(lease.releasePurchaseLease).toHaveBeenCalledWith(LEASE);
+	if (order.some((o) => o.startsWith("lock:enter"))) expect(order.at(-1)).toBe("lock:exit");
+}
+
+describe("release --moved-to (§5.8)", () => {
+	beforeEach(() => {
+		order = [];
+		vi.mocked(lease.acquirePurchaseLease).mockImplementation(async () => {
+			order.push("lease:acquire");
+			return LEASE;
+		});
+		vi.mocked(store.releaseHold).mockImplementation(async (_l, ref, input) => {
+			order.push("store.releaseHold");
+			return {
+				hold: hold({ id: ref.id, version: ref.version + 1, state: "released", release_reason: input.reason }),
+				closedSetupId: "setup-1",
+				...(input.expectOrgRow ? { checkedOrgRow: { subscriptionId: X, status: "active" } } : {}),
+			};
+		});
+	});
+
+	it("C98: releases a moved link_refused hold, audited with the move; no re-link, alert or Stripe write; a second run is not_open", async () => {
+		const out = await runMoved(movedCase());
+		expect(out.result).toEqual({ kind: "released", holdId: "hold-1" });
+		expect(store.releaseHold).toHaveBeenCalledTimes(1);
+		expect(store.releaseHold).toHaveBeenCalledWith(LEASE, { id: "hold-1", version: 0 }, {
+			reason: "operator",
+			releasedBy: "op-1",
+			note: `moved to ${T}: r`,
+			expectOrgRow: { orgId: T, subscriptionId: X },
+		});
+		expect(auditLines()).toEqual([
+			{
+				event: "billing.payment_hold.released",
+				hold_id: "hold-1",
+				subscription_id: X,
+				from_state: "needs_operator",
+				operator: "op-1",
+				reason: "r",
+				moved_to: T,
+				payer: "payer-1",
+				customer_id: "cus_u",
+				row_subscription_id: X,
+				row_status: "active",
+				listed_customers: ["cus_u"],
+				listed_subscription_count: 1,
+				setup_closed: "setup-1",
+			},
+		]);
+		expect(sweeper.relinkAdoptedSetup).not.toHaveBeenCalled();
+		expect(alert).not.toHaveBeenCalled();
+		expect(alertPaymentNeedsSupport).not.toHaveBeenCalled();
+		expect(getPurchaseStripe).not.toHaveBeenCalled();
+		expect(holdStripeWrites(out.log)).toEqual([]);
+		expect(out.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+		expect(lease.releasePurchaseLease).toHaveBeenCalledWith(LEASE);
+		// T's lock is held from before the first Stripe read until after the release.
+		expect(order[1]).toBe(`lock:enter:org-plan:${T}`);
+		expect(order.findIndex((o) => o.startsWith("stripe:"))).toBeGreaterThan(1);
+		expect(order.indexOf("store.releaseHold")).toBeLessThan(order.indexOf("lock:exit"));
+
+		vi.mocked(store.releaseHold).mockClear();
+		info.mockClear();
+		db.queue.push([]);
+		expect(
+			await releaseHoldCommand({ subscriptionId: X, reason: "r", operator: "op-1", movedTo: T }, serverDeps(fakeStripe({ sub: "active", invoice: "paid" }).stripe), print),
+		).toEqual({ kind: "not_open" });
+		expect(auditLines()).toEqual([]);
+		expect(store.releaseHold).not.toHaveBeenCalled();
+	});
+
+	it("C98 control: a plain release emits no moved_to, payer, row_* or setup_closed key, and passes no expectOrgRow", async () => {
+		const { stripe } = fakeStripe({ sub: "canceled", invoice: "void" });
+		const open = hold({ state: "needs_operator" });
+		db.queue.push([open], [open], []);
+		expect(await releaseHoldCommand(releaseArgs, serverDeps(stripe), print)).toMatchObject({ kind: "released" });
+		const [line] = auditLines();
+		for (const key of ["moved_to", "payer", "customer_id", "row_subscription_id", "row_status", "listed_customers", "listed_subscription_count", "setup_closed"]) {
+			expect(line).not.toHaveProperty(key);
+		}
+		expect(vi.mocked(store.releaseHold).mock.calls[0]?.[2]).not.toHaveProperty("expectOrgRow");
+	});
+
+	it("C99: every refusal is typed, writes nothing, never syncs (but on the way to row_not_x / row_changed), and gives the lease and the lock back", async () => {
+		const z = (status: string, over: { orgId?: string; price?: string } = {}) =>
+			stripeSub({ id: "sub_z", status, orgId: over.orgId ?? T, customer: "cus_t", price: over.price });
+		const cases: Array<[string, MovedCase]> = [
+			["not_link_refused", movedCase({ hold: hold({ state: "needs_operator", open_note: null }) })],
+			["team_not_found", movedCase({ team: null })],
+			["same_team", movedCase({ setupOrgId: T })],
+			["payer_not_in_team", movedCase({ member: null })],
+			["team_purchase_in_progress", movedCase({ lockBusy: true })],
+			["x_missing", movedCase({}, { x: "missing" })],
+			["stripe_unreadable", movedCase({}, { x: "error" })],
+			["x_ended", movedCase({}, { x: stripeSub({ id: X, status: "canceled", orgId: T }) })],
+			["x_not_movable", movedCase({}, { x: stripeSub({ id: X, status: "unpaid", orgId: T }) })],
+			["subscription_not_moved", movedCase({}, { x: stripeSub({ id: X, status: "active", orgId: O }) })],
+			["customer_not_moved", movedCase({}, { customer: { deleted: false, orgId: O } })],
+			["team_has_other_plan", movedCase({ rows: [billing("sub_z", "past_due")] })],
+			["team_has_other_plan", movedCase({}, { search: [z("past_due")] })],
+			["too_soon", movedCase({ rows: [billing(X, "active", 5)] })],
+			["row_not_x", movedCase({ rows: [null, billing(null, "none")] })],
+			["lease_lost", movedCase({ renew: false })],
+		];
+		for (const [code, c] of cases) {
+			vi.clearAllMocks();
+			order = [];
+			db.queue.length = 0;
+			const out = await runMoved(c);
+			expect([code, out.result]).toEqual([code, expect.objectContaining({ kind: "refused", code })]);
+			expectNothingWritten(out);
+			const synced = vi.mocked(out.sync.syncSubscriptionToBilling).mock.calls.length;
+			expect([code, synced]).toEqual([code, code === "row_not_x" ? 1 : 0]);
+		}
+	});
+
+	it("C99: a --moved-to with no value is refused before any read", async () => {
+		const { stripe } = fakeStripe({ sub: "active", invoice: "paid" });
+		for (const movedTo of ["", "  ", "--reason"]) {
+			expect(await releaseHoldCommand({ ...releaseArgs, movedTo }, serverDeps(stripe), print)).toMatchObject({ kind: "refused" });
+		}
+		expect(db.db.select).not.toHaveBeenCalled();
+		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
+		expect(await main(["release", X, "--reason", "r", "--operator", "op-1", "--moved-to"], print)).toBe(1);
+		expect(await main(["release", X, "--moved-to", "--reason", "r", "--operator", "op-1"], print)).toBe(1);
+		expect(await main(["release", X, "--reason", "r", "--operator", "op-1", "--moved-to="], print)).toBe(1);
+		expect(getServiceDb).not.toHaveBeenCalled();
+	});
+
+	it("a --moved-to or subscription id outside the id charset is refused before any read (the search query cannot be broken out of)", async () => {
+		const { stripe } = fakeStripe({ sub: "active", invoice: "paid" });
+		for (const movedTo of ["org' OR metadata['x']:'y", "org t", "org\"t", "org:t"]) {
+			expect(await releaseHoldCommand({ ...releaseArgs, movedTo }, serverDeps(stripe), print)).toMatchObject({ kind: "refused" });
+			expect(await main(["release", X, "--moved-to", movedTo, "--reason", "r", "--operator", "op-1"], print)).toBe(1);
+		}
+		expect(
+			await releaseHoldCommand({ ...releaseArgs, subscriptionId: "sub_x'", movedTo: T }, serverDeps(stripe), print),
+		).toMatchObject({ kind: "refused" });
+		expect(await main(["release", "sub_x'", "--moved-to", T, "--reason", "r", "--operator", "op-1"], print)).toBe(1);
+		expect(db.db.select).not.toHaveBeenCalled();
+		expect(getServiceDb).not.toHaveBeenCalled();
+		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
+		// A UUID team id passes the check.
+		db.queue.push([]);
+		expect(
+			await releaseHoldCommand({ ...releaseArgs, movedTo: "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c" }, serverDeps(stripe), print),
+		).toEqual({ kind: "not_open" });
+	});
+
+	it("C99 / C101: team_not_found, payer_not_in_team and a busy lock make no Stripe call, and print no live observation", async () => {
+		for (const c of [movedCase({ team: null }), movedCase({ member: { role: "admin", status: "active" } }), movedCase({ lockBusy: true })]) {
+			vi.clearAllMocks();
+			order = [];
+			printed = [];
+			db.queue.length = 0;
+			const out = await runMoved(c);
+			expect(out.result).toMatchObject({ kind: "refused" });
+			expect(order.filter((o) => o.startsWith("stripe:"))).toEqual([]);
+			expect(out.log).toEqual([]);
+			expect(printed.some((l) => l.startsWith("Live observation"))).toBe(false);
+		}
+	});
+
+	it("C99: a listing or search that reaches its cap (1000 per customer, 50 customers, 10 search pages), or fails, is stripe_unreadable", async () => {
+		const worlds: Array<Partial<MovedWorld>> = [
+			{ listOverCap: true },
+			{ customerOverCap: true },
+			{ searchOverCap: true },
+			{ listFail: true },
+			{ searchFail: true },
+		];
+		for (const w of worlds) {
+			vi.clearAllMocks();
+			order = [];
+			db.queue.length = 0;
+			const out = await runMoved(movedCase({}, w));
+			expect([w, out.result]).toEqual([w, expect.objectContaining({ kind: "refused", code: "stripe_unreadable" })]);
+			expect(store.releaseHold).not.toHaveBeenCalled();
+		}
+	});
+
+	it("C99: the per-customer listing stops at its cap of 1000", async () => {
+		const out = await runMoved(movedCase({}, { listOverCap: true }));
+		expect(out.result).toMatchObject({ code: "stripe_unreadable" });
+		expect(order.filter((o) => o === "stripe:subscriptions.list:cus_u")).toHaveLength(10);
+	});
+
+	it("C99: the search stops at its cap of 10 pages", async () => {
+		const out = await runMoved(movedCase({}, { searchOverCap: true }));
+		expect(out.result).toMatchObject({ code: "stripe_unreadable" });
+		expect(order.filter((o) => o === "stripe:subscriptions.search")).toHaveLength(10);
+	});
+});
+
+describe("release --moved-to: sync once, the pre-sync row, N1 and N2 (C100)", () => {
+	beforeEach(() => {
+		order = [];
+		vi.mocked(store.releaseHold).mockImplementation(async (_l, ref, input) => {
+			order.push("store.releaseHold");
+			return {
+				hold: hold({ id: ref.id, version: ref.version + 1, state: "released", release_reason: input.reason }),
+				closedSetupId: "setup-1",
+				checkedOrgRow: { subscriptionId: X, status: "active" },
+			};
+		});
+	});
+
+	/** The lock was entered before the first Stripe read and left after any `releaseHold`. */
+	function expectLockAround() {
+		const enter = order.findIndex((o) => o.startsWith("lock:enter"));
+		const firstStripe = order.findIndex((o) => o.startsWith("stripe:"));
+		expect(enter).toBeGreaterThan(-1);
+		expect(enter).toBeLessThan(firstStripe);
+		const exit = order.indexOf("lock:exit");
+		if (order.includes("store.releaseHold")) expect(order.indexOf("store.releaseHold")).toBeLessThan(exit);
+		expect(exit).toBe(order.length - 1);
+	}
+
+	it("sync once: T's row names nothing, the one sync applies, the re-read names X: released, synced exactly once on the X this run read", async () => {
+		const c = movedCase({ rows: [null, billing(X, "active", 0)] });
+		const out = await runMoved(c);
+		expect(out.result).toMatchObject({ kind: "released" });
+		expect(out.sync.syncSubscriptionToBilling).toHaveBeenCalledTimes(1);
+		expect(out.sync.syncSubscriptionToBilling.mock.calls[0]?.[0]).toBe(c.world.x);
+		expect(out.sync.syncSubscriptionToBilling.mock.calls[0]).toHaveLength(1);
+		expect(order.indexOf("lease:renew")).toBeLessThan(order.indexOf("sync"));
+		expectLockAround();
+	});
+
+	it("pre-sync row: Z past_due, active, trialing or none refuses naming Z, with no sync and no release; Z canceled does not refuse on row 11", async () => {
+		for (const status of ["past_due", "active", "trialing", "none"] as const) {
+			vi.mocked(store.releaseHold).mockClear();
+			order = [];
+			const out = await runMoved(movedCase({ rows: [billing("sub_z", status)] }));
+			expect(out.result).toMatchObject({ kind: "refused", code: "team_has_other_plan", reason: expect.stringContaining(`sub_z (${status})`) });
+			expect(out.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+			expect(store.releaseHold).not.toHaveBeenCalled();
+			expectLockAround();
+		}
+		order = [];
+		const canceled = await runMoved(movedCase({ rows: [billing("sub_z", "canceled"), billing(X, "active", 0)] }));
+		expect(canceled.result).toMatchObject({ kind: "released" });
+		expect(canceled.sync.syncSubscriptionToBilling).toHaveBeenCalledTimes(1);
+	});
+
+	it("N1: a just-minted Z, incomplete, on the customer on T's row, not yet searchable: refused from the listing", async () => {
+		const z = stripeSub({ id: "sub_z", status: "incomplete", orgId: T, customer: "cus_t" });
+		const out = await runMoved(
+			movedCase({ rows: [billing(null, "none", 1, "cus_t")] }, { lists: { cus_t: [z], cus_u: [] }, search: [] }),
+		);
+		expect(out.result).toMatchObject({ kind: "refused", code: "team_has_other_plan", reason: expect.stringContaining("sub_z (incomplete)") });
+		expect(order).toContain("stripe:subscriptions.list:cus_t");
+		expect(out.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+		expectLockAround();
+	});
+
+	it("webhook-first: the row names X 20 min ago and the search finds Z past_due: refused, no sync; 5 min ago is too_soon with the time; neither: released", async () => {
+		const z = stripeSub({ id: "sub_z", status: "past_due", orgId: T, customer: "cus_other" });
+		const found = await runMoved(movedCase({}, { search: [z] }));
+		expect(found.result).toMatchObject({ code: "team_has_other_plan" });
+		expect(found.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+
+		const soon = await runMoved(movedCase({ rows: [billing(X, "active", 5)] }, { search: [] }));
+		expect(soon.result).toMatchObject({ code: "too_soon", reason: expect.stringContaining("2026-10-09T12:10:00.000Z") });
+
+		const later = await runMoved(movedCase({}, { search: [], lists: {} }));
+		expect(later.result).toMatchObject({ kind: "released" });
+	});
+
+	it("N2: an active AI subscription on T, listed and searched, does not refuse; beside a past_due plan Z, the refusal names Z only", async () => {
+		const ai = stripeSub({ id: "sub_ai", status: "active", orgId: T, price: "price_ai_plus" });
+		const out = await runMoved(movedCase({}, { lists: { cus_u: [ai] }, search: [ai] }));
+		expect(out.result).toMatchObject({ kind: "released" });
+
+		const z = stripeSub({ id: "sub_z", status: "past_due", orgId: T });
+		const both = await runMoved(movedCase({}, { lists: { cus_u: [ai, z] }, search: [ai] }));
+		expect(both.result).toMatchObject({ code: "team_has_other_plan", reason: expect.stringContaining("sub_z") });
+		expect(both.result).toMatchObject({ reason: expect.not.stringContaining("sub_ai") });
+
+		const metered = stripeSub({ id: "sub_m", status: "active", orgId: T, price: "price_ai_plus", meteredOnly: true });
+		const noLicensed = await runMoved(movedCase({}, { search: [metered] }));
+		expect(noLicensed.result).toMatchObject({ code: "team_has_other_plan", reason: expect.stringContaining("sub_m") });
+	});
+
+	it("a canceled search hit does not refuse; a failing listing or search is stripe_unreadable", async () => {
+		const gone = stripeSub({ id: "sub_c", status: "canceled", orgId: T });
+		expect((await runMoved(movedCase({}, { search: [gone] }))).result).toMatchObject({ kind: "released" });
+		expect((await runMoved(movedCase({}, { listFail: true }))).result).toMatchObject({ code: "stripe_unreadable" });
+		expect((await runMoved(movedCase({}, { searchFail: true }))).result).toMatchObject({ code: "stripe_unreadable" });
+	});
+
+	it("X's metadata naming O gives subscription_not_moved: no sync, and the listings' verdict is not reached", async () => {
+		const z = stripeSub({ id: "sub_z", status: "active", orgId: T });
+		const out = await runMoved(
+			movedCase({ rows: [null] }, { x: stripeSub({ id: X, status: "active", orgId: O }), search: [z] }),
+		);
+		expect(out.result).toMatchObject({ code: "subscription_not_moved", reason: expect.stringContaining(O) });
+		expect(out.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+	});
+});
+
+describe("release --moved-to: fresh reads under the lease (C101)", () => {
+	beforeEach(() => {
+		order = [];
+		vi.mocked(lease.acquirePurchaseLease).mockImplementation(async () => {
+			order.push("lease:acquire");
+			return LEASE;
+		});
+	});
+
+	it("takes the payer's lease before X or its customer is retrieved", async () => {
+		await runMoved(movedCase());
+		expect(order.indexOf("lease:acquire")).toBeLessThan(order.indexOf("stripe:subscriptions.retrieve"));
+		expect(order.indexOf("lease:acquire")).toBeLessThan(order.indexOf("stripe:customers.retrieve"));
+	});
+
+	it("a busy lease is lease_busy-refused and X is never retrieved", async () => {
+		vi.mocked(lease.acquirePurchaseLease).mockResolvedValue(null);
+		const out = await runMoved(movedCase());
+		expect(out.result).toMatchObject({ kind: "refused", reason: expect.stringMatching(/lease is still busy/) });
+		expect(order.filter((o) => o.startsWith("stripe:"))).toEqual([]);
+	});
+
+	it("a hold released between the first read and the re-read is not_open, with no event; one the re-read finds with another note is not_link_refused", async () => {
+		expect((await runMoved(movedCase({ reread: null }))).result).toEqual({ kind: "not_open" });
+		expect(auditLines()).toEqual([]);
+		const other = movedCase({ reread: hold({ state: "needs_operator", open_note: "backfill: B5 unproven" }) });
+		expect((await runMoved(other)).result).toMatchObject({ code: "not_link_refused" });
+		expect(store.releaseHold).not.toHaveBeenCalled();
+	});
+
+	it("releaseHold null with T's row still naming X is 'Nothing was written' (not_open); with the row now naming Z, row_changed; no event either way", async () => {
+		vi.mocked(store.releaseHold).mockResolvedValue(null);
+		const same = await runMoved(movedCase({ rows: [billing(X), billing(X)] }));
+		expect(same.result).toEqual({ kind: "not_open" });
+		expect(printed.some((l) => l.startsWith("Nothing was written"))).toBe(true);
+		const changed = await runMoved(movedCase({ rows: [billing(X), billing("sub_z", "active")] }));
+		expect(changed.result).toMatchObject({ kind: "refused", code: "row_changed", reason: expect.stringContaining("sub_z, active") });
+		expect(auditLines()).toEqual([]);
+	});
+
+	it("lease renewal: false at the end of step 7 is lease_lost, with no sync, no release and no event; true after 150s of reads releases", async () => {
+		const lost = await runMoved(movedCase({ renew: false, rows: [null, billing(X)] }));
+		expect(lost.result).toMatchObject({ code: "lease_lost" });
+		expect(lost.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+		expect(store.releaseHold).not.toHaveBeenCalled();
+		expect(auditLines()).toEqual([]);
+
+		const c = movedCase();
+		const slow = { ...depsOver(fakeStripe({ sub: "active", invoice: "paid" }).stripe) };
+		let reads = 0;
+		slow.now = () => new Date(NOW.getTime() + (reads++ === 0 ? 0 : 150_000));
+		const { moved } = movedDepsOf(c);
+		db.queue.push([c.hold], [c.hold], [SETUP_LINE], [c.team], [c.member]);
+		const out = await releaseHoldCommand(
+			{ subscriptionId: X, reason: "r", operator: "op-1", movedTo: T },
+			{ store, lease, sweeper: { ...sweeper, holdsManageBilling: async () => true }, sweepDeps: slow, moved },
+			print,
+		);
+		expect(out).toMatchObject({ kind: "released" });
+		expect(moved.lease.renewPurchaseLease).toHaveBeenCalledWith(LEASE);
+	});
+});
+
+describe("release: the plain path names --moved-to for a link_refused hold (C102)", () => {
+	it("the C98 fixture without --moved-to is refused, writes nothing, and says --moved-to with T's id; an unpaid non-link hold does not", async () => {
+		const { stripe } = fakeStripe({ sub: "active", invoice: "paid" });
+		const refusedHold = hold({ state: "needs_operator", opened_by: "link", open_note: LINK_REFUSED_NOTE });
+		vi.mocked(sweeper.relinkAdoptedSetup).mockResolvedValueOnce({ kind: "not_linked", why: `it is already linked to another team (${T})` });
+		db.queue.push([refusedHold], [refusedHold], [SETUP_LINE], [{ id: "setup-1" }]);
+		const moved = await releaseHoldCommand(releaseArgs, serverDeps(stripe), print);
+		expect(moved).toMatchObject({ kind: "refused", reason: expect.stringContaining("--moved-to") });
+		expect(moved).toMatchObject({ reason: expect.stringContaining(T) });
+		expect(store.releaseHold).not.toHaveBeenCalled();
+		expect(auditLines()).toEqual([]);
+
+		const unpaid = fakeStripe({ sub: "unpaid", invoice: "open" }).stripe;
+		const plainHold = hold({ state: "needs_operator", open_note: null });
+		vi.mocked(sweeper.relinkAdoptedSetup).mockResolvedValueOnce({ kind: "not_linked", why: "its customer was not minted by the setup's creator" });
+		db.queue.push([plainHold], [plainHold], [SETUP_LINE], [{ id: "setup-1" }]);
+		const control = await releaseHoldCommand(releaseArgs, serverDeps(unpaid), print);
+		expect(control).toMatchObject({ kind: "refused" });
+		expect(control).toMatchObject({ reason: expect.not.stringContaining("--moved-to") });
+		expect(store.releaseHold).not.toHaveBeenCalled();
+	});
+});
+
+describe("release --moved-to: the payer keeps paying (C108)", () => {
+	it("U not a member, an admin, an owner not active, or an active owner without manage_billing: payer_not_in_team, nothing written, no sync", async () => {
+		const cases = [
+			movedCase({ member: null }),
+			movedCase({ member: { role: "admin", status: "active" } }),
+			movedCase({ member: { role: "owner", status: "suspended" } }),
+			movedCase({ managesBilling: false }),
+		];
+		for (const c of cases) {
+			vi.clearAllMocks();
+			order = [];
+			db.queue.length = 0;
+			const out = await runMoved(c);
+			expect(out.result).toMatchObject({ kind: "refused", code: "payer_not_in_team" });
+			expectNothingWritten(out);
+			expect(out.sync.syncSubscriptionToBilling).not.toHaveBeenCalled();
+		}
 	});
 });

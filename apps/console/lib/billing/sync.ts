@@ -86,6 +86,23 @@ export function planItem(
 	return sub.items.data.find((i) => i.price.recurring?.usage_type !== "metered");
 }
 
+/**
+ * Whether `sub` is an org-plan subscription rather than the standalone AI one. A classifier only: the AI
+ * test is the one the webhook's sync makes (`planItem`, then `aiTierForPriceId`), so a subscription whose
+ * plan line carries an AI price is AI, and every other one counts as a plan — including one with no
+ * licensed line, so a caller refuses on what it cannot place. It reads no status and no
+ * `organization_id`; each caller applies its own filter at its call site:
+ *   - F3's org-plan live check (`app/server/actions/billing.ts`, ADR 0002 §10.2 F3): any live
+ *     (`active`, `trialing`, `past_due`) subscription on the org's customer that this calls a plan;
+ *   - the moved release (`scripts/payment-holds.ts`, ADR 0002 §5.8 row 12): any subscription other than
+ *     X with `organization_id = T` that has not ended (`canceled`, `incomplete_expired`) and that this
+ *     calls a plan.
+ */
+export function isOrgPlanSubscription(sub: Stripe.Subscription): boolean {
+	const priceId = planItem(sub)?.price.id;
+	return !(priceId && aiTierForPriceId(priceId));
+}
+
 /** How a sync call was sourced. */
 export interface SyncOptions {
 	/**
