@@ -3421,9 +3421,15 @@ async function newOrgSetupStateFor(
 		}
 	}
 	// A setup an open payment hold names is reported WITH that hold, and with no payment link (§5.6,
-	// C84): the hold may be voiding that invoice, or refunding a payment of it.
-	const hold = await openPaymentHoldOn(sub.id);
+	// C84): the hold may be voiding that invoice, or refunding a payment of it. The lookup does not take
+	// the user's lease (§4.4 names its holders), so a hold can open between the first read and the
+	// plan-state read — the purchase's E0, the sweeper, the link's refusal. When the first read found
+	// none, holds are read AGAIN after the plan state, and a hold seen then is reported exactly as one
+	// seen first (#6069): "a held setup is never reported as resumable" (§5.6). A hold that opens after
+	// the second read was not open when the plan state, and its payment link, were read.
+	const heldBefore = await openPaymentHoldOn(sub.id);
 	const report = await readNewOrgPlanState(sub);
+	const hold = heldBefore ?? (await openPaymentHoldOn(sub.id));
 	return {
 		subscriptionId: sub.id,
 		customerId,
