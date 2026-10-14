@@ -13,9 +13,22 @@ export type Db = PostgresJsDatabase<typeof schema>;
 declare global {
 	var __alethiaServiceDb: Db | undefined;
 	var __alethiaAppDb: Db | undefined;
+	var __alethiaLockDb: Db | undefined;
 }
 
-/** Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible). */
+/**
+ * Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible).
+ *
+ * CONNECTION BUDGET. Three clients are built here, each with up to `poolMax`
+ * (`ALETHIA_DB_POOL_MAX`, default 10) connections: service, app and lock. So one console
+ * process can hold up to 3 × `poolMax`, plus the two `max: 1` LISTEN clients in
+ * lib/realtime/index.ts. The lock pool opens only while a purchase runs and closes after
+ * `idleTimeout`. The bundled Postgres in docker-compose.yml sets no `max_connections`, so the
+ * Postgres default of 100 applies: with the defaults, one console process reaches 32 of them,
+ * and the admin app (apps/admin/lib/db.ts) builds pools of its own on top. Several console
+ * replicas against one database multiply the 3 × `poolMax`: size `ALETHIA_DB_POOL_MAX` against
+ * the database's `max_connections` divided by the replica count.
+ */
 function makeClient(url: string) {
 	const cfg = getDatabaseConfig();
 	return postgres(url, {
@@ -37,6 +50,28 @@ export function getServiceDb(): Db {
 		);
 	}
 	return globalThis.__alethiaServiceDb;
+}
+
+/**
+ * Lock connection: the service role, on a pool of its own (`poolMax` connections, created lazily).
+ * For a caller that holds a connection open while the code it guards queries through
+ * {@link getServiceDb}: `withPurchaseLock` (lib/billing/purchase-lock.ts) holds a transaction here for
+ * a whole purchase. Drawn from the service pool, `poolMax` such holders took every service connection
+ * and then waited forever for one more, because postgres-js has no acquisition timeout (#6012). From
+ * this pool, a holder never waits on itself: what it guards uses the service pool.
+ *
+ * Code that runs while it holds a connection from here must not take another from here: that would
+ * bring the same stall back on this pool. A caller beyond `poolMax` waits for a holder to finish, with
+ * no timeout of its own.
+ */
+export function getLockDb(): Db {
+	if (!globalThis.__alethiaLockDb) {
+		globalThis.__alethiaLockDb = drizzle(
+			makeClient(getDatabaseConfig().serviceUrl),
+			{ schema, casing: "snake_case" },
+		);
+	}
+	return globalThis.__alethiaLockDb;
 }
 
 /**
