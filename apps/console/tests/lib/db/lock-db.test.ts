@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Unit: the lock pool (#6012). `withPurchaseLock` holds a transaction on a `getLockDb()` connection
-// while its work queries through `getServiceDb()`; if the two shared one postgres-js client, a pool's
-// worth of purchases would stall it. The stall itself is reproduced against real Postgres in
-// tests/integration/purchase-lock.test.ts; this pins the wiring: two separate clients, both on the
-// service URL with `poolMax` connections, each built once. It also enforces the lock pool's one rule:
-// only lib/billing/purchase-lock.ts uses it, so nothing else can hold a lock connection while asking
-// for another.
+// Unit: the lock pool (#6012, #6027). `withPurchaseLock` and `runWebhookEventExactlyOnce` each hold a
+// transaction on a `getLockDb()` connection while the work they guard queries through `getServiceDb()`;
+// if the two shared one postgres-js client, a pool's worth of purchases or webhook deliveries would
+// stall it. The stall itself is reproduced against real Postgres in
+// tests/integration/purchase-lock.test.ts and tests/integration/webhook-events-pool.test.ts; this pins
+// the wiring: two separate clients, both on the service URL with `poolMax` connections, each built
+// once. It also enforces the lock pool's one rule: only lib/billing/purchase-lock.ts and
+// lib/billing/webhook-events.ts use it, so a new caller, which could hold a lock connection while
+// asking for another, has to be added here by name.
 
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -88,12 +90,12 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("getLockDb — the single caller", () => {
-	it("is named only by lib/db/index.ts, which defines it, and lib/billing/purchase-lock.ts", () => {
+	it("is named only by lib/db/index.ts, which defines it, lib/billing/purchase-lock.ts and lib/billing/webhook-events.ts", () => {
 		// Any mention counts, not just an import line: a re-export or an aliased import is a caller too.
 		const naming = sourceFiles(CONSOLE_ROOT)
 			.filter((file) => readFileSync(path.join(CONSOLE_ROOT, file), "utf8").includes("getLockDb"))
 			.map((file) => file.split(path.sep).join("/"))
 			.sort();
-		expect(naming).toEqual(["lib/billing/purchase-lock.ts", "lib/db/index.ts"]);
+		expect(naming).toEqual(["lib/billing/purchase-lock.ts", "lib/billing/webhook-events.ts", "lib/db/index.ts"]);
 	});
 });
