@@ -82,7 +82,7 @@ import {
 	LINK_REFUSED_NOTE,
 } from "./machine";
 import type { HoldStripeReader } from "./observe";
-import { openHold, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
+import { openHold, openHoldOn, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -380,7 +380,15 @@ export async function linkSetupToOrg(input: {
 	const fence = fenceFor(lease);
 	const before = await getOrgBilling(orgId);
 	if (namesOtherLivePlan(before, sub.id)) {
-		return refuseBesideLivePlan({ userId, orgId, sub, customerId, lease, rowSubscriptionId: before?.stripeSubscriptionId ?? null });
+		return refuseBesideLivePlan({
+			userId,
+			orgId,
+			sub,
+			customerId,
+			lease,
+			rowSubscriptionId: before?.stripeSubscriptionId ?? null,
+			namesOrg: sub.metadata?.organization_id === orgId,
+		});
 	}
 
 	let linked: Stripe.Subscription;
@@ -410,7 +418,15 @@ export async function linkSetupToOrg(input: {
 	if ((await syncSubscriptionToBilling(linked)) === "ignored") {
 		const after = await getOrgBilling(orgId);
 		if (namesOtherLivePlan(after, sub.id)) {
-			return refuseBesideLivePlan({ userId, orgId, sub, customerId, lease, rowSubscriptionId: after?.stripeSubscriptionId ?? null });
+			return refuseBesideLivePlan({
+				userId,
+				orgId,
+				sub,
+				customerId,
+				lease,
+				rowSubscriptionId: after?.stripeSubscriptionId ?? null,
+				namesOrg: linked.metadata?.organization_id === orgId,
+			});
 		}
 	}
 
@@ -440,7 +456,11 @@ export async function linkSetupToOrg(input: {
  * release` is releasing), nothing new is opened and no second alert is raised; the clause claims the
  * alert only when that hold, if it is `userId`'s own `new_org` hold, alerted in its current state
  * entry. X with no invoice cannot be held (a hold names its invoice): it is alerted on and the setup
- * stays open. A lost lease is thrown, with nothing written.
+ * stays open.
+ *
+ * A lease lost when the hold is opened is thrown, with nothing written. When X's metadata names `orgId`
+ * at that point (`namesOrg`: always, when the refusal follows the sync, because the link wrote it), the
+ * refusal would otherwise be recorded nowhere, so it is alerted on first (`alertUnheldRefusal`).
  */
 async function refuseBesideLivePlan(input: {
 	userId: string;
@@ -449,6 +469,8 @@ async function refuseBesideLivePlan(input: {
 	customerId: string;
 	lease: PurchaseLease;
 	rowSubscriptionId: string | null;
+	/** X's Stripe metadata names `orgId`, as last read or written by the link. */
+	namesOrg: boolean;
 }): Promise<SetupLinkResult> {
 	const { userId, sub, customerId, lease } = input;
 	const raise = () =>
@@ -474,7 +496,10 @@ async function refuseBesideLivePlan(input: {
 			openedByUserId: userId,
 			openNote: LINK_REFUSED_NOTE,
 		});
-		if (opened.kind === "lease_lost") throw new PurchaseLeaseLostError(lease.key);
+		if (opened.kind === "lease_lost") {
+			if (input.namesOrg) await alertUnheldRefusal(input);
+			throw new PurchaseLeaseLostError(lease.key);
+		}
 		if (opened.kind === "opened") {
 			hold = opened.hold;
 			alerted = await raise();
@@ -499,6 +524,36 @@ async function refuseBesideLivePlan(input: {
 		hold_id: hold?.id ?? null,
 	});
 	return { kind: "refused", clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}`, hold };
+}
+
+/**
+ * The refusal beside the org's other live plan that lost the lease before its hold was opened, while X's
+ * metadata names the org (#6043): nothing in the database records it — no hold, no `refused_reason` —
+ * and X renews beside Y. So the operator is alerted with X as the subject and the org named in the
+ * detail. Deduplicated: when an open hold already names X (another caller of the payer's lease refused
+ * or held it), that hold records X and its own alert watches it, so nothing is raised. A failed read of
+ * that hold raises the alert anyway. Never throws: `alertPaymentNeedsSupport` does not.
+ */
+async function alertUnheldRefusal(input: {
+	orgId: string;
+	sub: Stripe.Subscription;
+	customerId: string;
+	rowSubscriptionId: string | null;
+}): Promise<void> {
+	let held: PaymentHoldRow | null = null;
+	try {
+		held = await openHoldOn(input.sub.id);
+	} catch (err) {
+		console.error(`[billing] could not read the open hold on ${input.sub.id} before alerting its unheld refusal:`, err);
+	}
+	if (held) return;
+	await alertPaymentNeedsSupport({
+		subscriptionId: input.sub.id,
+		customerId: input.customerId,
+		paymentIntentId: null,
+		context: "link_refused",
+		detail: `the link to team ${input.orgId} was refused because its billing row holds another live subscription (${input.rowSubscriptionId ?? "unknown"}), and its purchase lease was lost before a hold could be opened, so no hold records it. Its metadata names team ${input.orgId}, but it is unlinked and keeps renewing beside it. Refund it, or move it to the right team.`,
+	});
 }
 
 /**

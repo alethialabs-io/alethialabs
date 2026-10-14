@@ -31,6 +31,8 @@
 //        the link's core: with an org, X is linked (`linked_at`, the row names X); with no org, or a
 //        creator who lost `manage_billing`, the setup stays open. Beside a live Y the re-link opens a
 //        `link_refused` hold that T2o never adopts (C80). `release` of a live X links it first.
+//   #6043 the re-link's refusal after the sync (X's metadata already names O) whose lease is lost before
+//        the hold opens: the lost lease is thrown, no hold is open, and the operator is alerted once.
 //
 // The link's core reaches Stripe through the purchase client (`getPurchaseStripe`), faked here over
 // `linkWorld`; the sync applies X to the org's row with the real guarded write
@@ -49,6 +51,8 @@ const linkWorld = vi.hoisted(() => ({
 	allowed: true,
 	/** customer id → its Stripe email (C32's recipient). */
 	customerEmails: new Map<string, string>(),
+	/** Runs once at the start of the next sync, before it writes: the race a test stages (#6043). */
+	onSync: null as null | (() => Promise<void>),
 }));
 vi.mock("@/lib/billing/stripe", () => {
 	const client = {
@@ -85,6 +89,9 @@ vi.mock("@/lib/billing/sync", async (importActual) => {
 	return {
 		...actual,
 		syncSubscriptionToBilling: async (sub: { id: string; status: string; customer: string; metadata: Record<string, string> }) => {
+			const race = linkWorld.onSync;
+			linkWorld.onSync = null;
+			await race?.();
 			const orgId = sub.metadata.organization_id;
 			if (!orgId) return "ignored";
 			const live = sub.status === "active" || sub.status === "trialing";
@@ -108,6 +115,9 @@ vi.mock("@/lib/email/billing-email", async (importActual) => ({
 	sendPaymentHoldNoticeEmail: vi.fn(async () => undefined),
 	sendOrgPlanHoldNoticeEmail: vi.fn(async () => undefined),
 }));
+// The operator alert the link's core raises itself (`alertPaymentNeedsSupport`, not the sweep's `alert`
+// dep): recorded here, and answering false as the real one does with no operator org configured.
+vi.mock("@/lib/billing/payment-alert", () => ({ alertPaymentNeedsSupport: vi.fn(async () => false) }));
 vi.mock("@/lib/auth/scope", () => ({
 	getActiveScope: async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId }),
 }));
@@ -116,6 +126,7 @@ vi.mock("@/lib/authz", async (importActual) => {
 	return { ...actual, getPdp: () => ({ can: async () => ({ allowed: linkWorld.allowed }) }) };
 });
 
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import * as store from "@/lib/billing/payment-holds/store";
 import { deliverHoldNotice } from "@/lib/billing/payment-holds/emails";
@@ -125,6 +136,7 @@ import * as sweeper from "@/lib/billing/payment-holds/sweeper";
 import { runPaymentHoldSweep, type SweepDeps } from "@/lib/billing/payment-holds/sweeper";
 import {
 	acquirePurchaseLease,
+	PurchaseLeaseLostError,
 	releasePurchaseLease,
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
@@ -1072,6 +1084,55 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		await makeDue(refusedHold.id);
 		await tick(payer, stripe);
 		expect(await read(refusedHold.id)).toMatchObject({ state: "needs_operator" });
+	});
+
+	it("#6043: Y takes the row during the re-link's sync and the payer's lease is lost before the hold opens — the lost lease is thrown, no hold, and the operator is alerted once naming X and O", async () => {
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(new FakeStripe(), payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// Inside the sync, after X's metadata write: Y takes O's row, and the lease's row expires (another
+		// caller may now take it), so the hold's FOR SHARE read of the lease finds nothing.
+		linkWorld.onSync = async () => {
+			await applySubscriptionToBilling({
+				organizationId: orgId,
+				plan: "team",
+				status: "active",
+				stripeCustomerId: `cus_${sub}_y`,
+				stripeSubscriptionId: `${sub}_y`,
+				seats: null,
+				currentPeriodEnd: null,
+				eventAt: null,
+			});
+			await getServiceDb()
+				.update(purchaseLeases)
+				.set({ expires_at: new Date(Date.now() - 1000) })
+				.where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		};
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			await expect(sweeper.relinkAdoptedSetup(lease, { payer_key: payer, subscription_id: sub, customer_id: `cus_${sub}` }, alert)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+
+		// X's metadata names O, and nothing records the refusal in the database: no open hold, the setup
+		// neither refused nor linked.
+		expect(linkWorld.subs.get(sub)?.metadata.organization_id).toBe(orgId);
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null, refused_reason: null });
+		// So the operator is told at once, about X, naming O.
+		const raised = vi.mocked(alertPaymentNeedsSupport).mock.calls.map((c) => c[0]).filter((a) => a.subscriptionId === sub);
+		expect(raised).toHaveLength(1);
+		expect(raised[0]).toMatchObject({ context: "link_refused", customerId: `cus_${sub}` });
+		expect(raised[0]?.detail).toContain(`team ${orgId}`);
 	});
 
 	it("§5.4: `release` of a live X whose setup has an org links it FIRST, then releases; beside a live Y it refuses and releases nothing", async () => {
