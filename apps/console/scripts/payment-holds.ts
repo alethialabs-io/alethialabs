@@ -1,25 +1,36 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The payment-hold operator command (ADR 0002 §5.4 "Commands", §8 "Backfill", Q12; S6 #5783).
+// The payment-hold operator command (ADR 0002 §5.4 "Commands", §8 "Backfill", Q12; S6 #5783; ADR 0004
+// D1 rule 5).
 //
 // Usage (`pnpm -C apps/console billing:payment-holds …`):
-//   list [--open] [--payer <user id>]          read-only: the holds, newest first
+//   list [--open] [--scope new_org|org_plan] [--payer <user or org id>]
+//                                              read-only: the holds, newest first
 //   show <subscription_id>                     read-only: its holds, its setup, and the LIVE observation
 //   release <subscription_id> --reason "<why>" --operator <your user id>
 //                                              T16: releases the subscription's OPEN hold, audited
 //   release <subscription_id> --moved-to <team id> --reason "<why>" --operator <your user id>
 //                                              T16m: the moved release of a `link_refused` hold (§5.8)
-//   reconcile [--backfill] [--payer <user id>] one sweeper pass now; --backfill first runs the §8 listing,
+//   reconcile [--backfill] [--scope new_org|org_plan] [--payer <user or org id>]
+//                                              one sweeper pass now; --backfill first runs the §8 listing,
 //                                              then prints the S1-era closures whose subscription is live
 //
-// RELEASE (T16). Refuses with no --reason or no --operator. Takes the payer's lease (`user:<payer>`,
-// waiting up to 30s, refusing while still busy), prints the live observation, then releases with the
+// SCOPE (ADR 0004 D1). A hold is `new_org` (create-a-team; its payer is a user id) or `org_plan` (its
+// payer is an org id). `--scope` narrows `list` and `reconcile` to one; with `--payer` the pair is the
+// filter, since a payer id alone is never a key. Every lease this command takes is the hold's own,
+// `leaseKeyFor(scope, payer_key)`: `user:<payer>` or `org-plan:<org>`. An unknown `--scope` is refused
+// before anything is read.
+//
+// RELEASE (T16). Refuses with no --reason or no --operator. Takes the hold's own lease
+// (`leaseKeyFor(scope, payer)`, waiting up to 30s, refusing while still busy), prints the live observation, then releases with the
 // store's compare-and-set on `version` (`release_reason = operator`, `released_by`, `release_note`). Only
 // when that write returned the row is the audit event `billing.payment_hold.released` written — a
 // structured log line with that stable name (there is no billing audit table; the durable record is the
 // row's `released_by` and `release_note`). A second run finds no open hold and writes nothing.
-//   A release closes the hold's OPEN setup in the same transaction (§4.1). Closing the setup of a
+//   A `new_org` release closes the hold's OPEN setup in the same transaction (§4.1); an `org_plan`
+// release closes none (ADR 0004 D1 rule 4), so the setup rule below applies to `new_org` holds only.
+// Closing the setup of a
 // subscription that may still go live would hide it from every reader (I14), so while an open setup names
 // the subscription, the release is REFUSED unless Stripe reads it ended or `resource_missing`, or it reads
 // live and its setup has an org. Then the link's core runs FIRST, under the same lease (§5.6 "When a hold
@@ -70,10 +81,10 @@
 //      taken counts: nothing was paid by any other method). An invoice with NO PaymentIntent proves
 //      nothing either way: it is held in `needs_operator` and alerted, never advanced;
 //   B6 not a withdrawal: no `commerce_order` names it as `withdrawn` or `refunded`.
-// Each hit is opened as a hold (`opened_by = backfill`, `open_note` naming the evidence) under its payer's
-// lease and advanced at once; one the machine cannot settle reaches `needs_operator`. Everything else is
-// LISTED with the failed test named, and nothing is written for it (Q12: each is a support decision, with
-// `show` as the evidence). Safe to re-run, and to run twice at once: a subscription any hold has ever
+// Each hit is opened as a `new_org` hold (`opened_by = backfill`, `open_note` naming the evidence) under
+// its payer's lease and advanced at once; one the machine cannot settle reaches `needs_operator`.
+// Everything else is LISTED with the failed test named, and nothing is written for it (Q12: each is a
+// support decision, with `show` as the evidence). Safe to re-run, and to run twice at once: a subscription any hold has ever
 // named — open or released — is skipped, and that check is made again under the payer's lease before a
 // hold is opened.
 //
@@ -114,10 +125,13 @@ import type * as SyncModule from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
 import {
 	commerceOrder,
+	leaseKeyFor,
 	member,
 	type OrganizationBilling,
 	organization,
+	PAYMENT_HOLD_SCOPES,
 	type PaymentHoldRow,
+	type PaymentHoldScope,
 	paymentHolds,
 	pendingOrgSetups,
 } from "@/lib/db/schema";
@@ -135,7 +149,7 @@ declare module "node:module" {
 
 /** The server modules the commands use, loaded by `main` (they import `server-only`). */
 export interface ServerDeps {
-	store: Pick<typeof StoreModule, "payerLeaseKey" | "openHold" | "writeHoldState">;
+	store: Pick<typeof StoreModule, "openHold" | "writeHoldState">;
 	lease: Pick<typeof LeaseModule, "acquirePurchaseLease" | "releasePurchaseLease">;
 	sweeper: Pick<typeof SweeperModule, "runPaymentHoldSweep" | "machineDepsFor" | "holdsManageBilling">;
 	/** The sweeper's Stripe client, alert and email sender (`liveSweepDeps()`, or a test's). */
@@ -196,6 +210,7 @@ const LEASE_WAIT_MS = 30_000;
 function holdLine(h: PaymentHoldRow): string {
 	return [
 		`hold ${h.id}`,
+		`scope ${h.scope}`,
 		`sub ${h.subscription_id}`,
 		`payer ${h.payer_key}`,
 		`state ${h.state}${h.release_reason ? `(${h.release_reason})` : ""}`,
@@ -220,14 +235,18 @@ function observationLine(obs: HoldObservation | { error: string }): string {
 	return `Live observation: subscription ${sub}, held invoice ${obs.inv}, payments ${pay}`;
 }
 
-/** `list`: the holds, newest first (at most 500), optionally only the open ones and one payer's. */
-export async function listHolds(input: { open: boolean; payer: string | undefined }, print: Print): Promise<number> {
+/** `list`: the holds, newest first (at most 500), optionally only the open ones, one scope's and one payer's. */
+export async function listHolds(
+	input: { open: boolean; scope?: PaymentHoldScope; payer: string | undefined },
+	print: Print,
+): Promise<number> {
 	const rows = await getServiceDb()
 		.select()
 		.from(paymentHolds)
 		.where(
 			and(
 				input.open ? ne(paymentHolds.state, "released") : undefined,
+				input.scope ? eq(paymentHolds.scope, input.scope) : undefined,
 				input.payer ? eq(paymentHolds.payer_key, input.payer) : undefined,
 			),
 		)
@@ -356,7 +375,7 @@ export async function releaseHoldCommand(
 		print(`No OPEN hold names ${input.subscriptionId}; nothing was changed.`);
 		return { kind: "not_open" };
 	}
-	const lease = await deps.lease.acquirePurchaseLease(deps.store.payerLeaseKey(found.payer_key), LEASE_WAIT_MS);
+	const lease = await deps.lease.acquirePurchaseLease(leaseKeyFor(found.scope, found.payer_key), LEASE_WAIT_MS);
 	if (!lease) {
 		return refuse(print, `the payer's purchase lease is still busy after ${LEASE_WAIT_MS / 1000}s (a purchase or the sweeper holds it); try again.`);
 	}
@@ -381,7 +400,8 @@ export async function releaseHoldCommand(
 			print(`${hold.subscription_id} not found in this Stripe account. Check the key before you release it.`);
 		}
 		const settled = !("error" in live) && (live.sub.kind === "ended" || live.sub.kind === "missing");
-		if (!settled && (await hasOpenSetup(hold.subscription_id))) {
+		// Only a `new_org` release closes a setup (ADR 0004 D1 rule 4), so only it can hide one.
+		if (hold.scope === "new_org" && !settled && (await hasOpenSetup(hold.subscription_id))) {
 			const relinked = !("error" in live) && live.sub.kind === "live" ? await relinkBeforeRelease(lease, hold, deps) : null;
 			if (relinked?.kind === "linked") {
 				print(`Linked ${hold.subscription_id} to its team first (§5.6); its setup is no longer open.`);
@@ -992,7 +1012,7 @@ async function holdFromBackfill(
 	deps: ServerDeps,
 	print: Print,
 ): Promise<BackfillOutcome> {
-	const lease = await deps.lease.acquirePurchaseLease(deps.store.payerLeaseKey(verdict.payer), LEASE_WAIT_MS);
+	const lease = await deps.lease.acquirePurchaseLease(leaseKeyFor("new_org", verdict.payer), LEASE_WAIT_MS);
 	if (!lease) {
 		print(`LISTED ${subscriptionId}: its payer's lease stayed busy; re-run the backfill.`);
 		return "listed";
@@ -1081,7 +1101,7 @@ export async function listLiveOrgHasPlanClosures(
 
 /** `reconcile`: the backfill and the S1-era listing when asked, then one sweeper pass, printing its counts. */
 export async function reconcile(
-	input: { backfill: boolean; payer: string | undefined },
+	input: { backfill: boolean; scope?: PaymentHoldScope; payer: string | undefined },
 	deps: ServerDeps,
 	stripe: BackfillStripe,
 	print: Print,
@@ -1090,7 +1110,7 @@ export async function reconcile(
 		await runBackfill(deps, stripe, print);
 		await listLiveOrgHasPlanClosures(deps.sweepDeps.stripe(), print);
 	}
-	const result = await deps.sweeper.runPaymentHoldSweep({ payerKey: input.payer, deps: deps.sweepDeps });
+	const result = await deps.sweeper.runPaymentHoldSweep({ scope: input.scope, payerKey: input.payer, deps: deps.sweepDeps });
 	print(`Sweep: ${JSON.stringify(result)}`);
 }
 
@@ -1102,13 +1122,18 @@ function arg(argv: readonly string[], name: string): string | undefined {
 	return idx !== -1 ? argv[idx + 1] : undefined;
 }
 
+/** The scope `--scope` names, or null when it names none of them. */
+function scopeArg(value: string): PaymentHoldScope | null {
+	return PAYMENT_HOLD_SCOPES.find((s) => s === value) ?? null;
+}
+
 const USAGE = [
 	"Usage: billing:payment-holds <command>",
-	"  list [--open] [--payer <user id>]",
+	"  list [--open] [--scope new_org|org_plan] [--payer <user or org id>]",
 	"  show <subscription_id>",
 	'  release <subscription_id> --reason "<why>" --operator <your user id>',
 	'  release <subscription_id> --moved-to <team id> --reason "<why>" --operator <your user id>',
-	"  reconcile [--backfill] [--payer <user id>]",
+	"  reconcile [--backfill] [--scope new_org|org_plan] [--payer <user or org id>]",
 ].join("\n");
 
 /**
@@ -1162,9 +1187,16 @@ export async function main(argv: readonly string[], print: Print = (line) => con
 		console.error(USAGE);
 		return 1;
 	}
+	// `--scope` names one of the known scopes, or the command is refused before anything is read.
+	const scopeText = arg(argv, "scope");
+	const scope = scopeText === undefined ? undefined : scopeArg(scopeText);
+	if (scope === null) {
+		console.error(`--scope must be one of: ${PAYMENT_HOLD_SCOPES.join(", ")}.\n${USAGE}`);
+		return 1;
+	}
 	try {
 		if (command === "list") {
-			await listHolds({ open: argv.includes("--open"), payer: arg(argv, "payer") }, print);
+			await listHolds({ open: argv.includes("--open"), scope, payer: arg(argv, "payer") }, print);
 			return 0;
 		}
 		if (command === "release" && subject) {
@@ -1199,7 +1231,7 @@ export async function main(argv: readonly string[], print: Print = (line) => con
 			return 0;
 		}
 		await reconcile(
-			{ backfill: argv.includes("--backfill"), payer: arg(argv, "payer") },
+			{ backfill: argv.includes("--backfill"), scope, payer: arg(argv, "payer") },
 			deps,
 			await liveBackfillStripe(),
 			print,

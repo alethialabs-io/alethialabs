@@ -8,20 +8,22 @@
 //   1. selects the open holds that are DUE — `next_check_at <= now()`, or nudged since their last
 //      observation (`nudged_at > observed_at`; the webhook sets `nudged_at` through `nudgeHold`) — oldest first, at most
 //      `SWEEP_BATCH`;
-//   2. for each, takes its payer's lease (`user:<payer>`) with a ZERO wait: a lease another caller holds
-//      (the operator, another instance's tick, a create-a-team purchase) skips that hold until the
-//      next tick;
+//   2. for each, takes the hold's own lease, `leaseKeyFor(scope, payer_key)` (`user:<payer>` for a
+//      `new_org` hold, `org-plan:<org>` for an `org_plan` one; ADR 0004 D1 rule 5), with a ZERO wait: a
+//      lease another caller holds (the operator, another instance's tick, a purchase) skips that hold
+//      until the next tick;
 //   3. under the lease, re-reads the row, runs `advanceHold` (up to 3 Stripe writes), and then the AGE
 //      ALERT (§5.4, I11): once per hold and state entry, when the hold has sat in its state past the
 //      bound its state and last observation give it (`ageAlertFor`);
 //   4. sends the Q3 emails (`sendDueHoldNotices`, emails.ts) — the sweeper is their ONLY sender.
 //
-// It runs on every instance: the lease serialises them per payer, every state write is the store's
+// It runs on every instance: the lease serialises them per scope and payer, every state write is the store's
 // compare-and-set on `version` and on that lease, and each email is claimed before it is sent. So two
 // overlapping ticks, in one process or across instances, cannot advance one hold twice at once or mail
 // one hold and state twice.
 //
-// WHEN A HOLD ENDS (§5.6, I16 (b)). An `adopted` release whose setup has an org runs the link's core
+// WHEN A HOLD ENDS (§5.6, I16 (b)). An `adopted` release of a `new_org` hold whose setup has an org runs
+// the link's core
 // at once, under the same lease (`relinkAdoptedSetup`): the visit here, the create-a-team purchase (its
 // hold pass and its sweep) and `payment-holds release` all call it. The core (`linkSetupToOrg`) lives in this file because
 // the sweeper is its caller with no session, and the session's link (app/server/actions/billing.ts)
@@ -61,7 +63,15 @@ import {
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
-import { member, organization, organizationBilling, type PaymentHoldRow, paymentHolds } from "@/lib/db/schema";
+import {
+	leaseKeyFor,
+	member,
+	organization,
+	organizationBilling,
+	type PaymentHoldRow,
+	type PaymentHoldScope,
+	paymentHolds,
+} from "@/lib/db/schema";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { type DeliverHoldNotice, deliverHoldNotice, sendDueHoldNotices } from "./emails";
 import {
@@ -72,7 +82,7 @@ import {
 	LINK_REFUSED_NOTE,
 } from "./machine";
 import type { HoldStripeReader } from "./observe";
-import { openHold, payerLeaseKey, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
+import { openHold, releaseHold, reserveRefundAttempt, writeHoldState } from "./store";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -117,7 +127,7 @@ export interface SweepResult {
 	advanced: number;
 	/** Of those, holds the call released. */
 	released: number;
-	/** Holds skipped because another caller held their payer's lease. */
+	/** Holds skipped because another caller held their lease. */
 	busy: number;
 	/** Holds whose state write matched no row, or whose lease was lost mid-call. */
 	stale: number;
@@ -252,20 +262,22 @@ export type HoldVisit =
 	| { kind: "advanced"; result: AdvanceResult; ageAlerted: boolean; relinked: RelinkResult | null };
 
 /**
- * Advances one open hold under ITS payer's lease, taken with a zero wait, then raises its age alert when
- * one is due. The caller passes the row it selected; it is re-read under the lease, so a hold another
+ * Advances one open hold under ITS own lease, `leaseKeyFor(scope, payer_key)`, taken with a zero wait,
+ * then raises its age alert when one is due. Only a `new_org` hold's adoption re-links a setup (ADR 0004
+ * D1 rule 5): an `org_plan` hold has no setup. The caller passes the row it selected; it is re-read under the lease, so a hold another
  * caller moved or released in between is advanced from what the database has now. The lease is given
  * back whatever happens.
  */
 export async function visitHold(hold: PaymentHoldRow, deps: SweepDeps): Promise<HoldVisit> {
-	const lease = await tryAcquirePurchaseLease(payerLeaseKey(hold.payer_key));
+	const lease = await tryAcquirePurchaseLease(leaseKeyFor(hold.scope, hold.payer_key));
 	if (!lease) return { kind: "busy" };
 	try {
 		const fresh = await readOpenHold(hold.id);
 		if (!fresh) return { kind: "gone" };
 		const result = await advanceHold(fresh, machineDepsFor(lease, deps));
 		const ageAlerted = result.outcome === "open" ? await raiseAgeAlert(lease, result.hold, deps) : false;
-		const relinked = isAdopted(result.hold) ? await relinkAfterVisit(lease, result.hold, deps) : null;
+		const relinked =
+			isAdopted(result.hold) && result.hold.scope === "new_org" ? await relinkAfterVisit(lease, result.hold, deps) : null;
 		return { kind: "advanced", result, ageAlerted, relinked };
 	} finally {
 		try {
@@ -522,7 +534,7 @@ async function relinkSetup(
 	orgId: string,
 	alert: HoldMachineDeps["alert"],
 ): Promise<RelinkResult> {
-	if (lease.key !== payerLeaseKey(row.user_id)) {
+	if (lease.key !== leaseKeyFor("new_org", row.user_id)) {
 		throw new Error(`relinkSetup: the setup of ${row.user_id} needs that user's lease, not ${lease.key}.`);
 	}
 	if (row.linked_at || row.closed_at) return { kind: "no_setup" };
@@ -595,8 +607,8 @@ async function relinkOrgOf(
 }
 
 /**
- * §5.6 "When a hold ends", for an `adopted` hold under its payer's lease: the payer's open setup for the
- * hold's subscription is re-linked (`relinkSetup`) to its org (`relinkOrgOf`, read-only). With no open
+ * §5.6 "When a hold ends", for an `adopted` `new_org` hold under its payer's lease: the payer's open
+ * setup for the hold's subscription is re-linked (`relinkSetup`) to its org (`relinkOrgOf`, read-only). With no open
  * setup, or no org naming it (none made, or deleted), nothing runs: such a setup stays open for the
  * creator's resume, and the sweeper owes its Q3 email. An org the creator cannot act in runs no core either: the operator is alerted with X as the subject, and the
  * setup stays open (`not_linked`). Called by the visit here, the create-a-team purchase and `payment-holds
@@ -652,13 +664,15 @@ function dueNow(): SQL | undefined {
 
 /** Options of one tick. */
 export interface SweepOptions {
-	/** Only this payer's holds and emails (the operator's `reconcile --payer`). */
+	/** Only this scope's holds and emails (the operator's `reconcile --scope`). */
+	scope?: PaymentHoldScope;
+	/** Only this payer's holds and emails (the operator's `reconcile --payer`); with `scope`, the pair. */
 	payerKey?: string;
 	deps?: Partial<SweepDeps>;
 }
 
 /**
- * One sweeper tick (§5.4): advances every due open hold under its payer's lease, raises the age alerts,
+ * One sweeper tick (§5.4): advances every due open hold under its own lease, raises the age alerts,
  * then sends the Q3 emails. Never throws for one hold's failure; a database failure in the selection
  * itself is thrown to the loop's supervisor.
  */
@@ -669,7 +683,13 @@ export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<S
 	const due = await getServiceDb()
 		.select()
 		.from(paymentHolds)
-		.where(and(dueNow(), options.payerKey ? eq(paymentHolds.payer_key, options.payerKey) : undefined))
+		.where(
+			and(
+				dueNow(),
+				options.scope ? eq(paymentHolds.scope, options.scope) : undefined,
+				options.payerKey ? eq(paymentHolds.payer_key, options.payerKey) : undefined,
+			),
+		)
 		// Oldest first: by the moment the hold became due — its nudge when that is what made it due,
 		// else its schedule.
 		.orderBy(
@@ -700,7 +720,7 @@ export async function runPaymentHoldSweep(options: SweepOptions = {}): Promise<S
 		}
 	}
 
-	result.notices = await sendDueHoldNotices({ deliver: deps.deliver, payerKey: options.payerKey });
+	result.notices = await sendDueHoldNotices({ deliver: deps.deliver, scope: options.scope, payerKey: options.payerKey });
 	return result;
 }
 

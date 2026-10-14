@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Q3 emails of a payment hold (ADR 0002 Q3, §4.1 "Notice claim", §5.4 "Who sends the Q3 emails";
-// S6 #5783). Three, each to the hold's PAYER only (`payer_key`, the user who paid), and each at most once
-// per hold and state:
+// S6 #5783; ADR 0004 D8). Three, each to the hold's payer only, and each at most once per hold and state:
 //
 //   refund_pending      the refund was issued and is on its way back (and, §3.1, that buying again
 //                       before it lands may show both charges if it then fails);
 //   released:refunded   the refund reads `succeeded` in full (`release_reason = refunded`);
 //   released:adopted    the payment went through and the team can be finished from Create a team —
-//                       only while the hold's setup has NO org (§5.6 "When a hold ends"). A setup with an
-//                       org is re-linked from slice 9 on, and is the creator's to link until then.
+//                       only for a `new_org` hold, and only while the hold's setup has NO org (§5.6 "When a
+//                       hold ends"). A setup with an org is re-linked from slice 9 on, and is the
+//                       creator's to link until then. An `org_plan` adoption is never mailed (ADR 0004
+//                       D8): there is no setup to finish, and Stripe's receipt speaks.
+//
+// THE RECIPIENT, PER SCOPE (`deliverHoldNotice`). A `new_org` hold's payer is a user, mailed at their own
+// address (`payer_key` is the user id). An `org_plan` hold's payer is an org, mailed at the address
+// Stripe receipts already go to: its Stripe customer's email (ADR 0004 D8, Q7).
 //
 // ONE SENDER. Only a sweeper tick calls `sendDueHoldNotices` — the in-process loop, its cron twin, and
 // the operator command's `reconcile`, which runs one tick and so CAN send these emails. The command's
@@ -31,10 +36,12 @@
 import "server-only";
 import { and, asc, eq, gt, like, or, type SQL, sql } from "drizzle-orm";
 import { newOrgSubscriptionIdOf } from "@/lib/billing/new-org-setup";
+import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import {
 	type PaymentHoldNotifiedState,
 	type PaymentHoldRow,
+	type PaymentHoldScope,
 	organization,
 	paymentHolds,
 	pendingOrgSetups,
@@ -52,19 +59,19 @@ const NOTICE_BATCH = 50;
 /** Sends one hold's email for `notice`. Throws when the send failed, so the claim is given back. */
 export type DeliverHoldNotice = (hold: PaymentHoldRow, notice: PaymentHoldNotifiedState) => Promise<void>;
 
-/** The email a hold in its current state is owed, or null. */
+/** The email a hold in its current state is owed, or null. Only a `new_org` adoption is mailed (ADR 0004 D8). */
 function noticeOf(hold: PaymentHoldRow): PaymentHoldNotifiedState | null {
 	if (hold.state === "refund_pending") return "refund_pending";
 	if (hold.state !== "released") return null;
 	if (hold.release_reason === "refunded") return "released:refunded";
-	if (hold.release_reason === "adopted") return "released:adopted";
+	if (hold.release_reason === "adopted" && hold.scope === "new_org") return "released:adopted";
 	return null;
 }
 
 /**
  * The holds owed an email now (§5.4): `refund_pending`, or released `refunded` / `adopted` within the
- * window, whose claimed state is not that one. An `adopted` hold counts only while an OPEN setup with no
- * org names its subscription.
+ * window, whose claimed state is not that one. An `adopted` hold counts only when it is `new_org`, and
+ * only while an OPEN setup with no org names its subscription.
  */
 function owedNotice(): SQL | undefined {
 	const recent = gt(paymentHolds.released_at, sql`now() - (${RELEASED_NOTICE_WINDOW_DAYS}::int * interval '1 day')`);
@@ -85,6 +92,7 @@ function owedNotice(): SQL | undefined {
 			sql`${paymentHolds.notified_state} IS DISTINCT FROM 'released:refunded'`,
 		),
 		and(
+			eq(paymentHolds.scope, "new_org"),
 			eq(paymentHolds.state, "released"),
 			eq(paymentHolds.release_reason, "adopted"),
 			recent,
@@ -113,13 +121,21 @@ async function markedOrgExists(subscriptionId: string): Promise<boolean> {
  */
 export async function sendDueHoldNotices(input: {
 	deliver: DeliverHoldNotice;
-	/** Only this payer's holds (the operator's `reconcile --payer`). */
+	/** Only this scope's holds (the operator's `reconcile --scope`). */
+	scope?: PaymentHoldScope;
+	/** Only this payer's holds (the operator's `reconcile --payer`); with `scope`, the pair. */
 	payerKey?: string;
 }): Promise<number> {
 	const owed = await getServiceDb()
 		.select()
 		.from(paymentHolds)
-		.where(and(owedNotice(), input.payerKey ? eq(paymentHolds.payer_key, input.payerKey) : undefined))
+		.where(
+			and(
+				owedNotice(),
+				input.scope ? eq(paymentHolds.scope, input.scope) : undefined,
+				input.payerKey ? eq(paymentHolds.payer_key, input.payerKey) : undefined,
+			),
+		)
 		.orderBy(asc(paymentHolds.updated_at))
 		.limit(NOTICE_BATCH);
 
@@ -154,11 +170,30 @@ export async function sendDueHoldNotices(input: {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * The live sender: the email for `notice`, to the hold's payer's own address. A payer with no account
- * any more gets nothing, and the claim stands (there is nobody to retry for). Throws when the send
- * itself failed.
+ * The address an `org_plan` hold's email goes to (ADR 0004 D8): its Stripe customer's email, the address
+ * Stripe receipts go to. Null when the customer is deleted or has no email. A failed read throws.
+ */
+async function orgPlanRecipient(hold: PaymentHoldRow): Promise<string | null> {
+	const customer = await getStripe().customers.retrieve(hold.customer_id);
+	return customer.deleted ? null : (customer.email ?? null);
+}
+
+/**
+ * The live sender: the email for `notice`, to the hold's payer — a `new_org` payer at the user's own
+ * address, an `org_plan` payer at its Stripe customer's email (ADR 0004 D8). A payer with no account or
+ * no address any more gets nothing, and the claim stands (there is nobody to retry for). Throws when the
+ * address could not be read or the send itself failed, so the claim is given back.
  */
 export async function deliverHoldNotice(hold: PaymentHoldRow, notice: PaymentHoldNotifiedState): Promise<void> {
+	if (hold.scope === "org_plan") {
+		const to = await orgPlanRecipient(hold);
+		if (!to) {
+			console.warn(`[billing] payment hold ${hold.id}: its customer has no email; the ${notice} email was not sent.`);
+			return;
+		}
+		await sendPaymentHoldNoticeEmail({ to, notice });
+		return;
+	}
 	if (!UUID.test(hold.payer_key)) return;
 	const [payer] = await getServiceDb()
 		.select({ email: user.email })

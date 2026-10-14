@@ -173,32 +173,54 @@ export async function forgetPendingOrgSetup(
 /** The release reasons after which a held subscription can never become payable again (§8). */
 export const FORGETTABLE_RELEASES: ReadonlySet<string> = new Set(["voided_unpaid", "deleted_draft", "expired_unpaid"]);
 
-/** The OPEN payment hold on `subscriptionId`, or null (I6: at most one). Service role: holds have no app policy. */
+// THE CREATE-A-TEAM HOLD READERS (ADR 0004 D1 rule 3). The three below decide or route a create-a-team
+// purchase, link or resume, so they read `scope = 'new_org'` only: an org-plan hold never blocks or
+// reroutes create-a-team. The setup predicates that WAIT on holds (`noOpenHold`, `unclosedVerdict`, and
+// `forgetPendingOrgSetup`'s hold condition) stay scope-free on purpose (D1 rule 4): narrowing them could
+// only close or forget a setup the design means to keep.
+
+/**
+ * The OPEN `new_org` payment hold on `subscriptionId`, or null (I6: at most one open hold per
+ * subscription). Service role: holds have no app policy.
+ */
 export async function openPaymentHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
 	const [hold] = await getServiceDb()
 		.select()
 		.from(paymentHolds)
-		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.where(
+			and(
+				eq(paymentHolds.scope, "new_org"),
+				eq(paymentHolds.subscription_id, subscriptionId),
+				ne(paymentHolds.state, "released"),
+			),
+		)
 		.limit(1);
 	return hold ?? null;
 }
 
-/** The newest RELEASED payment hold on `subscriptionId`, or null. Service role: holds have no app policy. */
+/** The newest RELEASED `new_org` payment hold on `subscriptionId`, or null. Service role: holds have no app policy. */
 export async function latestReleasedHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
 	const [hold] = await getServiceDb()
 		.select()
 		.from(paymentHolds)
-		.where(and(eq(paymentHolds.subscription_id, subscriptionId), eq(paymentHolds.state, "released")))
+		.where(
+			and(
+				eq(paymentHolds.scope, "new_org"),
+				eq(paymentHolds.subscription_id, subscriptionId),
+				eq(paymentHolds.state, "released"),
+			),
+		)
 		.orderBy(desc(paymentHolds.released_at))
 		.limit(1);
 	return hold ?? null;
 }
 
 /**
- * The payment holds of `payerKey` the create-a-team purchase reads (ADR 0002 §3.2 E1 (a), §5.5): every
- * OPEN one, which it advances before it may mint (I1 (a)), and every one released `refunded` or
- * `already_refunded` within the refund notice window, whose clause its response carries. Only this
- * payer's: the purchase reads nobody else's holds (I7).
+ * The `new_org` payment holds of `payerKey` the create-a-team purchase reads (ADR 0002 §3.2 E1 (a),
+ * §5.5): every OPEN one, which it advances before it may mint (I1 (a)), and every one released
+ * `refunded` or `already_refunded` within the refund notice window, whose clause its response carries.
+ * Only this payer's: the purchase reads nobody else's holds (I7), and no org-plan hold, even one whose
+ * `payer_key` is the same string (ADR 0004 O1).
  */
 export async function paymentHoldsOfPayer(payerKey: string): Promise<PaymentHoldRow[]> {
 	const since = new Date(Date.now() - REFUND_NOTICE_WINDOW_MS);
@@ -207,6 +229,7 @@ export async function paymentHoldsOfPayer(payerKey: string): Promise<PaymentHold
 		.from(paymentHolds)
 		.where(
 			and(
+				eq(paymentHolds.scope, "new_org"),
 				eq(paymentHolds.payer_key, payerKey),
 				or(
 					ne(paymentHolds.state, "released"),
@@ -858,7 +881,10 @@ export async function closePendingOrgSetup(input: {
 	return closed ?? null;
 }
 
-/** I16 (a), inside a statement on `pending_org_setups`: no open payment hold names `subscriptionId`. */
+/**
+ * I16 (a), inside a statement on `pending_org_setups`: no open payment hold, of any scope, names
+ * `subscriptionId` (ADR 0004 D1 rule 4).
+ */
 function noOpenHold(subscriptionId: string): SQL {
 	return sql`NOT EXISTS (SELECT 1 FROM payment_holds h WHERE h.subscription_id = ${subscriptionId} AND h.state <> 'released')`;
 }
@@ -901,11 +927,17 @@ export async function recordSetupRefusal(input: {
 }
 
 /**
- * The verdict of a close whose compare-and-set matched nothing: `open` while a payment hold keeps the
- * setup open (I16), else `closed` (another reader closed or linked it first).
+ * The verdict of a close whose compare-and-set matched nothing: `open` while a payment hold of ANY scope
+ * keeps the setup open (I16; the same scope-free question as `noOpenHold`, ADR 0004 D1 rule 4), else
+ * `closed` (another reader closed or linked it first).
  */
 async function unclosedVerdict(subscriptionId: string): Promise<SetupCloserVerdict> {
-	return (await openPaymentHoldOn(subscriptionId)) ? "open" : "closed";
+	const [hold] = await getServiceDb()
+		.select({ id: paymentHolds.id })
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.limit(1);
+	return hold ? "open" : "closed";
 }
 
 /**
