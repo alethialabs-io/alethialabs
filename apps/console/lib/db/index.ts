@@ -13,6 +13,7 @@ export type Db = PostgresJsDatabase<typeof schema>;
 declare global {
 	var __alethiaServiceDb: Db | undefined;
 	var __alethiaAppDb: Db | undefined;
+	var __alethiaLockDb: Db | undefined;
 }
 
 /** Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible). */
@@ -37,6 +38,28 @@ export function getServiceDb(): Db {
 		);
 	}
 	return globalThis.__alethiaServiceDb;
+}
+
+/**
+ * Lock connection: the service role, on a pool of its own (`poolMax` connections, created lazily).
+ * For a caller that holds a connection open while the code it guards queries through
+ * {@link getServiceDb}: `withPurchaseLock` (lib/billing/purchase-lock.ts) holds a transaction here for
+ * a whole purchase. Drawn from the service pool, `poolMax` such holders took every service connection
+ * and then waited forever for one more, because postgres-js has no acquisition timeout (#6012). From
+ * this pool, a holder never waits on itself: what it guards uses the service pool.
+ *
+ * Code that runs while it holds a connection from here must not take another from here: that would
+ * bring the same stall back on this pool. A caller beyond `poolMax` waits for a holder to finish, with
+ * no timeout of its own.
+ */
+export function getLockDb(): Db {
+	if (!globalThis.__alethiaLockDb) {
+		globalThis.__alethiaLockDb = drizzle(
+			makeClient(getDatabaseConfig().serviceUrl),
+			{ schema, casing: "snake_case" },
+		);
+	}
+	return globalThis.__alethiaLockDb;
 }
 
 /**
