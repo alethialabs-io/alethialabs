@@ -3714,11 +3714,14 @@ describe("ADR 0002 S1 (#5714)", () => {
 			stripe.checkout.sessions.create.mockResolvedValue({ url: "https://checkout.test/s" } as never);
 		});
 
-		it("the org's row names X: createCheckoutSession is not refused, and that call sets linked_at", async () => {
+		// ADR 0004 D5 (O2, #6015): Checkout gained the row predicate, so the call that adopts X is then refused
+		// by it — X is the org's live plan. The guard runs first, so the adoption is unchanged.
+		it("the org's row names X: createCheckoutSession sets linked_at, then the row predicate refuses beside the live X", async () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(linkedX());
 			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));
 			db.queue.push([openRow({ linked_at: new Date() })]);
-			await expect(createCheckoutSession("team")).resolves.toEqual({ url: "https://checkout.test/s" });
+			await expect(createCheckoutSession("team")).rejects.toThrow(/change the plan instead/);
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
 			expect(db.sets).toEqual([expect.objectContaining({ linked_at: expect.any(Date) })]);
 			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
 			expect(events()).toEqual(["billing.pending_org_setup.adopted"]);
@@ -3755,7 +3758,9 @@ describe("ADR 0002 S1 (#5714)", () => {
 			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
 			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
 			db.queue.push([openRow({ closed_at: new Date() })]);
-			await createCheckoutSession("team");
+			// The setup is closed, then the row predicate refuses beside the live Y (ADR 0004 D5, O2).
+			await expect(createCheckoutSession("team")).rejects.toThrow(/change the plan instead/);
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
 			expect(db.sets).toEqual([
 				expect.objectContaining({ closed_reason: "org_has_plan", refused_reason: "org_has_plan" }),
 			]);
@@ -4406,6 +4411,17 @@ describe("ADR 0002 S3 (#5754)", () => {
 	});
 });
 
+// ADR 0004's copy, written out here from the ADR rather than read from billing.ts, so a wording drift fails.
+/** D7: a `past_due` (or `unpaid`) plan. */
+const UNPAID_PLAN_COPY =
+	"This team's plan has an unpaid invoice, so a second plan was not started. Update the payment method in Billing, or contact support at support@alethialabs.io.";
+/** D5 / D8: a live off-Stripe grant. */
+const CONTRACT_PLAN_COPY =
+	"This team's plan is managed under a contract, so a plan cannot be bought here. Contact support at support@alethialabs.io.";
+/** D2 (c): a `paused` subscription on the org's customer refuses with the contact-support copy. */
+const PAUSED_PLAN_COPY =
+	"A subscription on this team's billing account is paused, so a second plan was not started. Contact support at support@alethialabs.io.";
+
 // ── F3 (ADR 0002 §10.2, #5977) ───────────────────────────────────────────────
 // The org-plan purchase minted a second plan beside a live subscription its webhook had not written
 // yet: both flows trusted the row alone, and the sweep lists `incomplete` only. Both now list every
@@ -4477,11 +4493,47 @@ describe("F3 — the org-plan purchase lists the customer's live subscriptions b
 			);
 		});
 
-		it.each(["trialing", "past_due"])("refuses beside a %s org-plan subscription", async (status) => {
+		it.each(["trialing"])("refuses beside a %s org-plan subscription", async (status) => {
 			stripeLists([listedSub("sub_live", status)]);
 
 			await expect(flow.run()).resolves.toEqual(expect.stringMatching(/change the plan instead/));
 			expect(flow.minted()).toBe(0);
+		});
+
+		// ADR 0004 C27 (the F3 half) and C19: `past_due` now refuses with D7's copy, and the live set gains
+		// `unpaid` (D7's copy) and `paused` (the contact-support copy).
+		it.each(["past_due", "unpaid"])("refuses beside a %s org-plan subscription with D7's copy: update the payment method", async (status) => {
+			stripeLists([listedSub("sub_live", status)]);
+
+			const refusal = await flow.run();
+			expect(refusal).toBe(UNPAID_PLAN_COPY);
+			expect(refusal).not.toMatch(/change the plan instead/);
+			expect(flow.minted()).toBe(0);
+		});
+
+		it("refuses beside a paused org-plan subscription with the contact-support copy (ADR 0004 C19)", async () => {
+			stripeLists([listedSub("sub_live", "paused")]);
+
+			const refusal = await flow.run();
+			expect(refusal).toBe(PAUSED_PLAN_COPY);
+			expect(refusal).not.toMatch(/change the plan instead|payment method/);
+			expect(flow.minted()).toBe(0);
+		});
+
+		it("an active one beside a past_due one still reads \"change the plan instead\"", async () => {
+			stripeLists([listedSub("sub_dunning", "past_due"), listedSub("sub_live", "active")]);
+
+			await expect(flow.run()).resolves.toEqual(expect.stringMatching(/change the plan instead/));
+			expect(flow.minted()).toBe(0);
+		});
+
+		it("a paused AI subscription is not a plan, and does not refuse", async () => {
+			stripeLists([
+				listedSub("sub_ai", "paused", "price_ai_plus", { organization_id: "org-1", product_type: "ai_subscription" }),
+			]);
+
+			await expect(flow.run()).resolves.toBeNull();
+			expect(flow.minted()).toBe(1);
 		});
 
 		it.each(["canceled", "incomplete_expired"])("a %s org-plan subscription does not refuse: the purchase goes ahead", async (status) => {
@@ -4701,7 +4753,7 @@ describe("F2 — the AI subscription and hosted Checkout take their purchase loc
 
 		// What the lock buys is the ORDER: the Checkout's reads start only after the intent's mint. It does
 		// NOT stop the double plan. The intent's subscription is `incomplete` until paid, the live check counts
-		// only `active`, `trialing` and `past_due`, and Checkout has no sweep, so the Checkout creates its
+		// only live statuses (`active`, `trialing`, `past_due`, `unpaid`, `paused`), never `incomplete`, and Checkout has no sweep, so the Checkout creates its
 		// session beside the intent's payable one. That is ADR 0004 C21, owned by O6 (Checkout gains the
 		// sweep); this test pins today's behaviour and must flip there.
 		it("an intent and a Checkout in two tabs run one after the other; the Checkout still opens beside the intent's `incomplete` mint (ADR 0004 C21, open until O6)", async () => {
@@ -4789,5 +4841,187 @@ describe("F2 — the AI subscription and hosted Checkout take their purchase loc
 			planMint.resolve({ id: "sub_plan", latest_invoice: { confirmation_secret: { client_secret: "cs_plan" } } });
 			await expect(plan).resolves.toMatchObject({ subscriptionId: "sub_plan" });
 		});
+	});
+});
+
+// ── O2 (ADR 0004 D5, D7, #6015) ──────────────────────────────────────────────
+// One row predicate, `orgRowBlocksNewPlan`, in all three org-plan flows, read before any Stripe call: a row
+// naming an `active`/`trialing` subscription, a row naming a `past_due` one (D7), and a subscription-less
+// row that is a live, unexpired off-Stripe grant (D5). A lapsed grant does not refuse, and a subscription-
+// less row is judged by D5 alone, whatever its status (B2).
+describe("O2 — the row predicates refuse before any Stripe call (ADR 0004 D5, D7, #6015)", () => {
+	const FUTURE = new Date("2099-01-01T00:00:00Z");
+	const PAST = new Date("2020-01-01T00:00:00Z");
+
+	/** Every Stripe call in the namespaces a purchase could touch: customers, subscriptions, Checkout. */
+	function stripeCalls(): number {
+		const groups = [stripe.customers, stripe.subscriptions, stripe.checkout.sessions];
+		return groups.flatMap((g) => Object.values(g)).reduce((n, fn) => n + fn.mock.calls.length, 0);
+	}
+
+	/** The three org-plan flows, each run to what it told the customer (null when it went ahead). */
+	const flows = {
+		createSubscriptionIntent: {
+			prepare: () => undefined,
+			run: async (): Promise<string | null> => {
+				const r = await createSubscriptionIntent("team");
+				return "error" in r ? r.error : null;
+			},
+			minted: () => stripe.subscriptions.create.mock.calls.length,
+		},
+		createCheckoutSession: {
+			prepare: () => undefined,
+			run: async (): Promise<string | null> => {
+				try {
+					await createCheckoutSession("team");
+					return null;
+				} catch (e) {
+					return e instanceof Error ? e.message : String(e);
+				}
+			},
+			minted: () => stripe.checkout.sessions.create.mock.calls.length,
+		},
+		startProTrial: {
+			prepare: () => {
+				db.queue.push([{ proTrialConsumedAt: null }]); // the account's trial flag is unset
+				// accountHasLiveSubscription: the actor owns no live org — a billing manager who is not an
+				// owner (an owner of a live org is the separate case at the end of this block).
+				db.queue.push([]);
+				db.queue.push([]); // the trial flag's stamp
+			},
+			run: async (): Promise<string | null> => {
+				try {
+					await startProTrial();
+					return null;
+				} catch (e) {
+					return e instanceof Error ? e.message : String(e);
+				}
+			},
+			minted: () => stripe.subscriptions.create.mock.calls.length,
+		},
+	};
+
+	beforeEach(() => {
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_new",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_new" } },
+		});
+		stripe.checkout.sessions.create.mockResolvedValue({ url: "https://checkout.test/sess" });
+	});
+
+	describe.each(Object.entries(flows))("%s", (_name, flow) => {
+		it.each(["active", "trialing"])("a row naming a %s subscription refuses with \"change the plan instead\", before any Stripe call", async (status) => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_y", status, currentPeriodEnd: FUTURE } as never);
+			flow.prepare();
+
+			await expect(flow.run()).resolves.toEqual(expect.stringMatching(/already has an active subscription — change the plan instead/));
+			expect(stripeCalls()).toBe(0);
+		});
+
+		// C27 (the intent), C28 (Checkout and the trial).
+		it("C27/C28: a row naming a past_due subscription refuses with D7's copy, before any Stripe call", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_y", status: "past_due", currentPeriodEnd: FUTURE } as never);
+			flow.prepare();
+
+			await expect(flow.run()).resolves.toBe(UNPAID_PLAN_COPY);
+			expect(stripeCalls()).toBe(0);
+		});
+
+		// C29: K2 sequence 2. An `active` and a `trialing` grant, and one with no term end (never lapses).
+		it.each([
+			{ status: "active", end: FUTURE, term: "a term ending in 2099" },
+			{ status: "trialing", end: FUTURE, term: "a term ending in 2099" },
+			{ status: "active", end: null, term: "no term end" },
+		])("C29: a live off-Stripe grant ($status, $term) refuses with the contract copy, and nothing is minted", async ({ status, end }) => {
+			orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status, currentPeriodEnd: end } as never);
+			flow.prepare();
+
+			await expect(flow.run()).resolves.toBe(CONTRACT_PLAN_COPY);
+			expect(stripeCalls()).toBe(0);
+			expect(flow.minted()).toBe(0);
+		});
+
+		// C45: B2. A subscription-less `past_due` row is a grant: D5 judges it, and D7's copy would be false.
+		it("C45: an unexpired past_due grant gets the contract copy, never \"update the payment method\"", async () => {
+			orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status: "past_due", currentPeriodEnd: FUTURE } as never);
+			flow.prepare();
+
+			const refusal = await flow.run();
+			expect(refusal).toBe(CONTRACT_PLAN_COPY);
+			expect(refusal).not.toMatch(/payment method|unpaid invoice/);
+			expect(stripeCalls()).toBe(0);
+		});
+
+		// C30. The `active` half is a pin (dev refuses no grant). The `past_due` half fails once D7's arm
+		// is built without its subscription-id condition.
+		it.each(["active", "past_due"])("C30: a LAPSED %s grant does not refuse, and the purchase goes ahead", async (status) => {
+			orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status, currentPeriodEnd: PAST } as never);
+			flow.prepare();
+
+			await expect(flow.run()).resolves.toBeNull();
+			expect(flow.minted()).toBe(1);
+		});
+
+		it.each(["none", "canceled"])("a row naming a %s subscription does not refuse", async (status) => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_old", status, currentPeriodEnd: PAST } as never);
+			flow.prepare();
+
+			await expect(flow.run()).resolves.toBeNull();
+			expect(flow.minted()).toBe(1);
+		});
+
+		it("a row that cannot be read fails the purchase before any Stripe call", async () => {
+			orgBilling.mockRejectedValue(new Error("database unavailable"));
+			flow.prepare();
+
+			await expect(flow.run().catch((e: unknown) => (e instanceof Error ? e.message : String(e)))).resolves.toMatch(/database unavailable/);
+			expect(stripeCalls()).toBe(0);
+		});
+	});
+
+	// C29 for the trial, as production reaches it: the actor OWNS the grant org, so
+	// `accountHasLiveSubscription`'s join returns that org's own `active`/`trialing` row. The contract copy
+	// must win over "already used its free Pro trial", which is false for a grant org that never trialled.
+	it.each(["active", "trialing"])("C29: the OWNER of a live %s grant org is told the contract copy by startProTrial, not the trial copy", async (status) => {
+		orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status, currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]); // the account's trial flag is unset
+		db.queue.push([{ status }]); // accountHasLiveSubscription: the grant org itself, which the actor owns
+
+		await expect(startProTrial()).rejects.toThrow(CONTRACT_PLAN_COPY);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("the trial flag still refuses first: an account that used its trial is told so, even on a grant org", async () => {
+		orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status: "active", currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: new Date("2026-01-01") }]);
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("an owner of ANOTHER live org whose own row is not a grant still gets the trial copy (unchanged)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: null, status: "none", currentPeriodEnd: null } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([{ status: "active" }]); // another org the actor owns is live
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("an owner of a live-subscription org still gets the trial copy first (unchanged)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_y", status: "active", currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([{ status: "active" }]); // that org's own row, which the actor owns
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("Checkout reads the row BEFORE it takes the org-plan lock, so a refused row never queues on it", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_y", status: "past_due", currentPeriodEnd: FUTURE } as never);
+
+		await expect(createCheckoutSession("team")).rejects.toThrow(UNPAID_PLAN_COPY);
+		expect(withPurchaseLock).not.toHaveBeenCalled();
 	});
 });
