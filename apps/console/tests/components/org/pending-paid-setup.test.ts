@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const actions = vi.hoisted(() => ({
 	resolveNewOrgSetup: vi.fn(),
+	findUnfinishedNewOrgSetup: vi.fn(),
 	linkSubscriptionToNewOrg: vi.fn(),
 	saveNewOrgSetupDetails: vi.fn(),
 	setCustomerBillingAddress: vi.fn(),
@@ -21,7 +22,7 @@ const actions = vi.hoisted(() => ({
 }));
 vi.mock("@/app/server/actions/billing", () => ({
 	attachTaxIdToCustomer: (...a: unknown[]) => actions.attachTaxIdToCustomer(...a),
-	findUnfinishedNewOrgSetup: vi.fn(),
+	findUnfinishedNewOrgSetup: (...a: unknown[]) => actions.findUnfinishedNewOrgSetup(...a),
 	linkSubscriptionToNewOrg: (...a: unknown[]) => actions.linkSubscriptionToNewOrg(...a),
 	resolveNewOrgSetup: (...a: unknown[]) => actions.resolveNewOrgSetup(...a),
 	saveNewOrgSetupDetails: (...a: unknown[]) => actions.saveNewOrgSetupDetails(...a),
@@ -46,6 +47,7 @@ import {
 	pollSettlingPlanState,
 	readPendingPaidSetup,
 	readStoredPaidSetup,
+	recoverUnfinishedPaidSetup,
 	UNATTENDED_FAILURE,
 	UNATTENDED_SLUG_REFUSAL,
 	watchPaidSetup,
@@ -355,6 +357,71 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 
 		expect(outcome).toMatchObject({ kind: "done", orgId: "org-1", planState: "processing" });
 		expect(actions.toast.error).not.toHaveBeenCalled();
+	});
+});
+
+describe("a held setup is never recovered as resumable (ADR 0002 §5.6)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	for (const state of REFUSING) {
+		it(`a paid setup under a ${state} hold is reported held, with the hold's sentence`, async () => {
+			actions.findUnfinishedNewOrgSetup.mockResolvedValue(lookup("sub_held", { org: true, hold: state }));
+
+			expect(await recoverUnfinishedPaidSetup(null)).toEqual({ kind: "held", notice: `notice for ${state}` });
+		});
+	}
+
+	it("a hold the link advances itself (closing) is still recovered to finish", async () => {
+		const state = lookup("sub_closing_recovered", { hold: "closing" });
+		actions.resolveNewOrgSetup.mockResolvedValue(state);
+
+		expect(await recoverUnfinishedPaidSetup({ subscriptionId: "sub_closing_recovered", customerId: "cus_1" })).toEqual({
+			kind: "found",
+			state,
+		});
+	});
+});
+
+describe("a stop for support is final, and is not said twice (ADR 0002 §5.6 rule 4)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		window.sessionStorage.clear();
+		actions.saveNewOrgSetupDetails.mockResolvedValue({ ok: true });
+	});
+
+	it("a subscription that is not this account's keeps the record WITH its sentence, so a resume does not offer a retry", async () => {
+		actions.resolveNewOrgSetup.mockResolvedValue(null);
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord("sub_not_ours"), runHooks);
+
+		expect(outcome).toMatchObject({ kind: "failed", retryable: false, recordCleared: false });
+		const message = outcome.kind === "failed" ? outcome.message : "";
+		expect(message).toMatch(/Contact support/);
+		expect(readPendingPaidSetup(RUN_USER)?.stopped).toBe(message);
+		expect(wroteAnything()).toBe(false);
+	});
+
+	it("a watched non-retryable outcome is not toasted: the sheet's panel says it", async () => {
+		actions.resolveNewOrgSetup.mockResolvedValue(lookup("sub_watched_held", { hold: "refund_due" }));
+		const unwatch = watchPaidSetup("sub_watched_held");
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord("sub_watched_held"), runHooks);
+		unwatch();
+
+		expect(outcome).toMatchObject({ kind: "failed", retryable: false });
+		expect(actions.toast.error).not.toHaveBeenCalled();
+	});
+
+	it("a watched thrown error is still toasted", async () => {
+		actions.resolveNewOrgSetup.mockRejectedValue(new Error("fetch failed"));
+		const unwatch = watchPaidSetup("sub_watched_thrown");
+
+		await finishPaidSetup(RUN_USER, runRecord("sub_watched_thrown"), runHooks);
+		unwatch();
+
+		expect(actions.toast.error).toHaveBeenCalledTimes(1);
 	});
 });
 

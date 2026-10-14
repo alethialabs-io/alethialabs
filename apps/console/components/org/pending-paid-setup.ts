@@ -125,6 +125,13 @@ export interface PendingPaidSetup {
 	 * new slug and shows this under the field — kept here so a resumed sheet can still say why.
 	 */
 	slugRefusal: string | null;
+	/**
+	 * The sentence a run stopped with when the setup needs support and no retry can finish it (the
+	 * subscription is not this account's, or its team is one this account is not in), or null/absent.
+	 * A sheet that resumes this record shows the sentence instead of offering "Retry to complete setup",
+	 * which ADR 0002 §5.6 rule 4 keeps for a thrown error only.
+	 */
+	stopped?: string | null;
 }
 
 const billingSchema = z.object({
@@ -161,6 +168,7 @@ const pendingSchema = z.object({
 	createdSlug: z.string(),
 	linked: z.boolean(),
 	slugRefusal: z.string().nullable(),
+	stopped: z.string().nullable().optional(),
 });
 
 /** The two ids that identify the charge — all a record that no longer parses can still give the server. */
@@ -248,9 +256,13 @@ function clearPendingPaidSetup(userId: string): void {
 	}
 }
 
-/** What the server said about an unfinished paid setup: one to resume, none, or it could not be asked. */
+/**
+ * What the server said about an unfinished paid setup: one to resume; one an open hold refuses, with the
+ * hold's sentence (never resumable, ADR 0002 §5.6); none; or it could not be asked.
+ */
 export type RecoveredPaidSetup =
 	| { kind: "found"; state: NewOrgSetupState }
+	| { kind: "held"; notice: string }
 	| { kind: "none" }
 	| { kind: "unavailable" };
 
@@ -266,6 +278,11 @@ export async function recoverUnfinishedPaidSetup(
 	try {
 		const state = ids ? await resolveNewOrgSetup(ids) : await findUnfinishedNewOrgSetup();
 		if (!state || !state.paid || (state.linked && state.declared)) return { kind: "none" };
+		// A setup a refusing hold names is not offered to finish: the run would stop on the same hold.
+		// `closing` and `cancel_unproven` are resumed, as the run lets the link decide those.
+		if (state.hold && REFUSING_HOLD_STATES.has(state.hold.state)) {
+			return { kind: "held", notice: state.hold.notice };
+		}
 		return { kind: "found", state };
 	} catch {
 		return { kind: "unavailable" };
@@ -371,7 +388,8 @@ export function finishPaidSetup(
 							? UNATTENDED_FAILURE
 							: outcome.message;
 				toast.error(message, { duration: Number.POSITIVE_INFINITY });
-			} else if (outcome.kind === "failed") {
+			} else if (outcome.kind === "failed" && outcome.retryable) {
+				// A non-retryable outcome is shown by the watching sheet's stopped panel, once.
 				toast.error(outcome.message);
 			}
 		}
@@ -439,7 +457,7 @@ async function runSteps(
 	start: PendingPaidSetup,
 	hooks: RunHooks,
 ): Promise<PaidSetupOutcome> {
-	let record: PendingPaidSetup = { ...start, slugRefusal: null };
+	let record: PendingPaidSetup = { ...start, slugRefusal: null, stopped: null };
 	/** Persists the record and reports it to the sheet. */
 	const save = (next: PendingPaidSetup) => {
 		record = next;
@@ -454,10 +472,11 @@ async function runSteps(
 	// answer says `unconfirmed`, never a state nobody read.
 	let report: NewOrgPlanReport | null = null;
 	try {
-		// Where the setup stands, by the server's account, asked FIRST so a refused setup stops before
-		// this run writes anything. The record's `createdOrgId` and `linked` are what this browser last
-		// SAW; the server's answer is what HAPPENED, including a create or a link whose response never
-		// arrived.
+		// Where the setup stands, by the server's account, asked FIRST so that a hold this answer reports
+		// stops the run before it sends anything to the server. The answer is a snapshot: a hold that opens
+		// after it is not seen here, and the link decides that one itself (a refusal comes back with the
+		// hold's clause, below), after the org was created. The record's `createdOrgId` and `linked` are what this browser last SAW; the
+		// server's answer is what HAPPENED, including a create or a link whose response never arrived.
 		const server = await resolveNewOrgSetup(ids);
 		if (!server) {
 			throw new SetupStopped(
@@ -606,6 +625,9 @@ async function runSteps(
 			return { kind: "failed", message: e.message, record, retryable: false, recordCleared: true };
 		}
 		if (e instanceof SetupStopped) {
+			// Kept, with its sentence, so a reopened sheet says the same thing rather than offering a retry
+			// that would stop here again.
+			save({ ...record, stopped: e.message });
 			return { kind: "failed", message: e.message, record, retryable: false, recordCleared: false };
 		}
 		return {

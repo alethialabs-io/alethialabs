@@ -293,6 +293,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				if (!active) return;
 				if (found.kind === "found") {
 					beginRecovery(found.state);
+				} else if (found.kind === "held") {
+					// A hold refuses this setup (ADR 0002 §5.6): its sentence, and no step to finish it.
+					setStopped(found.notice);
+					setView("pay");
 				} else if (found.kind === "unavailable") {
 					// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
 					// a customer who just paid does not pay again.
@@ -340,6 +344,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			void running.then((outcome) => {
 				if (generation.current === gen) applyOutcome(outcome);
 			});
+		} else if (stored.stopped) {
+			// A run already stopped this setup for support; a retry would stop it again (§5.6 rule 4).
+			setStopped(stored.stopped);
 		} else {
 			setNeedsSetupRetry(true);
 		}
@@ -558,10 +565,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 	/**
 	 * Opens or closes the sheet. A close while a paid setup is unfinished is held for confirmation
-	 * (see `confirmingClose`); every other close resets the sheet.
+	 * (see `confirmingClose`), unless a run stopped it for good (`stopped`): the confirmation says the
+	 * setup picks up where it left off, which is not true then. Every other close resets the sheet.
 	 */
 	function handleOpenChange(next: boolean) {
-		if (!next && pending && !confirmingClose) {
+		if (!next && pending && !confirmingClose && stopped === null) {
 			setConfirmingClose(true);
 			return;
 		}

@@ -20,12 +20,13 @@ const m = vi.hoisted(() => ({
 	resolveSetup: vi.fn(),
 	linkSubscription: vi.fn(),
 	createOrg: vi.fn(),
+	findUnfinished: vi.fn(),
 }));
 
 vi.mock("@/app/server/actions/billing", () => ({
 	attachTaxIdToCustomer: vi.fn().mockResolvedValue({ ok: true }),
 	saveNewOrgSetupDetails: vi.fn().mockResolvedValue({ ok: true }),
-	findUnfinishedNewOrgSetup: vi.fn().mockResolvedValue(null),
+	findUnfinishedNewOrgSetup: (...a: unknown[]) => m.findUnfinished(...a),
 	resolveNewOrgSetup: (...a: unknown[]) => m.resolveSetup(...a),
 	createNewOrgSubscriptionIntent: (...a: unknown[]) => m.createIntent(...a),
 	getProOffer: vi.fn().mockResolvedValue({ kind: "pay" }),
@@ -114,6 +115,7 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 }));
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
+import { toast } from "sonner";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
@@ -140,15 +142,16 @@ function lookup(hold: NewOrgSetupState["hold"]): NewOrgSetupState {
 	};
 }
 
-/** Name → declare, ending on the payment step. */
+/** Name → declare, ending on the payment step. Returns the render, for a test that reopens the sheet. */
 async function toPayment(user: ReturnType<typeof userEvent.setup>, onOpenChange = vi.fn()) {
-	render(<CreateOrgSheet open onOpenChange={onOpenChange} />);
+	const view = render(<CreateOrgSheet open onOpenChange={onOpenChange} />);
 	await user.type(screen.getByLabelText(/team name/i), "Acme Cloud");
 	const cont = screen.getByRole("button", { name: /continue/i });
 	await vi.waitFor(() => expect(cont).toBeEnabled());
 	await user.click(cont);
 	await user.click(await screen.findByRole("button", { name: "Declare payer" }));
 	await screen.findByRole("button", { name: "Pay" });
+	return view;
 }
 
 beforeEach(() => {
@@ -162,6 +165,7 @@ beforeEach(() => {
 		currency: "eur",
 	});
 	m.resolveSetup.mockResolvedValue(lookup(null));
+	m.findUnfinished.mockResolvedValue(null);
 	m.createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-cloud" }, error: null });
 	m.linkSubscription.mockResolvedValue({ kind: "linked", planState: "active", paymentUrl: null });
 });
@@ -211,6 +215,8 @@ describe("CreateOrgSheet — a refused setup is final (ADR 0002 C57, C78)", () =
 		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
 		expect(screen.queryByText(/retry/i)).not.toBeInTheDocument();
 		expect(window.sessionStorage.getItem(pendingPaidSetupKey("user-holds"))).toBeNull();
+		// Said once, in the panel, not again in a toast.
+		expect(toast.error).not.toHaveBeenCalledWith(clause);
 
 		await user.click(screen.getByRole("button", { name: "Done" }));
 		expect(screen.queryByText(/close before your team is set up/i)).not.toBeInTheDocument();
@@ -239,5 +245,45 @@ describe("CreateOrgSheet — a refused setup is final (ADR 0002 C57, C78)", () =
 		expect(await screen.findByText(/retry to complete setup/i)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /complete setup/i })).toBeInTheDocument();
 		expect(screen.queryByText(/charged (again|twice)/i)).not.toBeInTheDocument();
+	});
+});
+
+describe("CreateOrgSheet — a held setup is not offered to finish (ADR 0002 §5.6)", () => {
+	it("opening the sheet with a paid setup under a needs_operator hold shows the hold's sentence and no declare step", async () => {
+		const notice =
+			"This team already has an active plan, so this payment was not linked to it. Contact support at support@alethialabs.io, who will refund it or move it to the right team.";
+		m.findUnfinished.mockResolvedValue(lookup({ state: "needs_operator", notice }));
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(notice);
+		expect(screen.queryByRole("button", { name: "Declare payer" })).not.toBeInTheDocument();
+		expect(screen.queryByText(/finish setting it up/i)).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
+	});
+});
+
+describe("CreateOrgSheet — a stop for support is final (ADR 0002 §5.6 rule 4)", () => {
+	it("a charge not tied to this account says so, closes without promising a resume, and reopens to the same sentence", async () => {
+		m.resolveSetup.mockResolvedValue(null);
+		const onOpenChange = vi.fn();
+		const user = userEvent.setup();
+		const view = await toPayment(user, onOpenChange);
+		/** Re-renders the sheet open or closed, as its parent does. */
+		const rerender = (open: boolean) =>
+			view.rerender(<CreateOrgSheet open={open} onOpenChange={onOpenChange} />);
+		await user.click(screen.getByRole("button", { name: "Pay" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(/isn't tied to this account/);
+		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Done" }));
+		expect(screen.queryByText(/picks up at the step/i)).not.toBeInTheDocument();
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+
+		rerender(false);
+		rerender(true);
+		expect(await screen.findByRole("alert")).toHaveTextContent(/isn't tied to this account/);
+		expect(screen.queryByText(/retry to complete setup/i)).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
 	});
 });
