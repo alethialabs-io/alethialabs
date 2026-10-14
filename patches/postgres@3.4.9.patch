@@ -1,0 +1,53 @@
+postgres@3.4.9: guard nextWrite() against a closed (null) socket (Alethia #6028).
+
+Backport of upstream porsager/postgres PR #1209 ("Guard nextWrite against a closed socket",
+fixes porsager/postgres#1208; same path through sql.begin() reported in #1248), unreleased as of
+3.4.9. The hunk is that PR's src/connection.js change verbatim, applied to both builds Node loads:
+src/ (import) and cjs/src/ (require). Without it, a write on a connection whose backend was killed
+throws an uncaught TypeError from a setImmediate and leaves the write buffer stuck, so the
+reconnect never sends its startup message and every later query on that connection hangs or
+fails with CONNECT_TIMEOUT. Drop this patch once a postgres release contains #1209.
+Test: apps/console/tests/integration/db-connection-kill.test.ts
+
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..982344fe9edc6077d715040ea8ee49bbc9548e9c 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function nextWrite(fn) {
++    if (!socket) {
++      // closed() nulls the socket and reconnect() only recreates it on a later
++      // timer. write() is also reached from the 'data' handler, so a throw here
++      // has no query to reject and escapes as an uncaughtException. Settle the
++      // pending queries rather than dropping the write, or the caller hangs.
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef0978f0a4 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function nextWrite(fn) {
++    if (!socket) {
++      // closed() nulls the socket and reconnect() only recreates it on a later
++      // timer. write() is also reached from the 'data' handler, so a throw here
++      // has no query to reject and escapes as an uncaughtException. Settle the
++      // pending queries rather than dropping the write, or the caller hangs.
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
