@@ -458,6 +458,7 @@ function holdRow(overrides: Partial<PaymentHoldRow>): PaymentHoldRow {
 	const now = new Date(Date.now() - 60_000);
 	return {
 		id: "hold_seed",
+		scope: "new_org",
 		subscription_id: "sub_x",
 		customer_id: "cus_x",
 		payer_key: "user-1",

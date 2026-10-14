@@ -19,6 +19,14 @@
 //        live, and while the payer's lease is busy.
 //   C58  `reconcile --backfill` holds only the never-live checkouts (B1–B6), refunds only a payment that
 //        landed after the end, lists the rest without writing, and a re-run writes nothing new.
+//   C6   (ADR 0004 D1 rule 5) a due `org_plan` hold is advanced under `org-plan:<O>`; with that lease
+//        held, the hold is skipped as busy and left unchanged.
+//   C32  (ADR 0004 D8, the sender half) an `org_plan` hold in `refund_pending` is mailed once, to its
+//        Stripe customer's email; a `released(adopted)` `org_plan` hold is mailed nothing, even beside an
+//        open create-a-team setup with no org naming its subscription.
+//   C3   (ADR 0004, the link's half) the link's refusal beside a live Y meets an `org_plan` hold on X whose
+//        payer key is the creator's id: it is not taken for the creator's own hold — no clause claims its
+//        alert, and the refusal names no hold.
 //   C91  (S9, §5.6 "When a hold ends") T2o adopts a `needs_operator` hold on a live X and the visit runs
 //        the link's core: with an org, X is linked (`linked_at`, the row names X); with no org, or a
 //        creator who lost `manage_billing`, the setup stays open. Beside a live Y the re-link opens a
@@ -39,6 +47,8 @@ const linkWorld = vi.hoisted(() => ({
 	subs: new Map<string, { id: string; status: string; customer: string; latest_invoice: string; metadata: Record<string, string> }>(),
 	updates: [] as string[],
 	allowed: true,
+	/** customer id → its Stripe email (C32's recipient). */
+	customerEmails: new Map<string, string>(),
 }));
 vi.mock("@/lib/billing/stripe", () => {
 	const client = {
@@ -59,7 +69,7 @@ vi.mock("@/lib/billing/stripe", () => {
 		customers: {
 			retrieve: async (id: string) => {
 				const owner = [...linkWorld.subs.values()].find((s) => s.customer === id)?.metadata.created_by;
-				return { id, deleted: false, metadata: { created_by: owner ?? "" } };
+				return { id, deleted: false, email: linkWorld.customerEmails.get(id) ?? null, metadata: { created_by: owner ?? "" } };
 			},
 			update: async (id: string) => {
 				linkWorld.updates.push(`customers.update:${id}`);
@@ -92,6 +102,11 @@ vi.mock("@/lib/billing/sync", async (importActual) => {
 		},
 	};
 });
+// The Q3 email's transport: C32 runs the real sender (`deliverHoldNotice`) and reads who it mailed.
+vi.mock("@/lib/email/billing-email", async (importActual) => ({
+	...(await importActual<typeof import("@/lib/email/billing-email")>()),
+	sendPaymentHoldNoticeEmail: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/auth/scope", () => ({
 	getActiveScope: async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId }),
 }));
@@ -102,7 +117,9 @@ vi.mock("@/lib/authz", async (importActual) => {
 
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import * as store from "@/lib/billing/payment-holds/store";
-import { nudgeHold, openHold, payerLeaseKey } from "@/lib/billing/payment-holds/store";
+import { deliverHoldNotice } from "@/lib/billing/payment-holds/emails";
+import { nudgeHold, openHold } from "@/lib/billing/payment-holds/store";
+import { sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
 import * as sweeper from "@/lib/billing/payment-holds/sweeper";
 import { runPaymentHoldSweep, type SweepDeps } from "@/lib/billing/payment-holds/sweeper";
 import {
@@ -299,6 +316,16 @@ const payers: string[] = [];
 const subscriptions: string[] = [];
 const users: string[] = [];
 
+/** A create-a-team payer's lease key, written out rather than derived from the code under test. */
+function payerLeaseKey(payer: string): string {
+	return `user:${payer}`;
+}
+
+/** An org's org-plan lease key (ADR 0004 §2 "Lease key"), written out for the same reason. */
+function orgPlanLeaseKey(orgId: string): string {
+	return `org-plan:${orgId}`;
+}
+
 /** A fresh payer id. */
 function newPayer(): string {
 	const payer = randomUUID();
@@ -335,6 +362,28 @@ async function hold(payer: string, sub: string, over: Partial<typeof paymentHold
 		nextCheckAt: new Date(Date.now() - 1000),
 		openedBy: "purchase",
 		openedByUserId: payer,
+	});
+	await releasePurchaseLease(lease);
+	if (opened.kind !== "opened") throw new Error(`fixture: the open returned ${opened.kind}`);
+	if (Object.keys(over).length === 0) return opened.hold;
+	const [row] = await getServiceDb().update(paymentHolds).set(over).where(eq(paymentHolds.id, opened.hold.id)).returning();
+	if (!row) throw new Error("fixture: the hold is gone");
+	return row;
+}
+
+/** Opens an `org_plan` hold for the org `org` on `sub` (E0, `closing`), under its org-plan lease. */
+async function orgPlanHold(org: string, sub: string, over: Partial<typeof paymentHolds.$inferInsert> = {}): Promise<PaymentHoldRow> {
+	const lease = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+	if (!lease) throw new Error("fixture: the org's lease was not free");
+	const opened = await openHold(lease, {
+		scope: "org_plan",
+		subscriptionId: sub,
+		customerId: `cus_${sub}`,
+		payerKey: org,
+		invoiceId: `in_${sub}`,
+		state: "closing",
+		nextCheckAt: new Date(Date.now() - 1000),
+		openedBy: "purchase",
 	});
 	await releasePurchaseLease(lease);
 	if (opened.kind !== "opened") throw new Error(`fixture: the open returned ${opened.kind}`);
@@ -441,6 +490,7 @@ afterAll(async () => {
 	if (payers.length) {
 		await db.delete(paymentHolds).where(inArray(paymentHolds.payer_key, payers));
 		await db.delete(purchaseLeases).where(inArray(purchaseLeases.key, payers.map(payerLeaseKey)));
+		await db.delete(purchaseLeases).where(inArray(purchaseLeases.key, payers.map(orgPlanLeaseKey)));
 	}
 	if (orgs.length) {
 		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.created_org_id, orgs));
@@ -641,6 +691,99 @@ describeIfDb("payment-hold sweeper — C95: the Q3 emails go out at most once pe
 		expect((await tick(payer, stripe)).notices).toBe(1);
 		expect((await tick(payer, stripe)).notices).toBe(0);
 		expect(deliver.mock.calls.map((c) => [c[0].id, c[1]])).toEqual([[adoptedOrphan.id, "released:adopted"]]);
+	});
+});
+
+// ── ADR 0004 D1 rule 5 and D8: the sweeper and the sender per scope ─────────────────────────────────
+
+describeIfDb("payment-hold sweeper — ADR 0004 C6: an org_plan hold is advanced under org-plan:<O>", () => {
+	it("advances a due org_plan hold under the org's lease; with that lease held it is busy and unchanged", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const sub = newSub();
+		stripe.add({ id: sub, customer: `cus_${sub}`, metadata: { organization_id: org } });
+		const h = await orgPlanHold(org, sub);
+
+		const held = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+		if (!held) throw new Error("fixture: the org's lease was not free");
+		try {
+			expect(await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: depsOver(stripe) })).toMatchObject({
+				due: 1,
+				advanced: 0,
+				busy: 1,
+			});
+			expect(await read(h.id)).toMatchObject({ state: "closing", version: 0 });
+			expect(stripe.writesFor(sub)).toEqual([]);
+		} finally {
+			await releasePurchaseLease(held);
+		}
+
+		// A user lease keyed on the same id is no lease of this hold's: the tick takes the org's.
+		const userKeyed = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userKeyed) throw new Error("fixture: the user-keyed lease was not free");
+		try {
+			expect(await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: depsOver(stripe) })).toMatchObject({
+				due: 1,
+				advanced: 1,
+				released: 1,
+			});
+		} finally {
+			await releasePurchaseLease(userKeyed);
+		}
+		expect(await read(h.id)).toMatchObject({ state: "released", release_reason: "voided_unpaid" });
+		expect(stripe.writesFor(sub)).toEqual([
+			`invoices.voidInvoice:in_${sub}`,
+			`subscriptions.cancel:${sub}:alethia:checkout_closed:${h.id}`,
+		]);
+	});
+
+	it("a scoped tick selects only that scope's holds", async () => {
+		const stripe = new FakeStripe();
+		const shared = newPayer();
+		const orgSub = newSub();
+		const userSub = newSub();
+		stripe.add({ id: orgSub, customer: `cus_${orgSub}`, metadata: { organization_id: shared } });
+		stripe.add({ id: userSub });
+		const orgHold = await orgPlanHold(shared, orgSub);
+		const userHold = await hold(shared, userSub);
+		expect(await runPaymentHoldSweep({ scope: "new_org", payerKey: shared, deps: depsOver(stripe) })).toMatchObject({ due: 1, released: 1 });
+		expect(await read(userHold.id)).toMatchObject({ state: "released" });
+		expect(await read(orgHold.id)).toMatchObject({ state: "closing", version: 0 });
+	});
+});
+
+describeIfDb("payment-hold sweeper — ADR 0004 C32, the sender half: an org_plan notice goes to the customer's email", () => {
+	afterEach(() => {
+		vi.mocked(sendPaymentHoldNoticeEmail).mockClear();
+		linkWorld.customerEmails.clear();
+	});
+
+	/** Sweep deps that send through the real sender. */
+	const realSender = (stripe: FakeStripe): SweepDeps => ({ ...depsOver(stripe), deliver: deliverHoldNotice });
+
+	it("refund_pending is mailed ONCE, to the Stripe customer's email", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const sub = newSub();
+		linkWorld.customerEmails.set(`cus_${sub}`, "billing@team.example");
+		const h = await orgPlanHold(org, sub, { state: "refund_pending", next_check_at: new Date(Date.now() + HOUR) });
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(1);
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
+		expect(vi.mocked(sendPaymentHoldNoticeEmail).mock.calls).toEqual([[{ to: "billing@team.example", notice: "refund_pending" }]]);
+		expect(await read(h.id)).toMatchObject({ notified_state: "refund_pending" });
+	});
+
+	it("released(adopted) is mailed nothing, even beside an open setup with no org naming its subscription", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const creator = await newUser();
+		const sub = newSub();
+		linkWorld.customerEmails.set(`cus_${sub}`, "billing@team.example");
+		await recordSetup(creator, sub);
+		const h = await orgPlanHold(org, sub, { state: "released", release_reason: "adopted", released_at: new Date(), next_check_at: null });
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
+		expect(sendPaymentHoldNoticeEmail).not.toHaveBeenCalled();
+		expect(await read(h.id)).toMatchObject({ notified_state: null });
 	});
 });
 
@@ -852,6 +995,45 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		expect(linkWorld.updates).toEqual([]);
 		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
 		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /has no members/.test(c[0].detail))).toBe(true);
+	});
+
+	it("C3: an org_plan hold on X whose payer key EQUALS the creator's id is not taken for the creator's hold", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await applySubscriptionToBilling({
+			organizationId: orgId,
+			plan: "team",
+			status: "active",
+			stripeCustomerId: `cus_${sub}_y`,
+			stripeSubscriptionId: `${sub}_y`,
+			seats: null,
+			currentPeriodEnd: null,
+			eventAt: null,
+		});
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// An org_plan hold on X, alerted in its current entry, whose payer key is the same string as the
+		// creator's user id.
+		const orgHold = await orgPlanHold(payer, sub, { state: "needs_operator", alerted_at: new Date(Date.now() + 1000) });
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			const result = await sweeper.relinkAdoptedSetup(lease, orgHold, alert);
+			expect(result).toMatchObject({ kind: "refused", hold: null });
+			if (result.kind !== "refused") throw new Error("expected a refusal");
+			expect(result.clause).not.toContain(sweeper.LINK_REFUSED_ALERTED.trim());
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+		// Nothing new was opened beside it, and the org's hold is untouched.
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open.map((h) => [h.id, h.scope, h.version])).toEqual([[orgHold.id, "org_plan", orgHold.version]]);
 	});
 
 	it("C80: beside a live Y the re-link opens a link_refused hold and leaves the setup open (refused_reason), and T2o never adopts it", async () => {

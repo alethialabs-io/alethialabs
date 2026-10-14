@@ -12,10 +12,14 @@
 //   - THE HOLD STORE (lib/billing/payment-holds/store.ts) is an in-memory table with the same
 //     compare-and-set on `version`; its SQL and its lease fence are pinned against Postgres in
 //     tests/integration/payment-holds.test.ts. The setup record module is mocked as in
-//     billing-subscription.test.ts, with its hold reads served from that table.
+//     billing-subscription.test.ts, EXCEPT its three hold readers (`paymentHoldsOfPayer`,
+//     `openPaymentHoldOn`, `latestReleasedHoldOn`), which run for real: the fake database below
+//     evaluates the predicate each one builds over that table. So the scope filter the create-a-team
+//     readers apply (ADR 0004 D1 rule 3: C1, C2) is the readers' own, not this file's.
 //
 // On dev every case here fails on its assertion: the flow there opens no hold, cancels before it
-// voids, and remembers nothing between two requests.
+// voids, and remembers nothing between two requests. ADR 0004 C1 is the one pin (it passes on dev:
+// no reader there keys a hold by an org id), and its failing-first twin is the case after it.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaymentHoldRow } from "@/lib/db/schema";
@@ -155,6 +159,7 @@ vi.mock("@/lib/authz/guard", () => ({
 // by being ignored, and a dropped or wrong conjunct changes which deliveries match.
 vi.mock("@/lib/db", async () => {
 	const schema = await import("@/lib/db/schema");
+	type PaymentHoldRow = import("@/lib/db/schema").PaymentHoldRow;
 	const { PgDialect } = await import("drizzle-orm/pg-core");
 	const { SQL } = await import("drizzle-orm");
 	const dialect = new PgDialect();
@@ -172,7 +177,80 @@ vi.mock("@/lib/db", async () => {
 		const read = (d: Delivery) => (column === "event_key" ? d.event_key : column === "status" ? d.status : d.resource_id);
 		return op === "<>" ? (d) => read(d) !== value : (d) => read(d) === value;
 	};
+	/**
+	 * Evaluates a `payment_holds` predicate, rendered by drizzle's Postgres dialect, over
+	 * `world.state.holds`: `and`, `or`, parentheses, and `=`, `<>`, `>`, `in (…)` between a column and a
+	 * bound parameter. Anything else in the rendered SQL throws, so a reader cannot pass by being
+	 * misread. A NULL column satisfies no comparison, as in SQL.
+	 */
+	const holdsMatching = (where: unknown): PaymentHoldRow[] => {
+		if (!(where instanceof SQL)) throw new Error("the payment_holds query has no where clause");
+		const q = dialect.sqlToQuery(where);
+		const tokens = q.sql.match(/"payment_holds"\."[a-z_]+"|\$\d+|<>|=|>|\(|\)|,|\b(?:and|or|in)\b/g) ?? [];
+		if (tokens.join("") !== q.sql.replace(/\s+/g, "")) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		let at = 0;
+		const next = () => tokens[at++];
+		const expect = (t: string) => {
+			if (next() !== t) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		};
+		const param = (t: string | undefined) => {
+			if (!t?.startsWith("$")) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+			return q.params[Number(t.slice(1)) - 1];
+		};
+		type Test = (h: PaymentHoldRow) => boolean;
+		const compare = (a: unknown, b: unknown): number => {
+			if (a instanceof Date) return a.getTime() - new Date(String(b)).getTime();
+			return String(a) === String(b) ? 0 : String(a) < String(b) ? -1 : 1;
+		};
+		const factor = (): Test => {
+			const t = next();
+			if (t === "(") {
+				const inner = expr();
+				expect(")");
+				return inner;
+			}
+			const col = /^"payment_holds"\."([a-z_]+)"$/.exec(t ?? "")?.[1];
+			if (!col) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+			const read = (h: PaymentHoldRow): unknown => Reflect.get(h, col);
+			const op = next();
+			if (op === "in") {
+				expect("(");
+				const values: unknown[] = [param(next())];
+				while (tokens[at] === ",") {
+					next();
+					values.push(param(next()));
+				}
+				expect(")");
+				return (h) => read(h) != null && values.some((v) => compare(read(h), v) === 0);
+			}
+			const value = param(next());
+			if (op === "=") return (h) => read(h) != null && compare(read(h), value) === 0;
+			if (op === "<>") return (h) => read(h) != null && compare(read(h), value) !== 0;
+			if (op === ">") return (h) => read(h) != null && compare(read(h), value) > 0;
+			throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		};
+		const term = (): Test => {
+			const tests = [factor()];
+			while (tokens[at] === "and") {
+				next();
+				tests.push(factor());
+			}
+			return (h) => tests.every((f) => f(h));
+		};
+		const expr = (): Test => {
+			const tests = [term()];
+			while (tokens[at] === "or") {
+				next();
+				tests.push(term());
+			}
+			return (h) => tests.some((f) => f(h));
+		};
+		const test = expr();
+		if (at !== tokens.length) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		return world.state.holds.filter(test).map((h) => ({ ...h }));
+	};
 	const answer = (table: unknown, where: unknown): unknown[] => {
+		if (table === schema.paymentHolds) return holdsMatching(where);
 		if (table === schema.alertDeliveries) {
 			if (!(where instanceof SQL)) throw new Error("the deliveries query has no where clause");
 			const q = dialect.sqlToQuery(where);
@@ -186,7 +264,8 @@ vi.mock("@/lib/db", async () => {
 		let table: unknown = null;
 		let where: unknown = null;
 		const chain: Record<string, unknown> = {};
-		for (const m of ["select", "limit", "innerJoin"]) chain[m] = () => chain;
+		// `orderBy` keeps the table's insertion order: every case here has at most one row a sort could move.
+		for (const m of ["select", "limit", "innerJoin", "orderBy"]) chain[m] = () => chain;
 		chain.from = (t: unknown) => {
 			table = t;
 			return chain;
@@ -255,13 +334,13 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 		throw new Error("database is unavailable");
 	};
 	return {
-		payerLeaseKey: (payer: string) => `user:${payer}`,
-		openHold: async (_lease: unknown, input: { subscriptionId: string; customerId: string; payerKey: string; invoiceId: string; state: PaymentHoldRow["state"]; nextCheckAt: Date }) => {
+		openHold: async (_lease: unknown, input: { scope?: PaymentHoldRow["scope"]; subscriptionId: string; customerId: string; payerKey: string; invoiceId: string; state: PaymentHoldRow["state"]; nextCheckAt: Date }) => {
 			if (world.state.openFails) throw new Error("database is unavailable");
 			const open = world.state.holds.find((h) => h.subscription_id === input.subscriptionId && h.state !== "released");
 			if (open) return { kind: "already_open", hold: open };
 			const hold = holdRow({
 				id: `hold_${world.state.holds.length + 1}`,
+				scope: input.scope ?? "new_org",
 				subscription_id: input.subscriptionId,
 				customer_id: input.customerId,
 				payer_key: input.payerKey,
@@ -338,15 +417,26 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		liveCheckSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
 		// The over-cap dedupe's cap-state marker (#5989).
 		newestUnlinkedSetupAt: vi.fn(async () => world.state.newestRecordAt),
-		paymentHoldsOfPayer: vi.fn(async (payer: string) => world.state.holds.filter((h) => h.payer_key === payer).map((h) => ({ ...h }))),
-		openPaymentHoldOn: vi.fn(async (sub: string) => world.state.holds.find((h) => h.subscription_id === sub && h.state !== "released") ?? null),
+		recordSetupRefusal: vi.fn(async () => null),
+		// The hold readers run for real, over the fake database's `payment_holds` (above).
+		paymentHoldsOfPayer: actual.paymentHoldsOfPayer,
+		openPaymentHoldOn: actual.openPaymentHoldOn,
+		latestReleasedHoldOn: actual.latestReleasedHoldOn,
 	};
 });
 
-import { createNewOrgSubscriptionIntent, createSubscriptionIntent } from "@/app/server/actions/billing";
-import { emitAlertEvent } from "@/lib/alerts/emit";
 import {
+	createNewOrgSubscriptionIntent,
+	createSubscriptionIntent,
+	linkSubscriptionToNewOrg,
+	resolveNewOrgSetup,
+} from "@/app/server/actions/billing";
+import { emitAlertEvent } from "@/lib/alerts/emit";
+import { authorizeInOrg } from "@/lib/authz/guard";
+import {
+	findSetupOrg,
 	forgetPendingOrgSetup,
+	recordSetupRefusal,
 	liveCheckSetupCustomers,
 	openPendingOrgSetupsForOrg,
 	unlinkedPendingOrgSetupCustomers,
@@ -358,6 +448,7 @@ function holdRow(overrides: Partial<PaymentHoldRow>): PaymentHoldRow {
 	const now = new Date();
 	return {
 		id: "hold_seed",
+		scope: "new_org",
 		subscription_id: "sub_x",
 		customer_id: "cus_1",
 		payer_key: "user-1",
@@ -663,6 +754,66 @@ describe("the sweep's kept subscriptions, and the copy (§5.5)", () => {
 		const late = await buy();
 		expect(late).toMatchObject({ kind: "intent" });
 		expect(late.kind === "intent" ? late.notice : "not minted").toBeUndefined();
+	});
+});
+
+describe("ADR 0004 D1 rule 3 — the create-a-team readers read new_org holds only", () => {
+	it("C1 (pin): an open org_plan hold of an org the user bought for does not block the user's create-a-team purchase", async () => {
+		seedHold({
+			scope: "org_plan",
+			payer_key: "org-1",
+			opened_by_user_id: "user-1",
+			subscription_id: "sub_org_plan",
+			customer_id: "cus_org",
+			invoice_id: "in_sub_org_plan",
+			state: "payment_in_flight",
+			last_pay: "in_flight",
+		});
+
+		expect(await buy()).toMatchObject({ kind: "intent", subscriptionId: "sub_new" });
+		expect(holdOn("sub_org_plan")).toMatchObject({ state: "payment_in_flight", version: 0 });
+	});
+
+	it("an org_plan hold whose payer_key EQUALS the user id still does not block: scope, not the key's text, decides", async () => {
+		seedHold({
+			scope: "org_plan",
+			payer_key: "user-1",
+			opened_by_user_id: null,
+			subscription_id: "sub_org_plan",
+			customer_id: "cus_org",
+			invoice_id: "in_sub_org_plan",
+			state: "payment_in_flight",
+			last_pay: "in_flight",
+		});
+
+		expect(await buy()).toMatchObject({ kind: "intent", subscriptionId: "sub_new" });
+		expect(holdOn("sub_org_plan")).toMatchObject({ state: "payment_in_flight", version: 0 });
+	});
+
+	it("C2: an org_plan hold on a linked create-a-team X: the resume reports no hold, and the link is not refused with it", async () => {
+		sub("sub_linked", "canceled", ["requires_payment_method"], { created_by: "user-1", organization_id: "org-1" });
+		seedHold({
+			scope: "org_plan",
+			payer_key: "org-1",
+			opened_by_user_id: null,
+			subscription_id: "sub_linked",
+			invoice_id: "in_sub_linked",
+			state: "closing",
+			last_pay: "awaiting",
+		});
+		vi.mocked(findSetupOrg).mockResolvedValue({ id: "org-1", slug: "acme" });
+
+		const resumed = await resolveNewOrgSetup({ subscriptionId: "sub_linked", customerId: "cus_1" });
+		expect(resumed).toMatchObject({ subscriptionId: "sub_linked", hold: null });
+
+		vi.mocked(authorizeInOrg).mockResolvedValue({ orgId: "org-1", userId: "user-1" });
+		const linked = await linkSubscriptionToNewOrg({ orgId: "org-1", subscriptionId: "sub_linked", customerId: "cus_1" });
+		// The link's hold consult saw no hold, so it judged X on its own read (ended), not on the org's hold.
+		expect(recordSetupRefusal).not.toHaveBeenCalledWith(expect.objectContaining({ refused: "held" }));
+		expect(recordSetupRefusal).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: "sub_linked", refused: "ended" }));
+		expect(linked).toMatchObject({ kind: "refused" });
+		// The org's hold was neither advanced nor touched.
+		expect(holdOn("sub_linked")).toMatchObject({ scope: "org_plan", state: "closing", version: 0 });
 	});
 });
 
