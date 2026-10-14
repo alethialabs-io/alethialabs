@@ -2329,6 +2329,12 @@ jobs:
       - name: The Go module fetch retry retries a proxy flake and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/go-mod-download-retry.sh --self-test
+      # The image pull retry T1 uses for ArgoCD's images (#6044), held to the same two directions
+      # under `bash -e`: a rate limit or a transport error is retried and logged, and a tag that does
+      # not exist, a private image or a stopped daemon is not.
+      - name: The image pull retry retries a rate limit and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/docker-pull-retry.sh --self-test
       # The same shape one host over: Playwright's `--with-deps` shells out to apt, and the runner
       # image carries Google's Chrome channel that Chromium does not need. Both directions pinned —
       # a transient fetch is retried, a real failure is not (#4499).
@@ -2945,6 +2951,19 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Pre-fetch test/e2e's Go modules (retrying a transient proxy error)
         run: GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
+      # ArgoCD's images come from the RUNNER's docker, not from the kubelet inside kind (#6044). The
+      # chart's redis lives on ECR Public, which rate-limits anonymous pulls per source IP, and
+      # GitHub's runners share IPs: pulled by the kubelet, it hit `toomanyrequests`, sat in
+      # ImagePullBackOff and redded queue batches. Here the list is RENDERED from the argo-cd chart
+      # at the version the runner installs (cmd/argoimages), so a chart bump cannot leave an image
+      # out, and each image is pulled under a retry that waits out a rate limit and says so. The T1
+      # test then loads them into kind as soon as the runner has created it.
+      - name: Pull the images the pinned ArgoCD chart renders (retrying a rate limit)
+        working-directory: test/e2e
+        run: |
+          GOWORK=off go run ./cmd/argoimages > "$RUNNER_TEMP/argocd-images.txt"
+          mapfile -t images < "$RUNNER_TEMP/argocd-images.txt"
+          bash "$GITHUB_WORKSPACE/scripts/ci/docker-pull-retry.sh" "${images[@]}"
       - run: pnpm install --frozen-lockfile
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         run: pnpm -C apps/console run db:migrate
@@ -2963,6 +2982,8 @@ jobs:
       # convergence assertion 8m + build/boot headroom) plus teardown margin.
       - name: T1 — real runner claims from the control plane and provisions kind
         working-directory: test/e2e
+        env:
+          ALETHIA_E2E_T1_PRELOAD_IMAGES: ${{ runner.temp }}/argocd-images.txt
         run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 30m -v
       # `always()` is deliberate — a leaked cluster must be swept on a CANCEL too, which is the one
       # thing `!cancelled()` would not do. What it must not do is run when `kind` was never
