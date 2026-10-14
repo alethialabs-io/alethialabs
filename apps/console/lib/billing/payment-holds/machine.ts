@@ -2,9 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // `advanceHold`: the payment-hold state machine (ADR 0002 §3, S5 #5763) — the only code that moves a
-// hold. NO CALLER YET: from slice 6 the sweeper runs it, and from slice 8 the create-a-team flow does,
-// each under the payer's lease. Stripe, the store, the lease fence, the alert and the clock are all
-// injected, so the transition table is tested without a network or a database.
+// hold. Its callers outside the tests, each under the payer's lease (the store's fence refuses a state
+// write under any other) and each with deps built by `machineDepsFor` (sweeper.ts):
+//   - the sweeper's visit (`visitHold`, sweeper.ts);
+//   - app/server/actions/billing.ts (`advanceResultUnderLease`): the create-a-team purchase, on each
+//     open hold of its payer and on the hold E0 just opened (`closeUnderHold`), and the link, on an
+//     open `closing` or `cancel_unproven` hold of the subscription it links;
+//   - scripts/payment-holds.ts: the §8 backfill, on each hold it opens and does not hand straight to an
+//     operator.
+// `operatorRelease` (T16) has one such caller, `payment-holds release` in that script, and `decideOpen`
+// one, `closeUnderHold` in billing.ts. Stripe, the store, the lease fence, the alert and the clock are
+// all injected, so the transition table is tested without a network or a database.
 //
 // THE TABLE (§3.3) is `decide`: one observation in, the first matching row out, top to bottom. The rows
 // are named by their T-numbers, and `advanceHold` reports every row it matched. Three rules shape it:
