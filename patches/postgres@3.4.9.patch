@@ -1,4 +1,4 @@
-postgres@3.4.9: two guards for a connection whose backend dies mid-use (Alethia #6028, #6041).
+postgres@3.4.9: three guards for a connection whose backend dies mid-use (Alethia #6028, #6041, #6060).
 Each hunk is applied to both builds Node loads: src/ (import) and cjs/src/ (require).
 
 1. connection.js, nextWrite(): reject a write on a closed (null) socket (Alethia #6028).
@@ -19,11 +19,21 @@ Each hunk is applied to both builds Node loads: src/ (import) and cjs/src/ (requ
    CONNECTION_CLOSED from begin() means the transaction's outcome is UNKNOWN, not that nothing
    committed: if the close landed after COMMIT was sent, the commit may have applied.
 
+3. connection.js, error() and closed(): an error-close rejects the queries still on the
+   connection (Alethia #6060). Backport of the two-line fix proposed on upstream
+   porsager/postgres#1246 (open, no PR or release as of 2026-10-14), verbatim apart from comments. On a TCP reset
+   Node emits the socket's 'error' and then its 'close' on a later tick. errored() left the
+   rejected query in `query`, and closed(hadError = true) skipped error(), so a statement issued in
+   between (begin()'s own ROLLBACK) stayed in `sent`, and after the next reconnect the connection
+   waited forever for the reply to a statement it never sent. error() now clears `query`, and
+   closed() calls error() whatever hadError is. A query that reaches execute() in that window
+   rejects with CONNECTION_CLOSED; its bytes only ever reached the dead socket.
+
 Drop each hunk once a postgres release contains it.
 Test: apps/console/tests/integration/db-connection-kill.test.ts
 
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..982344fe9edc6077d715040ea8ee49bbc9548e9c 100644
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..125ec84059a670929ef0bbbd8a6f549518caacf9 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -43,6 +53,29 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..982344fe9edc6077d715040ea8ee49bb
      const x = socket.write(chunk, fn)
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
+@@ -383,6 +393,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       return
+ 
+     errored(err)
++    // errored() rejects the active query but leaves it in `query`, so execute() would keep
++    // queueing behind a query that can never complete, and end() would wait on it (#1246).
++    query = null
+     while (sent.length)
+       queryError(sent.shift(), err)
+   }
+@@ -450,7 +463,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // On a reset Node emits 'error' and then 'close' on a later tick, and a query can reach
++    // execute() in between. Reject it on an error-close too, or it stays in `sent` and the
++    // connection waits for its reply after the next reconnect (#1246).
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
 diff --git a/cjs/src/index.js b/cjs/src/index.js
 index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f30d8aa7398ebe0726e09d815fe059bb9f0d726f 100644
 --- a/cjs/src/index.js
@@ -84,7 +117,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f30d8aa7398ebe0726e09d815fe059bb
          c.queue === full
            ? queries.push(q)
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef0978f0a4 100644
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..b2ab998a5d12b4e22b1851d48bf7a74a7bffe079 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -104,6 +137,29 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef
      const x = socket.write(chunk, fn)
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
+@@ -383,6 +393,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       return
+ 
+     errored(err)
++    // errored() rejects the active query but leaves it in `query`, so execute() would keep
++    // queueing behind a query that can never complete, and end() would wait on it (#1246).
++    query = null
+     while (sent.length)
+       queryError(sent.shift(), err)
+   }
+@@ -450,7 +463,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // On a reset Node emits 'error' and then 'close' on a later tick, and a query can reach
++    // execute() in between. Reject it on an error-close too, or it stays in `sent` and the
++    // connection waits for its reply after the next reconnect (#1246).
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
 diff --git a/src/index.js b/src/index.js
 index c7fba3dace20173f4cb13f3f138bb6d213b43683..99d2500d27aef14442ab8ec24f3b3584e22753b3 100644
 --- a/src/index.js
