@@ -1274,6 +1274,26 @@ describe("release --moved-to (§5.8)", () => {
 		expect(getServiceDb).not.toHaveBeenCalled();
 	});
 
+	it("a --moved-to or subscription id outside the id charset is refused before any read (the search query cannot be broken out of)", async () => {
+		const { stripe } = fakeStripe({ sub: "active", invoice: "paid" });
+		for (const movedTo of ["org' OR metadata['x']:'y", "org t", "org\"t", "org:t"]) {
+			expect(await releaseHoldCommand({ ...releaseArgs, movedTo }, serverDeps(stripe), print)).toMatchObject({ kind: "refused" });
+			expect(await main(["release", X, "--moved-to", movedTo, "--reason", "r", "--operator", "op-1"], print)).toBe(1);
+		}
+		expect(
+			await releaseHoldCommand({ ...releaseArgs, subscriptionId: "sub_x'", movedTo: T }, serverDeps(stripe), print),
+		).toMatchObject({ kind: "refused" });
+		expect(await main(["release", "sub_x'", "--moved-to", T, "--reason", "r", "--operator", "op-1"], print)).toBe(1);
+		expect(db.db.select).not.toHaveBeenCalled();
+		expect(getServiceDb).not.toHaveBeenCalled();
+		expect(lease.acquirePurchaseLease).not.toHaveBeenCalled();
+		// A UUID team id passes the check.
+		db.queue.push([]);
+		expect(
+			await releaseHoldCommand({ ...releaseArgs, movedTo: "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c" }, serverDeps(stripe), print),
+		).toEqual({ kind: "not_open" });
+	});
+
 	it("C99 / C101: team_not_found, payer_not_in_team and a busy lock make no Stripe call, and print no live observation", async () => {
 		for (const c of [movedCase({ team: null }), movedCase({ member: { role: "admin", status: "active" } }), movedCase({ lockBusy: true })]) {
 			vi.clearAllMocks();

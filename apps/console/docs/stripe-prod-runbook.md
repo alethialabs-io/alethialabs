@@ -250,8 +250,9 @@ another plan subscription (`team_has_other_plan`); an AI add-on does not count. 
 `billing.payment_hold.released` also carries `moved_to`, `payer`, `customer_id`, `row_subscription_id`,
 `row_status`, `listed_customers`, `listed_subscription_count` and `setup_closed`.
 
-**An unmeasured assumption.** `too_soon` waits 15 minutes after the team's billing row first named the
-subscription, on the assumption that Stripe's search sees everything the team bought before the move by
+**An unmeasured assumption.** When the team's billing row already names the subscription, `too_soon`
+waits until 15 minutes after the row **last changed** (`organization_billing.updated_at`, which every
+write to the row bumps: a sync, the usage cap, the AI spend caps, the payer facts), on the assumption that Stripe's search sees everything the team bought before the move by
 then. That lag has **not** been measured yet; it is to be measured in Stripe test mode (ADR 0002 §5.8,
 "The windows that are left").
 

@@ -32,7 +32,8 @@
 // (`open_note = link_refused`), the refusal also names `--moved-to`.
 //
 // MOVED RELEASE (T16m, E2m, ADR 0002 §5.8). `--moved-to <T>` alone selects it; `--reason` and `--operator`
-// stay required, and a `--moved-to` with no value is refused before anything is read. Support moved X to
+// stay required, and a `--moved-to` with no value, or a T or X outside the id charset (letters, digits,
+// `_`, `-`), is refused before anything is read. Support moved X to
 // team T in Stripe; this checks that the move fully happened and releases the hold with T16's own write.
 // It moves nothing and makes no Stripe write. Steps 1–3 are T16's (the hold, the payer's lease, the
 // re-read under it). Then, in this order:
@@ -283,6 +284,15 @@ export type ReleaseResult =
 	| { kind: "not_open" }
 	| { kind: "refused"; reason: string; code?: MovedReleaseRefusal };
 
+/**
+ * Whether `id` is made only of the characters a team id (a UUID) or a Stripe id (`sub_…`) uses. The moved
+ * release puts the team id into a Stripe search query string (`metadata['organization_id']:'<T>'`), so a
+ * quote or a space there could change the query; this refuses such a value before anything is read.
+ */
+function isPlainId(id: string): boolean {
+	return /^[A-Za-z0-9_-]+$/.test(id);
+}
+
 /** Prints a refusal and returns it. */
 function refuse(print: Print, reason: string): { kind: "refused"; reason: string } {
 	print(`Refused: ${reason}`);
@@ -336,6 +346,9 @@ export async function releaseHoldCommand(
 	const movedTo = input.movedTo?.trim();
 	if (movedTo !== undefined && (movedTo === "" || movedTo.startsWith("--"))) {
 		return refuse(print, "--moved-to needs the id of the team support moved the subscription to.");
+	}
+	if (movedTo !== undefined && (!isPlainId(input.subscriptionId) || !isPlainId(movedTo))) {
+		return refuse(print, "the subscription id and --moved-to may contain only letters, digits, '_' and '-'.");
 	}
 
 	const found = await openHoldOf(input.subscriptionId);
@@ -1165,6 +1178,12 @@ export async function main(argv: readonly string[], print: Print = (line) => con
 			const movedTo = hasMovedTo ? (arg(argv, "moved-to") ?? "") : undefined;
 			if (movedTo !== undefined && (movedTo.trim() === "" || movedTo.startsWith("--"))) {
 				refuse(print, "--moved-to needs the id of the team support moved the subscription to.");
+				return 1;
+			}
+			// Both ids reach a Stripe search query string on the moved path: refuse anything outside the id
+			// charset before anything is read.
+			if (movedTo !== undefined && (!isPlainId(subject) || !isPlainId(movedTo.trim()))) {
+				refuse(print, "the subscription id and --moved-to may contain only letters, digits, '_' and '-'.");
 				return 1;
 			}
 			const result = await releaseHoldCommand(
