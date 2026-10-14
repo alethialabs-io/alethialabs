@@ -451,7 +451,7 @@ import {
 	resolveNewOrgSetup,
 } from "@/app/server/actions/billing";
 import { emitAlertEvent } from "@/lib/alerts/emit";
-import { liveCheckSetupCustomers, settleOpenSetup } from "@/lib/billing/pending-org-setup";
+import { liveCheckSetupCustomers, openPaymentHoldOn, settleOpenSetup } from "@/lib/billing/pending-org-setup";
 import { advanceHold } from "@/lib/billing/payment-holds/machine";
 import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import { liveSweepDeps, machineDepsFor, relinkAdoptedSetup } from "@/lib/billing/payment-holds/sweeper";
@@ -678,6 +678,46 @@ describe("§5.6 — the link consults the hold that names X before any Stripe wr
 		await expect(resolveNewOrgSetup(ids)).resolves.toMatchObject({ planState: "action_needed", paymentUrl: "https://invoice.stripe.com/i/acct_1/test_inv", hold: null });
 		seedHold({ state: "closing", last_pay: "awaiting" });
 		await expect(resolveNewOrgSetup(ids)).resolves.toMatchObject({ planState: "action_needed", paymentUrl: null, hold: { state: "closing" } });
+	});
+});
+
+describe("#6069 — a hold that appears between the lookup's hold read and its plan-state read", () => {
+	it("resolveNewOrgSetup: a hold opened while the invoice is read is reported, with no payment link", async () => {
+		subX("incomplete", ["requires_action"]);
+		world.state.hosted.set("in_sub_x", "https://invoice.stripe.com/i/acct_1/test_inv");
+		setup();
+		// The purchase's E0 (or the sweeper) opens a hold on X after the lookup read X's holds, while it
+		// reads X's open invoice for the payment link.
+		const readInvoice = world.stripe.invoices.retrieve.getMockImplementation();
+		if (!readInvoice) throw new Error("the fake invoice read has no implementation");
+		world.stripe.invoices.retrieve.mockImplementation(async (id: string) => {
+			if (!holdOn()) seedHold({ state: "closing", last_pay: "awaiting" });
+			return readInvoice(id);
+		});
+
+		const state = await resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" });
+		expect(state).toMatchObject({ planState: "action_needed", paymentUrl: null, hold: { state: "closing" }, ended: null });
+	});
+
+	it("findUnfinishedNewOrgSetup: a hold opened just after the first hold read is reported, so the setup is not resumable", async () => {
+		subX("active", ["succeeded"]);
+		setup("sub_x", null);
+		vi.mocked(openPaymentHoldOn).mockImplementationOnce(async () => {
+			seedHold({ state: "needs_operator", open_note: "link_refused" });
+			return null;
+		});
+
+		const state = await findUnfinishedNewOrgSetup();
+		expect(state).toMatchObject({ subscriptionId: "sub_x", paid: true, hold: { state: "needs_operator" }, ended: null, paymentUrl: null });
+	});
+
+	it("a hold already open at the first read is reported from that read — the second read is not made", async () => {
+		subX("incomplete", ["requires_action"]);
+		setup();
+		seedHold({ state: "closing", last_pay: "awaiting" });
+
+		await expect(resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" })).resolves.toMatchObject({ hold: { state: "closing" }, paymentUrl: null });
+		expect(vi.mocked(openPaymentHoldOn)).toHaveBeenCalledTimes(1);
 	});
 });
 
