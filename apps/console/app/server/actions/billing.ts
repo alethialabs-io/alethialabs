@@ -98,7 +98,7 @@ import {
 } from "@/lib/billing/new-org-hold-copy";
 import { type AdvanceResult, advanceHold, decideOpen, LINK_REFUSED_NOTE } from "@/lib/billing/payment-holds/machine";
 import { type HoldStripeReader, observeHold } from "@/lib/billing/payment-holds/observe";
-import { type OpenHoldResult, openHold } from "@/lib/billing/payment-holds/store";
+import { holdClockNow, type OpenHoldResult, openHold, stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import {
 	LINK_REFUSED_ALERTED,
 	LINK_REFUSED_ORG_HAS_PLAN,
@@ -1006,7 +1006,8 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 
 /**
  * The guard's refusal to the setup's creator: the clause of the open payment hold on the setup's
- * subscription in place of the first sentence, then where to go — else `OPEN_SETUP_CREATOR`. A
+ * subscription in place of the first sentence, then where to go — else `OPEN_SETUP_CREATOR`. A clause
+ * it returns stamps that hold's `notice_last_sent_at` (`stampCarriedClauses`). A
  * `refund_pending` hold does not block (Q10), so its clause cannot say why the plan is refused: the
  * refusal keeps its own first sentence, and the clause says only that the refund was issued.
  */
@@ -1014,6 +1015,7 @@ async function creatorRefusal(subscriptionId: string): Promise<string> {
 	const hold = await openPaymentHoldOn(subscriptionId);
 	const clause = hold ? holdClause(hold, { refusing: true }) : null;
 	if (!hold || !clause) return OPEN_SETUP_CREATOR;
+	await stampCarriedClauses([hold.id]);
 	return hold.state === "refund_pending"
 		? `${OPEN_SETUP_CREATOR_FIRST} ${clause} ${OPEN_SETUP_CREATOR_NEXT}`
 		: `${clause} ${OPEN_SETUP_CREATOR_NEXT}`;
@@ -2169,9 +2171,52 @@ function heldSubscriptions(seen: CheckoutsSeen): Set<string> {
 	return new Set(open.map((h) => h.subscription_id));
 }
 
-/** One message for everything `seen` (§5.5): the refusal when anything blocks, else the mint's notice. */
-function copyOf(seen: CheckoutsSeen): { refusal: string | null; notice: string | null } {
-	return composeNewOrgHoldCopy({ holds: [...seen.holds.values()], kept: seen.kept, now: new Date() });
+/** What the purchase may return for everything it saw, and the holds whose clause that message carries. */
+interface SeenCopy {
+	refusal: string | null;
+	notice: string | null;
+	/** The ids of the holds whose clause is in `refusal` or `notice`: what a returned message stamps. */
+	carriers: string[];
+}
+
+/**
+ * One message for everything `seen` (§5.5): the refusal when anything blocks, else the mint's notice.
+ * The 14-day refund window is measured on the DATABASE's clock (`holdClockNow`), the one that stamped
+ * `released_at`, so the app server's clock can neither show nor hide a refund. It is read AFTER the
+ * holds were selected, so it can only hide a refund the select admitted, never show one it left out.
+ * It is read only when a hold released as refunded is in the set: the composer reads `now` only in
+ * `refundedRecently`, whose first two tests are exactly `refundReleased`, so for any other set `now` is
+ * never read and `new Date(0)` stands in for it. A hold carries a clause when the composer, given that
+ * hold alone, writes one.
+ */
+async function copyOf(seen: CheckoutsSeen): Promise<SeenCopy> {
+	const holds = [...seen.holds.values()];
+	const refundReleased = holds.some(
+		(h) => h.state === "released" && (h.release_reason === "refunded" || h.release_reason === "already_refunded"),
+	);
+	const now = refundReleased ? await holdClockNow() : new Date(0);
+	const copy = composeNewOrgHoldCopy({ holds, kept: seen.kept, now });
+	const carriers = holds
+		.filter((h) => {
+			const alone = composeNewOrgHoldCopy({ holds: [h], kept: [], now });
+			return alone.refusal !== null || alone.notice !== null;
+		})
+		.map((h) => h.id);
+	return { ...copy, carriers };
+}
+
+/**
+ * Stamps `notice_last_sent_at` on the holds whose clause a response is returning (ADR 0002 §4.1, §5.5):
+ * a hint write, with no lease. It means "returned", never "delivered". A stamp that fails is logged and
+ * the response goes out anyway: the column is a record of what was said, and never decides an answer.
+ */
+async function stampCarriedClauses(holdIds: readonly string[]): Promise<void> {
+	if (holdIds.length === 0) return;
+	try {
+		await stampHoldNotice(holdIds);
+	} catch (e) {
+		console.error(`[billing] could not stamp notice_last_sent_at on ${holdIds.join(", ")}:`, e);
+	}
 }
 
 /** The id of a subscription's latest invoice, expanded or not; null when it has none. */
@@ -2228,7 +2273,8 @@ async function relinkIfAdopted(
  * hold in `closing` under the lease BEFORE anything is voided or cancelled; then the machine advances
  * it — voiding first, cancelling only after a proven void (§3.4). Returns the hold as E0 opened it
  * (`opened`) and as the machine left it (`hold`), or a refusal that ends the purchase with nothing touched: T0f, the hold could not be written (no
- * block is promised); T0h, an open hold already names `sub` (its clause, when it is this payer's).
+ * block is promised); T0h, an open hold already names `sub` (its clause, when it is this payer's, which
+ * stamps that hold's `notice_last_sent_at`).
  */
 async function closeUnderHold(
 	sub: Stripe.Subscription,
@@ -2258,7 +2304,9 @@ async function closeUnderHold(
 		return { kind: "held", opened: decision.hold, hold: await advanceUnderLease(decision.hold, lease) };
 	}
 	const own = decision.kind === "refuse_held" ? decision.hold : null;
-	return { kind: "refused", message: (own ? holdClause(own) : null) ?? NOT_CONFIRMED_CLOSED };
+	const clause = own ? holdClause(own) : null;
+	if (own && clause) await stampCarriedClauses([own.id]);
+	return { kind: "refused", message: clause ?? NOT_CONFIRMED_CLOSED };
 }
 
 /**
@@ -2477,8 +2525,11 @@ async function startNewOrgSubscription(
 		const opened = await relinkIfAdopted(hold, advanced, lease);
 		if (opened) seen.holds.set(opened.id, opened);
 	}
-	const held = copyOf(seen).refusal;
-	if (held) return { kind: "refused", message: held };
+	const held = await copyOf(seen);
+	if (held.refusal) {
+		await stampCarriedClauses(held.carriers);
+		return { kind: "refused", message: held.refusal };
+	}
 
 	// I1 (b), the prior: closed under a hold, or kept. A `canceled` one is closed under a hold only while
 	// its invoice can still be paid (the machine voids it, T8, or deletes a draft, T8d); a paid one is a
@@ -2561,8 +2612,11 @@ async function startNewOrgSubscription(
 			if (refusal) return { kind: "refused", message: refusal };
 		}
 	}
-	const copy = copyOf(seen);
-	if (copy.refusal) return { kind: "refused", message: copy.refusal };
+	const copy = await copyOf(seen);
+	if (copy.refusal) {
+		await stampCarriedClauses(copy.carriers);
+		return { kind: "refused", message: copy.refusal };
+	}
 
 	// I1 (c), read last.
 	const holdCustomers = [...seen.holds.values()].map((h) => h.customer_id);
@@ -2665,6 +2719,7 @@ async function startNewOrgSubscription(
 		await closeOutMintedSubscription(sub, mintedOn);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
+	if (copy.notice) await stampCarriedClauses(copy.carriers);
 	return {
 		kind: "intent",
 		clientSecret,
@@ -2900,17 +2955,19 @@ async function linkSubscriptionToNewOrgUnderLease(
  * The link's refusal while an open payment hold names X (§5.6): the hold's clause (§5.5) when it is this
  * user's, else the generic one. A hold an earlier refusal of this link opened beside the team's other
  * live plan (`open_note = link_refused`) keeps that refusal's clause and reason: the live plan, not the
- * payment, is what holds X. Otherwise `refused_reason = 'held'`. The setup stays open either way (I16):
+ * payment, is what holds X. Otherwise `refused_reason = 'held'`. A clause about this user's hold stamps
+ * its `notice_last_sent_at`. The setup stays open either way (I16):
  * the hold's release closes it, or its adoption re-links it.
  */
 async function refuseHeldLink(userId: string, subscriptionId: string, hold: PaymentHoldRow): Promise<NewOrgLinkResult> {
 	if (hold.payer_key === userId && hold.open_note === LINK_REFUSED_NOTE) {
 		await recordSetupRefusal({ userId, subscriptionId, refused: "org_has_plan", close: false });
 		const alerted = hold.alerted_at !== null && hold.alerted_at >= hold.state_since;
+		await stampCarriedClauses([hold.id]);
 		return { kind: "refused", clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}` };
 	}
 	await recordSetupRefusal({ userId, subscriptionId, refused: "held", close: false });
-	return { kind: "refused", clause: heldNotice(hold, userId) };
+	return { kind: "refused", clause: await heldNotice(hold, userId) };
 }
 
 /**
@@ -2923,7 +2980,8 @@ async function refuseHeldLink(userId: string, subscriptionId: string, hold: Paym
  *   - Otherwise the payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved)
  *     is the "not charged" clause and no alert; anything else — money may have moved, or the read failed
  *     — is the "contact support" clause and `alertEndedUnconfirmed`'s alert.
- * It refunds nothing: only a hold may refund (I3).
+ * The `refunded` sentence is that released hold's clause, so it stamps the hold's `notice_last_sent_at`
+ * (§4.1, `stampCarriedClauses`). It refunds nothing: only a hold may refund (I3).
  */
 async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
 	const released = await latestReleasedHoldOn(sub.id);
@@ -2942,6 +3000,7 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 	const alerted =
 		read === "unconfirmed" &&
 		(await alertEndedUnconfirmed(sub, closed ?? (await pendingOrgSetupFor(userId, sub.id)), { link: orgId }));
+	if (read === "refunded" && released) await stampCarriedClauses([released.id]);
 	return { kind: "refused", clause: endedSetupClause(read, { alerted, teamExists: true }) };
 }
 
@@ -3191,7 +3250,7 @@ async function newOrgSetupStateFor(
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
 		...report,
 		...(hold ? { paymentUrl: null } : {}),
-		hold: hold && hold.state !== "released" ? { state: hold.state, notice: heldNotice(hold, userId) } : null,
+		hold: hold && hold.state !== "released" ? { state: hold.state, notice: await heldNotice(hold, userId) } : null,
 		ended:
 			hold && hold.state !== "released"
 				? null
@@ -3223,7 +3282,8 @@ async function newOrgSetupStateFor(
  * closed it. When it did, the dedupe counts from `beforeClose`, the database's clock read before the
  * closer ran, rather than from `closed_at`, which the closer stamps with this server's clock: an alert
  * the closer raised is dated by the database, and must silence this one whatever the two clocks say.
- * It writes nothing else.
+ * A `refunded` read stamps the released hold's `notice_last_sent_at` (§4.1: the sentence is that hold's
+ * clause). It writes nothing else.
  */
 async function endedSetupFor(input: {
 	sub: Stripe.Subscription;
@@ -3245,6 +3305,7 @@ async function endedSetupFor(input: {
 	const alerted =
 		read === "unconfirmed" &&
 		(await alertEndedUnconfirmed(sub, record, "resume", closedNow ? input.beforeClose : null));
+	if (read === "refunded" && released) await stampCarriedClauses([released.id]);
 	return { clause: endedSetupClause(read, { alerted, teamExists: input.teamExists }) };
 }
 
@@ -3262,11 +3323,15 @@ async function databaseNow(setupId: string): Promise<Date | null> {
 }
 
 /**
- * What a resume lookup tells `userId` about the open hold on their setup: the hold's clause (§5.5) when
- * the hold is theirs, else the generic one — another payer's hold is never described (S4's warning).
+ * What a resume lookup or the link tells `userId` about the open hold on their setup: the hold's clause
+ * (§5.5) when the hold is theirs, which stamps its `notice_last_sent_at` (`stampCarriedClauses`), else
+ * the generic one — another payer's hold is never described (S4's warning), and is not stamped.
  */
-function heldNotice(hold: PaymentHoldRow, userId: string): string {
-	return (hold.payer_key === userId ? holdClause(hold, { refusing: true }) : null) ?? NOT_CONFIRMED_CLOSED;
+async function heldNotice(hold: PaymentHoldRow, userId: string): Promise<string> {
+	const clause = hold.payer_key === userId ? holdClause(hold, { refusing: true }) : null;
+	if (!clause) return NOT_CONFIRMED_CLOSED;
+	await stampCarriedClauses([hold.id]);
+	return clause;
 }
 
 /**
