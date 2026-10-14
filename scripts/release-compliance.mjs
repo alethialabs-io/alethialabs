@@ -24,13 +24,37 @@ writeFileSync(
   `${JSON.stringify(nodeInventory, null, 2)}\n`,
 );
 
+/**
+ * Lists every module in `directory`'s build list with `go list -m -json all`.
+ *
+ * It runs through scripts/ci/go-mod-download-retry.sh, which retries only a proxy fetch that did
+ * not complete (an HTTP/2 stream reset, a TLS or i/o timeout, a 502/503/504 — #6031) and fails a
+ * real error on the first attempt. That script passes `go list`'s stdout through untouched; its
+ * retry warnings and go's own stderr go straight to this process's stderr, so a retry shows in the
+ * log even when the run ends green.
+ */
 function readGoModules(directory) {
-  const result = spawnSync("go", ["list", "-m", "-json", "all"], {
-    cwd: join(root, directory),
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    "bash",
+    [
+      join(root, "scripts", "ci", "go-mod-download-retry.sh"),
+      "--",
+      "go",
+      "list",
+      "-m",
+      "-json",
+      "all",
+    ],
+    {
+      cwd: join(root, directory),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
   if (result.status !== 0) {
-    throw new Error(`go list failed in ${directory}: ${result.stderr}`);
+    throw new Error(
+      `go list failed in ${directory} (exit ${result.status}${result.error ? `, ${result.error.message}` : ""}); its output is above`,
+    );
   }
   const modules = [];
   let depth = 0;
