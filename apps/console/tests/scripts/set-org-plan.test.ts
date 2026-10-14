@@ -56,13 +56,13 @@ afterEach(() => {
 });
 
 describe("set-org-plan.mjs", () => {
-	it("clears the Stripe subscription link on conflict, as setOrgPlan does", async () => {
+	it("clears only the Stripe subscription id on conflict, keeping the customer id", async () => {
 		expect(await runScript(["acme", "team", "--status", "past_due"])).toBe(0);
 		const upsert = queries.find((q) => q.includes("on conflict"));
 		expect(upsert).toBeDefined();
 		expect(upsert).toMatch(/stripe_subscription_id\s*=\s*null/);
-		expect(upsert).toMatch(/stripe_customer_id\s*=\s*null/);
-		expect(upsert).toMatch(/seats\s*=\s*null/);
+		expect(upsert).not.toMatch(/stripe_customer_id/);
+		expect(upsert).not.toMatch(/seats/);
 	});
 
 	it("does not take the subscription id from the insert, so a fresh grant row has none either", async () => {
@@ -73,9 +73,9 @@ describe("set-org-plan.mjs", () => {
 		expect(columns).not.toContain("stripe_");
 	});
 
-	it("states in its usage text that it clears the subscription link", async () => {
+	it("states in its usage text what it clears and keeps", async () => {
 		expect(await runScript([])).toBe(1);
 		const printed = vi.mocked(console.error).mock.calls.flat().join("\n");
-		expect(printed).toMatch(/Clears any Stripe subscription link/);
+		expect(printed).toMatch(/Clears stripe_subscription_id.*stripe_customer_id is kept/);
 	});
 });
