@@ -205,6 +205,27 @@ relative to the repo root, as the board's `scope:` lines are.
   merged. Two deliberate departures from #5974's proposal are stated in §5.8: the flag is
   `--moved-to <team id>`, not `--reason moved --team <id>`; and S11's scope leaves out
   `lib/billing/payment-holds/store.ts`, which needs no change.
+- **Amendment** (2026-10-14, #5974 widened; S10's lane found it). §5.6 sheet rule 1 could not be
+  built as written for an **ended** X. The rule stops the sheet when "it reports X ended", but the
+  lookup reports no such thing. `NewOrgSetupState` (`lib/billing/new-org-setup.ts:73-108`) carries
+  only `hold`, which is null once X has ended with no open hold (`billing.ts:2979`, `:2987`). And
+  `planState` cannot stand in for it. `not_active` also covers `paused` and unknown statuses
+  (`lib/billing/new-org-plan-state.ts:84`, `:103`), which the link would **link**: the link refuses
+  only `canceled` and `incomplete_expired` (`ENDED_SUBSCRIPTION_STATUSES`, `billing.ts:1261`, `:2691`).
+  The sentences the link uses live in a `"use server"` file as private constants (`billing.ts:1`,
+  `:922-929`). If the sheet copied them, it would show a false sentence for an X that a hold refunded
+  and released. In that case no hold is open and the PaymentIntent succeeded, so `planState` is
+  `not_active`, and the "could not confirm" sentence would appear where the link says "refunded in
+  full" (`refuseEndedLink`, `billing.ts:2753-2782`; `latestReleasedHoldOn`,
+  `lib/billing/pending-org-setup.ts:187-195`). So:
+  - the lookup gains `ended: { clause } | null`, filled with exactly `refuseEndedLink`'s choice of
+    sentence. Both read it through one helper outside the `"use server"` file, so the two cannot
+    drift. The lookup raises no alert.
+  - rule 1 reads `ended`.
+
+  This adds cases C103–C107 and slice S10b, which takes the ended half out of S10. Citations are at
+  `origin/dev` `6f050e0b7`. No other decision changes. The one wording change is S10's done-when,
+  whose ended half moves to S10b.
 
 ---
 
@@ -1131,6 +1152,48 @@ gains `hold: { state; notice } | null`, and `resolveNewOrgSetup` (`billing.ts:21
 reported hold is not a settling plan state, so #5539's re-read loop (`pollSettlingPlanState`,
 `pending-paid-setup.ts:615-654`) stops on it.
 
+**The lookup reports an ended setup (amendment 2026-10-14, #5974; S10b).** `NewOrgSetupState`
+(`lib/billing/new-org-setup.ts:73-108`) gains `ended: { clause: string } | null`.
+`newOrgSetupStateFor` (`billing.ts:2924-2996`) fills it, so both `resolveNewOrgSetup` (`:3032`, which returns it at `:3052`) and
+`findUnfinishedNewOrgSetup` (`:3083`) carry it. Today the second calls it only for a paid X
+(`:3124`, `:3139`, each behind a paid-status check at `:3105` and `:3137`), so for it `ended` is always null.
+- **When it is set.** No open hold names X (the `openPaymentHoldOn` read at `:2979` returned null),
+  and X's status is in `ENDED_SUBSCRIPTION_STATUSES`, which is `canceled` or `incomplete_expired`
+  (`billing.ts:1261`). That is exactly the link's condition for `refuseEndedLink` (`:2691`). With an
+  open hold, `ended` is null and `hold` carries the hold's clause, as in the link, which reads holds
+  first. A `paused` X, or one with an unknown status, is **not** ended: the link would link it. So
+  `planState` is never the test.
+- **Which sentence.** The choice moves out of `billing.ts`, which is a `"use server"` file
+  (`:1`) and so can export only async actions, into two pure exports of
+  `lib/billing/new-org-setup.ts`. That module is already imported by both the server and the sheet,
+  and has no `server-only` import.
+  - `endedSetupRead(releasedReason: PaymentHoldReleaseReason | null, planState: NewOrgPlanState):
+    "refunded" | "not_charged" | "unconfirmed"`. It returns `refunded` when the newest released hold on
+    X (`latestReleasedHoldOn`) has reason `refunded` or `already_refunded`. Otherwise it returns
+    `not_charged` when `planState` is `not_charged`. Otherwise it returns `unconfirmed`. These are
+    `refuseEndedLink`'s three branches (`billing.ts:2754-2767`).
+  - `endedSetupClause(read, { alerted, teamExists }): string`. It returns the §5.5 sentences now held
+    in `billing.ts:922-929`, which move into this module unchanged. The one change is that "A team
+    already created for it stays on the free plan." is appended only when `teamExists` is true. The
+    alert sentence is added only for `unconfirmed`, and only when `alerted` is true.
+  - `refuseEndedLink` calls both with `teamExists: true`, because the link runs only once the team
+    exists. So its three strings stay byte for byte what they are today. Its alert behaviour is
+    unchanged.
+- **The lookup's inputs.**
+  - `releasedReason` is `latestReleasedHoldOn(X)?.release_reason ?? null`.
+  - `planState` is the report the lookup already reads (`readNewOrgPlanState`, `:2980`), the same
+    read `refuseEndedLink` makes.
+  - `teamExists` is `org !== null`.
+  - `alerted` is the **read-only** `alertedAboutSince(X, closedAt ?? endedAt)` (`:2790`). `closedAt`
+    comes from the setup row read **again after** `settleOpenSetupQuietly` (`:2956`), because that
+    closer may just have closed it. This is the "already" half of `refuseEndedLink`'s rule
+    (`:2768-2771`).
+- **No alert, and no write.** The lookup never calls `alertPaymentNeedsSupport` for `ended`. The
+  alerting writer on this path is the closer the lookup has already run. Its close branch alerts when
+  the first payment is not proven `never_paid` (`lib/billing/pending-org-setup.ts:988-996`). The clause
+  claims an alert only when one reached a channel (I8). If that alert reached none, the clause says
+  only "contact support". It never claims an alert that was not delivered.
+
 **The resume lookups close what they read as ended (rev 7, R7-1; shipped by S1).** Both lookups
 already retrieve X (`billing.ts:2115`, `:2175`). When X reads ended and the setup is open, they run
 the setup closer (§5.7 "Every open setup has an exit") **before** they answer, so the sheet's
@@ -1142,7 +1205,9 @@ only when it has no org (`forgetPendingOrgSetup`, `pending-org-setup.ts:128-147`
 **The sheet (rev 5, K5).** `runSteps` (`components/org/pending-paid-setup.ts`) changes in four places:
 
 1. **Stop before creating the org, only where the link would refuse (rev 5.1).** `resolveNewOrgSetup`
-   runs before the org is created (`:476`). It reports X ended, or a hold in `payment_in_flight`,
+   runs before the org is created (`:476`). It reports X ended (amendment 2026-10-14: `ended` is set;
+   see "The lookup reports an ended setup" below, and the run throws `SetupStopped(ended.clause)`), or
+   a hold in `payment_in_flight`,
    `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator`. In those cases the run throws
    `SetupStopped(notice)` **before** `authClient.organization.create` (`:495`), and the browser
    record is cleared, because the server keeps the memory. Rev 7: this rule also runs when the org
@@ -1531,6 +1596,11 @@ Stripe, so they reach every row regardless.
 | C100 | **Amendment 2026-10-14.** The command syncs X more than once, or before X's move is proven. | #5974 | §5.8 step 7. | H: T's row names nothing with `syncedOnce = false` gives `sync_first`; the same facts with `syncedOnce = true` give `row_not_x`. Scripts: the row names nothing at first; the sync applies and the re-read names X, so the result is `released`. `syncSubscriptionToBilling` is called exactly once, with the X object this run read. Variant: the row names a live Z, so the result is `row_not_x` after one sync and no second sync. Variant: X's metadata names O, so the result is `subscription_not_moved` and the sync is never called. |
 | C101 | **Amendment 2026-10-14.** The move is judged on a stale read, or outside the lease. | #5974 | §5.8 steps 2–5, 8; T16's fence. | Scripts: `acquirePurchaseLease` is called before `subscriptions.retrieve(X)` and `customers.retrieve` (call order). A busy lease returns `lease_busy` and X is never retrieved. A hold that is released between the first read and the re-read under the lease gives `not_open` and no event. A hold that the re-read finds with another `open_note` gives `not_link_refused`. `store.releaseHold` returning null (a T15 observe bumped `version` in between, or the lease was lost) gives "Nothing was written", no event and `not_open`. |
 | C102 | **Amendment 2026-10-14.** The plain release on a moved X does not say what to do. | #5974 | §5.8 "The plain release points at the moved path". | Scripts: the C98 fixture without `--moved-to` is still refused, and nothing is written. The refusal contains `--moved-to` and T's id. Control: a `needs_operator` hold with `open_note` null, X `unpaid` and an open setup whose re-link returns `not_linked` is refused without `--moved-to` in the text. |
+| C103 | **Amendment 2026-10-14 (S10b).** The sheet cannot stop for an ended X with no hold, because the lookup does not report it. Using `planState` instead would stop a `paused` X, which the link links. | S10 lane (#5970); `billing.ts:1261`, `:2979-2987`; `new-org-plan-state.ts:84` | §5.6 "The lookup reports an ended setup". | A (`tests/actions/billing-new-org-link.test.ts`): the setup is already closed, so the closer writes nothing. `resolveNewOrgSetup` for X `canceled` with no hold and payments read `none` returns `ended.clause` equal to the "not charged" clause, `hold: null`, and calls `alertPaymentNeedsSupport` zero times. X `incomplete_expired` gives the same result. X `paused` returns `ended: null`. X `incomplete` and X `active` return `ended: null`. With an open `refund_due` hold on a `canceled` X, the result is `ended: null` and `hold` set. |
+| C104 | **Amendment 2026-10-14.** Copied sentences show "could not confirm" for an X that a hold refunded in full and released. | S10 lane (#5970); `refuseEndedLink`, `billing.ts:2753-2782` | `endedSetupRead`'s first branch. | A: X `canceled`, the newest released hold on X is `refunded`, the PaymentIntent `succeeded` (`planState` `not_active`), and no hold is open. `ended.clause` contains "refunded in full" and does not match `/could not confirm/`. The same holds for `already_refunded`. **Drift check:** for the same fixture with an org, the lookup's `ended.clause` is the exact string the link's `{ kind: "refused" }` returns. |
+| C105 | **Amendment 2026-10-14.** The lookup claims an alert it did not deliver, or raises one itself. | I8; S10 lane | §5.6 "No alert, and no write". | A: X `canceled`, payments read `succeeded`, no released hold. With an operator-alert delivery row for X after its `closed_at`, the clause ends with "We have raised an alert." plus, with an org, the free-plan sentence. With no delivery row, or only a `dead` one, there is no alert sentence. In both cases the lookup itself calls `alertPaymentNeedsSupport` zero times. With `org: null`, no free-plan sentence. Drift check against the link, with an org, for the delivered case. |
+| C106 | **Amendment 2026-10-14.** The two copies of the sentences drift. | S10 lane | One helper (§5.6). | `tests/lib/billing/new-org-setup.test.ts` (new). `endedSetupRead` covers every `NewOrgPlanState` × {`refunded`, `already_refunded`, another reason, null}: the two refund reasons always give `refunded`; otherwise `not_charged` gives `not_charged`; everything else gives `unconfirmed`. `endedSetupClause` with `teamExists: true` returns the §5.5 sentences of this ADR **as literals in the test**, not imported from the module under test. The alert sentence appears only for `unconfirmed` with `alerted`. The free-plan sentence appears only with `teamExists`. |
+| C107 | **Amendment 2026-10-14.** The sheet creates a team, or calls the link, for an ended X with no hold. | S10 lane (#5970); `pending-paid-setup.ts:476`, `:495`, `:539` | §5.6 sheet rule 1. | S (`tests/components/org/pending-paid-setup.test.ts`): `resolveNewOrgSetup` returns `ended: { clause }` with `org: null`. `authClient.organization.create` and `linkSubscriptionToNewOrg` are not called, the outcome is `failed`, `retryable: false`, its message is the clause, and the browser record is cleared. The same with `org` set (a resume): no link call. Control: `ended: null`, `hold: null`, X paid: the run creates the org and links. |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 
@@ -1546,7 +1616,7 @@ Stripe, so they reach every row regardless.
 | C62 | a stale holder's Checkout URL or trial | Checkout and the trial are not covered |
 | C68, C70 | the trial's `created` event and the gate marker | the trial is not covered (K1) |
 
-That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1. The 2026-10-14 amendment (#5974) adds C98–C102, which makes 92.
+That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1. The 2026-10-14 amendment (#5974) adds C98–C102, which makes 92. The second 2026-10-14 amendment adds C103–C107, which makes 97.
 
 ---
 
@@ -1906,13 +1976,34 @@ whatever this column says.
     closable, §5.6) (C78), renders a
     typed refusal as non-retryable with its clause and clears the browser record (C57, S half), and
     keeps "Retry to complete setup" only for a thrown error, without "you won't be charged again"
-    (C79, C32 S half). #5539's re-read loop stops on a reported hold. **Follow-up from the S1
+    (C79, C32 S half). #5539's re-read loop stops on a reported hold. **Amendment (2026-10-14,
+    #5974):** the ended half of rule 1 is not S10's. The lookup does not report an ended X, so S10
+    cannot build it. It moves to S10b. S10 stops on a reported hold only. Its PR references #5970
+    without closing it. **Follow-up from the S1
     review (amendment 2026-10-08, #5715), owned here:** a stale client can still call the link for
     an X whose setup is already closed: the link runs the closer, which answers `closed`, and does
     not refuse on it. If the board labels it
     `class:ui`, it opens as a draft and stays one (CLAUDE.md §4).
     - scope: `apps/console/components/org/pending-paid-setup.ts apps/console/components/org/create-org-sheet.tsx apps/console/tests/components/org/**`
     - Blocked by: S9. Migration: no. Security review: no.
+10b. **S10b: The lookup reports an ended setup, and the sheet stops on it (§5.6 "The lookup reports
+    an ended setup", rule 1; amendment 2026-10-14, #5974).** File it only after this amendment
+    merges. Its PR closes #5970.
+    Done when:
+    - `NewOrgSetupState` has `ended: { clause: string } | null`.
+    - `endedSetupRead` and `endedSetupClause` live in `lib/billing/new-org-setup.ts`, with the five
+      sentences moved there from `billing.ts:922-929`.
+    - `refuseEndedLink` uses them, and its strings and alert behaviour are unchanged (the existing
+      C86 and C57 assertions stay green).
+    - `newOrgSetupStateFor` fills `ended` with no alert and no write.
+    - `runSteps` throws `SetupStopped(ended.clause)` before `authClient.organization.create` and
+      before the link, both when no org exists and on a resume where one does.
+
+    C103–C107 pass, and each fails on `dev` first.
+    - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-setup.ts apps/console/components/org/pending-paid-setup.ts apps/console/tests/actions/billing-new-org-link.test.ts apps/console/tests/lib/billing/new-org-setup.test.ts apps/console/tests/components/org/**`
+    - Blocked by: S10, which shares `pending-paid-setup.ts` and `tests/components/org/**`. Migration:
+      no. Security review: no. It reads only the caller's own setup and holds, through the lookup's
+      existing ownership checks (`billing.ts:3049-3051`), and adds no write.
 11. **S11: The moved release of a `link_refused` hold (§5.8; amendment 2026-10-14, #5974).** File
     it only after this amendment merges.
     Done when `payment-holds release <X> --moved-to <T> --reason --operator` exists as §5.8 says:
@@ -1946,7 +2037,7 @@ Order: S1 → S2, then two lanes. Lane (a) is S3. Lane (b) is S4 → S5 → S6 �
 S8, then S9 → S10. The two lanes' scopes are disjoint (rev 7 re-checked: S4's release-closes-setup
 write lives in `payment-holds/store.ts`, not in S3's `pending-org-setup.ts`). S8's and S9's scopes
 reach S1's and S6's files, which is sound because they run after both. Amendment (2026-10-14,
-#5974): S11 follows S9 and runs in parallel with S10.
+#5974): S11 follows S9 and runs in parallel with S10. S10b follows S10.
 
 ### 10.2 Follow-up issues for the descoped flows (proposed, not filed)
 
