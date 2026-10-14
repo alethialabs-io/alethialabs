@@ -9,6 +9,12 @@
 // emails, which is why the live webhook guards on stripe_webhook_event. A replay passes
 // `suppressEmails: true` so re-dispatching an already-delivered event never re-mails the customer.
 //
+// THE ORG-PLAN ROW (ADR 0004 D4, D6, lib/billing/org-plan-row.ts). After a deletion applies to the row,
+// R1 names a live org-plan sibling; after a sync of a subscription read fresh from Stripe, R2 re-reads
+// the subscription the row names when a live write was refused, and D6b′ reads a replaced stored-`none`
+// one. Their writes go through the same guarded sync, and their reads throw on failure, so a re-run is
+// safe; none of them cancels, refunds or voids anything.
+//
 // PAYMENT HOLDS (ADR 0002 §5.3, S7). The webhook never moves a hold and makes no Stripe call for one:
 // it never calls `advanceHold`, whose callers are the sweeper (payment-holds/sweeper.ts `visitHold`) and
 // the operator command (scripts/payment-holds.ts), each under the payer's lease. For holds the dispatcher
@@ -46,6 +52,8 @@ import { mirrorPaidInvoice, setInvoiceStatus } from "@/lib/billing/invoices";
 import { attemptBackupPayment } from "@/lib/billing/payment-methods";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import { nudgeHold } from "@/lib/billing/payment-holds/store";
+import { isPaidStatus, reconcileAfterSync, repointAfterEnd } from "@/lib/billing/org-plan-row";
+import type { PlanSlotWrite } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
@@ -288,6 +296,19 @@ export async function handleStripeEvent(
 	// lower bound on the retrieved state's age — so a stale or redelivered event (including a
 	// break-glass replay) is refused rather than regressing the row (#5514).
 	const sync = { eventAt: new Date(event.created * 1000) };
+	// Syncs a subscription the dispatcher has just READ from Stripe, then runs the org-plan row's
+	// reconciliations on what the guarded write reported (ADR 0004 D4 R2, D6a, D6b′,
+	// lib/billing/org-plan-row.ts). A failed Stripe read in R2 throws, failing the event before any email.
+	const syncFresh = async (sub: Stripe.Subscription): Promise<void> => {
+		const seen: { write: PlanSlotWrite | null } = { write: null };
+		const outcome = await syncSubscriptionToBilling(sub, {
+			...sync,
+			onPlanWrite: (write) => {
+				seen.write = write;
+			},
+		});
+		await reconcileAfterSync(getStripe(), sub, outcome, seen.write, sync);
+	};
 
 	switch (event.type) {
 		case "customer.subscription.created":
@@ -297,10 +318,7 @@ export async function handleStripeEvent(
 			// DIFFERENT, since-cancelled subscription would otherwise claim a row holding nothing live,
 			// and stick — every later event for the org's real subscription is then refused. Retrieved,
 			// a dead subscription reads `canceled` and claims nothing (#5518 review).
-			await syncSubscriptionToBilling(
-				await getStripe().subscriptions.retrieve(event.data.object.id),
-				sync,
-			);
+			await syncFresh(await getStripe().subscriptions.retrieve(event.data.object.id));
 			if (event.type === "customer.subscription.updated") {
 				const snapshot = event.data.object;
 				await nudge(() => holds.nudgeSubscription(snapshot.id, customerIdOf(snapshot)));
@@ -314,9 +332,15 @@ export async function handleStripeEvent(
 			// customer "your subscription was canceled" then would be false, so only the applied
 			// deletion reports and mails.
 			if ((await syncSubscriptionToBilling(sub, sync)) !== "applied") break;
+			// R1 (ADR 0004 D4): the row's subscription ended, so name a live org-plan sibling, if any. A
+			// failed list throws here, before any email, and Stripe redelivers the event.
+			const successor = await repointAfterEnd(getStripe(), sub);
 			// A cancel Alethia made (a hold closing a checkout, or a close-out) is not the customer's: the
 			// row still records it, but there was never a plan to tell them was cancelled (§5.3 (4)).
 			if (await isAlethiaCancel(sub, holds)) break;
+			// R1 named a PAID sibling: the org's plan did not end, so there is no cancellation to report.
+			// A `past_due` successor is not paid, and the email still goes.
+			if (successor && isPaidStatus(successor.status)) break;
 			await trackRevenue(sub, "subscription_canceled");
 			await safeEmail("subscription canceled", () =>
 				sendSubscriptionCanceledEmail(sub),
@@ -332,10 +356,7 @@ export async function handleStripeEvent(
 			// First purchase: pull the full subscription, then apply.
 			const session = event.data.object;
 			if (typeof session.subscription === "string") {
-				await syncSubscriptionToBilling(
-					await getStripe().subscriptions.retrieve(session.subscription),
-					sync,
-				);
+				await syncFresh(await getStripe().subscriptions.retrieve(session.subscription));
 			}
 			break;
 		}
@@ -366,7 +387,7 @@ export async function handleStripeEvent(
 					ENDED_STATUSES.has(sub.status) &&
 					Boolean(invoice.id) &&
 					(await holds.heldInvoice(sub.id, invoice.id ?? "", customerIdOf(sub))) !== null;
-				await syncSubscriptionToBilling(sub, sync);
+				await syncFresh(sub);
 				const orgId = sub.metadata?.organization_id;
 				if (orgId) await safeMirror(invoice, orgId);
 				if (!refundedByHold) {
@@ -398,7 +419,7 @@ export async function handleStripeEvent(
 					? await holds.heldInvoice(sub.id, invoice.id, customerIdOf(sub))
 					: null;
 				const noRetry = isUnliveCreateATeamSubscription(sub) || held !== null;
-				await syncSubscriptionToBilling(sub, sync);
+				await syncFresh(sub);
 				const customerId = customerIdOf(sub);
 				const failedPm = paymentMethodIdOf(invoice);
 				// A replay must not re-attempt a live charge (suppressPaymentRetry); treat it as

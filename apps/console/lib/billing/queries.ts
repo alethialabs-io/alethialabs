@@ -133,9 +133,11 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 // ── The Stripe subscription write path (#5514) ──────────────────────────────────────────────
 //
 // `organization_billing` is ONE row per org, but an org can have more than one Stripe
-// subscription in flight: a fresh purchase beside a `past_due` one, an `incomplete` attempt the
-// purchase sweep has not cancelled yet, a trial started over an off-Stripe grant. Every
-// subscription's events arrive here. Upserting on `organization_id` alone let the LAST event to
+// subscription in flight: an `incomplete` attempt the purchase sweep has not cancelled yet, or a
+// trial started over an off-Stripe grant. (A fresh purchase beside a `past_due` plan is not one of
+// them: since #5977 the org-plan purchase and hosted Checkout both list the org's customer and
+// refuse beside an `active`, `trialing` or `past_due` org-plan subscription, `liveOrgPlanCheck` in
+// app/server/actions/billing.ts.) Every subscription's events arrive here. Upserting on `organization_id` alone let the LAST event to
 // arrive win, whichever subscription it was for — so a second subscription Z overwrote the row
 // naming the org's live subscription Y, and Z's later cancellation wrote `canceled`/`community`
 // onto an org that was still paying for Y.
@@ -288,14 +290,52 @@ export interface SubscriptionBillingWrite {
 }
 
 /**
+ * What the org-plan slot held when a guarded write ran: read with the row locked (`FOR UPDATE`), in the
+ * same transaction as the write, so it is exactly the state the guard decided against (ADR 0004 D6b).
+ * `subscriptionId` null is a row with no Stripe subscription: an off-Stripe grant, or a customer-id stamp.
+ */
+export interface PlanSlotBefore {
+	subscriptionId: string | null;
+	status: BillingStatus;
+	currentPeriodEnd: Date | null;
+}
+
+/**
+ * What one guarded org-plan write did: whether it applied, and what the slot held before it (null when
+ * the org had no row). When it applied and `before` names a different subscription, or none, `before` is
+ * what the write replaced; when it was refused, `before` is what the row still names.
+ */
+export interface PlanSlotWrite {
+	applied: boolean;
+	before: PlanSlotBefore | null;
+}
+
+/**
  * Applies one Stripe subscription's state to the org-plan columns, IF the guard above allows it,
  * and returns whether it did. The check and the write are one statement, so it is atomic against a
  * concurrent delivery. This — not `upsertOrgBilling` — is the write path for Stripe subscription
- * events (lib/billing/sync.ts).
+ * events (lib/billing/sync.ts, through `writeSubscriptionToBilling`).
  */
 export async function applySubscriptionToBilling(
 	input: SubscriptionBillingWrite,
 ): Promise<boolean> {
+	return (await writeSubscriptionToBilling(input)).applied;
+}
+
+/**
+ * `applySubscriptionToBilling`, reporting what the slot held before the write (ADR 0004 D6b: "the
+ * guarded write reports the subscription id and status it replaced"). One transaction: the row is read
+ * `FOR UPDATE`, then the same guarded statement runs, so no other write lands between the read and the
+ * decision. `RETURNING` alone cannot say this, because it gives only the new values.
+ *
+ * When the org has no row, the read locks nothing, so a concurrent first write could insert one between
+ * the read and the upsert. The insert therefore runs as `ON CONFLICT DO NOTHING` first: when it inserts,
+ * nothing was replaced; when it conflicts, the racer's row is read `FOR UPDATE` (it is committed by then)
+ * and the guarded upsert decides against it.
+ */
+export async function writeSubscriptionToBilling(
+	input: SubscriptionBillingWrite,
+): Promise<PlanSlotWrite> {
 	const now = new Date();
 	const incoming: IncomingSubscription = {
 		subscriptionId: input.stripeSubscriptionId,
@@ -311,36 +351,64 @@ export async function applySubscriptionToBilling(
 		currentPeriodEnd: toValidDate(input.currentPeriodEnd),
 		updatedAt: now,
 	};
-	const db = getServiceDb();
-	if (input.status === "canceled") {
-		// An ended subscription touches only the row that names it — never inserts, never lands on a
-		// row naming another subscription.
-		const rows = await db
-			.update(organizationBilling)
-			.set({ ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) })
-			.where(
-				and(
-					eq(organizationBilling.organizationId, input.organizationId),
-					sameSubscriptionMayApply(PLAN_SLOT, incoming),
-				),
-			)
+	return getServiceDb().transaction(async (tx): Promise<PlanSlotWrite> => {
+		/** The slot as stored now, with the row locked until the transaction ends. */
+		const lockSlot = async (): Promise<PlanSlotBefore | null> => {
+			const [row] = await tx
+				.select({
+					subscriptionId: organizationBilling.stripeSubscriptionId,
+					status: organizationBilling.status,
+					currentPeriodEnd: organizationBilling.currentPeriodEnd,
+				})
+				.from(organizationBilling)
+				.where(eq(organizationBilling.organizationId, input.organizationId))
+				.for("update");
+			return row ?? null;
+		};
+		let before = await lockSlot();
+		if (input.status === "canceled") {
+			// An ended subscription touches only the row that names it — never inserts, never lands on a
+			// row naming another subscription.
+			const rows = await tx
+				.update(organizationBilling)
+				.set({ ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) })
+				.where(
+					and(
+						eq(organizationBilling.organizationId, input.organizationId),
+						sameSubscriptionMayApply(PLAN_SLOT, incoming),
+					),
+				)
+				.returning({ id: organizationBilling.id });
+			return { applied: rows.length > 0, before };
+		}
+		if (!before) {
+			const inserted = await tx
+				.insert(organizationBilling)
+				.values({
+					organizationId: input.organizationId,
+					...fields,
+					stripeSubscriptionEventAt: input.eventAt,
+				})
+				.onConflictDoNothing({ target: organizationBilling.organizationId })
+				.returning({ id: organizationBilling.id });
+			if (inserted.length > 0) return { applied: true, before: null };
+			before = await lockSlot();
+		}
+		const rows = await tx
+			.insert(organizationBilling)
+			.values({
+				organizationId: input.organizationId,
+				...fields,
+				stripeSubscriptionEventAt: input.eventAt,
+			})
+			.onConflictDoUpdate({
+				target: organizationBilling.organizationId,
+				set: { ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) },
+				setWhere: subscriptionMayApply(PLAN_SLOT, incoming),
+			})
 			.returning({ id: organizationBilling.id });
-		return rows.length > 0;
-	}
-	const rows = await db
-		.insert(organizationBilling)
-		.values({
-			organizationId: input.organizationId,
-			...fields,
-			stripeSubscriptionEventAt: input.eventAt,
-		})
-		.onConflictDoUpdate({
-			target: organizationBilling.organizationId,
-			set: { ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) },
-			setWhere: subscriptionMayApply(PLAN_SLOT, incoming),
-		})
-		.returning({ id: organizationBilling.id });
-	return rows.length > 0;
+		return { applied: rows.length > 0, before };
+	});
 }
 
 /** One STANDALONE AI subscription's state, as the webhook sync writes it onto the AI columns. */
