@@ -51,6 +51,10 @@ const world = vi.hoisted(() => {
 		leaseLost: false,
 		/** A subscription whose first read goes `active`: its payment lands as the machine reads it. */
 		activatesOnRead: null as string | null,
+		/** The newest `created_at` of user-1's unlinked setup records, as the over-cap dedupe reads it (#5989). */
+		newestRecordAt: null as Date | null,
+		/** The operator-alert delivery rows written so far: one per alert routed to a channel. */
+		deliveries: [] as { resource_id: string; event_key: string; status: string; created_at: Date }[],
 	};
 	const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing" });
 	const piOf = (invoice: string, i: number) => `pi_${invoice}_${i}`;
@@ -141,12 +145,60 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeInOrg: vi.fn(),
 	authorizeQuiet: vi.fn(),
 }));
-// The only direct read left in these paths is the payer's email before a customer is minted: none here.
-vi.mock("@/lib/db", () => {
-	const chain: Record<string, unknown> = {};
-	for (const m of ["select", "from", "where", "limit", "innerJoin"]) chain[m] = () => chain;
-	chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve([]).then(resolve);
-	return { getServiceDb: () => chain };
+// The direct reads in these paths: the payer's email before a customer is minted (none here), and the
+// over-cap dedupe's operator-alert deliveries (#5989); its other read, the newest unlinked setup record,
+// is `newestUnlinkedSetupAt` in the mocked setup module below. Each query answers by the table it reads
+// `from`. The deliveries query is EVALUATED: its
+// `where` is rendered to SQL by drizzle's Postgres dialect, and each conjunct — the event key, the
+// `resource_id`, `status <> …`, `created_at >= …` — is applied to `world.state.deliveries` with the
+// parameter the code bound. A conjunct this reader does not know throws, so a changed query cannot pass
+// by being ignored, and a dropped or wrong conjunct changes which deliveries match.
+vi.mock("@/lib/db", async () => {
+	const schema = await import("@/lib/db/schema");
+	const { PgDialect } = await import("drizzle-orm/pg-core");
+	const { SQL } = await import("drizzle-orm");
+	const dialect = new PgDialect();
+	type Delivery = (typeof world.state.deliveries)[number];
+	/** One conjunct of the deliveries query, as a filter over the fake rows. */
+	const conjunct = (clause: string, params: unknown[]): ((d: Delivery) => boolean) => {
+		const param = (ref: string | undefined) => params[Number(ref) - 1];
+		const m =
+			/^"alert_deliveries"\."(event_key|status|created_at)" (=|<>|>=) \$(\d+)$/.exec(clause) ??
+			/^"alert_deliveries"\."context"->>'(resource_id)' (=) \$(\d+)$/.exec(clause);
+		if (!m) throw new Error(`the fake db cannot evaluate: ${clause}`);
+		const [, column, op, ref] = m;
+		const value = param(ref);
+		if (column === "created_at") return (d) => d.created_at >= new Date(String(value));
+		const read = (d: Delivery) => (column === "event_key" ? d.event_key : column === "status" ? d.status : d.resource_id);
+		return op === "<>" ? (d) => read(d) !== value : (d) => read(d) === value;
+	};
+	const answer = (table: unknown, where: unknown): unknown[] => {
+		if (table === schema.alertDeliveries) {
+			if (!(where instanceof SQL)) throw new Error("the deliveries query has no where clause");
+			const q = dialect.sqlToQuery(where);
+			const clauses = q.sql.replace(/^\((.*)\)$/, "$1").split(" and ");
+			const filters = clauses.map((c) => conjunct(c.trim(), q.params));
+			return world.state.deliveries.filter((d) => filters.every((f) => f(d))).map((_, i) => ({ id: `delivery_${i}` }));
+		}
+		return [];
+	};
+	const query = () => {
+		let table: unknown = null;
+		let where: unknown = null;
+		const chain: Record<string, unknown> = {};
+		for (const m of ["select", "limit", "innerJoin"]) chain[m] = () => chain;
+		chain.from = (t: unknown) => {
+			table = t;
+			return chain;
+		};
+		chain.where = (w: unknown) => {
+			where = w;
+			return chain;
+		};
+		chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve(answer(table, where)).then(resolve);
+		return chain;
+	};
+	return { getServiceDb: () => ({ select: () => query() }) };
 });
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn(async () => null), upsertOrgBilling: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({
@@ -284,6 +336,8 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		unlinkedPendingOrgSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
 		// The S8 reads: the setup records the live check lists, and the payer's holds.
 		liveCheckSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
+		// The over-cap dedupe's cap-state marker (#5989).
+		newestUnlinkedSetupAt: vi.fn(async () => world.state.newestRecordAt),
 		paymentHoldsOfPayer: vi.fn(async (payer: string) => world.state.holds.filter((h) => h.payer_key === payer).map((h) => ({ ...h }))),
 		openPaymentHoldOn: vi.fn(async (sub: string) => world.state.holds.find((h) => h.subscription_id === sub && h.state !== "released") ?? null),
 	};
@@ -410,6 +464,8 @@ beforeEach(() => {
 	world.state.writeFailures = 0;
 	world.state.leaseLost = false;
 	world.state.activatesOnRead = null;
+	world.state.newestRecordAt = null;
+	world.state.deliveries = [];
 	vi.unstubAllEnvs();
 });
 
@@ -743,5 +799,151 @@ describe("§5.5 — a refusal never invites a purchase", () => {
 		const message = refusalOf(await buy());
 		expect(message).toMatch(/issued its refund/);
 		expect(message).not.toMatch(/buy again/);
+	});
+});
+
+describe("#5989 — the over-cap refusal alerts once per cap state, and says what fixes it", () => {
+	/** An `emitAlertEvent` that routes to one channel: it writes a delivery row, as the real one does. */
+	const deliverAlerts = () =>
+		vi.mocked(emitAlertEvent).mockImplementation(async (_org, event, context) => {
+			world.state.deliveries.push({ resource_id: context.resource_id ?? "", event_key: event, status: "pending", created_at: new Date() });
+			return 1;
+		});
+	/** The operator alerts raised about user-1, in order. */
+	const userAlerts = () => vi.mocked(emitAlertEvent).mock.calls.filter(([, , c]) => c.resource_id === "user-1");
+
+	beforeEach(() => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		world.state.newestRecordAt = new Date(Date.now() - 60_000);
+	});
+
+	it("the live check over its cap: the first refusal alerts with the fix, a user who stays at the cap is not paged again, and the refusal never changes", async () => {
+		deliverAlerts();
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		const first = refusalOf(await buy());
+		const second = refusalOf(await buy());
+		const third = refusalOf(await buy({}));
+
+		expect(first).toMatch(/more unfinished checkouts than we can check automatically/);
+		expect([second, third]).toEqual([first, first]);
+		expect(userAlerts()).toHaveLength(1);
+		expect(userAlerts()[0]?.[2]).toMatchObject({
+			resource_type: "user",
+			summary: expect.stringMatching(/To fix it: .*linked_at IS NULL.*at most 50 distinct Stripe customers/),
+		});
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("a newer setup record starts a new cap state: the next refusal alerts again", async () => {
+		deliverAlerts();
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		refusalOf(await buy());
+		world.state.newestRecordAt = new Date(Date.now() + 1_000);
+		refusalOf(await buy());
+
+		expect(userAlerts()).toHaveLength(2);
+	});
+
+	it("an alert that reached no channel silences nothing: the next refusal alerts again", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		refusalOf(await buy());
+		refusalOf(await buy());
+
+		expect(userAlerts()).toHaveLength(2);
+	});
+
+	it("only a live delivery of the operator event about THIS user silences it: a dead one, another event's, or another resource's does not", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+		const after = new Date(Date.now() - 1_000);
+		world.state.deliveries.push(
+			{ resource_id: "user-1", event_key: "system.platform.payment_needs_support", status: "dead", created_at: after },
+			{ resource_id: "user-1", event_key: "system.platform.other_event", status: "pending", created_at: after },
+			{ resource_id: "sub_x", event_key: "system.platform.payment_needs_support", status: "pending", created_at: after },
+		);
+
+		refusalOf(await buy());
+		expect(userAlerts()).toHaveLength(1);
+
+		world.state.deliveries.push({ resource_id: "user-1", event_key: "system.platform.payment_needs_support", status: "sent", created_at: after });
+		refusalOf(await buy());
+		expect(userAlerts()).toHaveLength(1);
+	});
+
+	it("the reuse set over its cap refuses the same way, alerts once with the fix, and shares the live check's cap state", async () => {
+		deliverAlerts();
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+		const first = refusalOf(await buy());
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+		const second = refusalOf(await buy());
+
+		expect(second).toBe(first);
+		expect(userAlerts()).toHaveLength(1);
+		expect(userAlerts()[0]?.[2]).toMatchObject({ summary: expect.stringMatching(/To fix it: /) });
+	});
+});
+
+describe("#5989 — a refused purchase mints no Stripe customer", () => {
+	/** The browser lost its customer, and no record names one this purchase may reuse: a customer would be minted. */
+	const noReusableCustomer = () => {
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_with_org"] });
+	};
+
+	it("a payment still settling refuses the purchase and its retry, and neither creates a customer", async () => {
+		noReusableCustomer();
+		sub("sub_settling", "incomplete", ["processing"], { created_by: "user-1" }, "cus_with_org");
+
+		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
+		expect(refusalOf(await buy({}))).toMatch(/still being processed/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("a sweep that cannot list refuses and creates no customer", async () => {
+		noReusableCustomer();
+		world.stripe.subscriptions.list.mockRejectedValue(new Error("Stripe is unavailable"));
+
+		expect(refusalOf(await buy({}))).toMatch(/could not check your earlier checkouts/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a live check that cannot list refuses and creates no customer", async () => {
+		noReusableCustomer();
+		world.stripe.subscriptions.list.mockImplementation(async (p: { status: string }) => {
+			if (p.status === "all") throw new Error("Stripe is unavailable");
+			return { has_more: false, data: [] };
+		});
+
+		expect(refusalOf(await buy({}))).toMatch(/could not check your earlier checkouts/);
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a live subscription the live check finds is resumed, and no customer is created for it", async () => {
+		noReusableCustomer();
+		sub("sub_live", "active", ["succeeded"], { created_by: "user-1" }, "cus_with_org");
+
+		await expect(buy({})).resolves.toMatchObject({ kind: "resume" });
+		expect(world.stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("a purchase that mints still creates exactly one customer — after every check — and mints on it", async () => {
+		noReusableCustomer();
+
+		await expect(buy({})).resolves.toMatchObject({ kind: "intent", customerId: "cus_created" });
+		expect(world.stripe.customers.create).toHaveBeenCalledTimes(1);
+		const created = world.stripe.customers.create.mock.invocationCallOrder[0] ?? 0;
+		const lastList = Math.max(...world.stripe.subscriptions.list.mock.invocationCallOrder);
+		expect(created).toBeGreaterThan(lastList);
+		expect(world.stripe.subscriptions.create).toHaveBeenCalledWith(
+			expect.objectContaining({ customer: "cus_created" }),
+			expect.anything(),
+		);
 	});
 });
