@@ -3,9 +3,20 @@
 
 // The payment-hold store (ADR 0002 §4.1, S4, #5755): the only module that writes `payment_holds`.
 //
-// NO CALLER YET. This slice adds the table and the writes; from slice 5 the create-a-team flow opens
-// holds (E0) and advances them (`advanceHold`), and later slices add the webhook's nudge, the sweeper and
-// its notice emails, and the operator's release. Until then no row is ever written outside the tests.
+// CALLERS. Outside the tests, this module's functions are imported only here:
+//   - app/server/actions/billing.ts: `openHold` — E0 in the create-a-team purchase (`closeUnderHold`,
+//     `opened_by = purchase`), before anything is voided or cancelled.
+//   - sweeper.ts: `openHold` — the link's refusal in `linkSetupToOrg` (`opened_by = link`), the core the
+//     session's link in billing.ts also runs; `payerLeaseKey`; and the three state writes
+//     `writeHoldState`, `reserveRefundAttempt` and `releaseHold`, which `machineDepsFor` binds to a lease
+//     and hands to `advanceHold` and `operatorRelease`. The purchase, the link and the operator command
+//     build their machine deps through `machineDepsFor` too. `writeHoldState` is also called directly,
+//     for the age alert's `age_alerted_at` stamp and the link refusal's `alerted_at` stamp.
+//   - webhook-handler.ts (lib/billing): `nudgeHold`.
+//   - emails.ts: `claimHoldNotice` and `unclaimHoldNotice`, around each notice send.
+//   - scripts/payment-holds.ts (the operator command): `payerLeaseKey`, `openHold` (the §8 backfill,
+//     `opened_by = backfill`) and `writeHoldState` (the backfill's `alerted_at` stamp).
+// machine.ts imports only this module's types.
 //
 // THREE KINDS OF WRITE (§4.1), each with its own fence:
 //
@@ -25,8 +36,11 @@
 // A RELEASE DECIDES THE SETUP (§4.1, I16 (b)). The state write that releases a hold, for any reason but
 // `adopted`, closes the `pending_org_setups` row with the hold's `subscription_id` in the SAME
 // transaction (`closed_reason = 'hold_released'`), when that row is still open. An `adopted` release
-// leaves it open: from slice 5 its caller re-links the setup, or leaves it open for the resume, after the
-// commit (§5.6 "When a hold ends").
+// leaves it open (§5.6 "When a hold ends"). The session's link, when its own advance adopts the
+// subscription, goes on to link that setup itself (`linkSetupToOrg`). `relinkAdoptedSetup` (sweeper.ts)
+// re-links a setup whose team exists under the caller's lease, and leaves one with no team open for the
+// resume; the sweeper's visit, the create-a-team purchase (`relinkIfAdopted`) and `payment-holds release`
+// call it.
 //
 // Every write runs through getServiceDb(): the table is service-role only (programmables.sql).
 
