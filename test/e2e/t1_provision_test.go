@@ -207,6 +207,11 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 		t.Logf("──── argocd namespace on failure ────\n%s", dumpT1ArgoDiagnosis(dctx, clusterName, diagDir))
 	})
 
+	// ── Load ArgoCD's images into kind the moment the runner creates it (#6044), so the kubelet
+	// never pulls them from a registry that rate-limits anonymous pulls. Started BEFORE the runner,
+	// and collected after the job goes terminal. ──
+	preload := startT1ImagePreload(t, ctx, clusterName)
+
 	// ── Launch the REAL runner process pointed at the control plane. ──
 	var runnerOut bytes.Buffer
 	runnerCtx, killRunner := context.WithCancel(ctx)
@@ -245,6 +250,7 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
 	status, err := cp.WaitTerminal(ctx, jobID, wait)
+	preload.finish(t, err == nil && status == "SUCCESS")
 	if err != nil {
 		t.Fatalf("waiting for job to finish: %v\n──── runner output ────\n%s", err, runnerOut.String())
 	}
@@ -428,6 +434,78 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…(truncated)"
+}
+
+// t1ImagePreload is the running PreloadIntoKind goroutine and the way to collect its result.
+type t1ImagePreload struct {
+	images []string
+	done   chan error
+	cancel context.CancelFunc
+}
+
+// startT1ImagePreload reads the image list the workflow pulled (T1PreloadImagesEnv) and starts
+// loading it into clusterName in the background. In the merge-queue job (ALETHIA_E2E_T1_REQUIRE) a
+// missing or unreadable list is a hard FAIL, so the pre-load cannot silently drop out of the
+// workflow; elsewhere it is skipped and the kubelet pulls as it always did.
+func startT1ImagePreload(t *testing.T, ctx context.Context, clusterName string) *t1ImagePreload {
+	t.Helper()
+	p := &t1ImagePreload{}
+	path := strings.TrimSpace(os.Getenv(T1PreloadImagesEnv))
+	if path == "" {
+		if isTruthy(os.Getenv("ALETHIA_E2E_T1_REQUIRE")) {
+			t.Fatalf("%s is unset: the workflow must pull ArgoCD's images for T1 to load into kind (#6044)", T1PreloadImagesEnv)
+		}
+		t.Logf("%s unset — not pre-loading ArgoCD's images; the kubelet will pull them", T1PreloadImagesEnv)
+		return p
+	}
+	images, err := ReadImageList(path)
+	if err != nil {
+		t.Fatalf("read the pre-load image list: %v", err)
+	}
+	p.images = images
+	p.done = make(chan error, 1)
+	lctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		p.done <- PreloadIntoKind(lctx, clusterName, images, ExecKind,
+			PreloadOptions{Poll: 5 * time.Second, MaxFailures: 10}, t.Logf)
+	}()
+	// A t.Fatal between here and finish would otherwise leave the goroutine logging into a test that
+	// has completed. Registered after the teardown, so it runs BEFORE it: loading stops before the
+	// cluster is deleted.
+	t.Cleanup(func() {
+		cancel()
+		<-exited
+	})
+	return p
+}
+
+// finish collects the pre-load's result. After a SUCCESSFUL job the load is given up to three more
+// minutes to finish and a failed load fails the test: the job passing without it means the kubelet
+// pulled after all, which is the exposure this exists to remove. After a failed job the load is
+// stopped at once and only logged, because the job's own failure is the one to report.
+func (p *t1ImagePreload) finish(t *testing.T, jobSucceeded bool) {
+	t.Helper()
+	if p.done == nil {
+		return
+	}
+	defer p.cancel()
+	if !jobSucceeded {
+		p.cancel()
+		t.Logf("pre-load of %d image(s) after a failed job: %v", len(p.images), <-p.done)
+		return
+	}
+	select {
+	case err := <-p.done:
+		if err != nil {
+			t.Errorf("pre-loading ArgoCD's images into kind failed (#6044): %v", err)
+		}
+	case <-time.After(3 * time.Minute):
+		p.cancel()
+		t.Errorf("pre-loading ArgoCD's images into kind had not finished 3m after the job succeeded (#6044): %v", <-p.done)
+	}
 }
 
 // testLogWriter pipes provisioner teardown output into the test log.
