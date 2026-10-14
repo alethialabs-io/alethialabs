@@ -28,6 +28,12 @@
 //   C8   a row inserted without `scope` reads `new_org`; a scope outside the check is refused.
 //   ---  D1 rule 4: the setup predicates that wait on holds stay scope-free — an open `org_plan` hold on
 //        X keeps X's setup open through the closer, and its verdict says `open`, not `closed`.
+//
+// #6025, the §5.5 refund notice:
+//   ---  its 14-day window is the DATABASE's: day 13 is in and day 15 is out, and an app clock 5 minutes
+//        off on either side moves neither edge; `holdClockNow` is the database's clock.
+//   ---  `stampHoldNotice` is a hint write: no lease, no version bump, no `updated_at`, open or released.
+//   C104 (control) `latestReleasedHoldOn` has no time bound: a refund 30 days old is still returned.
 
 import { randomUUID } from "node:crypto";
 import { vi } from "vitest";
@@ -46,7 +52,7 @@ import * as store from "@/lib/billing/payment-holds/store";
 import * as setups from "@/lib/billing/pending-org-setup";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	claimHoldNotice,
 	type HoldRef,
@@ -55,6 +61,7 @@ import {
 	type OpenHoldInput,
 	releaseHold,
 	reserveRefundAttempt,
+	stampHoldNotice,
 	unclaimHoldNotice,
 	writeHoldState,
 } from "@/lib/billing/payment-holds/store";
@@ -887,6 +894,106 @@ describeIfDb("payment_holds — ADR 0004 D1: the hold scope", () => {
 				VALUES (${other}, 'cus_it_hold', ${payer}, ${`in_${other}`}, 'closing', now(), 'backfill', 'ai')`),
 		);
 		expect(refused).toMatch(/payment_holds_scope_known/);
+	});
+});
+
+// ── #6025: the refund notice's window, its clock, and the stamp ────────────────────────────────────
+
+/** Moves `id`'s `released_at` to the database's now minus `ago`, a Postgres interval literal. */
+async function releasedAgo(id: string, ago: string): Promise<void> {
+	await getServiceDb()
+		.update(paymentHolds)
+		.set({ released_at: sql`now() - ${ago}::interval` })
+		.where(eq(paymentHolds.id, id));
+}
+
+/** A hold of a fresh payer, released `refunded` `ago` before the database's now. */
+async function refundedHold(ago: string): Promise<{ payer: string; lease: PurchaseLease; hold: PaymentHoldRow }> {
+	const { payer, lease } = await payerWithLease();
+	const hold = await opened(lease, e0(payer, newSubscription()));
+	await releaseHold(lease, refOf(hold), { reason: "refunded" });
+	await releasedAgo(hold.id, ago);
+	return { payer, lease, hold };
+}
+
+/** Runs the app's clock `offsetMs` away from the real one (Date only: the driver's timers stay real). */
+function skewAppClock(offsetMs: number): void {
+	const real = Date.now();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(real + offsetMs);
+}
+
+describeIfDb("payment_holds — #6025: the refund notice window is the database's, and the stamp is a hint", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("day 13 is in the payer's set, day 15 is not — for the create-a-team and the scoped reader alike", async () => {
+		const day13 = await refundedHold("13 days");
+		const day15 = await refundedHold("15 days");
+		expect((await setups.paymentHoldsOfPayer(day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(day15.payer)).toEqual([]);
+		expect((await store.paymentHoldsOf("new_org", day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
+		expect(await store.paymentHoldsOf("new_org", day15.payer)).toEqual([]);
+		await releasePurchaseLease(day13.lease);
+		await releasePurchaseLease(day15.lease);
+	});
+
+	it("an app clock 5 minutes off on either side moves neither edge of the database's 14 days", async () => {
+		const inside = await refundedHold("14 days - 2 minutes");
+		const outside = await refundedHold("14 days 2 minutes");
+
+		skewAppClock(5 * 60_000);
+		expect((await setups.paymentHoldsOfPayer(inside.payer)).map((h) => h.id)).toEqual([inside.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(outside.payer)).toEqual([]);
+		vi.useRealTimers();
+
+		skewAppClock(-5 * 60_000);
+		expect((await setups.paymentHoldsOfPayer(inside.payer)).map((h) => h.id)).toEqual([inside.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(outside.payer)).toEqual([]);
+		vi.useRealTimers();
+
+		await releasePurchaseLease(inside.lease);
+		await releasePurchaseLease(outside.lease);
+	});
+
+	it("holdClockNow reads the database's clock, not the app's", async () => {
+		skewAppClock(60 * 60_000);
+		const read = await store.holdClockNow();
+		vi.useRealTimers();
+		const [row] = await getServiceDb().execute<{ epoch_s: number }>(sql`select extract(epoch from now())::double precision as epoch_s`);
+		expect(Math.abs(read.getTime() - Number(row?.epoch_s) * 1000)).toBeLessThan(5_000);
+	});
+
+	it("C104 (control): latestReleasedHoldOn has no time bound — a refund released 30 days ago is still X's", async () => {
+		const { lease, hold } = await refundedHold("30 days");
+		expect(await setups.latestReleasedHoldOn(hold.subscription_id)).toMatchObject({ id: hold.id, release_reason: "refunded" });
+		await releasePurchaseLease(lease);
+	});
+
+	it("stampHoldNotice writes notice_last_sent_at with no lease, and changes nothing else — so a prepared state write still lands", async () => {
+		const { payer, lease } = await payerWithLease();
+		const hold = await opened(lease, e0(payer, newSubscription()));
+		const prepared = refOf(hold);
+		await releasePurchaseLease(lease);
+
+		expect(await stampHoldNotice([hold.id])).toBe(1);
+		const stamped = await readHold(hold.id);
+		expect(stamped.notice_last_sent_at).not.toBeNull();
+		expect({ ...stamped, notice_last_sent_at: null }).toEqual(hold);
+
+		const again = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!again) throw new Error("fixture: the payer's lease was not free");
+		expect(await writeHoldState(again, prepared, { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(again);
+	});
+
+	it("a released hold's refund clause is stamped too; an empty set stamps nothing", async () => {
+		const { lease, hold } = await refundedHold("1 day");
+		expect(await stampHoldNotice([hold.id])).toBe(1);
+		expect((await readHold(hold.id)).notice_last_sent_at).not.toBeNull();
+		expect(await stampHoldNotice([])).toBe(0);
+		await releasePurchaseLease(lease);
 	});
 });
 

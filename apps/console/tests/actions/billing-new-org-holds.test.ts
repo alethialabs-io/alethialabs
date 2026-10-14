@@ -59,7 +59,11 @@ const world = vi.hoisted(() => {
 		newestRecordAt: null as Date | null,
 		/** The operator-alert delivery rows written so far: one per alert routed to a channel. */
 		deliveries: [] as { resource_id: string; event_key: string; status: string; created_at: Date }[],
+		/** How far the DATABASE's clock runs ahead of this process's (negative: behind). #6025. */
+		dbClockOffsetMs: 0,
 	};
+	/** The fake database's `now()`: this process's clock moved by `dbClockOffsetMs`. */
+	const dbNow = () => new Date(Date.now() + state.dbClockOffsetMs);
 	const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing" });
 	const piOf = (invoice: string, i: number) => `pi_${invoice}_${i}`;
 	const intent = (invoice: string, i: number, status: string) => ({
@@ -140,7 +144,7 @@ const world = vi.hoisted(() => {
 			create: vi.fn(async () => ({ id: "cus_created" })),
 		},
 	};
-	return { state, stripe };
+	return { state, stripe, dbNow };
 });
 
 vi.mock("@/lib/authz/guard", () => ({
@@ -180,26 +184,36 @@ vi.mock("@/lib/db", async () => {
 	/**
 	 * Evaluates a `payment_holds` predicate, rendered by drizzle's Postgres dialect, over
 	 * `world.state.holds`: `and`, `or`, parentheses, and `=`, `<>`, `>`, `in (…)` between a column and a
-	 * bound parameter. Anything else in the rendered SQL throws, so a reader cannot pass by being
-	 * misread. A NULL column satisfies no comparison, as in SQL.
+	 * bound parameter — or `now() - $n::interval`, a window on the DATABASE's clock (`world.dbNow`), whose
+	 * interval must read `<n> milliseconds`. Anything else in the rendered SQL throws, so a reader cannot
+	 * pass by being misread. A NULL column satisfies no comparison, as in SQL.
 	 */
 	const holdsMatching = (where: unknown): PaymentHoldRow[] => {
 		if (!(where instanceof SQL)) throw new Error("the payment_holds query has no where clause");
 		const q = dialect.sqlToQuery(where);
-		const tokens = q.sql.match(/"payment_holds"\."[a-z_]+"|\$\d+|<>|=|>|\(|\)|,|\b(?:and|or|in)\b/g) ?? [];
-		if (tokens.join("") !== q.sql.replace(/\s+/g, "")) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		const tokens =
+			q.sql.match(/"payment_holds"\."[a-z_]+"|now\(\) - \$\d+::interval|\$\d+|<>|=|>|\(|\)|,|\b(?:and|or|in)\b/g) ?? [];
+		if (tokens.join("").replace(/\s+/g, "") !== q.sql.replace(/\s+/g, "")) {
+			throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+		}
 		let at = 0;
 		const next = () => tokens[at++];
 		const expect = (t: string) => {
 			if (next() !== t) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
 		};
 		const param = (t: string | undefined) => {
+			const window = /^now\(\) - \$(\d+)::interval$/.exec(t ?? "");
+			if (window) {
+				const ms = /^(\d+) milliseconds$/.exec(String(q.params[Number(window[1]) - 1]));
+				if (!ms) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
+				return world.dbNow().getTime() - Number(ms[1]);
+			}
 			if (!t?.startsWith("$")) throw new Error(`the fake db cannot evaluate: ${q.sql}`);
 			return q.params[Number(t.slice(1)) - 1];
 		};
 		type Test = (h: PaymentHoldRow) => boolean;
 		const compare = (a: unknown, b: unknown): number => {
-			if (a instanceof Date) return a.getTime() - new Date(String(b)).getTime();
+			if (a instanceof Date) return a.getTime() - (typeof b === "number" ? b : new Date(String(b)).getTime());
 			return String(a) === String(b) ? 0 : String(a) < String(b) ? -1 : 1;
 		};
 		const factor = (): Test => {
@@ -379,7 +393,7 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 			Object.assign(hold, {
 				state: "released",
 				release_reason: input.reason,
-				released_at: new Date(),
+				released_at: world.dbNow(),
 				next_check_at: null,
 				last_pay: input.lastPay ?? hold.last_pay,
 				version: hold.version + 1,
@@ -389,6 +403,13 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 		nudgeHold: vi.fn(),
 		claimHoldNotice: vi.fn(),
 		unclaimHoldNotice: vi.fn(),
+		// #6025: the hint write of a carried clause, and the database's clock.
+		stampHoldNotice: vi.fn(async (ids: readonly string[]) => {
+			const stamped = world.state.holds.filter((h) => ids.includes(h.id));
+			for (const h of stamped) h.notice_last_sent_at = world.dbNow();
+			return stamped.length;
+		}),
+		holdClockNow: vi.fn(async () => world.dbNow()),
 	};
 });
 
@@ -441,6 +462,7 @@ import {
 	openPendingOrgSetupsForOrg,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
+import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import { getOrgBilling } from "@/lib/billing/queries";
 
 /** A full `payment_holds` row, with `overrides`. */
@@ -557,6 +579,7 @@ beforeEach(() => {
 	world.state.activatesOnRead = null;
 	world.state.newestRecordAt = null;
 	world.state.deliveries = [];
+	world.state.dbClockOffsetMs = 0;
 	vi.unstubAllEnvs();
 });
 
@@ -1096,5 +1119,116 @@ describe("#5989 — a refused purchase mints no Stripe customer", () => {
 			expect.objectContaining({ customer: "cus_created" }),
 			expect.anything(),
 		);
+	});
+});
+
+describe("#6025 — the refund notice's 14 days are the DATABASE's, and a returned clause stamps notice_last_sent_at", () => {
+	const DAY = 86_400_000;
+	/** A hold of user-1 released `refunded` `ageMs` before the database's now. */
+	const refundedAgo = (ageMs: number, overrides: Partial<PaymentHoldRow> = {}) =>
+		seedHold({ subscription_id: "sub_a", state: "released", release_reason: "refunded", released_at: new Date(world.dbNow().getTime() - ageMs), ...overrides });
+	/** The `notice` a minting response carried, or undefined. */
+	const noticeOf = (r: Awaited<ReturnType<typeof createNewOrgSubscriptionIntent>>) => {
+		if (r.kind !== "intent") throw new Error(`expected a mint, got ${r.kind}`);
+		return r.notice;
+	};
+
+	it("day 13 of the database's clock shows the refund clause; day 15 does not", async () => {
+		refundedAgo(13 * DAY);
+		expect(noticeOf(await buy())).toMatch(/refunded in full/);
+
+		world.state.holds = [];
+		refundedAgo(15 * DAY);
+		expect(noticeOf(await buy())).toBeUndefined();
+	});
+
+	it("an app server whose clock is 5 minutes off neither hides nor shows the clause at the database's day 14", async () => {
+		// The app runs 5 minutes AHEAD of the database: 2 minutes inside the window is still inside it.
+		world.state.dbClockOffsetMs = -5 * 60_000;
+		refundedAgo(14 * DAY - 2 * 60_000);
+		expect(noticeOf(await buy())).toMatch(/refunded in full/);
+
+		// The app runs 5 minutes BEHIND the database: 2 minutes past the window is past it.
+		world.state.holds = [];
+		world.state.dbClockOffsetMs = 5 * 60_000;
+		refundedAgo(14 * DAY + 2 * 60_000);
+		expect(noticeOf(await buy())).toBeUndefined();
+	});
+
+	it("a minting response that carries the refund clause stamps that hold, and only that one", async () => {
+		const refunded = refundedAgo(DAY);
+		const voided = seedHold({ subscription_id: "sub_v", state: "released", release_reason: "voided_unpaid", released_at: world.dbNow() });
+
+		expect(noticeOf(await buy())).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([refunded.id]);
+		expect(holdOn("sub_a")?.notice_last_sent_at).toEqual(expect.any(Date));
+		expect(world.state.holds.find((h) => h.id === voided.id)?.notice_last_sent_at).toBeNull();
+	});
+
+	it("a minting response with no clause stamps nothing", async () => {
+		refundedAgo(15 * DAY);
+
+		expect(noticeOf(await buy())).toBeUndefined();
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+		expect(holdOn("sub_a")?.notice_last_sent_at).toBeNull();
+	});
+
+	it("a refusal stamps every hold whose clause it carries — the blocking one and the refund — and nothing else", async () => {
+		const refunded = refundedAgo(6 * DAY);
+		sub("sub_b", "canceled", ["processing"]);
+		const blocking = seedHold({ subscription_id: "sub_b", invoice_id: "in_sub_b", state: "payment_in_flight", last_pay: "in_flight" });
+		const stale = refundedAgo(20 * DAY, { subscription_id: "sub_old" });
+
+		const message = refusalOf(await buy());
+		expect(message).toMatch(/still being processed/);
+		expect(message).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice).mock.calls.flat(2).sort()).toEqual([refunded.id, blocking.id].sort());
+		expect(world.state.holds.find((h) => h.id === stale.id)?.notice_last_sent_at).toBeNull();
+	});
+
+	it("a refusal for a KEPT subscription, which has no hold, stamps nothing", async () => {
+		sub("sub_dangling", "incomplete", []);
+
+		expect(refusalOf(await buy())).toMatch(/still open and we could not confirm it is unpaid/);
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+	});
+
+	it("T0h: the payer's own open hold on the swept subscription refuses with its clause, and is stamped; another payer's is not", async () => {
+		sub("sub_dangling", "incomplete");
+		// An open hold the purchase's own reader does not return (another scope), on the subscription it sweeps.
+		const own = seedHold({ scope: "org_plan", subscription_id: "sub_dangling", invoice_id: "in_sub_dangling", state: "payment_in_flight", last_pay: "in_flight" });
+		expect(refusalOf(await buy())).toMatch(/still being processed/);
+		expect(world.state.holds.find((h) => h.id === own.id)?.notice_last_sent_at).toEqual(expect.any(Date));
+
+		world.state.holds = [];
+		vi.mocked(stampHoldNotice).mockClear();
+		const foreign = seedHold({ payer_key: "user-2", subscription_id: "sub_dangling", invoice_id: "in_sub_dangling", state: "payment_in_flight", last_pay: "in_flight" });
+		expect(refusalOf(await buy())).toMatch(/could not confirm an earlier checkout was closed/);
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+		expect(world.state.holds.find((h) => h.id === foreign.id)?.notice_last_sent_at).toBeNull();
+	});
+
+	it("§5.7: the guard's creator refusal that carries the hold's clause stamps it; with no hold it stamps nothing", async () => {
+		vi.mocked(getOrgBilling).mockResolvedValue(null);
+		vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([{ ...setupRow("user-1", "sub_x"), created_org_id: "org-1" }]);
+		const held = seedHold({ state: "payment_in_flight", last_pay: "in_flight" });
+
+		expect(await createSubscriptionIntent("team")).toEqual({ error: expect.stringMatching(/still being processed/) });
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([held.id]);
+
+		world.state.holds = [];
+		vi.mocked(stampHoldNotice).mockClear();
+		expect(await createSubscriptionIntent("team")).toEqual({ error: expect.stringMatching(/^Your paid setup/) });
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+	});
+
+	it("a stamp that fails is logged, and the response still goes out", async () => {
+		refundedAgo(DAY);
+		vi.mocked(stampHoldNotice).mockRejectedValueOnce(new Error("database is unavailable"));
+		const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+		expect(noticeOf(await buy())).toMatch(/refunded in full/);
+		expect(logged).toHaveBeenCalledWith(expect.stringMatching(/could not stamp notice_last_sent_at/), expect.any(Error));
+		logged.mockRestore();
 	});
 });
