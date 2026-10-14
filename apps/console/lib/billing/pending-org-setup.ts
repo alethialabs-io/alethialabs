@@ -20,7 +20,7 @@
 
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { and, asc, desc, eq, gt, inArray, isNull, like, lt, ne, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, lt, max, ne, or, type SQL, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
@@ -332,6 +332,20 @@ export async function unlinkedPendingOrgSetupCustomers(userId: string): Promise<
  */
 export async function liveCheckSetupCustomers(userId: string): Promise<UnlinkedSetupCustomers> {
 	return setupCustomers(userId, isNull(pendingOrgSetups.linked_at));
+}
+
+/**
+ * The `created_at` of the actor's newest setup record that is not linked — the live check's record set
+ * (`liveCheckSetupCustomers`), closed records included — or null when there is none. The create-a-team
+ * purchase reads it as the marker of a CAP STATE, to alert the operator once per state when that set is
+ * over `UNLINKED_SETUP_CUSTOMER_CAP` (#5989).
+ */
+export async function newestUnlinkedSetupAt(userId: string): Promise<Date | null> {
+	const [row] = await getServiceDb()
+		.select({ at: max(pendingOrgSetups.created_at) })
+		.from(pendingOrgSetups)
+		.where(and(eq(pendingOrgSetups.user_id, userId), isNull(pendingOrgSetups.linked_at)));
+	return row?.at ?? null;
 }
 
 /**

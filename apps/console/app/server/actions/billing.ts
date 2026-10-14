@@ -112,6 +112,7 @@ import {
 	findSetupOrg,
 	forgetPendingOrgSetup,
 	liveCheckSetupCustomers,
+	newestUnlinkedSetupAt,
 	logBillingEvent,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
@@ -2259,8 +2260,9 @@ const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 /**
  * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94): every subscription, of every status, on each of
  * `customers` — the customers of the user's unlinked records (`liveCheckSetupCustomers`, whether or not
- * the team exists or the record is closed), of the holds this request saw, and the one it would mint on —
- * fully paged. ORDER: it runs AFTER the hold pass and the sweep, so a subscription either one adopted is
+ * the team exists or the record is closed), of the holds this request saw, and the one it would reuse —
+ * fully paged. A customer the purchase has yet to mint is not among them: it is minted after this check
+ * (#5989), with nothing on it to read. ORDER: it runs AFTER the hold pass and the sweep, so a subscription either one adopted is
  * still seen, and it reads the record set AGAIN here (`liveCheckCustomers`) rather than reuse the copy
  * the sweep read: a resume lookup can add a record outside this user's lease (`setupRecordFor`'s
  * backfill), so only a fresh read makes this the last read. A LIVE create-a-team subscription of the user's — one whose webhook has not been seen yet,
@@ -2293,19 +2295,57 @@ async function liveCreateATeamSubscription(
 /**
  * The customers of the live check's record set (`liveCheckSetupCustomers`), or the refusal over its cap.
  * Closed records are never deleted, so over the cap is lasting: the refusal also alerts the operator,
- * who clears them.
+ * once per cap state (`alertSetupCapOnce`), with what clears it.
  */
 async function liveCheckCustomers(
 	userId: string,
 ): Promise<{ kind: "all"; customers: string[] } | { kind: "refused"; message: string }> {
 	const recorded = await liveCheckSetupCustomers(userId);
 	if (recorded.kind === "all") return recorded;
-	await alertOperator({
+	await alertSetupCapOnce(userId, {
 		title: "A create-a-team purchase refused: too many setup records to check",
-		subject: { type: "user", id: userId },
-		summary: `User ${userId} has unlinked create-a-team setup records (closed ones included) on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not check them all for a live or settling subscription and refused. Closed records are never deleted, so this repeats until they are cleared by hand.`,
+		summary: `User ${userId} has unlinked create-a-team setup records (closed ones included) on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not check them all for a live or settling subscription and refused.`,
 	});
 	return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
+}
+
+/**
+ * What clears either over-cap refusal of the create-a-team purchase, appended to its alert. It names the
+ * live check's record set (`liveCheckSetupCustomers`), because the reuse set the other refusal reads is a
+ * subset of it: bringing the larger one under the cap clears both. It also says what else the sweep and
+ * the live check read, so an operator does not take a record's customer for unread once no record names it.
+ */
+const SETUP_CAP_FIX = `To fix it: the user's pending_org_setups rows with linked_at IS NULL (closed ones included — closing a record does not take it out of the count) must name at most ${UNLINKED_SETUP_CUSTOMER_CAP} distinct Stripe customers. No operator command removes a record from that set, so this is a change by hand. Before taking a record's customer out of the set, check that the customer has no live or incomplete create-a-team subscription of this user's: once no record names it, the sweep and the live check read that customer only when the browser passes it as the purchase's customer, and the live check also when an open payment hold of the user's names it.`;
+
+/**
+ * Raises an over-cap alert of the create-a-team purchase (ADR 0002 §4.3, §4.5) — the subject is the user,
+ * and `SETUP_CAP_FIX` is appended to `summary` — once per user per CAP STATE (#5989). The state is marked
+ * by the user's newest unlinked record (`newestUnlinkedSetupAt`): the alert is skipped while an operator
+ * alert about this user has reached a channel at or after that record (`alertedAboutSince`), and a newer
+ * record starts a new state, which alerts again.
+ *
+ * The purchase itself writes no record while the user is over the cap (it refuses before the mint). One
+ * writer does: `setupRecordFor`'s BACKFILL, reached through `newOrgSetupStateFor` — the paid-prior resume
+ * (which runs before the live check's cap is read) and the resume and link lookups outside the purchase —
+ * records a subscription that has no record yet. Each such record starts a new state, so the next
+ * over-cap refusal alerts again. That is bounded: the backfill writes through `recordPendingOrgSetup`,
+ * which inserts with `onConflictDoNothing` on `subscription_id`, so it adds at most one record, and so at
+ * most one more alert, per subscription.
+ *
+ * An alert that reached no channel writes no delivery row, so it silences nothing. The refusal is the
+ * caller's either way; a skipped alert is still logged.
+ */
+async function alertSetupCapOnce(userId: string, alert: { title: string; summary: string }): Promise<void> {
+	const since = await newestUnlinkedSetupAt(userId);
+	if (await alertedAboutSince(userId, since)) {
+		console.error(`[billing] ${alert.summary} (already alerted for this cap state; not raised again)`);
+		return;
+	}
+	await alertOperator({
+		title: alert.title,
+		subject: { type: "user", id: userId },
+		summary: `${alert.summary} ${SETUP_CAP_FIX}`,
+	});
 }
 
 /** The setup of a paid create-a-team subscription to resume, or the refusal when the user cannot finish it here. */
@@ -2334,10 +2374,9 @@ async function startNewOrgSubscription(
 	// Every one of them, or a refusal: a partial list would sweep fewer customers than exist (ADR 0002 §4.5).
 	const recorded = await unlinkedPendingOrgSetupCustomers(actor.userId);
 	if (recorded.kind === "over_cap") {
-		await alertOperator({
+		await alertSetupCapOnce(actor.userId, {
 			title: "A create-a-team purchase refused: too many unfinished setups",
-			subject: { type: "user", id: actor.userId },
-			summary: `User ${actor.userId} has unfinished create-a-team setups on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not sweep them all and refused.`,
+			summary: `User ${actor.userId} has unfinished create-a-team setups (no team, not linked, not declared) on more than ${UNLINKED_SETUP_CUSTOMER_CAP} Stripe customers, so the purchase could not sweep them all and refused.`,
 		});
 		return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 	}
@@ -2398,34 +2437,21 @@ async function startNewOrgSubscription(
 
 	// Reuse the customer from a prior attempt only if this user owns it and no org does (ADR 0002 §4.2
 	// (2), `isReusableCreateATeamCustomer`): the one the browser passed, else the one on the caller's
-	// newest unfinished setup record (the browser can lose its copy, #5463). Otherwise mint a fresh bare
-	// customer (no organization_id until the org exists and is linked).
-	let customerId: string | null = null;
+	// newest unfinished setup record (the browser can lose its copy, #5463). With none, a fresh bare
+	// customer is minted — but only after the sweep and the live check below (#5989): every refusal
+	// comes before it, so a refused purchase, and each refused retry, leaves no customer behind. A
+	// customer minted by this request has no subscription yet, so neither check has anything to read on it.
+	let reusedCustomer: string | null = null;
 	if (opts.customerId) {
 		const existing = await getPurchaseStripe().customers.retrieve(opts.customerId);
-		if (isReusableCreateATeamCustomer(existing, actor.userId)) customerId = existing.id;
+		if (isReusableCreateATeamCustomer(existing, actor.userId)) reusedCustomer = existing.id;
 	}
-	if (!customerId && recordedCustomers[0]) {
-		customerId = await ownedCustomer(recordedCustomers[0], actor.userId);
+	if (!reusedCustomer && recordedCustomers[0]) {
+		reusedCustomer = await ownedCustomer(recordedCustomers[0], actor.userId);
 	}
-	const origin: MintedCustomer["origin"] = customerId ? "reused" : "created";
-	if (!customerId) {
-		const [u] = await getServiceDb()
-			.select({ email: user.email, name: user.name })
-			.from(user)
-			.where(eq(user.id, actor.userId))
-			.limit(1);
-		await fence();
-		const customer = await getPurchaseStripe().customers.create({
-			email: u?.email,
-			name: opts.orgName,
-			metadata: { created_by: actor.userId },
-		});
-		customerId = customer.id;
-	}
-	const mintedOn: MintedCustomer = { customerId, origin };
+	const reused = reusedCustomer ? [reusedCustomer] : [];
 
-	// I1 (b), the sweep: every `incomplete` subscription on the customer this purchase uses and on every
+	// I1 (b), the sweep: every `incomplete` subscription on the customer this purchase reuses and on every
 	// customer the caller's unlinked records name — closed records and records whose team exists
 	// included — so a purchase still settling on any of them blocks a second one. Only this user's
 	// create-a-team subscriptions are touched (ADR 0002 §4.2): one of theirs that never paid is closed
@@ -2433,7 +2459,7 @@ async function startNewOrgSubscription(
 	// customers — a team's own plan or AI checkout included — is left alone, alerted on, and does not refuse. Each of the user's own is closed
 	// under a hold or kept (`closeOrKeep`). A customer with more than the sweep reads refuses, and so does
 	// a list that fails (§5.1).
-	for (const sweepCustomer of new Set([customerId, ...recordedCustomers, ...liveRecorded.customers])) {
+	for (const sweepCustomer of new Set([...reused, ...recordedCustomers, ...liveRecorded.customers])) {
 		let listed: Awaited<ReturnType<typeof listCustomerSubscriptions>>;
 		try {
 			listed = await listCustomerSubscriptions(getStripe(), sweepCustomer, "incomplete");
@@ -2460,9 +2486,29 @@ async function startNewOrgSubscription(
 
 	// I1 (c), read last.
 	const holdCustomers = [...seen.holds.values()].map((h) => h.customer_id);
-	const live = await liveCreateATeamSubscription(actor.userId, [...holdCustomers, customerId]);
+	const live = await liveCreateATeamSubscription(actor.userId, [...holdCustomers, ...reused]);
 	if (live.kind === "refused") return { kind: "refused", message: live.message };
 	if (live.kind === "live") return resumeOrRefuse(live.sub, actor.userId);
+
+	// Every check has passed: only now is a customer minted, when none could be reused (no organization_id
+	// until the org exists and is linked). The renewal before it is §4.4 rule 1's; the mint deadline's own
+	// renewal below still comes after it, right before `subscriptions.create` (rule 2).
+	let customerId = reusedCustomer;
+	if (!customerId) {
+		const [u] = await getServiceDb()
+			.select({ email: user.email, name: user.name })
+			.from(user)
+			.where(eq(user.id, actor.userId))
+			.limit(1);
+		await fence();
+		const customer = await getPurchaseStripe().customers.create({
+			email: u?.email,
+			name: opts.orgName,
+			metadata: { created_by: actor.userId },
+		});
+		customerId = customer.id;
+	}
+	const mintedOn: MintedCustomer = { customerId, origin: reusedCustomer ? "reused" : "created" };
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -2837,19 +2883,19 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 }
 
 /**
- * Whether an operator alert about subscription `subscriptionId` (`system.platform.payment_needs_support`,
- * `resource_id` = X) has reached a channel at or after `since` — or ever, when `since` is null: a
- * delivery row exists, not dead. A delivery row is written only for an alert routed to a channel, so an
- * alert that reached none never silences a later one.
+ * Whether an operator alert about `resourceId` — a subscription X, or a user for the create-a-team
+ * over-cap alert (`system.platform.payment_needs_support`, `resource_id` = it) — has reached a channel at
+ * or after `since`, or ever, when `since` is null: a delivery row exists, not dead. A delivery row is
+ * written only for an alert routed to a channel, so an alert that reached none never silences a later one.
  */
-async function alertedAboutSince(subscriptionId: string, since: Date | null): Promise<boolean> {
+async function alertedAboutSince(resourceId: string, since: Date | null): Promise<boolean> {
 	const [hit] = await getServiceDb()
 		.select({ id: alertDeliveries.id })
 		.from(alertDeliveries)
 		.where(
 			and(
 				eq(alertDeliveries.event_key, OPERATOR_ALERT_EVENT),
-				sql`${alertDeliveries.context}->>'resource_id' = ${subscriptionId}`,
+				sql`${alertDeliveries.context}->>'resource_id' = ${resourceId}`,
 				ne(alertDeliveries.status, "dead"),
 				since ? gte(alertDeliveries.created_at, since) : undefined,
 			),
