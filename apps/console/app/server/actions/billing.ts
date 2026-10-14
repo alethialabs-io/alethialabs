@@ -2312,17 +2312,26 @@ async function liveCheckCustomers(
 /**
  * What clears either over-cap refusal of the create-a-team purchase, appended to its alert. It names the
  * live check's record set (`liveCheckSetupCustomers`), because the reuse set the other refusal reads is a
- * subset of it: bringing the larger one under the cap clears both.
+ * subset of it: bringing the larger one under the cap clears both. It also says what else the sweep and
+ * the live check read, so an operator does not take a record's customer for unread once no record names it.
  */
-const SETUP_CAP_FIX = `To fix it: the user's pending_org_setups rows with linked_at IS NULL (closed ones included — closing a record does not take it out of the count) must name at most ${UNLINKED_SETUP_CUSTOMER_CAP} distinct Stripe customers. No operator command removes a record from that set, so this is a change by hand. Before taking a record's customer out of the set, check that the customer has no live or incomplete create-a-team subscription of this user's: the live check and the sweep stop reading that customer once no record names it.`;
+const SETUP_CAP_FIX = `To fix it: the user's pending_org_setups rows with linked_at IS NULL (closed ones included — closing a record does not take it out of the count) must name at most ${UNLINKED_SETUP_CUSTOMER_CAP} distinct Stripe customers. No operator command removes a record from that set, so this is a change by hand. Before taking a record's customer out of the set, check that the customer has no live or incomplete create-a-team subscription of this user's: once no record names it, the sweep and the live check read that customer only when the browser passes it as the purchase's customer, and the live check also when an open payment hold of the user's names it.`;
 
 /**
  * Raises an over-cap alert of the create-a-team purchase (ADR 0002 §4.3, §4.5) — the subject is the user,
- * and `SETUP_CAP_FIX` is appended to `summary` — at most once per user per CAP STATE (#5989). A user over
- * the cap is refused before any setup record is written, so the user's newest unlinked record
- * (`newestUnlinkedSetupAt`) stays the same for as long as the state lasts. The alert is skipped while an
- * operator alert about this user has reached a channel at or after that record (`alertedAboutSince`); a
- * newer record means the user went under the cap and back over, which is a new state, and alerts again.
+ * and `SETUP_CAP_FIX` is appended to `summary` — once per user per CAP STATE (#5989). The state is marked
+ * by the user's newest unlinked record (`newestUnlinkedSetupAt`): the alert is skipped while an operator
+ * alert about this user has reached a channel at or after that record (`alertedAboutSince`), and a newer
+ * record starts a new state, which alerts again.
+ *
+ * The purchase itself writes no record while the user is over the cap (it refuses before the mint). One
+ * writer does: `setupRecordFor`'s BACKFILL, reached through `newOrgSetupStateFor` — the paid-prior resume
+ * (which runs before the live check's cap is read) and the resume and link lookups outside the purchase —
+ * records a subscription that has no record yet. Each such record starts a new state, so the next
+ * over-cap refusal alerts again. That is bounded: the backfill writes through `recordPendingOrgSetup`,
+ * which inserts with `onConflictDoNothing` on `subscription_id`, so it adds at most one record, and so at
+ * most one more alert, per subscription.
+ *
  * An alert that reached no channel writes no delivery row, so it silences nothing. The refusal is the
  * caller's either way; a skipped alert is still logged.
  */

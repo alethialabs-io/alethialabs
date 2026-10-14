@@ -54,7 +54,7 @@ const world = vi.hoisted(() => {
 		/** The newest `created_at` of user-1's unlinked setup records, as the over-cap dedupe reads it (#5989). */
 		newestRecordAt: null as Date | null,
 		/** The operator-alert delivery rows written so far: one per alert routed to a channel. */
-		deliveries: [] as { resource_id: string; created_at: Date }[],
+		deliveries: [] as { resource_id: string; event_key: string; status: string; created_at: Date }[],
 	};
 	const missing = () => Object.assign(new Error("No such object"), { code: "resource_missing" });
 	const piOf = (invoice: string, i: number) => `pi_${invoice}_${i}`;
@@ -147,29 +147,55 @@ vi.mock("@/lib/authz/guard", () => ({
 }));
 // The direct reads in these paths: the payer's email before a customer is minted (none here), and the
 // over-cap dedupe's two (#5989) — the newest unlinked setup record, and the operator-alert deliveries
-// about the user since then. Each query answers by the table it reads `from`; the deliveries answer
-// applies the same predicate as `alertedAboutSince` (same resource, at or after `newestRecordAt`).
+// since then. Each query answers by the table it reads `from`. The deliveries query is EVALUATED: its
+// `where` is rendered to SQL by drizzle's Postgres dialect, and each conjunct — the event key, the
+// `resource_id`, `status <> …`, `created_at >= …` — is applied to `world.state.deliveries` with the
+// parameter the code bound. A conjunct this reader does not know throws, so a changed query cannot pass
+// by being ignored, and a dropped or wrong conjunct changes which deliveries match.
 vi.mock("@/lib/db", async () => {
 	const schema = await import("@/lib/db/schema");
-	const answer = (table: unknown): unknown[] => {
+	const { PgDialect } = await import("drizzle-orm/pg-core");
+	const { SQL } = await import("drizzle-orm");
+	const dialect = new PgDialect();
+	type Delivery = (typeof world.state.deliveries)[number];
+	/** One conjunct of the deliveries query, as a filter over the fake rows. */
+	const conjunct = (clause: string, params: unknown[]): ((d: Delivery) => boolean) => {
+		const param = (ref: string | undefined) => params[Number(ref) - 1];
+		const m =
+			/^"alert_deliveries"\."(event_key|status|created_at)" (=|<>|>=) \$(\d+)$/.exec(clause) ??
+			/^"alert_deliveries"\."context"->>'(resource_id)' (=) \$(\d+)$/.exec(clause);
+		if (!m) throw new Error(`the fake db cannot evaluate: ${clause}`);
+		const [, column, op, ref] = m;
+		const value = param(ref);
+		if (column === "created_at") return (d) => d.created_at >= new Date(String(value));
+		const read = (d: Delivery) => (column === "event_key" ? d.event_key : column === "status" ? d.status : d.resource_id);
+		return op === "<>" ? (d) => read(d) !== value : (d) => read(d) === value;
+	};
+	const answer = (table: unknown, where: unknown): unknown[] => {
 		if (table === schema.pendingOrgSetups) return [{ at: world.state.newestRecordAt }];
 		if (table === schema.alertDeliveries) {
-			const since = world.state.newestRecordAt;
-			return world.state.deliveries
-				.filter((d) => d.resource_id === "user-1" && (!since || d.created_at >= since))
-				.map((_, i) => ({ id: `delivery_${i}` }));
+			if (!(where instanceof SQL)) throw new Error("the deliveries query has no where clause");
+			const q = dialect.sqlToQuery(where);
+			const clauses = q.sql.replace(/^\((.*)\)$/, "$1").split(" and ");
+			const filters = clauses.map((c) => conjunct(c.trim(), q.params));
+			return world.state.deliveries.filter((d) => filters.every((f) => f(d))).map((_, i) => ({ id: `delivery_${i}` }));
 		}
 		return [];
 	};
 	const query = () => {
 		let table: unknown = null;
+		let where: unknown = null;
 		const chain: Record<string, unknown> = {};
-		for (const m of ["select", "where", "limit", "innerJoin"]) chain[m] = () => chain;
+		for (const m of ["select", "limit", "innerJoin"]) chain[m] = () => chain;
 		chain.from = (t: unknown) => {
 			table = t;
 			return chain;
 		};
-		chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve(answer(table)).then(resolve);
+		chain.where = (w: unknown) => {
+			where = w;
+			return chain;
+		};
+		chain.then = (resolve: (v: unknown[]) => unknown) => Promise.resolve(answer(table, where)).then(resolve);
 		return chain;
 	};
 	return { getServiceDb: () => ({ select: () => query() }) };
@@ -777,8 +803,8 @@ describe("§5.5 — a refusal never invites a purchase", () => {
 describe("#5989 — the over-cap refusal alerts once per cap state, and says what fixes it", () => {
 	/** An `emitAlertEvent` that routes to one channel: it writes a delivery row, as the real one does. */
 	const deliverAlerts = () =>
-		vi.mocked(emitAlertEvent).mockImplementation(async (_org, _event, context) => {
-			world.state.deliveries.push({ resource_id: context.resource_id ?? "", created_at: new Date() });
+		vi.mocked(emitAlertEvent).mockImplementation(async (_org, event, context) => {
+			world.state.deliveries.push({ resource_id: context.resource_id ?? "", event_key: event, status: "pending", created_at: new Date() });
 			return 1;
 		});
 	/** The operator alerts raised about user-1, in order. */
@@ -826,6 +852,24 @@ describe("#5989 — the over-cap refusal alerts once per cap state, and says wha
 		refusalOf(await buy());
 
 		expect(userAlerts()).toHaveLength(2);
+	});
+
+	it("only a live delivery of the operator event about THIS user silences it: a dead one, another event's, or another resource's does not", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		vi.mocked(liveCheckSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+		const after = new Date(Date.now() - 1_000);
+		world.state.deliveries.push(
+			{ resource_id: "user-1", event_key: "system.platform.payment_needs_support", status: "dead", created_at: after },
+			{ resource_id: "user-1", event_key: "system.platform.other_event", status: "pending", created_at: after },
+			{ resource_id: "sub_x", event_key: "system.platform.payment_needs_support", status: "pending", created_at: after },
+		);
+
+		refusalOf(await buy());
+		expect(userAlerts()).toHaveLength(1);
+
+		world.state.deliveries.push({ resource_id: "user-1", event_key: "system.platform.payment_needs_support", status: "sent", created_at: after });
+		refusalOf(await buy());
+		expect(userAlerts()).toHaveLength(1);
 	});
 
 	it("the reuse set over its cap refuses the same way, alerts once with the fix, and shares the live check's cap state", async () => {
