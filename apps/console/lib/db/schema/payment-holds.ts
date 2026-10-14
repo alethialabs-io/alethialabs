@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Payment holds (ADR 0002 §4.1, S4, #5755). One row says that one create-a-team subscription, which
-// the flow touched, is not yet proven settled. While a row is open (any state but `released`) it is
-// meant to block its payer's next create-a-team purchase. This slice adds the table and its store
-// (lib/billing/payment-holds/store.ts) only: NOTHING writes or reads a hold yet. From S5 the
-// create-a-team flow will open and advance holds; the webhook nudge and the sweeper will come in later
-// slices.
+// the flow touched, is not yet proven settled. A row is open in any state but `released`. The
+// create-a-team purchase (app/server/actions/billing.ts) reads its payer's holds (`paymentHoldsOfPayer`,
+// lib/billing/pending-org-setup.ts), advances each open one, and refuses to mint while any of them
+// blocks: every open state but `refund_pending` (`holdBlocks`, lib/billing/new-org-hold-copy.ts).
+// Every write goes through lib/billing/payment-holds/store.ts, whose header names its callers: the
+// purchase, the link, the sweeper, the webhook's nudge, the notice emails and the operator command.
 //
 // Rows are never deleted (I6): `released` is terminal for a row and kept for audit, and a later open on
 // the same subscription writes a NEW row. That is why `subscription_id` is unique among OPEN rows only
@@ -84,12 +85,12 @@ export const paymentHolds = pgTable(
 		// The create-a-team subscription this hold is about (`sub_…`). Unique among OPEN rows only.
 		subscription_id: text().notNull(),
 		customer_id: text().notNull(),
-		// The payer: the user id (I12). Written once, at open, and never changed. Nothing reads it to block
-		// a purchase yet: from S5/S8 an open hold will block its payer, including after the subscription is
-		// linked to an org.
+		// The payer: the user id (I12). Written once, at open, and never changed. The create-a-team purchase
+		// reads a payer's holds by it (`paymentHoldsOfPayer`), whether or not the subscription has since
+		// been linked to an org.
 		payer_key: text().notNull(),
-		// The held invoice (I2): `latest_invoice` when the hold was opened. Nothing voids or refunds
-		// through it yet: from S5/S6 it will be the only invoice a hold reads, voids or refunds — never the
+		// The held invoice (I2): `latest_invoice` when the hold was opened. It is the only invoice the
+		// machine reads, voids or deletes, and the only one whose PaymentIntents it refunds — never the
 		// subscription's later invoices.
 		invoice_id: text().notNull(),
 		payment_intent_id: text(),
@@ -133,8 +134,7 @@ export const paymentHolds = pgTable(
 		uniqueIndex("payment_holds_open_subscription_uidx")
 			.on(t.subscription_id)
 			.where(sql`state <> 'released'`),
-		// For the lookup of a payer's open holds. Nothing reads by payer yet: from S8 the create-a-team
-		// flow will.
+		// For the lookup of a payer's open holds.
 		index("payment_holds_open_payer_idx")
 			.on(t.payer_key)
 			.where(sql`state <> 'released'`),
