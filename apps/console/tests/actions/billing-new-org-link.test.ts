@@ -62,8 +62,11 @@ const world = vi.hoisted(() => {
 		members: [{ userId: "user-1", status: "active" }] as { userId: string; status: string }[],
 		/** Every direct database write the paths under test made (an INSERT of a member would land here). */
 		dbWrites: [] as string[],
-		/** `alert_deliveries`: one row per alert that reached a channel (what `emitAlertEvent` inserts). */
-		deliveries: [] as { id: string; resource_id: string }[],
+		/**
+		 * `alert_deliveries`: one row per alert that reached a channel (what `emitAlertEvent` inserts). A
+		 * `dead` row is one whose delivery failed for good; the dedupe's read skips it (`ne(status, 'dead')`).
+		 */
+		deliveries: [] as { id: string; resource_id: string; status?: string }[],
 		/** The lease is gone when the store opens a hold (the lease row's FOR SHARE read finds nothing). */
 		openLeaseLost: false,
 		/** The next subscription the sweep's machine reads goes `active`: its payment landed. */
@@ -201,7 +204,7 @@ vi.mock("@/lib/db", async () => {
 				: table === schema.member
 					? world.state.members.map((m) => ({ ...m }))
 					: table === schema.alertDeliveries
-						? world.state.deliveries.map((d) => ({ ...d }))
+						? world.state.deliveries.filter((d) => d.status !== "dead").map((d) => ({ ...d }))
 						: [];
 		table = null;
 		return Promise.resolve(rows).then(resolve);
@@ -993,5 +996,184 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 		expect(r).toMatchObject({ kind: "refused", message: expect.stringMatching(/^We could not settle an earlier checkout's payment automatically/) });
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
 		expect(holdOn()).toMatchObject({ state: "needs_operator", open_note: "link_refused" });
+	});
+});
+
+// ADR 0002 S10b (amendment 2026-10-14): the resume lookup reports an ended setup, with the sentence the
+// link would refuse it with and under the link's alert rule. The expected sentences are LITERALS (C106's
+// rule): read from the module under test, they could not see the two copies drift.
+const NOT_CHARGED_CLAUSE =
+	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
+const UNCONFIRMED_CLAUSE =
+	"This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at support@alethialabs.io with the time of the payment.";
+const ALERT_SENTENCE = " We have raised an alert.";
+const FREE_PLAN_SENTENCE = " A team already created for it stays on the free plan.";
+/** What `alertPaymentNeedsSupport` puts before the detail for `context: "setup_closed"`. */
+const SETUP_CLOSED_SUMMARY = "a create-a-team subscription whose unfinished setup was closed because the subscription ended: ";
+
+const resolve = () => resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" });
+
+/** The lookup's answer, failing the test when it returned none. */
+async function resolved() {
+	const state = await resolve();
+	if (!state) throw new Error("expected a setup state, got null");
+	return state;
+}
+
+/** user-1's setup for X, CLOSED earlier for `reason`, so the closer writes nothing and alerts nothing. */
+function closedSetup(reason: PendingOrgSetupRow["closed_reason"], org: string | null = "org-1"): PendingOrgSetupRow {
+	return Object.assign(setup("sub_x", org), { closed_at: new Date(Date.now() - 3_600_000), closed_reason: reason });
+}
+
+/** The summaries of every operator alert raised so far. */
+function alertSummaries(): string[] {
+	return vi.mocked(emitAlertEvent).mock.calls.map((c) => String(c[2]?.summary ?? ""));
+}
+
+describe("§5.6 'The lookup reports an ended setup' (S10b)", () => {
+	it("C103: X canceled, no hold, nothing paid — `ended` carries the not-charged clause, no hold, no alert", async () => {
+		subX("canceled");
+		closedSetup("ended");
+
+		const state = await resolved();
+		expect(state).toMatchObject({ ended: { clause: NOT_CHARGED_CLAUSE }, hold: null });
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+		expect(settleOpenSetup).not.toHaveBeenCalled();
+	});
+
+	it("C103: X incomplete_expired gives the same result", async () => {
+		subX("incomplete_expired");
+		closedSetup("ended");
+
+		await expect(resolved()).resolves.toMatchObject({ ended: { clause: NOT_CHARGED_CLAUSE }, hold: null });
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+	});
+
+	for (const status of ["paused", "incomplete", "active"]) {
+		it(`C103: X ${status} is not ended — the link would link it`, async () => {
+			subX(status, status === "active" ? ["succeeded"] : ["requires_payment_method"]);
+			setup();
+
+			await expect(resolved()).resolves.toMatchObject({ ended: null });
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+	}
+
+	it("C103: an open refund_due hold on a canceled X reports the hold, and `ended` is null", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+		seedHold({ state: "refund_due", last_pay: "succeeded" });
+
+		await expect(resolved()).resolves.toMatchObject({ ended: null, hold: { state: "refund_due" } });
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+	});
+
+	const refundReasons: Array<NonNullable<PaymentHoldRow["release_reason"]>> = ["refunded", "already_refunded"];
+	for (const reason of refundReasons) {
+		it(`C104: X a hold released as ${reason} — 'refunded in full', never 'could not confirm', and the link's exact clause`, async () => {
+			subX("canceled", ["succeeded"]);
+			closedSetup("hold_released");
+			seedHold({ state: "released", release_reason: reason, released_at: new Date() });
+
+			const state = await resolved();
+			expect(state.planState).toBe("not_active");
+			expect(state.hold).toBeNull();
+			expect(state.ended?.clause).toMatch(/refunded in full/);
+			expect(state.ended?.clause).not.toMatch(/could not confirm/);
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+			// Drift check: the link refuses the same fixture with the same string.
+			expect(await refusedClause()).toBe(state.ended?.clause);
+		});
+	}
+});
+
+describe("§5.6 'The alert: the link's, under the link's rule' (C105)", () => {
+	/** X canceled, no hold of any kind, the setup closed earlier for `reason`, and money that moved since. */
+	function fixture(reason: PendingOrgSetupRow["closed_reason"], org: string | null = "org-1"): PendingOrgSetupRow {
+		subX("canceled", ["succeeded"]);
+		return closedSetup(reason, org);
+	}
+
+	/** Clears what a run left behind (the delivery rows, the alert calls) and stages the fixture again. */
+	function restage(reason: PendingOrgSetupRow["closed_reason"], org: string | null = "org-1"): PendingOrgSetupRow {
+		world.state.deliveries = [];
+		world.state.setups.clear();
+		world.state.orgOf.clear();
+		vi.mocked(emitAlertEvent).mockClear();
+		return fixture(reason, org);
+	}
+
+	// `ended` is the closer's own close on a `never_paid` read, which alerted nothing: the payments moved
+	// after it read them. `hold_released` is a hold's release, which alerts nothing about the setup.
+	const earlierCloses: Array<NonNullable<PendingOrgSetupRow["closed_reason"]>> = ["hold_released", "ended"];
+	for (const reason of earlierCloses) {
+		it(`(a) closed earlier as ${reason}, no delivery row since — ONE alert from the lookup, and the clause claims it`, async () => {
+			fixture(reason);
+
+			const state = await resolved();
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
+			expect(alertSummaries()[0]).toContain(`${SETUP_CLOSED_SUMMARY}a resume of the setup was stopped`);
+			expect(state.ended?.clause).toBe(`${UNCONFIRMED_CLAUSE}${ALERT_SENTENCE}${FREE_PLAN_SENTENCE}`);
+			expect(state.hold).toBeNull();
+
+			// Drift check: the link, on the same fixture, refuses with the same string and alerts as often.
+			restage(reason);
+			expect(await refusedClause()).toBe(state.ended?.clause);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(alertSummaries()[0]).toContain(`${SETUP_CLOSED_SUMMARY}the link to team org-1 was refused`);
+		});
+	}
+
+	it("(a) with no team, the same clause without the free-plan sentence", async () => {
+		fixture("hold_released", null);
+
+		const state = await resolved();
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+		expect(state.ended?.clause).toBe(`${UNCONFIRMED_CLAUSE}${ALERT_SENTENCE}`);
+	});
+
+	it("(b) the alert reached no channel — the clause does not claim it", async () => {
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		fixture("ended");
+		expect((await resolved()).ended?.clause).toBe(`${UNCONFIRMED_CLAUSE}${FREE_PLAN_SENTENCE}`);
+
+		restage("ended", null);
+		vi.mocked(emitAlertEvent).mockResolvedValue(0);
+		expect((await resolved()).ended?.clause).toBe(UNCONFIRMED_CLAUSE);
+	});
+
+	it("(c) a delivered row about X since the close — no alert, and the clause of (a)", async () => {
+		fixture("ended");
+		world.state.deliveries.push({ id: "delivery_earlier", resource_id: "sub_x", status: "delivered" });
+
+		const state = await resolved();
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+		expect(state.ended?.clause).toBe(`${UNCONFIRMED_CLAUSE}${ALERT_SENTENCE}${FREE_PLAN_SENTENCE}`);
+
+		// Drift check: the link is silenced by the same row, and says the same thing.
+		restage("ended");
+		world.state.deliveries.push({ id: "delivery_earlier", resource_id: "sub_x", status: "delivered" });
+		expect(await refusedClause()).toBe(state.ended?.clause);
+		expect(emitAlertEvent).not.toHaveBeenCalled();
+	});
+
+	it("(d) only a dead row — as (a), one alert", async () => {
+		fixture("ended");
+		world.state.deliveries.push({ id: "delivery_dead", resource_id: "sub_x", status: "dead" });
+
+		const state = await resolved();
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+		expect(state.ended?.clause).toBe(`${UNCONFIRMED_CLAUSE}${ALERT_SENTENCE}${FREE_PLAN_SENTENCE}`);
+	});
+
+	it("the lookup writes nothing for an ended setup: no setup write, no Stripe write", async () => {
+		const row = fixture("ended");
+		const before = { ...row };
+
+		await resolved();
+		expect(world.state.setups.get("sub_x")).toEqual(before);
+		expect(stripeWrites()).toBe(0);
+		expect(world.stripe.refunds.create).not.toHaveBeenCalled();
 	});
 });

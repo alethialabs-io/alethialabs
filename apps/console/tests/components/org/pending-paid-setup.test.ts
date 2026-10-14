@@ -154,10 +154,10 @@ function runRecord(subscriptionId: string, orgId: string | null = null): Pending
 	};
 }
 
-/** What the resume lookup answers: an org or none, not linked, and the open hold it reports. */
+/** What the resume lookup answers: an org or none, not linked, the open hold it reports, and an ended X's clause. */
 function lookup(
 	subscriptionId: string,
-	opts: { org?: boolean; hold?: OpenPaymentHoldState | null; notice?: string } = {},
+	opts: { org?: boolean; hold?: OpenPaymentHoldState | null; notice?: string; ended?: string } = {},
 ): NewOrgSetupState {
 	return {
 		subscriptionId,
@@ -166,6 +166,7 @@ function lookup(
 		planState: "confirming",
 		paymentUrl: null,
 		hold: opts.hold ? { state: opts.hold, notice: opts.notice ?? `notice for ${opts.hold}` } : null,
+		ended: opts.ended ? { clause: opts.ended } : null,
 		org: opts.org ? { id: "org-1", slug: "acme-cloud" } : null,
 		linked: false,
 		declared: false,
@@ -275,6 +276,46 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 			expect(outcome).toMatchObject({ kind: "done", planState: "active" });
 		});
 	}
+
+	// C107 (S10b): an ended X with no open hold, which the lookup reports with the link's own clause.
+	const ENDED_CLAUSE =
+		"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged.";
+	it("C107: an ended X stops the run before the org is created and before the link, and clears the record", async () => {
+		const sub = "sub_c107";
+		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub, { ended: ENDED_CLAUSE }), paid: false, planState: "not_charged" });
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord(sub), runHooks);
+
+		expect(outcome).toMatchObject({ kind: "failed", retryable: false, recordCleared: true, message: ENDED_CLAUSE });
+		expect(actions.createOrg).not.toHaveBeenCalled();
+		expect(actions.linkSubscriptionToNewOrg).not.toHaveBeenCalled();
+		expect(wroteAnything()).toBe(false);
+		expect(readStoredPaidSetup(RUN_USER)).toEqual({ kind: "none" });
+	});
+
+	it("C107: on a resume whose org exists, an ended X stops the run before the link, writing nothing", async () => {
+		const sub = "sub_c107_resume";
+		const clause = `${ENDED_CLAUSE} A team already created for it stays on the free plan.`;
+		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub, { org: true, ended: clause }), paid: false, planState: "not_charged" });
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord(sub, "org-1"), runHooks);
+
+		expect(outcome).toMatchObject({ kind: "failed", retryable: false, recordCleared: true, message: clause });
+		expect(actions.linkSubscriptionToNewOrg).not.toHaveBeenCalled();
+		expect(wroteAnything()).toBe(false);
+		expect(readStoredPaidSetup(RUN_USER)).toEqual({ kind: "none" });
+	});
+
+	it("C107 control: `ended` null, no hold, X paid — the run creates the org and links", async () => {
+		const sub = "sub_c107_control";
+		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub), planState: "active" });
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord(sub), runHooks);
+
+		expect(actions.createOrg).toHaveBeenCalledTimes(1);
+		expect(actions.linkSubscriptionToNewOrg).toHaveBeenCalledTimes(1);
+		expect(outcome).toMatchObject({ kind: "done", planState: "active" });
+	});
 
 	// C57, the S half: the link's typed refusal.
 	it("C57: a refused link ends failed, not retryable, with its clause, and clears the record", async () => {

@@ -33,10 +33,11 @@ vi.mock("@/lib/billing/stripe", () => ({
 	STRIPE_REQUEST_TIMEOUT_MS: 20_000,
 	STRIPE_MAX_NETWORK_RETRIES: 1,
 }));
-// `planItem` is real: the org-plan live check (#5977) reads the plan line the way the webhook's sync does.
+// `isOrgPlanSubscription` is real: the org-plan live check (#5977) classifies with the one definition in
+// lib/billing/sync.ts, which reads the plan line the way the webhook's sync does.
 vi.mock("@/lib/billing/sync", async (importActual) => {
 	const actual = await importActual<typeof import("@/lib/billing/sync")>();
-	return { planItem: actual.planItem, syncSubscriptionToBilling: vi.fn() };
+	return { isOrgPlanSubscription: actual.isOrgPlanSubscription, syncSubscriptionToBilling: vi.fn() };
 });
 // The server-side setup record (#5445) is its own module, tested against real Postgres in
 // tests/integration/pending-org-setups.test.ts. Here only its CALLS are asserted; the validation
@@ -2022,6 +2023,7 @@ describe("resolveNewOrgSetup", () => {
 			planState: "active",
 			paymentUrl: null,
 			hold: null,
+			ended: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
 			declared: false,
