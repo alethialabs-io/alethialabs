@@ -1,12 +1,25 @@
-postgres@3.4.9: guard nextWrite() against a closed (null) socket (Alethia #6028).
+postgres@3.4.9: two guards for a connection whose backend dies mid-use (Alethia #6028, #6041).
+Each hunk is applied to both builds Node loads: src/ (import) and cjs/src/ (require).
 
-Backport of upstream porsager/postgres PR #1209 ("Guard nextWrite against a closed socket",
-fixes porsager/postgres#1208; same path through sql.begin() reported in #1248), unreleased as of
-3.4.9. The hunk is that PR's src/connection.js change verbatim, applied to both builds Node loads:
-src/ (import) and cjs/src/ (require). Without it, a write on a connection whose backend was killed
-throws an uncaught TypeError from a setImmediate and leaves the write buffer stuck, so the
-reconnect never sends its startup message and every later query on that connection hangs or
-fails with CONNECT_TIMEOUT. Drop this patch once a postgres release contains #1209.
+1. connection.js, nextWrite(): reject a write on a closed (null) socket (Alethia #6028).
+   Backport of upstream porsager/postgres PR #1209 ("Guard nextWrite against a closed socket",
+   fixes porsager/postgres#1208), that PR's change verbatim, unreleased as of 3.4.9. Without it, a
+   write on a connection whose backend was killed throws an uncaught TypeError from a setImmediate
+   and leaves the write buffer stuck, so the reconnect never sends its startup message and every
+   later query on that connection hangs or fails with CONNECT_TIMEOUT.
+
+2. index.js, begin(): a transaction whose session has closed refuses every later statement
+   (Alethia #6041). Backport of part 1 of the patch proposed on upstream porsager/postgres#1248
+   (open, no release). Without it, when the pool reconnects the connection a dead transaction was
+   on, the transaction's later statements and its own COMMIT run on the new session outside any
+   transaction, so statements issued after the kill commit on their own while everything before
+   it that was not yet committed was rolled back. With it, the statements the transaction had
+   queued, and every statement it issues after the close (savepoints and its own COMMIT or
+   ROLLBACK included), reject with the close's CONNECTION_CLOSED error and are never sent.
+   CONNECTION_CLOSED from begin() means the transaction's outcome is UNKNOWN, not that nothing
+   committed: if the close landed after COMMIT was sent, the commit may have applied.
+
+Drop each hunk once a postgres release contains it.
 Test: apps/console/tests/integration/db-connection-kill.test.ts
 
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
@@ -30,6 +43,46 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..982344fe9edc6077d715040ea8ee49bb
      const x = socket.write(chunk, fn)
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
+diff --git a/cjs/src/index.js b/cjs/src/index.js
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f30d8aa7398ebe0726e09d815fe059bb9f0d726f 100644
+--- a/cjs/src/index.js
++++ b/cjs/src/index.js
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closedError = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          closedError = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
+       }
+ 
+       function handler(q) {
++        if (closedError)
++          return q.reject(closedError)
+         q.catch(e => uncaughtError || (uncaughtError = e))
+         c.queue === full
+           ? queries.push(q)
 diff --git a/src/connection.js b/src/connection.js
 index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef0978f0a4 100644
 --- a/src/connection.js
@@ -51,3 +104,43 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef
      const x = socket.write(chunk, fn)
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
+diff --git a/src/index.js b/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..99d2500d27aef14442ab8ec24f3b3584e22753b3 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closedError = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          closedError = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
+       }
+ 
+       function handler(q) {
++        if (closedError)
++          return q.reject(closedError)
+         q.catch(e => uncaughtError || (uncaughtError = e))
+         c.queue === full
+           ? queries.push(q)
