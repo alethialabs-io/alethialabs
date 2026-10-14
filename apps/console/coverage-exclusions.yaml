@@ -173,9 +173,10 @@ tier_separation:
         tests/integration/billing-queries.test.ts,
         tests/unit/billing-to-valid-date.test.ts,
         tests/integration/payment-hold-sweeper.test.ts,
+        tests/integration/billing-sync.test.ts,
       ]
-    symbols: [getOrgBilling, getOrgByStripeCustomer, toValidDate, applySubscriptionToBilling]
-    reason: Per-org billing reads against real Postgres, the guarded subscription write (#5514) the S9 re-link syncs through against real Postgres, plus the pure timestamptz coercion its unit suite proves.
+    symbols: [getOrgBilling, getOrgByStripeCustomer, toValidDate, applySubscriptionToBilling, writeSubscriptionToBilling]
+    reason: Per-org billing reads against real Postgres, the guarded subscription write (#5514) the S9 re-link syncs through against real Postgres, its reporting form (ADR 0004 D6b, including two concurrent first writes) against real Postgres, plus the pure timestamptz coercion its unit suite proves.
 
   # ── lib/fleet — the durable queue and pool tables ─────────────────────────────────────────
   - path: lib/fleet/queue.ts
