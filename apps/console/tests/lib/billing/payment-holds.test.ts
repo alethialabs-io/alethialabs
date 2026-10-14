@@ -176,6 +176,7 @@ function stripeOf(w: World) {
 function holdRow(over: Partial<PaymentHoldRow> = {}): PaymentHoldRow {
 	return {
 		id: "hold_1",
+		scope: "new_org",
 		subscription_id: "sub_1",
 		customer_id: "cus_1",
 		payer_key: "user_1",

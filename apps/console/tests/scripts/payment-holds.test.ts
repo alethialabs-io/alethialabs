@@ -11,6 +11,9 @@
 // Stripe are mocked: these pin the DECISIONS — what is advanced, alerted, mailed, released, held or
 // listed, and what each refuses. The SQL fences (the claim's compare-and-set, the lease, `version`) are
 // pinned against Postgres in tests/integration/payment-hold-sweeper.test.ts.
+//
+// ADR 0004 C42 (O1, #6001): `list --scope org_plan` lists only those holds, and `release <sub>` of an
+// `org_plan` hold takes `org-plan:<O>` and writes `released(operator)`.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +39,6 @@ vi.mock("@/lib/billing/config", async (importOriginal) => {
 	return { ...real, aiTierForPriceId: (id: string) => (id === "price_ai_plus" ? "ai_plus" : null) };
 });
 vi.mock("@/lib/billing/payment-holds/store", () => ({
-	payerLeaseKey: (payer: string) => `user:${payer}`,
 	writeHoldState: vi.fn(),
 	reserveRefundAttempt: vi.fn(),
 	releaseHold: vi.fn(),
@@ -122,6 +124,7 @@ function hold(over: Partial<PaymentHoldRow> = {}): PaymentHoldRow {
 		id: "hold-1",
 		subscription_id: "sub_x",
 		customer_id: "cus_x",
+		scope: "new_org",
 		payer_key: "payer-1",
 		invoice_id: "in_x",
 		payment_intent_id: null,
@@ -881,7 +884,89 @@ describe("main", () => {
 	it("list prints the holds without amounts or emails", async () => {
 		db.queue.push([hold()]);
 		expect(await main(["list", "--open"], print)).toBe(0);
-		expect(printed[0]).toMatch(/^hold hold-1 {2}sub sub_x {2}payer payer-1 {2}state closing/);
+		expect(printed[0]).toMatch(/^hold hold-1 {2}scope new_org {2}sub sub_x {2}payer payer-1 {2}state closing/);
+	});
+});
+
+// ── ADR 0004 C42: the operator sees and releases org-plan holds ────────────────────────────────────
+
+describe("ADR 0004 C42: the scope in the operator command", () => {
+	const dialect = new PgDialect();
+	const orgHold = (over: Partial<PaymentHoldRow> = {}) =>
+		hold({ scope: "org_plan", payer_key: "org-o", opened_by_user_id: null, state: "refund_due", ...over });
+
+	/** The predicate of the one listing `main` ran, rendered as Postgres. */
+	function listedWhere() {
+		const where = db.wheres[0];
+		if (!is(where, SQL)) throw new Error("list built no SQL predicate");
+		return dialect.sqlToQuery(where);
+	}
+
+	it("list --scope org_plan reads only that scope's holds, and prints each hold's scope", async () => {
+		db.queue.push([orgHold()]);
+		expect(await main(["list", "--scope", "org_plan"], print)).toBe(0);
+		const q = listedWhere();
+		expect(q.sql).toMatch(/"payment_holds"\."scope" = \$\d+/);
+		expect(q.params).toEqual(["org_plan"]);
+		expect(printed[0]).toMatch(/^hold hold-1 {2}scope org_plan {2}sub sub_x {2}payer org-o {2}state refund_due/);
+	});
+
+	it("list --scope and --payer filter together: payer_key alone is never the key", async () => {
+		db.queue.push([]);
+		expect(await main(["list", "--open", "--scope=new_org", "--payer", "payer-1"], print)).toBe(0);
+		const q = listedWhere();
+		expect(q.sql).toMatch(/"payment_holds"\."scope" = \$\d+/);
+		expect(q.sql).toMatch(/"payment_holds"\."payer_key" = \$\d+/);
+		expect(q.params).toEqual(expect.arrayContaining(["new_org", "payer-1"]));
+	});
+
+	it("a --scope with no value is refused, never read as every scope", async () => {
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		for (const argv of [
+			["list", "--scope"],
+			["list", "--scope="],
+			["list", "--scope", "--open"],
+			["list", "--open", "--scope"],
+			["reconcile", "--scope"],
+			["reconcile", "--scope", "--payer", "payer-1"],
+		]) {
+			expect(await main(argv, print)).toBe(1);
+		}
+		expect(getServiceDb).not.toHaveBeenCalled();
+		expect(err).toHaveBeenCalled();
+	});
+
+	it("list --scope with an unknown scope is refused before anything is read", async () => {
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		expect(await main(["list", "--scope", "ai"], print)).toBe(1);
+		expect(await main(["reconcile", "--scope", "ai"], print)).toBe(1);
+		expect(getServiceDb).not.toHaveBeenCalled();
+		expect(err).toHaveBeenCalled();
+	});
+
+	it("release of an org_plan hold takes org-plan:<O> and writes released(operator), audited once", async () => {
+		const { stripe } = fakeStripe({ sub: "canceled", invoice: "void" });
+		const open = orgHold();
+		db.queue.push([open], [open], []); // the open hold; re-read under the lease; setup line
+		const result = await releaseHoldCommand(releaseArgs, serverDeps(stripe), print);
+		expect(result).toEqual({ kind: "released", holdId: "hold-1" });
+		expect(lease.acquirePurchaseLease).toHaveBeenCalledWith("org-plan:org-o", expect.any(Number));
+		expect(store.releaseHold).toHaveBeenCalledWith(LEASE, { id: "hold-1", version: 0 }, {
+			reason: "operator",
+			releasedBy: "op-1",
+			note: "customer refunded by hand",
+		});
+		expect(events()).toEqual(["billing.payment_hold.released"]);
+		expect(lease.releasePurchaseLease).toHaveBeenCalledWith(LEASE);
+	});
+
+	it("an org_plan release is not refused for an open setup naming its subscription: it closes no setup (D1 rule 4)", async () => {
+		const { stripe } = fakeStripe({ sub: "active", invoice: "open" });
+		const open = orgHold({ state: "needs_operator" });
+		db.queue.push([open], [open], [{ id: "setup-1", user_id: "payer-1", created_org_id: null, linked_at: null, closed_at: null }], [{ id: "setup-1" }]);
+		expect(await releaseHoldCommand(releaseArgs, serverDeps(stripe), print)).toMatchObject({ kind: "released" });
+		expect(sweeper.relinkAdoptedSetup).not.toHaveBeenCalled();
+		expect(store.releaseHold).toHaveBeenCalledTimes(1);
 	});
 });
 

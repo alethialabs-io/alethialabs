@@ -18,8 +18,32 @@
 //        names X writes nothing; and the row's `FOR SHARE` lock is held until the release commits, proven
 //        with a second connection whose `UPDATE` of the row times out (55P03) while the release is open.
 //   ---  RLS: `payment_holds` is service-role only.
+//
+// ADR 0004 D1 (O1, #6001), the hold scope:
+//   C3   scope, not the payer key's text, separates holds: with equal `payer_key` strings, each scope's
+//        reader returns only its own, and the create-a-team readers never return an `org_plan` hold.
+//   C4   a state write under the wrong scope's lease changes no row; under its own scope's lease it does.
+//   C5   `openHold` with scope `org_plan` and a `user:` lease throws, and writes nothing.
+//   C7   an `org_plan` release closes no create-a-team setup (C92 above re-runs green for `new_org`).
+//   C8   a row inserted without `scope` reads `new_org`; a scope outside the check is refused.
+//   ---  D1 rule 4: the setup predicates that wait on holds stay scope-free — an open `org_plan` hold on
+//        X keeps X's setup open through the closer, and its verdict says `open`, not `closed`.
 
 import { randomUUID } from "node:crypto";
+import { vi } from "vitest";
+
+// The setup closer's one Stripe read in the D1 rule 4 case below: X, read `canceled`. `canceled` is
+// never proven unpaid, so the closer makes no payment read, and nothing else in this file reaches Stripe.
+vi.mock("@/lib/billing/stripe", () => ({
+	getStripe: () => ({
+		subscriptions: {
+			retrieve: async (id: string) => ({ id, status: "canceled", customer: "cus_it_hold", latest_invoice: null, metadata: {} }),
+		},
+	}),
+}));
+
+import * as store from "@/lib/billing/payment-holds/store";
+import * as setups from "@/lib/billing/pending-org-setup";
 import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -29,7 +53,6 @@ import {
 	nudgeHold,
 	openHold,
 	type OpenHoldInput,
-	payerLeaseKey,
 	releaseHold,
 	reserveRefundAttempt,
 	unclaimHoldNotice,
@@ -50,6 +73,16 @@ import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
 
 const payers: string[] = [];
 const subscriptions: string[] = [];
+
+/** A create-a-team payer's lease key, written out rather than derived from the code under test. */
+function payerLeaseKey(payer: string): string {
+	return `user:${payer}`;
+}
+
+/** An org's org-plan lease key (ADR 0004 §2 "Lease key"), written out for the same reason. */
+function orgPlanLeaseKey(orgId: string): string {
+	return `org-plan:${orgId}`;
+}
 
 /** A fresh payer and that payer's live lease. */
 async function payerWithLease(): Promise<{ payer: string; lease: PurchaseLease }> {
@@ -111,7 +144,10 @@ async function expireLease(key: string): Promise<void> {
 afterAll(async () => {
 	const db = getServiceDb();
 	for (const sub of subscriptions) await db.delete(paymentHolds).where(eq(paymentHolds.subscription_id, sub));
-	for (const payer of payers) await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+	for (const payer of payers) {
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, orgPlanLeaseKey(payer)));
+	}
 });
 
 describeIfDb("payment_holds — C51: the open-row unique index", () => {
@@ -636,6 +672,221 @@ describeIfDb("payment_holds — C109: the moved release's row check, under FOR S
 		expect(await cDone).toBeNull();
 		expect((await release)?.hold.state).toBe("released");
 		await releasePurchaseLease(lease);
+	});
+});
+
+// ── ADR 0004 D1: the hold scope ─────────────────────────────────────────────────────────────────────
+
+/** A fresh org id as an `org_plan` payer, and that org's live org-plan lease. */
+async function orgWithLease(): Promise<{ org: string; lease: PurchaseLease }> {
+	const org = randomUUID();
+	payers.push(org);
+	const lease = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+	if (!lease) throw new Error("fixture: a fresh org's org-plan lease was not free");
+	return { org, lease };
+}
+
+/** E0's input for an `org_plan` hold of `org` on `subscriptionId`, in `closing`. */
+function e0OrgPlan(org: string, subscriptionId: string): OpenHoldInput {
+	return { ...e0(org, subscriptionId), scope: "org_plan", openedByUserId: null };
+}
+
+describeIfDb("payment_holds — ADR 0004 D1: the hold scope", () => {
+	it("C3: with EQUAL payer_key strings, each scope's reader returns only its own hold", async () => {
+		const shared = randomUUID();
+		payers.push(shared);
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(shared));
+		const orgLease = await tryAcquirePurchaseLease(orgPlanLeaseKey(shared));
+		if (!userLease || !orgLease) throw new Error("fixture: the leases were not free");
+		const newOrgSub = newSubscription();
+		const orgPlanSub = newSubscription();
+		const newOrgHold = await opened(userLease, e0(shared, newOrgSub));
+		const orgPlanHold = await opened(orgLease, e0OrgPlan(shared, orgPlanSub));
+		expect(newOrgHold.scope).toBe("new_org");
+		expect(orgPlanHold.scope).toBe("org_plan");
+
+		// The create-a-team readers (ADR 0004 D1 rule 3) see the new_org hold only.
+		expect((await setups.paymentHoldsOfPayer(shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+		expect((await setups.openPaymentHoldOn(newOrgSub))?.id).toBe(newOrgHold.id);
+		expect(await setups.openPaymentHoldOn(orgPlanSub)).toBeNull();
+
+		// The scoped reader returns each scope's own.
+		expect((await store.paymentHoldsOf("org_plan", shared)).map((h) => h.id)).toEqual([orgPlanHold.id]);
+		expect((await store.paymentHoldsOf("new_org", shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+
+		// The scope-free lookup by subscription (D2 (b) 4) finds either.
+		expect((await store.openHoldOn(orgPlanSub))?.id).toBe(orgPlanHold.id);
+		expect((await store.openHoldOn(newOrgSub))?.id).toBe(newOrgHold.id);
+
+		// Released, the org_plan hold is not the create-a-team link's "newest released hold".
+		await releaseHold(orgLease, refOf(orgPlanHold), { reason: "refunded" });
+		expect(await setups.latestReleasedHoldOn(orgPlanSub)).toBeNull();
+		expect(await setups.openPaymentHoldOn(orgPlanSub)).toBeNull();
+		expect(await store.openHoldOn(orgPlanSub)).toBeNull();
+		// A recent refund stays in the scoped reader's set for its notice; it never enters the payer's.
+		expect((await store.paymentHoldsOf("org_plan", shared)).map((h) => [h.id, h.state])).toEqual([[orgPlanHold.id, "released"]]);
+		expect((await setups.paymentHoldsOfPayer(shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("paymentHoldsOf keeps a released hold only when it was refunded within the notice window", async () => {
+		const { org, lease } = await orgWithLease();
+		const refunded = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const voided = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const stale = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const open = await opened(lease, e0OrgPlan(org, newSubscription()));
+		await releaseHold(lease, refOf(refunded), { reason: "refunded" });
+		await releaseHold(lease, refOf(voided), { reason: "voided_unpaid" });
+		await releaseHold(lease, refOf(stale), { reason: "already_refunded" });
+		await getServiceDb()
+			.update(paymentHolds)
+			.set({ released_at: sql`now() - interval '15 days'` })
+			.where(eq(paymentHolds.id, stale.id));
+		const ids = (await store.paymentHoldsOf("org_plan", org)).map((h) => h.id);
+		expect(ids.sort()).toEqual([refunded.id, open.id].sort());
+		await releasePurchaseLease(lease);
+	});
+
+	it("C4: an org_plan hold's state writes need org-plan:<O> — a live user:<O> lease changes no row", async () => {
+		const { org, lease: orgLease } = await orgWithLease();
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userLease) throw new Error("fixture: the user-keyed lease was not free");
+		const hold = await opened(orgLease, e0OrgPlan(org, newSubscription()));
+
+		expect(await writeHoldState(userLease, refOf(hold), { state: "cancel_unproven" })).toBeNull();
+		expect(await reserveRefundAttempt(userLease, refOf(hold))).toBeNull();
+		expect(await releaseHold(userLease, refOf(hold), { reason: "operator" })).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "closing", version: 0, refund_attempt: 0 });
+
+		expect(await writeHoldState(orgLease, refOf(hold), { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C4, the mirror: a new_org hold's state writes need user:<U> — a live org-plan:<U> lease changes no row", async () => {
+		const { payer, lease: userLease } = await payerWithLease();
+		const orgLease = await tryAcquirePurchaseLease(orgPlanLeaseKey(payer));
+		if (!orgLease) throw new Error("fixture: the org-plan-keyed lease was not free");
+		const hold = await opened(userLease, e0(payer, newSubscription()));
+
+		expect(await writeHoldState(orgLease, refOf(hold), { state: "cancel_unproven" })).toBeNull();
+		expect(await reserveRefundAttempt(orgLease, refOf(hold))).toBeNull();
+		expect(await releaseHold(orgLease, refOf(hold), { reason: "operator" })).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "closing", version: 0, refund_attempt: 0 });
+
+		expect(await writeHoldState(userLease, refOf(hold), { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C5: openHold with scope org_plan and a user: lease throws, and writes nothing", async () => {
+		const org = randomUUID();
+		payers.push(org);
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userLease) throw new Error("fixture: the user-keyed lease was not free");
+		const sub = newSubscription();
+		await expect(openHold(userLease, e0OrgPlan(org, sub))).rejects.toThrow(/needs that payer's lease/);
+		expect(await getServiceDb().select().from(paymentHolds).where(eq(paymentHolds.subscription_id, sub))).toEqual([]);
+
+		// And the mirror: a new_org open under an org-plan: lease.
+		const { org: other, lease: orgLease } = await orgWithLease();
+		await expect(openHold(orgLease, e0(other, sub))).rejects.toThrow(/needs that payer's lease/);
+		expect(await getServiceDb().select().from(paymentHolds).where(eq(paymentHolds.subscription_id, sub))).toEqual([]);
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C7: an org_plan release closes no create-a-team setup, whatever its reason", async () => {
+		const creator = randomUUID();
+		await getServiceDb().insert(user).values({ id: creator, email: `it-hold-${creator}@example.test` });
+		try {
+			for (const reason of ["voided_unpaid", "refunded", "operator"] as const) {
+				const { org, lease } = await orgWithLease();
+				const sub = newSubscription();
+				const [setup] = await getServiceDb()
+					.insert(pendingOrgSetups)
+					.values({
+						user_id: creator,
+						subscription_id: sub,
+						customer_id: "cus_it_hold",
+						intended_name: "Held",
+						intended_slug: `held-${sub.slice(-8)}`,
+					})
+					.returning({ id: pendingOrgSetups.id });
+				if (!setup) throw new Error("fixture: no setup was recorded");
+				const hold = await opened(lease, e0OrgPlan(org, sub));
+
+				const released = await releaseHold(lease, refOf(hold), { reason });
+				expect(released).toMatchObject({ closedSetupId: null, hold: { state: "released", release_reason: reason } });
+				const [after] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, setup.id));
+				expect(after).toMatchObject({ closed_at: null, closed_reason: null, linked_at: null });
+				await releasePurchaseLease(lease);
+			}
+		} finally {
+			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
+			await getServiceDb().delete(user).where(eq(user.id, creator));
+		}
+	});
+
+	it("D1 rule 4: an open org_plan hold on X keeps X's setup open — the close and the closer's verdict are scope-free", async () => {
+		const creator = randomUUID();
+		await getServiceDb().insert(user).values({ id: creator, email: `it-hold-${creator}@example.test` });
+		try {
+			const { org, lease } = await orgWithLease();
+			const sub = newSubscription();
+			const [setup] = await getServiceDb()
+				.insert(pendingOrgSetups)
+				.values({
+					user_id: creator,
+					subscription_id: sub,
+					customer_id: "cus_it_hold",
+					intended_name: "Held",
+					intended_slug: `held-${sub.slice(-8)}`,
+				})
+				.returning();
+			if (!setup) throw new Error("fixture: no setup was recorded");
+			await opened(lease, e0OrgPlan(org, sub));
+
+			// The plain close (`noOpenHold`) refuses while the org_plan hold is open.
+			expect(await setups.closePendingOrgSetup({ subscriptionId: sub, reason: "ended" })).toBeNull();
+			// The closer reads X ended, its close matches nothing, and its verdict (`unclosedVerdict`) is
+			// `open`: a hold keeps it. Reading only new_org holds would answer `closed` here.
+			expect(await setups.settleOpenSetup(setup)).toBe("open");
+			const [after] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, setup.id));
+			expect(after).toMatchObject({ closed_at: null, linked_at: null });
+			await releasePurchaseLease(lease);
+		} finally {
+			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
+			await getServiceDb().delete(user).where(eq(user.id, creator));
+		}
+	});
+
+	it("C8: a row inserted without scope reads new_org, and a scope outside the check is refused", async () => {
+		const payer = randomUUID();
+		const sub = newSubscription();
+		const [row] = await getServiceDb()
+			.insert(paymentHolds)
+			.values({
+				subscription_id: sub,
+				customer_id: "cus_it_hold",
+				payer_key: payer,
+				invoice_id: `in_${sub}`,
+				state: "closing",
+				next_check_at: new Date(),
+				opened_by: "backfill",
+			})
+			.returning();
+		expect(row?.scope).toBe("new_org");
+
+		const other = newSubscription();
+		const refused = await refusalText(() =>
+			getServiceDb().execute(sql`INSERT INTO payment_holds
+				(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by, scope)
+				VALUES (${other}, 'cus_it_hold', ${payer}, ${`in_${other}`}, 'closing', now(), 'backfill', 'ai')`),
+		);
+		expect(refused).toMatch(/payment_holds_scope_known/);
 	});
 });
 

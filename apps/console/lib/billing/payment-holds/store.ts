@@ -1,29 +1,40 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The payment-hold store (ADR 0002 §4.1, S4, #5755): the only module that writes `payment_holds`.
+// The payment-hold store (ADR 0002 §4.1, S4, #5755; ADR 0004 D1): the only module that writes
+// `payment_holds`.
+//
+// SCOPE (ADR 0004 D1). Every hold belongs to one flow, `new_org` or `org_plan`, written at open and never
+// changed. Its state writes are fenced on the lease `leaseKeyFor(scope, payer_key)` (lib/db/schema), so
+// a request holding `user:U` can never write an `org_plan` hold, and one holding `org-plan:O` can never
+// write a `new_org` hold. `openHold` takes the scope as an optional input, `new_org` when absent: every
+// opener today is create-a-team and passes none. The two readers here are the org-plan flow's
+// (`paymentHoldsOf`, by scope and payer) and the scope-free lookup by subscription (`openHoldOn`); the
+// create-a-team readers live in lib/billing/pending-org-setup.ts and read `new_org` only.
 //
 // CALLERS. Outside the tests, this module's functions are imported only here:
 //   - app/server/actions/billing.ts: `openHold` — E0 in the create-a-team purchase (`closeUnderHold`,
 //     `opened_by = purchase`), before anything is voided or cancelled.
 //   - sweeper.ts: `openHold` — the link's refusal in `linkSetupToOrg` (`opened_by = link`), the core the
-//     session's link in billing.ts also runs; `payerLeaseKey`; and the three state writes
+//     session's link in billing.ts also runs; and the three state writes
 //     `writeHoldState`, `reserveRefundAttempt` and `releaseHold`, which `machineDepsFor` binds to a lease
 //     and hands to `advanceHold` and `operatorRelease`. The purchase, the link and the operator command
 //     build their machine deps through `machineDepsFor` too. `writeHoldState` is also called directly,
 //     for the age alert's `age_alerted_at` stamp and the link refusal's `alerted_at` stamp.
 //   - webhook-handler.ts (lib/billing): `nudgeHold`.
 //   - emails.ts: `claimHoldNotice` and `unclaimHoldNotice`, around each notice send.
-//   - scripts/payment-holds.ts (the operator command): `payerLeaseKey`, `openHold` (the §8 backfill,
+//   - scripts/payment-holds.ts (the operator command): `openHold` (the §8 backfill,
 //     `opened_by = backfill`) and `writeHoldState` (the backfill's `alerted_at` stamp).
-// machine.ts imports only this module's types.
+// machine.ts imports only this module's types. `paymentHoldsOf` and `openHoldOn` have no caller outside
+// the tests yet: the org-plan purchase (ADR 0004 O6) is their first.
 //
 // THREE KINDS OF WRITE (§4.1), each with its own fence:
 //
 //   STATE WRITE   `openHold` (E0), `writeHoldState` (every transition that keeps the hold open, a failed
 //                 observation's bookkeeping, the age alert), `reserveRefundAttempt` (T5's reservation,
 //                 §3.5) and `releaseHold` (every release, including T16). A compare-and-set on `version`
-//                 AND on the payer's purchase lease (S2) in the same statement, `version = version + 1`.
+//                 AND on the hold's own purchase lease, `leaseKeyFor(scope, payer_key)` (S2; ADR 0004
+//                 D1 rule 1), in the same statement, `version = version + 1`.
 //                 A request whose lease another request took over writes nothing: its statement matches
 //                 no row (S2's C25, the hold-write half). A write prepared on a version another write has
 //                 since bumped writes nothing either (C65).
@@ -33,9 +44,10 @@
 //                 hold and state.
 // Neither a hint nor a claim touches `version`, so neither can make a state write miss (C74).
 //
-// A RELEASE DECIDES THE SETUP (§4.1, I16 (b)). The state write that releases a hold, for any reason but
-// `adopted`, closes the `pending_org_setups` row with the hold's `subscription_id` in the SAME
-// transaction (`closed_reason = 'hold_released'`), when that row is still open. An `adopted` release
+// A RELEASE DECIDES THE SETUP (§4.1, I16 (b)). The state write that releases a `new_org` hold, for any
+// reason but `adopted`, closes the `pending_org_setups` row with the hold's `subscription_id` in the SAME
+// transaction (`closed_reason = 'hold_released'`), when that row is still open. An `org_plan` release
+// touches no setup (ADR 0004 D1 rule 4). An `adopted` release
 // leaves it open (§5.6 "When a hold ends"). The session's link, when its own advance adopts the
 // subscription, goes on to link that setup itself (`linkSetupToOrg`). `relinkAdoptedSetup` (sweeper.ts)
 // re-links a setup whose team exists under the caller's lease, and leaves one with no team open for the
@@ -50,24 +62,23 @@
 // Every write runs through getServiceDb(): the table is service-role only (programmables.sql).
 
 import "server-only";
-import { and, eq, isNull, ne, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
+import { REFUND_NOTICE_WINDOW_MS } from "@/lib/billing/new-org-hold-copy";
 import { getServiceDb } from "@/lib/db";
 import {
+	leaseKeyFor,
+	leaseKeySql,
 	type OpenPaymentHoldState,
 	type PaymentHoldNotifiedState,
 	type PaymentHoldOpener,
 	type PaymentHoldReleaseReason,
 	organizationBilling,
 	type PaymentHoldRow,
+	type PaymentHoldScope,
 	paymentHolds,
 	pendingOrgSetups,
 } from "@/lib/db/schema";
 import type { PurchaseLease } from "@/lib/billing/purchase-lease";
-
-/** The purchase-lease key a hold's state writes are fenced on: its payer's, `user:<payer_key>` (§4.4). */
-export function payerLeaseKey(payerKey: string): string {
-	return `user:${payerKey}`;
-}
 
 /** The hold a state write is prepared on: its id, and the `version` the caller read. */
 export interface HoldRef {
@@ -77,24 +88,28 @@ export interface HoldRef {
 
 /**
  * The lease half of a state write's fence, for use inside a statement on `payment_holds`: the caller's
- * lease is live, still names the caller as holder, AND is the hold's own payer's lease. The last clause
- * means a request holding user A's lease can never write user B's hold.
+ * lease is live, still names the caller as holder, AND is the hold's own lease,
+ * `leaseKeyFor(scope, payer_key)`, computed from the row in the same statement (ADR 0004 D1 rule 1). So
+ * a request holding user A's lease can never write user B's hold, and a lease of one scope can never
+ * write a hold of the other, even when the two payer keys are the same string.
  */
 function leaseFence(lease: PurchaseLease): SQL {
 	return sql`EXISTS (SELECT 1 FROM purchase_leases pl
 		WHERE pl.key = ${lease.key}
 		  AND pl.holder = ${lease.holder}
 		  AND pl.expires_at > now()
-		  AND pl.key = 'user:' || ${paymentHolds.payer_key})`;
+		  AND pl.key = ${leaseKeySql()})`;
 }
 
-/** The full state-write predicate (§4.1): this row, at the version read, behind a live lease of its payer. */
+/** The full state-write predicate (§4.1): this row, at the version read, behind a live lease of its own. */
 function stateWriteFence(lease: PurchaseLease, ref: HoldRef): SQL | undefined {
 	return and(eq(paymentHolds.id, ref.id), eq(paymentHolds.version, ref.version), leaseFence(lease));
 }
 
 /** What E0 writes (§3.2, §4.1). */
 export interface OpenHoldInput {
+	/** The flow the hold belongs to (ADR 0004 D1). `new_org` when absent; ADR 0004 O8 makes it required. */
+	scope?: PaymentHoldScope;
 	subscriptionId: string;
 	customerId: string;
 	payerKey: string;
@@ -114,8 +129,9 @@ export interface OpenHoldInput {
  * that row, or null when it was released between the conflict and the read); or wrote nothing because
  * the caller's lease is no longer live (the purchase must then void and cancel nothing, T0f).
  *
- * WARNING — `already_open.hold` may belong to ANOTHER payer: it is whatever open row holds the
- * subscription, read without a payer filter. Callers must not show it, or anything from it, to the user.
+ * WARNING — `already_open.hold` may belong to ANOTHER payer, or to another scope: it is whatever open
+ * row holds the subscription, read without a payer or scope filter. Callers must not show it, or
+ * anything from it, to the user.
  */
 export type OpenHoldResult =
 	| { kind: "opened"; hold: PaymentHoldRow }
@@ -123,7 +139,9 @@ export type OpenHoldResult =
 	| { kind: "lease_lost" };
 
 /**
- * E0 (T0 / T0h): opens a hold under the payer's lease, before anything is voided or cancelled (I4).
+ * E0 (T0 / T0h): opens a hold under its own lease, `leaseKeyFor(scope, payerKey)`, before anything is
+ * voided or cancelled (I4). A lease of any other key is refused with a throw, before anything is read or
+ * written (ADR 0004 D1 rule 2).
  *
  * An INSERT cannot carry the lease predicate in its own statement the way an UPDATE does, so the fence is
  * a `FOR SHARE` read of the lease row in the same transaction: while it is held, a takeover of that
@@ -131,8 +149,9 @@ export type OpenHoldResult =
  * and the insert. A conflict on the open-row unique index (I6) writes nothing and returns the open row.
  */
 export async function openHold(lease: PurchaseLease, input: OpenHoldInput): Promise<OpenHoldResult> {
-	if (lease.key !== payerLeaseKey(input.payerKey)) {
-		throw new Error(`openHold: a hold of ${input.payerKey} needs that payer's lease, not ${lease.key}.`);
+	const scope = input.scope ?? "new_org";
+	if (lease.key !== leaseKeyFor(scope, input.payerKey)) {
+		throw new Error(`openHold: a ${scope} hold of ${input.payerKey} needs that payer's lease, not ${lease.key}.`);
 	}
 	return getServiceDb().transaction(async (tx) => {
 		const live = await tx.execute(sql`SELECT 1 AS live FROM purchase_leases
@@ -143,6 +162,7 @@ export async function openHold(lease: PurchaseLease, input: OpenHoldInput): Prom
 		const [opened] = await tx
 			.insert(paymentHolds)
 			.values({
+				scope,
 				subscription_id: input.subscriptionId,
 				customer_id: input.customerId,
 				payer_key: input.payerKey,
@@ -272,9 +292,10 @@ export interface ReleasedHold {
 
 /**
  * Releases a hold (the state write into `released`) and, in the SAME transaction, decides its setup
- * (§4.1 "A release decides the setup", I16 (b)): for every reason but `adopted`, the still-open
- * `pending_org_setups` row with the hold's subscription is closed with `closed_reason = 'hold_released'`.
- * An `adopted` release leaves the setup as it is.
+ * (§4.1 "A release decides the setup", I16 (b)): for a `new_org` hold released for any reason but
+ * `adopted`, the still-open `pending_org_setups` row with the hold's subscription is closed with
+ * `closed_reason = 'hold_released'`. An `adopted` release, and any `org_plan` release (ADR 0004 D1
+ * rule 4), leaves the setup as it is.
  *
  * With `expectOrgRow` (§5.8 step 9), the transaction first reads the team's `organization_billing` row
  * `FOR SHARE`, before the hold's update. When that row does not name the expected subscription (or there
@@ -320,7 +341,9 @@ export async function releaseHold(
 			.where(and(stateWriteFence(lease, ref), ne(paymentHolds.state, "released")))
 			.returning();
 		if (!hold) return null;
-		if (input.reason === "adopted") return { hold, closedSetupId: null, ...(checkedOrgRow ? { checkedOrgRow } : {}) };
+		if (input.reason === "adopted" || hold.scope !== "new_org") {
+			return { hold, closedSetupId: null, ...(checkedOrgRow ? { checkedOrgRow } : {}) };
+		}
 
 		// "Still open" is the setup's own definition (lib/db/schema/pending-org-setups.ts): neither linked
 		// nor closed. A linked setup is finished and is not reopened or re-closed here.
@@ -337,6 +360,48 @@ export async function releaseHold(
 			.returning({ id: pendingOrgSetups.id });
 		return { hold, closedSetupId: closed?.id ?? null, ...(checkedOrgRow ? { checkedOrgRow } : {}) };
 	});
+}
+
+/**
+ * The holds of `payerKey` in `scope` that a purchase in that scope reads (ADR 0002 §3.2 E1 (a), §5.5;
+ * ADR 0004 D1 rule 3, D2 (a)): every OPEN one, and every one released `refunded` or `already_refunded`
+ * within the refund notice window, for its clause. Keyed by the pair: `payer_key` alone is never a key,
+ * so an org id and a user id that happen to be the same string never read each other's holds. The
+ * org-plan purchase reads `paymentHoldsOf('org_plan', orgId)` (ADR 0004 O6).
+ */
+export async function paymentHoldsOf(scope: PaymentHoldScope, payerKey: string): Promise<PaymentHoldRow[]> {
+	const since = new Date(Date.now() - REFUND_NOTICE_WINDOW_MS);
+	return getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(
+			and(
+				eq(paymentHolds.scope, scope),
+				eq(paymentHolds.payer_key, payerKey),
+				or(
+					ne(paymentHolds.state, "released"),
+					and(
+						inArray(paymentHolds.release_reason, ["refunded", "already_refunded"]),
+						gt(paymentHolds.released_at, since),
+					),
+				),
+			),
+		)
+		.orderBy(asc(paymentHolds.created_at));
+}
+
+/**
+ * The OPEN hold on `subscriptionId`, of ANY scope, or null (I6: at most one open hold per subscription,
+ * across scopes). The org-plan sweep's cross-scope check (ADR 0004 D2 (b) 4): a subscription another
+ * scope's hold is deciding is kept, never closed. The returned hold may be another payer's.
+ */
+export async function openHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
+	const [hold] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.limit(1);
+	return hold ?? null;
 }
 
 /**
