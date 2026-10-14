@@ -94,7 +94,7 @@ export function toValidDate(v: unknown): Date | null {
  * Upserts an org's billing record (one row per org) UNCONDITIONALLY — the off-Stripe write path:
  * the operator plane's plan grant (lib/platform/provision.ts) and the customer-id stamp in
  * `ensureCustomer`. It is NOT the Stripe subscription-event path; that is
- * `applySubscriptionToBilling` below, which refuses to let one subscription's event overwrite a
+ * `writeSubscriptionToBilling` below, which refuses to let one subscription's event overwrite a
  * row naming another live one (#5514). Entitlements then resolve from the new plan + status on
  * the next request (no cache to invalidate — getActiveScope reads it fresh).
  */
@@ -156,7 +156,7 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 //     Stripe purchase has always been able to replace). That second clause is the superseder.
 //   - An ENDED event (`canceled`) touches only the row naming that same subscription. It never
 //     creates a row and never lands on a row naming another subscription.
-// Anything refused leaves the row byte-for-byte unchanged and the write reports `false`.
+// Anything refused leaves the row byte-for-byte unchanged and the write reports it did not apply.
 
 /** The billing statuses under which a subscription still holds the org's row. */
 const LIVE_STATUSES = ["active", "trialing", "past_due"] as const;
@@ -311,10 +311,10 @@ export interface PlanSlotWrite {
 }
 
 /**
- * Applies one Stripe subscription's state to the org-plan columns, IF the guard above allows it,
- * and returns whether it did. The check and the write are one statement, so it is atomic against a
- * concurrent delivery. This — not `upsertOrgBilling` — is the write path for Stripe subscription
- * events (lib/billing/sync.ts, through `writeSubscriptionToBilling`).
+ * `writeSubscriptionToBilling`, answering only whether the write applied. No production code calls it:
+ * since ADR 0004 O3 the sync (lib/billing/sync.ts) writes through `writeSubscriptionToBilling`, which
+ * also reports the slot it decided against. It is kept for the integration tests that seed or replay a
+ * row through the same guard (tests/integration/payment-hold-sweeper.test.ts).
  */
 export async function applySubscriptionToBilling(
 	input: SubscriptionBillingWrite,
@@ -323,8 +323,10 @@ export async function applySubscriptionToBilling(
 }
 
 /**
- * `applySubscriptionToBilling`, reporting what the slot held before the write (ADR 0004 D6b: "the
- * guarded write reports the subscription id and status it replaced"). One transaction: the row is read
+ * The Stripe subscription-event write path (lib/billing/sync.ts): applies one subscription's state to
+ * the org-plan columns IF the guard above allows it, and reports whether it did and what the slot held
+ * before the write (ADR 0004 D6b: "the guarded write reports the subscription id and status it
+ * replaced"). One transaction: the row is read
  * `FOR UPDATE`, then the same guarded statement runs, so no other write lands between the read and the
  * decision. `RETURNING` alone cannot say this, because it gives only the new values.
  *
@@ -423,7 +425,7 @@ export interface AiSubscriptionWrite {
 
 /**
  * Applies a standalone AI subscription's state to ONLY the AI columns, under the same guard as
- * `applySubscriptionToBilling` (over the AI subscription id, status and watermark), and returns
+ * `writeSubscriptionToBilling` (over the AI subscription id, status and watermark), and returns
  * whether it did. The org-plan columns are never touched — the AI product is orthogonal, so an org
  * can be e.g. community plan + AI Plus. Creates the row (plan defaults to community) if the org has
  * none, except for an ended subscription, which only ever updates the row naming it.

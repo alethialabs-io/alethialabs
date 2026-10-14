@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The org-plan row's reconciliations from a fresh Stripe read, and the two-live detector (ADR 0004 D4,
-// D6). The guarded write (`writeSubscriptionToBilling`, lib/billing/queries.ts) is unchanged: it decides
-// from the row's STORED status. What it cannot see, these make one Stripe read to find out:
+// D6). The guard's predicate (lib/billing/queries.ts) is #5514's, unchanged: it decides from the row's
+// STORED status. `writeSubscriptionToBilling` now runs it in a transaction that first reads the slot
+// `FOR UPDATE`, and reports that slot (D6b). What the stored status cannot show, these make one Stripe
+// read to find out:
 //
 //   R1   the subscription the row names ENDED (`customer.subscription.deleted` applied): list the org's
 //        customer and name a live org-plan sibling, `active` first, then `trialing`, then any other live
@@ -222,9 +224,13 @@ function customerIdOf(sub: Stripe.Subscription): string {
  * R1, after `customer.subscription.deleted` for `ended` APPLIED to its org's row. When `ended` is an
  * org-plan subscription of its org, lists its customer fully and names one live org-plan sibling (see
  * `chooseSuccessor`) by syncing it with no event time: the row now reads `canceled`, which is not live,
- * so the guard lets a different subscription take it. With two or more live, it also raises the
- * two-live alert (D6c). Returns the subscription it named, or null when there was none to name (the row
- * then stays `canceled` / `community`). A failed list throws.
+ * so the guard lets a different subscription take it. That write carries no event time, so a deletion
+ * of the named subscription racing it could be refused (the row still named `ended`) and then be
+ * overwritten by the stale `active`: R1 therefore retrieves the named one again after its write, and
+ * when it has ended, syncs that read too, whose `canceled` applies because the row now names it.
+ * With two or more live, and the named one still live, it raises the two-live alert (D6c). Returns the
+ * named subscription as last read, or null when there was none to name (the row then stays
+ * `canceled` / `community`). A failed list or retrieve throws.
  */
 export async function repointAfterEnd(
 	stripe: OrgPlanStripe,
@@ -238,13 +244,18 @@ export async function repointAfterEnd(
 	const named = chooseSuccessor(live);
 	if (!named) return null;
 	await syncSubscriptionToBilling(named);
+	const now = await stripe.subscriptions.retrieve(named.id);
+	if (ENDED_STATUSES.has(now.status)) {
+		await syncSubscriptionToBilling(now);
+		return now;
+	}
 	const others = live.filter((s) => s.id !== named.id);
 	const other = others.reduce<Stripe.Subscription | null>(
 		(best, s) => (!best || s.created > best.created ? s : best),
 		null,
 	);
-	if (other) await reportTwoLive(orgId, partyOf(named), partyOf(other));
-	return named;
+	if (other) await reportTwoLive(orgId, partyOf(now), partyOf(other));
+	return now;
 }
 
 /**
@@ -255,13 +266,17 @@ export async function repointAfterEnd(
  * - Refused, `x` live, and the row names a different subscription Y: retrieve Y. Ended → sync Y (its
  *   `canceled` applies to the row that names it), then sync `x` again with the same event time, which
  *   now applies. Live → the row stays on Y, and the two-live alert names `x` and Y (D6a).
+ *   Y's own `customer.subscription.deleted` is refused once `x` holds the row, so it can no longer tell
+ *   the customer Y ended. When R2 wrote Y's end and `x` is not a PAID successor on the row, R2 returns
+ *   Y, and the caller sends Y's cancellation as an applied deletion would (R1's email rule, D4).
  * - Refused, `x` live, and the row names no subscription: nothing to re-read; when the row is a live
  *   off-Stripe grant, the two-live alert names `x` and the grant.
  * - Applied, `x` paid, and the row named a different Y it stored as `none`: retrieve Y, and alert when Y
  *   reads `paused` (D6b′). A failed retrieve alerts anyway, saying Y could not be read: the row now names
  *   `x`, so a redelivery could not find Y again. It never fails the event.
  *
- * A failed retrieve in R2 throws, before anything past the guarded write of `x` has changed.
+ * Returns the ended subscription whose cancellation the customer is still owed (R2's ended-Y branch),
+ * or null. A failed retrieve in R2 throws, before anything past the guarded write of `x` has changed.
  */
 export async function reconcileAfterSync(
 	stripe: OrgPlanStripe,
@@ -269,28 +284,29 @@ export async function reconcileAfterSync(
 	outcome: SyncOutcome,
 	write: PlanSlotWrite | null,
 	opts: SyncOptions,
-): Promise<void> {
+): Promise<Stripe.Subscription | null> {
 	const orgId = x.metadata?.organization_id;
 	const before = write?.before;
-	if (!orgId || !before || before.subscriptionId === x.id || !isOrgPlanSubscriptionOf(x, orgId)) return;
+	if (!orgId || !before || before.subscriptionId === x.id || !isOrgPlanSubscriptionOf(x, orgId)) return null;
 
 	if (outcome === "ignored") {
-		if (!isLiveStatus(x.status)) return;
+		if (!isLiveStatus(x.status)) return null;
 		if (before.subscriptionId === null) {
 			if (slotIsLive(before)) await reportTwoLive(orgId, partyOf(x), partyOfSlot(before));
-			return;
+			return null;
 		}
 		const y = await stripe.subscriptions.retrieve(before.subscriptionId);
 		if (ENDED_STATUSES.has(y.status)) {
-			await syncSubscriptionToBilling(y);
-			await syncSubscriptionToBilling(x, { eventAt: opts.eventAt });
-		} else if (isLiveStatus(y.status)) {
-			await reportTwoLive(orgId, partyOf(x), partyOf(y));
+			const yEnded = await syncSubscriptionToBilling(y);
+			const xTook = await syncSubscriptionToBilling(x, { eventAt: opts.eventAt });
+			const paidSuccessor = xTook === "applied" && isPaidStatus(x.status);
+			return yEnded === "applied" && !paidSuccessor ? y : null;
 		}
-		return;
+		if (isLiveStatus(y.status)) await reportTwoLive(orgId, partyOf(x), partyOf(y));
+		return null;
 	}
 
-	if (!isPaidStatus(x.status) || before.subscriptionId === null || before.status !== "none") return;
+	if (!isPaidStatus(x.status) || before.subscriptionId === null || before.status !== "none") return null;
 	const replacedId = before.subscriptionId;
 	let y: Stripe.Subscription;
 	try {
@@ -303,7 +319,8 @@ export async function reconcileAfterSync(
 			{ subscriptionId: replacedId, status: "unreadable", created: null },
 			`Subscription ${replacedId} could not be read from Stripe, so it may still be paused and live.`,
 		);
-		return;
+		return null;
 	}
 	if (y.status === "paused") await reportTwoLive(orgId, partyOf(x), partyOf(y));
+	return null;
 }

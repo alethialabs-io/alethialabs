@@ -12,8 +12,10 @@
 // THE ORG-PLAN ROW (ADR 0004 D4, D6, lib/billing/org-plan-row.ts). After a deletion applies to the row,
 // R1 names a live org-plan sibling; after a sync of a subscription read fresh from Stripe, R2 re-reads
 // the subscription the row names when a live write was refused, and D6b′ reads a replaced stored-`none`
-// one. Their writes go through the same guarded sync, and their reads throw on failure, so a re-run is
-// safe; none of them cancels, refunds or voids anything.
+// one. Their writes go through the same guarded sync. R1's list and R1's and R2's retrieves throw on
+// failure, so the event fails and is redelivered, and the re-run is safe; D6b′'s retrieve is caught and
+// alerts instead, because the row already names the new subscription. None of them cancels, refunds or
+// voids anything.
 //
 // PAYMENT HOLDS (ADR 0002 §5.3, S7). The webhook never moves a hold and makes no Stripe call for one:
 // it never calls `advanceHold`, whose callers are the sweeper (payment-holds/sweeper.ts `visitHold`) and
@@ -299,6 +301,19 @@ export async function handleStripeEvent(
 	// Syncs a subscription the dispatcher has just READ from Stripe, then runs the org-plan row's
 	// reconciliations on what the guarded write reported (ADR 0004 D4 R2, D6a, D6b′,
 	// lib/billing/org-plan-row.ts). A failed Stripe read in R2 throws, failing the event before any email.
+	// Tells the customer an org-plan subscription that the row named has ended: the revenue event and the
+	// "subscription canceled" email, unless Alethia made the cancel (a hold closing a checkout, or a
+	// close-out): the row still records that, but there was never a plan to tell them about (§5.3 (4)).
+	const reportCancellation = async (sub: Stripe.Subscription): Promise<void> => {
+		if (await isAlethiaCancel(sub, holds)) return;
+		await trackRevenue(sub, "subscription_canceled");
+		await safeEmail("subscription canceled", () => sendSubscriptionCanceledEmail(sub));
+	};
+	// Syncs a subscription the dispatcher has just READ from Stripe, then runs the org-plan row's
+	// reconciliations on what the guarded write reported (ADR 0004 D4 R2, D6a, D6b′,
+	// lib/billing/org-plan-row.ts). A failed Stripe read in R2 throws, failing the event before any email.
+	// When R2 wrote the end of the row's subscription Y and no paid successor took the row, Y's own
+	// deletion will be refused, so Y's cancellation is reported here instead.
 	const syncFresh = async (sub: Stripe.Subscription): Promise<void> => {
 		const seen: { write: PlanSlotWrite | null } = { write: null };
 		const outcome = await syncSubscriptionToBilling(sub, {
@@ -307,7 +322,8 @@ export async function handleStripeEvent(
 				seen.write = write;
 			},
 		});
-		await reconcileAfterSync(getStripe(), sub, outcome, seen.write, sync);
+		const endedPlan = await reconcileAfterSync(getStripe(), sub, outcome, seen.write, sync);
+		if (endedPlan) await reportCancellation(endedPlan);
 	};
 
 	switch (event.type) {
@@ -335,16 +351,10 @@ export async function handleStripeEvent(
 			// R1 (ADR 0004 D4): the row's subscription ended, so name a live org-plan sibling, if any. A
 			// failed list throws here, before any email, and Stripe redelivers the event.
 			const successor = await repointAfterEnd(getStripe(), sub);
-			// A cancel Alethia made (a hold closing a checkout, or a close-out) is not the customer's: the
-			// row still records it, but there was never a plan to tell them was cancelled (§5.3 (4)).
-			if (await isAlethiaCancel(sub, holds)) break;
 			// R1 named a PAID sibling: the org's plan did not end, so there is no cancellation to report.
 			// A `past_due` successor is not paid, and the email still goes.
 			if (successor && isPaidStatus(successor.status)) break;
-			await trackRevenue(sub, "subscription_canceled");
-			await safeEmail("subscription canceled", () =>
-				sendSubscriptionCanceledEmail(sub),
-			);
+			await reportCancellation(sub);
 			break;
 		}
 		case "customer.subscription.trial_will_end":

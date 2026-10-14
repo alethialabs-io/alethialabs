@@ -135,7 +135,7 @@ export type SyncOutcome = "applied" | "ignored";
  * org from `subscription.metadata.organization_id`. Events without it are ignored
  * (logged), so a stray Stripe object can never mutate the wrong tenant.
  *
- * The write is CONDITIONAL (#5514, see `applySubscriptionToBilling`): it is refused when the row
+ * The write is CONDITIONAL (#5514, see `writeSubscriptionToBilling`): it is refused when the row
  * names a different live subscription this one does not supersede, when this is an ended
  * subscription the row does not name, or when the event is older than one already applied. A
  * refused sync has no side effects — no included credit, no welcome email — because the org is

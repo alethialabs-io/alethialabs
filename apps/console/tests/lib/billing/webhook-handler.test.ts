@@ -282,7 +282,8 @@ describe("ADR 0004 D4 and D6 in the webhook (W)", () => {
 			if (!sub) throw new Error(`No such subscription: ${id}`);
 			return sub;
 		});
-		// Pages of two, so R1's read is proven to follow `has_more`.
+		// Pages of two, in insertion order. "R1 reads page two" is proven by its own case below, which puts
+		// the only live sibling there.
 		stripeMock.list.mockReset().mockImplementation(async (params: Stripe.SubscriptionListParams) => {
 			const all = [...world.stripe.values()].filter((s) => s.customer === params.customer);
 			const from = params.starting_after ? all.findIndex((s) => s.id === params.starting_after) + 1 : 0;
@@ -371,6 +372,36 @@ describe("ADR 0004 D4 and D6 in the webhook (W)", () => {
 		]);
 		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "active", plan: "team" });
 		expect(twoLiveAlerts()).toEqual([]);
+		// X is a PAID successor: the org's plan did not end, so Y's cancellation is not reported.
+		expect(sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+		expect(captureServer).not.toHaveBeenCalled();
+		expectNoStripeWrite();
+	});
+
+	it("C36 variant: X is past_due — R2 writes Y's end and X, and Y's cancellation is reported once, even though Y's late deletion is then refused", async () => {
+		rowNames("sub_y", "active");
+		const y = subscription("sub_y", "canceled", 1_000);
+		const x = subscription("sub_x", "past_due", 2_000);
+		await handleStripeEvent(eventOf("customer.subscription.updated", x), noHolds);
+		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "past_due", plan: "community" });
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledWith(y);
+		expect(captureServer).toHaveBeenCalledWith(ORG, "subscription_canceled", ORG, undefined);
+
+		// Y's own deletion arrives late: the row names X, so it is refused, and Y is not reported twice.
+		await handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds);
+		expect(rowNow()?.subscriptionId).toBe("sub_x");
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+		expectNoStripeWrite();
+	});
+
+	it("C36 variant, replay: R2's cancellation report honours suppressEmails", async () => {
+		rowNames("sub_y", "active");
+		subscription("sub_y", "canceled", 1_000);
+		const x = subscription("sub_x", "unpaid", 2_000);
+		await handleStripeEvent(eventOf("customer.subscription.updated", x), { ...noHolds, suppressEmails: true });
+		expect(rowNow()?.subscriptionId).toBe("sub_x");
+		expect(sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
 		expectNoStripeWrite();
 	});
 
@@ -458,6 +489,19 @@ describe("ADR 0004 D4 and D6 in the webhook (W)", () => {
 		expectNoStripeWrite();
 	});
 
+	it.each(["canceled", "incomplete_expired"])(
+		"C46: the replaced Y reads %s — not paused, so no alert",
+		async (status) => {
+			rowNames("sub_y", "none");
+			subscription("sub_y", status, 1_000);
+			const x = subscription("sub_x", "active", 2_000);
+			await handleStripeEvent(eventOf("customer.subscription.updated", x), noHolds);
+			expect(stripeMock.retrieve).toHaveBeenCalledWith("sub_y");
+			expect(twoLiveAlerts()).toEqual([]);
+			expectNoStripeWrite();
+		},
+	);
+
 	it("C46: the replaced Y reads incomplete — no alert", async () => {
 		rowNames("sub_y", "none");
 		subscription("sub_y", "incomplete", 1_000);
@@ -490,6 +534,56 @@ describe("ADR 0004 D4 and D6 in the webhook (W)", () => {
 		const x = subscription("sub_x", "past_due", 2_000);
 		await handleStripeEvent(eventOf("customer.subscription.updated", x), noHolds);
 		expect(stripeMock.retrieve).toHaveBeenCalledTimes(1);
+		expect(twoLiveAlerts()).toEqual([]);
+		expectNoStripeWrite();
+	});
+
+	it("R1 follows `has_more`: the only live sibling sits on the second page", async () => {
+		rowNames("sub_y", "active");
+		subscription("sub_old1", "canceled", 100);
+		subscription("sub_old2", "incomplete_expired", 200);
+		const y = subscription("sub_y", "canceled", 1_000);
+		subscription("sub_x", "active", 2_000);
+		await handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds);
+		expect(stripeMock.list).toHaveBeenCalledTimes(2);
+		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "active", plan: "team" });
+		expect(sendSubscriptionCanceledEmail).not.toHaveBeenCalled();
+		expectNoStripeWrite();
+	});
+
+	it("R1 names only a LIVE sibling: newer ended org-plan siblings are passed over for an older past_due one", async () => {
+		rowNames("sub_y", "active");
+		subscription("sub_x", "past_due", 1_500);
+		subscription("sub_gone", "canceled", 3_000);
+		subscription("sub_expired", "incomplete_expired", 3_500);
+		subscription("sub_checkout", "incomplete", 4_000);
+		const y = subscription("sub_y", "canceled", 1_000);
+		await handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds);
+		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "past_due", plan: "community" });
+		expect(twoLiveAlerts()).toEqual([]);
+		expectNoStripeWrite();
+	});
+
+	it("R1 race: the named sibling is deleted between R1's list and its write — R1 re-reads it and writes its end, and the email goes", async () => {
+		rowNames("sub_y", "active");
+		const listed = subscription("sub_x", "active", 2_000);
+		const y = subscription("sub_y", "canceled", 1_000);
+		// The list still shows X active; every read after it shows X canceled.
+		const gone = { ...listed, status: "canceled" };
+		stripeMock.retrieve.mockImplementation(async (id: string) => {
+			if (id === "sub_x") return gone;
+			const sub = world.stripe.get(id);
+			if (!sub) throw new Error(`No such subscription: ${id}`);
+			return sub;
+		});
+		await handleStripeEvent(eventOf("customer.subscription.deleted", y), noHolds);
+		expect(world.syncs).toEqual([
+			{ id: "sub_y", status: "canceled", eventAt: new Date(CREATED * 1000) },
+			{ id: "sub_x", status: "active", eventAt: undefined },
+			{ id: "sub_x", status: "canceled", eventAt: undefined },
+		]);
+		expect(rowNow()).toEqual({ subscriptionId: "sub_x", status: "canceled", plan: "community" });
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
 		expect(twoLiveAlerts()).toEqual([]);
 		expectNoStripeWrite();
 	});

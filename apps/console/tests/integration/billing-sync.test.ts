@@ -29,6 +29,7 @@ import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { organization, organizationBilling } from "@/lib/db/schema";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { writeSubscriptionToBilling } from "@/lib/billing/queries";
 import { type HandleEventOptions, handleStripeEvent } from "@/lib/billing/webhook-handler";
 import { emitAlertEvent } from "@/lib/alerts/emit";
 import { sendSubscriptionCanceledEmail } from "@/lib/email/billing-email";
@@ -639,5 +640,53 @@ describeIfDb("ADR 0004: the superseder with a fresh read, and the two-live detec
 			{ applied: true, before: null },
 			{ applied: false, before: { subscriptionId: y, status: "active", currentPeriodEnd: new Date(1_900_000_000 * 1000) } },
 		]);
+	});
+
+	it("C36 variant: X is past_due — R2 writes Y's end, X takes the row, and Y's cancellation is reported once", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		const x = subId("x");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }), at(1));
+		const ended = inStripe({ id: y, orgId: org, status: "canceled" }, 100);
+		const dunning = inStripe({ id: x, orgId: org, status: "past_due" }, 200);
+
+		await handleStripeEvent(eventOf("customer.subscription.updated", dunning, 10), noHolds);
+		const r = await row(org);
+		expect(r?.stripeSubscriptionId).toBe(x);
+		expect(r?.status).toBe("past_due");
+		expect(r?.plan).toBe("community");
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+
+		// Y's late deletion is refused (the row names X) and does not report Y again.
+		await handleStripeEvent(eventOf("customer.subscription.deleted", ended, 11), noHolds);
+		expect((await row(org))?.stripeSubscriptionId).toBe(x);
+		expect(sendSubscriptionCanceledEmail).toHaveBeenCalledTimes(1);
+	});
+
+	it("two concurrent FIRST writes for one org: one inserts and reports nothing replaced, the other reports the row the first wrote", async () => {
+		const org = await freshOrg();
+		const a = subId("a");
+		const b = subId("b");
+		/** One first write of `id`, as `active`, with no row yet. */
+		const first = (id: string) =>
+			writeSubscriptionToBilling({
+				organizationId: org,
+				plan: "team",
+				status: "active",
+				stripeCustomerId: `cus_${org.slice(0, 8)}`,
+				stripeSubscriptionId: id,
+				seats: 1,
+				currentPeriodEnd: null,
+				eventAt: null,
+			});
+		const reports = await Promise.all([first(a), first(b)]);
+		const inserted = reports.filter((w) => w.before === null);
+		const refused = reports.filter((w) => w.before !== null);
+		// Whichever way the race went, the loser decided against the winner's row, read under its lock —
+		// never against "no row", which is what a lost insert would report without the re-lock.
+		expect(inserted).toEqual([{ applied: true, before: null }]);
+		expect(refused).toHaveLength(1);
+		const winner = (await row(org))?.stripeSubscriptionId;
+		expect(refused[0]).toEqual({ applied: false, before: { subscriptionId: winner, status: "active", currentPeriodEnd: null } });
 	});
 });
