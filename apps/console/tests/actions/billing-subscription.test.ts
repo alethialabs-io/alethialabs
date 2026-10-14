@@ -33,10 +33,11 @@ vi.mock("@/lib/billing/stripe", () => ({
 	STRIPE_REQUEST_TIMEOUT_MS: 20_000,
 	STRIPE_MAX_NETWORK_RETRIES: 1,
 }));
-// `planItem` is real: the org-plan live check (#5977) reads the plan line the way the webhook's sync does.
+// `isOrgPlanSubscription` is real: the org-plan live check (#5977) classifies with the one definition in
+// lib/billing/sync.ts, which reads the plan line the way the webhook's sync does.
 vi.mock("@/lib/billing/sync", async (importActual) => {
 	const actual = await importActual<typeof import("@/lib/billing/sync")>();
-	return { planItem: actual.planItem, syncSubscriptionToBilling: vi.fn() };
+	return { isOrgPlanSubscription: actual.isOrgPlanSubscription, syncSubscriptionToBilling: vi.fn() };
 });
 // The server-side setup record (#5445) is its own module, tested against real Postgres in
 // tests/integration/pending-org-setups.test.ts. Here only its CALLS are asserted; the validation
@@ -2022,6 +2023,7 @@ describe("resolveNewOrgSetup", () => {
 			planState: "active",
 			paymentUrl: null,
 			hold: null,
+			ended: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
 			declared: false,
@@ -3472,6 +3474,7 @@ describe("ADR 0002 S1 (#5714)", () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
 			vi.mocked(pendingOrgSetupFor).mockResolvedValue(openRow());
 			vi.mocked(findSetupOrg).mockResolvedValue({ id: "org-1", slug: "acme" });
+			db.queue.push([{ now: new Date() }]); // the database's clock, read before the closer (S10b)
 			db.queue.push([openRow({ closed_at: new Date(), closed_reason: "ended" })]); // the close CAS
 			db.queue.push([]); // the declaration read
 			await expect(resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" })).resolves.toMatchObject({

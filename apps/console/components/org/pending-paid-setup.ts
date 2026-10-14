@@ -424,7 +424,8 @@ function fieldLabel(field: string): string {
 class SetupStopped extends Error {}
 
 /**
- * A `SetupStopped` the server decided: a hold that names the setup, or the link's typed refusal. The
+ * A `SetupStopped` the server decided: a hold that names the setup, an ended subscription the resume
+ * lookup reports (`ended`), or the link's typed refusal. The
  * run clears the browser record for it, because the server keeps the memory (the hold row, and the
  * setup record) and a retry would only be refused again.
  */
@@ -485,14 +486,13 @@ async function runSteps(
 			);
 		}
 		// Stop where the link would refuse (ADR 0002 §5.6, rule 1): before the org is created, and on a
-		// resume where it already exists. Nothing is sent to the server first; the hold decides the setup
-		// when it ends. Only the HELD half of the rule is implemented. The stop for an X that reads ended
-		// is not, because the lookup carries no ended signal: its `planState` cannot tell an ended X from
-		// another inactive one, and it carries no clause for an ended X with no open hold. Such a run goes
-		// on: it creates the org when there is none, and the link refuses an ended X with its own clause.
+		// resume where it already exists. Nothing is sent to the server first. A refusing hold decides the
+		// setup when it ends. For an ended X with no open hold (`ended`), the lookup ran the setup closer
+		// before it answered, and `ended.clause` is the sentence the link would refuse that X with.
 		if (server.hold && REFUSING_HOLD_STATES.has(server.hold.state)) {
 			throw new SetupRefused(server.hold.notice);
 		}
+		if (server.ended) throw new SetupRefused(server.ended.clause);
 
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
 		// restores them. The checkout already saved them before the charge; this run re-saves because the
