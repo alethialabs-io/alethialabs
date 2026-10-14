@@ -4,12 +4,14 @@
 // The Stripe clients. Server-only. Built lazily from the validated config so a community /
 // self-managed build (no STRIPE_SECRET_KEY) never constructs either.
 //
-// TWO CLIENTS, ON PURPOSE (ADR 0002 §4.4 and §8 step 1, #5741). `getStripe()` is the shared client and
-// keeps the SDK's defaults (80s timeout, 2 network retries): every caller outside the create-a-team
-// purchase — metering, webhook sync, reconcile, the backup-card `invoices.pay` loop — relies on them,
-// and an app-level retry after a call that succeeded at Stripe but answered slowly can act twice (the
-// meter re-reports). `getPurchaseStripe()` is the purchase path's client — the calls the create-a-team
-// purchase and its link make directly — with a shorter timeout and one retry.
+// TWO CLIENTS, ON PURPOSE (ADR 0002 §4.4 and §8 step 1, #5741; ADR 0004 D3). `getStripe()` is the shared
+// client and keeps the SDK's defaults (80s timeout, 2 network retries): metering, webhook sync,
+// reconcile and the backup-card `invoices.pay` loop rely on them, and an app-level retry after a call that
+// succeeded at Stripe but answered slowly can act twice (the meter re-reports). `getPurchaseStripe()` is
+// the client of these calls made under a purchase lease, with a shorter timeout and one retry: the
+// create-a-team purchase and its link, the org-plan mint, its hosted Checkout session and the Pro trial's
+// mint (ADR 0004 O4), and the payment-hold sweeper and operator script (lib/billing/payment-holds/sweeper.ts,
+// scripts/payment-holds.ts). The org-plan sweep and its live check stay on the shared client.
 //
 // WHAT THE TIMEOUT IS, AND IS NOT. On Node the SDK arms `req.setTimeout(timeout)`: a SOCKET-INACTIVITY
 // timer that resets at each stage of the request (connect, send, each chunk of the response). It is
@@ -44,9 +46,11 @@ export function getStripe(): Stripe {
 }
 
 /**
- * The create-a-team purchase path's Stripe client: `STRIPE_REQUEST_TIMEOUT_MS` of socket inactivity per
- * stage, `STRIPE_MAX_NETWORK_RETRIES` retries. Used only by the calls that purchase and its link make
- * directly (app/server/actions/billing.ts). Throws if STRIPE_SECRET_KEY is unset.
+ * The purchase path's Stripe client: `STRIPE_REQUEST_TIMEOUT_MS` of socket inactivity per stage,
+ * `STRIPE_MAX_NETWORK_RETRIES` retries. Used by these calls made under a purchase lease: the create-a-team
+ * purchase and its link, the org-plan mint, its Checkout session's create and expire, and the Pro trial's
+ * mint (app/server/actions/billing.ts), and the payment-hold sweeper and operator script. The mint deadline
+ * (`mintDeadlineMs` there) is computed from these two constants. Throws if STRIPE_SECRET_KEY is unset.
  */
 export function getPurchaseStripe(): Stripe {
 	if (!purchaseClient) {

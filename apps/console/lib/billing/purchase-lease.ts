@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The purchase lease (ADR 0002 §4.4, Q2, #5741): one create-a-team purchase per user at a time,
-// across every instance, WITHOUT holding a pooled connection while Stripe is called.
+// The purchase lease (ADR 0002 §4.4, Q2, #5741): one purchase per payer at a time, across every
+// instance, WITHOUT holding a pooled connection while Stripe is called. Two kinds of key are taken
+// (app/server/actions/billing.ts): `user:<user>` by the create-a-team purchase and its link, and
+// `org-plan:<org>` by the org-plan purchase, its hosted Checkout and the Pro trial (ADR 0004 D3). A
+// payment hold's own lease is `leaseKeyFor(scope, payer_key)`, one of the two (lib/db/schema/payment-holds.ts).
 //
-// `withPurchaseLock` (lib/billing/purchase-lock.ts) held one service connection in an open transaction
-// for the whole Stripe sequence, plus up to 30s waiting; with `poolMax = 10`, ten waiters starved the
-// holder. A lease is a row in `purchase_leases` instead: taken by one upsert, renewed by one update,
-// released by one delete, each on its own short statement. A waiter polls; it holds nothing between
-// polls.
+// `withPurchaseLock` (lib/billing/purchase-lock.ts) holds one connection in an open transaction for the
+// whole Stripe sequence, plus up to 30s waiting; on the service pool, with `poolMax = 10`, ten waiters
+// starved the holder (#6012 then gave it a pool of its own). A lease is a row in `purchase_leases`
+// instead: taken by one upsert, renewed by one update, released by one delete, each on its own short
+// statement. A waiter polls; it holds nothing between polls.
 //
 // THE LEASE CAN EXPIRE MID-PURCHASE, AND NOTHING CAN FENCE A STRIPE WRITE. A request that stalls past
 // `PURCHASE_LEASE_TTL_SECONDS` can be taken over by another; when the stalled one wakes, its writes
@@ -56,16 +59,10 @@ export class PurchaseLeaseLostError extends Error {
 }
 
 /**
- * Runs before each Stripe write of a purchase. Under a lease it renews it, and throws
- * `PurchaseLeaseLostError` when the lease is lost; `UNFENCED` does nothing.
+ * Runs before each Stripe write of a purchase: renews the purchase's lease, and throws
+ * `PurchaseLeaseLostError` when the lease is lost (`fenceFor`).
  */
 export type StripeWriteFence = () => Promise<void>;
-
-/**
- * The fence of a flow that holds no lease — the org-plan purchase, which keeps `withPurchaseLock`
- * (ADR 0002 §7). Its Stripe writes are not renewed against anything.
- */
-export const UNFENCED: StripeWriteFence = async () => undefined;
 
 /** `now() + the lease's lifetime`, computed by the database so every instance shares one clock. */
 const leaseExpiry = sql`now() + (${PURCHASE_LEASE_TTL_SECONDS}::int * interval '1 second')`;
