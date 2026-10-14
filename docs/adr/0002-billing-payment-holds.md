@@ -272,6 +272,19 @@ relative to the repo root, as the board's `scope:` lines are.
     - When the lookup's own closer has just closed the record, the dedupe counts from the database's
       clock, read before the closer ran, instead of from `closed_at`.
     - The lookup's alert detail begins "a resume lookup of the setup reported it ended".
+- **Notes** (2026-10-14, #6068: the text made true to code merged that day; **no decision changes**).
+  - **The closer's lock (#6059, closing #6052).** §5.7 "Who alerts" described the close as one
+    compare-and-set. It now also takes `LOCK TABLE payment_holds IN SHARE MODE`, behind a 2s
+    `lock_timeout`, before that compare-and-set, so a hold write in flight commits first (I14,
+    I16 (a)). A lock timeout fails closed. `close-setup` follows the same steps. New case C110.
+  - **Who still closes `org_has_plan` beside a live Y (S9 follow-up 1, #5506, 2026-10-13).** I14's
+    rev 7 and rev 7.1 sentences, §5.6's "From S9 on" sentence and §5.7's "two rows only" read as if
+    only S1's link, before holds existed, ever closed a setup beside a live Y. That was never what
+    §5.7's adopt branch says (rev 7.1, and C96's variant), and it is not what runs. Since S9 (#5938)
+    the **link** no longer closes there: it passes `linkRefuses`, and refuses under a `needs_operator`
+    hold. The **guard and both resume lookups** still run the adopt branch's S1 refusal: they close
+    with `org_has_plan` and alert, and open no hold. Notes in I14, §5.6, §5.7 and §8 say so, and §8
+    says which of those closures its listing prints: an `incomplete` X closed that way is not printed.
 
 ---
 
@@ -683,6 +696,17 @@ Each invariant is tested (§6).
   active owner of T holding `manage_billing`. U's payment method keeps paying for X. X is then an ordinary subscription of T, written to and
   watched through T's row (§2, "Create-a-team subscription"). It is not unlinked, so the invariant
   holds.
+  **Note (2026-10-14, #6068; S9 follow-up 1, #5506):** the rev 7 sentence ("it closes only when X
+  reads ended") and the rev 7.1 sentence ("the one other close is the operator's") leave out a close
+  that §5.7 has specified since rev 7.1, and that runs: the setup closer's adopt branch. When X is
+  not ended, its metadata names the setup's org O and user U, and O's billing row names another
+  `active` or `trialing` Y after one sync of X, the closer closes the setup with `org_has_plan` and
+  raises `alertPaymentNeedsSupport` with X as the subject (`settleOpenSetup`,
+  `lib/billing/pending-org-setup.ts`; §5.7 "Adopt", C96's variant). It opens no hold. Since S9
+  (#5938) the link passes `linkRefuses`, so this close is made only by the readers that run the
+  closer without refusing: the open-setup guard and both resume lookups. X can then be live, or
+  `incomplete` and still payable, with the setup closed; what watches it is that one alert, and
+  §8's listing for an X that reads live when the operator runs it.
 - **I15, the guard never locks the org out (rev 6, corrected in rev 7).** Every open setup has an
   exit that does not depend on the creator coming back (§5.7 "Every open setup has an exit"). Rev 6
   claimed this from one writer, the link's refusal, and the claim was false (R7-1).
@@ -1152,6 +1176,11 @@ holds a `past_due` Y is refused, above.)
 Until S9, the S1 refusal closes the setup (no holds exist yet, and S1's closer has no hold to wait
 for). From S9 on, the `org_has_plan` refusal of a live or `incomplete` X opens the `needs_operator`
 hold below, so the setup stays open (I16).
+**Note (2026-10-14, #6068):** "the `org_has_plan` refusal" in the sentence above is **the link's**.
+The link runs the closer with `linkRefuses` (`billing.ts`, before `linkSetupToOrg`), so the closer
+writes nothing beside the live Y and the link's own refusal opens the hold (#5938). The guard and both
+resume lookups run the same closer without `linkRefuses`, and it still closes beside an `active` or
+`trialing` Y with `org_has_plan` and an alert, as §5.7's adopt branch says (I14 note).
 
 | X, and any open hold naming X | The link returns |
 |---|---|
@@ -1377,6 +1406,27 @@ the same X at once (the guard, both lookups, the link). Only the caller whose st
 the row raises the alert, logs `billing.pending_org_setup.closed` or `billing.pending_org_setup.adopted`,
 and calls it closed. A caller that matched nothing raises nothing, so "alerted once" has a mechanism.
 
+**Note (2026-10-14, #6059, closing #6052; S8 follow-up 4):** the close is no longer a single
+statement. The closer runs without the payer's lease, so E0 can be inserting a hold on the same X
+while it runs, and under READ COMMITTED the `NOT EXISTS` reads the statement's snapshot: it neither
+sees nor waits for an uncommitted hold insert, so the close could land and the hold commit beneath it
+(I14, I16 (a)). `closePendingOrgSetup` (`lib/billing/pending-org-setup.ts`) now runs one transaction:
+1. `set_config('lock_timeout', '2s', true)` (`HOLD_LOCK_WAIT`).
+2. **The fast path.** When a committed open hold of any scope names X, it returns null (closed
+   nothing) at once, without taking a lock.
+3. `LOCK TABLE payment_holds IN SHARE MODE`. Every hold insert or update takes ROW EXCLUSIVE, which
+   SHARE conflicts with: a hold write in flight commits before the compare-and-set takes its
+   snapshot, and one that starts later waits until the close commits. SHARE does not conflict with
+   itself, so closers do not wait on each other. No hold writer changed.
+4. The same compare-and-set as above, `NOT EXISTS` included.
+
+A lock not free within 2s throws (SQLSTATE `55P03`) with nothing written, and fails closed: the guard
+refuses with the try-again clause (§5.5), the resume lookups log it and leave the setup open for the
+next reader, and the link fails as on any other database error, with the setup open. The operator's
+`close-setup` (`scripts/pending-org-setups.ts`, `closeOpenSetup`) repeats the same four steps, and on
+`55P03` refuses, writes nothing and says to run it again. "Who alerts" is unchanged: only the caller
+whose compare-and-set returned the row alerts or logs. Case C110.
+
 These are every state an open setup can be in, and its exit:
 
 | Open setup, X reads | Exit | Writer | From |
@@ -1389,11 +1439,17 @@ These are every state an open setup can be in, and its exit:
 | live, no hold, not yet linked in Stripe, the creator does not return | the co-owner's message names the creator and support; support cancels (and refunds) X in Stripe, then runs `pending-org-setups close-setup` (§5.4) | the operator | S1 |
 | Stripe answers `resource_missing` for X (rev 7.1, R71-2) | the guard refuses as for any open setup (the message offers support); the operator checks the key, then runs `close-setup`, which accepts a missing X with a reason (§5.4). Never closed automatically. `findUnfinishedNewOrgSetup` already keeps such a setup (`billing.ts:2175-2178`). | the operator | S1 |
 | the link refused beside a live Y (S1, no holds yet) | closed by the refusal, with the alert | the link | S1 |
+| live or `incomplete`, no hold, linked in Stripe to O and U, and O's row names another `active` or `trialing` Y after one sync of X (note 2026-10-14, #6068) | closed with `org_has_plan` and the alert by the guard or either resume lookup (the adopt branch's S1 refusal). Since S9 the link writes nothing here (`linkRefuses`) and refuses under a `needs_operator` hold instead (§5.6) | the closer | S1; the link's half removed by S9 |
 | live, an open `link_refused` hold names X, and support has moved X to another team T (amendment 2026-10-14, #5974) | `payment-holds release <X> --moved-to <T>` releases the hold. The same transaction closes the setup (`hold_released`). Before #5974 this row had no exit (§5.8, "The gap"). | the operator | S11 |
 
 A setup that closes while X is still live occurs in two rows only.
 - **S1's refusal before holds exist.** X is then outside every reader, and the alert is its watch.
   §8 lists those setups for the operator when S9 deploys.
+  **Note (2026-10-14, #6068):** "two rows only" is not what runs. The row added above (the guard's
+  or a resume lookup's closer beside a live Y) also closes while X is live or `incomplete`, after
+  S9 as before it. It is the same S1 refusal, with the same watch: the one alert, whose delivery the
+  closer does not check, and §8's listing, which prints such a setup only when its X reads live at
+  the time the operator runs it.
 - **The moved release (amendment 2026-10-14, §5.8).** X is then **not** outside every reader. Before
   the close commits, T's row is checked to name X (`FOR SHARE`, §5.8 step 8). From then on X's events
   write T's row under #5518's guard. T's row is X's watch, as for any org's subscription.
@@ -1832,6 +1888,7 @@ Stripe, so they reach every row regardless.
 | C107 | **Amendment 2026-10-14.** The sheet creates a team, or calls the link, for an ended X with no hold. | S10 lane (#5970); `pending-paid-setup.ts:476`, `:495`, `:539` | §5.6 sheet rule 1. | S (`tests/components/org/pending-paid-setup.test.ts`): `resolveNewOrgSetup` returns `ended: { clause }` with `org: null`. `authClient.organization.create` and `linkSubscriptionToNewOrg` are not called, the outcome is `failed`, `retryable: false`, its message is the clause, and the browser record is cleared. The same with `org` set (a resume): no link call. Control: `ended: null`, `hold: null`, X paid: the run creates the org and links. |
 | C108 | **Amendment 2026-10-14; review of #5980, blocker 2.** The moved release frees X onto a team where U, whose payment method still pays for X, cannot see or cancel it, and U's resume then says "you won't be charged again". | review of #5980; `sync.ts:161-162`; `billing.ts:2935-2948`; `pending-paid-setup.ts:477-480` | §5.8 row 4. | H: U not a member of T gives `payer_not_in_team`. The same for U an `admin` but not an `owner`, for U an owner with `status` not `active`, and for U an active owner whose `holdsManageBilling` is false. Scripts: each of those writes nothing, emits no event and never reaches the sync. The C98 fixture (U an active owner with `manage_billing`) releases. `stripe-prod-runbook.md` names the payment-method check and the refund alternative (reviewed in the PR, not tested). |
 | C109 | **Amendment 2026-10-14; review of #5980, advisory 3 and delta advisory 4.** A webhook rewrites T's row between the decision and the release, and the hold is freed over a row that no longer names X. | review of #5980 | §5.8 step 9, `expectOrgRow`. | `tests/integration/payment-holds.test.ts` (real Postgres): an open `link_refused` hold and an open setup.<br>`releaseHold(lease, ref, { …, expectOrgRow: { orgId: T, subscriptionId: X } })` with T's row naming Z writes nothing: the hold stays open with `version` unchanged, and the setup stays open. With the row naming X, it releases and closes the setup.<br>**The lock is proven with two connections, not inferred from final rows.** Connection A opens a transaction and takes the `FOR SHARE` lock (the store's statement, run up to the point before its commit; or `releaseHold` with a hook that pauses before commit). Connection B, with `SET lock_timeout = '500ms'`, runs `UPDATE organization_billing SET stripe_subscription_id = 'Z' WHERE organization_id = T`. It must fail with SQLSTATE `55P03` (`lock_not_available`) while A is open, and succeed after A commits. A control **without** `expectOrgRow` lets B's update succeed at once. That control fails if the store took the lock unconditionally, and the main case fails if `FOR SHARE` was never issued.<br>Without `expectOrgRow`, the store's behaviour is as in C92. |
+| C110 | **Note 2026-10-14 (#6059, closing #6052; S8 follow-up 4).** The closer runs without the payer's lease; E0 inserts a hold on the same ended X and commits after the closer's `NOT EXISTS` read its snapshot, so the setup is closed while a hold names X. | #6052; review of #6059 A1–A3 | §5.7 "Who alerts" (note 2026-10-14); I14; I16 (a). | `tests/integration/pending-org-setups.test.ts` (real Postgres, "#6052" block, two connections).<br>**The race.** Connection E inserts an open hold on a `canceled` X and does not commit; `settleOpenSetup` runs; E commits only once the closer has finished or shows in `pg_stat_activity` waiting on a lock on `payment_holds`. The verdict is `open`, the setup and the hold stay open, and the closer was seen waiting. With the pre-#6059 closer it fails: `closed_at` is set while the hold is open.<br>**The lock timeout.** Another uncommitted hold write keeps ROW EXCLUSIVE: `closePendingOrgSetup`, `settleOpenSetup` and `close-setup` each get `55P03` or the refusal, with nothing written; after that write rolls back, the same close lands.<br>**The fast path.** With a committed open hold on X and the same blocking write open, the close returns null at once, and `close-setup` refuses with the open-hold message.<br>`tests/scripts/pending-org-setups.test.ts`: the statement order (timeout, probe, `LOCK`, then the write), the fast path (no `LOCK`, no write), and the `55P03` refusal with nothing written. |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 
@@ -1847,7 +1904,7 @@ Stripe, so they reach every row regardless.
 | C62 | a stale holder's Checkout URL or trial | Checkout and the trial are not covered |
 | C68, C70 | the trial's `created` event and the gate marker | the trial is not covered (K1) |
 
-That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1. The 2026-10-14 amendment (#5974) adds C98–C102, which makes 92. The second 2026-10-14 amendment adds C103–C107, which makes 97. The money review of #5980 adds C108–C109, which makes 99.
+That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1. The 2026-10-14 amendment (#5974) adds C98–C102, which makes 92. The second 2026-10-14 amendment adds C103–C107, which makes 97. The money review of #5980 adds C108–C109, which makes 99. The note of 2026-10-14 on #6059 adds C110, which makes 100.
 
 ---
 
@@ -1966,6 +2023,14 @@ run safe: a subscription already held conflicts on the partial unique index (T0h
 be live (§5.7 exits, last row). When S9 deploys, the backfill's listing also prints every setup with
 `closed_reason = org_has_plan` whose X reads live, for the operator. It holds none of them: X is
 paid and live, and only an operator may decide its money (Q12).
+**Note (2026-10-14, #6068; as shipped in #5938, S9):** the listing is `listLiveOrgHasPlanClosures`
+(`scripts/payment-holds.ts`), run by `payment-holds reconcile --backfill` after the backfill. It reads
+**every** setup with `closed_reason = org_has_plan`, not only S1-era ones, because the guard's and the
+resume lookups' closer still writes that reason beside a live Y after S9 (§5.7, I14 note). It prints
+one whose X reads `active`, `trialing`, `past_due`, `unpaid` or `paused`, and a failed read as such.
+It does **not** print one whose X reads `incomplete`: such an X is not live yet, but it can still be
+paid and become live, and then it is printed only by a later run. Until then the closer's one alert
+is its only watch.
 
 **`forgetPendingOrgSetup` (rev 7, advisory 5).** It stays, with today's guard
 (`pending-org-setup.ts:128-147`): it deletes a record only when X's `created_by` is U, its status is
