@@ -8,7 +8,7 @@
 // active org — never a client-supplied org id. Stripe then drives the
 // organization_billing record through the webhook; entitlements follow.
 
-import { and, count, eq, gte, isNull, max, ne, sql } from "drizzle-orm";
+import { and, count, eq, gte, ne, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
@@ -112,6 +112,7 @@ import {
 	findSetupOrg,
 	forgetPendingOrgSetup,
 	liveCheckSetupCustomers,
+	newestUnlinkedSetupAt,
 	logBillingEvent,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
@@ -166,7 +167,6 @@ import {
 	organization,
 	organizationBilling,
 	type PaymentHoldRow,
-	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
 
@@ -2346,15 +2346,6 @@ async function alertSetupCapOnce(userId: string, alert: { title: string; summary
 		subject: { type: "user", id: userId },
 		summary: `${alert.summary} ${SETUP_CAP_FIX}`,
 	});
-}
-
-/** The `created_at` of the user's newest setup record with `linked_at IS NULL` — the live check's set — or null when there is none. */
-async function newestUnlinkedSetupAt(userId: string): Promise<Date | null> {
-	const [row] = await getServiceDb()
-		.select({ at: max(pendingOrgSetups.created_at) })
-		.from(pendingOrgSetups)
-		.where(and(eq(pendingOrgSetups.user_id, userId), isNull(pendingOrgSetups.linked_at)));
-	return row?.at ?? null;
 }
 
 /** The setup of a paid create-a-team subscription to resume, or the refusal when the user cannot finish it here. */

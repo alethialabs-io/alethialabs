@@ -146,8 +146,9 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeQuiet: vi.fn(),
 }));
 // The direct reads in these paths: the payer's email before a customer is minted (none here), and the
-// over-cap dedupe's two (#5989) — the newest unlinked setup record, and the operator-alert deliveries
-// since then. Each query answers by the table it reads `from`. The deliveries query is EVALUATED: its
+// over-cap dedupe's operator-alert deliveries (#5989); its other read, the newest unlinked setup record,
+// is `newestUnlinkedSetupAt` in the mocked setup module below. Each query answers by the table it reads
+// `from`. The deliveries query is EVALUATED: its
 // `where` is rendered to SQL by drizzle's Postgres dialect, and each conjunct — the event key, the
 // `resource_id`, `status <> …`, `created_at >= …` — is applied to `world.state.deliveries` with the
 // parameter the code bound. A conjunct this reader does not know throws, so a changed query cannot pass
@@ -172,7 +173,6 @@ vi.mock("@/lib/db", async () => {
 		return op === "<>" ? (d) => read(d) !== value : (d) => read(d) === value;
 	};
 	const answer = (table: unknown, where: unknown): unknown[] => {
-		if (table === schema.pendingOrgSetups) return [{ at: world.state.newestRecordAt }];
 		if (table === schema.alertDeliveries) {
 			if (!(where instanceof SQL)) throw new Error("the deliveries query has no where clause");
 			const q = dialect.sqlToQuery(where);
@@ -336,6 +336,8 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		unlinkedPendingOrgSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
 		// The S8 reads: the setup records the live check lists, and the payer's holds.
 		liveCheckSetupCustomers: vi.fn(async () => ({ kind: "all", customers: [] })),
+		// The over-cap dedupe's cap-state marker (#5989).
+		newestUnlinkedSetupAt: vi.fn(async () => world.state.newestRecordAt),
 		paymentHoldsOfPayer: vi.fn(async (payer: string) => world.state.holds.filter((h) => h.payer_key === payer).map((h) => ({ ...h }))),
 		openPaymentHoldOn: vi.fn(async (sub: string) => world.state.holds.find((h) => h.subscription_id === sub && h.state !== "released") ?? null),
 	};
