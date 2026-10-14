@@ -95,19 +95,27 @@ func TestClusterToken_MissThenHit(t *testing.T) {
 	}
 }
 
-// TestClusterToken_TheSixtySecondSkew: an entry with 61s left is served; one with 59s left, or
-// already expired, is re-minted.
+// TestClusterToken_TheSixtySecondSkew: with the clock pinned, an entry with at least 60s left is
+// served and one with less, or already expired, is re-minted. The boundary is exact: no wall-clock
+// time passes between the entry's expiry being written and the command reading it.
 func TestClusterToken_TheSixtySecondSkew(t *testing.T) {
+	pinned := time.Now()
+	prev := kubeNow
+	kubeNow = func() time.Time { return pinned }
+	t.Cleanup(func() { kubeNow = prev })
 	for _, tc := range []struct {
 		left   time.Duration
 		remint bool
 	}{
 		{61 * time.Second, false},
+		{60*time.Second + time.Nanosecond, false},
+		{60 * time.Second, false},
+		{60*time.Second - time.Nanosecond, true},
 		{59 * time.Second, true},
 		{-time.Hour, true},
 	} {
 		env := newKCEnv(t)
-		if err := env.cache().Put(kubecache.Entry{ClusterID: kcClusterID, Tier: types.KubeconfigMintTierReadonly, Token: "OLD-TOKEN", ExpiresAt: time.Now().Add(tc.left)}); err != nil {
+		if err := env.cache().Put(kubecache.Entry{ClusterID: kcClusterID, Tier: types.KubeconfigMintTierReadonly, Token: "OLD-TOKEN", ExpiresAt: pinned.Add(tc.left)}); err != nil {
 			t.Fatal(err)
 		}
 		stdout, stderr, err := env.runToken(kcClusterID)
