@@ -22,7 +22,7 @@
 //   C6   (ADR 0004 D1 rule 5) a due `org_plan` hold is advanced under `org-plan:<O>`; with that lease
 //        held, the hold is skipped as busy and left unchanged.
 //   C32  (ADR 0004 D8, the sender half) an `org_plan` hold in `refund_pending` is mailed once, to its
-//        Stripe customer's email; a `released(adopted)` `org_plan` hold is mailed nothing, even beside an
+//        Stripe customer's email, in the org-plan copy (#6011); a `released(adopted)` `org_plan` hold is mailed nothing, even beside an
 //        open create-a-team setup with no org naming its subscription.
 //   C3   (ADR 0004, the link's half) the link's refusal beside a live Y meets an `org_plan` hold on X whose
 //        payer key is the creator's id: it is not taken for the creator's own hold — no clause claims its
@@ -106,6 +106,7 @@ vi.mock("@/lib/billing/sync", async (importActual) => {
 vi.mock("@/lib/email/billing-email", async (importActual) => ({
 	...(await importActual<typeof import("@/lib/email/billing-email")>()),
 	sendPaymentHoldNoticeEmail: vi.fn(async () => undefined),
+	sendOrgPlanHoldNoticeEmail: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/auth/scope", () => ({
 	getActiveScope: async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId }),
@@ -119,7 +120,7 @@ import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import * as store from "@/lib/billing/payment-holds/store";
 import { deliverHoldNotice } from "@/lib/billing/payment-holds/emails";
 import { nudgeHold, openHold } from "@/lib/billing/payment-holds/store";
-import { sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
+import { sendOrgPlanHoldNoticeEmail, sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
 import * as sweeper from "@/lib/billing/payment-holds/sweeper";
 import { runPaymentHoldSweep, type SweepDeps } from "@/lib/billing/payment-holds/sweeper";
 import {
@@ -755,13 +756,14 @@ describeIfDb("payment-hold sweeper — ADR 0004 C6: an org_plan hold is advanced
 describeIfDb("payment-hold sweeper — ADR 0004 C32, the sender half: an org_plan notice goes to the customer's email", () => {
 	afterEach(() => {
 		vi.mocked(sendPaymentHoldNoticeEmail).mockClear();
+		vi.mocked(sendOrgPlanHoldNoticeEmail).mockClear();
 		linkWorld.customerEmails.clear();
 	});
 
 	/** Sweep deps that send through the real sender. */
 	const realSender = (stripe: FakeStripe): SweepDeps => ({ ...depsOver(stripe), deliver: deliverHoldNotice });
 
-	it("refund_pending is mailed ONCE, to the Stripe customer's email", async () => {
+	it("refund_pending is mailed ONCE, to the Stripe customer's email, in the org-plan copy", async () => {
 		const stripe = new FakeStripe();
 		const org = newPayer();
 		const sub = newSub();
@@ -769,7 +771,8 @@ describeIfDb("payment-hold sweeper — ADR 0004 C32, the sender half: an org_pla
 		const h = await orgPlanHold(org, sub, { state: "refund_pending", next_check_at: new Date(Date.now() + HOUR) });
 		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(1);
 		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
-		expect(vi.mocked(sendPaymentHoldNoticeEmail).mock.calls).toEqual([[{ to: "billing@team.example", notice: "refund_pending" }]]);
+		expect(vi.mocked(sendOrgPlanHoldNoticeEmail).mock.calls).toEqual([[{ to: "billing@team.example", notice: "refund_pending" }]]);
+		expect(sendPaymentHoldNoticeEmail).not.toHaveBeenCalled();
 		expect(await read(h.id)).toMatchObject({ notified_state: "refund_pending" });
 	});
 
@@ -783,6 +786,7 @@ describeIfDb("payment-hold sweeper — ADR 0004 C32, the sender half: an org_pla
 		const h = await orgPlanHold(org, sub, { state: "released", release_reason: "adopted", released_at: new Date(), next_check_at: null });
 		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
 		expect(sendPaymentHoldNoticeEmail).not.toHaveBeenCalled();
+		expect(sendOrgPlanHoldNoticeEmail).not.toHaveBeenCalled();
 		expect(await read(h.id)).toMatchObject({ notified_state: null });
 	});
 });
