@@ -49,7 +49,7 @@ import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 import { type Money, money } from "@repo/format";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
-import { resolvePlanEntitlements } from "@/lib/billing/plan";
+import { isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf, setBackupOrder } from "@/lib/billing/payment-methods";
@@ -851,6 +851,27 @@ const TOO_MANY_EARLIER_CHECKOUTS = `This account has more unfinished checkouts t
 const LIVE_PLAN_REFUSAL = "This organization already has an active subscription — change the plan instead.";
 
 /**
+ * What the org-plan flows tell the customer when the org's plan is `past_due` (ADR 0004 D7): the row names
+ * a Stripe subscription and reads `past_due`, or the live check finds a `past_due` or `unpaid` one. The
+ * path that charges once is fixing the card on that plan, so the copy names it.
+ */
+const UNPAID_PLAN_REFUSAL = `This team's plan has an unpaid invoice, so a second plan was not started. Update the payment method in Billing, or contact support at ${SUPPORT_EMAIL}.`;
+
+/**
+ * What the org-plan flows tell the customer when the org's row is a live, unexpired off-Stripe grant
+ * (ADR 0004 D5, D8): no Stripe subscription stands behind it, so it names neither an invoice nor a card.
+ */
+const CONTRACT_PLAN_REFUSAL = `This team's plan is managed under a contract, so a plan cannot be bought here. Contact support at ${SUPPORT_EMAIL}.`;
+
+/**
+ * What the org-plan purchase tells the customer when its live check finds a `paused` subscription on the
+ * org's customer (ADR 0004 D2 (c)). It says "a subscription on this team's billing account", not "this
+ * team's plan", because the check counts every non-AI subscription on the customer (a legacy shared one
+ * included).
+ */
+const PAUSED_PLAN_REFUSAL = `A subscription on this team's billing account is paused, so a second plan was not started. Contact support at ${SUPPORT_EMAIL}.`;
+
+/**
  * What the org-plan purchase tells the customer when its live check (`liveOrgPlanCheck`) met more
  * subscriptions on the org's customer than `SWEEP_SUBSCRIPTION_CAP`, so it read none of them as clear.
  * It claims no alert: whether one reached a channel is not threaded through to this copy.
@@ -1407,12 +1428,14 @@ async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWr
 }
 
 /**
- * THE ORG-PLAN LIVE CHECK (ADR 0002 §10.2 F3, #5977): every subscription on the org's customer, of every
- * status, paged to the end (`listCustomerSubscriptions`). A live (`active`, `trialing`, `past_due`)
- * org-plan one refuses with "change the plan instead" — the row alone cannot see one whose webhook has
- * not been written yet, nor a `past_due` one. An AI subscription on the same customer is not a plan.
- * Over the cap it refuses and alerts the operator; a page that fails is thrown, so nothing is minted.
- * Answers the refusal's copy, or null when the purchase may go ahead.
+ * THE ORG-PLAN LIVE CHECK (ADR 0002 §10.2 F3, #5977; ADR 0004 D2 (c)): every subscription on the org's
+ * customer, of every status, paged to the end (`listCustomerSubscriptions`). A live one (ADR 0002 §2:
+ * `active`, `trialing`, `past_due`, `unpaid`, `paused`) that `isOrgPlanSubscription` counts refuses, with
+ * copy by status: `active`/`trialing` "change the plan instead", `past_due`/`unpaid` D7's unpaid-invoice
+ * copy, `paused` the contact-support copy. When more than one is live, that order picks the copy. The row
+ * alone cannot see one whose webhook has not been written yet. An AI subscription on the same customer is
+ * not a plan. Over the cap it refuses and alerts the operator; a page that fails is thrown, so nothing is
+ * minted. Answers the refusal's copy, or null when the purchase may go ahead.
  */
 async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
 	const listed = await listCustomerSubscriptions(getStripe(), customerId, "all");
@@ -1424,8 +1447,38 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
 		});
 		return TOO_MANY_SUBSCRIPTIONS_TO_CHECK;
 	}
-	const live = listed.subs.some((s) => PAID_SUBSCRIPTION_STATUSES.has(s.status) && isOrgPlanSubscription(s));
-	return live ? LIVE_PLAN_REFUSAL : null;
+	const live = new Set(
+		listed.subs.filter((s) => LIVE_SUBSCRIPTION_STATUSES.has(s.status) && isOrgPlanSubscription(s)).map((s) => s.status),
+	);
+	if (live.has("active") || live.has("trialing")) return LIVE_PLAN_REFUSAL;
+	if (live.has("past_due") || live.has("unpaid")) return UNPAID_PLAN_REFUSAL;
+	if (live.has("paused")) return PAUSED_PLAN_REFUSAL;
+	return null;
+}
+
+/**
+ * THE ROW PREDICATE (ADR 0004 D5, D7): whether the org's billing row already stands for a plan, so no
+ * org-plan flow (`createSubscriptionIntent`, `createCheckoutSession`, `startProTrial`) may start another.
+ * Each caller runs it on a fresh row read before any Stripe call. Answers the refusal's copy, or null:
+ *
+ * - a row naming a Stripe subscription that is `active` or `trialing`: "change the plan instead";
+ * - a row naming a Stripe subscription that is `past_due` (Stripe's `past_due` or `unpaid`): D7's copy;
+ * - a row naming NO subscription is judged by D5 alone, whatever its status: a live grant (`active`,
+ *   `trialing` or `past_due`) whose term has not lapsed (`isManualGrantExpired`) gets the contract copy,
+ *   and a lapsed one does not refuse, because buying is the way back to a plan.
+ */
+function orgRowBlocksNewPlan(
+	row: { stripeSubscriptionId: string | null; status: string; currentPeriodEnd: Date | null } | null,
+	now: Date = new Date(),
+): string | null {
+	if (!row) return null;
+	if (row.stripeSubscriptionId) {
+		if (row.status === "active" || row.status === "trialing") return LIVE_PLAN_REFUSAL;
+		if (row.status === "past_due") return UNPAID_PLAN_REFUSAL;
+		return null;
+	}
+	const grantStatus = row.status === "active" || row.status === "trialing" || row.status === "past_due";
+	return grantStatus && !isManualGrantExpired(row, now) ? CONTRACT_PLAN_REFUSAL : null;
 }
 
 /** A sweep as `PaymentOutcome`s: a kept subscription may be under way; an unsettled one says what became of it. */
@@ -1461,9 +1514,13 @@ export async function createCheckoutSession(
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before subscribing to a plan.");
 	}
-	// Before any Stripe write (#5714): the org's unlinked paid setup must not get a plan beside it.
+	// Before any Stripe write (#5714): the org's unlinked paid setup must not get a plan beside it. It runs
+	// before the row predicate, so its closer still adopts a linked X the row names (ADR 0002 C96).
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) throw new Error(openSetup);
+	// The row predicate (ADR 0004 D5, D7), on a row read after the guard, before the lock and any Stripe write.
+	const rowRefusal = orgRowBlocksNewPlan(await getOrgBilling(actor.orgId));
+	if (rowRefusal) throw new Error(rowRefusal);
 	await gatePaidConversion(actor);
 	// The same org-plan purchase lock `createSubscriptionIntent` takes (ADR 0002 §10.2 F2): an intent and
 	// a Checkout in two tabs run one after another, so the second one's live check runs after the first
@@ -1540,14 +1597,10 @@ export async function createSubscriptionIntent(
 	if (actor.orgId === actor.userId) {
 		return { error: "Create an organization before subscribing to a plan." };
 	}
-	const existing = await getOrgBilling(actor.orgId);
-	if (
-		existing?.stripeSubscriptionId &&
-		(existing.status === "active" || existing.status === "trialing")
-	) {
-		return { error: LIVE_PLAN_REFUSAL };
-	}
-	// After the live-plan check (so a live plan still reads "change the plan instead"), before any
+	// The row predicate (ADR 0004 D5, D7), before the lock and any Stripe call.
+	const rowRefusal = orgRowBlocksNewPlan(await getOrgBilling(actor.orgId));
+	if (rowRefusal) return { error: rowRefusal };
+	// After the row predicate (so a live plan still reads "change the plan instead"), before any
 	// Stripe write (#5714): the org's unlinked paid setup must not get a second plan beside it.
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) return { error: openSetup };
@@ -1585,8 +1638,8 @@ async function startOrgSubscription(
 	}
 	const sweptRefusal = refusalFor(sweepOutcomes(swept));
 	if (sweptRefusal) return { error: sweptRefusal };
-	// After the sweep, under the lock: a live plan the row does not show yet — its webhook unwritten, or
-	// `past_due` — refuses rather than get a second plan minted beside it (#5977).
+	// After the sweep, under the lock: a live plan the row does not show yet (its webhook unwritten)
+	// refuses rather than get a second plan minted beside it (#5977, ADR 0004 D2 (c)).
 	const livePlan = await liveOrgPlanCheck(customerId);
 	if (livePlan) return { error: livePlan };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
@@ -1712,8 +1765,9 @@ async function startAiSubscription(
  * add a card from billing before then to continue). "cancel" is also the only end
  * behavior Stripe allows on a card-less trial that includes a metered item (the
  * runner-minutes meter). Syncs the billing row synchronously so the `organizations`
- * entitlement is live for the whole trial. Owner-gated; hosted-only; refuses if a
- * live/trialing subscription already exists. No automatic_tax here — there's no
+ * entitlement is live for the whole trial. Owner-gated; hosted-only; refuses when the org's
+ * row already stands for a plan (`orgRowBlocksNewPlan`: a live or `past_due` subscription, or a
+ * live off-Stripe grant). No automatic_tax here — there's no
  * address/invoice yet; tax is computed when the customer later adds payment.
  */
 export async function startProTrial(opts?: {
@@ -1756,13 +1810,9 @@ export async function startProTrial(opts?: {
 	if (await accountHasLiveSubscription(actor.userId)) {
 		throw new Error("Your account has already used its free Pro trial.");
 	}
-	const existing = await getOrgBilling(actor.orgId);
-	if (
-		existing?.stripeSubscriptionId &&
-		(existing.status === "active" || existing.status === "trialing")
-	) {
-		throw new Error("This organization already has an active subscription.");
-	}
+	// The row predicate (ADR 0004 D5, D7), before any Stripe call: the one the two purchase flows run.
+	const rowRefusal = orgRowBlocksNewPlan(await getOrgBilling(actor.orgId));
+	if (rowRefusal) throw new Error(rowRefusal);
 	// Before any Stripe write (#5714): no trial beside the org's unlinked paid setup.
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) throw new Error(openSetup);
