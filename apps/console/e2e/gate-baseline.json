@@ -218,7 +218,6 @@
 				"Billing settings — Pro trial (team) › cloud-spend disclaimer is shown on the plan card": "passed",
 				"Billing settings — Pro trial (team) › a Stripe customer (trial) gets the in-app Payment methods section": "passed",
 				"Billing settings — Pro trial (team) › plan history, transactions and invoices sections render for a customer": "passed",
-				"Billing — Stripe test mode › the /start trial CTA redirects into a TEST-mode Checkout session": "passed",
 				"Billing — Stripe test mode › the upgrade sheet mounts Stripe.js's own card fields, not a look-alike": "passed",
 				"Billing — Stripe test mode › a card attached to the org's real customer appears in Payment methods": "passed",
 				"Billing — destructive controls ask first › Cancel plan opens a confirmation, and Cancel leaves the subscription renewing": "passed",
