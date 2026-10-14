@@ -1153,6 +1153,7 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		const bankDebit = newSub();
 		const orgOwned = newSub();
 		const orgId = randomUUID();
+		const aiOwned = newSub();
 		stripe.add(
 			{ id: neverPaid, status: "canceled", ended_at: 1000, metadata: mine, cancellation_details: requested },
 			{ pis: [{ id: `pi_${neverPaid}`, status: "requires_payment_method", amount: 1000, pm: null, refunds: [] }] },
@@ -1176,6 +1177,15 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 			metadata: { created_by: payer, organization_id: orgId },
 			cancellation_details: requested,
 		});
+		// An AI subscription of the same org, built like `orgOwned` (an open invoice, no payment), which B2–B6
+		// would hold for an operator. Only B1 keeps it out: it is not covered on both runs, and no hold names it.
+		stripe.add({
+			id: aiOwned,
+			status: "canceled",
+			ended_at: 1000,
+			metadata: { organization_id: orgId, product_type: "ai_subscription" },
+			cancellation_details: requested,
+		});
 		const printed: string[] = [];
 		const print = (line: string) => {
 			printed.push(line);
@@ -1185,12 +1195,12 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		// ADR 0004 §9 step 5 (C43): a linked create-a-team subscription carries `organization_id`, so it is an
 		// org-plan subscription of that org. Its open invoice has no PaymentIntent, so B5 proves nothing: it
 		// is held as `org_plan` for an operator, never advanced.
-		expect(first).toEqual({ held: 2, toOperator: 1, listed: 2, alreadyHeld: 0, notCovered: 0 });
+		expect(first).toEqual({ held: 2, toOperator: 1, listed: 2, alreadyHeld: 0, notCovered: 1 });
 
 		const rows = await getServiceDb()
 			.select()
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
 		const bySub = new Map(rows.map((r) => [r.subscription_id, r]));
 		expect(rows).toHaveLength(3);
 		expect(bySub.get(orgOwned)).toMatchObject({
@@ -1203,6 +1213,9 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		expect(bySub.get(orgOwned)?.alerted_at).not.toBeNull();
 		expect(alert.mock.calls.filter((c) => c[0].subscriptionId === orgOwned)).toHaveLength(1);
 		expect(stripe.writesFor(orgOwned)).toEqual([]);
+		expect(bySub.has(aiOwned)).toBe(false);
+		expect(stripe.writesFor(aiOwned)).toEqual([]);
+		expect(printed.some((l) => l.includes(aiOwned))).toBe(false);
 		expect(bySub.get(neverPaid)).toMatchObject({
 			state: "released",
 			release_reason: "voided_unpaid",
@@ -1227,12 +1240,12 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		// A second run writes nothing: every subscription a hold has named is skipped.
 		const writesBefore = stripe.log.length;
 		const second = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 3, notCovered: 0 });
+		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 3, notCovered: 1 });
 		expect(stripe.log.length).toBe(writesBefore);
 		const [after] = await getServiceDb()
 			.select({ count: sql<number>`count(*)::int` })
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
 		expect(after?.count).toBe(3);
 	});
 

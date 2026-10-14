@@ -330,16 +330,29 @@ those alerts.
 **Deploy O6 only when all three hold** (ADR 0004 §9 step 6):
 
 1. O4's rollout has been complete for **more than 24h**. That is the advisory key's precondition, and
-   B1's second guard: every Checkout session without a session-level key has then reached Stripe's
-   default expiry.
+   the second guard against the keyless-Checkout finding (ADR 0004 rev 2's money-review blocker, case
+   C44; not the backfill's test B1 above): every Checkout session without a session-level key has
+   then reached Stripe's default expiry.
 2. An operator has run the widened backfill (this section, ADR 0004 §9 step 5).
 3. The backfill runs **again** once O6's rollout has completed, because old instances keep cancelling
    without holds until then.
 
+**Before O6 deploys, also work the open `org_plan` holds.** Once O6 is live, every open `org_plan`
+hold except `refund_pending` refuses its org's plan purchase, Checkout and trial (ADR 0004 §4.1),
+and a `needs_operator` hold stays open until an operator releases it. So after the first backfill:
+
+1. Run `list --open --scope org_plan`, and `show` each `needs_operator` hold.
+2. Release each hold support has decided, with `release <sub> --reason "<why>" --operator <your user
+   id>`. Cancel or refund the subscription in Stripe first where support decided that.
+3. Leave open only the holds that are still undecided. Each one blocks its org's next purchase until it
+   is released.
+
 ```sh
 pnpm -C apps/console billing:payment-holds reconcile --backfill   # before O6 deploys
-pnpm -C apps/console billing:payment-holds reconcile --backfill   # again, once O6 has rolled out everywhere
 pnpm -C apps/console billing:payment-holds list --open --scope org_plan
+pnpm -C apps/console billing:payment-holds show sub_…              # each needs_operator hold
+pnpm -C apps/console billing:payment-holds release sub_… --reason "<why>" --operator <your user id>
+pnpm -C apps/console billing:payment-holds reconcile --backfill   # again, once O6 has rolled out everywhere
 ```
 
 ## Rollback
