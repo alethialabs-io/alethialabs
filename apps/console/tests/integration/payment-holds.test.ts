@@ -26,8 +26,22 @@
 //   C5   `openHold` with scope `org_plan` and a `user:` lease throws, and writes nothing.
 //   C7   an `org_plan` release closes no create-a-team setup (C92 above re-runs green for `new_org`).
 //   C8   a row inserted without `scope` reads `new_org`; a scope outside the check is refused.
+//   ---  D1 rule 4: the setup predicates that wait on holds stay scope-free — an open `org_plan` hold on
+//        X keeps X's setup open through the closer, and its verdict says `open`, not `closed`.
 
 import { randomUUID } from "node:crypto";
+import { vi } from "vitest";
+
+// The setup closer's one Stripe read in the D1 rule 4 case below: X, read `canceled`. `canceled` is
+// never proven unpaid, so the closer makes no payment read, and nothing else in this file reaches Stripe.
+vi.mock("@/lib/billing/stripe", () => ({
+	getStripe: () => ({
+		subscriptions: {
+			retrieve: async (id: string) => ({ id, status: "canceled", customer: "cus_it_hold", latest_invoice: null, metadata: {} }),
+		},
+	}),
+}));
+
 import * as store from "@/lib/billing/payment-holds/store";
 import * as setups from "@/lib/billing/pending-org-setup";
 import { eq, sql } from "drizzle-orm";
@@ -810,6 +824,39 @@ describeIfDb("payment_holds — ADR 0004 D1: the hold scope", () => {
 				expect(after).toMatchObject({ closed_at: null, closed_reason: null, linked_at: null });
 				await releasePurchaseLease(lease);
 			}
+		} finally {
+			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
+			await getServiceDb().delete(user).where(eq(user.id, creator));
+		}
+	});
+
+	it("D1 rule 4: an open org_plan hold on X keeps X's setup open — the close and the closer's verdict are scope-free", async () => {
+		const creator = randomUUID();
+		await getServiceDb().insert(user).values({ id: creator, email: `it-hold-${creator}@example.test` });
+		try {
+			const { org, lease } = await orgWithLease();
+			const sub = newSubscription();
+			const [setup] = await getServiceDb()
+				.insert(pendingOrgSetups)
+				.values({
+					user_id: creator,
+					subscription_id: sub,
+					customer_id: "cus_it_hold",
+					intended_name: "Held",
+					intended_slug: `held-${sub.slice(-8)}`,
+				})
+				.returning();
+			if (!setup) throw new Error("fixture: no setup was recorded");
+			await opened(lease, e0OrgPlan(org, sub));
+
+			// The plain close (`noOpenHold`) refuses while the org_plan hold is open.
+			expect(await setups.closePendingOrgSetup({ subscriptionId: sub, reason: "ended" })).toBeNull();
+			// The closer reads X ended, its close matches nothing, and its verdict (`unclosedVerdict`) is
+			// `open`: a hold keeps it. Reading only new_org holds would answer `closed` here.
+			expect(await setups.settleOpenSetup(setup)).toBe("open");
+			const [after] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, setup.id));
+			expect(after).toMatchObject({ closed_at: null, linked_at: null });
+			await releasePurchaseLease(lease);
 		} finally {
 			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
 			await getServiceDb().delete(user).where(eq(user.id, creator));

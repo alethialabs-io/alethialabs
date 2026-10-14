@@ -438,9 +438,9 @@ export async function linkSetupToOrg(input: {
  *
  * When a hold on X is already open (an earlier refusal of the same X, or the hold `payment-holds
  * release` is releasing), nothing new is opened and no second alert is raised; the clause claims the
- * alert only when that hold, if it is `userId`'s, alerted in its current state entry. X with no invoice
- * cannot be held (a hold names its invoice): it is alerted on and the setup stays open. A lost lease is
- * thrown, with nothing written.
+ * alert only when that hold, if it is `userId`'s own `new_org` hold, alerted in its current state
+ * entry. X with no invoice cannot be held (a hold names its invoice): it is alerted on and the setup
+ * stays open. A lost lease is thrown, with nothing written.
  */
 async function refuseBesideLivePlan(input: {
 	userId: string;
@@ -482,7 +482,9 @@ async function refuseBesideLivePlan(input: {
 				hold = (await writeHoldState(lease, { id: hold.id, version: hold.version }, { alertedAt: new Date() })) ?? hold;
 			}
 		} else {
-			hold = opened.hold && opened.hold.payer_key === userId ? opened.hold : null;
+			// Only `userId`'s own create-a-team hold speaks here: an `org_plan` hold whose payer key is the
+			// same string is another payer's (ADR 0004 C3).
+			hold = opened.hold && opened.hold.scope === "new_org" && opened.hold.payer_key === userId ? opened.hold : null;
 			alerted = hold !== null && alertedThisEntry(hold);
 		}
 	} else {

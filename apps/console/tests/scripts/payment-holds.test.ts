@@ -920,6 +920,22 @@ describe("ADR 0004 C42: the scope in the operator command", () => {
 		expect(q.params).toEqual(expect.arrayContaining(["new_org", "payer-1"]));
 	});
 
+	it("a --scope with no value is refused, never read as every scope", async () => {
+		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+		for (const argv of [
+			["list", "--scope"],
+			["list", "--scope="],
+			["list", "--scope", "--open"],
+			["list", "--open", "--scope"],
+			["reconcile", "--scope"],
+			["reconcile", "--scope", "--payer", "payer-1"],
+		]) {
+			expect(await main(argv, print)).toBe(1);
+		}
+		expect(getServiceDb).not.toHaveBeenCalled();
+		expect(err).toHaveBeenCalled();
+	});
+
 	it("list --scope with an unknown scope is refused before anything is read", async () => {
 		const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		expect(await main(["list", "--scope", "ai"], print)).toBe(1);

@@ -24,6 +24,9 @@
 //   C32  (ADR 0004 D8, the sender half) an `org_plan` hold in `refund_pending` is mailed once, to its
 //        Stripe customer's email; a `released(adopted)` `org_plan` hold is mailed nothing, even beside an
 //        open create-a-team setup with no org naming its subscription.
+//   C3   (ADR 0004, the link's half) the link's refusal beside a live Y meets an `org_plan` hold on X whose
+//        payer key is the creator's id: it is not taken for the creator's own hold — no clause claims its
+//        alert, and the refusal names no hold.
 //   C91  (S9, §5.6 "When a hold ends") T2o adopts a `needs_operator` hold on a live X and the visit runs
 //        the link's core: with an org, X is linked (`linked_at`, the row names X); with no org, or a
 //        creator who lost `manage_billing`, the setup stays open. Beside a live Y the re-link opens a
@@ -992,6 +995,45 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		expect(linkWorld.updates).toEqual([]);
 		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
 		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /has no members/.test(c[0].detail))).toBe(true);
+	});
+
+	it("C3: an org_plan hold on X whose payer key EQUALS the creator's id is not taken for the creator's hold", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await applySubscriptionToBilling({
+			organizationId: orgId,
+			plan: "team",
+			status: "active",
+			stripeCustomerId: `cus_${sub}_y`,
+			stripeSubscriptionId: `${sub}_y`,
+			seats: null,
+			currentPeriodEnd: null,
+			eventAt: null,
+		});
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// An org_plan hold on X, alerted in its current entry, whose payer key is the same string as the
+		// creator's user id.
+		const orgHold = await orgPlanHold(payer, sub, { state: "needs_operator", alerted_at: new Date(Date.now() + 1000) });
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			const result = await sweeper.relinkAdoptedSetup(lease, orgHold, alert);
+			expect(result).toMatchObject({ kind: "refused", hold: null });
+			if (result.kind !== "refused") throw new Error("expected a refusal");
+			expect(result.clause).not.toContain(sweeper.LINK_REFUSED_ALERTED.trim());
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+		// Nothing new was opened beside it, and the org's hold is untouched.
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open.map((h) => [h.id, h.scope, h.version])).toEqual([[orgHold.id, "org_plan", orgHold.version]]);
 	});
 
 	it("C80: beside a live Y the re-link opens a link_refused hold and leaves the setup open (refused_reason), and T2o never adopts it", async () => {

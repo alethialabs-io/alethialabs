@@ -1187,9 +1187,10 @@ export async function main(argv: readonly string[], print: Print = (line) => con
 		console.error(USAGE);
 		return 1;
 	}
-	// `--scope` names one of the known scopes, or the command is refused before anything is read.
-	const scopeText = arg(argv, "scope");
-	const scope = scopeText === undefined ? undefined : scopeArg(scopeText);
+	// `--scope` names one of the known scopes, or the command is refused before anything is read. A
+	// `--scope` with no value is refused too: it must never read as "every scope".
+	const hasScope = argv.some((a) => a === "--scope" || a.startsWith("--scope="));
+	const scope = hasScope ? scopeArg(arg(argv, "scope") ?? "") : undefined;
 	if (scope === null) {
 		console.error(`--scope must be one of: ${PAYMENT_HOLD_SCOPES.join(", ")}.\n${USAGE}`);
 		return 1;
