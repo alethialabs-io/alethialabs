@@ -22,6 +22,8 @@
 //     build their machine deps through `machineDepsFor` too. `writeHoldState` is also called directly,
 //     for the age alert's `age_alerted_at` stamp and the link refusal's `alerted_at` stamp.
 //   - webhook-handler.ts (lib/billing): `nudgeHold`.
+//   - app/server/actions/billing.ts: `stampHoldNotice` after a response carries a hold's clause, and
+//     `holdClockNow` for the refund notice window of the holds a create-a-team purchase saw.
 //   - emails.ts: `claimHoldNotice` and `unclaimHoldNotice`, around each notice send.
 //   - scripts/payment-holds.ts (the operator command): `openHold` (the §8 backfill,
 //     `opened_by = backfill`) and `writeHoldState` (the backfill's `alerted_at` stamp).
@@ -39,10 +41,17 @@
 //                 no row (S2's C25, the hold-write half). A write prepared on a version another write has
 //                 since bumped writes nothing either (C65).
 //   HINT WRITE    `nudgeHold`: `nudged_at` and `updated_at` only. No version, no bump, no lease.
+//                 `stampHoldNotice`: `notice_last_sent_at` only, when a response carried the hold's §5.5
+//                 clause. No version, no bump, no lease, and no state predicate: a released hold's
+//                 refund clause is carried too.
 //   NOTICE CLAIM  `claimHoldNotice` / `unclaimHoldNotice`: `notified_state` and `notified_at` only. No
 //                 version, no bump, no lease; its own compare-and-set makes each email at most once per
 //                 hold and state.
 // Neither a hint nor a claim touches `version`, so neither can make a state write miss (C74).
+//
+// THE NOTICE WINDOW'S CLOCK. `released_at` is stamped by the database's `now()`, so the 14-day refund
+// notice window (§5.5) is measured on that clock too: the readers compare against `now()` in SQL, and
+// `holdClockNow` gives a caller the same clock to compare a row it already holds.
 //
 // A RELEASE DECIDES THE SETUP (§4.1, I16 (b)). The state write that releases a `new_org` hold, for any
 // reason but `adopted`, closes the `pending_org_setups` row with the hold's `subscription_id` in the SAME
@@ -65,6 +74,7 @@ import "server-only";
 import { and, asc, eq, gt, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
 import { REFUND_NOTICE_WINDOW_MS } from "@/lib/billing/new-org-hold-copy";
 import { getServiceDb } from "@/lib/db";
+import { dbNow } from "@/lib/db/now";
 import {
 	leaseKeyFor,
 	leaseKeySql,
@@ -366,11 +376,12 @@ export async function releaseHold(
  * The holds of `payerKey` in `scope` that a purchase in that scope reads (ADR 0002 §3.2 E1 (a), §5.5;
  * ADR 0004 D1 rule 3, D2 (a)): every OPEN one, and every one released `refunded` or `already_refunded`
  * within the refund notice window, for its clause. Keyed by the pair: `payer_key` alone is never a key,
- * so an org id and a user id that happen to be the same string never read each other's holds. The
- * org-plan purchase reads `paymentHoldsOf('org_plan', orgId)` (ADR 0004 O6).
+ * so an org id and a user id that happen to be the same string never read each other's holds. The window
+ * is measured on the database's clock, the one that stamped `released_at`. The org-plan purchase reads
+ * `paymentHoldsOf('org_plan', orgId)` (ADR 0004 O6).
  */
 export async function paymentHoldsOf(scope: PaymentHoldScope, payerKey: string): Promise<PaymentHoldRow[]> {
-	const since = new Date(Date.now() - REFUND_NOTICE_WINDOW_MS);
+	const since = sql`now() - ${`${REFUND_NOTICE_WINDOW_MS} milliseconds`}::interval`;
 	return getServiceDb()
 		.select()
 		.from(paymentHolds)
@@ -417,6 +428,27 @@ export async function nudgeHold(subscriptionId: string): Promise<number> {
 		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
 		.returning({ id: paymentHolds.id });
 	return rows.length;
+}
+
+/**
+ * The hint write of a carried clause (§4.1, §5.5): `notice_last_sent_at = now()` on each of `holdIds`,
+ * the holds whose clause a response is returning. It means "returned", never "delivered". It changes
+ * that column and nothing else — no state, counter, schedule, `version` or `updated_at` — so it needs no
+ * lease and can never make a state write miss (C74). Returns how many holds it stamped.
+ */
+export async function stampHoldNotice(holdIds: readonly string[]): Promise<number> {
+	if (holdIds.length === 0) return 0;
+	const rows = await getServiceDb()
+		.update(paymentHolds)
+		.set({ notice_last_sent_at: sql`now()` })
+		.where(inArray(paymentHolds.id, [...holdIds]))
+		.returning({ id: paymentHolds.id });
+	return rows.length;
+}
+
+/** The database's clock now: the one `released_at` is stamped by, for the refund notice window (§5.5). */
+export async function holdClockNow(): Promise<Date> {
+	return dbNow(getServiceDb());
 }
 
 /**
