@@ -18,6 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 // Stripe is the one boundary faked here (#5714's cases): the guard and the closer read the
@@ -59,6 +60,7 @@ import {
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { pgErrorCode } from "@/lib/db/pg-error";
 import {
 	authzActivityLog,
 	grants,
@@ -875,5 +877,214 @@ describeIfDb("pending_org_setups — S8: payment holds decide the setup (I16, C9
 		expect(subs).toEqual(expect.arrayContaining([SUB_F_OPEN, SUB_F_REFUNDED]));
 		expect(subs).not.toContain(SUB_F_VOIDED);
 		expect(subs).not.toContain(SUB_OTHER);
+	});
+});
+
+// #6052 (S8 follow-up 4, I14): the closer runs without the payer's lease, so E0 can be opening a hold on
+// the same canceled X while the closer closes X's setup. Two real connections, interleaved on purpose:
+// E (standing in for E0's `openHold` transaction) has INSERTED the hold and not committed it when the
+// closer runs. Under READ COMMITTED the close's `NOT EXISTS` cannot see that uncommitted row, so on dev
+// the close lands and the hold commits beneath it — a setup closed while a hold names X (I16 (a)).
+// After #6052 the close waits for E's commit, sees the hold, and leaves the setup open.
+describeIfDb("pending_org_setups — #6052: the closer's check and close are atomic against a hold being opened", () => {
+	const U = randomUUID();
+	const X = `sub_it_6052_${randomUUID().slice(0, 8)}`;
+	/** E: the hold's own transaction, on a connection of its own. B: polls pg_stat_activity beside it. */
+	let e: postgres.Sql;
+	let b: postgres.Sql;
+	let savedStripeKey: string | undefined;
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const url = process.env.ALETHIA_DATABASE_URL ?? "";
+		e = postgres(url, { max: 1 });
+		b = postgres(url, { max: 1 });
+		await getServiceDb().insert(user).values({ id: U, email: `it-6052-${U}@example.test` });
+		await recordPendingOrgSetup({ userId: U, subscriptionId: X, customerId: "cus_it_6052", name: "Race", slug: "race" });
+	});
+
+	afterAll(async () => {
+		await e.end({ timeout: 1 });
+		await b.end({ timeout: 1 });
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await db.delete(paymentHolds).where(eq(paymentHolds.payer_key, U));
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, U));
+		await db.delete(user).where(eq(user.id, U));
+	});
+
+	/**
+	 * Resolves once another backend of this database waits on a lock while running a statement on
+	 * `payment_holds` (the closer, blocked behind E's insert); resolves false when `stop` fires first or
+	 * after ~5s of polling.
+	 */
+	async function closerWaitsOnHolds(stop: { done: boolean }): Promise<boolean> {
+		for (let i = 0; i < 250 && !stop.done; i++) {
+			const rows = await b`SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%payment_holds%'`;
+			if (rows.length > 0) return true;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		return false;
+	}
+
+	it("a hold inserted before the close and committed after it keeps the setup open, and the closer answers open", async () => {
+		const row = await pendingOrgSetupFor(U, X);
+		if (!row) throw new Error("fixture: the setup is missing");
+		expect(row.closed_at).toBeNull();
+		expect(await openPaymentHoldOn(X)).toBeNull();
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({
+			id: X,
+			status: "canceled",
+			customer: "cus_it_6052",
+			latest_invoice: null,
+			metadata: { created_by: U },
+		});
+
+		let inserted: () => void = () => undefined;
+		const holdInserted = new Promise<void>((resolve) => {
+			inserted = resolve;
+		});
+		// Boxed: a promise resolved WITH a promise adopts it, and E would wait for the closer to finish.
+		let started: (box: { closing: Promise<string> }) => void = () => undefined;
+		const closerStarted = new Promise<{ closing: Promise<string> }>((resolve) => {
+			started = resolve;
+		});
+		const stop = { done: false };
+		// E: E0's statement shape (`openHold`): the insert, guarded by the open-row unique index, then a
+		// pause before COMMIT while the closer runs.
+		const opening = e.begin(async (tx) => {
+			await tx`INSERT INTO payment_holds
+				(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by)
+				VALUES (${X}, 'cus_it_6052', ${U}, ${`in_${X}`}, 'closing', now(), 'purchase')
+				ON CONFLICT (subscription_id) WHERE state <> 'released' DO NOTHING`;
+			inserted();
+			// Commit only once the closer has either finished (dev: it never waits) or is blocked behind
+			// this insert (the fix). Either way its read of the holds came while this row was uncommitted.
+			const { closing } = await closerStarted;
+			return Promise.race([
+				closing.then(() => "closer finished"),
+				closerWaitsOnHolds(stop).then((waiting) => (waiting ? "closer waiting" : "timed out")),
+			]);
+		});
+		await holdInserted;
+		const closing = settleOpenSetup(row);
+		started({ closing });
+		const whenCommitted = await opening;
+		stop.done = true;
+		const verdict = await closing;
+
+		// Whichever way the interleaving went, the hold is now committed and open on X.
+		expect((await openPaymentHoldOn(X))?.state).toBe("closing");
+		// I16 (a): the setup is not closed beneath it, and the closer says so.
+		expect((await pendingOrgSetupFor(U, X))?.closed_at).toBeNull();
+		expect(verdict).toBe("open");
+		// The closer really ran while the hold was uncommitted, and waited behind it.
+		expect(whenCommitted).toBe("closer waiting");
+	});
+
+	/**
+	 * Opens a hold write on ANOTHER subscription on E and keeps its transaction open (its ROW EXCLUSIVE
+	 * lock on `payment_holds` held) until `finish` is called; `finish` rolls it back.
+	 */
+	async function holdWriteInFlight(): Promise<{ finish: () => Promise<void> }> {
+		const other = `sub_it_6052_other_${randomUUID().slice(0, 8)}`;
+		let ready: () => void = () => undefined;
+		const isReady = new Promise<void>((resolve) => {
+			ready = resolve;
+		});
+		let release: () => void = () => undefined;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const done = e
+			.begin(async (tx) => {
+				await tx`INSERT INTO payment_holds
+					(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by)
+					VALUES (${other}, 'cus_it_6052', ${U}, ${`in_${other}`}, 'closing', now(), 'purchase')`;
+				ready();
+				await released;
+				throw new Error("rollback");
+			})
+			.catch(() => undefined);
+		await isReady;
+		return {
+			finish: async () => {
+				release();
+				await done;
+			},
+		};
+	}
+
+	/** A fresh open setup of U on a fresh subscription, with `held` adding a committed open hold on it. */
+	async function freshSetup(held: boolean): Promise<string> {
+		const x = `sub_it_6052_${randomUUID().slice(0, 8)}`;
+		await recordPendingOrgSetup({ userId: U, subscriptionId: x, customerId: "cus_it_6052", name: "Race", slug: "race" });
+		if (held) {
+			await getServiceDb().insert(paymentHolds).values({
+				subscription_id: x,
+				customer_id: "cus_it_6052",
+				payer_key: U,
+				invoice_id: `in_${x}`,
+				state: "closing",
+				next_check_at: new Date(),
+				opened_by: "purchase",
+			});
+		}
+		return x;
+	}
+
+	it("lock_timeout: a closer that cannot take the lock in 2s throws 55P03 with nothing written — the closer, settleOpenSetup and close-setup alike", async () => {
+		const x = await freshSetup(false);
+		const inFlight = await holdWriteInFlight();
+		try {
+			const started = Date.now();
+			const err = await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }).then(
+				() => null,
+				(e: unknown) => e,
+			);
+			expect(pgErrorCode(err)).toBe("55P03");
+			expect(Date.now() - started).toBeLessThan(10_000);
+			const row = await pendingOrgSetupFor(U, x);
+			if (!row) throw new Error("fixture: the setup is missing");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({
+				id: x,
+				status: "canceled",
+				customer: "cus_it_6052",
+				latest_invoice: null,
+				metadata: { created_by: U },
+			});
+			// The guard turns this throw into the try-again refusal (openSetupRefusal's catch).
+			expect(pgErrorCode(await settleOpenSetup(row).then(() => null, (e: unknown) => e))).toBe("55P03");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			const printed: string[] = [];
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/not free within 2s/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
+		// Once the hold write is gone, the same close lands.
+		expect((await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }))?.closed_reason).toBe("ended");
+	});
+
+	it("fast path: with a committed open hold on X the close answers null at once, without waiting on the lock", async () => {
+		const x = await freshSetup(true);
+		const inFlight = await holdWriteInFlight();
+		try {
+			// Were the lock taken, this would wait behind E and throw 55P03; it resolves null instead.
+			await expect(closePendingOrgSetup({ subscriptionId: x, reason: "ended" })).resolves.toBeNull();
+			const printed: string[] = [];
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/open payment hold \(closing\)/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
 	});
 });
