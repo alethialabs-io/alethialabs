@@ -16,7 +16,19 @@ declare global {
 	var __alethiaLockDb: Db | undefined;
 }
 
-/** Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible). */
+/**
+ * Builds a pooler-safe postgres-js client (prepare:false → transaction-pooler compatible).
+ *
+ * CONNECTION BUDGET. Three clients are built here, each with up to `poolMax`
+ * (`ALETHIA_DB_POOL_MAX`, default 10) connections: service, app and lock. So one console
+ * process can hold up to 3 × `poolMax`, plus the two `max: 1` LISTEN clients in
+ * lib/realtime/index.ts. The lock pool opens only while a purchase runs and closes after
+ * `idleTimeout`. The bundled Postgres in docker-compose.yml sets no `max_connections`, so the
+ * Postgres default of 100 applies: with the defaults, one console process reaches 32 of them,
+ * and the admin app (apps/admin/lib/db.ts) builds pools of its own on top. Several console
+ * replicas against one database multiply the 3 × `poolMax`: size `ALETHIA_DB_POOL_MAX` against
+ * the database's `max_connections` divided by the replica count.
+ */
 function makeClient(url: string) {
 	const cfg = getDatabaseConfig();
 	return postgres(url, {

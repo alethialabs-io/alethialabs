@@ -21,7 +21,6 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { expect, it, vi } from "vitest";
 import { withPurchaseLock } from "@/lib/billing/purchase-lock";
-import { getDatabaseConfig } from "@/lib/config/database";
 import { getServiceDb } from "@/lib/db";
 import { describeIfDb } from "./db";
 
@@ -49,6 +48,21 @@ async function within<T>(p: Promise<T>, ms: number): Promise<T> {
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * The `max` the postgres-js client under a drizzle handle was built with, read from the client
+ * (`$client.options.max`); undefined when the handle has no such client. The `Db` type does not
+ * carry `$client`, so it is narrowed here instead of cast.
+ */
+function builtPoolMax(db: object): unknown {
+	if (!("$client" in db)) return undefined;
+	const client: unknown = db.$client;
+	if ((typeof client !== "object" && typeof client !== "function") || client === null) return undefined;
+	if (!("options" in client)) return undefined;
+	const options: unknown = client.options;
+	if (typeof options !== "object" || options === null || !("max" in options)) return undefined;
+	return options.max;
 }
 
 /** Resolves once `check` is true, polling every 10ms for up to `ms`. */
@@ -118,8 +132,10 @@ describeIfDb("withPurchaseLock — one purchase per key at a time", () => {
 	});
 
 	it("as many purchases as the service pool has connections can each query through it", async () => {
-		const { poolMax } = getDatabaseConfig();
-		expect(poolMax).toBe(2);
+		// The pool actually built, not the config: a service client cached by an earlier file would
+		// carry its own size, and the test would then exercise nothing.
+		expect(builtPoolMax(getServiceDb())).toBe(2);
+		const poolMax = 2;
 		let entered = 0;
 		const allIn = deferred();
 		const release = deferred();

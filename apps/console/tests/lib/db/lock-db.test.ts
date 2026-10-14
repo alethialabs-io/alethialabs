@@ -5,8 +5,12 @@
 // while its work queries through `getServiceDb()`; if the two shared one postgres-js client, a pool's
 // worth of purchases would stall it. The stall itself is reproduced against real Postgres in
 // tests/integration/purchase-lock.test.ts; this pins the wiring: two separate clients, both on the
-// service URL with `poolMax` connections, each built once.
+// service URL with `poolMax` connections, each built once. It also enforces the lock pool's one rule:
+// only lib/billing/purchase-lock.ts uses it, so nothing else can hold a lock connection while asking
+// for another.
 
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { postgresMock, drizzleMock } = vi.hoisted(() => ({
@@ -60,5 +64,36 @@ describe("getLockDb", () => {
 	it("is built once and reused", () => {
 		expect(getLockDb()).toBe(getLockDb());
 		expect(postgresMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+/** The console's root: tests/lib/db → three levels up. */
+const CONSOLE_ROOT = path.resolve(__dirname, "../../..");
+
+/** Directories under the console root that hold no console source. */
+const NOT_SOURCE = new Set(["node_modules", ".next", "coverage", "tests", ".turbo"]);
+
+/** Every .ts/.tsx/.mts/.js/.mjs file under `dir`, as a path relative to the console root. */
+function sourceFiles(dir: string): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) {
+			if (!NOT_SOURCE.has(entry.name)) out.push(...sourceFiles(full));
+		} else if (/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(entry.name)) {
+			out.push(path.relative(CONSOLE_ROOT, full));
+		}
+	}
+	return out;
+}
+
+describe("getLockDb — the single caller", () => {
+	it("is named only by lib/db/index.ts, which defines it, and lib/billing/purchase-lock.ts", () => {
+		// Any mention counts, not just an import line: a re-export or an aliased import is a caller too.
+		const naming = sourceFiles(CONSOLE_ROOT)
+			.filter((file) => readFileSync(path.join(CONSOLE_ROOT, file), "utf8").includes("getLockDb"))
+			.map((file) => file.split(path.sep).join("/"))
+			.sort();
+		expect(naming).toEqual(["lib/billing/purchase-lock.ts", "lib/db/index.ts"]);
 	});
 });
