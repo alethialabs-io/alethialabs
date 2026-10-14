@@ -2331,7 +2331,9 @@ jobs:
         run: bash scripts/ci/go-mod-download-retry.sh --self-test
       # The image pull retry T1 uses for ArgoCD's images (#6044), held to the same two directions
       # under `bash -e`: a rate limit or a transport error is retried and logged, and a tag that does
-      # not exist, a private image or a stopped daemon is not.
+      # not exist, a private image or a stopped daemon is not. It also pins the mirror mapping
+      # (#6067): only `ecr-public.aws.com/docker/library/*` is served from mirror.gcr.io, and five
+      # mutants of the script must each fail this self-test.
       - name: The image pull retry retries a rate limit and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/docker-pull-retry.sh --self-test
@@ -2952,13 +2954,16 @@ jobs:
       - name: Pre-fetch test/e2e's Go modules (retrying a transient proxy error)
         run: GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
       # ArgoCD's images come from the RUNNER's docker, not from the kubelet inside kind (#6044). The
-      # chart's redis lives on ECR Public, which rate-limits anonymous pulls per source IP, and
-      # GitHub's runners share IPs: pulled by the kubelet, it hit `toomanyrequests`, sat in
+      # chart's redis lives on ECR Public, which limits anonymous pulls per source IP in rate AND in
+      # data, and GitHub's runners share IPs: pulled by the kubelet, it hit `toomanyrequests`, sat in
       # ImagePullBackOff and redded queue batches. Here the list is RENDERED from the argo-cd chart
       # at the version the runner installs (cmd/argoimages), so a chart bump cannot leave an image
-      # out, and each image is pulled under a retry that waits out a rate limit and says so. The T1
-      # test then loads them into kind as soon as the runner has created it.
-      - name: Pull the images the pinned ArgoCD chart renders (retrying a rate limit)
+      # out, and each image is pulled under a retry that waits out a rate limit and says so. An
+      # `ecr-public.aws.com/docker/library/*` image is pulled from mirror.gcr.io and tagged to the
+      # ECR reference the chart renders, because a retry cannot wait out ECR Public's exhausted data
+      # quota (#6067); ECR Public is the fallback, and a notice names the source that served it. The
+      # T1 test then loads them into kind as soon as the runner has created it.
+      - name: Pull the images the pinned ArgoCD chart renders (mirror first, retrying a rate limit)
         working-directory: test/e2e
         run: |
           GOWORK=off go run ./cmd/argoimages > "$RUNNER_TEMP/argocd-images.txt"

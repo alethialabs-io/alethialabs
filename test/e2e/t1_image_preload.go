@@ -17,7 +17,9 @@ package e2e
 //     prints every image it names. The list is DERIVED, so a chart bump that adds or moves an
 //     image changes the list with it; there is no hand-written copy to drift.
 //  2. ci.yml's provision-e2e job pulls that list into the runner's docker with
-//     scripts/ci/docker-pull-retry.sh, which retries only a rate limit or a transport error.
+//     scripts/ci/docker-pull-retry.sh, which retries only a rate limit or a transport error. It
+//     serves an `ecr-public.aws.com/docker/library/*` image from mirror.gcr.io and tags it to the
+//     reference listed (#6067), so the list — and the name `kind load` looks up — is unchanged.
 //  3. The T1 test loads the pulled images into the kind cluster as soon as its nodes exist
 //     (PreloadIntoKind). The cluster is created by the runner's `tofu apply`, inside the test, so
 //     there is no earlier point at which a workflow step could load them.
