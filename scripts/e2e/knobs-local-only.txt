@@ -18,10 +18,21 @@
 # That last one is the point. A sweep whose "found nothing" branch is indistinguishable from its
 # "nothing is wrong" branch is the defect this repo keeps paying for.
 
-# ── LOCAL-ONLY BY DESIGN: these drive a laptop run of T1, which CI does not do. ──
+# ── T1 IS NOT A NIGHTLY SCENARIO. ──
+# T1 (the e2e_t1 suite) runs from ci.yml's provision-e2e job on Mergify queue builds, and from a
+# laptop. The nightly runs only the e2e_t2 suite, which reads none of these, so none is wired there.
+#
+# Set by ci.yml's provision-e2e job:
 ALETHIA_E2E_T1_REQUIRE
+# a missing prerequisite is a hard FAIL there, never a skip (job-level `env:`).
+ALETHIA_E2E_T1_PRELOAD_IMAGES
+# the image list that job pulls for T1 to load into kind (#6044), set on its T1 step.
+#
+# Set only by a laptop run (CI leaves them at their defaults):
 ALETHIA_E2E_T1_RUNNER_LOG
 ALETHIA_E2E_T1_WAIT
+
+# ── LOCAL DEBUGGING ONLY: the default comes from the provider row. ──
 ALETHIA_E2E_T2_WAIT
 
 # ── MUST NOT BE CI-SETTABLE. ──
