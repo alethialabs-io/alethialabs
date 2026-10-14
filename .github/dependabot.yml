@@ -51,10 +51,12 @@ updates:
         patterns: ["ai", "@ai-sdk/*"]
         update-types: [minor, patch]
       # postgres (postgres-js) is pinned by patches/postgres@3.4.9.patch (root package.json
-      # `pnpm.patchedDependencies`, #6028). A patch keyed on an exact version matches nothing after a
-      # bump, and pnpm then refuses to install (ERR_PNPM_UNUSED_PATCH). In its own group that red
-      # holds back only this PR, not every other minor/patch update. To land it: check whether the
-      # new release contains porsager/postgres#1209, then drop the patch or re-roll it with
+      # `pnpm.patchedDependencies`, #6028, #6041). A patch keyed on an exact version matches nothing
+      # after a bump, and pnpm then refuses to install (ERR_PNPM_UNUSED_PATCH). In its own group that
+      # red holds back only this PR, not every other minor/patch update. To land it: check whether the
+      # new release contains BOTH fixes the patch carries, porsager/postgres#1209 (nextWrite on a
+      # closed socket) and porsager/postgres#1248 (begin() refusing statements after its session
+      # closed). Drop the patch only when both are released; otherwise re-roll the missing hunk with
       # `pnpm patch`. Like `ai-sdk`, this group must stay ABOVE `npm-minor-patch`.
       postgres:
         patterns: ["postgres"]
