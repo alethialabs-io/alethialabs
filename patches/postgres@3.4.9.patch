@@ -12,10 +12,12 @@ Each hunk is applied to both builds Node loads: src/ (import) and cjs/src/ (requ
    (Alethia #6041). Backport of part 1 of the patch proposed on upstream porsager/postgres#1248
    (open, no release). Without it, when the pool reconnects the connection a dead transaction was
    on, the transaction's later statements and its own COMMIT run on the new session outside any
-   transaction, so statements issued after the kill commit on their own while the ones before it
-   were rolled back. With it, the statements the transaction had queued, and every statement it
-   issues after the close (savepoints and its own COMMIT or ROLLBACK included), reject with the
-   close's CONNECTION_CLOSED error and are never sent.
+   transaction, so statements issued after the kill commit on their own while everything before
+   it that was not yet committed was rolled back. With it, the statements the transaction had
+   queued, and every statement it issues after the close (savepoints and its own COMMIT or
+   ROLLBACK included), reject with the close's CONNECTION_CLOSED error and are never sent.
+   CONNECTION_CLOSED from begin() means the transaction's outcome is UNKNOWN, not that nothing
+   committed: if the close landed after COMMIT was sent, the commit may have applied.
 
 Drop each hunk once a postgres release contains it.
 Test: apps/console/tests/integration/db-connection-kill.test.ts
@@ -42,10 +44,10 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..982344fe9edc6077d715040ea8ee49bb
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..eb06f02b1aa7027ebc9ecdb1e78dd11848183ddc 100644
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f30d8aa7398ebe0726e09d815fe059bb9f0d726f 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
-@@ -237,12 +237,23 @@ function Postgres(a, b) {
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
      let savepoints = 0
        , connection
        , prepare = null
@@ -57,11 +59,13 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..eb06f02b1aa7027ebc9ecdb1e78dd118
          scope(connection, fn),
 -        new Promise((_, reject) => connection.onclose = reject)
 +        new Promise((_, reject) => connection.onclose = e => {
-+          // The session ended with the transaction open, so the server rolled it back.
-+          // The pool can reconnect this same connection, and a statement sent on that new
-+          // session would run outside any transaction and commit on its own. So reject
-+          // what this transaction has queued, and every statement it issues later,
-+          // including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
 +          closedError = e
 +          while (queries.length)
 +            queries.shift().reject(e)
@@ -70,7 +74,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..eb06f02b1aa7027ebc9ecdb1e78dd118
        ])
      } catch (error) {
        throw error
-@@ -289,6 +300,8 @@ function Postgres(a, b) {
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
        }
  
        function handler(q) {
@@ -101,10 +105,10 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..40a4b481881d3d8da24d11b32ca9c4ef
      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
      chunk = nextWriteTimer = null
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..8f44ba16cc2be233ec2ed4131cf48690c8eb593b 100644
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..99d2500d27aef14442ab8ec24f3b3584e22753b3 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -237,12 +237,23 @@ function Postgres(a, b) {
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
      let savepoints = 0
        , connection
        , prepare = null
@@ -116,11 +120,13 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..8f44ba16cc2be233ec2ed4131cf48690
          scope(connection, fn),
 -        new Promise((_, reject) => connection.onclose = reject)
 +        new Promise((_, reject) => connection.onclose = e => {
-+          // The session ended with the transaction open, so the server rolled it back.
-+          // The pool can reconnect this same connection, and a statement sent on that new
-+          // session would run outside any transaction and commit on its own. So reject
-+          // what this transaction has queued, and every statement it issues later,
-+          // including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
 +          closedError = e
 +          while (queries.length)
 +            queries.shift().reject(e)
@@ -129,7 +135,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..8f44ba16cc2be233ec2ed4131cf48690
        ])
      } catch (error) {
        throw error
-@@ -289,6 +300,8 @@ function Postgres(a, b) {
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
        }
  
        function handler(q) {

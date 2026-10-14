@@ -10,11 +10,15 @@
 //     (reading 'write')` from a setImmediate, outside any promise, and leaves the write buffer stuck,
 //     so every later query on that connection fails with CONNECT_TIMEOUT or hangs (#6028).
 //   - A pool query has reconnected it: the statement runs on the new session outside any
-//     transaction and commits on its own, while the statements before the kill were rolled back
-//     (#6041, porsager/postgres#1248).
+//     transaction and commits on its own, while everything before the kill that was not yet
+//     committed was rolled back (#6041, porsager/postgres#1248).
 // patches/postgres@3.4.9.patch makes begin() reject every statement of a transaction whose session
 // has closed, so neither write happens, and makes a write that does reach a closed socket reject
 // with CONNECTION_CLOSED (exercised here through reserve(), which has no such begin() guard).
+//
+// CONNECTION_CLOSED from a transaction means its outcome is UNKNOWN, not that nothing committed: if
+// the close lands after COMMIT was sent, the commit may have applied. These tests kill the backend
+// before the callback returns, so no COMMIT is in flight and nothing it wrote can have committed.
 //
 // These pin, against real Postgres:
 //   1. The caller of the killed transaction gets postgres-js's CONNECTION_CLOSED error, and so does
@@ -248,13 +252,15 @@ describeIfDb("a backend killed mid-transaction (#6028)", () => {
 
 	it("a write on a reserved connection whose backend is gone rejects with CONNECTION_CLOSED instead of throwing uncaught", async () => {
 		uncaught.length = 0;
-		const client = postgres(process.env.ALETHIA_DATABASE_URL ?? "", { max: 1 });
+		const closed = deferred();
+		// postgres-js calls `onclose` once it has processed the socket's close and dropped the socket.
+		const client = postgres(process.env.ALETHIA_DATABASE_URL ?? "", { max: 1, onclose: () => closed.resolve() });
 		try {
 			const reserved = await client.reserve();
 			const [row] = await reserved`select pg_backend_pid() as pid`;
 			await terminateBackend(Number(row?.pid));
-			// Let the close be processed, so the connection's socket is gone before the next write.
-			await new Promise((r) => setTimeout(r, 200));
+			// Wait for the close itself, so the connection's socket is gone before the next write.
+			await within(closed.promise, 5000);
 			expect(await within(settledCode(reserved`select 1`), 5000)).toBe("CONNECTION_CLOSED");
 			await new Promise((r) => setTimeout(r, 200));
 			expect(uncaught.map(String)).toEqual([]);
