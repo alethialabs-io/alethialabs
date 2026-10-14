@@ -8,10 +8,18 @@
 // only after the first has minted (and recorded) its subscription, so its sweep sees that one.
 //
 // It is a transaction-scoped Postgres advisory lock (`pg_advisory_xact_lock`, the pattern
-// lib/billing/webhook-events.ts uses), held on one service connection for the whole purchase. The
-// work inside does not run in that transaction: its own reads and writes go through `getServiceDb()`
-// and commit on their own. The transaction exists only to hold the lock, and Postgres releases it at
-// commit or rollback, so a crashed request cannot leave it held.
+// lib/billing/webhook-events.ts uses), held on one connection for the whole purchase. The work inside
+// does not run in that transaction: its own reads and writes go through `getServiceDb()` and commit on
+// their own. The transaction exists only to hold the lock, and Postgres releases it at commit or
+// rollback, so a crashed request cannot leave it held.
+//
+// THE LOCK'S CONNECTION IS NOT A SERVICE-POOL CONNECTION (#6012). It comes from `getLockDb()`, a pool of
+// its own. Taken from the service pool, `poolMax` purchases on different keys each held one service
+// connection and then waited, inside their work, for another: no connection was left, postgres-js
+// queues without a timeout, and every service query on the instance stalled with them.
+// tests/integration/purchase-lock.test.ts runs a pool's worth of purchases (a pool of two) and fails
+// on that stall. So the work must not call `withPurchaseLock` again: a nested call would wait on the
+// lock pool the same way.
 //
 // THE KEYS, AND THE ORDER THEY NEST IN (ADR 0002 §10.2 F2). Two keys are taken:
 //   - `org-plan:<org>`: the org-plan purchase — `createSubscriptionIntent` and `createCheckoutSession`
@@ -26,7 +34,7 @@
 
 import "server-only";
 import { sql } from "drizzle-orm";
-import { getServiceDb } from "@/lib/db";
+import { getLockDb } from "@/lib/db";
 import { pgErrorCode } from "@/lib/db/pg-error";
 
 /** How long a purchase waits for another one on the same key before it gives up. */
@@ -44,7 +52,7 @@ export async function withPurchaseLock<T>(
 	key: string,
 	fn: () => Promise<T>,
 ): Promise<{ acquired: true; value: T } | { acquired: false }> {
-	return getServiceDb().transaction(async (tx) => {
+	return getLockDb().transaction(async (tx) => {
 		try {
 			await tx.execute(sql`select set_config('lock_timeout', ${PURCHASE_LOCK_WAIT}, true)`);
 			await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`purchase:${key}`}, 0))`);
