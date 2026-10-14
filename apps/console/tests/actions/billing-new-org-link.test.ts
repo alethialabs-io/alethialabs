@@ -368,6 +368,13 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 		nudgeHold: vi.fn(),
 		claimHoldNotice: vi.fn(),
 		unclaimHoldNotice: vi.fn(),
+		// #6025: the hint write of a carried clause, and the database's clock.
+		stampHoldNotice: vi.fn(async (ids: readonly string[]) => {
+			const stamped = world.state.holds.filter((h) => ids.includes(h.id));
+			for (const h of stamped) h.notice_last_sent_at = new Date();
+			return stamped.length;
+		}),
+		holdClockNow: vi.fn(async () => new Date()),
 	};
 });
 
@@ -446,6 +453,7 @@ import {
 import { emitAlertEvent } from "@/lib/alerts/emit";
 import { liveCheckSetupCustomers, settleOpenSetup } from "@/lib/billing/pending-org-setup";
 import { advanceHold } from "@/lib/billing/payment-holds/machine";
+import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
 import { liveSweepDeps, machineDepsFor, relinkAdoptedSetup } from "@/lib/billing/payment-holds/sweeper";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 
@@ -1308,5 +1316,75 @@ describe("C105: what the lookup writes", () => {
 		expect(world.state.setups.get("sub_x")).toEqual(before);
 		expect(stripeWrites()).toBe(0);
 		expect(world.stripe.refunds.create).not.toHaveBeenCalled();
+	});
+});
+
+describe("#6025 — a link or lookup that returns a hold's clause stamps its notice_last_sent_at", () => {
+	it("the link refused with this user's hold's clause stamps that hold", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+		const hold = seedHold({ state: "refund_due", last_pay: "succeeded" });
+
+		expect(await refusedClause()).toMatch(/Its refund has not gone through yet/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([hold.id]);
+		expect(holdOn()?.notice_last_sent_at).toEqual(expect.any(Date));
+	});
+
+	it("the link refused beside the team's live plan (link_refused) stamps the hold that carries that refusal", async () => {
+		subX("active", ["succeeded"]);
+		setup();
+		const hold = seedHold({ state: "needs_operator", open_note: "link_refused", alerted_at: new Date() });
+
+		expect(await refusedClause()).toMatch(ORG_HAS_PLAN);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([hold.id]);
+	});
+
+	it("ANOTHER payer's hold gives the generic clause and is not stamped", async () => {
+		subX("incomplete");
+		setup();
+		seedHold({ state: "closing", payer_key: "user-9" });
+
+		expect(await refusedClause()).toMatch(/^We could not confirm an earlier checkout was closed/);
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+		expect(holdOn()?.notice_last_sent_at).toBeNull();
+	});
+
+	it("the lookup that reports a held setup with its clause stamps the hold; one with no hold stamps nothing", async () => {
+		subX("canceled", ["succeeded"]);
+		setup();
+		const hold = seedHold({ state: "refund_due", last_pay: "succeeded" });
+
+		const state = await resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" });
+		expect(state).toMatchObject({ hold: { state: "refund_due", notice: expect.stringMatching(/refund has not gone through/) } });
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([hold.id]);
+
+		world.state.holds = [];
+		vi.mocked(stampHoldNotice).mockClear();
+		await resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" });
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+	});
+
+	it("§4.1: the ended setup's 'refunded in full' sentence is the released hold's clause — the lookup and the link stamp it", async () => {
+		subX("canceled", ["succeeded"]);
+		closedSetup("hold_released");
+		const released = seedHold({ state: "released", release_reason: "refunded", released_at: new Date() });
+
+		expect((await resolved()).ended?.clause).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([released.id]);
+
+		vi.mocked(stampHoldNotice).mockClear();
+		expect(await refusedClause()).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([released.id]);
+	});
+
+	it("an ended setup read by its payments (no refunded hold) stamps nothing — not even a voided release on X", async () => {
+		subX("canceled");
+		closedSetup("hold_released");
+		const voided = seedHold({ state: "released", release_reason: "voided_unpaid", released_at: new Date() });
+
+		expect((await resolved()).ended?.clause).toMatch(/It was not charged/);
+		expect(await refusedClause()).toMatch(/It was not charged/);
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+		expect(world.state.holds.find((h) => h.id === voided.id)?.notice_last_sent_at).toBeNull();
 	});
 });

@@ -198,7 +198,12 @@ export async function openPaymentHoldOn(subscriptionId: string): Promise<Payment
 	return hold ?? null;
 }
 
-/** The newest RELEASED `new_org` payment hold on `subscriptionId`, or null. Service role: holds have no app policy. */
+/**
+ * The newest RELEASED `new_org` payment hold on `subscriptionId`, or null. Service role: holds have no app
+ * policy. It has NO time bound, unlike the 14-day refund notice of `paymentHoldsOfPayer`: its callers
+ * (`refuseEndedLink`, `endedSetupFor`) read it as what happened to X's money (ADR 0002 §5.6, C104), and
+ * a refund older than 14 days is still a refund.
+ */
 export async function latestReleasedHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
 	const [hold] = await getServiceDb()
 		.select()
@@ -220,10 +225,11 @@ export async function latestReleasedHoldOn(subscriptionId: string): Promise<Paym
  * §5.5): every OPEN one, which it advances before it may mint (I1 (a)), and every one released
  * `refunded` or `already_refunded` within the refund notice window, whose clause its response carries.
  * Only this payer's: the purchase reads nobody else's holds (I7), and no org-plan hold, even one whose
- * `payer_key` is the same string (ADR 0004 O1).
+ * `payer_key` is the same string (ADR 0004 O1). The window is measured on the database's clock, the one
+ * that stamped `released_at`, so the app server's clock can neither show nor hide a refund.
  */
 export async function paymentHoldsOfPayer(payerKey: string): Promise<PaymentHoldRow[]> {
-	const since = new Date(Date.now() - REFUND_NOTICE_WINDOW_MS);
+	const since = sql`now() - ${`${REFUND_NOTICE_WINDOW_MS} milliseconds`}::interval`;
 	return getServiceDb()
 		.select()
 		.from(paymentHolds)
