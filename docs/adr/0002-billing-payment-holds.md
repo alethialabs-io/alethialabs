@@ -802,7 +802,7 @@ and nothing reopens the hold.
   | `not_linked` because X reads ended | `next_check_at = NULL`, `last_error = why` | none: the setup closer closes that setup (§5.7) |
   | thrown, attempt *n* < 6 | `attempts = n`, `last_error`, `next_check_at = now + delay(n)` | none |
   | thrown, attempt *n* ≥ 6 | the alert decision below, with `attempts = n` and `last_error` | the give-up alert, with X as the subject (`context: "payment_hold"`), "failed *n* times" |
-  | the lease is lost: the relink throws `PurchaseLeaseLostError`, or the renewal made before every relink write finds the lease taken over | none under the lost lease | none. The relink pass takes the payer's lease afresh, with a 0s wait, re-reads the hold, and records the loss as a **thrown attempt** (the two rows above). The visit and the purchase only log it, and leave the check for the pass. A fresh lease that is busy means another caller holds the payer, and the next tick tries again. |
+  | the lease is lost: the relink throws `PurchaseLeaseLostError`, or the renewal made before every relink write finds the lease taken over | none under the lost lease | none. The relink pass takes the payer's lease afresh, with a 0s wait, re-reads the hold, and records the loss as a **thrown attempt** (the two rows above). The visit logs it and carries on. The purchase (`relinkIfAdopted`) rethrows it, and the purchase ends as on any lost lease. In both cases nothing is recorded, and the check is left for the pass. A fresh lease that is busy means another caller holds the payer, and the next tick tries again. |
 
   The session's link (`linkSubscriptionToNewOrg`) adopts under its own advance and then runs the
   link's core itself (§5.6, the `closing` / `cancel_unproven` row). It records nothing on the hold.
