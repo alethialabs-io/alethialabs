@@ -87,6 +87,11 @@ not edit it.
   (2) §8 lists the permanent refusal on a legacy shared customer, with the operator's fix. (3) D2 (a′) states that
   expiring another org's keyless session costs a restart, never a charge. **Accepted** under the maintainer's
   delegation, after two adversarial money review rounds on PR #5982.
+- **Note** (2026-10-14, as shipped in #6048, O4). S17 is verified against the pinned `stripe@22.6.2` types, and
+  S16's bounds are confirmed by the same types' own doc (§1.3). Two consequences are recorded, and no decision
+  changes: `checkout.sessions.list` has no `mode` filter, so O6 keeps only `mode === "subscription"` sessions in
+  code; and O4 sets `expires_at` 31 minutes out, not 30, because Stripe checks its 30-minute minimum against its
+  own clock (D3, Q8).
 
 ---
 
@@ -196,15 +201,29 @@ Rev 4's W1–W5 (ADR 0002 at `66c0c25b3`, §5.3 (2)) were written before #5518. 
 
 ADR 0002 §1.3 S1–S15 hold unchanged here, with the same caveats. Two more are used:
 
-- **S16 (not re-read for this revision).** A Checkout Session's `expires_at` can be set between 30 minutes and
+- **S16 (~~not re-read for this revision~~; confirmed 2026-10-14 against `stripe@22.6.2`, #6048).** A Checkout Session's `expires_at` can be set between 30 minutes and
   24 hours after creation, with 24 hours as the default, and `checkout.sessions.expire` makes an `open` session
   unusable (docs.stripe.com/api/checkout/sessions/create, `expires_at`; `/expire`). D3 shortens the window. It does not
   depend on the exact minimum, because every session is also expired before a new purchase (D2, I1 (a′)).
-- **S17 (unverified; an O4 task, against the pinned `stripe` SDK types).** A Checkout Session carries
+  **Note (2026-10-14, #6048):** the pinned SDK's doc on `SessionCreateParams.expires_at` says the same range and
+  default, and `checkout.sessions.expire(id)` exists (`cjs/resources/Checkout/Sessions.d.ts`). Stripe measures
+  the 30-minute minimum from its own creation time, while the server computes `expires_at` from its own clock
+  before the request leaves. So O4 sets 31 minutes (`CHECKOUT_SESSION_LIFETIME_SECONDS = 31 * 60`, `billing.ts`):
+  exactly 30 would be refused whenever latency or clock skew ate into it.
+- **S17 (~~unverified; an O4 task, against the pinned `stripe` SDK types~~; verified 2026-10-14 against
+  `stripe@22.6.2`'s types, #6048).** A Checkout Session carries
   its own `metadata`, separate from `subscription_data.metadata`, and `checkout.sessions.list` filters by
   `customer` and `status`. Classifying a session needs the session-level key, which `createCheckoutSession` does not write today (`billing.ts:1452-1466`).
   If the list cannot filter by status, (a′) pages the customer's sessions and filters in code; nothing else
   depends on it.
+  **Note (2026-10-14, #6048):** verified in `cjs/resources/Checkout/Sessions.d.ts`:
+  - `Checkout.Session.metadata: Metadata | null` is the session's own field, and `SessionCreateParams.metadata`
+    exists beside `subscription_data.metadata`. Since O4, `createCheckoutSession` writes the session-level
+    `metadata.organization_id` (the "does not write today" above no longer holds).
+  - `SessionListParams` has `customer` and `status` (`open`, `complete`, `expired`), so the page-and-filter
+    fallback above is not needed for status.
+  - `SessionListParams` has **no `mode` filter**. (a′) acts only on subscription-mode sessions (D2), so O6 must
+    keep only `mode === "subscription"` sessions in code.
 
 ---
 
@@ -376,7 +395,9 @@ after drops the advisory key (O6), and deploys only after the first one's rollou
 **Checkout's artifact.** The URL is the payable artifact. Its gate runs after `checkout.sessions.create` and before
 `session.url` is returned. Its close-out is `checkout.sessions.expire`. The session is created with its own
 `metadata.organization_id` (S17) and an `expires_at` 30 minutes out (S16, Q8), so a URL that leaves the server
-stays payable as briefly as Stripe allows.
+stays payable as briefly as Stripe allows. **Note (2026-10-14, #6048):** as shipped, `expires_at` is 31 minutes
+out. Stripe checks its 30-minute minimum against its own clock, so the extra minute is the margin that keeps
+Stripe from refusing every session (S16).
 
 **The AI flow keeps F2's `ai:<org>` advisory key.** It writes the AI slot only (`sync.ts:141-146`, `:215-234`), so
 it cannot take the org-plan row, and it opens no holds (§8).
