@@ -1359,9 +1359,11 @@ function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">,
  * first-invoice subs that a re-opened upgrade sheet would otherwise pile up (each one Stripe
  * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the DB, so it
  * cleans up even the subs that were never persisted to organization_billing — the exact leak the old
- * DB-only guard missed. A list that fails is thrown, so nothing is minted. It touches every one on the
- * customer, which is the org's own. (The create-a-team purchase has its own sweep, under payment holds:
- * `closeOrKeep`.)
+ * DB-only guard missed. A list that fails is thrown, so nothing is minted. It touches only the ORG-PLAN
+ * subscriptions on the customer (`isOrgPlanSubscription`, ADR 0002 §10.2 F2): the org's standalone AI
+ * checkout shares this customer, is minted under its own `ai:<org>` lock, and is neither cancelled nor
+ * kept here, so it never refuses an org-plan purchase either. (The create-a-team purchase has its own
+ * sweep, under payment holds: `closeOrKeep`.)
  *
  * Every page is read (`listCustomerSubscriptions`); a customer with more than `SWEEP_SUBSCRIPTION_CAP`
  * of them is not swept at all and answers `overCap`, which refuses.
@@ -1385,6 +1387,8 @@ async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWr
 	const listed = await listCustomerSubscriptions(getStripe(), customerId, "incomplete");
 	if (listed.kind === "over_cap") return { ...sweep, overCap: true };
 	for (const s of listed.subs) {
+		// F2: an AI subscription is not this sweep's to cancel or keep.
+		if (!isOrgPlanSubscription(s)) continue;
 		let firstPayment: FirstPayment;
 		try {
 			firstPayment = await readTwice(() => readFirstPayment(s));
@@ -1461,7 +1465,22 @@ export async function createCheckoutSession(
 	const openSetup = await openSetupRefusal(actor);
 	if (openSetup) throw new Error(openSetup);
 	await gatePaidConversion(actor);
+	// The same org-plan purchase lock `createSubscriptionIntent` takes (ADR 0002 §10.2 F2): an intent and
+	// a Checkout in two tabs run one after another, so the second one's live check runs after the first
+	// one's Stripe writes.
+	const locked = await withPurchaseLock(`org-plan:${actor.orgId}`, () => startCheckoutSession(actor, plan));
+	if (!locked.acquired) throw new Error(PURCHASE_IN_PROGRESS);
+	return locked.value;
+}
 
+/**
+ * The body of `createCheckoutSession`, run under the org's purchase lock: resolves the customer, runs the
+ * live check (`liveOrgPlanCheck`), and creates the hosted Checkout session.
+ */
+async function startCheckoutSession(
+	actor: { orgId: string; userId: string },
+	plan: PaidPlan,
+): Promise<{ url: string }> {
 	const cfg = getStripeConfig();
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	// The row alone misses a live plan whose webhook has not been written yet (#5977).
@@ -1629,6 +1648,24 @@ export async function createAiSubscriptionIntent(
 		);
 	}
 	await gatePaidConversion(actor);
+	// The AI purchase's own lock (ADR 0002 §10.2 F2), not the org-plan one: the AI subscription writes the
+	// org's AI slot only, and the org-plan sweep never touches it. Two AI purchases of one org run one after
+	// another. This flow has no sweep and no live check of its own (ADR 0002 C22), so the lock orders the
+	// two; it does not stop the second one minting.
+	const locked = await withPurchaseLock(`ai:${actor.orgId}`, () => startAiSubscription(actor, tier, opts));
+	if (!locked.acquired) throw new Error(PURCHASE_IN_PROGRESS);
+	return locked.value;
+}
+
+/**
+ * The body of `createAiSubscriptionIntent`, run under the org's `ai:` purchase lock: resolves the
+ * customer and mints the incomplete AI subscription.
+ */
+async function startAiSubscription(
+	actor: { orgId: string; userId: string },
+	tier: PaidAiTier,
+	opts: { billingEmail?: string; currency?: SupportedCurrency } | undefined,
+): Promise<SubscriptionIntent> {
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
