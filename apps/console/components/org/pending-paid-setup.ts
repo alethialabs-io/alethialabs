@@ -128,8 +128,9 @@ export interface PendingPaidSetup {
 	/**
 	 * The sentence a run stopped with when the setup needs support and no retry can finish it (the
 	 * subscription is not this account's, or its team is one this account is not in), or null/absent.
-	 * A sheet that resumes this record shows the sentence instead of offering "Retry to complete setup",
-	 * which ADR 0002 §5.6 rule 4 keeps for a thrown error only.
+	 * A sheet that resumes this record runs the steps again, which ask the server first, instead of
+	 * offering "Retry to complete setup" (ADR 0002 §5.6 rule 4 keeps that for a thrown error), and
+	 * instead of replaying a sentence that support may since have made false.
 	 */
 	stopped?: string | null;
 }

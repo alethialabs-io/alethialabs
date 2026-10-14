@@ -373,6 +373,15 @@ describe("a held setup is never recovered as resumable (ADR 0002 §5.6)", () => 
 		});
 	}
 
+	it("once the hold is released (adopted), the same setup recovers as resumable again", async () => {
+		actions.findUnfinishedNewOrgSetup.mockResolvedValueOnce(lookup("sub_adopted", { org: true, hold: "needs_operator" }));
+		expect(await recoverUnfinishedPaidSetup(null)).toMatchObject({ kind: "held" });
+
+		const released = lookup("sub_adopted", { org: true, hold: null });
+		actions.findUnfinishedNewOrgSetup.mockResolvedValueOnce(released);
+		expect(await recoverUnfinishedPaidSetup(null)).toEqual({ kind: "found", state: released });
+	});
+
 	it("a hold the link advances itself (closing) is still recovered to finish", async () => {
 		const state = lookup("sub_closing_recovered", { hold: "closing" });
 		actions.resolveNewOrgSetup.mockResolvedValue(state);

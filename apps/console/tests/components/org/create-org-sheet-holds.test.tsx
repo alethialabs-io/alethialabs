@@ -10,7 +10,7 @@
 //     offered, the tab's record is gone, and closing needs no confirmation, because nothing is left
 //     here to finish.
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -276,6 +276,13 @@ describe("CreateOrgSheet — a stop for support is final (ADR 0002 §5.6 rule 4)
 		expect(await screen.findByRole("alert")).toHaveTextContent(/isn't tied to this account/);
 		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
 
+		// A final stop does not ask the browser to confirm leaving: nothing in this tab can finish it.
+		const leaving = new Event("beforeunload", { cancelable: true });
+		act(() => {
+			window.dispatchEvent(leaving);
+		});
+		expect(leaving.defaultPrevented).toBe(false);
+
 		await user.click(screen.getByRole("button", { name: "Done" }));
 		expect(screen.queryByText(/picks up at the step/i)).not.toBeInTheDocument();
 		expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -285,5 +292,41 @@ describe("CreateOrgSheet — a stop for support is final (ADR 0002 §5.6 rule 4)
 		expect(await screen.findByRole("alert")).toHaveTextContent(/isn't tied to this account/);
 		expect(screen.queryByText(/retry to complete setup/i)).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /complete setup/i })).not.toBeInTheDocument();
+	});
+});
+
+describe("CreateOrgSheet — a stop for support is checked again, not replayed", () => {
+	it("a tab whose stored stop support has since fixed asks the server again and finishes the setup", async () => {
+		const stale =
+			"Your payment went through and a team was already created for it, but this account isn't in it. Contact support with the time of the payment.";
+		window.sessionStorage.setItem(
+			pendingPaidSetupKey("user-holds"),
+			JSON.stringify({
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				name: "Acme Cloud",
+				slug: "acme-cloud",
+				currency: "eur",
+				declaration: { capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
+				billing: null,
+				customerDetailsSaved: true,
+				createdOrgId: null,
+				createdSlug: "",
+				linked: false,
+				slugRefusal: null,
+				stopped: stale,
+			}),
+		);
+		// Support added this account to the team: the server now reports it as the caller's.
+		m.resolveSetup.mockResolvedValue({ ...lookup(null), org: { id: "org-1", slug: "acme-cloud" } });
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		await vi.waitFor(() => expect(m.linkSubscription).toHaveBeenCalledTimes(1));
+		expect(m.resolveSetup).toHaveBeenCalled();
+		expect(m.createOrg).not.toHaveBeenCalled();
+		expect(screen.queryByText(stale)).not.toBeInTheDocument();
+		await vi.waitFor(() =>
+			expect(window.sessionStorage.getItem(pendingPaidSetupKey("user-holds"))).toBeNull(),
+		);
 	});
 });

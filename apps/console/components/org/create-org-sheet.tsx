@@ -345,8 +345,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				if (generation.current === gen) applyOutcome(outcome);
 			});
 		} else if (stored.stopped) {
-			// A run already stopped this setup for support; a retry would stop it again (§5.6 rule 4).
-			setStopped(stored.stopped);
+			// An earlier run stopped this setup for support. Its sentence may no longer be true (support
+			// can have fixed it), so it is not replayed: the run asks the server again, first, and either
+			// stops with what is true now or finishes. No retry is offered for it (§5.6 rule 4).
+			void runSetup(stored);
 		} else {
 			setNeedsSetupRetry(true);
 		}
@@ -484,8 +486,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	// Closing the TAB is outside the sheet's reach and outside sessionStorage's scope, so while a paid
-	// setup is unfinished — running or failed — the browser is asked to confirm leaving the page.
-	const setupUnfinished = pending !== null;
+	// setup is unfinished — running or failed — the browser is asked to confirm leaving the page. Not
+	// while a final stop is shown (`stopped`, which a held recovery also sets): nothing in this tab can
+	// finish that setup, so leaving loses nothing.
+	const setupUnfinished = pending !== null && stopped === null;
 	useEffect(() => {
 		if (!setupUnfinished) return;
 		/** Asks the browser to confirm leaving while a paid setup is unfinished. */
