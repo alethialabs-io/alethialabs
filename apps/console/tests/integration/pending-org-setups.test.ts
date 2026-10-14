@@ -60,6 +60,7 @@ import {
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { pgErrorCode } from "@/lib/db/pg-error";
 import {
 	authzActivityLog,
 	grants,
@@ -909,7 +910,7 @@ describeIfDb("pending_org_setups — #6052: the closer's check and close are ato
 		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
 		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
 		const db = getServiceDb();
-		await db.delete(paymentHolds).where(eq(paymentHolds.subscription_id, X));
+		await db.delete(paymentHolds).where(eq(paymentHolds.payer_key, U));
 		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, U));
 		await db.delete(user).where(eq(user.id, U));
 	});
@@ -982,5 +983,108 @@ describeIfDb("pending_org_setups — #6052: the closer's check and close are ato
 		expect(verdict).toBe("open");
 		// The closer really ran while the hold was uncommitted, and waited behind it.
 		expect(whenCommitted).toBe("closer waiting");
+	});
+
+	/**
+	 * Opens a hold write on ANOTHER subscription on E and keeps its transaction open (its ROW EXCLUSIVE
+	 * lock on `payment_holds` held) until `finish` is called; `finish` rolls it back.
+	 */
+	async function holdWriteInFlight(): Promise<{ finish: () => Promise<void> }> {
+		const other = `sub_it_6052_other_${randomUUID().slice(0, 8)}`;
+		let ready: () => void = () => undefined;
+		const isReady = new Promise<void>((resolve) => {
+			ready = resolve;
+		});
+		let release: () => void = () => undefined;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const done = e
+			.begin(async (tx) => {
+				await tx`INSERT INTO payment_holds
+					(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by)
+					VALUES (${other}, 'cus_it_6052', ${U}, ${`in_${other}`}, 'closing', now(), 'purchase')`;
+				ready();
+				await released;
+				throw new Error("rollback");
+			})
+			.catch(() => undefined);
+		await isReady;
+		return {
+			finish: async () => {
+				release();
+				await done;
+			},
+		};
+	}
+
+	/** A fresh open setup of U on a fresh subscription, with `held` adding a committed open hold on it. */
+	async function freshSetup(held: boolean): Promise<string> {
+		const x = `sub_it_6052_${randomUUID().slice(0, 8)}`;
+		await recordPendingOrgSetup({ userId: U, subscriptionId: x, customerId: "cus_it_6052", name: "Race", slug: "race" });
+		if (held) {
+			await getServiceDb().insert(paymentHolds).values({
+				subscription_id: x,
+				customer_id: "cus_it_6052",
+				payer_key: U,
+				invoice_id: `in_${x}`,
+				state: "closing",
+				next_check_at: new Date(),
+				opened_by: "purchase",
+			});
+		}
+		return x;
+	}
+
+	it("lock_timeout: a closer that cannot take the lock in 2s throws 55P03 with nothing written — the closer, settleOpenSetup and close-setup alike", async () => {
+		const x = await freshSetup(false);
+		const inFlight = await holdWriteInFlight();
+		try {
+			const started = Date.now();
+			const err = await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }).then(
+				() => null,
+				(e: unknown) => e,
+			);
+			expect(pgErrorCode(err)).toBe("55P03");
+			expect(Date.now() - started).toBeLessThan(10_000);
+			const row = await pendingOrgSetupFor(U, x);
+			if (!row) throw new Error("fixture: the setup is missing");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({
+				id: x,
+				status: "canceled",
+				customer: "cus_it_6052",
+				latest_invoice: null,
+				metadata: { created_by: U },
+			});
+			// The guard turns this throw into the try-again refusal (openSetupRefusal's catch).
+			expect(pgErrorCode(await settleOpenSetup(row).then(() => null, (e: unknown) => e))).toBe("55P03");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			const printed: string[] = [];
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/not free within 2s/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
+		// Once the hold write is gone, the same close lands.
+		expect((await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }))?.closed_reason).toBe("ended");
+	});
+
+	it("fast path: with a committed open hold on X the close answers null at once, without waiting on the lock", async () => {
+		const x = await freshSetup(true);
+		const inFlight = await holdWriteInFlight();
+		try {
+			// Were the lock taken, this would wait behind E and throw 55P03; it resolves null instead.
+			await expect(closePendingOrgSetup({ subscriptionId: x, reason: "ended" })).resolves.toBeNull();
+			const printed: string[] = [];
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/open payment hold \(closing\)/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
 	});
 });

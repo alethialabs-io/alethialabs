@@ -859,12 +859,19 @@ export async function openPendingOrgSetupsForOrg(orgId: string): Promise<Pending
  * be inserting a hold on the same X while it runs. Under READ COMMITTED the `NOT EXISTS` alone reads
  * the statement's snapshot: an insert not yet committed is invisible to it and is not waited for, so
  * the close would land and the hold commit beneath it. So the close runs in a transaction that first
- * takes `payment_holds` in SHARE mode (`lockHoldWrites`). Every hold insert or update takes ROW
- * EXCLUSIVE, which SHARE conflicts with: an open hold write is waited for and committed before the
- * `UPDATE` takes its snapshot, and a hold write that starts later waits until the close has committed.
- * Either way the check and the close see one state of the holds. The lock is on the closer's side
- * only, so no hold writer changes. SHARE does not conflict with itself, so closers do not wait on each
- * other; they wait only on the short hold-write transactions.
+ * takes `payment_holds` in SHARE mode. Every hold insert or update takes ROW EXCLUSIVE, which SHARE
+ * conflicts with: an open hold write is waited for and committed before the `UPDATE` takes its
+ * snapshot, and a hold write that starts later waits until the close has committed. Either way the
+ * check and the close see one state of the holds. The lock is on the closer's side only, so no hold
+ * writer changes. SHARE does not conflict with itself, so closers do not wait on each other.
+ *
+ * Two bounds on that lock. A committed open hold on X already rules the close out, so when one is
+ * visible the transaction returns null before it locks anything: the lock is taken only when no hold
+ * is visible yet. And the wait is capped at `HOLD_LOCK_WAIT` (`lock_timeout`), so a closer queued
+ * behind a long lock (a VACUUM, an index build) gives up instead of holding every hold write behind it.
+ * Giving up THROWS (SQLSTATE 55P03) with nothing written: the guard refuses with the try-again clause,
+ * the lookups log it and leave the setup open for the next reader, and the link fails as it does on any
+ * other database error, with the setup still open.
  */
 export async function closePendingOrgSetup(input: {
 	subscriptionId: string;
@@ -876,7 +883,10 @@ export async function closePendingOrgSetup(input: {
 }): Promise<PendingOrgSetupRow | null> {
 	const now = new Date();
 	return getServiceDb().transaction(async (tx) => {
-		await lockHoldWrites(tx);
+		await tx.execute(sql`SELECT set_config('lock_timeout', ${HOLD_LOCK_WAIT}, true)`);
+		const held = await tx.execute(openHoldProbe(input.subscriptionId));
+		if (held.length > 0) return null;
+		await tx.execute(sql`LOCK TABLE payment_holds IN SHARE MODE`);
 		const [closed] = await tx
 			.update(pendingOrgSetups)
 			.set({
@@ -901,12 +911,12 @@ export async function closePendingOrgSetup(input: {
 	});
 }
 
-/**
- * Takes `payment_holds` in SHARE mode for the rest of `tx`: waits for every hold write in flight to
- * commit, and makes every later one wait for `tx` (see `closePendingOrgSetup`, #6052).
- */
-async function lockHoldWrites(tx: { execute: (query: SQL) => Promise<unknown> }): Promise<void> {
-	await tx.execute(sql`LOCK TABLE payment_holds IN SHARE MODE`);
+/** How long a close waits for its lock on `payment_holds` before it gives up (`closePendingOrgSetup`). */
+const HOLD_LOCK_WAIT = "2s";
+
+/** A row when a COMMITTED open payment hold, of any scope, names `subscriptionId` (the close's fast path). */
+function openHoldProbe(subscriptionId: string): SQL {
+	return sql`SELECT 1 FROM payment_holds WHERE subscription_id = ${subscriptionId} AND state <> 'released' LIMIT 1`;
 }
 
 /**
