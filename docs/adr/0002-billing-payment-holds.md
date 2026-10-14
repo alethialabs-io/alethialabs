@@ -2309,7 +2309,7 @@ it would fail those PRs' scope check.
   the two-live detector, and a `past_due` org minting a second plan. Scope: `docs/adr/**`.
 - **F2. billing: the AI subscription and hosted Checkout share the org's customer with no lock and
   no sweep boundary. AC 11.**
-  **Subsumed by ADR 0004 D3/O4 (2026-10-14); F2 is not filed.** The text below is the issue as proposed.
+  **Still owed, and now a prerequisite of ADR 0004** ("Order: F2 and F3 first", §11; the AI flow keeps F2's `ai:<org>` key, D3). ADR 0004 O4 later moves the org-plan half from this advisory lock to the `org-plan:` lease. The text below is the issue as proposed.
   Done when the org-plan sweep cancels or keeps only org-plan subscriptions, never an AI one.
   `createAiSubscriptionIntent` takes its own `ai:<org>` purchase lock, and `createCheckoutSession`
   takes `org-plan:<org>`. Each change has a test that fails on `dev` first. Scope:
