@@ -854,6 +854,24 @@ export async function openPendingOrgSetupsForOrg(orgId: string): Promise<Pending
  * NEVER WHILE A PAYMENT HOLD IS OPEN on the subscription (ADR 0002 I16 (a), C92): the same statement
  * requires that no open hold names it, and matches nothing otherwise. The hold decides the setup when
  * it ends — its release closes it, or an adoption leaves it open (lib/billing/payment-holds/store.ts).
+ *
+ * ATOMIC AGAINST A HOLD BEING OPENED (I14, #6052). The closer runs without the payer's lease, so E0 can
+ * be inserting a hold on the same X while it runs. Under READ COMMITTED the `NOT EXISTS` alone reads
+ * the statement's snapshot: an insert not yet committed is invisible to it and is not waited for, so
+ * the close would land and the hold commit beneath it. So the close runs in a transaction that first
+ * takes `payment_holds` in SHARE mode. Every hold insert or update takes ROW EXCLUSIVE, which SHARE
+ * conflicts with: an open hold write is waited for and committed before the `UPDATE` takes its
+ * snapshot, and a hold write that starts later waits until the close has committed. Either way the
+ * check and the close see one state of the holds. The lock is on the closer's side only, so no hold
+ * writer changes. SHARE does not conflict with itself, so closers do not wait on each other.
+ *
+ * Two bounds on that lock. A committed open hold on X already rules the close out, so when one is
+ * visible the transaction returns null before it locks anything: the lock is taken only when no hold
+ * is visible yet. And the wait is capped at `HOLD_LOCK_WAIT` (`lock_timeout`), so a closer queued
+ * behind a long lock (a VACUUM, an index build) gives up instead of holding every hold write behind it.
+ * Giving up THROWS (SQLSTATE 55P03) with nothing written: the guard refuses with the try-again clause,
+ * the lookups log it and leave the setup open for the next reader, and the link fails as it does on any
+ * other database error, with the setup still open.
  */
 export async function closePendingOrgSetup(input: {
 	subscriptionId: string;
@@ -864,27 +882,41 @@ export async function closePendingOrgSetup(input: {
 	note?: string;
 }): Promise<PendingOrgSetupRow | null> {
 	const now = new Date();
-	const [closed] = await getServiceDb()
-		.update(pendingOrgSetups)
-		.set({
-			closed_at: now,
-			closed_reason: input.reason,
-			...(input.refusedReason ? { refused_reason: input.refusedReason } : {}),
-			...(input.closedBy ? { closed_by: input.closedBy } : {}),
-			...(input.note ? { closed_note: input.note } : {}),
-			updated_at: now,
-		})
-		.where(
-			and(
-				eq(pendingOrgSetups.subscription_id, input.subscriptionId),
-				input.userId ? eq(pendingOrgSetups.user_id, input.userId) : undefined,
-				isNull(pendingOrgSetups.closed_at),
-				isNull(pendingOrgSetups.linked_at),
-				noOpenHold(input.subscriptionId),
-			),
-		)
-		.returning();
-	return closed ?? null;
+	return getServiceDb().transaction(async (tx) => {
+		await tx.execute(sql`SELECT set_config('lock_timeout', ${HOLD_LOCK_WAIT}, true)`);
+		const held = await tx.execute(openHoldProbe(input.subscriptionId));
+		if (held.length > 0) return null;
+		await tx.execute(sql`LOCK TABLE payment_holds IN SHARE MODE`);
+		const [closed] = await tx
+			.update(pendingOrgSetups)
+			.set({
+				closed_at: now,
+				closed_reason: input.reason,
+				...(input.refusedReason ? { refused_reason: input.refusedReason } : {}),
+				...(input.closedBy ? { closed_by: input.closedBy } : {}),
+				...(input.note ? { closed_note: input.note } : {}),
+				updated_at: now,
+			})
+			.where(
+				and(
+					eq(pendingOrgSetups.subscription_id, input.subscriptionId),
+					input.userId ? eq(pendingOrgSetups.user_id, input.userId) : undefined,
+					isNull(pendingOrgSetups.closed_at),
+					isNull(pendingOrgSetups.linked_at),
+					noOpenHold(input.subscriptionId),
+				),
+			)
+			.returning();
+		return closed ?? null;
+	});
+}
+
+/** How long a close waits for its lock on `payment_holds` before it gives up (`closePendingOrgSetup`). */
+const HOLD_LOCK_WAIT = "2s";
+
+/** A row when a COMMITTED open payment hold, of any scope, names `subscriptionId` (the close's fast path). */
+function openHoldProbe(subscriptionId: string): SQL {
+	return sql`SELECT 1 FROM payment_holds WHERE subscription_id = ${subscriptionId} AND state <> 'released' LIMIT 1`;
 }
 
 /**

@@ -347,8 +347,14 @@ function makeDb() {
 	const update = vi.fn(() => chain);
 	const insert = vi.fn(() => chain);
 	const del = vi.fn(() => chain);
-	const db = { select, update, insert, delete: del };
-	return { db, queue, select, update, insert, sets };
+	// The setup closer's transaction (#6052): it runs on this same db. Its raw statements (`execute`: the
+	// lock timeout, the committed-hold probe, the LOCK) answer no rows and do NOT pop `queue`, so the
+	// queued results still line up with the reads and the compare-and-set.
+	const execute = vi.fn(async () => []);
+	const base = { select, update, insert, delete: del, execute };
+	const transaction = vi.fn(async (fn: (tx: typeof base) => Promise<unknown>) => fn(base));
+	const db = { ...base, transaction };
+	return { db, queue, select, update, insert, sets, execute, transaction };
 }
 
 /** A fully-stubbed Stripe client with every method the billing actions touch. */
@@ -3531,6 +3537,10 @@ describe("ADR 0002 S1 (#5714)", () => {
 			db.queue.push([openRow({ closed_at: new Date() })]);
 			await expect(closer(openRow(), { sub: subX("incomplete_expired") as never })).resolves.toBe("closed");
 			expect(emitAlertEvent).not.toHaveBeenCalled();
+			// #6052: the close ran in one transaction, after its three raw statements (the lock timeout, the
+			// committed-hold probe, the SHARE lock on payment_holds); real Postgres pins what they do.
+			expect(db.transaction).toHaveBeenCalledTimes(1);
+			expect(db.execute).toHaveBeenCalledTimes(3);
 		});
 
 		it("two readers closing the same setup at once: one compare-and-set returns it, and only that caller alerts and logs", async () => {
