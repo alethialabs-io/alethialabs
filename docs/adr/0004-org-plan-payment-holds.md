@@ -590,7 +590,7 @@ this ADR adds after it.
 | a different Y, stored `none` (an `incomplete` or a `paused` Y) | X paid | applies | **D6b′**: retrieve Y; alert only when it reads `paused` |
 | a different Y, stored `past_due` | X not paid | ignored | R2 when X is `past_due` (live); else nothing |
 | no subscription id, a live grant | X paid | applies (superseder) | **D6b** alert |
-| no subscription id, a live grant | X not paid | ignored (`billing-sync.test.ts:367`) | nothing |
+| no subscription id, a live grant | X not paid | ignored (`billing-sync.test.ts:367`) | ~~nothing~~ **alert (D6)** when X is live, and nothing for an `incomplete` X (**Note (2026-10-14, #6003, as built):** D4 and invariant O6 raise the two-live alert here; `reconcileAfterSync` in `lib/billing/org-plan-row.ts` reports X and the grant when X is live and the row is a live grant) |
 | Y, and Y's `deleted` arrives | — | Y's `canceled` applies | **R1**: name the newest `active` sibling, else the newest `trialing`, else the newest other live one; two or more live → **D6c** alert; R1 named a paid (`active`/`trialing`) one → no cancellation email |
 
 ---
