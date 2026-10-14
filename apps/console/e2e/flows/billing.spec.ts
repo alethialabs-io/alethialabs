@@ -29,16 +29,29 @@
 //
 // ── WHAT "TEST MODE" IS ACTUALLY PROVEN BY ────────────────────────────────────────────────────
 //
-// A page that renders is not a page that reached Stripe. Three tests below carry that weight, and
+// A page that renders is not a page that reached Stripe. Four tests below carry that weight, and
 // each waits for something ONLY a live test-mode API call produces:
 //   · a card attached to the org's real Stripe customer appears in Payment methods by its brand
 //     and last four — a row the console can only have got from `listPaymentMethods`;
 //   · the `Remove` confirmation opens over that row, and the card survives a page reload;
 //   · the upgrade sheet mounts Stripe.js's own cross-origin card iframes, which exist only once
-//     Elements has initialised against a real publishable key.
-// The /start CTA test reads Stripe too, but for an ABSENCE: the `team` org is already on a live
-// trial, so /start must mint no second Checkout (#5977) — it asserts that against Stripe's own list
-// of the customer's Checkout Sessions, not only against the browser.
+//     Elements has initialised against a real publishable key;
+//   · /start, for an org with a Stripe customer and no plan, navigates to a `cs_test_` Checkout
+//     Session that Stripe's own list of that customer's sessions then returns (#5993).
+// A second /start test reads Stripe for an ABSENCE: the `team` org is already on a live trial, so
+// /start must mint no second Checkout (#5977) — asserted against the same Stripe list.
+//
+// THE POSITIVE /start TEST SIGNS UP ITS OWN ACCOUNT, and every alternative was worse:
+//   · `team` is on a live trial, so /start correctly refuses it — that is the test above.
+//   · `owner` (Hobby) has no customer, and `createCheckoutSession` calls `ensureCustomer`, which
+//     creates and persists one. That flips `summary.canManage` true for the Hobby org mid-run, and
+//     the suite is `fullyParallel`, so which Hobby-persona specs see it is a coin toss.
+//   · a second org for `owner` is out too: /start runs against the session's ACTIVE org, and every
+//     `owner` context shares one session row, so a parallel spec navigating the Hobby org can move
+//     the active org back between the switch and /start.
+//   · a new persona in global-setup would add a signup to every gate run for one test.
+// A throwaway signup owns an org nothing else in the run knows exists — the pattern runners.spec.ts
+// and onboarding.spec.ts already use, with the same OTP patience.
 //
 // THE UPGRADE SHEET AND /start NEED THE ELIGIBILITY GATE TO SAY YES, and it is asked before Stripe
 // is — for /start, so that the gate's refusal is not what keeps it off Checkout. Two doors:
@@ -57,7 +70,8 @@
 
 import Stripe from "stripe";
 import { scanA11y } from "../helpers/a11y";
-import { db } from "../helpers/db";
+import { db, orgIdBySlug } from "../helpers/db";
+import { signUpHobby } from "../helpers/personas";
 import { expect, test } from "../fixtures/qa";
 
 const billingPath = (slug: string) => `/${slug}/~/settings/billing`;
@@ -202,6 +216,28 @@ async function declareTeamPayer(orgId: string): Promise<void> {
 }
 
 /**
+ * Gives a freshly signed-up org a Stripe customer and the payer declaration, and no plan.
+ *
+ * An upsert, because whether onboarding already wrote the org's `organization_billing` row is not
+ * this test's premise to depend on. `plan` and `status` are left at the table's defaults on insert
+ * (`community`, `none`) and untouched on conflict, so the row says "no plan" exactly as onboarding
+ * left it. The declaration columns are the ones `declareTeamPayer` writes, for the same reason:
+ * /start has no form to collect them, and the eligibility gate is asked before Stripe is.
+ */
+async function seedCustomerWithoutPlan(orgId: string, customerId: string): Promise<void> {
+	await db()`
+		insert into organization_billing
+			(organization_id, stripe_customer_id, payer_capacity, billing_country, authority_attestation)
+		values (${orgId}, ${customerId}, 'organization', 'DE', 'Director')
+		on conflict (organization_id) do update
+			set stripe_customer_id = excluded.stripe_customer_id,
+			    payer_capacity = excluded.payer_capacity,
+			    billing_country = excluded.billing_country,
+			    authority_attestation = excluded.authority_attestation,
+			    updated_at = now()`;
+}
+
+/**
  * Mirrors one paid invoice row for the org, exactly as the `invoice.paid` webhook would.
  *
  * `paidHoursAgo` IS THE ORDERING CONTRACT BETWEEN THE THREE SEEDERS BELOW, not a detail.
@@ -317,6 +353,65 @@ test.describe("Billing settings — Pro trial (team)", () => {
 
 // ── Stripe TEST MODE — what proves the console actually reached the API ───────────────────
 test.describe("Billing — Stripe test mode", () => {
+	test("the /start CTA takes an org with a customer and no plan into a TEST-mode Checkout", { tag: "@needs:stripe" }, async ({
+		page,
+	}) => {
+		// A throwaway account (see the header for why no persona can be used). The signup waits on
+		// the shared OTP log, so it gets runners.spec.ts's patience, and the test a budget to match.
+		test.setTimeout(240_000);
+		const email = `e2e-billing-start-${Date.now()}-${Math.floor(Math.random() * 1e4)}@alethia.test`;
+		const { orgSlug } = await signUpHobby(page, email, { otpTimeoutMs: 150_000 });
+		const orgId = await orgIdBySlug(orgSlug);
+		if (!orgId) throw new Error(`the throwaway signup's org ${orgSlug} has no organization row`);
+
+		// THE PREMISE: a Stripe customer exists before /start, and it carries no subscription. Made
+		// here rather than left to `ensureCustomer`, so the customer the read-back asks about is known
+		// before the console runs — a customer the console had created would be found only through the
+		// row the console wrote.
+		const stripe = stripeApi();
+		const customer = await stripe.customers.create({
+			email,
+			metadata: { organization_id: orgId, e2e: "billing.spec /start positive (#5993)" },
+		});
+		await seedCustomerWithoutPlan(orgId, customer.id);
+		const subs = await stripe.subscriptions.list({ customer: customer.id, status: "all", limit: 1 });
+		expect(subs.data, "a customer created a moment ago already carries a subscription").toEqual([]);
+
+		// TWO recorders, because they answer different questions. `page.on("request")` fires for
+		// every hop of a redirect chain and RECORDS the evidence; `page.route` STOPS the browser from
+		// loading a Stripe page. A test whose only evidence came from the route handler would report
+		// "no navigation" for a navigation that was issued and simply not intercepted.
+		const attempts: string[] = [];
+		page.on("request", (req) => {
+			if (req.url().includes("checkout.stripe.com")) attempts.push(req.url());
+		});
+		await page.route(/checkout\.stripe\.com/, async (route) => {
+			await route.abort();
+		});
+
+		// The abort rejects the navigation — that rejection IS the success path here, so the verdict
+		// is the recorded URL below, never `goto`'s outcome.
+		await page.goto("/start?plan=team&trial=1").catch(() => undefined);
+		await expect
+			.poll(() => attempts.length, {
+				timeout: 45_000,
+				message:
+					"no navigation to checkout.stripe.com was issued — /start either showed the gate's " +
+					"refusal or fell back to the billing page (createCheckoutSession threw)",
+			})
+			.toBeGreaterThan(0);
+		expect(attempts[0]).toContain("cs_test_");
+
+		// The URL is the browser's account; Stripe's is the one that counts. The customer was made by
+		// this test a minute ago, so the session it lists is the one /start minted and no other.
+		const sessions = await stripe.checkout.sessions.list({ customer: customer.id, limit: 10 });
+		expect(sessions.data.map((cs) => cs.id), "Stripe lists no single Checkout Session for the customer").toHaveLength(1);
+		const session = sessions.data[0];
+		expect(session?.id).toMatch(/^cs_test_/);
+		expect(session?.mode).toBe("subscription");
+		expect(attempts[0], "the browser was sent to a different session than Stripe lists").toContain(session?.id);
+	});
+
 	test("the /start CTA for an org already on a live trial mints no second Checkout", { tag: "@needs:stripe" }, async ({
 		team,
 	}) => {
