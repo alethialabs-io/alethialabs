@@ -29,16 +29,19 @@
 //
 // ── WHAT "TEST MODE" IS ACTUALLY PROVEN BY ────────────────────────────────────────────────────
 //
-// A page that renders is not a page that reached Stripe. Four tests below carry that weight, and
+// A page that renders is not a page that reached Stripe. Three tests below carry that weight, and
 // each waits for something ONLY a live test-mode API call produces:
 //   · a card attached to the org's real Stripe customer appears in Payment methods by its brand
 //     and last four — a row the console can only have got from `listPaymentMethods`;
 //   · the `Remove` confirmation opens over that row, and the card survives a page reload;
-//   · the /start CTA redirects to a URL containing a `cs_test_` Checkout Session id;
 //   · the upgrade sheet mounts Stripe.js's own cross-origin card iframes, which exist only once
 //     Elements has initialised against a real publishable key.
+// The /start CTA test reads Stripe too, but for an ABSENCE: the `team` org is already on a live
+// trial, so /start must mint no second Checkout (#5977) — it asserts that against Stripe's own list
+// of the customer's Checkout Sessions, not only against the browser.
 //
-// THE LAST TWO NEED THE ELIGIBILITY GATE TO SAY YES, and it is asked before Stripe is. Two doors:
+// THE UPGRADE SHEET AND /start NEED THE ELIGIBILITY GATE TO SAY YES, and it is asked before Stripe
+// is — for /start, so that the gate's refusal is not what keeps it off Checkout. Two doors:
 //   · the payer must be DECLARED (#4633, fixed by #4895). The upgrade sheet opens on a
 //     `PayerDeclarationForm` step now, so every test that needs the pay view walks it first —
 //     `declareOrganizationPayer` below. /start has no form; its test records the declaration on
@@ -314,27 +317,27 @@ test.describe("Billing settings — Pro trial (team)", () => {
 
 // ── Stripe TEST MODE — what proves the console actually reached the API ───────────────────
 test.describe("Billing — Stripe test mode", () => {
-	test("the /start trial CTA redirects into a TEST-mode Checkout session", { tag: "@needs:stripe" }, async ({
+	test("the /start CTA for an org already on a live trial mints no second Checkout", { tag: "@needs:stripe" }, async ({
 		team,
 	}) => {
+		// The gate must say yes, so that what keeps /start off Checkout is the live plan and nothing else.
 		await declareTeamPayer(team.orgId!);
-		// `app/start/page.tsx` calls `createCheckoutSession("team")` server-side and redirects to
-		// the session URL, falling back to the org's billing page when Stripe is unconfigured or
-		// the call throws. Intercept the external navigation so no browser ever reaches Stripe.
-		//
-		// THE `team` PERSONA, NOT `owner`, and the reason is a side effect rather than a
-		// preference: `createCheckoutSession` calls `ensureCustomer`, which CREATES a Stripe
-		// customer for the org it runs against and persists it. Run against the Hobby persona this
-		// test would hand that org a customer, flipping `summary.canManage` true for every other
-		// spec in the run — the suite is `fullyParallel`, so which ones is a coin toss. `team`
-		// already has a customer, so the call changes nothing about the org's state.
+		// THE PREMISE, read from Stripe rather than assumed: the `team` org's customer carries the
+		// persona's Pro trial — a `trialing` org-plan subscription. `createCheckoutSession` lists the
+		// customer's subscriptions before it mints (#5977) and refuses beside a live plan; before that
+		// it minted a second Team Checkout, with a second trial, beside this one.
+		const customerId = await stripeCustomerId(team.orgId!);
+		const stripe = stripeApi();
+		const trialing = await stripe.subscriptions.list({ customer: customerId, status: "trialing", limit: 100 });
+		expect(trialing.data.length, "the team persona's customer lists no trialing subscription").toBeGreaterThan(0);
+		// Stripe's clock and the runner's can disagree; a minute's margin keeps a session this test
+		// caused from falling outside the window. Nothing else in the suite opens a Checkout for this
+		// customer, so a wider window cannot catch someone else's session.
+		const since = Math.floor(Date.now() / 1000) - 60;
+
+		// Recorded AND stopped, as before: if /start regresses into a redirect, the browser never
+		// loads a Stripe page, and the recorded URL is the evidence.
 		const attempts: string[] = [];
-		// TWO recorders, because they answer different questions and the second is not a spare.
-		// `page.on("request")` fires for every hop of a redirect chain and is what RECORDS the
-		// evidence; `page.route` is what STOPS the browser from actually loading a Stripe page.
-		// Route handlers and redirect hops have a history of disagreeing, and a test whose only
-		// evidence came from the handler would report "no navigation was issued" for a navigation
-		// that was issued and simply not intercepted.
 		team.page.on("request", (req) => {
 			if (req.url().includes("checkout.stripe.com")) attempts.push(req.url());
 		});
@@ -342,22 +345,18 @@ test.describe("Billing — Stripe test mode", () => {
 			await route.abort();
 		});
 
-		// The abort rejects the navigation — that rejection IS the success path here, so the
-		// verdict is the recorded URL below, never `goto`'s outcome.
+		// `app/start/page.tsx` falls back to the org's billing page when `createCheckoutSession` throws
+		// anything but the eligibility gate's refusal — the live-plan refusal is one of those.
 		await team.page.goto("/start?plan=team&trial=1").catch(() => undefined);
+		await expect(team.page).toHaveURL((url) => url.pathname === billingPath(team.orgSlug), { timeout: 45_000 });
+		expect(attempts, "/start navigated to Stripe Checkout beside a live trial").toEqual([]);
 
-		await expect
-			.poll(() => attempts.length, {
-				timeout: 45_000,
-				message:
-					"no navigation to checkout.stripe.com was issued — /start either showed the gate's " +
-					"refusal or fell back to the billing page (createCheckoutSession threw, or Stripe is " +
-					"not configured)",
-			})
-			.toBeGreaterThan(0);
-		// `cs_test_…` is the one thing a LIVE-mode account could not have produced, and a stub
-		// could not have invented: it is the id Stripe minted for this run's session.
-		expect(attempts[0]).toContain("cs_test_");
+		// The browser not going to Checkout is not the same as no Checkout existing: ask Stripe.
+		const sessions = await stripe.checkout.sessions.list({ customer: customerId, created: { gte: since }, limit: 100 });
+		expect(
+			sessions.data.map((cs) => cs.id),
+			"a Checkout Session was minted for a customer already on a live trial",
+		).toEqual([]);
 	});
 
 	test("the upgrade sheet mounts Stripe.js's own card fields, not a look-alike", { tag: "@needs:stripe" }, async ({
