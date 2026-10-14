@@ -10,12 +10,14 @@
 //
 // SCOPE (ADR 0004 D1). Every hold belongs to one flow: `new_org` (create-a-team, payer = the user id) or
 // `org_plan` (the org-plan purchase, payer = the org id). The pair `(scope, payer_key)` is the key, and
-// `leaseKeyFor` names the purchase lease that fences the hold's state writes. Every opener today is
+// `leaseKeyFor` names the purchase lease that fences the hold's state writes, and throws on a scope it has
+// no lease prefix for (#6009). Every opener today is
 // create-a-team and passes no scope, so the column's default `new_org` labels them; ADR 0004 O8 drops
 // the default once every opener passes it.
 //
 // Every write goes through lib/billing/payment-holds/store.ts, whose header names its callers: the
-// purchase, the link, the sweeper, the webhook's nudge, the notice emails and the operator command.
+// purchase, the link, the sweeper, the webhook's nudge, the notice stamp, the notice emails and the
+// operator command.
 //
 // Rows are never deleted (I6): `released` is terminal for a row and kept for audit, and a later open on
 // the same subscription writes a NEW row. That is why `subscription_id` is unique among OPEN rows only
@@ -25,7 +27,9 @@
 // THREE KINDS OF WRITE (§4.1), and only the store makes them:
 //   - a state write changes state, counters and schedule. It is a compare-and-set on `version` AND on
 //     the payer's purchase lease (`purchase_leases`, S2) in the same statement, and bumps `version`;
-//   - a hint write (the webhook's nudge) sets `nudged_at` and `updated_at` and nothing else;
+//   - a hint write sets one hint column and nothing else: the webhook's nudge sets `nudged_at` and
+//     `updated_at`; the notice stamp (`stampHoldNotice`, #6029) sets `notice_last_sent_at` alone, with
+//     no lease and no state predicate, so it stamps a `released` hold too;
 //   - a notice claim sets `notified_state` and `notified_at` and nothing else.
 // Only state writes touch `version`, so a hint or a claim can never make a state write miss (C74).
 //

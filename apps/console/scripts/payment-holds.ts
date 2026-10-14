@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The payment-hold operator command (ADR 0002 §5.4 "Commands", §8 "Backfill", Q12; S6 #5783; ADR 0004
-// D1 rule 5).
+// D1 rule 5, §9 step 5).
 //
 // Usage (`pnpm -C apps/console billing:payment-holds …`):
 //   list [--open] [--scope new_org|org_plan] [--payer <user or org id>]
@@ -67,10 +67,15 @@
 // `pending_org_setups`, makes no Stripe write, raises no alert and exits 1; only `row_not_x` and
 // `row_changed` can follow the one sync of X.
 //
-// BACKFILL (§8 B1–B6). The memory-less code before holds kept no record of what it cancelled, so the
-// listing has no lower bound: every `canceled` and `incomplete_expired` subscription in the account. A
-// subscription is HELD only when every test passes, each read from Stripe:
-//   B1 a create-a-team subscription: `metadata.created_by`, and no `metadata.organization_id`;
+// BACKFILL (ADR 0002 §8 B1–B6, B1 widened by ADR 0004 §9 step 5). The memory-less code before holds
+// kept no record of what it cancelled, so the listing has no lower bound: every `canceled` and
+// `incomplete_expired` subscription in the account. A subscription is HELD only when every test passes,
+// each read from Stripe:
+//   B1 an org-plan subscription of some org (ADR 0004 §2: its own `metadata.organization_id`, and no
+//      `metadata.product_type`, so an AI subscription is not one; a linked create-a-team subscription
+//      is), held as `org_plan` with that org as payer; or a create-a-team subscription
+//      (`metadata.created_by`, and no `metadata.organization_id`), held as `new_org` with its creator as
+//      payer. Anything else is not covered and nothing more is read for it;
 //   B2 ended by a request: `canceled` with `cancellation_details.reason = cancellation_requested`, or
 //      `incomplete_expired`;
 //   B3 never renewed or changed: exactly ONE invoice, with `billing_reason = subscription_create`;
@@ -81,12 +86,13 @@
 //      taken counts: nothing was paid by any other method). An invoice with NO PaymentIntent proves
 //      nothing either way: it is held in `needs_operator` and alerted, never advanced;
 //   B6 not a withdrawal: no `commerce_order` names it as `withdrawn` or `refunded`.
-// Each hit is opened as a `new_org` hold (`opened_by = backfill`, `open_note` naming the evidence) under
-// its payer's lease and advanced at once; one the machine cannot settle reaches `needs_operator`.
+// Each hit is opened as a hold of its B1 scope (`opened_by = backfill`, `open_note` naming the evidence)
+// under that hold's own lease, `leaseKeyFor(scope, payer)` (`org-plan:<org>` or `user:<creator>`), and
+// advanced at once; one the machine cannot settle reaches `needs_operator`.
 // Everything else is LISTED with the failed test named, and nothing is written for it (Q12: each is a
 // support decision, with `show` as the evidence). Safe to re-run, and to run twice at once: a subscription any hold has ever
-// named — open or released — is skipped, and that check is made again under the payer's lease before a
-// hold is opened.
+// named, of either scope, open or released, is skipped, and that check is made again under the payer's
+// lease before a hold is opened. `--scope` and `--payer` narrow only the sweeper pass, never the backfill.
 //
 // S1-ERA CLOSURES (§8). Before holds existed, the link's refusal beside a team's other live plan CLOSED
 // the setup (`closed_reason = org_has_plan`) while its subscription could still be live, which hides it
@@ -825,10 +831,13 @@ export interface BackfillSubscription {
 
 /** The backfill's verdict on one ended subscription. */
 export type BackfillVerdict =
-	| { kind: "not_create_a_team" }
+	/** B1 fails: neither an org-plan subscription nor a create-a-team one. */
+	| { kind: "not_covered" }
 	| { kind: "listed"; failed: string }
 	| {
 			kind: "hold";
+			/** B1's scope: `org_plan` (payer = the org id) or `new_org` (payer = the creator's user id). */
+			scope: PaymentHoldScope;
 			payer: string;
 			customerId: string;
 			invoiceId: string;
@@ -844,13 +853,29 @@ export type BackfillVerdict =
 const NOTHING_TAKEN: ReadonlySet<string> = new Set(["requires_payment_method", "canceled"]);
 
 /**
+ * B1 (ADR 0002 §8, widened by ADR 0004 §9 step 5): the hold scope and payer of `sub`, or null when it is
+ * neither an org-plan subscription of some org (its own `organization_id`, no `product_type`; a linked
+ * create-a-team subscription is one) nor a create-a-team one (`created_by`, no `organization_id`).
+ */
+function backfillScope(sub: BackfillSubscription): { scope: PaymentHoldScope; payer: string; what: string } | null {
+	const orgId = sub.metadata?.organization_id ?? "";
+	if (orgId) {
+		if (sub.metadata?.product_type) return null;
+		return { scope: "org_plan", payer: orgId, what: `org-plan subscription of ${orgId}` };
+	}
+	const creator = sub.metadata?.created_by ?? "";
+	if (creator) return { scope: "new_org", payer: creator, what: `create-a-team subscription of ${creator}` };
+	return null;
+}
+
+/**
  * B1–B6 (§8) for one subscription Stripe lists as `canceled` or `incomplete_expired`, read from Stripe
  * (and, for B6, `commerce_order`). Holds only on positive evidence that the checkout ended before it
  * was ever paid; any test that fails, or cannot be read, LISTS it.
  */
 export async function backfillVerdict(sub: BackfillSubscription, stripe: BackfillStripe): Promise<BackfillVerdict> {
-	const payer = sub.metadata?.created_by ?? "";
-	if (!payer || sub.metadata?.organization_id) return { kind: "not_create_a_team" };
+	const b1 = backfillScope(sub);
+	if (!b1) return { kind: "not_covered" };
 
 	const reason = sub.cancellation_details?.reason ?? null;
 	if (!(sub.status === "incomplete_expired" || (sub.status === "canceled" && reason === "cancellation_requested"))) {
@@ -922,10 +947,11 @@ export async function backfillVerdict(sub: BackfillSubscription, stripe: Backfil
 	const b5 = toOperator ? "B5 unproven (no PaymentIntent on the invoice; held for an operator)" : "B5 card";
 	return {
 		kind: "hold",
-		payer,
+		scope: b1.scope,
+		payer: b1.payer,
 		customerId: typeof sub.customer === "string" ? sub.customer : sub.customer.id,
 		invoiceId: invoice.id,
-		evidence: `backfill: B2 ${ended}; B3 one subscription_create invoice ${invoice.id}; B4 ${b4}; ${b5}; B6 no withdrawal`,
+		evidence: `backfill: B1 ${b1.what}; B2 ${ended}; B3 one subscription_create invoice ${invoice.id}; B4 ${b4}; ${b5}; B6 no withdrawal`,
 		toOperator,
 	};
 }
@@ -938,16 +964,17 @@ export interface BackfillSummary {
 	toOperator: number;
 	listed: number;
 	alreadyHeld: number;
-	notCreateATeam: number;
+	/** B1 failed: neither an org-plan nor a create-a-team subscription (an AI one, say). */
+	notCovered: number;
 }
 
 /**
  * `reconcile --backfill`'s listing (§8): every ended subscription in the account through B1–B6. Holds
- * each hit under its payer's lease and advances it at once; lists everything else. Writes nothing for a
+ * each hit, in its B1 scope, under that hold's own lease and advances it at once; lists everything else. Writes nothing for a
  * subscription any hold has ever named, so a re-run is safe.
  */
 export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, print: Print): Promise<BackfillSummary> {
-	const summary: BackfillSummary = { held: 0, toOperator: 0, listed: 0, alreadyHeld: 0, notCreateATeam: 0 };
+	const summary: BackfillSummary = { held: 0, toOperator: 0, listed: 0, alreadyHeld: 0, notCovered: 0 };
 	for (const status of ["canceled", "incomplete_expired"] as const) {
 		for await (const sub of stripe.subscriptions.list({ status, limit: 100 })) {
 			let verdict: BackfillVerdict;
@@ -958,8 +985,8 @@ export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, prin
 				print(`LISTED ${sub.id}: could not read it (${err instanceof Error ? err.message : String(err)})`);
 				continue;
 			}
-			if (verdict.kind === "not_create_a_team") {
-				summary.notCreateATeam += 1;
+			if (verdict.kind === "not_covered") {
+				summary.notCovered += 1;
 				continue;
 			}
 			// A cheap first look; `holdFromBackfill` asks again under the payer's lease.
@@ -983,7 +1010,7 @@ export async function runBackfill(deps: ServerDeps, stripe: BackfillStripe, prin
 	}
 	print(
 		`Backfill: ${summary.held} held, ${summary.toOperator} held for an operator, ${summary.listed} listed for review, ${summary.alreadyHeld} already held, ` +
-			`${summary.notCreateATeam} not create-a-team subscriptions.`,
+			`${summary.notCovered} neither org-plan nor create-a-team subscriptions.`,
 	);
 	return summary;
 }
@@ -1002,7 +1029,8 @@ async function knownHold(subscriptionId: string): Promise<{ id: string; state: s
 }
 
 /**
- * Opens one backfill hold under its payer's lease, and advances it — or, when B5 rested on no
+ * Opens one backfill hold of the verdict's scope under that hold's own lease
+ * (`leaseKeyFor(scope, payer)`, the lease `openHold` requires), and advances it — or, when B5 rested on no
  * PaymentIntent at all, opens it in `needs_operator` and alerts instead. The "a hold already names it"
  * check is made again UNDER the lease, so two backfills running at once cannot both open one.
  */
@@ -1012,7 +1040,7 @@ async function holdFromBackfill(
 	deps: ServerDeps,
 	print: Print,
 ): Promise<BackfillOutcome> {
-	const lease = await deps.lease.acquirePurchaseLease(leaseKeyFor("new_org", verdict.payer), LEASE_WAIT_MS);
+	const lease = await deps.lease.acquirePurchaseLease(leaseKeyFor(verdict.scope, verdict.payer), LEASE_WAIT_MS);
 	if (!lease) {
 		print(`LISTED ${subscriptionId}: its payer's lease stayed busy; re-run the backfill.`);
 		return "listed";
@@ -1025,6 +1053,7 @@ async function holdFromBackfill(
 		}
 		const now = new Date();
 		const opened = await deps.store.openHold(lease, {
+			scope: verdict.scope,
 			subscriptionId,
 			customerId: verdict.customerId,
 			payerKey: verdict.payer,
@@ -1048,12 +1077,12 @@ async function holdFromBackfill(
 			if (alerted) {
 				await deps.store.writeHoldState(lease, { id: opened.hold.id, version: opened.hold.version }, { alertedAt: now });
 			}
-			print(`HELD ${subscriptionId}: hold ${opened.hold.id}, needs_operator (B5 unproven: no PaymentIntent)${alerted ? ", alerted" : ""}.`);
+			print(`HELD ${subscriptionId}: hold ${opened.hold.id}, ${verdict.scope} of ${verdict.payer}, needs_operator (B5 unproven: no PaymentIntent)${alerted ? ", alerted" : ""}.`);
 			return "to_operator";
 		}
 		const advanced = await advanceHold(opened.hold, deps.sweeper.machineDepsFor(lease, deps.sweepDeps));
 		print(
-			`HELD ${subscriptionId}: hold ${opened.hold.id}, ${advanced.hold.state}` +
+			`HELD ${subscriptionId}: hold ${opened.hold.id}, ${verdict.scope} of ${verdict.payer}, ${advanced.hold.state}` +
 				`${advanced.hold.release_reason ? `(${advanced.hold.release_reason})` : ""} after ${advanced.rows.join(" → ") || "no row"}.`,
 		);
 		return "held";

@@ -21,16 +21,25 @@
 // on that stall. So the work must not call `withPurchaseLock` again: a nested call would wait on the
 // lock pool the same way.
 //
-// THE KEYS, AND THE ORDER THEY NEST IN (ADR 0002 §10.2 F2). Two keys are taken:
+// THE KEYS, AND THE ORDER THEY NEST IN (ADR 0002 §10.2 F2; ADR 0004 D3). Two keys are taken:
 //   - `org-plan:<org>`: the org-plan purchase — `createSubscriptionIntent` and `createCheckoutSession`
-//     (app/server/actions/billing.ts) — and the operator's moved release (scripts/payment-holds.ts);
+//     (app/server/actions/billing.ts, `withOrgPlanPurchaseKeys`) — and the operator's moved release
+//     (scripts/payment-holds.ts);
 //   - `ai:<org>`: the standalone AI purchase, `createAiSubscriptionIntent`, alone.
-// No caller holds both keys, and no caller takes either one inside the other. The one nesting is the
-// moved release's: it holds the payer's `user:<payer>` purchase lease (lib/billing/purchase-lease.ts) and
-// takes `org-plan:<org>` inside it, so the order is lease first, then this lock. No caller takes a lease
-// while it holds this lock: a lease and this lock are only ever taken lease first. That holds only until
-// ADR 0004 O4, which takes `org-plan:<org>` here first and an `org-plan:<org>` lease inside it (D3, C25);
-// O4 must restate this order.
+// No caller holds both keys. A lock and a purchase lease (lib/billing/purchase-lease.ts) nest in two
+// places, in opposite orders, over different lease keys:
+//   1. the org-plan purchase and its Checkout take `org-plan:<org>` HERE FIRST, and the `org-plan:<org>`
+//      lease inside it, given back in reverse — the lease, then this lock (ADR 0004 O4, D3, C25). That is
+//      for the rolling deploy: a pod before O4 takes this lock alone, and is excluded either way;
+//   2. the moved release holds the hold's own lease and takes `org-plan:<T>` here inside it. It reaches
+//      this lock only for a `new_org` hold — `decideMovedRelease` (lib/billing/payment-holds/machine.ts)
+//      refuses before the lock unless the hold was opened by the link's refusal (row 1) and its payer is a
+//      member of T (row 4), and an `org_plan` hold's payer is an org — so the lease it holds is a
+//      `user:<payer>` one.
+// So no cycle: the one caller that waits for a lease while holding this lock waits for an `org-plan:`
+// one, and the one caller that waits for this lock while holding a lease holds a `user:` one. Every other
+// taker of an `org-plan:` lease — the Pro trial, the hold sweeper (lib/billing/payment-holds/sweeper.ts,
+// which never waits) and the operator script outside its moved release — never takes this lock.
 
 import "server-only";
 import { sql } from "drizzle-orm";

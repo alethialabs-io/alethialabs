@@ -18,7 +18,9 @@
 //        second run writes nothing; it refuses beside an open setup whose subscription may still go
 //        live, and while the payer's lease is busy.
 //   C58  `reconcile --backfill` holds only the never-live checkouts (B1–B6), refunds only a payment that
-//        landed after the end, lists the rest without writing, and a re-run writes nothing new.
+//        landed after the end, lists the rest without writing, and a re-run writes nothing new. ADR 0004
+//        C43 (§9 step 5): B1 covers org-plan subscriptions too, so a linked create-a-team one is held as
+//        an `org_plan` hold of its org.
 //   C6   (ADR 0004 D1 rule 5) a due `org_plan` hold is advanced under `org-plan:<O>`; with that lease
 //        held, the hold is skipped as busy and left unchanged.
 //   C32  (ADR 0004 D8, the sender half) an `org_plan` hold in `refund_pending` is mailed once, to its
@@ -31,6 +33,8 @@
 //        the link's core: with an org, X is linked (`linked_at`, the row names X); with no org, or a
 //        creator who lost `manage_billing`, the setup stays open. Beside a live Y the re-link opens a
 //        `link_refused` hold that T2o never adopts (C80). `release` of a live X links it first.
+//   #6043 the re-link's refusal after the sync (X's metadata already names O) whose lease is lost before
+//        the hold opens: the lost lease is thrown, no hold is open, and the operator is alerted once.
 //
 // The link's core reaches Stripe through the purchase client (`getPurchaseStripe`), faked here over
 // `linkWorld`; the sync applies X to the org's row with the real guarded write
@@ -49,6 +53,8 @@ const linkWorld = vi.hoisted(() => ({
 	allowed: true,
 	/** customer id → its Stripe email (C32's recipient). */
 	customerEmails: new Map<string, string>(),
+	/** Runs once at the start of the next sync, before it writes: the race a test stages (#6043). */
+	onSync: null as null | (() => Promise<void>),
 }));
 vi.mock("@/lib/billing/stripe", () => {
 	const client = {
@@ -85,6 +91,9 @@ vi.mock("@/lib/billing/sync", async (importActual) => {
 	return {
 		...actual,
 		syncSubscriptionToBilling: async (sub: { id: string; status: string; customer: string; metadata: Record<string, string> }) => {
+			const race = linkWorld.onSync;
+			linkWorld.onSync = null;
+			await race?.();
 			const orgId = sub.metadata.organization_id;
 			if (!orgId) return "ignored";
 			const live = sub.status === "active" || sub.status === "trialing";
@@ -108,6 +117,9 @@ vi.mock("@/lib/email/billing-email", async (importActual) => ({
 	sendPaymentHoldNoticeEmail: vi.fn(async () => undefined),
 	sendOrgPlanHoldNoticeEmail: vi.fn(async () => undefined),
 }));
+// The operator alert the link's core raises itself (`alertPaymentNeedsSupport`, not the sweep's `alert`
+// dep): recorded here, and answering false as the real one does with no operator org configured.
+vi.mock("@/lib/billing/payment-alert", () => ({ alertPaymentNeedsSupport: vi.fn(async () => false) }));
 vi.mock("@/lib/auth/scope", () => ({
 	getActiveScope: async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId }),
 }));
@@ -116,6 +128,7 @@ vi.mock("@/lib/authz", async (importActual) => {
 	return { ...actual, getPdp: () => ({ can: async () => ({ allowed: linkWorld.allowed }) }) };
 });
 
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import * as store from "@/lib/billing/payment-holds/store";
 import { deliverHoldNotice } from "@/lib/billing/payment-holds/emails";
@@ -125,6 +138,7 @@ import * as sweeper from "@/lib/billing/payment-holds/sweeper";
 import { runPaymentHoldSweep, type SweepDeps } from "@/lib/billing/payment-holds/sweeper";
 import {
 	acquirePurchaseLease,
+	PurchaseLeaseLostError,
 	releasePurchaseLease,
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
@@ -1074,6 +1088,55 @@ describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked
 		expect(await read(refusedHold.id)).toMatchObject({ state: "needs_operator" });
 	});
 
+	it("#6043: Y takes the row during the re-link's sync and the payer's lease is lost before the hold opens — the lost lease is thrown, no hold, and the operator is alerted once naming X and O", async () => {
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(new FakeStripe(), payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// Inside the sync, after X's metadata write: Y takes O's row, and the lease's row expires (another
+		// caller may now take it), so the hold's FOR SHARE read of the lease finds nothing.
+		linkWorld.onSync = async () => {
+			await applySubscriptionToBilling({
+				organizationId: orgId,
+				plan: "team",
+				status: "active",
+				stripeCustomerId: `cus_${sub}_y`,
+				stripeSubscriptionId: `${sub}_y`,
+				seats: null,
+				currentPeriodEnd: null,
+				eventAt: null,
+			});
+			await getServiceDb()
+				.update(purchaseLeases)
+				.set({ expires_at: new Date(Date.now() - 1000) })
+				.where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		};
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			await expect(sweeper.relinkAdoptedSetup(lease, { payer_key: payer, subscription_id: sub, customer_id: `cus_${sub}` }, alert)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+
+		// X's metadata names O, and nothing records the refusal in the database: no open hold, the setup
+		// neither refused nor linked.
+		expect(linkWorld.subs.get(sub)?.metadata.organization_id).toBe(orgId);
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null, refused_reason: null });
+		// So the operator is told at once, about X, naming O.
+		const raised = vi.mocked(alertPaymentNeedsSupport).mock.calls.map((c) => c[0]).filter((a) => a.subscriptionId === sub);
+		expect(raised).toHaveLength(1);
+		expect(raised[0]).toMatchObject({ context: "link_refused", customerId: `cus_${sub}` });
+		expect(raised[0]?.detail).toContain(`team ${orgId}`);
+	});
+
 	it("§5.4: `release` of a live X whose setup has an org links it FIRST, then releases; beside a live Y it refuses and releases nothing", async () => {
 		const stripe = new FakeStripe();
 		const payer = await newUser();
@@ -1150,6 +1213,8 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		const paidBefore = newSub();
 		const bankDebit = newSub();
 		const orgOwned = newSub();
+		const orgId = randomUUID();
+		const aiOwned = newSub();
 		stripe.add(
 			{ id: neverPaid, status: "canceled", ended_at: 1000, metadata: mine, cancellation_details: requested },
 			{ pis: [{ id: `pi_${neverPaid}`, status: "requires_payment_method", amount: 1000, pm: null, refunds: [] }] },
@@ -1170,7 +1235,16 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 			id: orgOwned,
 			status: "canceled",
 			ended_at: 1000,
-			metadata: { created_by: payer, organization_id: randomUUID() },
+			metadata: { created_by: payer, organization_id: orgId },
+			cancellation_details: requested,
+		});
+		// An AI subscription of the same org, built like `orgOwned` (an open invoice, no payment), which B2–B6
+		// would hold for an operator. Only B1 keeps it out: it is not covered on both runs, and no hold names it.
+		stripe.add({
+			id: aiOwned,
+			status: "canceled",
+			ended_at: 1000,
+			metadata: { organization_id: orgId, product_type: "ai_subscription" },
 			cancellation_details: requested,
 		});
 		const printed: string[] = [];
@@ -1179,21 +1253,38 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		};
 
 		const first = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(first).toEqual({ held: 2, toOperator: 0, listed: 2, alreadyHeld: 0, notCreateATeam: 1 });
+		// ADR 0004 §9 step 5 (C43): a linked create-a-team subscription carries `organization_id`, so it is an
+		// org-plan subscription of that org. Its open invoice has no PaymentIntent, so B5 proves nothing: it
+		// is held as `org_plan` for an operator, never advanced.
+		expect(first).toEqual({ held: 2, toOperator: 1, listed: 2, alreadyHeld: 0, notCovered: 1 });
 
 		const rows = await getServiceDb()
 			.select()
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
 		const bySub = new Map(rows.map((r) => [r.subscription_id, r]));
-		expect(rows).toHaveLength(2);
+		expect(rows).toHaveLength(3);
+		expect(bySub.get(orgOwned)).toMatchObject({
+			scope: "org_plan",
+			payer_key: orgId,
+			state: "needs_operator",
+			opened_by: "backfill",
+			open_note: expect.stringMatching(new RegExp(`^backfill: B1 org-plan subscription of ${orgId}; .*B5 unproven`)),
+		});
+		expect(bySub.get(orgOwned)?.alerted_at).not.toBeNull();
+		expect(alert.mock.calls.filter((c) => c[0].subscriptionId === orgOwned)).toHaveLength(1);
+		expect(stripe.writesFor(orgOwned)).toEqual([]);
+		expect(bySub.has(aiOwned)).toBe(false);
+		expect(stripe.writesFor(aiOwned)).toEqual([]);
+		expect(printed.some((l) => l.includes(aiOwned))).toBe(false);
 		expect(bySub.get(neverPaid)).toMatchObject({
 			state: "released",
 			release_reason: "voided_unpaid",
 			opened_by: "backfill",
+			scope: "new_org",
 			payer_key: payer,
 			invoice_id: `in_${neverPaid}`,
-			open_note: expect.stringMatching(/^backfill: B2 canceled/),
+			open_note: expect.stringMatching(new RegExp(`^backfill: B1 create-a-team subscription of ${payer}; B2 canceled`)),
 		});
 		const refundedHold = bySub.get(paidAfter);
 		expect(refundedHold).toMatchObject({ state: "released", release_reason: "refunded", opened_by: "backfill" });
@@ -1210,13 +1301,13 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		// A second run writes nothing: every subscription a hold has named is skipped.
 		const writesBefore = stripe.log.length;
 		const second = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 2, notCreateATeam: 1 });
+		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 3, notCovered: 1 });
 		expect(stripe.log.length).toBe(writesBefore);
 		const [after] = await getServiceDb()
 			.select({ count: sql<number>`count(*)::int` })
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
-		expect(after?.count).toBe(2);
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
+		expect(after?.count).toBe(3);
 	});
 
 	it("two backfills at once open ONE hold per subscription; an invoice with no PaymentIntent is held for an operator and alerted", async () => {

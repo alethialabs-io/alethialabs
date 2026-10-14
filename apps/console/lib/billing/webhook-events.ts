@@ -8,7 +8,7 @@
 // is skipped. See app/api/webhooks/stripe/route.ts.
 
 import { eq, sql } from "drizzle-orm";
-import { type Db, getServiceDb, type Tx } from "@/lib/db";
+import { type Db, getLockDb, getServiceDb, type Tx } from "@/lib/db";
 import { stripeWebhookEvent } from "@/lib/db/schema";
 
 /** Outcome of claiming an event id for processing. */
@@ -63,8 +63,10 @@ export async function markWebhookEventDone(
 
 /**
  * Runs `handler` for a Stripe event EXACTLY ONCE across concurrent / retried deliveries of the
- * same event id, then marks the row `done` — all inside a single transaction that first takes a
- * per-event advisory lock (`pg_advisory_xact_lock(hashtextextended(eventId, 0))`). Deliveries of
+ * same event id, then marks the row `done`. One transaction takes a per-event advisory lock
+ * (`pg_advisory_xact_lock(hashtextextended(eventId, 0))`) and holds it while `handler` runs; the
+ * row re-read, the re-insert and the `done` mark run in that transaction, but the handler's own reads
+ * and writes do not: they go through `getServiceDb()` and commit on their own. Deliveries of
  * the SAME id are serialized (different ids never block each other); the handler — which sends the
  * non-idempotent branded email — is invoked while the lock is held, so a second delivery blocks
  * until the first commits `done` and is then skipped.
@@ -80,6 +82,15 @@ export async function markWebhookEventDone(
  * A throw from `handler` rolls back the `done` mark (the separately-committed claim row survives, so
  * the caller can flip it to `error` and 500 for a Stripe retry) and propagates to the caller.
  *
+ * The transaction runs on a `getLockDb()` connection, not a service-pool one (#6027). Only the lock,
+ * the row re-read, the re-insert and the `done` mark run in it; the handler's own reads and writes go
+ * through `getServiceDb()` and commit on their own. Held on the service pool, `poolMax` deliveries of
+ * different events each took a service connection and then waited, inside the handler, for another:
+ * postgres-js queues without a timeout, so every service query on the instance stalled with them.
+ * tests/integration/webhook-events-pool.test.ts runs a pool's worth of deliveries (a pool of two) and
+ * fails on that stall. So the handler must not take a lock-pool connection itself (`withPurchaseLock`
+ * or a nested delivery): it would wait on the lock pool the same way.
+ *
  * @param eventId Stripe event id (`evt_…`) — the PK and the advisory-lock key.
  * @param eventType Event type, used only to re-establish a row deleted by a racing break-glass reset.
  * @param handler The side-effecting dispatch (e.g. `() => handleStripeEvent(event)`).
@@ -89,7 +100,7 @@ export async function runWebhookEventExactlyOnce(
 	eventType: string,
 	handler: () => Promise<void>,
 ): Promise<WebhookRunOutcome> {
-	return getServiceDb().transaction(async (tx): Promise<WebhookRunOutcome> => {
+	return getLockDb().transaction(async (tx): Promise<WebhookRunOutcome> => {
 		// Serialize concurrent deliveries of THIS event id — auto-released at commit/rollback.
 		// Different event ids hash to different keys, so they never block each other.
 		await tx.execute(

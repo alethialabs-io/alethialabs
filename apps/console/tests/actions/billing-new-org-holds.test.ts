@@ -740,7 +740,11 @@ describe("the sweep's kept subscriptions, and the copy (§5.5)", () => {
 		expect(unalerted).not.toMatch(/raised an alert/);
 
 		world.state.holds = [];
-		seedHold({ state: "needs_operator", alerted_at: new Date() });
+		// One instant for both: `holdRow` reads its own `new Date()` for `state_since` AFTER this argument is
+		// built, so two separate reads straddle a millisecond tick on a loaded runner and the alert reads as
+		// an earlier entry's. Equal is the boundary the rule (`alerted_at >= state_since`) admits.
+		const enteredAndAlerted = new Date();
+		seedHold({ state: "needs_operator", alerted_at: enteredAndAlerted, state_since: enteredAndAlerted });
 		expect(refusalOf(await buy())).toMatch(/raised an alert/);
 
 		// An alert from an EARLIER state entry (T3b in cancel_unproven) is not this entry's.
