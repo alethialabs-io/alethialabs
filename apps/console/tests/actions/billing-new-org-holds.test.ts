@@ -392,15 +392,42 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 			failNext();
 			const hold = find(ref);
 			if (!hold) return null;
+			// As the store: an `adopted` `new_org` release schedules its relink check and restarts the count (#6078).
+			const relinkCheck = input.reason === "adopted" && hold.scope === "new_org";
 			Object.assign(hold, {
 				state: "released",
 				release_reason: input.reason,
 				released_at: world.dbNow(),
-				next_check_at: null,
+				next_check_at: relinkCheck ? world.dbNow() : null,
+				...(relinkCheck ? { attempts: 0, last_error: null } : {}),
 				last_pay: input.lastPay ?? hold.last_pay,
 				version: hold.version + 1,
 			});
 			return { hold: { ...hold }, closedSetupId: null };
+		},
+		// The relink write (#6078): only a released `adopted` `new_org` hold, at its version.
+		writeAdoptedRelinkState: async (
+			_lease: unknown,
+			ref: { id: string; version: number },
+			patch: { attempts?: number; lastError?: string | null; nextCheckAt: Date | null; alertedAt?: Date },
+		) => {
+			const hold = world.state.holds.find(
+				(h) =>
+					h.id === ref.id &&
+					h.version === ref.version &&
+					h.state === "released" &&
+					h.release_reason === "adopted" &&
+					h.scope === "new_org",
+			);
+			if (!hold) return null;
+			Object.assign(hold, {
+				...(patch.attempts !== undefined ? { attempts: patch.attempts } : {}),
+				...(patch.lastError !== undefined ? { last_error: patch.lastError } : {}),
+				next_check_at: patch.nextCheckAt,
+				...(patch.alertedAt !== undefined ? { alerted_at: patch.alertedAt } : {}),
+				version: hold.version + 1,
+			});
+			return { ...hold };
 		},
 		nudgeHold: vi.fn(),
 		claimHoldNotice: vi.fn(),
@@ -462,6 +489,7 @@ import {
 	recordSetupRefusal,
 	liveCheckSetupCustomers,
 	openPendingOrgSetupsForOrg,
+	pendingOrgSetupFor,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { stampHoldNotice } from "@/lib/billing/payment-holds/store";
@@ -874,6 +902,20 @@ describe("I1 (c) — the live check, read last (§4.3)", () => {
 		await expect(buy()).resolves.toMatchObject({ kind: "resume", setup: { subscriptionId: "sub_x" } });
 		expect(holdOn("sub_x")).toMatchObject({ state: "released", release_reason: "adopted" });
 		expect(world.stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("C112 (#6078): an adoption whose re-link throws is recorded for the sweeper's retry, alerts nothing, and the purchase goes on", async () => {
+		sub("sub_x", "active", ["succeeded"], { created_by: "user-1" }, "cus_hold");
+		seedHold({ state: "cancel_unproven", last_pay: "succeeded", customer_id: "cus_hold" });
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("database is unavailable"));
+
+		await expect(buy()).resolves.toMatchObject({ kind: "resume", setup: { subscriptionId: "sub_x" } });
+		const adopted = holdOn("sub_x");
+		expect(adopted).toMatchObject({ state: "released", release_reason: "adopted", attempts: 1, last_error: "database is unavailable" });
+		const wait = (adopted?.next_check_at?.getTime() ?? 0) - Date.now();
+		expect(wait).toBeGreaterThan(4 * 60_000);
+		expect(wait).toBeLessThanOrEqual(5 * 60_000);
+		expect(vi.mocked(emitAlertEvent).mock.calls.filter(([, , c]) => c.resource_id === "sub_x")).toEqual([]);
 	});
 
 	it("an adoption by the SWEEP's own close is seen too: the live check runs after the sweep", async () => {

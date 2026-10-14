@@ -13,6 +13,10 @@
 // What is faked is what the link's core writes through: Stripe (`world.subs`), the org's billing row
 // (`world.row`), the sync, the hold store, the setup record module and the alert. The store's SQL, and
 // the same race against real Postgres, are in tests/integration/payment-hold-sweeper.test.ts.
+//
+// #6078: the relink retry's bookkeeping (`relinkRetryAfter`, `relinkAdoptedHold`) over a faked store —
+// the backoff schedule, the one give-up alert raised only by the caller whose write landed, a decided
+// outcome clearing the check, a lost lease writing nothing, and a failed write never hiding the result.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaymentHoldRow } from "@/lib/db/schema";
@@ -95,6 +99,7 @@ vi.mock("@/lib/billing/payment-holds/store", () => ({
 		return world.openOnX;
 	}),
 	writeHoldState: vi.fn(async () => null),
+	writeAdoptedRelinkState: vi.fn(async () => null),
 	releaseHold: vi.fn(),
 	reserveRefundAttempt: vi.fn(),
 }));
@@ -112,10 +117,16 @@ vi.mock("@/lib/observability/heartbeats", () => ({ registerLoop: vi.fn(), superv
 
 import type Stripe from "stripe";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
-import { openHold } from "@/lib/billing/payment-holds/store";
-import { linkSetupToOrg } from "@/lib/billing/payment-holds/sweeper";
+import { openHold, writeAdoptedRelinkState } from "@/lib/billing/payment-holds/store";
+import {
+	linkSetupToOrg,
+	RELINK_MAX_ATTEMPTS,
+	RELINK_RETRY_DELAYS_MS,
+	relinkAdoptedHold,
+	relinkRetryAfter,
+} from "@/lib/billing/payment-holds/sweeper";
 import { PurchaseLeaseLostError } from "@/lib/billing/purchase-lease";
-import { markPendingOrgSetupLinked, recordSetupRefusal } from "@/lib/billing/pending-org-setup";
+import { markPendingOrgSetupLinked, pendingOrgSetupFor, recordSetupRefusal } from "@/lib/billing/pending-org-setup";
 import { getPurchaseStripe } from "@/lib/billing/stripe";
 
 const USER = "user-1";
@@ -232,5 +243,118 @@ describe("#6043: a lease lost in the link's refusal after X's metadata names O",
 		expect(world.subs.get(X)?.metadata.organization_id).toBeUndefined();
 		expect(alertsOnX()).toHaveLength(0);
 		expect(recordSetupRefusal).not.toHaveBeenCalled();
+	});
+});
+
+describe("#6078: the relink retry's bookkeeping", () => {
+	const LEASE = { key: `user:${USER}`, holder: "holder-1" };
+	const NOW = new Date("2026-10-14T12:00:00Z");
+	const alert = vi.fn(async () => true);
+	const deps = { alert, now: () => NOW };
+
+	/** A `new_org` hold on X released `adopted`, after `attempts` failed relinks. */
+	function adopted(attempts: number): PaymentHoldRow {
+		const at = new Date("2026-10-14T11:00:00Z");
+		return {
+			id: "hold_x",
+			subscription_id: X,
+			customer_id: "cus_x",
+			scope: "new_org",
+			payer_key: USER,
+			invoice_id: "in_x",
+			payment_intent_id: null,
+			state: "released",
+			release_reason: "adopted",
+			released_at: at,
+			released_by: null,
+			release_note: null,
+			refund_attempt: 0,
+			attempts,
+			last_error: null,
+			next_check_at: at,
+			alerted_at: null,
+			notice_last_sent_at: null,
+			notified_state: null,
+			notified_at: null,
+			opened_by_user_id: USER,
+			opened_by: "purchase",
+			open_note: null,
+			state_since: at,
+			last_pay: "succeeded",
+			refund_action_since: null,
+			age_alerted_at: null,
+			observed_at: at,
+			nudged_at: null,
+			version: 4,
+			created_at: at,
+			updated_at: at,
+		};
+	}
+
+	beforeEach(() => {
+		alert.mockClear();
+	});
+
+	it("the schedule: 5m, 15m, 1h, 4h, 12h, and the sixth failure gives up", () => {
+		expect(RELINK_RETRY_DELAYS_MS).toEqual([5, 15, 60, 240, 720].map((m) => m * 60_000));
+		expect(RELINK_MAX_ATTEMPTS).toBe(6);
+		expect([1, 2, 3, 4, 5].map((n) => relinkRetryAfter(n))).toEqual(
+			RELINK_RETRY_DELAYS_MS.map((delayMs) => ({ kind: "retry", delayMs })),
+		);
+		expect(relinkRetryAfter(6)).toEqual({ kind: "give_up" });
+		expect(relinkRetryAfter(9)).toEqual({ kind: "give_up" });
+		expect(relinkRetryAfter(0)).toEqual({ kind: "retry", delayMs: RELINK_RETRY_DELAYS_MS[0] });
+	});
+
+	it("a thrown relink records the next attempt on the hold's version, and alerts nothing", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		await expect(relinkAdoptedHold(LEASE, adopted(1), deps)).resolves.toBeNull();
+		expect(writeAdoptedRelinkState).toHaveBeenCalledWith(LEASE, { id: "hold_x", version: 4 }, {
+			attempts: 2,
+			lastError: "connection reset",
+			nextCheckAt: new Date(NOW.getTime() + 15 * 60_000),
+		});
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("the sixth failure clears the check and stamps alerted_at, and alerts ONCE only when that write landed", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(adopted(6));
+		await relinkAdoptedHold(LEASE, adopted(5), deps);
+		expect(writeAdoptedRelinkState).toHaveBeenCalledWith(LEASE, { id: "hold_x", version: 4 }, {
+			attempts: 6,
+			lastError: "connection reset",
+			nextCheckAt: null,
+			alertedAt: NOW,
+		});
+		expect(alert).toHaveBeenCalledTimes(1);
+		expect(alert.mock.calls[0]).toEqual([expect.objectContaining({ subscriptionId: X, customerId: "cus_x", paymentIntentId: null })]);
+
+		// Another caller recorded first: its write matched nothing, so it raises nothing.
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		vi.mocked(writeAdoptedRelinkState).mockResolvedValueOnce(null);
+		await relinkAdoptedHold(LEASE, adopted(5), deps);
+		expect(alert).toHaveBeenCalledTimes(1);
+	});
+
+	it("a failed give-up write is logged and alerts nothing: the pass decides it again", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new Error("connection reset"));
+		vi.mocked(writeAdoptedRelinkState).mockRejectedValueOnce(new Error("database is unavailable"));
+		await expect(relinkAdoptedHold(LEASE, adopted(5), deps)).resolves.toBeNull();
+		expect(alert).not.toHaveBeenCalled();
+	});
+
+	it("a lost lease is thrown with nothing written", async () => {
+		vi.mocked(pendingOrgSetupFor).mockRejectedValueOnce(new PurchaseLeaseLostError(LEASE.key));
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		expect(writeAdoptedRelinkState).not.toHaveBeenCalled();
+	});
+
+	it("a decided relink (no open setup) clears the check, and its result survives a failed write", async () => {
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toEqual({ kind: "no_setup" });
+		expect(writeAdoptedRelinkState).toHaveBeenCalledWith(LEASE, { id: "hold_x", version: 4 }, { nextCheckAt: null });
+		vi.mocked(writeAdoptedRelinkState).mockRejectedValueOnce(new Error("database is unavailable"));
+		await expect(relinkAdoptedHold(LEASE, adopted(0), deps)).resolves.toEqual({ kind: "no_setup" });
+		expect(alert).not.toHaveBeenCalled();
 	});
 });
