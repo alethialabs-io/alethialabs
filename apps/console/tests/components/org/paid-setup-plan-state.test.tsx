@@ -77,6 +77,7 @@ function serverSays(
 		paid: planState === "active",
 		planState,
 		paymentUrl,
+		ended: null,
 		org: { id: "org-1", slug: "acme-cloud" },
 		linked,
 		declared: false,

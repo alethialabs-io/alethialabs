@@ -132,6 +132,7 @@ function lookup(hold: NewOrgSetupState["hold"]): NewOrgSetupState {
 		planState: "confirming",
 		paymentUrl: null,
 		hold,
+		ended: null,
 		org: null,
 		linked: false,
 		declared: false,
