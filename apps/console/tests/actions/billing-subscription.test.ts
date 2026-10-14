@@ -1352,8 +1352,8 @@ describe("createNewOrgSubscriptionIntent", () => {
 	});
 
 	it("the sweep of the customer's other incomplete subscriptions keeps one whose payment is processing, and mints nothing beside it", async () => {
-		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
-		stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+		// The customer is reused: one this request mints has nothing on it to sweep (#5989).
+		stripe.customers.retrieve.mockResolvedValue({ id: "cus_1", deleted: false, metadata: { created_by: "user-1" } });
 		const unpaid = newOrgSub({ created_by: "user-1" }, "incomplete", "sub_unpaid");
 		const inflight = newOrgSub({ created_by: "user-1" }, "incomplete", "sub_inflight");
 		stripe.subscriptions.list.mockResolvedValue({ data: [unpaid, inflight] });
@@ -1365,9 +1365,10 @@ describe("createNewOrgSubscriptionIntent", () => {
 			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
 		});
 
-		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
+		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_1" });
 
 		expect(r).toMatchObject({ kind: "refused" });
+		expect(stripe.customers.create).not.toHaveBeenCalled();
 		expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
 		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_unpaid", {
 			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_unpaid" },
@@ -1468,8 +1469,8 @@ describe("createNewOrgSubscriptionIntent", () => {
 	});
 
 	it("drops the records of the dangling incomplete subscriptions it cancels on the customer", async () => {
-		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
-		stripe.customers.create.mockResolvedValue({ id: "cus_new" } as never);
+		// The customer is reused: one this request mints has nothing on it to sweep (#5989).
+		stripe.customers.retrieve.mockResolvedValue({ id: "cus_1", deleted: false, metadata: { created_by: "user-1" } });
 		const dangling = newOrgSub({ created_by: "user-1" }, "incomplete", "sub_dangling");
 		stripe.subscriptions.list.mockResolvedValue({ data: [dangling] } as never);
 		stripe.subscriptions.create.mockResolvedValue({
@@ -1477,7 +1478,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			latest_invoice: { confirmation_secret: { client_secret: "cs_11" } },
 		} as never);
 
-		await createNewOrgSubscriptionIntent("team" as never, { orgName: "NewCo" });
+		await createNewOrgSubscriptionIntent("team" as never, { orgName: "NewCo", customerId: "cus_1" });
 		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_dangling", {
 			cancellation_details: { comment: "alethia:checkout_closed:hold_sub_dangling" },
 		});
