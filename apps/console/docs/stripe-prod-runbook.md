@@ -211,6 +211,53 @@ pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--payer <user
 - `reconcile` runs one sweeper tick now, so it can also send the customer emails above. With
   `--backfill` it first runs the backfill below.
 
+### Moving a refused payment to the right team (`release --moved-to`)
+
+When a customer pays for a new team but the team already has an active plan, the payment is not
+linked. Its hold waits for an operator with the note `link_refused`, and the customer is told that
+support "will refund it or move it to the right team". Refunding is the plain `release` above, once the
+subscription is cancelled. Moving it is this path (ADR 0002 §5.8):
+
+```sh
+pnpm -C apps/console billing:payment-holds release sub_… --moved-to <team id> \
+  --reason "<why>" --operator <your user id>
+```
+
+Before you run it, in this order:
+
+1. **Confirm with the payer, in writing, that their own payment method keeps paying.** Stripe cannot
+   move a subscription to another customer, so the subscription's customer, and that customer's default
+   payment method, stay the payer's. Once the team's billing row names the subscription, the row names
+   the payer's customer, so the payer's payment method also pays for **every later purchase the team
+   makes**: plan and seat changes, new plans, and Checkout.
+2. **Ask the team's owners whether a hosted Checkout for the team is open and unpaid.** If one is, it
+   is paid or expired first. The command cannot see an unpaid Checkout, and one paid after the move
+   bills the team twice.
+3. **Check that the payer is an owner of the team.** If they are not, they may be made one only with
+   the agreement of the team's existing owner, because that changes who governs the team, not only who
+   pays. The command refuses (`payer_not_in_team`) unless the payer is an active owner who can manage
+   the team's billing.
+4. **If the team's own payer, not this payer, is meant to pay, do not move the subscription.** Cancel
+   and refund it in Stripe (the plain `release` then settles the hold), and the team buys its own plan.
+5. **Otherwise, in the Stripe dashboard, set `organization_id` to the team's id on the subscription
+   AND on its customer**, then run the command. If it answers `too_soon`, wait until the time it prints
+   and run it again.
+
+The command moves nothing and writes nothing to Stripe. It checks that the move has fully happened, then
+releases the hold with `release_note = "moved to <team id>: <reason>"` and closes the setup. Each
+refusal prints a code and what to do instead. It refuses while the team is billed by, or is buying,
+another plan subscription (`team_has_other_plan`); an AI add-on does not count. The audit line
+`billing.payment_hold.released` also carries `moved_to`, `payer`, `customer_id`, `row_subscription_id`,
+`row_status`, `listed_customers`, `listed_subscription_count` and `setup_closed`.
+
+**An unmeasured assumption.** When the team's billing row already names the subscription, `too_soon`
+waits until 15 minutes after the row **last changed** (`organization_billing.updated_at`, which every
+write to the row bumps: a sync, the usage cap, the AI spend caps, the payer facts), on the assumption that Stripe's search sees everything the team bought before the move by
+then. That lag has **not** been measured yet; it is to be measured in Stripe test mode (ADR 0002 §5.8,
+"The windows that are left").
+
+The plain `release` of such a hold, after the subscription was moved, refuses and names `--moved-to`.
+
 ### The backfill
 
 Until the create-a-team purchase opens holds (ADR 0002 slice 8), it cancels checkouts and keeps no

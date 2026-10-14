@@ -10,8 +10,9 @@
 //     open `closing` or `cancel_unproven` hold of the subscription it links;
 //   - scripts/payment-holds.ts: the §8 backfill, on each hold it opens and does not hand straight to an
 //     operator.
-// `operatorRelease` (T16) has one such caller, `payment-holds release` in that script, and `decideOpen`
-// one, `closeUnderHold` in billing.ts. Stripe, the store, the lease fence, the alert and the clock are
+// `operatorRelease` (T16, and T16m with `expectOrgRow`) has one such caller, `payment-holds release` in
+// that script, which is also the one caller of the pure `decideMovedRelease` (E2m, §5.8); `decideOpen`
+// has one, `closeUnderHold` in billing.ts. Stripe, the store, the lease fence, the alert and the clock are
 // all injected, so the transition table is tested without a network or a database.
 //
 // THE TABLE (§3.3) is `decide`: one observation in, the first matching row out, top to bottom. The rows
@@ -41,6 +42,7 @@
 // Every Stripe write is preceded by the lease fence (§4.4 rule 1); a fence that throws ends the call
 // with no further write.
 
+import { newOrgSubscriptionIdOf, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import type { OpenPaymentHoldState, PaymentHoldReleaseReason, PaymentHoldRow } from "@/lib/db/schema";
 import {
 	HOLD_REFUND_METADATA_KEY,
@@ -51,7 +53,7 @@ import {
 	observeHold,
 	type SucceededPayment,
 } from "./observe";
-import type { HoldRef, HoldStatePatch, OpenHoldResult, ReleaseHoldInput } from "./store";
+import type { CheckedOrgRow, HoldRef, HoldStatePatch, OpenHoldResult, ReleasedHold, ReleaseHoldInput } from "./store";
 
 /** The write half of the Stripe client the machine uses (a structural subset of the SDK). */
 export interface HoldStripeWriter {
@@ -76,10 +78,7 @@ export interface HoldStore {
 	write(ref: HoldRef, patch: HoldStatePatch): Promise<PaymentHoldRow | null>;
 	/** T5's reservation (§3.5): the attempt number consumed, or null when no row was written. */
 	reserveRefundAttempt(ref: HoldRef): Promise<{ attempt: number; hold: PaymentHoldRow } | null>;
-	release(
-		ref: HoldRef,
-		input: ReleaseHoldInput,
-	): Promise<{ hold: PaymentHoldRow; closedSetupId: string | null } | null>;
+	release(ref: HoldRef, input: ReleaseHoldInput): Promise<ReleasedHold | null>;
 }
 
 /** Everything `advanceHold` touches outside itself. */
@@ -752,12 +751,22 @@ export function decideOpen(result: OpenHoldResult, payerKey: string): OpenDecisi
  * hold with `release_reason = operator`, `released_by` and the note, by the store's compare-and-set on
  * `version`. The caller holds the payer's lease and emits the audit event only when `released` is set.
  * An observation that fails is reported, and does not stop a release a person decided on.
+ *
+ * `expectOrgRow` is the moved release's (E2m, T16m, §5.8 step 9): it is handed to the store, which then
+ * writes nothing unless the team's billing row still names the subscription. The plain T16 never passes
+ * it. `closedSetupId` is the setup the store closed in the same transaction, and `checkedOrgRow` the row
+ * its `expectOrgRow` check read (only with `expectOrgRow`).
  */
 export async function operatorRelease(
 	hold: PaymentHoldRow,
 	deps: Pick<HoldMachineDeps, "reader" | "store">,
-	input: { operatorId: string; reason: string },
-): Promise<{ observation: HoldObservation | { error: string }; released: PaymentHoldRow | null }> {
+	input: { operatorId: string; reason: string; expectOrgRow?: { orgId: string; subscriptionId: string } },
+): Promise<{
+	observation: HoldObservation | { error: string };
+	released: PaymentHoldRow | null;
+	closedSetupId: string | null;
+	checkedOrgRow: CheckedOrgRow | null;
+}> {
 	if (input.reason.trim() === "") throw new Error("operatorRelease: a reason is required.");
 	let observation: HoldObservation | { error: string };
 	try {
@@ -765,11 +774,177 @@ export async function operatorRelease(
 	} catch (err) {
 		observation = { error: messageOf(err) };
 	}
-	if (hold.state === "released") return { observation, released: null };
+	if (hold.state === "released") return { observation, released: null, closedSetupId: null, checkedOrgRow: null };
 	const released = await deps.store.release(refOf(hold), {
 		reason: "operator",
 		releasedBy: input.operatorId,
 		note: input.reason,
+		...(input.expectOrgRow ? { expectOrgRow: input.expectOrgRow } : {}),
 	});
-	return { observation, released: released?.hold ?? null };
+	return {
+		observation,
+		released: released?.hold ?? null,
+		closedSetupId: released?.closedSetupId ?? null,
+		checkedOrgRow: released?.checkedOrgRow ?? null,
+	};
+}
+
+// ── E2m: the moved release of a `link_refused` hold (§5.8, T16m) ────────────────────────────────────
+
+/** The typed refusals of the moved release (§5.8, "The checks and their typed answers"). */
+export type MovedReleaseRefusal =
+	| "not_link_refused"
+	| "team_not_found"
+	| "same_team"
+	| "payer_not_in_team"
+	| "team_purchase_in_progress"
+	| "x_missing"
+	| "stripe_unreadable"
+	| "x_ended"
+	| "x_not_movable"
+	| "subscription_not_moved"
+	| "customer_not_moved"
+	| "team_has_other_plan"
+	| "too_soon"
+	| "row_not_x"
+	| "lease_lost"
+	| "row_changed";
+
+/** How long the team's row must have named X before the moved release trusts Stripe's search (row 13). */
+export const MOVED_RELEASE_SEARCH_LAG_MS = 15 * 60_000;
+
+/** Statuses under which a subscription has ended for good (row 7, and the end of row 12). */
+const MOVED_ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
+/** A team's billing row, as the moved release reads it. */
+export interface MovedOrgRow {
+	subscriptionId: string | null;
+	status: string;
+	customerId: string | null;
+	updatedAt: Date;
+}
+
+/** Another subscription the step 7 listings or search returned (never X itself). */
+export interface MovedOtherSubscription {
+	id: string;
+	status: string;
+	/** Its `metadata.organization_id`, or null. */
+	orgId: string | null;
+	/** `isOrgPlanSubscription` (lib/billing/sync.ts): false only for the standalone AI subscription. */
+	orgPlan: boolean;
+}
+
+/** What step 7 read from Stripe (and T's row, before any sync). */
+export type MovedStripeFacts =
+	/** Stripe answered `resource_missing` for X (row 5). */
+	| { kind: "x_missing" }
+	/** Any other failed read, or a cap that was reached (row 6). `what` names it. */
+	| { kind: "unreadable"; what: string }
+	| {
+			kind: "read";
+			x: { status: string; orgId: string | null; customerId: string };
+			customer: { deleted: boolean; orgId: string | null };
+			/** T's billing row, read BEFORE any sync; null when T has none. */
+			row: MovedOrgRow | null;
+			/** Every other subscription the listings and the search returned. */
+			others: MovedOtherSubscription[];
+	  };
+
+/** Everything `decideMovedRelease` decides on (§5.8 steps 3, 5, 6, 7 and 8). */
+export interface MovedReleaseFacts {
+	/** The hold as the re-read under the lease found it (step 3). */
+	hold: Pick<PaymentHoldRow, "state" | "open_note" | "subscription_id">;
+	/** The team named by `--moved-to`. */
+	teamId: string;
+	/** T's `organization` row, or null when no row has that id. */
+	team: { id: string; metadata: string | null } | null;
+	/** The setup row of X: its `created_org_id`, or null when there is no setup or it has none. */
+	setupOrgId: string | null;
+	/** U's `member` row in T, or null; and `holdsManageBilling(U, T)` (false when it was not asked). */
+	payer: { member: { role: string; status: string } | null; managesBilling: boolean };
+	/** Step 6: T's `org-plan:<T>` lock. Absent until the command has tried to take it. */
+	lock?: "held" | "busy";
+	/** Step 7's reads. Absent until they are made. */
+	stripe?: MovedStripeFacts;
+	/** Step 8's one sync of X has run. */
+	syncedOnce: boolean;
+	/** T's billing row read again after that sync (null when T has none); read only when `syncedOnce`. */
+	rowAfterSync: MovedOrgRow | null;
+	now: Date;
+}
+
+/** What `decideMovedRelease` answers. */
+export type MovedReleaseDecision =
+	| { kind: "refuse"; code: MovedReleaseRefusal; detail: string }
+	| { kind: "read_stripe" }
+	| { kind: "sync_first" }
+	| { kind: "release" };
+
+/** A refusal with `code`, and the facts that triggered it (for the operator's message). */
+function movedRefusal(code: MovedReleaseRefusal, detail = ""): MovedReleaseDecision {
+	return { kind: "refuse", code, detail };
+}
+
+/** A row's subscription and status, as the operator reads them. */
+function rowText(row: MovedOrgRow | null | undefined): string {
+	return row?.subscriptionId ? `${row.subscriptionId}, ${row.status}` : "nothing";
+}
+
+/**
+ * The moved release's decision (§5.8 step 8): the table of checks top to bottom, the first failing row
+ * wins — rows 1–4, L, 5–14. Pure. It answers `read_stripe` once rows 1–4 pass and step 7's facts are not
+ * read yet, `sync_first` when everything up to row 13 passes and T's row does not name X yet (and no
+ * sync has run), `release` when T's row names X, and otherwise the refusal. A second `sync_first` is
+ * `row_not_x`: X is synced at most once.
+ */
+export function decideMovedRelease(f: MovedReleaseFacts): MovedReleaseDecision {
+	const x = f.hold.subscription_id;
+	const t = f.teamId;
+	// Row 1.
+	if (f.hold.state !== "needs_operator" || f.hold.open_note !== LINK_REFUSED_NOTE) return movedRefusal("not_link_refused");
+	// Row 2.
+	if (!f.team) return movedRefusal("team_not_found");
+	// Row 3.
+	if (f.setupOrgId === t || newOrgSubscriptionIdOf(f.team.metadata) === x) return movedRefusal("same_team");
+	// Row 4.
+	const m = f.payer.member;
+	if (!m || m.role !== "owner" || m.status !== "active" || !f.payer.managesBilling) {
+		return movedRefusal("payer_not_in_team");
+	}
+	// Row L.
+	if (f.lock === "busy") return movedRefusal("team_purchase_in_progress");
+	if (f.lock !== "held" || !f.stripe) return { kind: "read_stripe" };
+	const s = f.stripe;
+	// Rows 5 and 6.
+	if (s.kind === "x_missing") return movedRefusal("x_missing");
+	if (s.kind === "unreadable") return movedRefusal("stripe_unreadable", s.what);
+	// Row 7.
+	if (MOVED_ENDED_STATUSES.has(s.x.status)) return movedRefusal("x_ended", s.x.status);
+	// Row 8.
+	if (!PAID_SUBSCRIPTION_STATUSES.has(s.x.status)) return movedRefusal("x_not_movable", s.x.status);
+	// Row 9.
+	if (s.x.orgId !== t) return movedRefusal("subscription_not_moved", s.x.orgId ?? "nothing");
+	// Row 10.
+	if (s.customer.deleted || s.customer.orgId !== t) {
+		return movedRefusal("customer_not_moved", s.customer.deleted ? "deleted" : (s.customer.orgId ?? "nothing"));
+	}
+	// Row 11: the row BEFORE any sync names another subscription that is not `canceled` (`none` included).
+	const row = s.row;
+	if (row?.subscriptionId && row.subscriptionId !== x && row.status !== "canceled") {
+		return movedRefusal("team_has_other_plan", `${row.subscriptionId} (${row.status})`);
+	}
+	// Row 12: another non-ended ORG-PLAN subscription with `organization_id = T` was listed or found.
+	const other = s.others.find(
+		(z) => z.id !== x && z.orgId === t && !MOVED_ENDED_STATUSES.has(z.status) && z.orgPlan,
+	);
+	if (other) return movedRefusal("team_has_other_plan", `${other.id} (${other.status})`);
+	// Row 13: X's own sync replaced T's customer on the row less than 15 minutes ago.
+	if (row?.subscriptionId === x && f.now.getTime() - row.updatedAt.getTime() < MOVED_RELEASE_SEARCH_LAG_MS) {
+		return movedRefusal("too_soon", new Date(row.updatedAt.getTime() + MOVED_RELEASE_SEARCH_LAG_MS).toISOString());
+	}
+	// Row 14.
+	if (f.syncedOnce) {
+		return f.rowAfterSync?.subscriptionId === x ? { kind: "release" } : movedRefusal("row_not_x", rowText(f.rowAfterSync));
+	}
+	return row?.subscriptionId === x ? { kind: "release" } : { kind: "sync_first" };
 }

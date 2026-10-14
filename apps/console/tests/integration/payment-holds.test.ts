@@ -14,10 +14,14 @@
 //        miss; the claim is once per hold and state.
 //   C92  (the release half) a release to `voided_unpaid` closes the open setup with `hold_released` in
 //        the SAME transaction; a release to `adopted` leaves it open.
+//   C109 the moved release's `expectOrgRow` (§5.8 step 9): a release over a team row that no longer
+//        names X writes nothing; and the row's `FOR SHARE` lock is held until the release commits, proven
+//        with a second connection whose `UPDATE` of the row times out (55P03) while the release is open.
 //   ---  RLS: `payment_holds` is service-role only.
 
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	claimHoldNotice,
@@ -33,7 +37,15 @@ import {
 } from "@/lib/billing/payment-holds/store";
 import { type PurchaseLease, releasePurchaseLease, tryAcquirePurchaseLease } from "@/lib/billing/purchase-lease";
 import { getServiceDb, withScope } from "@/lib/db";
-import { paymentHolds, type PaymentHoldRow, pendingOrgSetups, purchaseLeases, user } from "@/lib/db/schema";
+import {
+	organization,
+	organizationBilling,
+	paymentHolds,
+	type PaymentHoldRow,
+	pendingOrgSetups,
+	purchaseLeases,
+	user,
+} from "@/lib/db/schema";
 import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
 
 const payers: string[] = [];
@@ -446,6 +458,183 @@ describeIfDb("payment_holds — C92, the release half: a release decides the set
 		// And the retry, with the commit working again, does both.
 		expect((await releaseHold(lease, refOf(hold), { reason: "voided_unpaid" }))?.closedSetupId).toBe(setup);
 		expect((await readSetup(setup)).closed_reason).toBe("hold_released");
+		await releasePurchaseLease(lease);
+	});
+});
+
+describeIfDb("payment_holds — C109: the moved release's row check, under FOR SHARE (§5.8 step 9)", () => {
+	const USER = randomUUID();
+	const TEAM = randomUUID();
+	/** Two plain connections beside the pool: B writes the team's row, C holds the hold's row. */
+	let b: postgres.Sql;
+	let c: postgres.Sql;
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await db.insert(user).values({ id: USER, email: `it-hold-moved-${USER}@example.test` });
+		await db.insert(organization).values({ id: TEAM, name: `it-hold-moved-${TEAM.slice(0, 8)}` });
+		await db.insert(organizationBilling).values({ organizationId: TEAM, status: "active" });
+		const url = process.env.ALETHIA_DATABASE_URL ?? "";
+		b = postgres(url, { max: 1 });
+		c = postgres(url, { max: 1 });
+	});
+
+	afterAll(async () => {
+		await b.end({ timeout: 1 });
+		await c.end({ timeout: 1 });
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, USER));
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(USER)));
+		await db.delete(organizationBilling).where(eq(organizationBilling.organizationId, TEAM));
+		await db.delete(organization).where(eq(organization.id, TEAM));
+		await db.delete(user).where(eq(user.id, USER));
+	});
+
+	/** The user's lease, taken fresh for one test. */
+	async function userLease(): Promise<PurchaseLease> {
+		await getServiceDb().delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(USER)));
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(USER));
+		if (!lease) throw new Error("fixture: the user's lease was not free");
+		return lease;
+	}
+
+	/** An open `link_refused` hold of the user on a fresh X, with an open setup; and T's row naming `rowSub`. */
+	async function fixture(rowSub: (x: string) => string) {
+		const lease = await userLease();
+		const x = newSubscription();
+		const [setup] = await getServiceDb()
+			.insert(pendingOrgSetups)
+			.values({
+				user_id: USER,
+				subscription_id: x,
+				customer_id: "cus_it_hold",
+				intended_name: "Moved",
+				intended_slug: `moved-${x.slice(-8)}`,
+			})
+			.returning({ id: pendingOrgSetups.id });
+		if (!setup) throw new Error("fixture: no setup was recorded");
+		const hold = await opened(lease, {
+			...e0(USER, x),
+			state: "needs_operator",
+			openedBy: "link",
+			openNote: "link_refused",
+		});
+		await getServiceDb()
+			.update(organizationBilling)
+			.set({ stripeSubscriptionId: rowSub(x) })
+			.where(eq(organizationBilling.organizationId, TEAM));
+		return { lease, x, hold, setupId: setup.id };
+	}
+
+	/** Whether the setup `id` is still open. */
+	async function setupOpen(id: string): Promise<boolean> {
+		const [row] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, id));
+		return row !== undefined && row.closed_at === null;
+	}
+
+	/**
+	 * Polls (on B, between its statements) until a backend waits on a lock while running `fragment`, so the
+	 * release under test is truly blocked inside its transaction.
+	 */
+	async function untilWaiting(fragment: string): Promise<void> {
+		for (let i = 0; i < 100; i++) {
+			const rows = await b`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE ${`%${fragment}%`}`;
+			if (rows.length > 0) return;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		throw new Error(`no backend ever waited on a lock running ${fragment}`);
+	}
+
+	/** A one-shot signal: `fired` resolves once `fire` is called. */
+	function signal(): { fire: () => void; fired: Promise<void> } {
+		let fire: () => void = () => undefined;
+		const fired = new Promise<void>((resolve) => {
+			fire = resolve;
+		});
+		return { fire, fired };
+	}
+
+	/** B's `UPDATE` of the team's row with a 500ms lock timeout: null when it landed, else its SQLSTATE. */
+	async function updateRowFromB(to: string): Promise<string | null> {
+		try {
+			await b.begin(async (tx) => {
+				await tx`SET LOCAL lock_timeout = '500ms'`;
+				await tx`UPDATE organization_billing SET stripe_subscription_id = ${to} WHERE organization_id = ${TEAM}`;
+			});
+			return null;
+		} catch (err) {
+			return typeof err === "object" && err !== null && "code" in err ? String(err.code) : String(err);
+		}
+	}
+
+	it("with T's row naming Z it writes nothing: the hold stays open at its version, and the setup stays open", async () => {
+		const z = newSubscription();
+		const { lease, x, hold, setupId } = await fixture(() => z);
+		const out = await releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(out).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "needs_operator", version: hold.version });
+		expect(await setupOpen(setupId)).toBe(true);
+		await releasePurchaseLease(lease);
+	});
+
+	it("with T's row naming X it releases, closes the setup, and reports the row it checked", async () => {
+		const { lease, x, hold, setupId } = await fixture((sub) => sub);
+		const out = await releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(out).toMatchObject({ closedSetupId: setupId, checkedOrgRow: { subscriptionId: x, status: "active" } });
+		expect(out?.hold).toMatchObject({ state: "released", release_reason: "operator", release_note: `moved to ${TEAM}: it` });
+		expect(await setupOpen(setupId)).toBe(false);
+		await releasePurchaseLease(lease);
+	});
+
+	it("the FOR SHARE lock holds T's row until the release commits: B's UPDATE times out (55P03) while it is open, and lands after", async () => {
+		const { lease, x, hold } = await fixture((sub) => sub);
+		// C holds the hold's row FIRST, so the release blocks at its own UPDATE of payment_holds — which it
+		// makes AFTER the FOR SHARE read of T's row — and its transaction stays open, holding that lock while
+		// B tries to rewrite the row. C commits only after B's attempt, which frees the release.
+		const held = signal();
+		const cDone = c.begin(async (tx) => {
+			await tx`SELECT id FROM payment_holds WHERE id = ${hold.id} FOR UPDATE`;
+			held.fire();
+			await untilWaiting("payment_holds");
+			return updateRowFromB(newSubscription());
+		});
+		await held.fired;
+		const release = releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(await cDone).toBe("55P03");
+		expect((await release)?.hold.state).toBe("released");
+		// After the release committed, the same UPDATE lands at once.
+		expect(await updateRowFromB(newSubscription())).toBeNull();
+		await releasePurchaseLease(lease);
+	});
+
+	it("control: WITHOUT expectOrgRow no lock is taken on T's row — B's UPDATE lands while the release is open", async () => {
+		const { lease, x, hold } = await fixture((sub) => sub);
+		const held = signal();
+		const cDone = c.begin(async (tx) => {
+			await tx`SELECT id FROM payment_holds WHERE id = ${hold.id} FOR UPDATE`;
+			held.fire();
+			await untilWaiting("payment_holds");
+			return updateRowFromB(x);
+		});
+		await held.fired;
+		const release = releaseHold(lease, refOf(hold), { reason: "operator", releasedBy: randomUUID(), note: "it" });
+		expect(await cDone).toBeNull();
+		expect((await release)?.hold.state).toBe("released");
 		await releasePurchaseLease(lease);
 	});
 });
