@@ -266,7 +266,8 @@ describe("CreateOrgSheet — closing an unfinished paid setup", () => {
 		await user.click(screen.getByRole("button", { name: "Close" }));
 
 		expect(screen.getByText(/close before your team is set up/i)).toBeInTheDocument();
-		expect(screen.getByText(/won.t be charged again/i)).toBeInTheDocument();
+		// ADR 0002 C32: the close confirmation does not promise "you won't be charged again".
+		expect(screen.queryByText(/charged (again|twice)/i)).not.toBeInTheDocument();
 		expect(onOpenChange).not.toHaveBeenCalled();
 
 		await user.click(screen.getByRole("button", { name: /finish setup now/i }));
@@ -833,7 +834,8 @@ describe("CreateOrgSheet — a charge the page never heard about is not replaced
 		expect(linkSubscription).toHaveBeenCalledWith(
 			expect.objectContaining({ subscriptionId: "sub_1", customerId: "cus_1", orgId: "org-new" }),
 		);
-		expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/won.t be charged again/i));
+		expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/earlier payment for .* went through/i));
+		expect(toast.info).not.toHaveBeenCalledWith(expect.stringMatching(/charged (again|twice)/i));
 		expect(screen.queryByRole("button", { name: "Pay" })).not.toBeInTheDocument();
 	});
 
