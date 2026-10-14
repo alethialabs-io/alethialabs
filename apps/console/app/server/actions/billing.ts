@@ -14,7 +14,6 @@ import { RESERVED_SLUGS } from "@/lib/routing";
 import {
 	aiPaidTiersEnabled,
 	aiPriceIdForTier,
-	aiTierForPriceId,
 	deploymentMode,
 	getStripeConfig,
 	isStripeConfigured,
@@ -83,10 +82,11 @@ import { emitAlertEvent } from "@/lib/alerts/emit";
 import {
 	type FirstPaymentRead,
 	type NewOrgPlanReport,
+	type NewOrgPlanState,
 	newOrgPlanState,
 	PAYMENT_DEPENDENT_STATUSES,
 } from "@/lib/billing/new-org-plan-state";
-import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
+import { endedSetupClause, endedSetupRead, type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
 	composeNewOrgHoldCopy,
 	HOLD_NOT_RECORDED,
@@ -136,7 +136,7 @@ import {
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { displayName } from "@/lib/user-display";
-import { mapStatus, planItem, syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { isOrgPlanSubscription, mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
 	queryJobMinutesByOrg,
@@ -167,6 +167,7 @@ import {
 	organization,
 	organizationBilling,
 	type PaymentHoldRow,
+	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
 
@@ -925,21 +926,6 @@ const PURCHASE_IN_PROGRESS =
 const PURCHASE_STOPPED =
 	"This purchase took too long and was stopped, or another one on this account took over, so nothing new was started. Wait a moment and try again.";
 
-/**
- * The link's refusals of an ENDED X with no open hold (ADR 0002 §5.5, §5.6). The link runs only once the
- * team exists, so both say the team stays on the free plan. "Not charged" is said only when the payments
- * read proved that no money moved; anything else sends the customer to support, and claims the alert
- * only when it reached a channel (I8).
- */
-const LINK_REFUSED_NOT_CHARGED =
-	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
-const LINK_REFUSED_UNCONFIRMED = `This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at ${SUPPORT_EMAIL} with the time of the payment.`;
-const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
-/** §5.5's `released(refunded)` clause, for an ended X a hold refunded in full. */
-const LINK_REFUSED_REFUNDED =
-	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the free plan.";
-const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
-
 /** Where the open-setup guard sends the setup's creator (ADR 0002 §5.5). */
 const OPEN_SETUP_CREATOR_NEXT = `Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
 
@@ -1417,19 +1403,6 @@ async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWr
 }
 
 /**
- * Whether `sub` is an org-plan subscription rather than the standalone AI one. The AI test is the one the
- * webhook's sync makes (`planItem`, then `aiTierForPriceId`): a subscription whose plan line carries an AI
- * price is AI, and every other one counts as a plan. That is wider than what the sync writes to the plan
- * columns — the sync ignores a subscription with no `organization_id`, and this does not ask — on purpose:
- * the check refuses beside any live non-AI subscription on the org's customer. A subscription with no
- * licensed line counts as a plan too: the check refuses on what it cannot place rather than mint beside it.
- */
-function isOrgPlanSubscription(sub: Stripe.Subscription): boolean {
-	const priceId = planItem(sub)?.price.id;
-	return !(priceId && aiTierForPriceId(priceId));
-}
-
-/**
  * THE ORG-PLAN LIVE CHECK (ADR 0002 §10.2 F3, #5977): every subscription on the org's customer, of every
  * status, paged to the end (`listCustomerSubscriptions`). A live (`active`, `trialing`, `past_due`)
  * org-plan one refuses with "change the plan instead" — the row alone cannot see one whose webhook has
@@ -1884,7 +1857,7 @@ interface NewOrgSubscriptionOpts {
 /**
  * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay, with an optional `notice` (ADR
  * 0002 §5.5: an earlier refund, or one on its way back — the clauses that do not block a purchase). The
- * sheet does not show `notice` yet; the slice that owns the sheet will show it above the payment form.
+ * sheet shows `notice` above the payment form.
  * Or — when an earlier attempt turns out to be PAID already — that setup to finish, with nothing new to
  * pay; or a refusal to start anything, with the reason to show.
  */
@@ -2836,50 +2809,72 @@ async function refuseHeldLink(userId: string, subscriptionId: string, hold: Paym
 /**
  * The link's refusal of an ENDED X with no open hold (§5.6, the first two rows; C86). The setup is
  * closed with `refused_reason = 'ended'` (`recordSetupRefusal`, which closes only while no hold is open).
+ * The sentence is chosen by `endedSetupRead` and worded by `endedSetupClause` (lib/billing/new-org-setup.ts),
+ * which the resume lookup also uses, with the team stated as existing: the link runs only once it does.
  *   - A hold already RELEASED as `refunded` or `already_refunded` names X (the newest released hold on
  *     X): the §5.5 refund clause, and no alert. That release read every covering refund `succeeded`.
  *   - Otherwise the payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved)
  *     is the "not charged" clause and no alert; anything else — money may have moved, or the read failed
- *     — is the "contact support" clause and an alert with X as the subject, UNLESS an alert about X has
- *     already reached a channel since X ended or its setup closed (`alertedAboutSince`). An earlier
- *     close is no reason by itself to stay quiet: the closer reads the payments at ITS moment, money can
- *     move on a cancelled X's open invoice later (a stale tab), and the webhook opens no hold for it. So
- *     a close that alerted nothing is followed by this alert, and a retried refusal after a delivered
- *     alert is not — whatever the alert rule's throttle is (its default is none). An alert the closer did
- *     deliver also silences this one, even when money moved after it: nothing in this scope records
- *     what the closer's read saw, so that change cannot be told from a repeat.
- * It refunds nothing: only a hold may refund (I3). The clause claims an alert only when one reached a
- * channel — this call's, or the delivered one that silenced it (I8).
+ *     — is the "contact support" clause and `alertEndedUnconfirmed`'s alert.
+ * It refunds nothing: only a hold may refund (I3).
  */
 async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
 	const released = await latestReleasedHoldOn(sub.id);
-	const refunded = released?.release_reason === "refunded" || released?.release_reason === "already_refunded";
-	const { planState } = refunded ? { planState: "refunded" } : await readNewOrgPlanState(sub);
+	const releasedReason = released?.release_reason ?? null;
+	const { planState } = await readNewOrgPlanState(sub);
+	const read = endedSetupRead(releasedReason, planState);
 	const closed = await recordSetupRefusal({ userId, subscriptionId: sub.id, refused: "ended", close: true });
 	logBillingEvent("billing.new_org_link.refused", {
 		subscription_id: sub.id,
 		customer_id: subscriptionCustomerId(sub),
 		org_id: orgId,
 		x_read: sub.status,
-		plan_state: planState,
+		plan_state: read === "refunded" ? "refunded" : planState,
 		setup_closed_now: closed ? "true" : "false",
 	});
-	if (refunded) return { kind: "refused", clause: LINK_REFUSED_REFUNDED };
-	if (planState === "not_charged") return { kind: "refused", clause: LINK_REFUSED_NOT_CHARGED };
-	const record = closed ?? (await pendingOrgSetupFor(userId, sub.id));
+	const alerted =
+		read === "unconfirmed" &&
+		(await alertEndedUnconfirmed(sub, closed ?? (await pendingOrgSetupFor(userId, sub.id)), { link: orgId }));
+	return { kind: "refused", clause: endedSetupClause(read, { alerted, teamExists: true }) };
+}
+
+/**
+ * The alert for an ended X with no open hold whose money is NOT proven unmoved (§5.6 "The alert: the
+ * link's, under the link's rule"), for the link (`{ link: orgId }`) and for the resume lookup
+ * (`"resume"`), which stops the sheet before the link and so carries the same watch. Call it only for an
+ * `unconfirmed` read. `record` is X's setup record as it stands now, or null when there is none.
+ * `closedSince` replaces `record.closed_at` as the dedupe's start when the caller knows a database-clock
+ * instant at or before the close (the lookup, when its own closer just closed the record).
+ *
+ * It raises nothing, and answers true, when an alert about X has already reached a channel since its
+ * setup closed, or since X ended when the record is not closed (`alertedAboutSince`). An earlier close is
+ * no reason by itself to stay quiet: the closer reads the payments at ITS moment, money can move on a
+ * cancelled X's open invoice later (a stale tab), and the webhook opens no hold for it. So a close that
+ * alerted nothing is followed by this alert, and a retry after a delivered alert is not — whatever the
+ * alert rule's throttle is (its default is none). An alert the closer did deliver also silences this one,
+ * even when money moved after it: nothing records what the closer's read saw, so that change cannot be
+ * told from a repeat. Otherwise it alerts with X as the subject and answers whether the alert reached a
+ * channel — so a clause built on the answer claims an alert only when one did (I8).
+ */
+async function alertEndedUnconfirmed(
+	sub: Stripe.Subscription,
+	record: PendingOrgSetupRow | null,
+	trigger: { link: string } | "resume",
+	closedSince: Date | null = null,
+): Promise<boolean> {
 	const endedAt = typeof sub.ended_at === "number" ? new Date(sub.ended_at * 1000) : null;
-	const already = await alertedAboutSince(sub.id, record?.closed_at ?? endedAt);
-	const alerted = already || await alertPaymentNeedsSupport({
+	if (await alertedAboutSince(sub.id, closedSince ?? record?.closed_at ?? endedAt)) return true;
+	const who =
+		trigger === "resume"
+			? "a resume lookup of the setup reported it ended"
+			: `the link to team ${trigger.link} was refused`;
+	return alertPaymentNeedsSupport({
 		subscriptionId: sub.id,
 		customerId: subscriptionCustomerId(sub),
 		paymentIntentId: null,
 		context: "setup_closed",
-		detail: `the link to team ${orgId} was refused because the subscription reads ${sub.status}, and its first payment is not proven unmoved. ${setupRecordLine(record)} No hold has refunded it; check the payment and refund it by hand if it was taken.`,
+		detail: `${who} because the subscription reads ${sub.status}, and its first payment is not proven unmoved. ${setupRecordLine(record)} No hold has refunded it; check the payment and refund it by hand if it was taken.`,
 	});
-	return {
-		kind: "refused",
-		clause: `${LINK_REFUSED_UNCONFIRMED}${alerted ? LINK_REFUSED_ALERT_RAISED : ""}${LINK_REFUSED_FREE_PLAN}`,
-	};
 }
 
 /**
@@ -3053,7 +3048,11 @@ async function newOrgSetupStateFor(
 	// The setup closer runs before the lookup answers (ADR 0002 §5.6, §5.7): an open setup whose X
 	// reads ended is closed, and one a lost response left linked in Stripe is adopted. The answer
 	// below is about X and does not depend on it, so a closer that cannot read is logged, not thrown —
-	// the setup stays open and the next reader tries again.
+	// the setup stays open and the next reader tries again. When the closer may close it here, the
+	// database's clock is read first: an alert the closer raises is dated by that clock, and the ended
+	// report below must see that alert (`endedSetupFor`).
+	const beforeClose =
+		!row.closed_at && !row.linked_at && ENDED_SUBSCRIPTION_STATUSES.has(sub.status) ? await databaseNow(row.id) : null;
 	await settleOpenSetupQuietly(row, sub, org?.id ?? null);
 
 	let declared = false;
@@ -3086,6 +3085,10 @@ async function newOrgSetupStateFor(
 		...report,
 		...(hold ? { paymentUrl: null } : {}),
 		hold: hold && hold.state !== "released" ? { state: hold.state, notice: heldNotice(hold, userId) } : null,
+		ended:
+			hold && hold.state !== "released"
+				? null
+				: await endedSetupFor({ sub, userId, row, linked: !!linkedTo, beforeClose, planState: report.planState, teamExists: org !== null }),
 		org,
 		linked: !!linkedTo,
 		declared,
@@ -3094,6 +3097,61 @@ async function newOrgSetupStateFor(
 		billing: row.billing ?? null,
 		currency: sub.currency,
 	};
+}
+
+/**
+ * What a resume lookup reports about an ENDED X with no open hold (§5.6 "The lookup reports an ended
+ * setup"): exactly the sentence the link would refuse it with (`refuseEndedLink`), so the sheet can stop
+ * before the link. Call it only when no open hold names X: the link reads holds first, and so does the
+ * lookup. Null:
+ *   - for an X that has not ended. A `paused` one, or one of a status Stripe may add, is linked by the
+ *     link, so the test is the link's own (`ENDED_SUBSCRIPTION_STATUSES`), never `planState`;
+ *   - for a setup already LINKED: X's metadata names an organization (`linked`), or the setup record
+ *     carries `linked_at`. The sheet does not call the link for a setup the server reports linked to its
+ *     org, so it must not stop there either; a linked X that ended later is a plan that ran, not a
+ *     checkout that was closed.
+ *
+ * For an `unconfirmed` read it raises the link's alert through `alertEndedUnconfirmed`, under the link's
+ * dedupe. The setup record is read again for it, because the closer the lookup ran just before may have
+ * closed it. When it did, the dedupe counts from `beforeClose`, the database's clock read before the
+ * closer ran, rather than from `closed_at`, which the closer stamps with this server's clock: an alert
+ * the closer raised is dated by the database, and must silence this one whatever the two clocks say.
+ * It writes nothing else.
+ */
+async function endedSetupFor(input: {
+	sub: Stripe.Subscription;
+	userId: string;
+	/** The setup record as the lookup read it, before the closer ran. */
+	row: PendingOrgSetupRow;
+	linked: boolean;
+	beforeClose: Date | null;
+	planState: NewOrgPlanState;
+	teamExists: boolean;
+}): Promise<{ clause: string } | null> {
+	const { sub } = input;
+	if (!ENDED_SUBSCRIPTION_STATUSES.has(sub.status)) return null;
+	const record = await pendingOrgSetupFor(input.userId, sub.id);
+	if (input.linked || input.row.linked_at || record?.linked_at) return null;
+	const released = await latestReleasedHoldOn(sub.id);
+	const read = endedSetupRead(released?.release_reason ?? null, input.planState);
+	const closedNow = !input.row.closed_at && !!record?.closed_at;
+	const alerted =
+		read === "unconfirmed" &&
+		(await alertEndedUnconfirmed(sub, record, "resume", closedNow ? input.beforeClose : null));
+	return { clause: endedSetupClause(read, { alerted, teamExists: input.teamExists }) };
+}
+
+/**
+ * The database's clock now, read through the setup record `setupId` (a row that exists), or null when
+ * the row is gone. What `alert_deliveries.created_at` is stamped by.
+ */
+async function databaseNow(setupId: string): Promise<Date | null> {
+	const [hit] = await getServiceDb()
+		.select({ now: sql<Date>`now()`.mapWith((v: string | Date) => new Date(v)) })
+		.from(pendingOrgSetups)
+		.where(eq(pendingOrgSetups.id, setupId))
+		.limit(1);
+	return hit?.now ?? null;
 }
 
 /**
