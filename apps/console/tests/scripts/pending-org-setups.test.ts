@@ -9,6 +9,8 @@
 // the command's DECISIONS — when it refuses, what it writes, when it logs. The compare-and-set predicate
 // itself is pinned against Postgres in tests/integration/pending-org-setups.test.ts.
 
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
@@ -30,8 +32,21 @@ function makeDb() {
 	};
 	chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
 		Promise.resolve(queue.shift() ?? []).then(resolve, reject);
-	const db = { select: vi.fn(() => chain), update: vi.fn(() => chain) };
-	return { db, queue, sets };
+	// Raw statements (`tx.execute`): the lock timeout, the committed-hold probe and the LOCK. They do not
+	// pop `queue`; each records its SQL text and answers from `executeResults` (default: no rows).
+	const executed: string[] = [];
+	const executeResults: unknown[] = [];
+	const execute = vi.fn(async (query: SQL) => {
+		executed.push(new PgDialect().sqlToQuery(query).sql);
+		const next = executeResults.shift();
+		if (next instanceof Error) throw next;
+		return Array.isArray(next) ? next : [];
+	});
+	const select = vi.fn(() => chain);
+	const update = vi.fn(() => chain);
+	const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({ select, update, execute }));
+	const db = { select, update, transaction };
+	return { db, queue, sets, executed, executeResults };
 }
 
 /** The setup row as the database holds it. */
@@ -150,6 +165,56 @@ describe("close-setup (C90)", () => {
 		db.queue.push([]);
 		await expect(closeSetup(args, print)).resolves.toMatchObject({ kind: "refused" });
 		expect(retrieve).not.toHaveBeenCalled();
+	});
+});
+
+describe("close-setup under the hold lock (#6052)", () => {
+	it("caps the lock wait, probes for a committed hold, then takes payment_holds in SHARE mode — all before the write", async () => {
+		db.queue.push([row()]);
+		retrieve.mockResolvedValueOnce({ id: "sub_x", status: "canceled", metadata: {} });
+		db.queue.push([row({ closed_at: new Date() })]);
+		await expect(closeSetup(args, print)).resolves.toEqual({ kind: "closed", xRead: "ended" });
+		expect(db.db.transaction).toHaveBeenCalledTimes(1);
+		expect(db.executed).toEqual([
+			expect.stringMatching(/set_config\('lock_timeout'/),
+			expect.stringMatching(/FROM payment_holds WHERE subscription_id = \$1 AND state <> 'released'/),
+			"LOCK TABLE payment_holds IN SHARE MODE",
+		]);
+		expect(db.db.update).toHaveBeenCalledTimes(1);
+	});
+
+	it("a committed open hold short-cuts the close: no lock, no write, and the hold's refusal", async () => {
+		db.queue.push([row()]);
+		retrieve.mockResolvedValueOnce({ id: "sub_x", status: "canceled", metadata: {} });
+		db.executeResults.push([], [{ "?column?": 1 }]);
+		db.queue.push([{ state: "closing" }]); // openHoldState, after the close matched nothing
+		await expect(closeSetup(args, print)).resolves.toMatchObject({
+			kind: "refused",
+			reason: expect.stringMatching(/open payment hold \(closing\)/),
+		});
+		expect(db.executed).not.toContain("LOCK TABLE payment_holds IN SHARE MODE");
+		expect(db.db.update).not.toHaveBeenCalled();
+		expect(events()).toEqual([]);
+	});
+
+	it("a lock not free within the timeout (55P03) refuses, writes nothing and emits nothing", async () => {
+		db.queue.push([row()]);
+		retrieve.mockResolvedValueOnce({ id: "sub_x", status: "canceled", metadata: {} });
+		db.executeResults.push([], [], Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }));
+		await expect(closeSetup(args, print)).resolves.toMatchObject({
+			kind: "refused",
+			reason: expect.stringMatching(/not free within 2s\); nothing was written/),
+		});
+		expect(db.db.update).not.toHaveBeenCalled();
+		expect(events()).toEqual([]);
+	});
+
+	it("any other database failure is thrown, not turned into a refusal", async () => {
+		db.queue.push([row()]);
+		retrieve.mockResolvedValueOnce({ id: "sub_x", status: "canceled", metadata: {} });
+		db.executeResults.push(Object.assign(new Error("connection reset"), { code: "08006" }));
+		await expect(closeSetup(args, print)).rejects.toThrow("connection reset");
+		expect(db.db.update).not.toHaveBeenCalled();
 	});
 });
 
