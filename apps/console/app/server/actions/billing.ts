@@ -1467,18 +1467,31 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
  *   `trialing` or `past_due`) whose term has not lapsed (`isManualGrantExpired`) gets the contract copy,
  *   and a lapsed one does not refuse, because buying is the way back to a plan.
  */
-function orgRowBlocksNewPlan(
-	row: { stripeSubscriptionId: string | null; status: string; currentPeriodEnd: Date | null } | null,
-	now: Date = new Date(),
-): string | null {
+function orgRowBlocksNewPlan(row: OrgPlanRow | null, now: Date = new Date()): string | null {
 	if (!row) return null;
 	if (row.stripeSubscriptionId) {
 		if (row.status === "active" || row.status === "trialing") return LIVE_PLAN_REFUSAL;
 		if (row.status === "past_due") return UNPAID_PLAN_REFUSAL;
 		return null;
 	}
+	return isLiveGrant(row, now) ? CONTRACT_PLAN_REFUSAL : null;
+}
+
+/** The org-plan columns of an `organization_billing` row that the row predicate reads. */
+interface OrgPlanRow {
+	stripeSubscriptionId: string | null;
+	status: string;
+	currentPeriodEnd: Date | null;
+}
+
+/**
+ * Whether the row is a live off-Stripe grant (ADR 0004 §2, D5): it names no Stripe subscription, its
+ * status is `active`, `trialing` or `past_due`, and its term has not lapsed (`isManualGrantExpired`).
+ */
+function isLiveGrant(row: OrgPlanRow | null, now: Date = new Date()): boolean {
+	if (!row || row.stripeSubscriptionId) return false;
 	const grantStatus = row.status === "active" || row.status === "trialing" || row.status === "past_due";
-	return grantStatus && !isManualGrantExpired(row, now) ? CONTRACT_PLAN_REFUSAL : null;
+	return grantStatus && !isManualGrantExpired(row, now);
 }
 
 /** A sweep as `PaymentOutcome`s: a kept subscription may be under way; an unsettled one says what became of it. */
@@ -1806,12 +1819,17 @@ export async function startProTrial(opts?: {
 	if (u?.proTrialConsumedAt) {
 		throw new Error("Your account has already used its free Pro trial.");
 	}
+	const row = await getOrgBilling(actor.orgId);
+	// A live grant org's own row would make `accountHasLiveSubscription` below answer "already used its
+	// free Pro trial" to its owner, which is false for a grant that never trialled: the contract copy
+	// (ADR 0004 D5, C29) refuses first. Every other row reaches the account check as before.
+	if (isLiveGrant(row)) throw new Error(CONTRACT_PLAN_REFUSAL);
 	// Robust to a never-stamped flag: refuse if the account already owns a live org.
 	if (await accountHasLiveSubscription(actor.userId)) {
 		throw new Error("Your account has already used its free Pro trial.");
 	}
 	// The row predicate (ADR 0004 D5, D7), before any Stripe call: the one the two purchase flows run.
-	const rowRefusal = orgRowBlocksNewPlan(await getOrgBilling(actor.orgId));
+	const rowRefusal = orgRowBlocksNewPlan(row);
 	if (rowRefusal) throw new Error(rowRefusal);
 	// Before any Stripe write (#5714): no trial beside the org's unlinked paid setup.
 	const openSetup = await openSetupRefusal(actor);

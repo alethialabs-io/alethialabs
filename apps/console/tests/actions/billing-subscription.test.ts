@@ -4884,7 +4884,9 @@ describe("O2 — the row predicates refuse before any Stripe call (ADR 0004 D5, 
 		startProTrial: {
 			prepare: () => {
 				db.queue.push([{ proTrialConsumedAt: null }]); // the account's trial flag is unset
-				db.queue.push([]); // accountHasLiveSubscription: the account owns no other live org
+				// accountHasLiveSubscription: the actor owns no live org — a billing manager who is not an
+				// owner (an owner of a live org is the separate case at the end of this block).
+				db.queue.push([]);
 				db.queue.push([]); // the trial flag's stamp
 			},
 			run: async (): Promise<string | null> => {
@@ -4976,6 +4978,44 @@ describe("O2 — the row predicates refuse before any Stripe call (ADR 0004 D5, 
 			await expect(flow.run().catch((e: unknown) => (e instanceof Error ? e.message : String(e)))).resolves.toMatch(/database unavailable/);
 			expect(stripeCalls()).toBe(0);
 		});
+	});
+
+	// C29 for the trial, as production reaches it: the actor OWNS the grant org, so
+	// `accountHasLiveSubscription`'s join returns that org's own `active`/`trialing` row. The contract copy
+	// must win over "already used its free Pro trial", which is false for a grant org that never trialled.
+	it.each(["active", "trialing"])("C29: the OWNER of a live %s grant org is told the contract copy by startProTrial, not the trial copy", async (status) => {
+		orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status, currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]); // the account's trial flag is unset
+		db.queue.push([{ status }]); // accountHasLiveSubscription: the grant org itself, which the actor owns
+
+		await expect(startProTrial()).rejects.toThrow(CONTRACT_PLAN_COPY);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("the trial flag still refuses first: an account that used its trial is told so, even on a grant org", async () => {
+		orgBilling.mockResolvedValue({ plan: "enterprise", stripeCustomerId: "cus_1", stripeSubscriptionId: null, status: "active", currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: new Date("2026-01-01") }]);
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("an owner of ANOTHER live org whose own row is not a grant still gets the trial copy (unchanged)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: null, status: "none", currentPeriodEnd: null } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([{ status: "active" }]); // another org the actor owns is live
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
+	});
+
+	it("an owner of a live-subscription org still gets the trial copy first (unchanged)", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_y", status: "active", currentPeriodEnd: FUTURE } as never);
+		db.queue.push([{ proTrialConsumedAt: null }]);
+		db.queue.push([{ status: "active" }]); // that org's own row, which the actor owns
+
+		await expect(startProTrial()).rejects.toThrow(/already used its free Pro trial/);
+		expect(stripeCalls()).toBe(0);
 	});
 
 	it("Checkout reads the row BEFORE it takes the org-plan lock, so a refused row never queues on it", async () => {
