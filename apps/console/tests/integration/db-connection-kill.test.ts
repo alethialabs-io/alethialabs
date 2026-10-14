@@ -31,6 +31,7 @@
 // config), so every later query has to go through the connection that was killed.
 
 import { randomUUID } from "node:crypto";
+import { connect, createServer, type Socket } from "node:net";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -298,5 +299,72 @@ describeIfDb("a backend killed mid-transaction (#6028)", () => {
 		expect(await committedIds([queued])).toEqual([]);
 		await new Promise((r) => setTimeout(r, 200));
 		expect(uncaught.map(String)).toEqual([]);
+	});
+
+	// pg_terminate_backend closes the socket cleanly (FIN), so the tests above never see a TCP reset.
+	// A reset is forced here with a TCP proxy in front of the same real Postgres, the setup of the
+	// reproduction on porsager/postgres#1246. On a reset Node emits the socket's 'error', then its
+	// 'close' on a later tick. In between, begin() issues the transaction's ROLLBACK on the dead
+	// connection. The patch makes the error-close reject that ROLLBACK; without it the ROLLBACK stays
+	// queued, and after the reconnect the connection waits for a reply to a statement it never sent,
+	// so the second pool query hangs (#6060).
+	it("a TCP reset mid-statement inside a transaction: the transaction rejects and the pool connection is not jammed (#6060)", async () => {
+		uncaught.length = 0;
+		const written = `reset-${randomUUID()}`;
+		const marker = "econnreset_victim";
+		const target = new URL(process.env.ALETHIA_DATABASE_URL ?? "");
+		const pairs: { client: Socket; upstream: Socket }[] = [];
+		const proxy = createServer((client) => {
+			const upstream = connect(Number(target.port || 5432), target.hostname);
+			client.on("error", () => undefined);
+			upstream.on("error", () => undefined);
+			upstream.pipe(client);
+			client.on("data", (chunk: Buffer) => {
+				upstream.write(chunk);
+				// The statement carrying the marker has just been sent: reset the client's socket.
+				if (chunk.includes(marker)) {
+					setImmediate(() => {
+						for (const p of pairs.splice(0)) {
+							p.upstream.destroy();
+							p.client.resetAndDestroy();
+						}
+					});
+				}
+			});
+			pairs.push({ client, upstream });
+		});
+		await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
+		const address = proxy.address();
+		const via = new URL(target);
+		via.hostname = "127.0.0.1";
+		via.port = String(typeof address === "object" && address ? address.port : 0);
+
+		const client = postgres(via.toString(), { max: 1 });
+		try {
+			await client`select 1`;
+			// Statements without parameters, so the transaction's connection stays in the pool's
+			// busy queue and its ROLLBACK goes straight to the connection rather than a queue.
+			const outcome = settledCode(
+				client.begin(async (tx) => {
+					await tx.unsafe(`insert into ${PROBE_TABLE} (id) values ('${written}')`);
+					await tx.unsafe(`select pg_sleep(5), '${marker}'`);
+				}),
+			);
+			expect(await within(outcome, 5000)).toBe("CONNECTION_CLOSED");
+
+			await expect(within(client`select 2 as two`, 5000)).resolves.toEqual([{ two: 2 }]);
+			await expect(within(client`select 3 as three`, 5000)).resolves.toEqual([{ three: 3 }]);
+			expect(await committedIds([written])).toEqual([]);
+			await expect(within(client.end(), 5000)).resolves.toBeUndefined();
+			await new Promise((r) => setTimeout(r, 200));
+			expect(uncaught.map(String)).toEqual([]);
+		} finally {
+			await client.end({ timeout: 0 });
+			for (const p of pairs.splice(0)) {
+				p.upstream.destroy();
+				p.client.destroy();
+			}
+			await new Promise((r) => proxy.close(r));
+		}
 	});
 });
