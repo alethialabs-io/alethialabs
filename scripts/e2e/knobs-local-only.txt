@@ -24,6 +24,12 @@ ALETHIA_E2E_T1_RUNNER_LOG
 ALETHIA_E2E_T1_WAIT
 ALETHIA_E2E_T2_WAIT
 
+# ── SET BY ci.yml, NOT BY THE NIGHTLY. ──
+ALETHIA_E2E_T1_PRELOAD_IMAGES
+# The image list ci.yml's provision-e2e job pulls for T1 to load into kind (#6044). That job sets it
+# on its T1 step, and it runs only on Mergify queue builds. The nightly runs only the e2e_t2 suite,
+# which never reads it, so wiring it there would set a variable nothing in that run consumes.
+
 # ── MUST NOT BE CI-SETTABLE. ──
 ALETHIA_E2E_T2_TEARDOWN
 # Disables teardown. A variable that leaks a real cloud cluster for every subsequent run is not a
