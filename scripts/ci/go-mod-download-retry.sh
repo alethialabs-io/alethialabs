@@ -5,10 +5,11 @@
 # Fetch Go modules, retrying ONLY a failure that means "the module proxy did not answer" (#6031).
 #
 # USAGE
-#   go-mod-download-retry.sh [--all] <dir>...   `go mod download` (or `go mod download all`) in each
-#                                               dir, under whatever GOWORK the caller exported
+#   go-mod-download-retry.sh <dir>...           `go mod download` in each dir, under whatever GOWORK
+#                                               the caller exported
 #   go-mod-download-retry.sh -- <command>...    run one module-fetching command (`go list -m …`,
-#                                               `go install pkg@ver`) under the same retry; its
+#                                               `go install pkg@ver`, `go mod tidy`) under the same
+#                                               retry; its
 #                                               stdout is passed through untouched, so a caller can
 #                                               parse it (scripts/release-compliance.mjs does)
 #   go-mod-download-retry.sh --self-test
@@ -21,11 +22,12 @@
 # `GOPROXY=…,direct` fallback does not fire on it — the fallback is for 404/410 only — so nothing
 # between the runner and the red step retries it.
 #
-# `--all` is for a step that runs `go mod tidy`: tidy loads the tests of dependencies too, and a
-# plain `go mod download` does not fetch the modules those need. Measured on this repo's four modules
-# with an empty GOMODCACHE and then GOPROXY=off: after a plain download, build, vet and test all ran
-# offline and `GOWORK=off go mod tidy` failed on a module lookup; after `go mod download all` tidy ran
-# offline too.
+# WHAT A PRE-FETCH WRITES. A plain `go mod download` fills the module cache and, in workspace mode,
+# the gitignored go.work.sum; it leaves go.mod and go.sum alone (measured on all four modules from an
+# empty GOMODCACHE: `git status --porcelain` stayed empty). It does NOT fetch everything `go mod
+# tidy` loads — tidy also loads the tests of dependencies — so a tidy step runs its own `go mod tidy`
+# through `--` instead. `go mod download all` would cover it, but it also writes module-zip hashes
+# into go.sum that the committed, tidy go.sum does not carry, and fetches modules no step uses.
 #
 # WHAT IT REFUSES TO DO. A failure is retried only when ONE LINE of the output carries both a
 # transport error from the list below AND a URL — a fetch that did not complete. Anything else fails
@@ -156,8 +158,6 @@ STUB
   if [ "$(cat "$tmp/calls")" = "$(printf 'modA mod download\nmodB mod download')" ]; then
     echo "ok   - ...in that dir, with no extra arguments"; pass=$((pass + 1))
   else echo "FAIL - dir mode invoked: $(tr '\n' ';' < "$tmp/calls")"; fail=$((fail + 1)); fi
-  run "--all downloads the whole build list" 0 1 pass "" --all modA
-  says "...as go mod download all" calls "modA mod download all"
 
   run "no arguments is a usage error, not a silent pass" 2 0 pass ""
   run "a dir that does not exist fails, not a silent pass" 1 0 pass "" no-such-dir
@@ -220,7 +220,7 @@ retry_in() {
 }
 
 if [ "$#" -eq 0 ]; then
-  echo "usage: $0 [--all] <dir>... | -- <command>... | --self-test" >&2
+  echo "usage: $0 <dir>... | -- <command>... | --self-test" >&2
   exit 2
 fi
 
@@ -231,13 +231,10 @@ if [ "$1" = "--" ]; then
   exit $?
 fi
 
-download=(go mod download)
-if [ "$1" = "--all" ]; then download+=(all); shift; fi
-if [ "$#" -eq 0 ]; then echo "$0: no module directory given" >&2; exit 2; fi
 for dir in "$@"; do
   if [ ! -d "$dir" ]; then
     echo "::error title=Go module fetch::${dir} is not a directory." >&2
     exit 1
   fi
-  retry_in "$dir" "${download[@]}" || exit $?
+  retry_in "$dir" go mod download || exit $?
 done

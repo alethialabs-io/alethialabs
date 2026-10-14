@@ -920,8 +920,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       # Retries only a fetch that did not complete (an HTTP/2 stream reset from proxy.golang.org, a
       # TLS or i/o timeout, a 502/503/504) and fails anything else on the first attempt. A retry
-      # that ends green still leaves a `::warning` on the run. Its self-test runs further down, next
-      # to the chart-fetch retry's.
+      # that ends green still leaves a `::warning` on the run. A plain `go mod download` writes only
+      # the module cache: test/e2e's go.mod and go.sum stay as committed. Its self-test runs further
+      # down, next to the chart-fetch retry's.
       - name: Pre-fetch test/e2e's Go modules (retrying a transient proxy error)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
@@ -2388,15 +2389,16 @@ jobs:
           cache-dependency-path: ${{ matrix.module }}/go.sum
       # Every module the steps below need, fetched up front under a retry that re-tries ONLY a
       # transient proxy error (an HTTP/2 stream reset, a TLS or i/o timeout, a 502/503/504) and
-      # fails anything else on the first attempt (#6031). Three fetches, because the steps below
-      # resolve modules three ways: build/vet/test and golangci-lint in workspace mode; the
-      # standalone tidy guard with GOWORK=off, which needs `all` (tidy loads the tests of
-      # dependencies, and a plain download does not fetch what those need); and the test/e2e
-      # harness, a module outside the workspace, on the packages/core leg.
+      # fails anything else on the first attempt (#6031). Two fetches: the matrix module in
+      # workspace mode, for build/vet/test and golangci-lint; and on the packages/core leg the
+      # test/e2e harness, a module outside the workspace (GOWORK=off). Each is a plain
+      # `go mod download`, which writes only the module cache and the gitignored go.work.sum —
+      # go.mod and go.sum stay exactly as committed, so every step below sees the committed files.
+      # The standalone tidy guard needs modules this does not fetch (tidy also loads the tests of
+      # dependencies), so it runs its own `go mod tidy` under the same retry instead.
       - name: Pre-fetch Go modules (retrying a transient proxy error)
         run: |
           bash scripts/ci/go-mod-download-retry.sh ${{ matrix.module }}
-          GOWORK=off bash scripts/ci/go-mod-download-retry.sh --all ${{ matrix.module }}
           if [ "${{ matrix.module }}" = packages/core ]; then
             GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
           fi
@@ -2499,10 +2501,13 @@ jobs:
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
+      #
+      # `go mod tidy` fetches the modules it loads, so it runs under the module-fetch retry (#6031):
+      # only a transient proxy error is retried, and the go.mod/go.sum it leaves are tidy's own.
       - name: go.mod tidy guard (standalone — GOWORK=off)
         working-directory: ${{ matrix.module }}
         run: |
-          GOWORK=off go mod tidy
+          GOWORK=off bash "$GITHUB_WORKSPACE/scripts/ci/go-mod-download-retry.sh" -- go mod tidy
           if ! git diff --exit-code go.mod go.sum; then
             echo "::error::${{ matrix.module }}/go.mod or go.sum is not tidy standalone — run 'cd ${{ matrix.module }} && GOWORK=off go mod tidy' and commit." >&2
             exit 1
