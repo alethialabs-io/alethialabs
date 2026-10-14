@@ -231,6 +231,18 @@ relative to the repo root, as the board's `scope:` lines are.
     - The runbook needs T's owner's agreement before U is made an owner.
     - C109 uses two connections and a lock timeout.
     - S11's `sweeper.ts` scope is re-checked when S11 is filed.
+  **Final pass after the second delta review of #5980** (no blockers; seven advisories, all taken):
+  - The live observation is printed only after rows 1–4.
+  - The payer's lease is renewed after the Stripe reads (`lease_lost`).
+  - The named window gains the hosted-Checkout shape.
+  - Row 4 and the runbook say that every later purchase of T bills U's customer.
+  - S10b removes `billing.ts`'s private `isOrgPlanSubscription`.
+  - Row 11's refusal says how to unstick a stale `none` row.
+  - A typo is fixed.
+- **Accepted by maintainer delegation 2026-10-14 after three adversarial money review rounds (PR
+  #5980).** This covers both 2026-10-14 amendments (the moved release, §5.8 and S11; the ended
+  lookup, §5.6 and S10b). As for rev 7.1, the veto window stays open until the slice that builds each
+  one lands.
 - **Amendment** (2026-10-14, #5974 widened; S10's lane found it). §5.6 sheet rule 1 could not be
   built as written for an **ended** X. The rule stops the sheet when "it reports X ended", but the
   lookup reports no such thing. `NewOrgSetupState` (`lib/billing/new-org-setup.ts:73-108`) carries
@@ -1438,7 +1450,9 @@ before anything is read. Without `--moved-to`, `release` is T16, unchanged.
    the lease is still busy, it refuses with `lease_busy` (`:244-247`).
 3. It re-reads the hold under the lease (`:250-254`). If the hold was released meanwhile, the result is
    `not_open`. **Only this read counts** for the next step's hold check.
-4. It prints the hold, the setup and the live observation (`:255-259`).
+4. It prints the hold and the setup (`:255-256`). The live observation (`:257-259`) is **not**
+   printed here. It is a Stripe read, so it moves to the start of step 7, after rows 1–4 have passed
+   (final review of #5980, advisory 1). It is still only a display read, never evidence.
 5. **The database facts, read after the lease (rows 1–4 of the table below):**
    - team T's `organization` row (`id`, `metadata`);
    - U's membership of T: U's `member` row in T (`role`, `status`), and `holdsManageBilling(U, T)`
@@ -1480,6 +1494,18 @@ before anything is read. Without `--moved-to`, `release` is T16, unchanged.
      closed (delta advisory 2).
 
    The hold's stored observation, `last_pay` and the setup's columns are never evidence of the move.
+
+   **Then the payer's lease is renewed** (final review, advisory 2). The lease lives 120s
+   (`PURCHASE_LEASE_TTL_SECONDS`, `lib/billing/purchase-lease.ts:33`). The command may already have
+   spent up to 30s waiting for T's lock, plus the listings, before any write. So once the step 7
+   reads are done, and before the decision may lead to a sync, it calls
+   `renewPurchaseLease(lease)` (`purchase-lease.ts:115-125`).
+   - The renewal matches on key and holder. It fails only when another caller has taken the lease
+     over.
+   - A failed renewal refuses with `lease_lost`, before any sync and with nothing written, the same
+     rule the link's core follows before its writes (`fenceFor`, `:134`).
+   - A lease that expired but was not taken over renews, which is safe: nobody else acted under it.
+   - Step 9's own fence still checks `expires_at > now()` (`store.ts:63-69`).
 8. **The decision**, `decideMovedRelease` (a new pure function in `machine.ts`, next to
    `operatorRelease`). It takes the facts from steps 3, 5 and 7 and returns one of four answers:
    `refuse(code)`, `read_stripe` (rows 1–4 passed and the Stripe facts are not read yet),
@@ -1536,7 +1562,7 @@ do instead.
 | 1 | `not_link_refused` | The re-read hold is not `needs_operator` with `open_note = link_refused` (`LINK_REFUSED_NOTE`, `machine.ts:95`). | "This hold was not opened by a refused link; use `release` without `--moved-to`." |
 | 2 | `team_not_found` | No `organization` row has id T. | "No team has id T; check the id." |
 | 3 | `same_team` | T is the setup's own team: `created_org_id = T`, or T's metadata marker names X (`newOrgSubscriptionIdOf`, `lib/billing/new-org-setup.ts:44`). | "That is the team this setup was made for; `release` without `--moved-to` re-links X to it once its other plan is gone (§5.6 'When a hold ends')." |
-| 4 | `payer_not_in_team` | U, the hold's payer, is not an **owner** of T with `member.status = active`, **or** `holdsManageBilling(U, T)` is false. The first half is the resume lookup's ownership test (`billing.ts:2935-2948`) plus `relinkOrgOf`'s active test (`sweeper.ts:589-591`). The second is the question `relinkSetup` asks (`sweeper.ts:538`). | "U pays for X with their own payment method, and is not an active owner of T who can manage its billing. Do not move X there: refund it (`release` once it is cancelled). If U should own T, T's existing owner must agree and make U an owner first: that changes who governs T, not only who pays." |
+| 4 | `payer_not_in_team` | U, the hold's payer, is not an **owner** of T with `member.status = active`, **or** `holdsManageBilling(U, T)` is false. The first half is the resume lookup's ownership test (`billing.ts:2935-2948`) plus `relinkOrgOf`'s active test (`sweeper.ts:589-591`). The second is the question `relinkSetup` asks (`sweeper.ts:538`). | "U's customer, and so U's payment method, would pay for X and for every later purchase T makes, and U is not an active owner of T who can manage its billing. Do not move X there: refund it (`release` once it is cancelled). If U should own T, T's existing owner must agree and make U an owner first: that changes who governs T, not only who pays." |
 | L | `team_purchase_in_progress` | Step 6's lock on `org-plan:<T>` is still busy after 30s. | "T is buying a plan right now; try again in a minute, then check T's subscriptions with `show`." |
 | 5 | `x_missing` | Stripe answers `resource_missing` for X. | "X is not in this Stripe account; check the key, then use `release` without `--moved-to`, which accepts a missing X." |
 | 6 | `stripe_unreadable` | Any other failure reading X, its customer, a listing or the search; or a step 7 cap was reached. | "Could not read everything about X and T from Stripe; nothing was written; try again, or work it by hand." |
@@ -1544,10 +1570,11 @@ do instead.
 | 8 | `x_not_movable` | X's status is not `active`, `trialing` or `past_due` (`PAID_SUBSCRIPTION_STATUSES`, `lib/billing/new-org-setup.ts:111-115`). That means `incomplete`, `unpaid`, `paused`, or an unknown value. | "X is <status>; only a paid X is moved. Wait until it is paid, or cancel and refund it." |
 | 9 | `subscription_not_moved` | X's `metadata.organization_id` is not T. It prints what it names, or "nothing". | "Set X's organization_id to T in Stripe first." |
 | 10 | `customer_not_moved` | X's customer is deleted, or its `metadata.organization_id` is not T. | "Set X's customer's organization_id to T in Stripe first." |
-| 11 | `team_has_other_plan` | T's row, read **before any sync**, names a subscription Z ≠ X whose row status is anything but `canceled`. That includes `none`, which is how an in-flight `incomplete` Z reads (`sync.ts:57-58`). This is **deliberately wider** than the link's `namesOtherLivePlan` (`sweeper.ts:323-335`), which stays as it is for the link. The link must link beside an abandoned `none` Y (C77). The moved path has no customer waiting, so it may wait for Z to settle. | "T's billing row names Z (<status>). T is billed by, or is buying, another plan. Decide X or Z in Stripe first, or wait for Z to settle." |
+| 11 | `team_has_other_plan` | T's row, read **before any sync**, names a subscription Z ≠ X whose row status is anything but `canceled`. That includes `none`, which is how an in-flight `incomplete` Z reads (`sync.ts:57-58`). This is **deliberately wider** than the link's `namesOtherLivePlan` (`sweeper.ts:323-335`), which stays as it is for the link. The link must link beside an abandoned `none` Y (C77). The moved path has no customer waiting, so it may wait for Z to settle. | "T's billing row names Z (<status>). T is billed by, or is buying, another plan. Decide X or Z in Stripe first, or wait for Z to settle. Check Z in Stripe. If Z has ended there but the row still names it `none` (its ending webhook never landed), redeliver Z's `customer.subscription.deleted` event from the Stripe dashboard, then run this again. A delivery that never reached `done` runs again (`lib/billing/webhook-events.ts:38-45`)." |
 | 12 | `team_has_other_plan` | Step 7's listings or search return a subscription Z ≠ X with `metadata.organization_id = T`, **not** `canceled` or `incomplete_expired`, and **an org-plan subscription**: `isOrgPlanSubscription(Z)`. That is the classification F3 uses: `planItem`, then `aiTierForPriceId`. An AI price is AI, and everything else is a plan. It is defined in F3's PR #5979 (branch `feat/billing-f3-live-sub-check`, `fae17d048`, `app/server/actions/billing.ts:1426-1429`). There it is private to a `"use server"` file, so S11 defines it once, exported, in `lib/billing/sync.ts` beside `planItem` (`sync.ts:83-87`), with F3's body unchanged. Whichever of F3 and S10b touches `billing.ts` after S11 imports it there instead of the private copy. A standalone AI subscription (`product_type: "ai_subscription"`, `billing.ts:1624`) routes to the AI columns (`sync.ts:141-146`) and never to T's plan slot, so it is **not** counted. This row catches a Z the webhook already displaced from T's row, and a just-minted Z the row does not show yet. | "T has another plan subscription, Z (<status>). Moving X there would bill T twice. Decide X or Z in Stripe first." It never names an AI subscription. |
 | 13 | `too_soon` | T's pre-sync row already names X (the webhook applied support's edit first), and its `updatedAt` is less than **15 minutes** ago. | "X was moved to T less than 15 minutes ago. Run this again after <time>, so that Stripe's search can see everything T bought before the move." |
 | 14 | `row_not_x` | T's billing row does not name X after one sync. It prints the row's subscription and status. | "T's billing row names <Z, status> (or nothing); nothing was released." |
+| — | `lease_lost` | The renewal at the end of step 7 failed: another caller took the payer's lease over. No sync has run. | "Another request took this payer's lease while the command read Stripe; nothing was written. Run it again." |
 | — | `row_changed` | Step 9's `FOR SHARE` check found T's row no longer naming X. | "T's billing row changed while this ran (it names <Z, status>); nothing was written. Run `show` and decide again." |
 
 Why each check is there:
@@ -1559,8 +1586,10 @@ Why each check is there:
     the one minted for U (`created_by = U`, `sweeper.ts:386-393`), with U's payment method, and
     Stripe does not let a subscription change customer.
   - Once T's row names X, the row's `stripeCustomerId` is U's customer (`lib/billing/sync.ts:161-162`).
-    So every renewal of X, and every plan or seat change T's billing managers make through T's row,
-    **charges U**.
+    `ensureCustomer` returns that customer for every later purchase of T (`billing.ts:687-694`). So
+    every renewal of X, and **every purchase T makes from then on** (a plan change, a seat change, a
+    new plan through `createSubscriptionIntent`, a hosted Checkout), **charges U's customer** (final
+    review, advisory 4).
   - The hold exists so that a person decides X's money (C80). A team in which U cannot see or cancel
     that plan is the one destination this design can check and must refuse.
   - Requiring **owner** also keeps U's resume true. The lookup returns null for X linked to an org U
@@ -1591,8 +1620,10 @@ Why each check is there:
 - **Row 14 is the proof that X is watched.** T's row names X, so X's events write T's row, and
   #5518's guard covers it from then on.
 
-**The window that is left, named (delta blocker N1 (b)).** One Z can still be missed. All four
-conditions must hold together:
+**The windows that are left, named (delta blocker N1 (b); final review, advisory 3).** Two shapes of
+Z can still be missed.
+
+**Shape 1: an existing Z the reads cannot see.** All four conditions must hold together:
 - (i) it was created **outside** T's org-plan lock: a hosted Checkout session (`createCheckoutSession`
   takes no lock, §7), or an embedded mint that finished before the lock was taken;
 - (ii) its customer is **not** on T's row, because X's sync replaced it more than 15 minutes ago;
@@ -1605,6 +1636,17 @@ customer of T whose `organization_id` was written by `ensureCustomer`.
 The 15 minutes is a stated assumption about Stripe's index lag. It has **not** been measured, like
 S7 in §1.3: S11 records it in Stripe test mode, and the runbook says so. Such a Z is §7's "two live
 subscriptions on one org", which this design does not cover. No new mechanism is introduced for it.
+
+**Shape 2: a hosted Checkout session opened on T before the release and paid after it.**
+- `createCheckoutSession` takes no lock (§7), and `ensureCustomer` gives it the customer on T's row
+  (`billing.ts:1442`, `:687-694`).
+- A session that is still unpaid has **no subscription** yet, so no listing or search can find it, and
+  T's lock does not stop it from completing.
+- If the customer pays after the release commits, Stripe creates Z on T. Z's sync is refused beside
+  the live X on T's row, and T pays for two plans, with Z on no row.
+- This is §7's "a Checkout completed beside an embedded purchase", which hosted Checkout's
+  descoping already leaves uncovered. Rows 11–13 cannot see it, and this amendment does not change
+  that. The runbook tells support to ask T's owners about any open Checkout before the move.
 
 **What the lease does and does not fence.** The payer's lease does not fence Stripe (§4.4), so step
 7's Stripe reads are current only against this codebase's own writers.
@@ -1765,7 +1807,7 @@ Stripe, so they reach every row regardless.
 | C98 | **Amendment 2026-10-14 (#5974).** Support moved a `link_refused` X to the right team T. `release` re-links to the setup's team, gets `not_linked` and refuses, so the hold sits at T15 for good, U cannot create a team, and §5.7's guard stays on. | S9 money review (#5506, 2026-10-13); `scripts/payment-holds.ts:264-274`, `sweeper.ts:537` | §5.8; E2m, T16m. | `tests/scripts/payment-holds.test.ts`: the hold is `needs_operator` with `open_note = link_refused`; an open setup has `created_org_id = O`; X reads `active` with `metadata.organization_id = T`, its customer's is T, and T's row names X, written 20 minutes ago. U is an active owner of T and `holdsManageBilling(U, T)` is true. The listings of T's customers and Stripe's search for T return only X. `withPurchaseLock('org-plan:T')` is acquired. `release X --moved-to T --reason r --operator op` returns `{ kind: "released" }` and exits 0. `store.releaseHold` is called once with the lease, `{ id, version }` and `{ reason: "operator", releasedBy: "op", note: "moved to T: r" }`. Exactly one `billing.payment_hold.released` line carries `moved_to: "T"` and `setup_closed`. `relinkAdoptedSetup`, the alert and every Stripe write (`customers.update`, `subscriptions.update`, `subscriptions.cancel`, `refunds.create`) are not called. The lease is given back. The event also carries `payer`, `customer_id`, `row_subscription_id: X` and `row_status`, and `releaseHold` receives `expectOrgRow: { orgId: T, subscriptionId: X }`. A second run returns `not_open` and emits nothing. **Control (review advisory 6):** the existing T16 release tests pass unchanged, and a plain release emits a `billing.payment_hold.released` line with no `moved_to`, `payer`, `row_*` or `setup_closed` key, and passes no `expectOrgRow`. (The same-transaction setup close is the store's, already proven by C92.) |
 | C99 | **Amendment 2026-10-14.** The moved path releases on partial or wrong evidence. | #5974; review of #5980 | §5.8, the checks table. | `tests/lib/billing/payment-holds.test.ts`: `decideMovedRelease` returns each code of rows 1–4, L and 5–14 from a fact set that fails only that row. There are separate fact sets for X `incomplete`, `unpaid` and `paused`, each giving `x_not_movable`, and X `past_due` passes row 8. With rows 1–4 passing and the Stripe facts unread, it returns `read_stripe`. Order is pinned: a fact set that fails rows 3 and 9 returns `same_team`, one that fails rows 4 and 11 returns `payer_not_in_team`, and one that fails rows 7 and 9 returns `x_ended`. A fact set that passes every row returns `release`. `tests/scripts/payment-holds.test.ts`: for each code, the result is `{ kind: "refused", code }` and the exit is 1. `store.releaseHold`, the alert and every Stripe write are not called, no event is emitted, the lease is given back and T's lock is released. `syncSubscriptionToBilling` is called only on the way to `row_not_x` or `row_changed`, once. A `--moved-to` with no value is refused before any read. A `team_not_found` or `payer_not_in_team` makes **no** Stripe call: no retrieve, list or search (delta advisory 1). A `withPurchaseLock` that returns `{ acquired: false }` gives `team_purchase_in_progress`, with no Stripe call. A listing or search mock that reaches its cap (1000 per customer, 50 customers, 10 search pages) gives `stripe_unreadable`, not `release`. |
 | C100 | **Amendment 2026-10-14; review of #5980, blocker 1, delta blockers N1 and N2.** The command syncs X more than once, syncs before X's move is proven, frees the hold while T is billed by (or is buying) another plan, or refuses beside an AI add-on. | #5974; #5715; review of #5980 | §5.8 steps 6–9; rows 11–13. | H and scripts. Every fixture runs inside a `withPurchaseLock` mock that records it was entered before the first Stripe read and left after `releaseHold`.<br>**Sync once:** T's row names nothing with `syncedOnce = false` gives `sync_first`. The same facts with `syncedOnce = true` give `row_not_x`. Scripts: the row names nothing at first, the sync applies, and the re-read names X, so the result is `released`, with `syncSubscriptionToBilling` called exactly once on the X object this run read.<br>**Pre-sync row:** T's row names Z `past_due`, then `active`, then `trialing`, then **`none` (an in-flight `incomplete` Z)**. Each gives `team_has_other_plan` naming Z, with no sync and no `releaseHold`. A row naming Z `canceled` does not refuse on row 11.<br>**Just minted, not indexed (N1):** T's row names nothing, and the customer on it, C_T, lists Z `incomplete` with `organization_id = T`, a plan price. The search returns **nothing**. The result is `team_has_other_plan`, from the listing.<br>**Webhook-first:** T's row already names X with `updatedAt` 20 minutes ago, and the search returns Z `past_due` with `organization_id = T`. The result is `team_has_other_plan`, with no sync. The same row with `updatedAt` 5 minutes ago and an empty search gives `too_soon`, with the time to retry. With `updatedAt` 20 minutes ago and an empty search and listings, the result is `release`.<br>**AI controls (N2):** an `active` AI subscription on T (an `ai_plus` price, `product_type: "ai_subscription"`), from the listing and from the search, does **not** refuse, and the result is `release`. An AI subscription plus a `past_due` plan Z gives `team_has_other_plan`, naming **Z**, not the AI subscription. A Z with no licensed line counts as a plan, as F3 counts it.<br>**Other:** a search hit that is `canceled` does not refuse. A failing listing or search gives `stripe_unreadable`. X's metadata naming O gives `subscription_not_moved`, and neither the sync nor the listings' verdict is reached. |
-| C101 | **Amendment 2026-10-14.** The move is judged on a stale read, or outside the lease. | #5974 | §5.8 steps 2–5, 8; T16's fence. | Scripts: `acquirePurchaseLease` is called before `subscriptions.retrieve(X)` and `customers.retrieve` (call order). A busy lease returns `lease_busy` and X is never retrieved. A hold that is released between the first read and the re-read under the lease gives `not_open` and no event. A hold that the re-read finds with another `open_note` gives `not_link_refused`. `store.releaseHold` returning null with T's row still naming X (a T15 observe bumped `version` in between, or the lease was lost) gives "Nothing was written", no event and `not_open`. Null with T's row now naming Z gives `row_changed` and no event. |
+| C101 | **Amendment 2026-10-14.** The move is judged on a stale read, or outside the lease. | #5974 | §5.8 steps 2–5, 8; T16's fence. | Scripts: `acquirePurchaseLease` is called before `subscriptions.retrieve(X)` and `customers.retrieve` (call order). A busy lease returns `lease_busy` and X is never retrieved. A hold that is released between the first read and the re-read under the lease gives `not_open` and no event. A hold that the re-read finds with another `open_note` gives `not_link_refused`. `store.releaseHold` returning null with T's row still naming X (a T15 observe bumped `version` in between, or the lease was lost) gives "Nothing was written", no event and `not_open`. Null with T's row now naming Z gives `row_changed` and no event. **Lease renewal (final review, advisory 2):** `renewPurchaseLease` returning false at the end of step 7 gives `lease_lost`. `syncSubscriptionToBilling` and `store.releaseHold` are not called, and no event is emitted. With the renewal returning true after a mocked 150s of reads, the release goes ahead. **Display read (advisory 1):** for `team_not_found` and `payer_not_in_team`, the live observation is not printed and `subscriptions.retrieve` is never called. |
 | C102 | **Amendment 2026-10-14.** The plain release on a moved X does not say what to do. | #5974 | §5.8 "The plain release points at the moved path". | Scripts: the C98 fixture without `--moved-to` is still refused, and nothing is written. The refusal contains `--moved-to` and T's id. Control: a `needs_operator` hold with `open_note` null, X `unpaid` and an open setup whose re-link returns `not_linked` is refused without `--moved-to` in the text. |
 | C103 | **Amendment 2026-10-14 (S10b).** The sheet cannot stop for an ended X with no hold, because the lookup does not report it. Using `planState` instead would stop a `paused` X, which the link links. | S10 lane (#5970); `billing.ts:1261`, `:2979-2987`; `new-org-plan-state.ts:84` | §5.6 "The lookup reports an ended setup". | A (`tests/actions/billing-new-org-link.test.ts`): the setup is already closed, so the closer writes nothing. `resolveNewOrgSetup` for X `canceled` with no hold and payments read `none` returns `ended.clause` equal to the "not charged" clause, `hold: null`, and calls `alertPaymentNeedsSupport` zero times. X `incomplete_expired` gives the same result. X `paused` returns `ended: null`. X `incomplete` and X `active` return `ended: null`. With an open `refund_due` hold on a `canceled` X, the result is `ended: null` and `hold` set. |
 | C104 | **Amendment 2026-10-14.** Copied sentences show "could not confirm" for an X that a hold refunded in full and released. | S10 lane (#5970); `refuseEndedLink`, `billing.ts:2753-2782` | `endedSetupRead`'s first branch. | A: X `canceled`, the newest released hold on X is `refunded`, the PaymentIntent `succeeded` (`planState` `not_active`), and no hold is open. `ended.clause` contains "refunded in full" and does not match `/could not confirm/`. The same holds for `already_refunded`. **Drift check:** for the same fixture with an org, the lookup's `ended.clause` is the exact string the link's `{ kind: "refused" }` returns. |
@@ -2173,10 +2215,16 @@ whatever this column says.
       It makes no other write.
     - `runSteps` throws `SetupStopped(ended.clause)` before `authClient.organization.create` and
       before the link, both when no org exists and on a resume where one does.
+    - **`billing.ts` has no private `isOrgPlanSubscription`** (final review, advisory 5). If F3
+      (#5979) has put its private copy on `dev`, S10b deletes it and imports S11's export from
+      `lib/billing/sync.ts`, so exactly one definition exists. If F3 is still open, its PR is told to
+      import the export on rebase instead of defining its own. C100's AI controls and F3's tests both
+      run against the one definition.
 
     C103–C107 pass, and each fails on `dev` first.
     - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-setup.ts apps/console/components/org/pending-paid-setup.ts apps/console/tests/actions/billing-new-org-link.test.ts apps/console/tests/lib/billing/new-org-setup.test.ts apps/console/tests/components/org/**`
-    - Blocked by: S10, which shares `pending-paid-setup.ts` and `tests/components/org/**`. Migration:
+    - Blocked by: S10, which shares `pending-paid-setup.ts` and `tests/components/org/**`, and S11,
+      whose `sync.ts` export it imports. Migration:
       no. Security review: no. It reads only the caller's own setup and holds, through the lookup's
       existing ownership checks (`billing.ts:3049-3051`). Its one new side effect is the link's existing alert, raised through the same function.
 11. **S11: The moved release of a `link_refused` hold (§5.8; amendment 2026-10-14, #5974).** File
@@ -2205,19 +2253,22 @@ whatever this column says.
       The plain T16 event is unchanged.
     - The plain release's re-link refusal names `--moved-to` for a `link_refused` hold.
     - The runbook's payment-holds section (`docs/stripe-prod-runbook.md` §7) gains the moved path:
-      1. Support confirms with U, in writing, that **U's own payment method keeps paying for X**
-         under T. Stripe cannot move a subscription to another customer, so X's customer, and that
+      1. Support confirms with U, in writing, that **U's own payment method keeps paying for X,
+         and for every later purchase T makes** (plan and seat changes, new plans, Checkout),
+         because T's billing row then names U's customer. Stripe cannot move a subscription to another customer, so X's customer, and that
          customer's default payment method, are still U's.
-      2. Support checks that U is an owner of T. If U is not, U may be made one only with the
+      2. Support asks T's owners whether a hosted Checkout for T is open and unpaid (§5.8, "Shape
+         2"). If one is, that Checkout is settled or expired first.
+      3. Support checks that U is an owner of T. If U is not, U may be made one only with the
          agreement of T's existing owner, because that changes who governs T, not only who pays.
-      3. If T's payer, not U, is meant to pay, support does **not** move X. It cancels and refunds
+      4. If T's payer, not U, is meant to pay, support does **not** move X. It cancels and refunds
          X (the plain `release` then settles the hold), and T buys its own plan.
-      4. Otherwise support sets `organization_id` to T on X **and** on X's customer, then runs the
+      5. Otherwise support sets `organization_id` to T on X **and** on X's customer, then runs the
          command. If it answers `too_soon`, support waits for the time it prints.
-      5. The 15-minute index-lag assumption (§5.8, "The window that is left") is recorded as
+      6. The 15-minute index-lag assumption (§5.8, "The windows that are left") is recorded as
          unmeasured until S11 measures it in Stripe test mode.
 
-    C98–C102, C108 and C109 pass, with C100's N1 and N2 fixtures,, and each fails on `dev` first. No migration: the release reason
+    C98–C102, C108 and C109 pass, with C100's N1 and N2 fixtures, and each fails on `dev` first. No migration: the release reason
     stays `operator`, and the team is recorded in `release_note`.
     - scope: `apps/console/scripts/payment-holds.ts apps/console/lib/billing/payment-holds/machine.ts apps/console/lib/billing/payment-holds/store.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/lib/billing/sync.ts apps/console/docs/stripe-prod-runbook.md apps/console/tests/scripts/payment-holds.test.ts apps/console/tests/lib/billing/payment-holds.test.ts apps/console/tests/integration/payment-holds.test.ts`
     - Blocked by: this amendment (S9, whose `scripts/payment-holds.ts` it extends, has merged:
