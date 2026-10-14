@@ -17,6 +17,10 @@
 // address (`payer_key` is the user id). An `org_plan` hold's payer is an org, mailed at the address
 // Stripe receipts already go to: its Stripe customer's email (ADR 0004 D8, Q7).
 //
+// THE COPY, PER SCOPE. A `new_org` hold gets the create-a-team copy (`sendPaymentHoldNoticeEmail`). An
+// `org_plan` hold gets the org-plan copy (`sendOrgPlanHoldNoticeEmail`), which names no team setup: the
+// purchase was a plan for a team that already exists (ADR 0004 D8, O7).
+//
 // ONE SENDER. Only a sweeper tick calls `sendDueHoldNotices` — the in-process loop, its cron twin, and
 // the operator command's `reconcile`, which runs one tick and so CAN send these emails. The command's
 // `release` and the backfill move holds but never mail; neither will the purchase flow and the link when
@@ -47,7 +51,7 @@ import {
 	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
-import { sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
+import { sendOrgPlanHoldNoticeEmail, sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
 import { claimHoldNotice, unclaimHoldNotice } from "./store";
 
 /** How long after its release a hold's email may still be sent (§5.4). */
@@ -179,19 +183,24 @@ async function orgPlanRecipient(hold: PaymentHoldRow): Promise<string | null> {
 }
 
 /**
- * The live sender: the email for `notice`, to the hold's payer — a `new_org` payer at the user's own
- * address, an `org_plan` payer at its Stripe customer's email (ADR 0004 D8). A payer with no account or
- * no address any more gets nothing, and the claim stands (there is nobody to retry for). Throws when the
- * address could not be read or the send itself failed, so the claim is given back.
+ * The live sender: the email for `notice`, in its scope's copy, to the hold's payer — a `new_org` payer
+ * at the user's own address with the create-a-team copy, an `org_plan` payer at its Stripe customer's
+ * email with the org-plan copy (ADR 0004 D8). A payer with no account or no address any more gets
+ * nothing, and the claim stands (there is nobody to retry for). Throws when the address could not be read
+ * or the send itself failed, so the claim is given back, and throws for an `org_plan` adoption, which has
+ * no email (`noticeOf` never selects one).
  */
 export async function deliverHoldNotice(hold: PaymentHoldRow, notice: PaymentHoldNotifiedState): Promise<void> {
 	if (hold.scope === "org_plan") {
+		if (notice === "released:adopted") {
+			throw new Error(`payment hold ${hold.id}: an org_plan adoption is never mailed (ADR 0004 D8)`);
+		}
 		const to = await orgPlanRecipient(hold);
 		if (!to) {
 			console.warn(`[billing] payment hold ${hold.id}: its customer has no email; the ${notice} email was not sent.`);
 			return;
 		}
-		await sendPaymentHoldNoticeEmail({ to, notice });
+		await sendOrgPlanHoldNoticeEmail({ to, notice });
 		return;
 	}
 	if (!UUID.test(hold.payer_key)) return;
