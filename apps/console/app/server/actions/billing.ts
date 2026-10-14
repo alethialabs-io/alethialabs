@@ -14,6 +14,7 @@ import { RESERVED_SLUGS } from "@/lib/routing";
 import {
 	aiPaidTiersEnabled,
 	aiPriceIdForTier,
+	aiTierForPriceId,
 	deploymentMode,
 	getStripeConfig,
 	isStripeConfigured,
@@ -134,7 +135,7 @@ import {
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { displayName } from "@/lib/user-display";
-import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
+import { mapStatus, planItem, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
 	queryJobMinutesByOrg,
@@ -844,6 +845,16 @@ const EARLIER_PAYMENT_UNCONFIRMED_ALERTED = `We could not confirm what happened 
  */
 const TOO_MANY_EARLIER_CHECKOUTS = `This account has more unfinished checkouts than we can check automatically, so nothing new was started. Contact support at ${SUPPORT_EMAIL} and we will clear them.`;
 
+/** What the org-plan purchase tells the customer when the org already has a live plan: the row's, or one Stripe lists (#5977). */
+const LIVE_PLAN_REFUSAL = "This organization already has an active subscription — change the plan instead.";
+
+/**
+ * What the org-plan purchase tells the customer when its live check (`liveOrgPlanCheck`) met more
+ * subscriptions on the org's customer than `SWEEP_SUBSCRIPTION_CAP`, so it read none of them as clear.
+ * It claims no alert: whether one reached a channel is not threaded through to this copy.
+ */
+const TOO_MANY_SUBSCRIPTIONS_TO_CHECK = `This organization has more subscriptions than we can check automatically, so nothing new was started. Contact support at ${SUPPORT_EMAIL}.`;
+
 /** The event the platform operator's alert rules route; the one `alertPaymentNeedsSupport` raises. */
 const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
 
@@ -1317,7 +1328,7 @@ const SWEEP_PAGE = 100;
 
 /**
  * Every subscription of `customerId` in `status` (`incomplete` for a sweep, `all` for the create-a-team
- * live check), paged to the end with `starting_after` (ADR 0002 §4.5, C20) — or `over_cap` when there are
+ * and org-plan live checks), paged to the end with `starting_after` (ADR 0002 §4.5, C20) — or `over_cap` when there are
  * more than `SWEEP_SUBSCRIPTION_CAP`. Never a list it stopped reading early: one more page beyond the cap
  * is what `over_cap` means, and the caller refuses on it. A page that fails is thrown.
  */
@@ -1400,6 +1411,39 @@ async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWr
 	return sweep;
 }
 
+/**
+ * Whether `sub` is an org-plan subscription rather than the standalone AI one: decided by its plan line's
+ * price exactly as the webhook's sync routes it (`planItem`, then `aiTierForPriceId`), so a subscription
+ * counts as a plan here exactly when its events would write the org's plan columns. A subscription with
+ * no licensed line counts as a plan: the check refuses on what it cannot place rather than mint beside it.
+ */
+function isOrgPlanSubscription(sub: Stripe.Subscription): boolean {
+	const priceId = planItem(sub)?.price.id;
+	return !(priceId && aiTierForPriceId(priceId));
+}
+
+/**
+ * THE ORG-PLAN LIVE CHECK (ADR 0002 §10.2 F3, #5977): every subscription on the org's customer, of every
+ * status, paged to the end (`listCustomerSubscriptions`). A live (`active`, `trialing`, `past_due`)
+ * org-plan one refuses with "change the plan instead" — the row alone cannot see one whose webhook has
+ * not been written yet, nor a `past_due` one. An AI subscription on the same customer is not a plan.
+ * Over the cap it refuses and alerts the operator; a page that fails is thrown, so nothing is minted.
+ * Answers the refusal's copy, or null when the purchase may go ahead.
+ */
+async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
+	const listed = await listCustomerSubscriptions(getStripe(), customerId, "all");
+	if (listed.kind === "over_cap") {
+		await alertOperator({
+			title: "An org-plan purchase refused: too many subscriptions to check",
+			subject: { type: "stripe_customer", id: customerId },
+			summary: `Customer ${customerId} has more than ${SWEEP_SUBSCRIPTION_CAP} subscriptions, so the org-plan purchase's live check read none of them as clear and refused.`,
+		});
+		return TOO_MANY_SUBSCRIPTIONS_TO_CHECK;
+	}
+	const live = listed.subs.some((s) => PAID_SUBSCRIPTION_STATUSES.has(s.status) && isOrgPlanSubscription(s));
+	return live ? LIVE_PLAN_REFUSAL : null;
+}
+
 /** A sweep as `PaymentOutcome`s: a kept subscription may be under way; an unsettled one says what became of it. */
 function sweepOutcomes(sweep: IncompleteSweep): PaymentOutcome[] {
 	return [...sweep.unsettled, ...sweep.kept.map((): PaymentOutcome => "processing")];
@@ -1440,6 +1484,9 @@ export async function createCheckoutSession(
 
 	const cfg = getStripeConfig();
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
+	// The row alone misses a live plan whose webhook has not been written yet (#5977).
+	const livePlan = await liveOrgPlanCheck(customerId);
+	if (livePlan) throw new Error(livePlan);
 	// Stripe Tax: compute VAT/sales tax + collect the customer's Tax/VAT id (EU B2B
 	// reverse-charge). Gated until the account's Tax settings are configured.
 	const tax: Partial<Stripe.Checkout.SessionCreateParams> = isStripeTaxEnabled()
@@ -1497,9 +1544,7 @@ export async function createSubscriptionIntent(
 		existing?.stripeSubscriptionId &&
 		(existing.status === "active" || existing.status === "trialing")
 	) {
-		return {
-			error: "This organization already has an active subscription — change the plan instead.",
-		};
+		return { error: LIVE_PLAN_REFUSAL };
 	}
 	// After the live-plan check (so a live plan still reads "change the plan instead"), before any
 	// Stripe write (#5714): the org's unlinked paid setup must not get a second plan beside it.
@@ -1516,7 +1561,7 @@ export async function createSubscriptionIntent(
 
 /**
  * The body of `createSubscriptionIntent`, run under the org's purchase lock: resolves the customer,
- * sweeps its `incomplete` subscriptions, and mints the new one.
+ * sweeps its `incomplete` subscriptions, runs the live check (`liveOrgPlanCheck`), and mints the new one.
  */
 async function startOrgSubscription(
 	actor: { orgId: string; userId: string },
@@ -1539,6 +1584,10 @@ async function startOrgSubscription(
 	}
 	const sweptRefusal = refusalFor(sweepOutcomes(swept));
 	if (sweptRefusal) return { error: sweptRefusal };
+	// After the sweep, under the lock: a live plan the row does not show yet — its webhook unwritten, or
+	// `past_due` — refuses rather than get a second plan minted beside it (#5977).
+	const livePlan = await liveOrgPlanCheck(customerId);
+	if (livePlan) return { error: livePlan };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
