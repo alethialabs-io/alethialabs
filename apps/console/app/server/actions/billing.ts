@@ -1176,15 +1176,19 @@ async function settleCancelledSubscription(
 	try {
 		return await settleCancelledSubscriptionUnderFence(sub, customerId, fence);
 	} catch (e) {
-		if (!(e instanceof PurchaseLeaseLostError)) throw e;
-		// The purchase lost its lease between the cancel and the writes that settle it (ADR 0002 §4.4
-		// rule 1): it stops, so the invoice may still be open, or a payment unrefunded. Nothing records
-		// this subscription, so the alert is the trace a person acts on. Then the stop is thrown on.
+		// ANYTHING thrown between the cancel and the writes that settle it stops the purchase there: the
+		// fence's `PurchaseLeaseLostError` (ADR 0002 §4.4 rule 1), and equally a renewal that throws because
+		// the database is unreachable. Either way the invoice may still be open, or a payment unrefunded, and
+		// nothing records this subscription — the next sweep lists only `incomplete` ones — so the alert is
+		// the trace a person acts on. Then the error is thrown on.
+		const invoiceId = typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+		const stopped =
+			e instanceof PurchaseLeaseLostError ? "lost its lease" : "failed with an error (see the log line)";
 		await alertPaymentNeedsSupport({
 			subscriptionId: sub.id,
 			customerId,
 			paymentIntentId: null,
-			detail: "the purchase that ended it lost its lease before it could void its latest invoice or refund its payment, so that invoice may still be payable, or a payment unrefunded.",
+			detail: `the purchase that ended it ${stopped} before it could void its latest invoice ${invoiceId ?? "(none)"} or refund its payment, so that invoice may still be payable, or a payment unrefunded.`,
 			error: e,
 		});
 		throw e;
@@ -1394,10 +1398,10 @@ function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">,
  * WHICH CLIENT (ADR 0002 S2 hand-off, decided in S3). This sweep and its helpers — `cancelNeverPaid`,
  * `voidPayableInvoice`, `refundTakenPayment` — stay on the shared client (`getStripe()`, the SDK's
  * 80s / 2 retries), not the purchase client: the first-payment reads they depend on
- * (`lib/billing/first-payment.ts`) are on the shared client anyway. Only the org-plan mint and the
- * Checkout session's create and expire moved to the purchase client (ADR 0004 O4, D3). Each Stripe write
- * here still runs behind `fence`, the org-plan lease's renewal (§4.4 rule 1), so a request that lost the
- * lease stops before its next one.
+ * (`lib/billing/first-payment.ts`) are on the shared client anyway. Only the org-plan mint, the Checkout
+ * session's create and expire, and the trial's mint moved to the purchase client (ADR 0004 O4, D3). Each
+ * Stripe write here still runs behind `fence`, the org-plan lease's renewal (§4.4 rule 1), so a request
+ * that lost the lease stops before its next one.
  *
  * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
  * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
@@ -1954,7 +1958,8 @@ export async function startProTrial(opts?: {
 /**
  * The body of `startProTrial`, run under the org's `org-plan:<org>` lease: resolves the customer, mints
  * the card-less trial, syncs it, and burns the account's one trial. Each Stripe write renews the lease
- * first (ADR 0002 §4.4 rule 1); a lost lease is thrown as `PurchaseLeaseLostError`. The trial has no
+ * first (ADR 0002 §4.4 rule 1), and the mint demands the mint deadline (rule 2) on the purchase client,
+ * as the intent and Checkout do; a lost lease is thrown as `PurchaseLeaseLostError`. The trial has no
  * artifact gate (ADR 0004 Q5): it takes no payment.
  */
 async function startOrgTrial(
@@ -1968,15 +1973,21 @@ async function startOrgTrial(
 	// Pin the currency now so the trial's eventual paid invoice bills correctly (Stripe
 	// locks it at creation); explicit selection wins, else the request geo.
 	const currency = requestedCurrency ?? (await currencyFromRequest());
-	await fence();
-	const sub = await getStripe().subscriptions.create({
-		customer: customerId,
-		items: planCreateItems("team", 1),
-		currency,
-		trial_period_days: 30,
-		trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
-		metadata: { organization_id: actor.orgId },
-	});
+	// THE MINT DEADLINE (§4.4 rule 2): the trial has no gate, so this renewal is what keeps its mint from
+	// starting on a lease too short to outlast the purchase client's worst case.
+	await fenceFor(lease, mintDeadlineMs())();
+	const sub = await getPurchaseStripe().subscriptions.create(
+		{
+			customer: customerId,
+			items: planCreateItems("team", 1),
+			currency,
+			trial_period_days: 30,
+			trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+			metadata: { organization_id: actor.orgId },
+		},
+		// Names this HOLDER, as the other two mints' keys do.
+		{ idempotencyKey: `trial-${lease.key}-${lease.holder}` },
+	);
 
 	// Activate the entitlement deterministically (don't wait for the webhook).
 	await syncSubscriptionToBilling(sub);
@@ -2246,8 +2257,8 @@ const CLOSEOUT_STAMP = "alethia:closeout";
  *     named by an unfinished setup record, so the user's next purchase sweeps it while a record still names
  *     it or the browser passes it again; `created` — minted by this request, and named nowhere else until
  *     this request records the setup;
- *   - `org_plan`: the org's own customer (`ensureCustomer`), which the org's next org-plan purchase sweeps
- *     (`cancelIncompleteSubscriptions`).
+ *   - `org_plan`: the org's own customer (`ensureCustomer`), which the org's next embedded plan purchase
+ *     (`createSubscriptionIntent`, `cancelIncompleteSubscriptions`) sweeps; Checkout and the trial do not.
  */
 type MintedCustomer =
 	| { flow: "new_org"; customerId: string; origin: "reused" | "created" }
@@ -2273,7 +2284,8 @@ type MintedCustomer =
  * unpaid) while an unfinished record names that customer or the browser passes it again; on a customer
  * this request `created`, NO sweep can find it — nothing names that customer — so the alert is its only
  * trace, and Stripe expires it after about 23h. An `org_plan` one hangs off the org's own customer, which
- * the org's next org-plan purchase sweeps, after `readFirstPayment` proves it unpaid (ADR 0004 O4).
+ * the org's next embedded plan purchase (`createSubscriptionIntent`) sweeps, after `readFirstPayment`
+ * proves it unpaid; Checkout and the trial do not sweep (ADR 0004 C21, O6).
  */
 async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: MintedCustomer): Promise<void> {
 	const stripe = getPurchaseStripe();
@@ -2318,7 +2330,7 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: Mi
 		await alertOperator({
 			title: "An org-plan close-out could not cancel the subscription it minted",
 			subject: { type: "stripe_subscription", id: sub.id },
-			summary: `Subscription ${sub.id} (customer ${customerId}) was minted by an org-plan purchase of org ${mintedOn.orgId} that then had to close it out without handing out its client secret, but the close-out ${failure}. It stays incomplete. It hangs off the org's own customer, so the org's next plan purchase sweeps it once its first payment is proven unpaid; otherwise Stripe expires it after about 23h unless it is closed by hand.`,
+			summary: `Subscription ${sub.id} (customer ${customerId}) was minted by an org-plan purchase of org ${mintedOn.orgId} that then had to close it out without handing out its client secret, but the close-out ${failure}. It stays incomplete. It hangs off the org's own customer, so the org's next embedded plan purchase (createSubscriptionIntent; hosted Checkout and the Pro trial do not sweep) sweeps it once its first payment is proven unpaid; otherwise Stripe expires it after about 23h unless it is closed by hand.`,
 		});
 		return;
 	}

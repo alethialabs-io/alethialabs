@@ -9,10 +9,9 @@
 // reconcile and the backup-card `invoices.pay` loop rely on them, and an app-level retry after a call that
 // succeeded at Stripe but answered slowly can act twice (the meter re-reports). `getPurchaseStripe()` is
 // the client of these calls made under a purchase lease, with a shorter timeout and one retry: the
-// create-a-team purchase and its link, the org-plan mint and its hosted Checkout session (ADR 0004 O4),
-// and the payment-hold sweeper and operator script (lib/billing/payment-holds/sweeper.ts,
-// scripts/payment-holds.ts). The org-plan sweep, its live check and the Pro trial's mint stay on the
-// shared client.
+// create-a-team purchase and its link, the org-plan mint, its hosted Checkout session and the Pro trial's
+// mint (ADR 0004 O4), and the payment-hold sweeper and operator script (lib/billing/payment-holds/sweeper.ts,
+// scripts/payment-holds.ts). The org-plan sweep and its live check stay on the shared client.
 //
 // WHAT THE TIMEOUT IS, AND IS NOT. On Node the SDK arms `req.setTimeout(timeout)`: a SOCKET-INACTIVITY
 // timer that resets at each stage of the request (connect, send, each chunk of the response). It is
@@ -49,8 +48,8 @@ export function getStripe(): Stripe {
 /**
  * The purchase path's Stripe client: `STRIPE_REQUEST_TIMEOUT_MS` of socket inactivity per stage,
  * `STRIPE_MAX_NETWORK_RETRIES` retries. Used by these calls made under a purchase lease: the create-a-team
- * purchase and its link, the org-plan mint and its Checkout session's create and expire
- * (app/server/actions/billing.ts), and the payment-hold sweeper and operator script. The mint deadline
+ * purchase and its link, the org-plan mint, its Checkout session's create and expire, and the Pro trial's
+ * mint (app/server/actions/billing.ts), and the payment-hold sweeper and operator script. The mint deadline
  * (`mintDeadlineMs` there) is computed from these two constants. Throws if STRIPE_SECRET_KEY is unset.
  */
 export function getPurchaseStripe(): Stripe {

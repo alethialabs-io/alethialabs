@@ -5330,6 +5330,93 @@ describe("O4 — the org-plan: lease inside the advisory key (ADR 0004 D3, #6037
 		});
 	});
 
+	describe("review of #6048: every fence is pinned, and an error after the sweep's cancel always leaves a trace", () => {
+		/** Lose the lease at the FIRST renewal only, so a deleted first fence is caught by no later one. */
+		function loseOnlyFirstRenewal(): void {
+			purchaseLease.renewLease.mockImplementation(async () => purchaseLease.renewLease.mock.calls.length > 1);
+		}
+
+		it("the intent's fence before `ensureCustomer`: a lease lost there writes nothing to the customer", async () => {
+			loseOnlyFirstRenewal();
+
+			await expect(createSubscriptionIntent("team", { billingEmail: "billing@example.test" })).resolves.toEqual({
+				error: PURCHASE_STOPPED,
+			});
+			expect(stripe.customers.update).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("Checkout's fence before `ensureCustomer`: a lease lost there creates no customer", async () => {
+			orgBilling.mockResolvedValue(null);
+			loseOnlyFirstRenewal();
+
+			await expect(createCheckoutSession("team")).rejects.toThrow(PURCHASE_STOPPED);
+			expect(stripe.customers.create).not.toHaveBeenCalled();
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+		});
+
+		it("the trial's first fence: a lease lost there creates no customer", async () => {
+			trialEligible();
+			orgBilling.mockResolvedValue(null);
+			loseOnlyFirstRenewal();
+
+			await expect(startProTrial()).rejects.toThrow(PURCHASE_STOPPED);
+			expect(stripe.customers.create).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("the trial mints through the purchase client, with a holder-named key, after a renewal that demands the mint deadline", async () => {
+			trialEligible();
+			const purchaseClient = makeStripe();
+			purchaseClient.subscriptions.create.mockResolvedValue({ id: "sub_trial" });
+			vi.mocked(getPurchaseStripe).mockReturnValue(purchaseClient as never);
+
+			await startProTrial();
+
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(purchaseClient.subscriptions.create).toHaveBeenCalledWith(
+				expect.objectContaining({ trial_period_days: 30, metadata: { organization_id: "org-1" } }),
+				{ idempotencyKey: "trial-org-plan:org-1-holder-1" },
+			);
+			const createdAt = purchaseClient.subscriptions.create.mock.invocationCallOrder[0];
+			const before = purchaseLease.renewLease.mock.calls.filter(
+				(_, i) => purchaseLease.renewLease.mock.invocationCallOrder[i] < createdAt,
+			);
+			expect(before.at(-1)).toEqual([{ key: "org-plan:org-1", holder: "holder-1" }, MINT_DEADLINE_MS]);
+		});
+
+		it("BLOCKER: a renewal that THROWS right after the sweep's cancel alerts, naming the subscription and its open invoice, and the error propagates", async () => {
+			process.env.ALETHIA_PLATFORM_ALERT_ORG_ID = "org-platform";
+			try {
+				stripe.subscriptions.list.mockImplementation(async (params: { status?: string }) => ({
+					data:
+						params.status === "incomplete"
+							? [{ id: "sub_old", status: "incomplete", metadata: { organization_id: "org-1" }, latest_invoice: "in_old", items: PLAN_ITEMS }]
+							: [],
+					has_more: false,
+				}));
+				const dbDown = new Error("connection terminated unexpectedly");
+				purchaseLease.renewLease.mockImplementation(async () => {
+					if (stripe.subscriptions.cancel.mock.calls.length > 0) throw dbDown;
+					return true;
+				});
+
+				await expect(createSubscriptionIntent("team")).rejects.toBe(dbDown);
+
+				expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_old");
+				expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
+				expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+				expect(emitAlertEvent).toHaveBeenCalledWith(
+					"org-platform",
+					"system.platform.payment_needs_support",
+					expect.objectContaining({ resource_id: "sub_old", summary: expect.stringContaining("in_old") }),
+				);
+			} finally {
+				delete process.env.ALETHIA_PLATFORM_ALERT_ORG_ID;
+			}
+		});
+	});
+
 	describe("createCheckoutSession: its session-level key, its 30-minute window, and the gate on its URL", () => {
 		it("creates the session through the purchase client, keyed to the org at the session level, expiring 31 minutes out", async () => {
 			const purchaseClient = makeStripe();
