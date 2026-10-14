@@ -859,9 +859,9 @@ const TOO_MANY_SUBSCRIPTIONS_TO_CHECK = `This organization has more subscription
 const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
 
 /**
- * Logs, and alerts the platform operator about, a create-a-team finding whose wording is NOT
- * `alertPaymentNeedsSupport`'s — that one always says the subscription is one "which the purchase flow
- * cancelled or was replacing", which is false here (ADR 0002 §4.2 (1)). `subject` is the alert's
+ * Logs, and alerts the platform operator about, a purchase finding — of the create-a-team purchase or the
+ * org-plan one — whose wording is NOT `alertPaymentNeedsSupport`'s: that one always says the subscription
+ * is one "which the purchase flow cancelled or was replacing", which is false for these (ADR 0002 §4.2 (1)). `subject` is the alert's
  * resource, so a rule's throttle collapses repeats for the same one. Raised on the platform operator's
  * org (`ALETHIA_PLATFORM_ALERT_ORG_ID`); with it unset only the log line is written. Resolves true only
  * when a delivery was queued to a channel. Never throws.
@@ -1320,7 +1320,11 @@ async function cancelNeverPaid(
 	return outcome === "settled" ? "cancelled" : outcome;
 }
 
-/** The most `incomplete` subscriptions the sweep reads on one customer before it refuses (ADR 0002 §4.5). */
+/**
+ * The most subscriptions `listCustomerSubscriptions` reads on one customer, in the status it lists
+ * (`incomplete` for a sweep; every status, canceled ones included, for the create-a-team and org-plan live
+ * checks), before it answers `over_cap` and the caller refuses (ADR 0002 §4.5).
+ */
 const SWEEP_SUBSCRIPTION_CAP = 1000;
 
 /** One page of the sweep's `subscriptions.list` — Stripe's maximum. */
@@ -1412,10 +1416,12 @@ async function cancelIncompleteSubscriptions(customerId: string, fence: StripeWr
 }
 
 /**
- * Whether `sub` is an org-plan subscription rather than the standalone AI one: decided by its plan line's
- * price exactly as the webhook's sync routes it (`planItem`, then `aiTierForPriceId`), so a subscription
- * counts as a plan here exactly when its events would write the org's plan columns. A subscription with
- * no licensed line counts as a plan: the check refuses on what it cannot place rather than mint beside it.
+ * Whether `sub` is an org-plan subscription rather than the standalone AI one. The AI test is the one the
+ * webhook's sync makes (`planItem`, then `aiTierForPriceId`): a subscription whose plan line carries an AI
+ * price is AI, and every other one counts as a plan. That is wider than what the sync writes to the plan
+ * columns — the sync ignores a subscription with no `organization_id`, and this does not ask — on purpose:
+ * the check refuses beside any live non-AI subscription on the org's customer. A subscription with no
+ * licensed line counts as a plan too: the check refuses on what it cannot place rather than mint beside it.
  */
 function isOrgPlanSubscription(sub: Stripe.Subscription): boolean {
 	const priceId = planItem(sub)?.price.id;
@@ -1436,7 +1442,7 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
 		await alertOperator({
 			title: "An org-plan purchase refused: too many subscriptions to check",
 			subject: { type: "stripe_customer", id: customerId },
-			summary: `Customer ${customerId} has more than ${SWEEP_SUBSCRIPTION_CAP} subscriptions, so the org-plan purchase's live check read none of them as clear and refused.`,
+			summary: `Customer ${customerId} has more than ${SWEEP_SUBSCRIPTION_CAP} subscriptions, so the org-plan purchase's live check read none of them as clear and refused. Canceled subscriptions count toward the cap (the check lists every status) and Stripe keeps them, so cancelling more does not clear it. The fix is a new Stripe customer for the org: once no live subscription remains on this one, point the org's organization_billing stripe_customer_id at a customer with no subscription history.`,
 		});
 		return TOO_MANY_SUBSCRIPTIONS_TO_CHECK;
 	}

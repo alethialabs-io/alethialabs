@@ -4498,10 +4498,35 @@ describe("F3 — the org-plan purchase lists the customer's live subscriptions b
 			);
 		});
 
-		it("more subscriptions than the cap: refuses and mints nothing, never reads a partial list as clear", async () => {
+		it("more subscriptions than the cap: refuses, mints nothing, and alerts the operator with the fix", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
 			stripeLists(Array.from({ length: 1001 }, (_, i) => listedSub(`sub_${i}`, "canceled")));
 
 			await expect(flow.run()).resolves.toEqual(expect.stringMatching(/more subscriptions than we can check automatically/));
+			expect(flow.minted()).toBe(0);
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({
+					resource_type: "stripe_customer",
+					resource_id: "cus_1",
+					summary: expect.stringMatching(/Canceled subscriptions count toward the cap.*new Stripe customer/),
+				}),
+			);
+			vi.unstubAllEnvs();
+		});
+
+		it("a live subscription with no licensed line (nothing to place it by) counts as a plan, and refuses", async () => {
+			stripeLists([
+				{
+					id: "sub_metered_only",
+					status: "active",
+					metadata: { organization_id: "org-1" },
+					items: { data: [{ price: { id: "price_meter", recurring: { usage_type: "metered" } } }] },
+				},
+			]);
+
+			await expect(flow.run()).resolves.toEqual(expect.stringMatching(/change the plan instead/));
 			expect(flow.minted()).toBe(0);
 		});
 
@@ -4512,6 +4537,35 @@ describe("F3 — the org-plan purchase lists the customer's live subscriptions b
 			const outcome = await flow.run().catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
 			expect(outcome).toEqual(expect.stringMatching(/Stripe is unavailable/));
 			expect(flow.minted()).toBe(0);
+		});
+	});
+
+	describe("createSubscriptionIntent: the live check runs after the sweep, and its failure is never swallowed", () => {
+		// The sweep's list shows nothing; by the next list a subscription has turned up `active` — a hosted
+		// Checkout completed meanwhile (it takes no lock). Only a live check AFTER the sweep reads it.
+		it("a subscription that turns up active between the sweep and the mint refuses", async () => {
+			let lists = 0;
+			stripe.subscriptions.list.mockImplementation(async (params: { status?: string }) => {
+				lists += 1;
+				const subs = lists === 1 ? [] : [listedSub("sub_racing", "active")];
+				return { data: params.status === "all" ? subs : subs.filter((s) => s.status === params.status), has_more: false };
+			});
+
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({
+				error: expect.stringMatching(/change the plan instead/),
+			});
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.list.mock.calls.map(([p]) => p.status)).toEqual(["incomplete", "all"]);
+		});
+
+		it("the sweep's list succeeds and the live check's list throws: the error reaches the caller, nothing is minted", async () => {
+			stripe.subscriptions.list.mockImplementation(async (params: { status?: string }) => {
+				if (params.status === "all") throw new Error("Stripe is unavailable");
+				return { data: [], has_more: false };
+			});
+
+			await expect(createSubscriptionIntent("team")).rejects.toThrow(/Stripe is unavailable/);
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		});
 	});
 });
