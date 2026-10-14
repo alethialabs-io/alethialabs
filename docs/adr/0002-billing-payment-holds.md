@@ -447,8 +447,11 @@ From the type definitions of the `stripe` SDK this repo pins (22.6.1):
 `PAID_SUBSCRIPTION_STATUSES` (`lib/billing/new-org-setup.ts:104-108`) is `active`, `trialing` and
 `past_due`. **Live** is deliberately wider: an `unpaid` or `paused` subscription still exists.
 
-The rev 4 notion of a **purchase scope** (`org_plan`, `new_org`, `ai`) is gone. Only one flow opens
-holds, so a hold is keyed by its payer alone (§4.1). Widening is Q13.
+~~The rev 4 notion of a **purchase scope** (`org_plan`, `new_org`, `ai`) is gone. Only one flow opens
+holds, so a hold is keyed by its payer alone (§4.1). Widening is Q13.~~
+**Superseded by ADR 0004 (2026-10-14), D1** (a hold scope per flow: `payment_holds.scope`, with every hold keyed by
+`(scope, payer_key)`). The struck text is what this ADR said at rev 5 and stays true of the create-a-team code until
+ADR 0004's O1 lands.
 
 ---
 
@@ -1847,13 +1850,13 @@ for every flow except create-a-team. §10.2 proposes their follow-up issues.
 | **Renewals** (`billing_reason = subscription_cycle`) | Not a first payment. A renewal is charged by Stripe on a live subscription, and no purchase flow cancels or voids it. | Stripe collects automatically. `invoice.payment_succeeded` re-syncs the row and sends a receipt (`webhook-handler.ts:168-181`). I2 keeps every hold off a renewal invoice. |
 | **Dunning** (a failed renewal) | Not a first payment. Stripe's retry schedule owns it. | `invoice.payment_failed` re-syncs (`past_due` keeps the org on `community`, `sync.ts:150-156`), tries the backup cards (`attemptBackupPayment`, `webhook-handler.ts:183-212`, unchanged for a live subscription) and emails "payment failed". When dunning ends in `canceled`, `customer.subscription.deleted` writes `canceled` / `community` and emails (`:122-132`). |
 | **Plan changes, cancels and resumes** on a live subscription | Not a first payment. Nothing is minted beside a live subscription. | `changeSubscriptionPlan` (`billing.ts:2568-…`) updates the live subscription with Stripe's proration. `cancelSubscription` sets `cancel_at_period_end` (`:2550-2555`) and `resumeSubscription` clears it (`:2559-2564`). |
-| **The org-plan purchase** (`createSubscriptionIntent`), for an org that already exists | Outside the paid org-setup path the maintainer named. The one change is §5.7's refusal for an org whose paid setup is unlinked. Its holds also need rules this design no longer carries: a superseder rule when two subscriptions name one org (rev 4's W2, K2), the off-Stripe-grant guard, and a live set wider than `PAID_SUBSCRIPTION_STATUSES`. | #5489's memory-less fail-closed path: `withPurchaseLock('org-plan:<org>')`, the `incomplete`-only sweep with `readFirstPayment`, `cancelNeverPaid` / `settleCancelledSubscription` (void, refund, or alert and refuse), and the row check on `active` / `trialing` (`billing.ts:1178-1257`). Its known gaps stay as #5506 lists them, pinned by `billing-subscription.test.ts:575-606`. They include a `past_due` org minting a second plan, a straight-to-`active` ACH subscription unseen until its webhook, and `PAYMENT_MAY_BE_UNDER_WAY`'s "you won't be charged twice". Widening is Q13. |
+| ~~**The org-plan purchase** (`createSubscriptionIntent`), for an org that already exists~~ **Superseded by ADR 0004 (2026-10-14), D2** (the org-plan purchase on holds; its lease is D3, its off-Stripe-grant guard D5, its `past_due` refusal D7). The struck cells are the rev 5 scope decision, kept for history. | ~~Outside the paid org-setup path the maintainer named. The one change is §5.7's refusal for an org whose paid setup is unlinked. Its holds also need rules this design no longer carries: a superseder rule when two subscriptions name one org (rev 4's W2, K2), the off-Stripe-grant guard, and a live set wider than `PAID_SUBSCRIPTION_STATUSES`.~~ | ~~#5489's memory-less fail-closed path: `withPurchaseLock('org-plan:<org>')`, the `incomplete`-only sweep with `readFirstPayment`, `cancelNeverPaid` / `settleCancelledSubscription` (void, refund, or alert and refuse), and the row check on `active` / `trialing` (`billing.ts:1178-1257`). Its known gaps stay as #5506 lists them, pinned by `billing-subscription.test.ts:575-606`. They include a `past_due` org minting a second plan, a straight-to-`active` ACH subscription unseen until its webhook, and `PAYMENT_MAY_BE_UNDER_WAY`'s "you won't be charged twice". Widening is Q13. ~~ |
 | **The AI subscription** (`createAiSubscriptionIntent`) | A separate product on an existing org. | No lock, no sweep, no holds (`billing.ts:1267-1321`). The create-a-team sweep no longer touches its `incomplete` subscriptions (I7, C18). |
 | **Hosted Checkout** (`createCheckoutSession`) | An existing org's purchase. | No lock and no sweep (`billing.ts:1123-1161`). Stripe expires the session after 24h by default. **Rev 5.1:** it refuses for an org with an unlinked paid setup (§5.7). |
 | **The card-less trial** (`startProTrial`), including the create-a-team sheet's trial path | Takes no payment, so there is nothing to hold. | It mints on the org's customer and syncs at once (`billing.ts:1335-1404`). The sheet creates the org, then starts the trial, and rolls the org back if the trial fails (`create-org-sheet.tsx:783-824`). Rev 4's gate and gate marker are withdrawn (K1). **Rev 5.1:** it refuses for an org with an unlinked paid setup (§5.7). |
 | **AI credit packs** (`createCreditPackIntent`) | One-off invoices with no subscription. | `billing.ts:2309-2383`. `invoice.payment_succeeded` grants the credits idempotently. |
 | **Disputes and chargebacks** | Not a first-payment settlement. | Stripe's dispute flow. No handler in this repo. |
-| **Two live subscriptions on one org** (adopted beside a live plan; a Checkout completed beside an embedded purchase) | Produced by flows not covered. A new org's setup cannot produce one: §5.7 keeps the org's own flows off its row until the link, and the link refuses beside a live, paid Y under a `needs_operator` hold (C80). | #5514 (PR #5518) keeps the row on the live one. #5518 names the residual itself: when the row's subscription is cancelled, the other one takes the row only at its next event. No detector exists. Rev 4's §7 detector is withdrawn with the rest of the org-plan scope. |
+| ~~**Two live subscriptions on one org** (adopted beside a live plan; a Checkout completed beside an embedded purchase)~~ **Superseded by ADR 0004 (2026-10-14), D6** (the two-live detector; the superseder rule that names the surviving subscription is D4). The struck cells are the rev 5 scope decision, kept for history. | ~~Produced by flows not covered. A new org's setup cannot produce one: §5.7 keeps the org's own flows off its row until the link, and the link refuses beside a live, paid Y under a `needs_operator` hold (C80).~~ | ~~#5514 (PR #5518) keeps the row on the live one. #5518 names the residual itself: when the row's subscription is cancelled, the other one takes the row only at its next event. No detector exists. Rev 4's §7 detector is withdrawn with the rest of the org-plan scope. ~~ |
 | **Self-hosted or community deployments with no Stripe** | No payment. | `requireHostedBilling` (`billing.ts:591-597`) refuses first. |
 | **Emailing the customer when a hold settles asynchronously** | Decided in Q3 (rev 7: covered). | The sweeper sends it under the notice claim (§4.1, §5.4), alongside the next create-a-team response's `notice` (§5.5). |
 
@@ -2024,10 +2027,14 @@ revisions.
   Everything else may be legitimate revenue, and refunding it without a person's review could refund
   a purchase the customer meant to keep.
 - **Q13.** *When should the org-plan purchase get holds?*
-  **Decision: in a separate ADR, ADR 0004, after this one ships (follow-up F1, §10.2).** Reason: it needs the
+  **Superseded by ADR 0004 (2026-10-14), D2** (the org-plan purchase gets holds). ADR 0004 also carries what this
+  decision said it needs: the scope column (D1), the superseder rule with a fresh read (D4), the off-Stripe-grant
+  guard (D5) and the two-live detector (D6). Its `past_due` gap, which this decision left as #5506 lists it, is D7.
+  The original decision follows, kept for history.
+  ~~**Decision: in a separate ADR, ADR 0004, after this one ships (follow-up F1, §10.2).** Reason: it needs the
   parts rev 4 had and rev 5 removed: the scope column, a superseder rule with a fresh read (W1, W2),
   the off-Stripe-grant guard, and the two-live detector. Its gaps stay as #5506 lists them until
-  then. Two of them have small fixes that need no holds, filed separately as F2 and F3.
+  then. Two of them have small fixes that need no holds, filed separately as F2 and F3.~~
 
 ## 10. Implementation slices
 
@@ -2292,6 +2299,7 @@ S9 has merged. Until then `billing.ts` is in every in-flight slice's scope, and 
 it would fail those PRs' scope check.
 
 - **F1. billing: payment holds for the org-plan purchase, design first (ADR 0004). AC 8 and Q13.**
+  **Shipped as ADR 0004 (2026-10-14, PR #5982), accepted.** The text below is the issue as proposed.
   Rev 7: 0003 is taken by #5548 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`) and 0001 by
   #5512. If 0004 is taken when F1 is filed, it takes the next number free at `origin/dev` and in
   open PRs; it never reuses a number.
@@ -2301,12 +2309,14 @@ it would fail those PRs' scope check.
   the two-live detector, and a `past_due` org minting a second plan. Scope: `docs/adr/**`.
 - **F2. billing: the AI subscription and hosted Checkout share the org's customer with no lock and
   no sweep boundary. AC 11.**
+  **Subsumed by ADR 0004 D3/O4 (2026-10-14); F2 is not filed.** The text below is the issue as proposed.
   Done when the org-plan sweep cancels or keeps only org-plan subscriptions, never an AI one.
   `createAiSubscriptionIntent` takes its own `ai:<org>` purchase lock, and `createCheckoutSession`
   takes `org-plan:<org>`. Each change has a test that fails on `dev` first. Scope:
   `apps/console/app/server/actions/billing.ts apps/console/lib/billing/purchase-lock.ts apps/console/tests/actions/billing*.test.ts`.
 - **F3. billing: the org-plan purchase can mint a second plan beside an `active` subscription its
   webhook has not written yet. AC 12.**
+  **Shipped in #5979 (2026-10-14).** The text below is the issue as proposed.
   Done when `createSubscriptionIntent` and `createCheckoutSession` list the org customer's
   subscriptions, fully paged, before minting. A live org-plan subscription (`active`, `trialing` or
   `past_due`) refuses with "change the plan instead". There is a test where Stripe lists an `active`
