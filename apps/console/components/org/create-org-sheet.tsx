@@ -95,6 +95,7 @@ import {
 	type SupportedCurrency,
 	planMeta,
 } from "@repo/plan-catalog";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import {
@@ -213,6 +214,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [pending, setPending] = useState<PendingPaidSetup | null>(null);
 	// A post-payment step failed — offer a retry (no second charge) rather than the payment form.
 	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
+	/**
+	 * The sentence a run ended with when retrying cannot help (`retryable: false`): a hold or the link
+	 * refused the setup, or support has to untangle it. Shown as the run's final answer, with no retry.
+	 */
+	const [stopped, setStopped] = useState<string | null>(null);
+	/**
+	 * The purchase intent's `notice` (ADR 0002 §5.5): a sentence about an earlier checkout that does
+	 * not block this purchase, shown above the payment form. Null when the intent carried none.
+	 */
+	const [intentNotice, setIntentNotice] = useState<string | null>(null);
 	/**
 	 * Bumped by every `reset()`. A run of the post-payment steps outlives a closed sheet on purpose
 	 * (its progress is persisted either way); this is what stops it writing its OUTCOME into a sheet
@@ -436,7 +447,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 */
 	async function resumePaidPrior(state: NewOrgSetupState, next: PayerDeclaration) {
 		toast.info(
-			`Your earlier payment for "${state.name}" went through. Finishing the setup of that team with it — you won't be charged again.`,
+			`Your earlier payment for "${state.name}" went through. Finishing the setup of that team with it.`,
 		);
 		await runRecovered(state, next);
 	}
@@ -534,6 +545,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setDeclaring(false);
 		setRefusal(null);
 		setNeedsSetupRetry(false);
+		setStopped(null);
+		setIntentNotice(null);
 		setSlugClaimedAfterPayment(false);
 		setConfirmingClose(false);
 		setIsTrialOrg(false);
@@ -704,6 +717,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
 			setCurrency(intent.currency);
+			setIntentNotice(intent.notice ?? null);
 			setDeclaration(next);
 			setView("pay");
 		} catch (e) {
@@ -745,6 +759,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
 			setCurrency(intent.currency);
+			setIntentNotice(intent.notice ?? null);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't switch currency.");
 		} finally {
@@ -820,7 +835,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			// steps would run with no resumable copy. The server still knows the charge, and the sheet
 			// asks it on open (`recoverUnfinishedPaidSetup`) — so a reload is the way back.
 			toast.error(
-				"Your payment went through, but this page hasn't finished loading your account. Reload, then open Create a team to finish — you won't be charged again.",
+				"Your payment went through, but this page hasn't finished loading your account. Reload, then open Create a team to finish.",
 				{ duration: Number.POSITIVE_INFINITY },
 			);
 			return;
@@ -854,6 +869,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		const gen = generation.current;
 		setBusy(true);
 		setNeedsSetupRetry(false);
+		setStopped(null);
 		setSlugClaimedAfterPayment(false);
 		const outcome = await finishPaidSetup(viewerId, record, {
 			onProgress: (next) => {
@@ -864,7 +880,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		if (generation.current === gen) applyOutcome(outcome);
 	}
 
-	/** Shows how a run of the post-payment steps ended: the invite view, a new-slug ask, or the retry. */
+	/**
+	 * Shows how a run of the post-payment steps ended: the invite view, a new-slug ask, the retry, or —
+	 * when retrying cannot help — the run's final sentence with no retry.
+	 */
 	function applyOutcome(outcome: PaidSetupOutcome) {
 		setBusy(false);
 		if (outcome.kind === "done") {
@@ -879,6 +898,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				customerId: outcome.customerId,
 			});
 			setView("invite");
+			return;
+		}
+		if (outcome.kind === "failed" && !outcome.retryable) {
+			// Final. A refused setup's record was cleared by the run (the server keeps the memory), so
+			// nothing is left here to resume, and a close needs no confirmation.
+			setPending(outcome.recordCleared ? null : outcome.record);
+			setNeedsSetupRetry(false);
+			setStopped(outcome.message);
 			return;
 		}
 		setPending(outcome.record);
@@ -980,7 +1007,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 							<div className="space-y-3">
 								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 									We found a payment for a team that isn&apos;t set up yet. Confirm who is
-									paying to finish setting it up — you won&apos;t be charged again.
+									paying to finish setting it up.
 									{recovered.billing === null &&
 										" The tax ID from checkout didn't reach us — add it in the team's billing settings once it is set up."}
 								</p>
@@ -1008,6 +1035,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								onStay={() => setConfirmingClose(false)}
 								onClose={closeKeepingPaidSetup}
 							/>
+						) : stopped !== null ? (
+							<SetupStoppedPanel message={stopped} onClose={() => handleOpenChange(false)} />
 						) : pending && slugClaimedAfterPayment ? (
 							<RetryWithNewSlug
 								form={form}
@@ -1052,6 +1081,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 											disabled={switchingCurrency}
 										/>
 									</div>
+									{intentNotice && (
+										<Alert className="shrink-0">
+											<AlertDescription>{intentNotice}</AlertDescription>
+										</Alert>
+									)}
 									<StripeElementsProvider clientSecret={clientSecret}>
 										<BillingCheckoutForm
 											clientSecret={clientSecret}
@@ -1284,8 +1318,7 @@ function RetryWithNewSlug({
 		>
 			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 				Your payment went through, but your team couldn&apos;t be created at that URL — the
-				reason is below. Choose a different URL to finish setting up; you won&apos;t be charged
-				again.
+				reason is below. Choose a different URL to finish setting up.
 			</p>
 			<TeamUrlField form={form} slug={slug} />
 			<Button type="submit" className="w-full" disabled={busy}>
@@ -1364,7 +1397,7 @@ function ConfirmCloseUnfinished({
 					? "Your payment went through and setup is still running — closing this panel does not stop it. "
 					: "Your payment went through and is kept for this team. "}
 				To finish later, open Create a team again — it picks up at the step that has not
-				finished, and you won&apos;t be charged again.{" "}
+				finished.{" "}
 				{inPageOnly
 					? "This browser isn't letting the page keep a copy, so after a reload or in another tab it will ask you again who is paying."
 					: "If you close this browser tab first, it will ask you again who is paying."}
@@ -1375,6 +1408,23 @@ function ConfirmCloseUnfinished({
 			</Button>
 			<Button variant="outline" className="w-full" onClick={onClose}>
 				Close for now
+			</Button>
+		</div>
+	);
+}
+
+/**
+ * A run of the post-payment steps that ended where retrying cannot help: the server's sentence for it
+ * (a hold's clause, the link's refusal, or a case for support), and a way out. No retry is offered.
+ */
+function SetupStoppedPanel({ message, onClose }: { message: string; onClose: () => void }) {
+	return (
+		<div className="space-y-3">
+			<Alert>
+				<AlertDescription>{message}</AlertDescription>
+			</Alert>
+			<Button variant="outline" className="w-full" onClick={onClose}>
+				Done
 			</Button>
 		</div>
 	);
@@ -1397,7 +1447,7 @@ function RetrySetup({
 		<div className="space-y-3">
 			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 				{failed
-					? "Your payment went through, but we couldn't finish setting up the team. You won't be charged again — retry to complete setup."
+					? "Your payment went through, but we couldn't finish setting up the team. Retry to complete setup."
 					: "Your payment went through — setting up your team now."}
 			</p>
 			<Button className="w-full" disabled={busy} onClick={onRetry}>

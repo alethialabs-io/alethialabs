@@ -79,6 +79,7 @@ import {
 	SETTLING_PLAN_STATES,
 } from "@/lib/billing/new-org-plan-state";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
+import type { OpenPaymentHoldState } from "@/lib/db/schema/payment-holds";
 import {
 	ORG_SLUG_RESERVED_CODE,
 	ORG_SLUG_RESERVED_MESSAGE,
@@ -91,11 +92,11 @@ export const SLUG_TAKEN = "That slug is taken — try another.";
 
 /** What a run that failed says when no sheet is open to show it: the payment is safe, and where to finish. */
 export const UNATTENDED_FAILURE =
-	"Your payment went through, but we couldn't finish setting up your team. Open Create a team to finish — you won't be charged again.";
+	"Your payment went through, but we couldn't finish setting up your team. Open Create a team to finish.";
 
 /** What a slug refused after payment says when no sheet is open to show it. */
 export const UNATTENDED_SLUG_REFUSAL =
-	"Your payment went through, but your team couldn't be created at the URL you chose. Open Create a team to choose another — you won't be charged again.";
+	"Your payment went through, but your team couldn't be created at the URL you chose. Open Create a team to choose another.";
 
 /** Everything needed to finish a paid setup without a second charge, and how far it has got. */
 export interface PendingPaidSetup {
@@ -292,6 +293,12 @@ export type PaidSetupOutcome =
 			record: PendingPaidSetup;
 			/** False when retrying cannot help (the subscription is not this account's); `message` says what to do. */
 			retryable: boolean;
+			/**
+			 * True when the run removed this tab's record because the server refused the setup (a hold that
+			 * names it, or the link's typed refusal): the server keeps the memory, and a retry would only be
+			 * refused again. `record` is then what the run held, for the sheet to show, not to resume.
+			 */
+			recordCleared: boolean;
 	  };
 
 /** The run in flight for each subscription, so a reopened sheet attaches to it rather than racing it. */
@@ -349,6 +356,8 @@ export function finishPaidSetup(
 		if (prior) {
 			const before = await prior;
 			if (before.kind === "done") return before;
+			// A refusal cleared the record; running again would write it back for a setup the server refused.
+			if (before.kind === "failed" && before.recordCleared) return before;
 			// The earlier run advanced the record; keep its progress and this call's slug.
 			record = { ...before.record, slug: start.slug, name: start.name };
 		}
@@ -395,6 +404,26 @@ function fieldLabel(field: string): string {
 /** Thrown inside a run for a refusal whose sentence is the customer's to read. */
 class SetupStopped extends Error {}
 
+/**
+ * A `SetupStopped` the server decided: a hold that names the setup, or the link's typed refusal. The
+ * run clears the browser record for it, because the server keeps the memory (the hold row, and the
+ * setup record) and a retry would only be refused again.
+ */
+class SetupRefused extends SetupStopped {}
+
+/**
+ * The open hold states in which the link refuses (ADR 0002 §5.6, the sheet's rule 1), so the run stops
+ * before it creates the org or calls the link. `closing` and `cancel_unproven` are not here: the link
+ * advances those under the lease and links, defers or refuses them itself.
+ */
+const REFUSING_HOLD_STATES: ReadonlySet<OpenPaymentHoldState> = new Set([
+	"payment_in_flight",
+	"invoice_payable",
+	"refund_due",
+	"refund_pending",
+	"needs_operator",
+]);
+
 /** The refusal sentence for a create that failed, or null when the failure is not about the slug. */
 function slugRefusalOf(error: { code?: string; message?: string } | null): string | null {
 	// The server's reserved-slug hook (ee/) answers with its own code: say RESERVED, not taken.
@@ -425,6 +454,26 @@ async function runSteps(
 	// answer says `unconfirmed`, never a state nobody read.
 	let report: NewOrgPlanReport | null = null;
 	try {
+		// Where the setup stands, by the server's account, asked FIRST so a refused setup stops before
+		// this run writes anything. The record's `createdOrgId` and `linked` are what this browser last
+		// SAW; the server's answer is what HAPPENED, including a create or a link whose response never
+		// arrived.
+		const server = await resolveNewOrgSetup(ids);
+		if (!server) {
+			throw new SetupStopped(
+				"Your payment went through, but it isn't tied to this account. Contact support with the time of the payment.",
+			);
+		}
+		// Stop where the link would refuse (ADR 0002 §5.6, rule 1): before the org is created, and on a
+		// resume where it already exists. Nothing is sent to the server first; the hold decides the setup
+		// when it ends. Only the HELD half of the rule is implemented. The stop for an X that reads ended
+		// is not, because the lookup carries no ended signal: its `planState` cannot tell an ended X from
+		// another inactive one, and it carries no clause for an ended X with no open hold. Such a run goes
+		// on: it creates the org when there is none, and the link refuses an ended X with its own clause.
+		if (server.hold && REFUSING_HOLD_STATES.has(server.hold.state)) {
+			throw new SetupRefused(server.hold.notice);
+		}
+
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
 		// restores them. The checkout already saved them before the charge; this run re-saves because the
 		// slug can have changed since (a refusal after payment). A field the server refuses is SAID —
@@ -470,15 +519,6 @@ async function runSteps(
 			save({ ...record, customerDetailsSaved: true });
 		}
 
-		// Where the setup stands, by the server's account. The record's `createdOrgId` and `linked`
-		// are what this browser last SAW; the server's answer is what HAPPENED, including a create or
-		// a link whose response never arrived.
-		const server = await resolveNewOrgSetup(ids);
-		if (!server) {
-			throw new SetupStopped(
-				"Your payment went through, but it isn't tied to this account. Contact support with the time of the payment — you won't be charged again.",
-			);
-		}
 		report = { planState: server.planState, paymentUrl: server.paymentUrl };
 		let orgId = server.org?.id ?? null;
 		if (server.org) {
@@ -518,7 +558,7 @@ async function runSteps(
 					// (someone else joined it, or it was left to them). Creating another is refused,
 					// by design; this is for support to untangle.
 					throw new SetupStopped(
-						"Your payment went through and a team was already created for it, but this account isn't in it. Contact support with the time of the payment — you won't be charged again.",
+						"Your payment went through and a team was already created for it, but this account isn't in it. Contact support with the time of the payment.",
 					);
 				} else {
 					const message = slugRefusalOf(error);
@@ -548,7 +588,7 @@ async function runSteps(
 			// A typed refusal (#5714): the team already has another live plan, so this payment was
 			// not linked. Final, not retryable — a retry would be refused again — and the clause
 			// says what happened and who to contact.
-			if (link.kind === "refused") throw new SetupStopped(link.clause);
+			if (link.kind === "refused") throw new SetupRefused(link.clause);
 			report = { planState: link.planState, paymentUrl: link.paymentUrl };
 			save({ ...record, linked: true });
 		}
@@ -561,15 +601,20 @@ async function runSteps(
 		clearPendingPaidSetup(userId);
 		finishedOrgId = orgId;
 	} catch (e) {
+		if (e instanceof SetupRefused) {
+			clearPendingPaidSetup(userId);
+			return { kind: "failed", message: e.message, record, retryable: false, recordCleared: true };
+		}
 		if (e instanceof SetupStopped) {
-			return { kind: "failed", message: e.message, record, retryable: false };
+			return { kind: "failed", message: e.message, record, retryable: false, recordCleared: false };
 		}
 		return {
 			kind: "failed",
 			message:
-				"Your payment went through, but we couldn't finish setting up the team. Retry to complete setup — you won't be charged again.",
+				"Your payment went through, but we couldn't finish setting up the team. Retry to complete setup.",
 			record,
 			retryable: true,
+			recordCleared: false,
 		};
 	}
 
@@ -614,7 +659,9 @@ const PLAN_STATE_POLL = { intervalMs: 3_000, timeoutMs: 60_000 } as const;
  * `unconfirmed`, #5522), so the view flips to `active` once Stripe settles the first invoice — every
  * `intervalMs` for at most `timeoutMs`, then it stops and the last true state stays on screen.
  * `onReport` is called with every answer that differs from the last; polling stops as soon as one is
- * no longer settling. A failed read is skipped (the next tick asks again). Returns the stop function.
+ * no longer settling, or reports an open hold on the setup (ADR 0002 §5.6: a hold is not a settling
+ * state, and only its end changes the answer). A failed read is skipped (the next tick asks again).
+ * Returns the stop function.
  */
 export function pollSettlingPlanState(
 	ids: { subscriptionId: string; customerId: string },
@@ -645,7 +692,7 @@ export function pollSettlingPlanState(
 					last = state.planState;
 					onReport({ planState: state.planState, paymentUrl: state.paymentUrl });
 				}
-				if (!SETTLING_PLAN_STATES.has(state.planState)) stop();
+				if (state.hold || !SETTLING_PLAN_STATES.has(state.planState)) stop();
 			})
 			.catch(() => {
 				// Skipped: the next tick asks again, and the screen keeps the last true state.
