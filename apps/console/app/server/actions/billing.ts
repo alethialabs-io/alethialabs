@@ -1467,7 +1467,9 @@ export async function createCheckoutSession(
 	await gatePaidConversion(actor);
 	// The same org-plan purchase lock `createSubscriptionIntent` takes (ADR 0002 §10.2 F2): an intent and
 	// a Checkout in two tabs run one after another, so the second one's live check runs after the first
-	// one's Stripe writes.
+	// one's Stripe writes. That orders them; it does not stop a double plan. An intent's subscription stays
+	// `incomplete` until it is paid, the live check does not count `incomplete`, and Checkout has no sweep,
+	// so a Checkout after an unpaid intent still opens a session beside it (ADR 0004 C21, owned by O6).
 	const locked = await withPurchaseLock(`org-plan:${actor.orgId}`, () => startCheckoutSession(actor, plan));
 	if (!locked.acquired) throw new Error(PURCHASE_IN_PROGRESS);
 	return locked.value;

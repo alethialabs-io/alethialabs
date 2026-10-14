@@ -4669,10 +4669,14 @@ describe("F2 — the AI subscription and hosted Checkout take their purchase loc
 			expect(withPurchaseLock).toHaveBeenCalledWith("org-plan:org-1", expect.any(Function));
 		});
 
-		it("an intent and a Checkout in two tabs run one after the other: the Checkout's live check reads the intent's mint", async () => {
+		/**
+		 * An intent whose mint is held open, and a Checkout started in a second tab while it is. Stripe lists
+		 * nothing until the mint lands, then the intent's subscription in `status`. Answers both promises
+		 * and the function that lands the mint.
+		 */
+		async function intentThenCheckout(status: string) {
 			const mint = deferred<unknown>();
 			stripe.subscriptions.create.mockReturnValue(mint.promise);
-			// What Stripe lists: nothing until the intent's mint lands, then its subscription.
 			const minted: ReturnType<typeof incompleteSub>[] = [];
 			stripe.subscriptions.list.mockImplementation(async (params: { status?: string }) => ({
 				data: minted.filter((s) => params.status === "all" || s.status === params.status),
@@ -4684,12 +4688,40 @@ describe("F2 — the AI subscription and hosted Checkout take their purchase loc
 			expect(stripe.subscriptions.create).toHaveBeenCalledTimes(1);
 			const checkout = createCheckoutSession("team");
 			await settle();
-			// The intent holds the key, so the Checkout has not started its Stripe reads.
+			// The intent holds `org-plan:<org>`, so the Checkout has not started its Stripe reads.
 			expect(stripe.subscriptions.list.mock.calls.map(([p]) => p.status)).toEqual(["incomplete", "all"]);
 			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
 
-			minted.push({ ...incompleteSub("sub_new", "price_team", { organization_id: "org-1" }), status: "active" });
-			mint.resolve({ id: "sub_new", latest_invoice: { confirmation_secret: { client_secret: "cs_new" } } });
+			const land = () => {
+				minted.push({ ...incompleteSub("sub_new", "price_team", { organization_id: "org-1" }), status });
+				mint.resolve({ id: "sub_new", latest_invoice: { confirmation_secret: { client_secret: "cs_new" } } });
+			};
+			return { intent, checkout, land };
+		}
+
+		// What the lock buys is the ORDER: the Checkout's reads start only after the intent's mint. It does
+		// NOT stop the double plan. The intent's subscription is `incomplete` until paid, the live check counts
+		// only `active`, `trialing` and `past_due`, and Checkout has no sweep, so the Checkout creates its
+		// session beside the intent's payable one. That is ADR 0004 C21, owned by O6 (Checkout gains the
+		// sweep); this test pins today's behaviour and must flip there.
+		it("an intent and a Checkout in two tabs run one after the other; the Checkout still opens beside the intent's `incomplete` mint (ADR 0004 C21, open until O6)", async () => {
+			const { intent, checkout, land } = await intentThenCheckout("incomplete");
+
+			land();
+
+			await expect(intent).resolves.toMatchObject({ subscriptionId: "sub_new" });
+			await expect(checkout).resolves.toEqual({ url: "https://checkout.test/sess" });
+			// The Checkout's live check ran after the intent's mint returned.
+			const allList = stripe.subscriptions.list.mock.calls.findLastIndex(([p]) => p.status === "all");
+			expect(stripe.subscriptions.list.mock.invocationCallOrder[allList]).toBeGreaterThan(
+				stripe.subscriptions.create.mock.invocationCallOrder[0],
+			);
+		});
+
+		it("an intent PAID before it releases the lock: the Checkout's live check reads it `active`, and refuses", async () => {
+			const { intent, checkout, land } = await intentThenCheckout("active");
+
+			land();
 
 			await expect(intent).resolves.toMatchObject({ subscriptionId: "sub_new" });
 			await expect(checkout).rejects.toThrow(/change the plan instead/);

@@ -20,7 +20,9 @@
 // No caller holds both keys, and no caller takes either one inside the other. The one nesting is the
 // moved release's: it holds the payer's `user:<payer>` purchase lease (lib/billing/purchase-lease.ts) and
 // takes `org-plan:<org>` inside it, so the order is lease first, then this lock. No caller takes a lease
-// while it holds this lock: a lease and this lock are only ever taken lease first.
+// while it holds this lock: a lease and this lock are only ever taken lease first. That holds only until
+// ADR 0004 O4, which takes `org-plan:<org>` here first and an `org-plan:<org>` lease inside it (D3, C25);
+// O4 must restate this order.
 
 import "server-only";
 import { sql } from "drizzle-orm";
