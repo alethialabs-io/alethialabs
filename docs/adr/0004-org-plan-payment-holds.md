@@ -1,13 +1,15 @@
 ---
-status: "Proposed"
+status: "Accepted (maintainer delegation 2026-10-14)"
 issue: "#5976"
 parent: "#5506"
 date: 2026-10-14
+accepted: 2026-10-14
 ---
 
 # Payment holds for the org-plan purchase
 
-**Decision (proposed).** The org-plan purchase (`createSubscriptionIntent`) gets payment holds. Before it makes an
+**Decision (accepted by maintainer delegation 2026-10-14, after two adversarial money review rounds, PR #5982).**
+The org-plan purchase (`createSubscriptionIntent`) gets payment holds. Before it makes an
 earlier org-plan subscription unpayable (voids its invoice or cancels it), it writes a hold row first, as the
 create-a-team purchase has done since ADR 0002 S8. The state machine is ADR 0002's, unchanged: `advanceHold`
 moves every hold, under its payer's lease, and nothing else does. This ADR adds what ADR 0002 rev 5 removed when it
@@ -53,6 +55,11 @@ path is relative to `apps/console/`, except this ADR's own folder, `docs/adr/`, 
 are relative to the repo root. "ADR 0002 §n" and "0002-Cn" name that ADR's sections and cases. The `C` numbers in
 §7 are this ADR's own.
 
+**What this supersedes in ADR 0002.** On acceptance, these parts of ADR 0002 are superseded by this ADR: §2's "the rev
+4 notion of a purchase scope … is gone"; §7's rows "The org-plan purchase" and "Two live subscriptions on one org";
+and Q13. Amending ADR 0002's own text is a separate follow-up with its own scope (`docs/adr/0002-*`). This ADR does
+not edit it.
+
 ## Revisions
 
 - **Rev 1** (2026-10-14). The first draft, written before any code, as #5506 and ADR 0002 Q13 require.
@@ -75,6 +82,11 @@ are relative to the repo root. "ADR 0002 §n" and "0002-Cn" name that ADR's sect
     used consistently for R1's email rule. (12) C1 and C30's base case are labelled pins. (13) C21 moves to O6.
     (14) O4 takes the advisory key first, then the lease. (15) R1 prefers `active` over `trialing`. (16) O8
     removes the `scope` default.
+- **Rev 2.1** (2026-10-14, the delta review of `d8b8ef592`: no blockers, three advisories, all taken). (1) When
+  D6b′ cannot read the replaced subscription, it alerts anyway, so the write is never left unreported (§6, D6).
+  (2) §8 lists the permanent refusal on a legacy shared customer, with the operator's fix. (3) D2 (a′) states that
+  expiring another org's keyless session costs a restart, never a charge. **Accepted** under the maintainer's
+  delegation, after two adversarial money review rounds on PR #5982.
 
 ---
 
@@ -273,7 +285,9 @@ session, and `startProTrial` before it mints its trial (D3):
   then re-read (S16, S17), when its own `metadata.organization_id` is O **or it has no such key**. A re-read
   showing `complete` means the customer finished it first: its subscription now exists, and (b) and (c) see it.
   One still `open` refuses (`UNSETTLED`). A session keyed to another org is left alone: it is that org's checkout
-  on a shared customer, and it cannot give O a plan.
+  on a shared customer, and it cannot give O a plan. A **keyless** session on a legacy shared customer may be
+  another org's (O2's), and (a′) expires it too. That is deliberate and not a cross-tenant defect: it costs O2's
+  open checkout a restart, never a charge, and keyless sessions stop existing 24h after O4's rollout.
 
   **Why a keyless session is expired too (B1).** Before O4, no session carries the key (`billing.ts:1452-1466`), and
   each one stays payable for Stripe's default 24h (S16). Left alone, a keyless Enterprise session opened before O4
@@ -458,7 +472,9 @@ ADR adopts it (Q4).
 and every such event's sync passes through D6a or D6b. So a two-live state that none of the three purchase flows
 created is reported within one billing period at worst. A two-live state created through the paths this ADR closes
 (D2, D5, D7) is not created at all. A race with `setOrgPlan` is reported at the write that brings it to the row. A
-`paused` Y that a paid X replaced is reported at that write (D6b′). Without D6b′ it would surface only when Y
+`paused` Y that a paid X replaced is reported at that write (D6b′). If D6b′ cannot read Y, it alerts anyway (§6). The
+cost is at worst an alert about a Y that turns out to be an abandoned `incomplete` checkout, and only when Stripe
+fails that one read. Without D6b′ it would surface only when Y
 resumed, which is also when it starts charging again.
 
 **Rejected: a scheduled scan of every org's Stripe customer.** It costs one list per org per tick to find what the
@@ -617,7 +633,7 @@ ADR 0002 §5.1 and §5.2 apply to the org-plan flow, call for call. The addition
 | `checkout.sessions.create` after a failed gate | close out: `expire`; a failed expire leaves a URL that nobody holds, payable until its 30-minute `expires_at` (S16) | return the URL |
 | the trial's `subscriptions.create` | as today: throws, nothing synced | — |
 | R1's list, R2's retrieve | throw; the event is redelivered (D4) | write a guess |
-| D6b′'s retrieve | log; the write already applied is kept; no alert is claimed | fail the event over a report |
+| D6b′'s retrieve | the write already applied is kept, and the alert is raised **anyway**, naming X and Y and saying that Y could not be read (fail closed). A redelivery could not re-detect it, because the row now names X | fail the event over a report; drop the report |
 | `reportTwoLive` | log; never throws; never fails the event | cancel anything |
 | the row read before the lease (D5, D7) | throw: the purchase fails before any Stripe write | pass the purchase |
 
@@ -687,7 +703,7 @@ Every new test must fail on the `dev` head its slice starts from, on its asserti
 | C43 | The backfill holds an org-plan subscription it cannot prove was never live. | 0002 §8 B1–B6 | §9 | P: B1 widened to org-plan subscriptions holds only a never-live, card-paid, single-invoice checkout, and lists the rest. |
 | C44 | **B1: a keyless Checkout session opened before O4 is finished after an embedded purchase.** | money review B1 | D2 (a′) | A2: an `open` subscription-mode session with **no** session-level `metadata.organization_id` on O's customer is expired and re-read before the mint. If it re-reads `complete`, (b) and (c) refuse. If it is still `open`, the purchase refuses `UNSETTLED`. The trial (C26) and Checkout do the same. |
 | C45 | **B2: an unexpired `past_due` grant is told to "update the payment method".** | money review B2 | D5; D7 | A: a row with no subscription id, status `past_due`, and a future `currentPeriodEnd`. All three flows refuse with the contract copy, which does not match `/payment method\|unpaid invoice/`. |
-| C46 | A `paused` Y replaced by a paid X goes unreported until it resumes. | advisory 4 | D6b′ | W: the row names Y, stored `none`. `updated(X, active)` applies, the handler retrieves Y, and Y reads `paused`: one two-live alert. Y reads `incomplete`: no alert. |
+| C46 | A `paused` Y replaced by a paid X goes unreported until it resumes. | advisory 4 | D6b′ | W: the row names Y, stored `none`. `updated(X, active)` applies, the handler retrieves Y, and Y reads `paused`: one two-live alert. Y reads `incomplete`: no alert. The retrieve rejects: the event still succeeds, and one alert names X and Y and says Y could not be read. |
 | C47 | R1 names a card-less trial over a paying plan. | advisory 15 | R1 order | W: Y is deleted. X1 is `active` and older, and T is `trialing` and newer. R1 names X1, with one two-live alert. |
 | C48 | `alertOperator` is reachable as a server action. | advisory 10 | `lib/billing/operator-alert.ts` | `tests/lib/billing/operator-alert.test.ts`: the module has no `"use server"` directive, and it resolves false with the variable unset and true only when a delivery was queued. After O6, `billing.ts` exports no `alertOperator` (checked by `check:action-boundary`). |
 
@@ -706,6 +722,7 @@ That is 48 cases. C17 and C38 re-run an existing test, and each adds only what t
 | Renewals, dunning, plan changes, cancels and resumes | Not first payments (ADR 0002 §7). | As on `dev`. R1 changes what follows a dunning-ended `canceled` only when a paid sibling exists. |
 | Credit packs, disputes, deployments with no Stripe | As in ADR 0002 §7. | As on `dev`. |
 | Choosing which of two live plans to keep | A person's decision (D6, Q4). | The alert, and the operator in Stripe. |
+| An org on a **legacy shared customer** whose customer also carries another org's live plan, or a live unlinked create-a-team subscription | (c) uses F3's classifier with no `organization_id` filter on purpose, so it refuses every purchase, Checkout and trial by O for as long as that subscription lives. That is the safe side: it never mints beside a subscription it cannot place. | The refusal names support. The operator's fix is the one F3's over-cap alert already describes: once nothing of O's is live on the shared customer, point O's `organization_billing.stripe_customer_id` at a new Stripe customer with no subscription history. New customers are no longer shared (ADR 0002 §4.2 (2)), so no new case arises. |
 | The org-plan sheet showing `notice` | A UI change. | O7, `class:ui`, a draft until the maintainer accepts it (CLAUDE.md §4). Until then the clause still rides the response. |
 
 ---
