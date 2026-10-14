@@ -193,6 +193,18 @@ relative to the repo root, as the board's `scope:` lines are.
 - **Amendment** (2026-10-09, maintainer delegation: T14 timing wins over Q4's ~32h; #5774, S5b). The
   fifth failed refund attempt goes to T14 at once, so a person sees a failing refund after about 8h35m
   (5m, 30m, 2h, 6h), not about 32h. Q4's decision text is corrected to match.
+- **Amendment** (2026-10-14, #5974; the maintainer decided on 2026-10-14 to amend, then build; it is
+  accepted under the maintainer's delegation once its money review passes, as rev 7.1 was). The S9
+  money review (recorded on #5506, 2026-10-13) found that a `link_refused` hold had no way out once
+  support **moved** X to the right team, although the §5.5 clause promises that support "will refund
+  it or move it to the right team". New: §5.8 (the moved release), event E2m and row T16m (§3.2,
+  §3.3), a row in §5.7's exits table, cases C98–C102 and slice S11 (§10). I14's list of the closes
+  that may happen while X is live gains this one, with the reason the invariant still holds (X is then
+  an ordinary subscription of the team it was moved to). **No other decision changes.** Every
+  `file:line` this amendment cites is at `origin/dev` `6f050e0b7` (2026-10-14), where S1–S9 have
+  merged. Two deliberate departures from #5974's proposal are stated in §5.8: the flag is
+  `--moved-to <team id>`, not `--reason moved --team <id>`; and S11's scope leaves out
+  `lib/billing/payment-holds/store.ts`, which needs no change.
 
 ---
 
@@ -423,7 +435,7 @@ and the copy (§5.5) read those three columns.
 | `already_refunded` | Refunds this hold did not create cover the charge and read `succeeded`. |
 | `adopted` | The subscription went live while it was still ours to keep. Only `closing` and `cancel_unproven` can reach this. |
 | `expired_unpaid` | `incomplete_expired`, with the held invoice void or unpaid. |
-| `operator` | An operator released it. |
+| `operator` | An operator released it. Amendment (2026-10-14, #5974): this includes the moved release (§5.8), whose `release_note` names the team X was moved to. |
 
 A failed **observation** (a Stripe read error) is **not** an event. It never moves a hold. It only
 writes `attempts`, `last_error` and `next_check_at`.
@@ -435,6 +447,7 @@ writes `attempts`, `last_error` and `next_check_at`.
 | **E0 `open`** | The create-a-team flow, under the lease, just before it voids or cancels a swept subscription or the prior. **Rev 5.1:** also the link when it refuses a live X (§5.6, the "live, paid plan" row). That row is written directly in `needs_operator` and alerts. It voids, cancels and refunds nothing. |
 | **E1 `observe`** | `advanceHold(hold)` reads the subscription, the held invoice, that invoice's payments, and their refunds, and classifies them as **O** below. Callers, **each holding the user's lease**: (a) the create-a-team flow, for **every** open hold of its user, and the link for a hold on its subscription (§5.6); (b) the scheduled sweeper, for every hold that is **due**: `next_check_at <= now()`, or `nudged_at > observed_at` (§4.1, §5.4); (c) the operator's `show` and `reconcile`. The webhook only nudges (§5.3). |
 | **E2 `operator_release`** | The audited operator command (§5.4). |
+| **E2m `operator_release_moved(T)`** (amendment 2026-10-14, #5974) | The same command with `--moved-to <T>`, for a `link_refused` hold only, after support moved X to team T in Stripe (§5.8). |
 
 **O** is a tuple read in this order: subscription, invoice, payments, refunds. A payment that lands
 between two reads shows up in the later payments read. The order narrows the read race; it does not
@@ -501,6 +514,7 @@ the Stripe write, then observes again in the same call, up to 3 steps per call.
 | T2o (rev 5.1, corrected in rev 7) | `needs_operator` | `sub ∈ {active, trialing}` | none. A paid, live subscription is the customer's to keep, so waiting for an operator only delays their team. **Rev 7 (R7-2):** the release runs §5.6 "When a hold ends" in the same caller, under the same lease. A setup with an org is re-linked at once. A setup with no org stays **open**, so `findUnfinishedNewOrgSetup` resumes it and §4.3's live check returns `resume`, and the sweeper sends the Q3 "finish creating your team" email. A setup is never closed while this hold is open (I16), so a refusal earlier in the hold's life cannot hide X. Not for a hold opened by the link's refusal (C80), which carries `open_note = link_refused` and is the operator's. | `released(adopted)` |
 | T15 | `needs_operator` | E1 `observe`, anything T2o does not match | Observe and record only. Never auto-releases. | `needs_operator` |
 | T16 | any open state | E2 `operator_release(reason)` | Under the user's lease (up to 30s wait, refused if still busy). Prints the live observation, then writes `released_by`, `release_note` and an audit event with a compare-and-set on `version`. | `released(operator)` |
+| T16m (amendment 2026-10-14, #5974) | `needs_operator` with `open_note = link_refused`, and no other | E2m `operator_release_moved(T, reason)` | Under the user's lease, as T16. Reads X, X's customer and T's billing row **fresh, after the lease is taken** (§5.8). Refuses with a typed code, and writes nothing, unless X reads live, X's and its customer's `metadata.organization_id` are T, T's billing row names X (after at most one `syncSubscriptionToBilling(X)`), and T is not the setup's own team. Makes no Stripe write. Then T16's compare-and-set on `version` writes `released_by` and `release_note = "moved to <T>: <reason>"`, and the same transaction closes the open setup (`hold_released`, §4.1). The audit event is T16's, with `moved_to` added. | `released(operator)` |
 | T17 | any open state | `sub` reads a status outside these rows (`unpaid`, `paused` on an ended sub, an unknown value) | alert | `needs_operator` |
 | T18 | `released` | any event | none (inert) | `released` |
 
@@ -592,7 +606,11 @@ Each invariant is tested (§6).
   setup is never closed while X may still become live and unlinked: it closes only when X reads
   ended and no open hold names X (I16). Rev 7.1: the one other close is the operator's, on an X that
   Stripe reports `resource_missing` (§5.4), which no automatic writer does. An adoption re-links a setup that has an org (§5.6 "When a
-  hold ends").
+  hold ends"). **Amendment (2026-10-14, #5974):** there is one more close while X is live: the moved
+  release (§5.8). It is the operator's too, and it closes only after a fresh read shows that X, its
+  customer and team T's billing row all name T. X is then an ordinary subscription of T, written to and
+  watched through T's row (§2, "Create-a-team subscription"). It is not unlinked, so the invariant
+  holds.
 - **I15, the guard never locks the org out (rev 6, corrected in rev 7).** Every open setup has an
   exit that does not depend on the creator coming back (§5.7 "Every open setup has an exit"). Rev 6
   claimed this from one writer, the link's refusal, and the claim was false (R7-1).
@@ -938,7 +956,9 @@ These numbers are part of Q4.
   `unpaid` or `paused` dead end (AC9). **Rev 7:** the release decides the setup (§4.1): it closes it,
   or, when X reads live, runs §5.6 "When a hold ends", which links it. A live X whose link is refused
   makes the command refuse the release and print why (the org's row names a live Y): the operator
-  first cancels and refunds X, or Y, in Stripe.
+  first cancels and refunds X, or Y, in Stripe. **Amendment (2026-10-14, #5974):** or support moves X
+  to the right team in Stripe and runs `release <X> --moved-to <team id>` (§5.8). That path exists only
+  for a `link_refused` hold.
 
 **The setup command (rev 7, shipped by S1).** `scripts/pending-org-setups.ts close-setup
 <subscription_id> --reason "<text>" --operator <userId>` is the operator's exit for a setup no
@@ -1217,6 +1237,7 @@ These are every state an open setup can be in, and its exit:
 | live, no hold, not yet linked in Stripe, the creator does not return | the co-owner's message names the creator and support; support cancels (and refunds) X in Stripe, then runs `pending-org-setups close-setup` (§5.4) | the operator | S1 |
 | Stripe answers `resource_missing` for X (rev 7.1, R71-2) | the guard refuses as for any open setup (the message offers support); the operator checks the key, then runs `close-setup`, which accepts a missing X with a reason (§5.4). Never closed automatically. `findUnfinishedNewOrgSetup` already keeps such a setup (`billing.ts:2175-2178`). | the operator | S1 |
 | the link refused beside a live Y (S1, no holds yet) | closed by the refusal, with the alert | the link | S1 |
+| live, an open `link_refused` hold names X, and support has moved X to another team T (amendment 2026-10-14, #5974) | `payment-holds release <X> --moved-to <T>` releases the hold. The same transaction closes the setup (`hold_released`). Before #5974 this row had no exit (§5.8, "The gap"). | the operator | S11 |
 
 A setup that closes while X is still live occurs only in the last row (S1's refusal before holds
 exist). X is then outside every reader, and the alert is its watch. §8 lists those setups for the
@@ -1240,6 +1261,154 @@ Three details, each corrected in rev 6:
 link can still mint Y beside X. Then the link's "live, paid plan" row (§5.6) refuses X under an alert and a `needs_operator`
 hold (C80), checked again after the sync (§5.6 "The refused sync"). That is an operator's case with
 nothing lost silently, which is the bar.
+
+### 5.8 The moved release of a `link_refused` hold (amendment 2026-10-14, #5974)
+
+**The gap.** The S9 money review found it, and it was recorded on #5506 on 2026-10-13. Beside the
+org's other live, paid plan Y, the link refuses X. It opens a `needs_operator` hold on X with
+`open_note = link_refused` (`lib/billing/payment-holds/sweeper.ts:454-464`). It leaves the setup open
+with `refused_reason = org_has_plan` (`:479`). And it tells the customer that support "will refund it
+or move it to the right team" (§5.5, `LINK_REFUSED_ORG_HAS_PLAN`, `sweeper.ts:304`). The refund has an
+exit: once X is cancelled, X reads ended, and T16 releases and closes. The move has no exit:
+
+1. T2o never adopts this hold (`machine.ts:214-220`), so every observation lands on T15 (`:232`).
+2. Support moves X to the right team T in Stripe, so X's and its customer's `metadata.organization_id`
+   name T. `payment-holds release` then reads X live beside an open setup
+   (`scripts/payment-holds.ts:264-265`) and runs the re-link first (`:266`, `relinkBeforeRelease`,
+   `:316-323`). The re-link resolves the setup's own team O, not T (`relinkOrgOf`,
+   `sweeper.ts:565-594`). It finds X's metadata naming another team (`:537`), alerts (`:540-545`) and
+   returns `not_linked` (`:546`). The command refuses (`scripts/payment-holds.ts:269-274`). Each attempt
+   raises that alert again.
+3. `close-setup` refuses a live X (`scripts/pending-org-setups.ts:139-144`), and it refuses while an
+   open hold names X (`:148-158`).
+
+So the hold blocks U's next create-a-team (I1 (a)), and §5.7's guard stays on for O's purchases. This
+lasts until someone cancels X, which is the refund path that support chose not to take.
+
+**The decision.** One more operator path, E2m / T16m (§3.2, §3.3). The command is:
+
+```
+pnpm -C apps/console billing:payment-holds release <X> --moved-to <T> --reason "<why>" --operator <user id>
+```
+
+The command checks that the move has fully happened. It reads that fresh, under the payer's lease. It
+then releases the hold with T16's own write. It moves nothing itself: the move is support's decision,
+made in Stripe, and the command records who made it and verifies it.
+
+**Why `--moved-to`, not #5974's proposed `--reason moved --team <id>`.** `--reason` is T16's required
+free text. It is stored as `release_note` (`scripts/payment-holds.ts:236`, `machine.ts:764`). If one
+word inside it chose the code path, the path would depend on how a note was worded. A note that began
+"moved …" for some other reason would take the moved path. So `--moved-to <T>` is its own flag, and
+its presence alone selects the path. `--reason` and `--operator` stay required, as for T16
+(`scripts/payment-holds.ts:236-237`, `:716-721`). A `--moved-to` with no value is refused there too,
+before anything is read. Without `--moved-to`, `release` is T16, unchanged.
+
+**What it does, in this order.** Steps 1–4 are T16's existing steps (`scripts/payment-holds.ts:239-259`).
+
+1. It finds the open hold of X. If there is none, it prints that and returns `not_open` (exit 0), as
+   T16 does (`:239-243`).
+2. It takes the payer's lease, `user:<payer_key>`, and waits up to 30s (`LEASE_WAIT_MS`, `:100`). If
+   the lease is still busy, it refuses with `lease_busy` (`:244-247`).
+3. It re-reads the hold under the lease (`:250-254`). If the hold was released meanwhile, the result is
+   `not_open`. **Only this read counts** for the next step's hold check.
+4. It prints the hold, the setup and the live observation (`:255-259`).
+5. **Fresh reads, all after the lease, all read-only:**
+   - team T's `organization` row (`id`, `metadata`);
+   - the setup row for X (`pendingOrgSetupFor(payer_key, X)`, `lib/billing/pending-org-setup.ts:224`);
+   - X itself (`subscriptions.retrieve(X)`, the purchase Stripe client);
+   - X's customer (`customers.retrieve`), only when X was read;
+   - T's billing row (`getOrgBilling(T)`, `lib/billing/queries.ts:34`).
+
+   The hold's stored observation, `last_pay` and the setup's columns are never evidence of the move.
+6. **The decision**, `decideMovedRelease` (a new pure function in `machine.ts`, next to
+   `operatorRelease`). It takes the facts from steps 3 and 5 and returns `refuse(code)`, `sync_first`
+   or `release`. It evaluates the table below top to bottom, and the first failing row wins.
+7. On `sync_first`: X's metadata names T, but T's row does not name X yet, because the webhook has not
+   run. The command runs `syncSubscriptionToBilling(X)` **once** (`lib/billing/sync.ts:118`), with the
+   X object read in step 5 and no event time, so #5549's rank guard applies (N2). This is the same
+   idempotent call the webhook makes, and the setup closer's adopt branch already makes it (§5.7). The
+   command re-reads T's row and decides again with `syncedOnce = true`. A second `sync_first` is
+   `row_not_x`. No other step syncs.
+8. On `release`: it calls `operatorRelease` (`machine.ts:748-767`) with the reason
+   `moved to <T>: <reason>`. That is T16's compare-and-set on `version` and on the payer's lease
+   (`store.ts:243-284`). In the same transaction it closes the open setup with
+   `closed_reason = 'hold_released'` (`store.ts:271-281`, §4.1). It returns null when the hold moved
+   on or the lease was lost. Then nothing is written and no event is emitted, as T16 does
+   (`scripts/payment-holds.ts:288-291`).
+9. It writes the audit event, only when step 8 returned the row (§5.4, rev 7.1). The event is T16's
+   `billing.payment_hold.released` line (`:293-302`), with the same fields plus `moved_to: T` and
+   `setup_closed`, the setup id the release closed, or null. To report that id, `operatorRelease`
+   passes through the `closedSetupId` that `store.releaseHold` already returns. Today it drops it
+   (`machine.ts:761-766`). The durable record is the row: `released_by` and the `release_note` that
+   names T.
+10. It gives the lease back in every case (`:305-307`).
+
+**The checks and their typed answers.** A refusal returns
+`{ kind: "refused"; code: MovedReleaseRefusal; reason: string }` and exits 1. It writes nothing to
+`payment_holds` or `pending_org_setups`, makes no Stripe write and raises no alert. Only `row_not_x`
+can have run the step 7 sync before it. Each `reason` tells the operator what to do instead:
+
+| # | Code | Refused when | What the operator is told |
+|---|---|---|---|
+| 1 | `not_link_refused` | the re-read hold is not `needs_operator` with `open_note = link_refused` (`LINK_REFUSED_NOTE`, `machine.ts:95`) | "This hold was not opened by a refused link; use `release` without `--moved-to`." |
+| 2 | `team_not_found` | no `organization` row has id T | "No team has id T; check the id." |
+| 3 | `same_team` | T is the setup's own team: `created_org_id = T`, or T's metadata marker names X (`newOrgSubscriptionIdOf`, `lib/billing/new-org-setup.ts:44`) | "That is the team this setup was made for; `release` without `--moved-to` re-links X to it once its other plan is gone (§5.6 'When a hold ends')." |
+| 4 | `x_missing` | Stripe answers `resource_missing` for X | "X is not in this Stripe account; check the key, then use `release` without `--moved-to`, which accepts a missing X." |
+| 5 | `x_unreadable` | any other failure reading X or its customer | "Could not read X (or its customer) from Stripe; nothing was written; try again." |
+| 6 | `x_ended` | X reads `canceled` or `incomplete_expired` | "X has ended; use `release` without `--moved-to`, which releases and closes the setup." |
+| 7 | `x_not_live` | X's status is outside the live set (`LIVE`, `lib/billing/payment-holds/observe.ts:133`): `incomplete`, or an unknown value | "X is <status>; wait until it goes live or expires." |
+| 8 | `subscription_not_moved` | X's `metadata.organization_id` is not T. It prints what it names, or "nothing". | "Set X's organization_id to T in Stripe first." |
+| 9 | `customer_not_moved` | X's customer is deleted, or its `metadata.organization_id` is not T | "Set X's customer's organization_id to T in Stripe first." |
+| 10 | `row_not_x` | T's billing row does not name X after one sync. It prints the row's subscription and status. | "T's billing row names <Z, status> (or nothing). If T already pays for another plan, decide X or that plan in Stripe first." |
+
+Why each check is there:
+- **Rows 1 and 3 keep the path narrow.** Every other hold, and a move back to the setup's own team,
+  already has T16 and its re-link. The moved path closes the setup, and it must never close one that
+  the re-link would mark linked.
+- **Rows 8 and 9 check what the link itself writes:** customer first, then subscription
+  (`sweeper.ts:386-393`). With the customer's metadata naming T, U's create-a-team never reuses that
+  customer again (§4.2 (2)).
+- **Row 10 is the proof that X is watched.** T's row names X, so X's events write T's row and #5518's
+  guard covers it from then on. T is then billed for X, so the command does not ask whether U is a
+  member of T or holds `manage_billing` there. It grants nothing in T. It checks a move that support
+  has already made in Stripe, and support answers for that move.
+
+**What the lease does and does not fence.** The lease does not fence Stripe (§4.4), so step 5's read
+is current only against this codebase's own writers. Nothing here writes X's or its customer's
+metadata without U's lease: the link's core renews that lease before each of those writes
+(`sweeper.ts:385-393`). So no session link, re-link or sweeper visit can change the metadata between
+step 5 and step 8. A hand edit in Stripe during those seconds is the operator's own race. T's row can
+still change through the webhook in that window. Once X is live on T's row, #5518's guard lets another
+subscription take that row only where §5.3 (2) says it may. Two live subscriptions on one org is §7's
+uncovered case, and it is not new here.
+
+**Why it closes the setup and does not mark it linked.** `markPendingOrgSetupLinked` also writes
+`created_org_id = orgId` (`lib/billing/pending-org-setup.ts:408-425`). Marking the setup linked to T
+would overwrite the record of the team the setup made (O) with a team that the setup's creator may not
+belong to. A close keeps `created_org_id = O`, `refused_reason = org_has_plan`, and the hold row that
+names T. Those three together say what happened. A closed setup releases §5.7's guard on O, and it
+leaves §4.3's live check correct: X now carries `organization_id`, so it is no longer U's
+create-a-team subscription (§4.2).
+
+**Why the sweeper never does this on its own.** T15 is unchanged. A `link_refused` hold never
+auto-releases, even when an observation could see the move. The hold exists so that a person decides
+X's money (C80). A metadata edit in Stripe is not evidence that someone decided anything, and only the
+operator's release records who did (`released_by`).
+
+**The plain release points at the moved path.** When T16's re-link returns `not_linked` for a hold
+whose `open_note` is `link_refused`, the refusal at `scripts/payment-holds.ts:269-274` adds one
+sentence: "If support moved X to another team, run `release` with `--moved-to <that team's id>`." The
+condition is the hold's `open_note`. It is not the text of `why`, because a check that matches a
+message breaks when the message is reworded. The team id is already in that refusal: `why` names it
+when X's metadata names another team (`sweeper.ts:537`). The plain path's other behaviour is
+unchanged, including the re-link's alert.
+
+**What it does not change.** No Stripe write. No customer email: the Q3 emails cover `refund_pending`,
+`refunded` and `adopted`, never `operator` (§5.4). No change to T2o, T15, T16, the store, the schema,
+the release reasons (the `payment_holds_release_reason_known` check,
+`lib/db/schema/payment-holds.ts:143-144`, keeps its seven values) or `close-setup`. After the
+release, X belongs to T. Its renewals, plan changes and cancellation follow the org-plan rules
+(§7), which this design does not cover.
 
 ---
 
@@ -1357,6 +1526,11 @@ Stripe, so they reach every row regardless.
 | C95 | **Rev 7 (advisory 6).** The Q3 email is sent twice, or by a caller with no fence. | #5511 review 6 | §4.1 notice claim; §5.4 "Who sends the Q3 emails". | I: two sweeper ticks over one `refund_pending` hold send one email; a send that throws un-claims, and the next tick sends it; the purchase flow and the link entering `refund_pending` send nothing. |
 | C96 | **Rev 7.1 (R71-1).** The link threw after `subscriptions.update` and before the mark: X is live and linked in Stripe, the org's row names X, `linked_at` is null, and nothing ever marks it. | #5511 review 7; `billing.ts:1907`, `:1930`, `:2079`, `:2193` | §5.7, the closer's adopt branch. | A: X `active`, `metadata.organization_id = O`, `metadata.created_by = U`, O's row names X, `linked_at` null: `createCheckoutSession` for O is not refused, and `linked_at` is set by that call; a concurrent resume lookup sets nothing twice. Variant: the row names nothing yet: the closer syncs X, then adopts. Variant: the row names a live Y: the S1 refusal (closed, `org_has_plan`, alert). Control: metadata names another user: not adopted, the guard refuses. |
 | C97 | **Rev 7.1 (R71-2).** An open setup whose X Stripe cannot find (`resource_missing`) refuses the org's purchases for good. | #5511 review 7; `billing.ts:2175-2178` | §5.4 "The setup command"; §5.7. | A: the guard on a `resource_missing` X refuses and closes nothing (no automatic close). `tests/scripts/pending-org-setups.test.ts`: `close-setup --reason` on it closes the row; `createSubscriptionIntent` for the org is not refused afterwards. |
+| C98 | **Amendment 2026-10-14 (#5974).** Support moved a `link_refused` X to the right team T. `release` re-links to the setup's team, gets `not_linked` and refuses, so the hold sits at T15 for good, U cannot create a team, and §5.7's guard stays on. | S9 money review (#5506, 2026-10-13); `scripts/payment-holds.ts:264-274`, `sweeper.ts:537` | §5.8; E2m, T16m. | `tests/scripts/payment-holds.test.ts`: the hold is `needs_operator` with `open_note = link_refused`; an open setup has `created_org_id = O`; X reads `active` with `metadata.organization_id = T`, its customer's is T, and T's row names X. `release X --moved-to T --reason r --operator op` returns `{ kind: "released" }` and exits 0. `store.releaseHold` is called once with the lease, `{ id, version }` and `{ reason: "operator", releasedBy: "op", note: "moved to T: r" }`. Exactly one `billing.payment_hold.released` line carries `moved_to: "T"` and `setup_closed`. `relinkAdoptedSetup`, the alert and every Stripe write (`customers.update`, `subscriptions.update`, `subscriptions.cancel`, `refunds.create`) are not called. The lease is given back. A second run returns `not_open` and emits nothing. (The same-transaction setup close is the store's, already proven by C92.) |
+| C99 | **Amendment 2026-10-14.** The moved path releases on partial or wrong evidence. | #5974 | §5.8, the checks table. | `tests/lib/billing/payment-holds.test.ts`: `decideMovedRelease` returns each of the ten codes from a fact set that fails only that row. A fact set that fails rows 3 and 8 returns `same_team`, and one that fails rows 6 and 8 returns `x_ended`, so order is pinned. A fact set that passes every row returns `release`. `tests/scripts/payment-holds.test.ts`: for each code, the result is `{ kind: "refused", code }` and the exit is 1. `store.releaseHold`, the alert and every Stripe write are not called, no event is emitted, and the lease is given back. `syncSubscriptionToBilling` is called only for `row_not_x`, once. A `--moved-to` with no value is refused before any read. |
+| C100 | **Amendment 2026-10-14.** The command syncs X more than once, or before X's move is proven. | #5974 | §5.8 step 7. | H: T's row names nothing with `syncedOnce = false` gives `sync_first`; the same facts with `syncedOnce = true` give `row_not_x`. Scripts: the row names nothing at first; the sync applies and the re-read names X, so the result is `released`. `syncSubscriptionToBilling` is called exactly once, with the X object this run read. Variant: the row names a live Z, so the result is `row_not_x` after one sync and no second sync. Variant: X's metadata names O, so the result is `subscription_not_moved` and the sync is never called. |
+| C101 | **Amendment 2026-10-14.** The move is judged on a stale read, or outside the lease. | #5974 | §5.8 steps 2–5, 8; T16's fence. | Scripts: `acquirePurchaseLease` is called before `subscriptions.retrieve(X)` and `customers.retrieve` (call order). A busy lease returns `lease_busy` and X is never retrieved. A hold that is released between the first read and the re-read under the lease gives `not_open` and no event. A hold that the re-read finds with another `open_note` gives `not_link_refused`. `store.releaseHold` returning null (a T15 observe bumped `version` in between, or the lease was lost) gives "Nothing was written", no event and `not_open`. |
+| C102 | **Amendment 2026-10-14.** The plain release on a moved X does not say what to do. | #5974 | §5.8 "The plain release points at the moved path". | Scripts: the C98 fixture without `--moved-to` is still refused, and nothing is written. The refusal contains `--moved-to` and T's id. Control: a `needs_operator` hold with `open_note` null, X `unpaid` and an open setup whose re-link returns `not_linked` is refused without `--moved-to` in the text. |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 
@@ -1372,7 +1546,7 @@ Stripe, so they reach every row regardless.
 | C62 | a stale holder's Checkout URL or trial | Checkout and the trial are not covered |
 | C68, C70 | the trial's `created` event and the gate marker | the trial is not covered (K1) |
 
-That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1.
+That is 87 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, C87–C95 from rev 7, and C96–C97 from rev 7.1. The 2026-10-14 amendment (#5974) adds C98–C102, which makes 92.
 
 ---
 
@@ -1739,11 +1913,40 @@ whatever this column says.
     `class:ui`, it opens as a draft and stays one (CLAUDE.md §4).
     - scope: `apps/console/components/org/pending-paid-setup.ts apps/console/components/org/create-org-sheet.tsx apps/console/tests/components/org/**`
     - Blocked by: S9. Migration: no. Security review: no.
+11. **S11: The moved release of a `link_refused` hold (§5.8; amendment 2026-10-14, #5974).** File
+    it only after this amendment merges.
+    Done when `payment-holds release <X> --moved-to <T> --reason --operator` exists as §5.8 says:
+    - It runs under the payer's lease.
+    - Its fresh reads of T, the setup, X, X's customer and T's billing row are all taken after the
+      lease.
+    - `decideMovedRelease` in `machine.ts` is pure and returns the ten typed refusals in the table's
+      order, `sync_first` or `release`.
+    - It syncs X at most once.
+    - The release goes through `operatorRelease` with `release_note = "moved to <T>: <reason>"`.
+      `operatorRelease` now passes `closedSetupId` through.
+    - The audit event carries `moved_to` and `setup_closed`, and only the caller whose
+      compare-and-set landed writes it.
+    - The plain release's re-link refusal names `--moved-to` for a `link_refused` hold.
+    - The runbook's payment-holds section (`docs/stripe-prod-runbook.md` §7) gains the moved path:
+      support sets `organization_id` to T on X **and** on X's customer in Stripe, then runs the
+      command.
+
+    C98–C102 pass, and each fails on `dev` first. No migration: the release reason stays `operator`,
+    and the team is recorded in `release_note`. `lib/billing/payment-holds/store.ts` is **not** in
+    scope, although #5974 named it. `releaseHold` already writes the note it is given and closes the
+    setup in the same transaction (C92). A scope that admits a file no case needs to change only
+    admits an unreviewed change there.
+    - scope: `apps/console/scripts/payment-holds.ts apps/console/lib/billing/payment-holds/machine.ts apps/console/docs/stripe-prod-runbook.md apps/console/tests/scripts/payment-holds.test.ts apps/console/tests/lib/billing/payment-holds.test.ts`
+    - Blocked by: this amendment (S9, whose `scripts/payment-holds.ts` it extends, has merged:
+      `74a6dcdc1`). **Parallel with S10**, whose scope it does not share. Migration: no. Security
+      review: **yes** (an operator command that releases a hold over a live, paid subscription, and
+      closes a setup while that subscription is live). It also gets the money review.
 
 Order: S1 → S2, then two lanes. Lane (a) is S3. Lane (b) is S4 → S5 → S6 → S7. The lanes join at
 S8, then S9 → S10. The two lanes' scopes are disjoint (rev 7 re-checked: S4's release-closes-setup
 write lives in `payment-holds/store.ts`, not in S3's `pending-org-setup.ts`). S8's and S9's scopes
-reach S1's and S6's files, which is sound because they run after both.
+reach S1's and S6's files, which is sound because they run after both. Amendment (2026-10-14,
+#5974): S11 follows S9 and runs in parallel with S10.
 
 ### 10.2 Follow-up issues for the descoped flows (proposed, not filed)
 
