@@ -35,7 +35,7 @@ set -uo pipefail
 # The bar for adding one: the REGISTRY or the NETWORK produces it, never a reference that is wrong.
 # That is why `manifest unknown`, `not found`, `unauthorized` and `denied` are not here, and why the
 # 5xx entries carry their status text.
-NET_ERR='toomanyrequests|429 Too Many Requests|connection reset|TLS handshake timeout|i/o timeout|unexpected EOF|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-?out'
+NET_ERR='toomanyrequests|429 Too Many Requests|connection reset|connection refused|no such host|TLS handshake timeout|i/o timeout|Client\.Timeout exceeded|net/http: request canceled|unexpected EOF|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-?out'
 
 # ── --self-test ───────────────────────────────────────────────────────────────────────────────────
 #
@@ -43,9 +43,11 @@ NET_ERR='toomanyrequests|429 Too Many Requests|connection reset|TLS handshake ti
 # asserted, not only the exit code: a script that gives up after one attempt exits with the same
 # code as one that tried three times.
 #
-# Every case invokes the script as `bash -e`, which is what a `run:` step with no `shell:` uses. A
-# retry loop whose failing command aborts the script under -e makes one attempt and never classifies
-# anything, while passing a harness that runs it under plain `bash`.
+# Every case invokes the script as `bash -e`, so a retry loop that is not errexit-safe fails here: a
+# bare `docker pull` (one not guarded by `if`) would end the script at the first failed attempt, and
+# every retry case below asserts more than one attempt. That only works because the main loop calls
+# pull_one as a plain command, not inside `||`/`&&`/`if` — bash switches errexit off for the whole
+# body of a function called from such a list, which would make the guard here unable to fail.
 #
 # The run's exit code IS the test: any failed case makes it exit 1.
 if [ "${1:-}" = "--self-test" ]; then
@@ -129,7 +131,12 @@ STUB
     'error pulling image configuration: download failed after attempts=6: unexpected EOF' \
     'Error response from daemon: received unexpected HTTP status: 502 Bad Gateway' \
     'Error response from daemon: received unexpected HTTP status: 503 Service Unavailable' \
-    'Error response from daemon: received unexpected HTTP status: 504 Gateway Timeout'; do
+    'Error response from daemon: received unexpected HTTP status: 504 Gateway Timeout' \
+    'Error response from daemon: received unexpected HTTP status: 500 Internal Server Error' \
+    'Error response from daemon: Get "https://quay.io/v2/": net/http: request canceled while waiting for connection (Client.Timeout exceeded while awaiting headers)' \
+    'Error response from daemon: Get "https://ghcr.io/v2/": net/http: request canceled' \
+    'Error response from daemon: Get "https://ghcr.io/v2/": dial tcp 140.82.1.1:443: connect: connection refused' \
+    'Error response from daemon: Get "https://quay.io/v2/": dial tcp: lookup quay.io on 127.0.0.53:53: no such host'; do
     run "retried: ${line##*: }" 0 2 flaky_once "$line" redis:8
   done
 
@@ -164,7 +171,7 @@ transient_line() {
 pull_one() {
   local image="$1" attempt=1 rc line backoff
   while :; do
-    # `if` keeps a failing pull from ending the script under `bash -e`.
+    # `if` keeps a failing pull from ending the script when it runs under `bash -e`.
     if docker pull "$image" >"$work/out" 2>&1; then rc=0; else rc=$?; fi
     cat "$work/out"
     if [ "$rc" -eq 0 ]; then
@@ -196,6 +203,10 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
+# A plain call, never `pull_one … || exit`: inside a `||` list bash runs the function body with
+# errexit off, and the self-test's `bash -e` could then no longer catch an unguarded pull.
 for image in "$@"; do
-  pull_one "$image" || exit $?
+  pull_one "$image"
+  rc=$?
+  [ "$rc" -eq 0 ] || exit "$rc"
 done
