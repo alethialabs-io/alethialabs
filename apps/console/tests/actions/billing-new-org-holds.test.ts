@@ -61,6 +61,8 @@ const world = vi.hoisted(() => {
 		deliveries: [] as { resource_id: string; event_key: string; status: string; created_at: Date }[],
 		/** How far the DATABASE's clock runs ahead of this process's (negative: behind). #6025. */
 		dbClockOffsetMs: 0,
+		/** How far the database's clock has moved on by the time `holdClockNow` reads it, after the select. */
+		clockReadLagMs: 0,
 	};
 	/** The fake database's `now()`: this process's clock moved by `dbClockOffsetMs`. */
 	const dbNow = () => new Date(Date.now() + state.dbClockOffsetMs);
@@ -409,7 +411,7 @@ vi.mock("@/lib/billing/payment-holds/store", () => {
 			for (const h of stamped) h.notice_last_sent_at = world.dbNow();
 			return stamped.length;
 		}),
-		holdClockNow: vi.fn(async () => world.dbNow()),
+		holdClockNow: vi.fn(async () => new Date(world.dbNow().getTime() + world.state.clockReadLagMs)),
 	};
 });
 
@@ -580,6 +582,7 @@ beforeEach(() => {
 	world.state.newestRecordAt = null;
 	world.state.deliveries = [];
 	world.state.dbClockOffsetMs = 0;
+	world.state.clockReadLagMs = 0;
 	vi.unstubAllEnvs();
 });
 
@@ -1153,6 +1156,20 @@ describe("#6025 — the refund notice's 14 days are the DATABASE's, and a return
 		world.state.dbClockOffsetMs = 5 * 60_000;
 		refundedAgo(14 * DAY + 2 * 60_000);
 		expect(noticeOf(await buy())).toBeUndefined();
+	});
+
+	it("the composer's `now` IS the database clock read after the select: a refund that crosses day 14 in between is hidden, and not stamped", async () => {
+		// Admitted by the select: 30 seconds inside the window.
+		refundedAgo(14 * DAY - 30_000);
+		world.state.clockReadLagMs = 60_000;
+		// By the clock read the database is a minute on, so the clause is old news. A constant `now` (epoch 0,
+		// or this process's clock, which here equals the select's) would show it.
+		expect(noticeOf(await buy())).toBeUndefined();
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+
+		// Control: with no lag the same refund is shown.
+		world.state.clockReadLagMs = 0;
+		expect(noticeOf(await buy())).toMatch(/refunded in full/);
 	});
 
 	it("a minting response that carries the refund clause stamps that hold, and only that one", async () => {

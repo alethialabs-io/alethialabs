@@ -2182,16 +2182,18 @@ interface SeenCopy {
 /**
  * One message for everything `seen` (§5.5): the refusal when anything blocks, else the mint's notice.
  * The 14-day refund window is measured on the DATABASE's clock (`holdClockNow`), the one that stamped
- * `released_at`, so the app server's clock can neither show nor hide a refund. That clock is read only
- * when a hold released as refunded is in the set: no other clause depends on the time. A hold carries a
- * clause when the composer, given that hold alone, writes one.
+ * `released_at`, so the app server's clock can neither show nor hide a refund. It is read AFTER the
+ * holds were selected, so it can only hide a refund the select admitted, never show one it left out.
+ * It is read only when a hold released as refunded is in the set: the composer reads `now` only in
+ * `refundedRecently`, whose first two tests are exactly `refundReleased`, so for any other set `now` is
+ * never read and `new Date(0)` stands in for it. A hold carries a clause when the composer, given that
+ * hold alone, writes one.
  */
 async function copyOf(seen: CheckoutsSeen): Promise<SeenCopy> {
 	const holds = [...seen.holds.values()];
 	const refundReleased = holds.some(
 		(h) => h.state === "released" && (h.release_reason === "refunded" || h.release_reason === "already_refunded"),
 	);
-	// With no refunded release in the set, `now` decides nothing: the composer compares it only with one.
 	const now = refundReleased ? await holdClockNow() : new Date(0);
 	const copy = composeNewOrgHoldCopy({ holds, kept: seen.kept, now });
 	const carriers = holds
@@ -2978,7 +2980,8 @@ async function refuseHeldLink(userId: string, subscriptionId: string, hold: Paym
  *   - Otherwise the payments are read as `readNewOrgPlanState` reads them: `not_charged` (no money moved)
  *     is the "not charged" clause and no alert; anything else — money may have moved, or the read failed
  *     — is the "contact support" clause and `alertEndedUnconfirmed`'s alert.
- * It refunds nothing: only a hold may refund (I3).
+ * The `refunded` sentence is that released hold's clause, so it stamps the hold's `notice_last_sent_at`
+ * (§4.1, `stampCarriedClauses`). It refunds nothing: only a hold may refund (I3).
  */
 async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: string): Promise<NewOrgLinkResult> {
 	const released = await latestReleasedHoldOn(sub.id);
@@ -2997,6 +3000,7 @@ async function refuseEndedLink(userId: string, sub: Stripe.Subscription, orgId: 
 	const alerted =
 		read === "unconfirmed" &&
 		(await alertEndedUnconfirmed(sub, closed ?? (await pendingOrgSetupFor(userId, sub.id)), { link: orgId }));
+	if (read === "refunded" && released) await stampCarriedClauses([released.id]);
 	return { kind: "refused", clause: endedSetupClause(read, { alerted, teamExists: true }) };
 }
 
@@ -3278,7 +3282,8 @@ async function newOrgSetupStateFor(
  * closed it. When it did, the dedupe counts from `beforeClose`, the database's clock read before the
  * closer ran, rather than from `closed_at`, which the closer stamps with this server's clock: an alert
  * the closer raised is dated by the database, and must silence this one whatever the two clocks say.
- * It writes nothing else.
+ * A `refunded` read stamps the released hold's `notice_last_sent_at` (§4.1: the sentence is that hold's
+ * clause). It writes nothing else.
  */
 async function endedSetupFor(input: {
 	sub: Stripe.Subscription;
@@ -3300,6 +3305,7 @@ async function endedSetupFor(input: {
 	const alerted =
 		read === "unconfirmed" &&
 		(await alertEndedUnconfirmed(sub, record, "resume", closedNow ? input.beforeClose : null));
+	if (read === "refunded" && released) await stampCarriedClauses([released.id]);
 	return { clause: endedSetupClause(read, { alerted, teamExists: input.teamExists }) };
 }
 

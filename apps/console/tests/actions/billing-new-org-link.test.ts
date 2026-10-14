@@ -1363,4 +1363,28 @@ describe("#6025 — a link or lookup that returns a hold's clause stamps its not
 		await resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" });
 		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
 	});
+
+	it("§4.1: the ended setup's 'refunded in full' sentence is the released hold's clause — the lookup and the link stamp it", async () => {
+		subX("canceled", ["succeeded"]);
+		closedSetup("hold_released");
+		const released = seedHold({ state: "released", release_reason: "refunded", released_at: new Date() });
+
+		expect((await resolved()).ended?.clause).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([released.id]);
+
+		vi.mocked(stampHoldNotice).mockClear();
+		expect(await refusedClause()).toMatch(/refunded in full/);
+		expect(vi.mocked(stampHoldNotice)).toHaveBeenCalledWith([released.id]);
+	});
+
+	it("an ended setup read by its payments (no refunded hold) stamps nothing — not even a voided release on X", async () => {
+		subX("canceled");
+		closedSetup("hold_released");
+		const voided = seedHold({ state: "released", release_reason: "voided_unpaid", released_at: new Date() });
+
+		expect((await resolved()).ended?.clause).toMatch(/It was not charged/);
+		expect(await refusedClause()).toMatch(/It was not charged/);
+		expect(vi.mocked(stampHoldNotice)).not.toHaveBeenCalled();
+		expect(world.state.holds.find((h) => h.id === voided.id)?.notice_last_sent_at).toBeNull();
+	});
 });

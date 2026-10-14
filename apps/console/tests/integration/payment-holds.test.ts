@@ -899,7 +899,11 @@ describeIfDb("payment_holds — ADR 0004 D1: the hold scope", () => {
 
 // ── #6025: the refund notice's window, its clock, and the stamp ────────────────────────────────────
 
-/** Moves `id`'s `released_at` to the database's now minus `ago`, a Postgres interval literal. */
+/**
+ * Moves `id`'s `released_at` to the database's now minus `ago`, a Postgres interval literal written in
+ * hours and minutes, never days: a day unit follows the session TimeZone across a DST change, which
+ * would eat the 2-minute margins below by an hour. The code under test uses a millisecond interval.
+ */
 async function releasedAgo(id: string, ago: string): Promise<void> {
 	await getServiceDb()
 		.update(paymentHolds)
@@ -929,8 +933,8 @@ describeIfDb("payment_holds — #6025: the refund notice window is the database'
 	});
 
 	it("day 13 is in the payer's set, day 15 is not — for the create-a-team and the scoped reader alike", async () => {
-		const day13 = await refundedHold("13 days");
-		const day15 = await refundedHold("15 days");
+		const day13 = await refundedHold("312 hours");
+		const day15 = await refundedHold("360 hours");
 		expect((await setups.paymentHoldsOfPayer(day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
 		expect(await setups.paymentHoldsOfPayer(day15.payer)).toEqual([]);
 		expect((await store.paymentHoldsOf("new_org", day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
@@ -940,8 +944,8 @@ describeIfDb("payment_holds — #6025: the refund notice window is the database'
 	});
 
 	it("an app clock 5 minutes off on either side moves neither edge of the database's 14 days", async () => {
-		const inside = await refundedHold("14 days - 2 minutes");
-		const outside = await refundedHold("14 days 2 minutes");
+		const inside = await refundedHold("335 hours 58 minutes");
+		const outside = await refundedHold("336 hours 2 minutes");
 
 		skewAppClock(5 * 60_000);
 		expect((await setups.paymentHoldsOfPayer(inside.payer)).map((h) => h.id)).toEqual([inside.hold.id]);
@@ -966,7 +970,7 @@ describeIfDb("payment_holds — #6025: the refund notice window is the database'
 	});
 
 	it("C104 (control): latestReleasedHoldOn has no time bound — a refund released 30 days ago is still X's", async () => {
-		const { lease, hold } = await refundedHold("30 days");
+		const { lease, hold } = await refundedHold("720 hours");
 		expect(await setups.latestReleasedHoldOn(hold.subscription_id)).toMatchObject({ id: hold.id, release_reason: "refunded" });
 		await releasePurchaseLease(lease);
 	});
@@ -989,7 +993,7 @@ describeIfDb("payment_holds — #6025: the refund notice window is the database'
 	});
 
 	it("a released hold's refund clause is stamped too; an empty set stamps nothing", async () => {
-		const { lease, hold } = await refundedHold("1 day");
+		const { lease, hold } = await refundedHold("24 hours");
 		expect(await stampHoldNotice([hold.id])).toBe(1);
 		expect((await readHold(hold.id)).notice_last_sent_at).not.toBeNull();
 		expect(await stampHoldNotice([])).toBe(0);
