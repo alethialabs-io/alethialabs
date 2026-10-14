@@ -63,8 +63,10 @@ export async function markWebhookEventDone(
 
 /**
  * Runs `handler` for a Stripe event EXACTLY ONCE across concurrent / retried deliveries of the
- * same event id, then marks the row `done` — all inside a single transaction that first takes a
- * per-event advisory lock (`pg_advisory_xact_lock(hashtextextended(eventId, 0))`). Deliveries of
+ * same event id, then marks the row `done`. One transaction takes a per-event advisory lock
+ * (`pg_advisory_xact_lock(hashtextextended(eventId, 0))`) and holds it while `handler` runs; the
+ * row re-read, the re-insert and the `done` mark run in that transaction, but the handler's own reads
+ * and writes do not: they go through `getServiceDb()` and commit on their own. Deliveries of
  * the SAME id are serialized (different ids never block each other); the handler — which sends the
  * non-idempotent branded email — is invoked while the lock is held, so a second delivery blocks
  * until the first commits `done` and is then skipped.
