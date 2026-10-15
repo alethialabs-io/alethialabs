@@ -81,8 +81,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@tanstack/react-query':
-        specifier: ^5.104.1
-        version: 5.104.1(react@19.2.8)
+        specifier: ^5.104.2
+        version: 5.104.2(react@19.2.8)
       date-fns:
         specifier: ^4.4.0
         version: 4.4.0
@@ -293,16 +293,16 @@ importers:
         version: 1.0.0-rc.0(@types/react@19.2.8)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@better-auth/cimd':
         specifier: ^1.7.7
-        version: 1.7.7(vfowy3bqman7537b7dxub24gha)
+        version: 1.7.7(siqcrgwjtxxtsg64eu3ispkp4y)
       '@better-auth/mcp':
         specifier: ^1.7.7
-        version: 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
+        version: 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@hookform/resolvers':
         specifier: ^5.9.1
-        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.89.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
+        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.90.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
       '@lexical/react':
         specifier: ^0.52.0
         version: 0.52.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(yjs@13.6.31)
@@ -400,8 +400,8 @@ importers:
         specifier: ^9.17.0
         version: 9.17.0
       '@tanstack/react-query':
-        specifier: ^5.104.1
-        version: 5.104.1(react@19.2.8)
+        specifier: ^5.104.2
+        version: 5.104.2(react@19.2.8)
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -416,7 +416,7 @@ importers:
         version: 3.0.3
       better-auth:
         specifier: ^1.7.7
-        version: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+        version: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -472,8 +472,8 @@ importers:
         specifier: ^1.438.7
         version: 1.438.7(@types/react@19.2.8)(react@19.2.8)
       posthog-node:
-        specifier: ^5.55.1
-        version: 5.55.1(rxjs@7.8.2)
+        specifier: ^5.55.2
+        version: 5.55.2(rxjs@7.8.2)
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -481,8 +481,8 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
       react-hook-form:
-        specifier: ^7.89.0
-        version: 7.89.0(@types/react@19.2.8)(react@19.2.8)
+        specifier: ^7.90.0
+        version: 7.90.0(@types/react@19.2.8)(react@19.2.8)
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.8)(react@19.2.8)
@@ -537,8 +537,8 @@ importers:
         specifier: ^4
         version: 4.3.3
       '@tanstack/react-query-devtools':
-        specifier: ^5.104.1
-        version: 5.104.1(@tanstack/react-query@5.104.1(react@19.2.8))(@types/react@19.2.8)(csstype@3.2.3)(react@19.2.8)
+        specifier: ^5.104.2
+        version: 5.104.2(@tanstack/react-query@5.104.2(react@19.2.8))(@types/react@19.2.8)(csstype@3.2.3)(react@19.2.8)
       '@testing-library/jest-dom':
         specifier: ^6.9.1
         version: 6.9.1
@@ -696,7 +696,7 @@ importers:
         version: 3.1149.0
       '@hookform/resolvers':
         specifier: ^5.9.1
-        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.89.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
+        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.90.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
       '@react-email/components':
         specifier: ^1.0.12
         version: 1.0.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -743,8 +743,8 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
       react-hook-form:
-        specifier: ^7.89.0
-        version: 7.89.0(@types/react@19.2.8)(react@19.2.8)
+        specifier: ^7.90.0
+        version: 7.90.0(@types/react@19.2.8)(react@19.2.8)
       sonner:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.2.8)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -793,13 +793,13 @@ importers:
     dependencies:
       '@better-auth/sso':
         specifier: ^1.7.1
-        version: 1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
+        version: 1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
       '@openfga/sdk':
         specifier: ^0.8.0
         version: 0.8.1
       better-auth:
         specifier: ^1.7.1
-        version: 1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+        version: 1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       samlify:
         specifier: ^2.0.0
         version: 2.13.1
@@ -883,8 +883,8 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)
       nodemailer:
-        specifier: 10.0.12
-        version: 10.0.12
+        specifier: 10.1.0
+        version: 10.1.0
       resend:
         specifier: ^6.32.1
         version: 6.32.1(@react-email/render@2.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
@@ -1067,10 +1067,10 @@ importers:
     dependencies:
       '@hookform/resolvers':
         specifier: ^5.9.1
-        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.89.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
+        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.90.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)
       react-hook-form:
-        specifier: ^7.89.0
-        version: 7.89.0(@types/react@19.2.8)(react@19.2.8)
+        specifier: ^7.90.0
+        version: 7.90.0(@types/react@19.2.8)(react@19.2.8)
       zod:
         specifier: 4.5.4
         version: 4.5.4
@@ -1166,8 +1166,8 @@ importers:
         specifier: ^9.14.0
         version: 9.14.0(react@19.2.8)
       react-hook-form:
-        specifier: ^7.89.0
-        version: 7.89.0(@types/react@19.2.8)(react@19.2.8)
+        specifier: ^7.90.0
+        version: 7.90.0(@types/react@19.2.8)(react@19.2.8)
       react-phone-number-input:
         specifier: ^3.4.18
         version: 3.4.18(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1779,6 +1779,7 @@ packages:
   '@base-ui-components/react@1.0.0-rc.0':
     resolution: {integrity: sha512-9lhUFbJcbXvc9KulLev1WTFxS/alJRBWDH/ibKSQaNvmDwMFS2gKp1sTeeldYSfKuS/KC1w2MZutc0wHu2hRHQ==}
     engines: {node: '>=14.0.0'}
+    deprecated: Package was renamed to @base-ui/react
     peerDependencies:
       '@types/react': 19.2.8
       react: 19.2.8
@@ -1789,6 +1790,7 @@ packages:
 
   '@base-ui-components/utils@0.2.2':
     resolution: {integrity: sha512-rNJCD6TFy3OSRDKVHJDzLpxO3esTV1/drRtWNUpe7rCpPN9HZVHUCuP+6rdDYDGWfXnQHbqi05xOyRP2iZAlkw==}
+    deprecated: Package was renamed to @base-ui/utils
     peerDependencies:
       '@types/react': 19.2.8
       react: 19.2.8
@@ -2091,9 +2093,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -2886,8 +2890,8 @@ packages:
       '@types/node':
         optional: true
 
-  '@internationalized/number@3.6.8':
-    resolution: {integrity: sha512-8UmMFia46DUt+k97zKd9fKWXcWHR+k8ae3eYzILETuT2KbIvLyOfac7zesw+sJdRAAZ7Q9pM1Mk22aXp2LD0Ig==}
+  '@internationalized/number@3.6.9':
+    resolution: {integrity: sha512-GgWy2caO/+hV9sT/oCTWGHvbjmJMPT9kkXzoKRLnkEq7adghhR7UprhvY9sXrKfrp3NcDfhF6QQHXR1KfQbB8g==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -3569,6 +3573,9 @@ packages:
   '@posthog/core@1.58.1':
     resolution: {integrity: sha512-z0ISzMUoF1izukfLIUSjGZBdO5H2BPdqN8MX27OKYGQ1sDj/r+WW9Nq7m5WsQY56NOxVsFtHClx9iHj6MYM3Tg==}
 
+  '@posthog/core@1.59.1':
+    resolution: {integrity: sha512-P39YgzQVDh6oz6wAzQXEnoHgTYpM7gifonmVKq1scAJco79h31XmmNVurRq9tTmmyIrr1uX8FHT0riCsyfV9AQ==}
+
   '@posthog/nextjs-config@1.11.2':
     resolution: {integrity: sha512-j/a5Nub3ThVRtih5hT/WgytHndz/dA61+FZi/sr0Y9HELpb1OgOan535UYpWhB6SKZw0GgG+etp7Aic8gb1A6A==}
     engines: {node: ^20.20.0 || >=22.22.0}
@@ -3581,6 +3588,9 @@ packages:
 
   '@posthog/types@1.415.3':
     resolution: {integrity: sha512-y90ARRBbyXcZDwuXXXvAnbjiuxQ+4FmUI4sasI19AHOPgdWPyd2Kpo0c0B2pKIR+fq+BcRokhF35eAdA54Mfbw==}
+
+  '@posthog/types@1.416.0':
+    resolution: {integrity: sha512-0/9+02s/0uDyrH4G/qUg1yyl6gXUg8Uuxw/PlDad3KLzo9FFS9zS/kAQaEshx/saVGupj1aAy/4EUBxWisBogw==}
 
   '@posthog/webpack-plugin@1.7.1':
     resolution: {integrity: sha512-BMXDlpuilZR3XuTWPE3HcLEYkaStAgA3Ox3B88eCSVzFP2YY39+7sCbnjyOkeO5yY6I2TYMowSlQ49QaI8P+fA==}
@@ -4142,96 +4152,112 @@ packages:
   '@react-email/body@0.3.0':
     resolution: {integrity: sha512-uGo0BOOzjbMUo3lu+BIDWayvn5o6Xyfmnlla5VGf05n8gHMvO1ll7U4FtzWe3hxMLwt53pmc4iE0M+B5slG+Ug==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/button@0.2.1':
     resolution: {integrity: sha512-qXyj7RZLE7POy9BMKSoqQ00tOXThjOZSUnI2Yu9i29IHngPlmrNayIWBoVKtElES7OWwypUcpiajwi1mUWx6/A==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/code-block@0.2.1':
     resolution: {integrity: sha512-M3B7JpVH4ytgn83/ujRR1k1DQHvTeABiDM61OvAbjLRPhC/5KLHU5KkzIbbuGIrjWwxAbL1kSQzU8MhLEtSxyw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/code-inline@0.0.6':
     resolution: {integrity: sha512-jfhebvv3dVsp3OdPgKXnk8+e2pBiDVZejDOBFzBa/IblrAJ9cQDkN6rBD5IyEg8hTOxwbw3iaI/yZFmDmIguIA==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/column@0.0.14':
     resolution: {integrity: sha512-f+W+Bk2AjNO77zynE33rHuQhyqVICx4RYtGX9NKsGUg0wWjdGP0qAuIkhx9Rnmk4/hFMo1fUrtYNqca9fwJdHg==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/components@1.0.12':
     resolution: {integrity: sha512-tH18JhPDWgE+3jnYkzyB6ZrZdfNnEsFe4PwmuXmlOw4NGIysP8wPY5aXZg++pTG9qUabXg1nzX/FGHGkObH8xQ==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/container@0.0.16':
     resolution: {integrity: sha512-QWBB56RkkU0AJ9h+qy33gfT5iuZknPC7Un/IjZv9B0QmMIK+WWacc0cH6y2SV5Cv/b99hU94fjEMOOO4enpkbQ==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/font@0.0.10':
     resolution: {integrity: sha512-0urVSgCmQIfx5r7Xc586miBnQUVnGp3OTYUm8m5pwtQRdTRO5XrTtEfNJ3JhYhSOruV0nD8fd+dXtKXobum6tA==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/head@0.0.13':
     resolution: {integrity: sha512-AJg6le/08Gz4tm+6MtKXqtNNyKHzmooOCdmtqmWxD7FxoAdU1eVcizhtQ0gcnVaY6ethEyE/hnEzQxt1zu5Kog==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/heading@0.0.16':
     resolution: {integrity: sha512-jmsKnQm1ykpBzw4hCYHwBkt5pW2jScXffPeEH5ZRF5tZeF5b1pvlFTO9han7C0pCkZYo1kEvWiRtx69yfCIwuw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/hr@0.0.12':
     resolution: {integrity: sha512-TwmOmBDibavUQpXBxpmZYi2Iks/yeZOzFYh+di9EltMSnEabH8dMZXrl+pxNXzCgZ2XE8HY7VmUL65Lenfu5PA==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/html@0.0.12':
     resolution: {integrity: sha512-KTShZesan+UsreU7PDUV90afrZwU5TLwYlALuCSU0OT+/U8lULNNbAUekg+tGwCnOfIKYtpDPKkAMRdYlqUznw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/img@0.0.12':
     resolution: {integrity: sha512-sRCpEARNVTf3FQhZOC+JTvu5r6ubiYWkT0ucYXg8ctkyi4G8QG+jgYPiNUqVeTLA2STOfmPM/nrk1nb84y6CPQ==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/link@0.0.13':
     resolution: {integrity: sha512-lkWc/NjOcefRZMkQoSDDbuKBEBDES9aXnFEOuPH845wD3TxPwh+QTf0fStuzjoRLUZWpHnio4z7qGGRYusn/sw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/markdown@0.0.18':
     resolution: {integrity: sha512-gSuYK5fsMbGk87jDebqQ6fa2fKcWlkf2Dkva8kMONqLgGCq8/0d+ZQYMEJsdidIeBo3kmsnHZPrwdFB4HgjUXg==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/preview@0.0.14':
     resolution: {integrity: sha512-aYK8q0IPkBXyMsbpMXgxazwHxYJxTrXrV95GFuu2HbEiIToMwSyUgb8HDFYwPqqfV03/jbwqlsXmFxsOd+VNaw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
@@ -4252,18 +4278,21 @@ packages:
   '@react-email/row@0.0.13':
     resolution: {integrity: sha512-bYnOac40vIKCId7IkwuLAAsa3fKfSfqCvv6epJKmPE0JBuu5qI4FHFCl9o9dVpIIS08s/ub+Y/txoMt0dYziGw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/section@0.0.17':
     resolution: {integrity: sha512-qNl65ye3W0Rd5udhdORzTV9ezjb+GFqQQSae03NDzXtmJq6sqVXNWNiVolAjvJNypim+zGXmv6J9TcV5aNtE/w==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
   '@react-email/tailwind@2.0.7':
     resolution: {integrity: sha512-kGw80weVFXikcnCXbigTGXGWQ0MRCSYNCudcdkWxebkWYd0FG6/NPoN3V1p/u68/4+NxZwYPVi2fhnp0x23HdA==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       '@react-email/body': '>=0'
       '@react-email/button': '>=0'
@@ -4302,6 +4331,7 @@ packages:
   '@react-email/text@0.1.6':
     resolution: {integrity: sha512-TYqkioRS45wTR5il3dYk/SbUjjEdhSwh9BtRNB99qNH1pXAwA45H7rAuxehiu8iJQJH0IyIr+6n62gBz9ezmsw==}
     engines: {node: '>=20.0.0'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       react: 19.2.8
 
@@ -4331,8 +4361,18 @@ packages:
     cpu: [arm]
     os: [android]
 
+  '@rollup/rollup-android-arm-eabi@4.64.7':
+    resolution: {integrity: sha512-GFF2tHk0NqYVObrK0+/ps/LEXsV/v2q6Lyiy7mZr+Ej24fpQScvqK2ziz9NHeEQYnKWKym38Ml7dZbPtC9tuAw==}
+    cpu: [arm]
+    os: [android]
+
   '@rollup/rollup-android-arm64@4.64.6':
     resolution: {integrity: sha512-si5/Etm6MphPc2xYHnk455Shls/hoMjTy3mhXge4OPmvCw7TwC4KP4fKokAlKLV4XaQvLvgSHfafPcblLMYYdQ==}
+    cpu: [arm64]
+    os: [android]
+
+  '@rollup/rollup-android-arm64@4.64.7':
+    resolution: {integrity: sha512-BOymcXJFYYXqluDidj6sLelNjXruC3u1BqVxLn2OPCXH9xaPSOTH+MS4uychsGI1NU7tJoiv9KvqijDHFe+hhQ==}
     cpu: [arm64]
     os: [android]
 
@@ -4341,8 +4381,18 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
+  '@rollup/rollup-darwin-arm64@4.64.7':
+    resolution: {integrity: sha512-jgVpGweIbls2H5jfBB70tnX52abMd5pJr3xmtoDILx6JdmGl+Un+tMb9R+MbHPVB46tTBpY8emtn7M71SnQhEQ==}
+    cpu: [arm64]
+    os: [darwin]
+
   '@rollup/rollup-darwin-x64@4.64.6':
     resolution: {integrity: sha512-l9DFl1Itb1YYdSrP1K3U8ih44AOHa/p+Q4WMMDfGvH5qVWp+ajfgS1DlYo4yCRh8wJ2ZJv0Fqccf+ULAmMFjmg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rollup/rollup-darwin-x64@4.64.7':
+    resolution: {integrity: sha512-AVMpt94mrXH7WjyWKmd9nT4RC5yM0AN3Lt6A89xVIsuLDi3dDX6dxMytLbW36FlppY9JsoqUoS3LUUpUrYxiMQ==}
     cpu: [x64]
     os: [darwin]
 
@@ -4351,8 +4401,18 @@ packages:
     cpu: [arm64]
     os: [freebsd]
 
+  '@rollup/rollup-freebsd-arm64@4.64.7':
+    resolution: {integrity: sha512-Nje29c/MyajxRNFGU05oyeTDS6SWdMg/wWMSlZSBTBju5BKz2NVc0kFiFSQGzRELNiB+CBk/ZvAVsWsENgjGag==}
+    cpu: [arm64]
+    os: [freebsd]
+
   '@rollup/rollup-freebsd-x64@4.64.6':
     resolution: {integrity: sha512-XTVNaDzcFl2TeBglvxdGgsCv9JGtAGRAoJENmGBR/XvDH2mA2K0IXc2aMfP0dR8mexSXSKifJ85FixoXX1wfTw==}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@rollup/rollup-freebsd-x64@4.64.7':
+    resolution: {integrity: sha512-xxgN5/kMzCNz/NYJ4t49B0/WS6InNlWv6xvgwUQqNnWM9WJMMwMUGWrAxdNEgYWdHL0sMnuh8I87StGrIMTA+w==}
     cpu: [x64]
     os: [freebsd]
 
@@ -4361,8 +4421,18 @@ packages:
     cpu: [arm]
     os: [linux]
 
+  '@rollup/rollup-linux-arm-gnueabihf@4.64.7':
+    resolution: {integrity: sha512-5U/9gVn/X657I8+NHoHO9Wnfyd0lEXwqbslobRoB9TC8SwYzOitcIr6TLE7531Q/NWs3L4mb+YOGzlf3vHIeYw==}
+    cpu: [arm]
+    os: [linux]
+
   '@rollup/rollup-linux-arm-musleabihf@4.64.6':
     resolution: {integrity: sha512-V4Nwkp8844X/Xnww3PI1LYS0YPei8XQEVG70R+5MPZGO7AhYoun4hCN7Svs4U3wbQLZbwiz+9xRFhUZZdRl8Ww==}
+    cpu: [arm]
+    os: [linux]
+
+  '@rollup/rollup-linux-arm-musleabihf@4.64.7':
+    resolution: {integrity: sha512-hcDS0a/Y8ggM3dcOfzH7UpSaogCViWTtNDSl0EXpWIj8g8/r86ITqptjil2hayTXS0Umzb+Yt3mjgpQVFVf2+A==}
     cpu: [arm]
     os: [linux]
 
@@ -4371,8 +4441,18 @@ packages:
     cpu: [arm64]
     os: [linux]
 
+  '@rollup/rollup-linux-arm64-gnu@4.64.7':
+    resolution: {integrity: sha512-awbAr4N7Qd/yjZAQBEEPzgcPveYG2Gi5L6gq1/Bp+3SMRjn5F68Wv1zKsntzvvoioBR6yKvhLtWqu11am1TsxA==}
+    cpu: [arm64]
+    os: [linux]
+
   '@rollup/rollup-linux-arm64-musl@4.64.6':
     resolution: {integrity: sha512-pbcs1BVBwC43hZkjhjlF8Rx8m5G0KnhLZs9Azy/gqccP6UsNSzJr0hKGIAVPqzAH1O/NdPxxC9GVGb4msQg/aw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rollup/rollup-linux-arm64-musl@4.64.7':
+    resolution: {integrity: sha512-Ut7xQJfeLhzu2yN3rHzVvL9ccyPJvN4aCdP1V7hJ5lGxX/eCzgB9SiMk/Md3J+rWWZgvoYsDW4BUFggJr32pBA==}
     cpu: [arm64]
     os: [linux]
 
@@ -4381,8 +4461,18 @@ packages:
     cpu: [loong64]
     os: [linux]
 
+  '@rollup/rollup-linux-loong64-gnu@4.64.7':
+    resolution: {integrity: sha512-trqoni/vHkuM5oo5iQhoKPh6fjjD7E80pMgCXWgGxU8vSRPUlwvG8GeYvEEcB6eJAxNa99WH9iVHPHelgtKiHA==}
+    cpu: [loong64]
+    os: [linux]
+
   '@rollup/rollup-linux-loong64-musl@4.64.6':
     resolution: {integrity: sha512-v/SQ68GnSlr/HyjB79sNXesGDwkOPu9JjbHfmWaymCiM+nZsQ9TstG1KfA4MuEvTr2d3PoY8PhFxj9bt0e32JA==}
+    cpu: [loong64]
+    os: [linux]
+
+  '@rollup/rollup-linux-loong64-musl@4.64.7':
+    resolution: {integrity: sha512-gvlUy0XFIwtUWiQmhc+4GT2Knm3KosinpUVhr7CtTFA78gFDnE5NWwMPzHrJsYpKkh2LlY7yvBIboN1FAV6Xeg==}
     cpu: [loong64]
     os: [linux]
 
@@ -4391,8 +4481,18 @@ packages:
     cpu: [ppc64]
     os: [linux]
 
+  '@rollup/rollup-linux-ppc64-gnu@4.64.7':
+    resolution: {integrity: sha512-8yS/kSXTJ/47Z62JW+C2AJ3vd/8zZw016vFjtNpZwmZlwJumLua4s1i78dkYuSSqQ+0aIMxJcBp/4uIwp2ehjA==}
+    cpu: [ppc64]
+    os: [linux]
+
   '@rollup/rollup-linux-ppc64-musl@4.64.6':
     resolution: {integrity: sha512-XQTB/IPoB/wG6x/wu9uomAt8YH61IAr5iZTubMiad/lu88sotq2ocz9hJd556+Jz2kIkF7ZQZIsUuWE3OWqtcA==}
+    cpu: [ppc64]
+    os: [linux]
+
+  '@rollup/rollup-linux-ppc64-musl@4.64.7':
+    resolution: {integrity: sha512-mxVSKvvty0hOP1AFo/l4Kpv3i3HK0zx4rYUrirZDToYlWhS3xzmIkq3vUJ7rtrM2cPyXveDyDT6M1FfXZ9hTRA==}
     cpu: [ppc64]
     os: [linux]
 
@@ -4401,8 +4501,18 @@ packages:
     cpu: [riscv64]
     os: [linux]
 
+  '@rollup/rollup-linux-riscv64-gnu@4.64.7':
+    resolution: {integrity: sha512-lEse1zra1CagM+uHH2bl28GInDsZZ45NJzHei2OMaXQFzZWKBO1hFo07rS0xB6ayV4WU360UrSmPDSyCMpYsUQ==}
+    cpu: [riscv64]
+    os: [linux]
+
   '@rollup/rollup-linux-riscv64-musl@4.64.6':
     resolution: {integrity: sha512-aIFxbAD9v3TvIaEDsKmukjcDg1JS4/tFXw8SHyQQgzOwzWCQ4cyDK7Ju1pQKqUXDFkEu/BZCFDCDATsKhQcB/Q==}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@rollup/rollup-linux-riscv64-musl@4.64.7':
+    resolution: {integrity: sha512-d/cqCoiG9WMZ5VuJZ5Qdlv9g97QyoGwnmvHccvGhKSacTy7xFrAS+jMcJSBdMNOw1oacSkl6p7K6O/DRYTKL3g==}
     cpu: [riscv64]
     os: [linux]
 
@@ -4411,8 +4521,18 @@ packages:
     cpu: [s390x]
     os: [linux]
 
+  '@rollup/rollup-linux-s390x-gnu@4.64.7':
+    resolution: {integrity: sha512-kVEA//CeDOZZP1XCH2JBgqXb9+ALlwuA/4civaazMVdgzaSQC9WM38w65zG/LLk0lA7F9Od19CSBZW7J9mCbNg==}
+    cpu: [s390x]
+    os: [linux]
+
   '@rollup/rollup-linux-x64-gnu@4.64.6':
     resolution: {integrity: sha512-05v6wFKDKJPZs9xlytVrrRu6IbRuoSvlH9xNwEOafXsKyjBFZPvAcZz2VIAB/M+lblYeKa9iOYC4RDVdfcAAaw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@rollup/rollup-linux-x64-gnu@4.64.7':
+    resolution: {integrity: sha512-14oLfDsOSr0TSntT/34jRg/V8B2XW/Jomh9zX9CjIM9gwwNlI1OCymS/GVn0DV32h67eRf7U0GGem0rvfXgNwQ==}
     cpu: [x64]
     os: [linux]
 
@@ -4421,8 +4541,18 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@rollup/rollup-linux-x64-musl@4.64.7':
+    resolution: {integrity: sha512-dFVtPfjZqAnUPpPY4Bfg+87yo1IBW9HiY8iCFtg49Pn46MfZTebSHZh8PL6SOsgyt9LQP8Nj/sE6jm3aWpySmQ==}
+    cpu: [x64]
+    os: [linux]
+
   '@rollup/rollup-openbsd-x64@4.64.6':
     resolution: {integrity: sha512-cwg7/h0ThvJwy8CBkmACdiHAxRWpbsCmIsjOt+Zzx0hTnIcSUmKYEV03bGg+hD827OnwUsbKh1ZZDW754xWyBA==}
+    cpu: [x64]
+    os: [openbsd]
+
+  '@rollup/rollup-openbsd-x64@4.64.7':
+    resolution: {integrity: sha512-Dm9CZ2SM3u2NgvBj4awW/gGqkOwzH8f6MSYIJE6+bKcKLI+T0+LhpD6vtetTfrIIx+rLXDf5RJqBP6v7V5O+wg==}
     cpu: [x64]
     os: [openbsd]
 
@@ -4431,8 +4561,18 @@ packages:
     cpu: [arm64]
     os: [openharmony]
 
+  '@rollup/rollup-openharmony-arm64@4.64.7':
+    resolution: {integrity: sha512-oaxsvS2mL6+78741CT2HCORBvy1USg3Wqpt5qvZwy3aMXRMl4zxyDo8maeFRWJkF3dp0Wbi71fKH5Gr9YI3vYA==}
+    cpu: [arm64]
+    os: [openharmony]
+
   '@rollup/rollup-win32-arm64-msvc@4.64.6':
     resolution: {integrity: sha512-KlfpmF1AAIdAWxt8QQNClbpLFlAUfYOzqIuJ7IXEStMHpFRuH78RG6FjqPb3Rqhh0K89F5npvG+/i3Fjl6IveQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@rollup/rollup-win32-arm64-msvc@4.64.7':
+    resolution: {integrity: sha512-UKZz1Y4mxUqkWh60uH7B1aZn6UcAimPk4ipRktpb3wfZq7JrzZYyAXTwiafkb3T+kd5P3Sf+vzcRdsDks4WtjQ==}
     cpu: [arm64]
     os: [win32]
 
@@ -4441,13 +4581,28 @@ packages:
     cpu: [ia32]
     os: [win32]
 
+  '@rollup/rollup-win32-ia32-msvc@4.64.7':
+    resolution: {integrity: sha512-WWkSuC1J+mZJnsDh0mRaCAFSWfQdl6y3fDjZeWElI6zHo8CcOSG5lY3yurKJjEq+FrX0WD60sFrVVpbHqzMmrw==}
+    cpu: [ia32]
+    os: [win32]
+
   '@rollup/rollup-win32-x64-gnu@4.64.6':
     resolution: {integrity: sha512-8fWDH1CkPI8GdBKAxzHDza7UmgficsKo2+MVbvUgOGhB0629w5sHMg3Qu5y7TZsrYKHHWpz8fla4KvoT7WsO3Q==}
     cpu: [x64]
     os: [win32]
 
+  '@rollup/rollup-win32-x64-gnu@4.64.7':
+    resolution: {integrity: sha512-u9bp2yXCI3/BUjUxY6uWknAY32pfvvDCPysyUTySotx0dj3ydlFHrRQYfn/b/kZgnfjyEwySMtI7Ga054uiysQ==}
+    cpu: [x64]
+    os: [win32]
+
   '@rollup/rollup-win32-x64-msvc@4.64.6':
     resolution: {integrity: sha512-9/c9PWdr5GCIHkkxiHM1HjNBQMVdftP4O8QTcoUAaRza2FSqJ4axbf8QAnBuE6BIGQDl71SaRPeDdDYid5ecTw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@rollup/rollup-win32-x64-msvc@4.64.7':
+    resolution: {integrity: sha512-EhX6N3XPMEnVU5cRfNgzPOKcSucsbu3nNNWuoAaEuKIqmddBKHN5b9d4rPe65T1I+FaOT176JKiZNsUBp3rqbA==}
     cpu: [x64]
     os: [win32]
 
@@ -4906,21 +5061,21 @@ packages:
     resolution: {integrity: sha512-DIpUSOhPfQ7u/qfUi/Wgm0wBO56MyBYXGvnlI0NcauDRPqdBUlAZZjW2Dxm92m+k1UWVhKw8YJ4f47+75Aujyw==}
     engines: {node: '>=20'}
 
-  '@tanstack/query-core@5.104.1':
-    resolution: {integrity: sha512-TiRghcrGkUTE+M4JBxvpPSpBhxvIzQairw+cksrHYGr+2uwC77yW1SY9nYxnYRYOppvucf8rEg6b5byoz4rTpw==}
+  '@tanstack/query-core@5.104.2':
+    resolution: {integrity: sha512-/qbsxJK5c3Ve1aFIULWYNcT2jeRUAiD4HME6Eu2ZdpofHoVgAjpkQhLg5xHuOoBkTPQUJLfP7zOxy0qsBcqROA==}
 
-  '@tanstack/query-devtools@5.104.1':
-    resolution: {integrity: sha512-wmXnQbnwEz+SctYMTrwsOWWNHKhCsVgtaliL9E+VI2vx2Xr773d/MpcrbIU1hEOUqC3p7x59swXFUPDLbplT3g==}
+  '@tanstack/query-devtools@5.104.2':
+    resolution: {integrity: sha512-LQrdtI9mRq1WEXml1ujhRN9K9cEnxH4YGkGoUvhYhGdZx0QcD7FKSV7lUKfMAHUm3ITJsTsqjlUJ7/qNZtQHqg==}
 
-  '@tanstack/react-query-devtools@5.104.1':
-    resolution: {integrity: sha512-0GoLxe08PVxnkbrHFwO+7fkgbc07xEcoBfdYvbTv63e6Fe7uz7PGyOxKeQTOXKGMmTfoniaISOqkjDzKC/66Ng==}
+  '@tanstack/react-query-devtools@5.104.2':
+    resolution: {integrity: sha512-F88xtzaf0QrJTENPMs6xngHuf5n+1zRFatAPhXUqF+DCpIlmuPEZb05U+DQCddfs2HjW25WMx3f9B4G8gApOiA==}
     peerDependencies:
-      '@tanstack/react-query': ^5.104.1
+      '@tanstack/react-query': ^5.104.2
       '@types/react': 19.2.8
       react: 19.2.8
 
-  '@tanstack/react-query@5.104.1':
-    resolution: {integrity: sha512-Zz70EgjahNI7aCz8BZxM3vUGU44ycxEAzMuCUjLeA7SVhhOkg3ZgPjPJPvHjs6Rmky/dtmnu1WzjGHNHmhCoZQ==}
+  '@tanstack/react-query@5.104.2':
+    resolution: {integrity: sha512-xKmzWGhadbE5wGS/ZmXShRITnI9oItox5GO14KvFZco3+vhTAyXS1erYzJWdiY280zapAGJXFUL9nHgwP6SV/g==}
     peerDependencies:
       react: 19.2.8
 
@@ -5297,6 +5452,7 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@ungap/structured-clone@1.4.0':
     resolution: {integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==}
@@ -6805,6 +6961,7 @@ packages:
   eslint@9.39.5:
     resolution: {integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -8441,6 +8598,7 @@ packages:
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
+    deprecated: Use your platform's native DOMException instead
 
   node-exports-info@1.6.2:
     resolution: {integrity: sha512-kXs9Go0cah0qHVV2v389IXQLdLCeE1xfFtjOAF+iobu0OIoG1pje8At2vMHyaPMiPMnG/LWP50twML21eMcAag==}
@@ -8466,8 +8624,8 @@ packages:
   node-rsa@1.1.1:
     resolution: {integrity: sha512-Jd4cvbJMryN21r5HgxQOpMEqv+ooke/korixNNK3mGqfGJmy0M77WDDzo/05969+OkMy3XW1UuZsSmW9KQm7Fw==}
 
-  nodemailer@10.0.12:
-    resolution: {integrity: sha512-PQ46oNbNMuH/Sno7B5IWIU9etytwrO0xdTFvWXpIQFRXhBAXtzD48243AS+BCbQQTPD8y3fqUrgLn0tSo77gvg==}
+  nodemailer@10.1.0:
+    resolution: {integrity: sha512-fXW8AulB25aOTuwfRYV6lqHyfz2VM4rr4SGXH03mE7x5znEUpzL5mu6anARUpZN7744Ziwkmr4AxSLPJsBQspg==}
     engines: {node: '>=20.0.0'}
 
   normalize-path@3.0.0:
@@ -8697,8 +8855,8 @@ packages:
       react:
         optional: true
 
-  posthog-node@5.55.1:
-    resolution: {integrity: sha512-YLnILmFn1zxGYBuCaBldqMjTq9OZBNNbHIr2F0am3iLfU+6ZTvuRmUbTmys//+LnCA6DfZNGgqTb4goFa93u+Q==}
+  posthog-node@5.55.2:
+    resolution: {integrity: sha512-iDAleFns2KSEr67i1/DQ5qxseJHp5t3zhk6UHr+48vualuB1QvresneO25Qmv29fzTDmunS/JCPNcpaP9/QmKg==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -8800,8 +8958,8 @@ packages:
       react: 19.2.8
       react-dom: 19.2.8
 
-  react-hook-form@7.89.0:
-    resolution: {integrity: sha512-vKcoCfy8RKZDrhSdqsRFp0uEOdS1AhLjOL6hR7Wmfzg1akNxEhaPf5WORx8SgEQPVXakdDyDkqQp+KNxVnnPHg==}
+  react-hook-form@7.90.0:
+    resolution: {integrity: sha512-+NdG0FLzCPhFOp2NNxaUYLF9fyZhNjx9FTBBSYWF71/l6BBlmIc/j6xlp3DbaHWLJbIG7Zd8oznA19xJClU97w==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@types/react': 19.2.8
@@ -9018,6 +9176,11 @@ packages:
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
 
+  rollup@4.64.7:
+    resolution: {integrity: sha512-aCiJONoZp0lNGJ6sYqspLkh6UXaWEey/7Ko2TZyXQ4kgzAhDUxAgbt/oulXKmD+zFHXw1k+RF6ZZWOrjp7DZnQ==}
+    engines: {node: '>=18.0.0', npm: '>=8.0.0'}
+    hasBin: true
+
   rou3@0.9.2:
     resolution: {integrity: sha512-3SOzvaAg8rkHrXtRjpCvCvbyO5to9oOO27Z/XqHEYXfMRVSw/qMIVdmaOk9W2lcRLtR6dlqTjo9hDeJk70QBYQ==}
 
@@ -9104,14 +9267,14 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  seroval-plugins@1.6.8:
-    resolution: {integrity: sha512-N7mWAMydj89EnYTHtRpS3LBrAz3J9O6oVrqpuXuvlAHfAUG8WEKqtbAd7SBiJNY5NfCAFhSdyAh7wI4Shjqy4g==}
+  seroval-plugins@1.6.9:
+    resolution: {integrity: sha512-kiDK/Tb8IWZ61WEU8pA2PDmAuw37gKph9Y77OZlD56mg0Y2g0Bg7gZ1HeHhs5d40w+nRoUq/wj08V26ilbez9g==}
     engines: {node: '>=10'}
     peerDependencies:
       seroval: ^1.0
 
-  seroval@1.6.8:
-    resolution: {integrity: sha512-HlSgSAkTk4EqHcje1ptJjfZi1YDv5KbhVJ/d3P7T/nAXua2VmDu+AKDX5VTdFfZf48nDkWB2TKYt0DrCSa+3wg==}
+  seroval@1.6.9:
+    resolution: {integrity: sha512-UeEzHwAK+yl0YLbsvROV1t5yMYEwZZ0CfKYxDvUgS2fO9Vxdf8djqVIB+OuVpuawRNPqw68LE1Du/GMsW2ZPqA==}
     engines: {node: '>=10'}
 
   set-cookie-parser@3.1.2:
@@ -9214,8 +9377,8 @@ packages:
     resolution: {integrity: sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==}
     engines: {node: '>= 10.0.0', npm: '>= 3.0.0'}
 
-  solid-js@1.9.16:
-    resolution: {integrity: sha512-vESESWrNRebA0sQv+Vr9/2wOFOL6NK2QQow7F5/WCBH4c+OVoDyQNEbiVKVL7YqE1M7MPd7z7p27KElLkaD0bw==}
+  solid-js@1.9.17:
+    resolution: {integrity: sha512-4GAmLOWPfNV8H9Jfn2LSFTpNEG6jiOKPiwd5lnLGQtehHaX6l3TOLzJqQ7mqwB/3k1Yy3zyumFVopmc/tm34ow==}
 
   solid-presence@0.2.0:
     resolution: {integrity: sha512-YM92o+jvpzX3XGaD4rLYmq/Kc2ZVh47GSCLEufHBFQQIurvZTs8SoGJxO8BJGNDxBKdcS8F3dYhW1SDXp4BNjA==}
@@ -9817,8 +9980,8 @@ packages:
     resolution: {integrity: sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A==}
     engines: {node: 20 || >=22}
 
-  watchpack@2.5.2:
-    resolution: {integrity: sha512-6i/00NBjP4yGPs+caKSyRfpTF/8Torsu0MOW3mMzIbhgISFder8i7xbqgHlLMwJrdiN8ndBV3UA1/AfzPSr+jg==}
+  watchpack@2.6.1:
+    resolution: {integrity: sha512-8mk/LnXpQAiM2xKZhTkxikwly5GhL2Z+DWiLTkMa/E1Nfv9zURhHgiFyWvM4BWqW+LjIgL2AIS7JntEUx6v3vQ==}
     engines: {node: '>=10.13.0'}
 
   weapon-regex@1.3.6:
@@ -11045,11 +11208,11 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@better-auth/cimd@1.7.7(vfowy3bqman7537b7dxub24gha)':
+  '@better-auth/cimd@1.7.7(siqcrgwjtxxtsg64eu3ispkp4y)':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
-      '@better-auth/oauth-provider': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
-      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+      '@better-auth/oauth-provider': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
+      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       better-call: 1.4.0(zod@4.5.4)
 
   '@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2)':
@@ -11108,11 +11271,11 @@ snapshots:
     optionalDependencies:
       kysely: 0.29.4
 
-  '@better-auth/mcp@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
+  '@better-auth/mcp@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
-      '@better-auth/oauth-provider': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
-      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+      '@better-auth/oauth-provider': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))
+      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       better-call: 1.4.0(zod@4.5.4)
       jose: 6.2.12
     transitivePeerDependencies:
@@ -11139,12 +11302,12 @@ snapshots:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
 
-  '@better-auth/oauth-provider@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
+  '@better-auth/oauth-provider@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
       '@better-fetch/fetch': 1.3.2
-      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+      better-auth: 1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       better-call: 1.4.0(zod@4.5.4)
       jose: 6.2.12
       zod: 4.5.4
@@ -11159,13 +11322,13 @@ snapshots:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
 
-  '@better-auth/sso@1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
+  '@better-auth/sso@1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11))(better-call@1.4.0(zod@4.5.4))':
     dependencies:
       '@better-auth/core': 1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2)
       '@better-auth/utils': 0.4.2
       '@better-fetch/fetch': 1.3.1
       '@xmldom/xmldom': 0.9.12
-      better-auth: 1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11)
+      better-auth: 1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11)
       better-call: 1.4.0(zod@4.5.4)
       fast-xml-parser: 5.10.1
       jose: 6.2.12
@@ -11205,10 +11368,10 @@ snapshots:
 
   '@chevrotain/types@11.1.2': {}
 
-  '@corvu/utils@0.4.2(solid-js@1.9.16)':
+  '@corvu/utils@0.4.2(solid-js@1.9.17)':
     dependencies:
       '@floating-ui/dom': 1.8.0
-      solid-js: 1.9.16
+      solid-js: 1.9.17
 
   '@csstools/color-helpers@6.1.0': {}
 
@@ -11580,10 +11743,10 @@ snapshots:
 
   '@fumari/image-size@0.1.1': {}
 
-  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.89.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)':
+  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.90.0(@types/react@19.2.8)(react@19.2.8))(zod@4.5.4)':
     dependencies:
       '@standard-schema/utils': 0.3.0
-      react-hook-form: 7.89.0(@types/react@19.2.8)(react@19.2.8)
+      react-hook-form: 7.90.0(@types/react@19.2.8)(react@19.2.8)
     optionalDependencies:
       '@standard-schema/spec': 1.1.0
       ajv: 8.20.0
@@ -11839,7 +12002,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 20.19.43
 
-  '@internationalized/number@3.6.8':
+  '@internationalized/number@3.6.9':
     dependencies:
       '@swc/helpers': 0.5.23
 
@@ -11867,27 +12030,27 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@kobalte/core@0.13.14(solid-js@1.9.16)':
+  '@kobalte/core@0.13.14(solid-js@1.9.17)':
     dependencies:
       '@floating-ui/dom': 1.8.0
-      '@internationalized/number': 3.6.8
-      '@kobalte/utils': 0.9.2(solid-js@1.9.16)
-      '@solid-primitives/props': 3.2.4(solid-js@1.9.16)
-      '@solid-primitives/resize-observer': 2.2.0(solid-js@1.9.16)
-      solid-js: 1.9.16
-      solid-presence: 0.2.0(solid-js@1.9.16)
-      solid-prevent-scroll: 0.1.11(solid-js@1.9.16)
+      '@internationalized/number': 3.6.9
+      '@kobalte/utils': 0.9.2(solid-js@1.9.17)
+      '@solid-primitives/props': 3.2.4(solid-js@1.9.17)
+      '@solid-primitives/resize-observer': 2.2.0(solid-js@1.9.17)
+      solid-js: 1.9.17
+      solid-presence: 0.2.0(solid-js@1.9.17)
+      solid-prevent-scroll: 0.1.11(solid-js@1.9.17)
 
-  '@kobalte/utils@0.9.2(solid-js@1.9.16)':
+  '@kobalte/utils@0.9.2(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.16)
-      '@solid-primitives/keyed': 1.5.3(solid-js@1.9.16)
-      '@solid-primitives/map': 0.4.13(solid-js@1.9.16)
-      '@solid-primitives/media': 2.3.6(solid-js@1.9.16)
-      '@solid-primitives/props': 3.2.4(solid-js@1.9.16)
-      '@solid-primitives/refs': 1.1.4(solid-js@1.9.16)
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.17)
+      '@solid-primitives/keyed': 1.5.3(solid-js@1.9.17)
+      '@solid-primitives/map': 0.4.13(solid-js@1.9.17)
+      '@solid-primitives/media': 2.3.6(solid-js@1.9.17)
+      '@solid-primitives/props': 3.2.4(solid-js@1.9.17)
+      '@solid-primitives/refs': 1.1.4(solid-js@1.9.17)
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
   '@lexical/a11y@0.52.0(typescript@5.9.3)':
     dependencies:
@@ -12505,6 +12668,10 @@ snapshots:
     dependencies:
       '@posthog/types': 1.415.3
 
+  '@posthog/core@1.59.1':
+    dependencies:
+      '@posthog/types': 1.416.0
+
   '@posthog/nextjs-config@1.11.2(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(posthog-js@1.438.7(@types/react@19.2.8)(react@19.2.8))(webpack@5.108.4(lightningcss@1.32.0))':
     dependencies:
       '@posthog/cli': 0.18.10
@@ -12522,10 +12689,12 @@ snapshots:
 
   '@posthog/types@1.415.3': {}
 
+  '@posthog/types@1.416.0': {}
+
   '@posthog/webpack-plugin@1.7.1(webpack@5.108.4(lightningcss@1.32.0))':
     dependencies:
       '@posthog/cli': 0.16.2
-      '@posthog/core': 1.58.1
+      '@posthog/core': 1.59.1
       '@posthog/plugin-utils': 2.0.1
       webpack: 5.108.4(lightningcss@1.32.0)
 
@@ -13237,76 +13406,151 @@ snapshots:
   '@rollup/rollup-android-arm-eabi@4.64.6':
     optional: true
 
+  '@rollup/rollup-android-arm-eabi@4.64.7':
+    optional: true
+
   '@rollup/rollup-android-arm64@4.64.6':
+    optional: true
+
+  '@rollup/rollup-android-arm64@4.64.7':
     optional: true
 
   '@rollup/rollup-darwin-arm64@4.64.6':
     optional: true
 
+  '@rollup/rollup-darwin-arm64@4.64.7':
+    optional: true
+
   '@rollup/rollup-darwin-x64@4.64.6':
+    optional: true
+
+  '@rollup/rollup-darwin-x64@4.64.7':
     optional: true
 
   '@rollup/rollup-freebsd-arm64@4.64.6':
     optional: true
 
+  '@rollup/rollup-freebsd-arm64@4.64.7':
+    optional: true
+
   '@rollup/rollup-freebsd-x64@4.64.6':
+    optional: true
+
+  '@rollup/rollup-freebsd-x64@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-arm-gnueabihf@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-arm-gnueabihf@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-arm-musleabihf@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-arm-musleabihf@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-arm64-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-arm64-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-arm64-musl@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-arm64-musl@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-loong64-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-loong64-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-loong64-musl@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-loong64-musl@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-ppc64-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-ppc64-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-ppc64-musl@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-ppc64-musl@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-riscv64-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-riscv64-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-riscv64-musl@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-riscv64-musl@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-s390x-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-s390x-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-linux-x64-gnu@4.64.6':
+    optional: true
+
+  '@rollup/rollup-linux-x64-gnu@4.64.7':
     optional: true
 
   '@rollup/rollup-linux-x64-musl@4.64.6':
     optional: true
 
+  '@rollup/rollup-linux-x64-musl@4.64.7':
+    optional: true
+
   '@rollup/rollup-openbsd-x64@4.64.6':
+    optional: true
+
+  '@rollup/rollup-openbsd-x64@4.64.7':
     optional: true
 
   '@rollup/rollup-openharmony-arm64@4.64.6':
     optional: true
 
+  '@rollup/rollup-openharmony-arm64@4.64.7':
+    optional: true
+
   '@rollup/rollup-win32-arm64-msvc@4.64.6':
+    optional: true
+
+  '@rollup/rollup-win32-arm64-msvc@4.64.7':
     optional: true
 
   '@rollup/rollup-win32-ia32-msvc@4.64.6':
     optional: true
 
+  '@rollup/rollup-win32-ia32-msvc@4.64.7':
+    optional: true
+
   '@rollup/rollup-win32-x64-gnu@4.64.6':
     optional: true
 
+  '@rollup/rollup-win32-x64-gnu@4.64.7':
+    optional: true
+
   '@rollup/rollup-win32-x64-msvc@4.64.6':
+    optional: true
+
+  '@rollup/rollup-win32-x64-msvc@4.64.7':
     optional: true
 
   '@rtsao/scc@1.1.0': {}
@@ -13583,73 +13827,73 @@ snapshots:
 
   '@socket.io/component-emitter@3.1.2': {}
 
-  '@solid-primitives/event-listener@2.4.6(solid-js@1.9.16)':
+  '@solid-primitives/event-listener@2.4.6(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/keyed@1.5.3(solid-js@1.9.16)':
+  '@solid-primitives/keyed@1.5.3(solid-js@1.9.17)':
     dependencies:
-      solid-js: 1.9.16
+      solid-js: 1.9.17
 
-  '@solid-primitives/map@0.4.13(solid-js@1.9.16)':
+  '@solid-primitives/map@0.4.13(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/trigger': 1.2.4(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/trigger': 1.2.4(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/media@2.3.6(solid-js@1.9.16)':
+  '@solid-primitives/media@2.3.6(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.16)
-      '@solid-primitives/rootless': 1.5.4(solid-js@1.9.16)
-      '@solid-primitives/static-store': 0.1.4(solid-js@1.9.16)
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.17)
+      '@solid-primitives/rootless': 1.5.4(solid-js@1.9.17)
+      '@solid-primitives/static-store': 0.1.4(solid-js@1.9.17)
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/props@3.2.4(solid-js@1.9.16)':
+  '@solid-primitives/props@3.2.4(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/refs@1.1.4(solid-js@1.9.16)':
+  '@solid-primitives/refs@1.1.4(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/resize-observer@2.2.0(solid-js@1.9.16)':
+  '@solid-primitives/resize-observer@2.2.0(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.16)
-      '@solid-primitives/rootless': 1.5.4(solid-js@1.9.16)
-      '@solid-primitives/static-store': 0.1.4(solid-js@1.9.16)
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.17)
+      '@solid-primitives/rootless': 1.5.4(solid-js@1.9.17)
+      '@solid-primitives/static-store': 0.1.4(solid-js@1.9.17)
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/rootless@1.5.4(solid-js@1.9.16)':
+  '@solid-primitives/rootless@1.5.4(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/static-store@0.1.4(solid-js@1.9.16)':
+  '@solid-primitives/static-store@0.1.4(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/storage@1.3.11(solid-js@1.9.16)':
+  '@solid-primitives/storage@1.3.11(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/transition-group@1.1.2(solid-js@1.9.16)':
+  '@solid-primitives/transition-group@1.1.2(solid-js@1.9.17)':
     dependencies:
-      solid-js: 1.9.16
+      solid-js: 1.9.17
 
-  '@solid-primitives/trigger@1.2.4(solid-js@1.9.16)':
+  '@solid-primitives/trigger@1.2.4(solid-js@1.9.17)':
     dependencies:
-      '@solid-primitives/utils': 6.4.1(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/utils': 6.4.1(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  '@solid-primitives/utils@6.4.1(solid-js@1.9.16)':
+  '@solid-primitives/utils@6.4.1(solid-js@1.9.17)':
     dependencies:
-      solid-js: 1.9.16
+      solid-js: 1.9.17
 
   '@stablelib/base64@1.0.1': {}
 
@@ -13840,36 +14084,36 @@ snapshots:
     dependencies:
       remove-accents: 0.5.0
 
-  '@tanstack/query-core@5.104.1': {}
+  '@tanstack/query-core@5.104.2': {}
 
-  '@tanstack/query-devtools@5.104.1(csstype@3.2.3)':
+  '@tanstack/query-devtools@5.104.2(csstype@3.2.3)':
     dependencies:
-      '@kobalte/core': 0.13.14(solid-js@1.9.16)
-      '@solid-primitives/keyed': 1.5.3(solid-js@1.9.16)
-      '@solid-primitives/resize-observer': 2.2.0(solid-js@1.9.16)
-      '@solid-primitives/storage': 1.3.11(solid-js@1.9.16)
+      '@kobalte/core': 0.13.14(solid-js@1.9.17)
+      '@solid-primitives/keyed': 1.5.3(solid-js@1.9.17)
+      '@solid-primitives/resize-observer': 2.2.0(solid-js@1.9.17)
+      '@solid-primitives/storage': 1.3.11(solid-js@1.9.17)
       '@tanstack/match-sorter-utils': 9.2.6
-      '@tanstack/query-core': 5.104.1
+      '@tanstack/query-core': 5.104.2
       clsx: 2.1.1
       goober: 2.1.19(csstype@3.2.3)
-      solid-js: 1.9.16
-      solid-transition-group: 0.2.3(solid-js@1.9.16)
+      solid-js: 1.9.17
+      solid-transition-group: 0.2.3(solid-js@1.9.17)
       superjson: 2.2.6
     transitivePeerDependencies:
       - csstype
 
-  '@tanstack/react-query-devtools@5.104.1(@tanstack/react-query@5.104.1(react@19.2.8))(@types/react@19.2.8)(csstype@3.2.3)(react@19.2.8)':
+  '@tanstack/react-query-devtools@5.104.2(@tanstack/react-query@5.104.2(react@19.2.8))(@types/react@19.2.8)(csstype@3.2.3)(react@19.2.8)':
     dependencies:
-      '@tanstack/query-devtools': 5.104.1(csstype@3.2.3)
-      '@tanstack/react-query': 5.104.1(react@19.2.8)
+      '@tanstack/query-devtools': 5.104.2(csstype@3.2.3)
+      '@tanstack/react-query': 5.104.2(react@19.2.8)
       '@types/react': 19.2.8
       react: 19.2.8
     transitivePeerDependencies:
       - csstype
 
-  '@tanstack/react-query@5.104.1(react@19.2.8)':
+  '@tanstack/react-query@5.104.2(react@19.2.8)':
     dependencies:
-      '@tanstack/query-core': 5.104.1
+      '@tanstack/query-core': 5.104.2
       react: 19.2.8
 
   '@tanstack/react-table@8.21.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
@@ -14832,7 +15076,7 @@ snapshots:
 
   bcryptjs@3.0.3: {}
 
-  better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11):
+  better-auth@1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11):
     dependencies:
       '@better-auth/core': 1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2)
       '@better-auth/drizzle-adapter': 1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))
@@ -14857,13 +15101,13 @@ snapshots:
       next: 16.4.0(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
-      solid-js: 1.9.16
+      solid-js: 1.9.17
       vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
       - '@opentelemetry/api'
 
-  better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.16)(vitest@4.1.11):
+  better-auth@1.7.7(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(solid-js@1.9.17)(vitest@4.1.11):
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5)
       '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.5.4))(jose@6.2.12)(kysely@0.29.4)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm)))
@@ -14888,7 +15132,7 @@ snapshots:
       next: 16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.64.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
-      solid-js: 1.9.16
+      solid-js: 1.9.17
       vitest: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@20.19.43)(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
     transitivePeerDependencies:
       - '@opentelemetry/api'
@@ -18066,7 +18310,7 @@ snapshots:
     dependencies:
       asn1: 0.2.6
 
-  nodemailer@10.0.12: {}
+  nodemailer@10.1.0: {}
 
   normalize-path@3.0.0: {}
 
@@ -18353,9 +18597,9 @@ snapshots:
     transitivePeerDependencies:
       - preact-render-to-string
 
-  posthog-node@5.55.1(rxjs@7.8.2):
+  posthog-node@5.55.2(rxjs@7.8.2):
     dependencies:
-      '@posthog/core': 1.58.1
+      '@posthog/core': 1.59.1
     optionalDependencies:
       rxjs: 7.8.2
 
@@ -18460,7 +18704,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  react-hook-form@7.89.0(@types/react@19.2.8)(react@19.2.8):
+  react-hook-form@7.90.0(@types/react@19.2.8)(react@19.2.8):
     dependencies:
       react: 19.2.8
     optionalDependencies:
@@ -18789,6 +19033,38 @@ snapshots:
       '@rollup/rollup-win32-x64-msvc': 4.64.6
       fsevents: 2.3.3
 
+  rollup@4.64.7:
+    dependencies:
+      '@types/estree': 1.0.9
+    optionalDependencies:
+      '@napi-rs/lzma-linux-x64-gnu': 1.5.1
+      '@rollup/rollup-android-arm-eabi': 4.64.7
+      '@rollup/rollup-android-arm64': 4.64.7
+      '@rollup/rollup-darwin-arm64': 4.64.7
+      '@rollup/rollup-darwin-x64': 4.64.7
+      '@rollup/rollup-freebsd-arm64': 4.64.7
+      '@rollup/rollup-freebsd-x64': 4.64.7
+      '@rollup/rollup-linux-arm-gnueabihf': 4.64.7
+      '@rollup/rollup-linux-arm-musleabihf': 4.64.7
+      '@rollup/rollup-linux-arm64-gnu': 4.64.7
+      '@rollup/rollup-linux-arm64-musl': 4.64.7
+      '@rollup/rollup-linux-loong64-gnu': 4.64.7
+      '@rollup/rollup-linux-loong64-musl': 4.64.7
+      '@rollup/rollup-linux-ppc64-gnu': 4.64.7
+      '@rollup/rollup-linux-ppc64-musl': 4.64.7
+      '@rollup/rollup-linux-riscv64-gnu': 4.64.7
+      '@rollup/rollup-linux-riscv64-musl': 4.64.7
+      '@rollup/rollup-linux-s390x-gnu': 4.64.7
+      '@rollup/rollup-linux-x64-gnu': 4.64.7
+      '@rollup/rollup-linux-x64-musl': 4.64.7
+      '@rollup/rollup-openbsd-x64': 4.64.7
+      '@rollup/rollup-openharmony-arm64': 4.64.7
+      '@rollup/rollup-win32-arm64-msvc': 4.64.7
+      '@rollup/rollup-win32-ia32-msvc': 4.64.7
+      '@rollup/rollup-win32-x64-gnu': 4.64.7
+      '@rollup/rollup-win32-x64-msvc': 4.64.7
+      fsevents: 2.3.3
+
   rou3@0.9.2: {}
 
   roughjs@4.6.6:
@@ -18884,11 +19160,11 @@ snapshots:
 
   semver@7.8.5: {}
 
-  seroval-plugins@1.6.8(seroval@1.6.8):
+  seroval-plugins@1.6.9(seroval@1.6.9):
     dependencies:
-      seroval: 1.6.8
+      seroval: 1.6.9
 
-  seroval@1.6.8: {}
+  seroval@1.6.9: {}
 
   set-cookie-parser@3.1.2: {}
 
@@ -19059,27 +19335,27 @@ snapshots:
       ip-address: 10.7.2
       smart-buffer: 4.2.0
 
-  solid-js@1.9.16:
+  solid-js@1.9.17:
     dependencies:
       csstype: 3.2.3
-      seroval: 1.6.8
-      seroval-plugins: 1.6.8(seroval@1.6.8)
+      seroval: 1.6.9
+      seroval-plugins: 1.6.9(seroval@1.6.9)
 
-  solid-presence@0.2.0(solid-js@1.9.16):
+  solid-presence@0.2.0(solid-js@1.9.17):
     dependencies:
-      '@corvu/utils': 0.4.2(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@corvu/utils': 0.4.2(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  solid-prevent-scroll@0.1.11(solid-js@1.9.16):
+  solid-prevent-scroll@0.1.11(solid-js@1.9.17):
     dependencies:
-      '@corvu/utils': 0.4.2(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@corvu/utils': 0.4.2(solid-js@1.9.17)
+      solid-js: 1.9.17
 
-  solid-transition-group@0.2.3(solid-js@1.9.16):
+  solid-transition-group@0.2.3(solid-js@1.9.17):
     dependencies:
-      '@solid-primitives/refs': 1.1.4(solid-js@1.9.16)
-      '@solid-primitives/transition-group': 1.1.2(solid-js@1.9.16)
-      solid-js: 1.9.16
+      '@solid-primitives/refs': 1.1.4(solid-js@1.9.17)
+      '@solid-primitives/transition-group': 1.1.2(solid-js@1.9.17)
+      solid-js: 1.9.17
 
   sonic-boom@4.2.1:
     dependencies:
@@ -19655,7 +19931,7 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
       postcss: 8.5.30
-      rollup: 4.64.6
+      rollup: 4.64.7
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 20.19.43
@@ -19672,7 +19948,7 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.7)
       picomatch: 4.0.7
       postcss: 8.5.30
-      rollup: 4.64.6
+      rollup: 4.64.7
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 25.0.8
@@ -19749,7 +20025,7 @@ snapshots:
 
   walk-up-path@4.0.0: {}
 
-  watchpack@2.5.2:
+  watchpack@2.6.1:
     dependencies:
       graceful-fs: 4.2.11
 
@@ -19791,7 +20067,7 @@ snapshots:
       neo-async: 2.6.2
       schema-utils: 4.5.0
       tapable: 2.3.3
-      watchpack: 2.5.2
+      watchpack: 2.6.1
       webpack-sources: 3.6.0
     transitivePeerDependencies:
       - '@minify-html/node'
