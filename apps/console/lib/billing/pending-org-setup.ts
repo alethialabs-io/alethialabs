@@ -20,7 +20,7 @@
 
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { and, asc, desc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, lt, max, ne, or, type SQL, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
@@ -40,7 +40,15 @@ import {
 } from "@/lib/billing/new-org-setup";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
-import { member, organization, organizationBilling, pendingOrgSetups } from "@/lib/db/schema";
+import {
+	member,
+	organization,
+	organizationBilling,
+	type PaymentHoldRow,
+	paymentHolds,
+	pendingOrgSetups,
+} from "@/lib/db/schema";
+import { REFUND_NOTICE_WINDOW_MS } from "@/lib/billing/new-org-hold-copy";
 import type {
 	PendingOrgSetupClosedReason,
 	PendingOrgSetupRefusedReason,
@@ -133,6 +141,11 @@ export async function recordPendingOrgSetup(input: {
  * first payment provably never happened (`never_paid`), and nothing has been created for it. Returns
  * whether it was allowed to; the record of a payment that is in flight or went through is never
  * dropped here.
+ *
+ * And no payment hold names the subscription (ADR 0002 §8), open or released for any reason but one
+ * that proves it can never become payable (`FORGETTABLE_RELEASES`), in the same DELETE. So a record
+ * that goes had no org (§5.7 never needed it) and a subscription that cannot be paid again (§4.3 never
+ * needs it).
  */
 export async function forgetPendingOrgSetup(
 	userId: string,
@@ -150,9 +163,90 @@ export async function forgetPendingOrgSetup(
 				eq(pendingOrgSetups.subscription_id, sub.id),
 				isNull(pendingOrgSetups.created_org_id),
 				isNull(pendingOrgSetups.linked_at),
+				sql`NOT EXISTS (SELECT 1 FROM payment_holds h WHERE h.subscription_id = ${sub.id}
+					AND (h.state <> 'released' OR h.release_reason NOT IN ('voided_unpaid', 'deleted_draft', 'expired_unpaid')))`,
 			),
 		);
 	return true;
+}
+
+/** The release reasons after which a held subscription can never become payable again (§8). */
+export const FORGETTABLE_RELEASES: ReadonlySet<string> = new Set(["voided_unpaid", "deleted_draft", "expired_unpaid"]);
+
+// THE CREATE-A-TEAM HOLD READERS (ADR 0004 D1 rule 3). The three below decide or route a create-a-team
+// purchase, link or resume, so they read `scope = 'new_org'` only: an org-plan hold never blocks or
+// reroutes create-a-team. The setup predicates that WAIT on holds (`noOpenHold`, `unclosedVerdict`, and
+// `forgetPendingOrgSetup`'s hold condition) stay scope-free on purpose (D1 rule 4): narrowing them could
+// only close or forget a setup the design means to keep.
+
+/**
+ * The OPEN `new_org` payment hold on `subscriptionId`, or null (I6: at most one open hold per
+ * subscription). Service role: holds have no app policy.
+ */
+export async function openPaymentHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
+	const [hold] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(
+			and(
+				eq(paymentHolds.scope, "new_org"),
+				eq(paymentHolds.subscription_id, subscriptionId),
+				ne(paymentHolds.state, "released"),
+			),
+		)
+		.limit(1);
+	return hold ?? null;
+}
+
+/**
+ * The newest RELEASED `new_org` payment hold on `subscriptionId`, or null. Service role: holds have no app
+ * policy. It has NO time bound, unlike the 14-day refund notice of `paymentHoldsOfPayer`: its callers
+ * (`refuseEndedLink`, `endedSetupFor`) read it as what happened to X's money (ADR 0002 §5.6, C104), and
+ * a refund older than 14 days is still a refund.
+ */
+export async function latestReleasedHoldOn(subscriptionId: string): Promise<PaymentHoldRow | null> {
+	const [hold] = await getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(
+			and(
+				eq(paymentHolds.scope, "new_org"),
+				eq(paymentHolds.subscription_id, subscriptionId),
+				eq(paymentHolds.state, "released"),
+			),
+		)
+		.orderBy(desc(paymentHolds.released_at))
+		.limit(1);
+	return hold ?? null;
+}
+
+/**
+ * The `new_org` payment holds of `payerKey` the create-a-team purchase reads (ADR 0002 §3.2 E1 (a),
+ * §5.5): every OPEN one, which it advances before it may mint (I1 (a)), and every one released
+ * `refunded` or `already_refunded` within the refund notice window, whose clause its response carries.
+ * Only this payer's: the purchase reads nobody else's holds (I7), and no org-plan hold, even one whose
+ * `payer_key` is the same string (ADR 0004 O1). The window is measured on the database's clock, the one
+ * that stamped `released_at`, so the app server's clock can neither show nor hide a refund.
+ */
+export async function paymentHoldsOfPayer(payerKey: string): Promise<PaymentHoldRow[]> {
+	const since = sql`now() - ${`${REFUND_NOTICE_WINDOW_MS} milliseconds`}::interval`;
+	return getServiceDb()
+		.select()
+		.from(paymentHolds)
+		.where(
+			and(
+				eq(paymentHolds.scope, "new_org"),
+				eq(paymentHolds.payer_key, payerKey),
+				or(
+					ne(paymentHolds.state, "released"),
+					and(
+						inArray(paymentHolds.release_reason, ["refunded", "already_refunded"]),
+						gt(paymentHolds.released_at, since),
+					),
+				),
+			),
+		)
+		.orderBy(asc(paymentHolds.created_at));
 }
 
 /** The actor's record for one subscription, or null — never another user's. */
@@ -220,30 +314,108 @@ export async function unfinishedPendingOrgSetups(
 	};
 }
 
+/** The most distinct customers `unlinkedPendingOrgSetupCustomers` returns before it refuses (ADR 0002 §4.5). */
+export const UNLINKED_SETUP_CUSTOMER_CAP = 50;
+
+/** How many records one keyset page of `unlinkedPendingOrgSetupCustomers` reads. */
+const UNLINKED_SETUP_PAGE = 100;
+
+/**
+ * What `unlinkedPendingOrgSetupCustomers` found: every customer (`all`), or `over_cap` when the actor's
+ * unlinked records name more than `UNLINKED_SETUP_CUSTOMER_CAP` distinct customers. `over_cap` carries
+ * no list ON PURPOSE: a partial list would let the purchase sweep fewer customers than exist and mint
+ * beside a payment still settling on one it never read, so the caller has nothing to proceed with and
+ * must refuse.
+ */
+export type UnlinkedSetupCustomers = { kind: "all"; customers: string[] } | { kind: "over_cap" };
+
 /**
  * The Stripe customers of the actor's setups that have no organization yet (nothing created, nothing
  * linked, nothing declared), newest record first, each once. The new-org purchase reuses the first when
  * the browser lost its `customerId`, and sweeps all of them for a payment still settling (#5463).
+ *
+ * It reads EVERY such record (ADR 0002 §4.5, C21), in keyset pages of `UNLINKED_SETUP_PAGE` ordered by
+ * `(created_at, id)` descending — a cursor on that position, not a row count, so no record is skipped or
+ * read twice — and stops only at the last page, or as soon as a customer beyond
+ * `UNLINKED_SETUP_CUSTOMER_CAP` appears, which answers `over_cap`. It never answers with a list it
+ * stopped reading early.
  */
-export async function unlinkedPendingOrgSetupCustomers(
-	userId: string,
-	limit = 5,
-): Promise<string[]> {
-	const rows = await getServiceDb()
-		.select({ customerId: pendingOrgSetups.customer_id })
+export async function unlinkedPendingOrgSetupCustomers(userId: string): Promise<UnlinkedSetupCustomers> {
+	return setupCustomers(
+		userId,
+		and(
+			isNull(pendingOrgSetups.created_org_id),
+			isNull(pendingOrgSetups.linked_at),
+			isNull(pendingOrgSetups.declared_at),
+		),
+	);
+}
+
+/**
+ * THE LIVE CHECK'S RECORD SET (ADR 0002 §4.3, C94): the Stripe customers of EVERY setup of the actor
+ * that is not linked — whether or not its organization exists, whether or not it is declared or closed —
+ * newest record first, each once, or `over_cap` past `UNLINKED_SETUP_CUSTOMER_CAP`. It is not
+ * `unlinkedPendingOrgSetupCustomers`, which leaves out every record with an organization because it
+ * answers which customer to reuse: with that set, a paid, unlinked subscription whose team exists was
+ * invisible to the check that keeps a second one from being minted beside it.
+ */
+export async function liveCheckSetupCustomers(userId: string): Promise<UnlinkedSetupCustomers> {
+	return setupCustomers(userId, isNull(pendingOrgSetups.linked_at));
+}
+
+/**
+ * The `created_at` of the actor's newest setup record that is not linked — the live check's record set
+ * (`liveCheckSetupCustomers`), closed records included — or null when there is none. The create-a-team
+ * purchase reads it as the marker of a CAP STATE, to alert the operator once per state when that set is
+ * over `UNLINKED_SETUP_CUSTOMER_CAP` (#5989).
+ */
+export async function newestUnlinkedSetupAt(userId: string): Promise<Date | null> {
+	const [row] = await getServiceDb()
+		.select({ at: max(pendingOrgSetups.created_at) })
 		.from(pendingOrgSetups)
-		.where(
-			and(
-				eq(pendingOrgSetups.user_id, userId),
-				isNull(pendingOrgSetups.created_org_id),
-				isNull(pendingOrgSetups.linked_at),
-				isNull(pendingOrgSetups.declared_at),
-			),
-		)
-		.groupBy(pendingOrgSetups.customer_id)
-		.orderBy(desc(sql`max(${pendingOrgSetups.created_at})`))
-		.limit(limit);
-	return rows.map((r) => r.customerId);
+		.where(and(eq(pendingOrgSetups.user_id, userId), isNull(pendingOrgSetups.linked_at)));
+	return row?.at ?? null;
+}
+
+/**
+ * The distinct customers of the actor's records matching `where`, in keyset pages of
+ * `UNLINKED_SETUP_PAGE` ordered by `(created_at, id)` descending — so no record is skipped or read twice
+ * — stopping only at the last page, or at the first customer beyond `UNLINKED_SETUP_CUSTOMER_CAP`, which
+ * answers `over_cap`.
+ */
+async function setupCustomers(userId: string, where: SQL | undefined): Promise<UnlinkedSetupCustomers> {
+	const customers: string[] = [];
+	const seen = new Set<string>();
+	let after: UnfinishedSetupCursor | null = null;
+	for (;;) {
+		const page = await getServiceDb()
+			.select({
+				id: pendingOrgSetups.id,
+				customerId: pendingOrgSetups.customer_id,
+				at: sql<string>`${pendingOrgSetups.created_at}::text`,
+			})
+			.from(pendingOrgSetups)
+			.where(
+				and(
+					eq(pendingOrgSetups.user_id, userId),
+					where,
+					after
+						? sql`(${pendingOrgSetups.created_at}, ${pendingOrgSetups.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
+						: undefined,
+				),
+			)
+			.orderBy(desc(pendingOrgSetups.created_at), desc(pendingOrgSetups.id))
+			.limit(UNLINKED_SETUP_PAGE);
+		for (const row of page) {
+			if (seen.has(row.customerId)) continue;
+			if (customers.length === UNLINKED_SETUP_CUSTOMER_CAP) return { kind: "over_cap" };
+			seen.add(row.customerId);
+			customers.push(row.customerId);
+		}
+		const last = page.at(-1);
+		if (page.length < UNLINKED_SETUP_PAGE || !last) return { kind: "all", customers };
+		after = { at: last.at, id: last.id };
+	}
 }
 
 /**
@@ -678,6 +850,28 @@ export async function openPendingOrgSetupsForOrg(orgId: string): Promise<Pending
  * Closes the open setup of `subscriptionId` — one compare-and-set on `closed_at IS NULL AND
  * linked_at IS NULL` — and returns the row it closed, or null when it was not open (already closed or
  * linked, by this caller or another one) or does not exist. `userId`, when given, must own it.
+ *
+ * NEVER WHILE A PAYMENT HOLD IS OPEN on the subscription (ADR 0002 I16 (a), C92): the same statement
+ * requires that no open hold names it, and matches nothing otherwise. The hold decides the setup when
+ * it ends — its release closes it, or an adoption leaves it open (lib/billing/payment-holds/store.ts).
+ *
+ * ATOMIC AGAINST A HOLD BEING OPENED (I14, #6052). The closer runs without the payer's lease, so E0 can
+ * be inserting a hold on the same X while it runs. Under READ COMMITTED the `NOT EXISTS` alone reads
+ * the statement's snapshot: an insert not yet committed is invisible to it and is not waited for, so
+ * the close would land and the hold commit beneath it. So the close runs in a transaction that first
+ * takes `payment_holds` in SHARE mode. Every hold insert or update takes ROW EXCLUSIVE, which SHARE
+ * conflicts with: an open hold write is waited for and committed before the `UPDATE` takes its
+ * snapshot, and a hold write that starts later waits until the close has committed. Either way the
+ * check and the close see one state of the holds. The lock is on the closer's side only, so no hold
+ * writer changes. SHARE does not conflict with itself, so closers do not wait on each other.
+ *
+ * Two bounds on that lock. A committed open hold on X already rules the close out, so when one is
+ * visible the transaction returns null before it locks anything: the lock is taken only when no hold
+ * is visible yet. And the wait is capped at `HOLD_LOCK_WAIT` (`lock_timeout`), so a closer queued
+ * behind a long lock (a VACUUM, an index build) gives up instead of holding every hold write behind it.
+ * Giving up THROWS (SQLSTATE 55P03) with nothing written: the guard refuses with the try-again clause,
+ * the lookups log it and leave the setup open for the next reader, and the link fails as it does on any
+ * other database error, with the setup still open.
  */
 export async function closePendingOrgSetup(input: {
 	subscriptionId: string;
@@ -688,26 +882,100 @@ export async function closePendingOrgSetup(input: {
 	note?: string;
 }): Promise<PendingOrgSetupRow | null> {
 	const now = new Date();
-	const [closed] = await getServiceDb()
+	return getServiceDb().transaction(async (tx) => {
+		await tx.execute(sql`SELECT set_config('lock_timeout', ${HOLD_LOCK_WAIT}, true)`);
+		const held = await tx.execute(openHoldProbe(input.subscriptionId));
+		if (held.length > 0) return null;
+		await tx.execute(sql`LOCK TABLE payment_holds IN SHARE MODE`);
+		const [closed] = await tx
+			.update(pendingOrgSetups)
+			.set({
+				closed_at: now,
+				closed_reason: input.reason,
+				...(input.refusedReason ? { refused_reason: input.refusedReason } : {}),
+				...(input.closedBy ? { closed_by: input.closedBy } : {}),
+				...(input.note ? { closed_note: input.note } : {}),
+				updated_at: now,
+			})
+			.where(
+				and(
+					eq(pendingOrgSetups.subscription_id, input.subscriptionId),
+					input.userId ? eq(pendingOrgSetups.user_id, input.userId) : undefined,
+					isNull(pendingOrgSetups.closed_at),
+					isNull(pendingOrgSetups.linked_at),
+					noOpenHold(input.subscriptionId),
+				),
+			)
+			.returning();
+		return closed ?? null;
+	});
+}
+
+/** How long a close waits for its lock on `payment_holds` before it gives up (`closePendingOrgSetup`). */
+const HOLD_LOCK_WAIT = "2s";
+
+/** A row when a COMMITTED open payment hold, of any scope, names `subscriptionId` (the close's fast path). */
+function openHoldProbe(subscriptionId: string): SQL {
+	return sql`SELECT 1 FROM payment_holds WHERE subscription_id = ${subscriptionId} AND state <> 'released' LIMIT 1`;
+}
+
+/**
+ * I16 (a), inside a statement on `pending_org_setups`: no open payment hold, of any scope, names
+ * `subscriptionId` (ADR 0004 D1 rule 4).
+ */
+function noOpenHold(subscriptionId: string): SQL {
+	return sql`NOT EXISTS (SELECT 1 FROM payment_holds h WHERE h.subscription_id = ${subscriptionId} AND h.state <> 'released')`;
+}
+
+/**
+ * Records why the link refused `userId`'s setup of `subscriptionId` (ADR 0002 §5.6, I16). With `close`
+ * (the link read X ended), one compare-and-set writes `refused_reason`, `closed_at` and
+ * `closed_reason = 'ended'` — and, as every close does (`closePendingOrgSetup`), only while no open
+ * payment hold names X. Otherwise, or when that matched nothing, `refused_reason` alone is written on
+ * the setup if it is still open, and it stays open: the hold that names X, or an operator, decides it.
+ * A closed or linked setup keeps the reason it already has. Returns the row this call CLOSED, or null.
+ */
+export async function recordSetupRefusal(input: {
+	userId: string;
+	subscriptionId: string;
+	refused: PendingOrgSetupRefusedReason;
+	close: boolean;
+}): Promise<PendingOrgSetupRow | null> {
+	if (input.close) {
+		const closed = await closePendingOrgSetup({
+			subscriptionId: input.subscriptionId,
+			userId: input.userId,
+			reason: "ended",
+			refusedReason: input.refused,
+		});
+		if (closed) return closed;
+	}
+	await getServiceDb()
 		.update(pendingOrgSetups)
-		.set({
-			closed_at: now,
-			closed_reason: input.reason,
-			...(input.refusedReason ? { refused_reason: input.refusedReason } : {}),
-			...(input.closedBy ? { closed_by: input.closedBy } : {}),
-			...(input.note ? { closed_note: input.note } : {}),
-			updated_at: now,
-		})
+		.set({ refused_reason: input.refused, updated_at: new Date() })
 		.where(
 			and(
+				eq(pendingOrgSetups.user_id, input.userId),
 				eq(pendingOrgSetups.subscription_id, input.subscriptionId),
-				input.userId ? eq(pendingOrgSetups.user_id, input.userId) : undefined,
 				isNull(pendingOrgSetups.closed_at),
 				isNull(pendingOrgSetups.linked_at),
 			),
-		)
-		.returning();
-	return closed ?? null;
+		);
+	return null;
+}
+
+/**
+ * The verdict of a close whose compare-and-set matched nothing: `open` while a payment hold of ANY scope
+ * keeps the setup open (I16; the same scope-free question as `noOpenHold`, ADR 0004 D1 rule 4), else
+ * `closed` (another reader closed or linked it first).
+ */
+async function unclosedVerdict(subscriptionId: string): Promise<SetupCloserVerdict> {
+	const [hold] = await getServiceDb()
+		.select({ id: paymentHolds.id })
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.limit(1);
+	return hold ? "open" : "closed";
 }
 
 /**
@@ -748,15 +1016,19 @@ export type SetupCloserVerdict = "closed" | "linked" | "open";
  * THE SETUP CLOSER (ADR 0002 §5.7 "Every open setup has an exit"). Run by the guard, both resume
  * lookups and the link before they answer. It has two branches, and nothing else in it writes:
  *
- *   - CLOSE: the subscription X reads ended (`canceled`, `incomplete_expired`). The setup is closed
- *     (`closed_reason = 'ended'`), and when `readFirstPayment` does not read `never_paid` — money may
- *     have moved on a setup nobody will finish — the operator is alerted. Nothing is refunded here.
+ *   - CLOSE: the subscription X reads ended (`canceled`, `incomplete_expired`) and no payment hold on X
+ *     is open. The setup is closed (`closed_reason = 'ended'`), and when `readFirstPayment` does not read
+ *     `never_paid` — money may have moved on a setup nobody will finish — the operator is alerted.
+ *     Nothing is refunded here. While a hold on X is open the setup stays `open` (I16): the hold is
+ *     watching that money, and its release closes the setup.
  *   - ADOPT: X is not ended, its `metadata.organization_id` is the setup's org, its
  *     `metadata.created_by` is the setup's user, and the org's billing row names X — the state a link
  *     leaves when it throws after `subscriptions.update` and before its mark (C96). The setup is marked
  *     linked. When the metadata names the org but the row does not name X yet, X is synced once first
  *     (the same idempotent call the webhook makes); a row that then names ANOTHER live plan is the S1
- *     refusal (closed with `org_has_plan`, alerted). Metadata naming a different org or user is never
+ *     refusal (closed with `org_has_plan`, alerted) — except when `linkRefuses` is set: the caller is
+ *     the link, which refuses that X itself under a `needs_operator` hold (ADR 0002 §5.6), so the
+ *     closer writes nothing and answers `open`. Metadata naming a different org or user is never
  *     adopted.
  *
  * Everything else stays open. A subscription Stripe cannot find (`resource_missing`) is NEVER closed
@@ -769,7 +1041,7 @@ export type SetupCloserVerdict = "closed" | "linked" | "open";
  */
 export async function settleOpenSetup(
 	row: PendingOrgSetupRow,
-	opts: { sub?: Stripe.Subscription; orgId?: string | null } = {},
+	opts: { sub?: Stripe.Subscription; orgId?: string | null; linkRefuses?: boolean } = {},
 ): Promise<SetupCloserVerdict> {
 	if (row.closed_at) return "closed";
 	if (row.linked_at) return "linked";
@@ -788,24 +1060,23 @@ export async function settleOpenSetup(
 		// Read BEFORE the write: a failed read throws with nothing written (fail closed).
 		const firstPayment = await readFirstPayment(sub);
 		const closed = await closePendingOrgSetup({ subscriptionId: row.subscription_id, reason: "ended" });
-		if (closed) {
-			logBillingEvent("billing.pending_org_setup.closed", {
-				subscription_id: row.subscription_id,
-				user_id: row.user_id,
-				org_id: closed.created_org_id,
-				closed_reason: "ended",
-				x_read: sub.status,
-				first_payment: firstPayment,
+		if (!closed) return unclosedVerdict(row.subscription_id);
+		logBillingEvent("billing.pending_org_setup.closed", {
+			subscription_id: row.subscription_id,
+			user_id: row.user_id,
+			org_id: closed.created_org_id,
+			closed_reason: "ended",
+			x_read: sub.status,
+			first_payment: firstPayment,
+		});
+		if (firstPayment !== "never_paid") {
+			await alertPaymentNeedsSupport({
+				subscriptionId: sub.id,
+				customerId,
+				paymentIntentId: null,
+				context: "setup_closed",
+				detail: `it reads ${sub.status} and its first payment is not proven unmoved, so money may have been taken for a team setup nobody will finish. Nothing was refunded automatically; check the payment and refund it by hand if it was taken.`,
 			});
-			if (firstPayment !== "never_paid") {
-				await alertPaymentNeedsSupport({
-					subscriptionId: sub.id,
-					customerId,
-					paymentIntentId: null,
-					context: "setup_closed",
-					detail: `it reads ${sub.status} and its first payment is not proven unmoved, so money may have been taken for a team setup nobody will finish. Nothing was refunded automatically; check the payment and refund it by hand if it was taken.`,
-				});
-			}
 		}
 		return "closed";
 	}
@@ -836,6 +1107,7 @@ export async function settleOpenSetup(
 		return "linked";
 	}
 	if (billing?.stripeSubscriptionId && LIVE_BILLING_STATUSES.has(billing.status)) {
+		if (opts.linkRefuses) return "open";
 		const closed = await closePendingOrgSetup({
 			subscriptionId: row.subscription_id,
 			reason: "org_has_plan",
@@ -858,7 +1130,7 @@ export async function settleOpenSetup(
 				detail: `it names team ${orgId}, whose billing row holds another live subscription (${billing.stripeSubscriptionId}), so it was not linked and keeps renewing beside it. Refund it, or move it to the right team.`,
 			});
 		}
-		return "closed";
+		return closed ? "closed" : unclosedVerdict(row.subscription_id);
 	}
 	return "open";
 }

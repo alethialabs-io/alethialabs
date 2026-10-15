@@ -50,6 +50,18 @@ updates:
       ai-sdk:
         patterns: ["ai", "@ai-sdk/*"]
         update-types: [minor, patch]
+      # postgres (postgres-js) is pinned by patches/postgres@3.4.9.patch (root package.json
+      # `pnpm.patchedDependencies`, #6028, #6041, #6060). A patch keyed on an exact version matches
+      # nothing after a bump, and pnpm then refuses to install (ERR_PNPM_UNUSED_PATCH). In its own group
+      # that red holds back only this PR, not every other minor/patch update. To land it: check whether
+      # the new release contains ALL THREE fixes the patch carries, porsager/postgres#1209 (nextWrite on
+      # a closed socket), porsager/postgres#1248 (begin() refusing statements after its session closed)
+      # and porsager/postgres#1246 (an error-close rejecting the queries still on the connection).
+      # Drop the patch only when all three are released; otherwise re-roll the missing hunks with
+      # `pnpm patch`. Like `ai-sdk`, this group must stay ABOVE `npm-minor-patch`.
+      postgres:
+        patterns: ["postgres"]
+        update-types: [minor, patch]
       npm-minor-patch:
         update-types: [minor, patch]
 
@@ -58,6 +70,11 @@ updates:
       - /apps/cli
       - /apps/runner
       - /packages/core
+      # test/e2e is the fourth go.work module and `replace`s packages/core with ../../packages/core,
+      # so a bump that moves core's requirements must move test/e2e/go.mod and go.sum in the same
+      # PR, or CI's GOWORK=off tidy check fails. scripts/ci/check-dependabot-gomod.mjs fails when a
+      # go.work `use` entry is missing from this list.
+      - /test/e2e
     target-branch: dev
     schedule:
       interval: weekly

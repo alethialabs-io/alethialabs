@@ -1571,6 +1571,7 @@ func TestEveryArgoConvergenceEntryPointIsSilentWithoutTheEnv(t *testing.T) {
 // on a rename.
 func TestOnlyOneArgoConvergenceLoop(t *testing.T) {
 	fset := token.NewFileSet()
+	//nolint:staticcheck // SA1019: ParseDir ignores build tags, deliberately: a loop behind a //go:build tag must not escape the scan.
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
 		// Non-test sources ONLY, and build tags deliberately ignored: a loop hidden behind
 		// `//go:build e2e_t2` is exactly as capable of losing the counts as one in plain sight,

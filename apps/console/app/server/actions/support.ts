@@ -444,17 +444,3 @@ export async function closeCase(id: string): Promise<void> {
 	}
 	emitCaseEvent(orgId, "closed", { caseId: id, caseNumber, subject, url });
 }
-
-/** Advances the caller's read watermark for a case (unread badge clearing). */
-export async function markCaseRead(id: string): Promise<void> {
-	const actor = await authorizeQuiet("view", { type: "support_case", id });
-	await withSupportScope(actor, async (tx) => {
-		await tx
-			.insert(supportCaseReads)
-			.values({ case_id: id, user_id: actor.userId, last_read_at: new Date() })
-			.onConflictDoUpdate({
-				target: [supportCaseReads.case_id, supportCaseReads.user_id],
-				set: { last_read_at: new Date() },
-			});
-	});
-}

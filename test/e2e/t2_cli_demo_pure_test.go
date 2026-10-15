@@ -66,7 +66,7 @@ func TestCLIDemoGapsAndCeilingsAreFiled(t *testing.T) {
 			gaps++
 		case CloudManual:
 			ceilings++
-		default:
+		case CLIDriven, ConsoleOnly:
 			continue
 		}
 		if !strings.HasPrefix(s.Issue, "#") || len(s.Issue) < 3 {

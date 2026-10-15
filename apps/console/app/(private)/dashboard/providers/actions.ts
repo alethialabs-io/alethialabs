@@ -21,12 +21,6 @@ export async function getAwsConnectionStatus(): Promise<AwsConnectionStatus> {
 	return conn.getStatus(actor, "aws");
 }
 
-/** Lists every connected AWS account for the org (multi-account). */
-export async function listAwsIdentities(): Promise<conn.ConnectionStatus[]> {
-	const actor = await currentActor();
-	return conn.listIdentities(actor, "aws");
-}
-
 /**
  * Gets or creates a pending AWS identity and returns its id (manage-gated, not activity-logged — this only
  * seeds the connect sheet). AWS is now keyless via DIRECT OIDC: the customer's role trusts the Alethia

@@ -206,21 +206,21 @@ func TestRegistryDigestResolver(t *testing.T) {
 	var srv *httptest.Server
 	var lieDigest bool
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/token":
+		switch r.URL.Path {
+		case "/token":
 			if r.URL.Query().Get("scope") != "repository:kserve/charts/kserve:pull" || r.URL.Query().Get("service") != "reg" {
 				http.Error(w, "bad scope "+r.URL.RawQuery, http.StatusBadRequest)
 				return
 			}
 			_, _ = w.Write([]byte(`{"token":"anon"}`))
-		case r.URL.Path == "/v2/kserve/charts/kserve/manifests/v0.15.2":
+		case "/v2/kserve/charts/kserve/manifests/v0.15.2":
 			if r.Header.Get("Authorization") != "Bearer anon" {
 				w.Header().Set("Www-Authenticate", `Bearer realm="`+srv.URL+`/token",service="reg",scope="repository:kserve/charts/kserve:pull"`)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
 			fallthrough
-		case r.URL.Path == "/mirror/kueue/charts/kueue/manifests/0.19.5":
+		case "/mirror/kueue/charts/kueue/manifests/0.19.5":
 			if !strings.Contains(r.Header.Get("Accept"), "application/vnd.oci.image.manifest.v1+json") {
 				http.Error(w, "no OCI accept", http.StatusNotAcceptable)
 				return
@@ -231,7 +231,7 @@ func TestRegistryDigestResolver(t *testing.T) {
 				w.Header().Set("Docker-Content-Digest", digest)
 			}
 			_, _ = w.Write(manifest)
-		case r.URL.Path == "/v2/kueue/charts/kueue/manifests/0.19.5":
+		case "/v2/kueue/charts/kueue/manifests/0.19.5":
 			http.Redirect(w, r, "/mirror/kueue/charts/kueue/manifests/0.19.5", http.StatusTemporaryRedirect)
 		default:
 			http.NotFound(w, r)

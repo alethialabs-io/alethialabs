@@ -72,11 +72,4 @@ export function getFleetProvider(): FleetProvider {
 	return globalThis.__alethiaFleetProvider;
 }
 
-/** For tests: install a specific provider (e.g. the fake). */
-export function setFleetProvider(p: FleetProvider): void {
-	globalThis.__alethiaFleetProvider = p;
-}
-
-/** @internal — exported for tests. */
-export { ManualFleetProvider };
 export type { CloudProvider };

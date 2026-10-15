@@ -2090,7 +2090,6 @@ jobs:
           ALETHIA_E2E_ACM_CERT: ${{ env.ALETHIA_E2E_MAX_CONFIG != '1' && vars.E2E_ACM_CERT || '' }}
           ALETHIA_E2E_ACM_CERT_ZONE_ID: ${{ vars.E2E_ACM_CERT_ZONE_ID }}
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
-          ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
           ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
           # ── Convergence budgets, so a "too slow" can be told apart from a "never". ──
           #

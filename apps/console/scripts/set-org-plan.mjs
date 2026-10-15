@@ -11,6 +11,13 @@
 //   pnpm -C apps/console run org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]
 //   pnpm -C apps/console run org:set-plan <org-slug> enterprise --perpetual
 //
+// A grant is a row with no Stripe subscription (ADR 0004 D5). Like setOrgPlan, this tool writes
+// `stripe_subscription_id = NULL` on the row, so an org that once cancelled self-serve Team is not
+// read as a Stripe subscriber (false `past_due` copy, and a time-limited grant that never lapses
+// because isManualGrantExpired() sees a subscription id). `stripe_customer_id` is deliberately kept:
+// the double-plan checks read the org's Stripe customer, and nulling it would hide a subscription
+// still on that customer. `seats` is not touched.
+//
 // `active`/`trialing` grant the plan's entitlements; `community` (or --status none) resets.
 //
 // `--perpetual` writes a NULL `current_period_end` — the open-ended grant that
@@ -75,7 +82,7 @@ async function main() {
 	const months = Number(arg("months", "12"));
 
 	if (!slug || !PLANS.has(plan)) {
-		console.error("Usage: org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]");
+		console.error("Usage: org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]\n  Clears stripe_subscription_id on the org's billing row (a grant has no subscription link); stripe_customer_id is kept.");
 		process.exit(1);
 	}
 	if (perpetual && plan === "community") {
@@ -119,6 +126,7 @@ async function main() {
 				status = excluded.status,
 				current_period_start = excluded.current_period_start,
 				current_period_end = excluded.current_period_end,
+				stripe_subscription_id = null,
 				updated_at = now()
 		`;
 		console.log(

@@ -16,8 +16,12 @@ import {
 
 /**
  * Enqueue DETECT_DRIFT jobs for every environment whose last drift check is older
- * than its tier cadence (elench). Runs at service level (no user session) — hit by
- * a platform cron via the internal sweep route. The drift snapshot is copied from
+ * than its tier cadence (elench). Runs at service level (no user session). Its driver is
+ * the reconcile loop's "drift-schedule" reconciler (lib/reconcile/loop.ts, booted from
+ * instrumentation.ts), which calls it in-process every 5 minutes; the sweep itself then
+ * self-gates each env by its tier cadence. The internal sweep route
+ * (/api/internal/drift/sweep) is an optional external door that nothing calls today —
+ * no platform cron drives this. The drift snapshot is copied from
  * the environment's latest successful DEPLOY job, so a refresh-only plan reads the
  * exact provisioned config/state. Selection is the unit-tested `selectDueForDrift`.
  *

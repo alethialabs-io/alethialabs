@@ -50,6 +50,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -147,6 +148,14 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
 
+	// The runner's helm --wait for ArgoCD must expire INSIDE the T1 wait, so a hung install ends
+	// the job FAILED with helm's own error instead of timing T1 out as PROCESSING (#5947).
+	wait := t1WaitTimeout()
+	argoInstall := t1ArgoInstallTimeout()
+	if err := t1ArgoBudgetFits(argoInstall, wait); err != nil {
+		t.Fatal(err)
+	}
+
 	// ── Real control plane over real Postgres. ──
 	cp, err := NewControlPlane(ctx, dbURL)
 	if err != nil {
@@ -185,6 +194,23 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 			t.Log("teardown: cluster destroyed")
 		}
 	})
+	// ArgoCD DIAGNOSIS on failure — registered AFTER the teardown so LIFO runs it FIRST, while the
+	// kind cluster still exists. It reads the cluster over its own kind kubeconfig, so it works
+	// whether or not the runner got as far as writing one.
+	diagDir := t.TempDir()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer dcancel()
+		t.Logf("──── argocd namespace on failure ────\n%s", dumpT1ArgoDiagnosis(dctx, clusterName, diagDir))
+	})
+
+	// ── Load ArgoCD's images into kind the moment the runner creates it (#6044), so the kubelet
+	// never pulls them from a registry that rate-limits anonymous pulls. Started BEFORE the runner,
+	// and collected after the job goes terminal. ──
+	preload := startT1ImagePreload(t, ctx, clusterName)
 
 	// ── Launch the REAL runner process pointed at the control plane. ──
 	var runnerOut bytes.Buffer
@@ -199,6 +225,7 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 		"ALETHIA_RUNNER_OPERATOR=self",
 		"ALETHIA_RECEIPT_SIGNING_KEY="+base64.StdEncoding.EncodeToString(priv),
 		"ALETHIA_CLUSTER_READY_TIMEOUT="+clusterReadyTimeout(),
+		t1ArgoInstallTimeoutEnv+"="+argoInstall.String(),
 		"ALETHIA_ARGOCD_TEMPLATES_DIR="+filepath.Join(root, "infra", "templates", "argocd"),
 	)
 	var runnerSink io.Writer = &runnerOut
@@ -222,7 +249,8 @@ func TestT1RealRunnerKindProvisioning(t *testing.T) {
 	})
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
-	status, err := cp.WaitTerminal(ctx, jobID, waitTimeout())
+	status, err := cp.WaitTerminal(ctx, jobID, wait)
+	preload.finish(t, err == nil && status == "SUCCESS")
 	if err != nil {
 		t.Fatalf("waiting for job to finish: %v\n──── runner output ────\n%s", err, runnerOut.String())
 	}
@@ -392,17 +420,6 @@ func clusterReadyTimeout() string {
 	return "3m"
 }
 
-// waitTimeout bounds how long the test waits for the job to finish (build the kind
-// image pull + apply + spine + argo). Generous but finite.
-func waitTimeout() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_T1_WAIT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return 8 * time.Minute
-}
-
 func shortHex(t *testing.T) string {
 	t.Helper()
 	b := make([]byte, 4)
@@ -419,10 +436,151 @@ func truncate(s string, n int) string {
 	return s[:n] + "…(truncated)"
 }
 
+// t1ImagePreload is the running PreloadIntoKind goroutine and the way to collect its result.
+type t1ImagePreload struct {
+	images []string
+	done   chan error
+	cancel context.CancelFunc
+}
+
+// startT1ImagePreload reads the image list the workflow pulled (T1PreloadImagesEnv) and starts
+// loading it into clusterName in the background. In the merge-queue job (ALETHIA_E2E_T1_REQUIRE) a
+// missing or unreadable list is a hard FAIL, so the pre-load cannot silently drop out of the
+// workflow; elsewhere it is skipped and the kubelet pulls as it always did.
+func startT1ImagePreload(t *testing.T, ctx context.Context, clusterName string) *t1ImagePreload {
+	t.Helper()
+	p := &t1ImagePreload{}
+	path := strings.TrimSpace(os.Getenv(T1PreloadImagesEnv))
+	if path == "" {
+		if isTruthy(os.Getenv("ALETHIA_E2E_T1_REQUIRE")) {
+			t.Fatalf("%s is unset: the workflow must pull ArgoCD's images for T1 to load into kind (#6044)", T1PreloadImagesEnv)
+		}
+		t.Logf("%s unset — not pre-loading ArgoCD's images; the kubelet will pull them", T1PreloadImagesEnv)
+		return p
+	}
+	images, err := ReadImageList(path)
+	if err != nil {
+		t.Fatalf("read the pre-load image list: %v", err)
+	}
+	p.images = images
+	p.done = make(chan error, 1)
+	lctx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		p.done <- PreloadIntoKind(lctx, clusterName, images, ExecKind,
+			PreloadOptions{Poll: 5 * time.Second, MaxFailures: 10}, t.Logf)
+	}()
+	// A t.Fatal between here and finish would otherwise leave the goroutine logging into a test that
+	// has completed. Registered after the teardown, so it runs BEFORE it: loading stops before the
+	// cluster is deleted.
+	t.Cleanup(func() {
+		cancel()
+		<-exited
+	})
+	return p
+}
+
+// finish collects the pre-load's result. After a SUCCESSFUL job the load is given up to three more
+// minutes, and a failed or unfinished load is a WARNING, never a failure: the job passing already
+// proved the provisioning, and a load that cannot work on this runner (see t1PreloadWarning) must
+// not turn every queue build red. After a failed job the load is stopped at once and only logged,
+// because the job's own failure is the one to report.
+func (p *t1ImagePreload) finish(t *testing.T, jobSucceeded bool) {
+	t.Helper()
+	if p.done == nil {
+		return
+	}
+	defer p.cancel()
+	if !jobSucceeded {
+		p.cancel()
+		t.Logf("pre-load of %d image(s) after a failed job: %v", len(p.images), <-p.done)
+		return
+	}
+	var err error
+	select {
+	case err = <-p.done:
+	case <-time.After(3 * time.Minute):
+		p.cancel()
+		err = fmt.Errorf("not finished 3m after the job succeeded: %w", <-p.done)
+	}
+	if err != nil {
+		msg := t1PreloadWarning(p.images, err)
+		t.Log(msg)
+		// Straight to stdout, unindented, so Actions reads it as a workflow command; t.Log indents.
+		fmt.Printf("::warning title=T1 image pre-load did not complete (#6044)::%s\n", strings.ReplaceAll(msg, "\n", " "))
+	}
+}
+
+// t1PreloadWarning says which images did not reach kind and the likeliest reason. kind v0.30 imports
+// with `ctr images import --all-platforms`; when the runner's Docker uses the containerd image store,
+// `docker save` of a multi-platform image references other platforms' blobs it never pulled, and
+// every import fails the same way.
+func t1PreloadWarning(images []string, err error) string {
+	return fmt.Sprintf("ArgoCD's images were NOT loaded into kind, so the kubelet pulled them itself "+
+		"(the anonymous ECR Public exposure is back for this run): %s. Error: %v. If every attempt failed "+
+		"in `ctr images import`, the likely cause is Docker's containerd image store (check `docker info "+
+		"-f '{{.DriverStatus}}'` for io.containerd.snapshotter) against kind's `ctr images import "+
+		"--all-platforms`.", strings.Join(images, ", "), err)
+}
+
 // testLogWriter pipes provisioner teardown output into the test log.
 type testLogWriter struct{ t *testing.T }
 
 func (w testLogWriter) Write(p []byte) (int, error) {
 	w.t.Logf("%s", bytes.TrimRight(p, "\n"))
 	return len(p), nil
+}
+
+// dumpT1ArgoDiagnosis fetches the kind cluster's kubeconfig independently of the runner, writes it
+// under dir, and renders the argocd namespace's pods and events plus a describe of every non-Ready
+// pod. Every step's failure is rendered in place rather than returned, so a partial dump still
+// reaches the log.
+func dumpT1ArgoDiagnosis(ctx context.Context, clusterName, dir string) string {
+	kubeconfig, err := KindKubeconfig(ctx, clusterName)
+	if err != nil {
+		return fmt.Sprintf("argocd diagnosis unavailable: %v", err)
+	}
+	kc := filepath.Join(dir, "kubeconfig-argocd-diag")
+	if err := os.WriteFile(kc, kubeconfig, 0o600); err != nil {
+		return fmt.Sprintf("argocd diagnosis unavailable: write kubeconfig: %v", err)
+	}
+	var b strings.Builder
+	section := func(title string, out []byte, err error) {
+		fmt.Fprintf(&b, "── kubectl %s ──\n", title)
+		if len(out) > 0 {
+			b.Write(out)
+			if !strings.HasSuffix(string(out), "\n") {
+				b.WriteString("\n")
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(&b, "(error: %v)\n", err)
+		}
+	}
+	get := t1ArgoGetArgv()
+	out, err := kubectlRead(ctx, 60*time.Second, kc, get...)
+	section(strings.Join(get, " "), out, err)
+
+	podsJSON, err := kubectlRead(ctx, 60*time.Second, kc, t1ArgoPodsJSONArgv()...)
+	if err != nil {
+		fmt.Fprintf(&b, "(cannot list argocd pods as JSON: %v)\n", err)
+		return b.String()
+	}
+	names, err := notReadyPodNames(podsJSON)
+	if err != nil {
+		fmt.Fprintf(&b, "(cannot decode argocd pods: %v)\n", err)
+		return b.String()
+	}
+	if len(names) == 0 {
+		b.WriteString("every non-terminal argocd pod is Ready\n")
+		return b.String()
+	}
+	for _, name := range names {
+		desc := t1ArgoDescribeArgv(name)
+		out, err := kubectlRead(ctx, 60*time.Second, kc, desc...)
+		section(strings.Join(desc, " "), out, err)
+	}
+	return b.String()
 }

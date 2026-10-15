@@ -20,7 +20,6 @@ import {
 	mergeScansToFormData,
 	type ScanInput,
 } from "@/lib/scanner/to-project";
-import type { RepoDigest } from "@/types/jsonb.types";
 
 /** Narrow a free-form provider string to a known slug (no casts). */
 function toSlug(p: string): CloudProviderSlug {
@@ -72,32 +71,6 @@ export async function scanRepo(repoUrl: string, opts?: { ref?: string }) {
 	});
 	notifyScaler();
 	return { jobId };
-}
-
-/** Read a scan job's status + the digest the runner produced (null until done). */
-export async function getScanDigest(jobId: string): Promise<{
-	status: string;
-	digest: RepoDigest | null;
-	error: string | null;
-}> {
-	const actor = await currentActor();
-	return withActorScope(actor, async (tx) => {
-		const [job] = await tx
-			.select({
-				status: jobs.status,
-				execution_metadata: jobs.execution_metadata,
-				error_message: jobs.error_message,
-			})
-			.from(jobs)
-			.where(eq(jobs.id, jobId))
-			.limit(1);
-		if (!job) return { status: "NOT_FOUND", digest: null, error: "Job not found" };
-		return {
-			status: job.status,
-			digest: job.execution_metadata?.repo_digest ?? null,
-			error: job.error_message,
-		};
-	});
 }
 
 /**

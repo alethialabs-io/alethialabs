@@ -535,6 +535,42 @@ func TestMintKubeconfig_ConsoleRefusalsEndCleanly(t *testing.T) {
 	}
 }
 
+// TestMintKubeconfig_OwnershipLostAtResultPostPostsNoTerminal is #5945 through the real dispatcher:
+// the console answers the result post 403 (the job left this runner between its gate and its write),
+// mapped by the production mintStatusError. The job must end with ErrJobNotOwned and post NO terminal
+// status — not the SUCCESS a 409 ("the mint already has a result") would be followed by.
+func TestMintKubeconfig_OwnershipLostAtResultPostPostsNoTerminal(t *testing.T) {
+	f := newMintFixture(t, types.KubeconfigMintTierReadonly, types.KubeconfigMintShapeExec, "x")
+	f.api.postErr = mintStatusError("post kubeconfig mint result", http.StatusForbidden)
+	_, err := runMintJob(t, f, mintSnapshot("aws"))
+	if !errors.Is(err, ErrJobNotOwned) {
+		t.Fatalf("a 403 from the result post must end with ErrJobNotOwned, got %v", err)
+	}
+	if len(f.api.results()) != 1 {
+		t.Fatalf("the result must have been posted once, got %d", len(f.api.results()))
+	}
+	for _, u := range f.api.getStatusUpdates() {
+		if u.status == "SUCCESS" || u.status == "FAILED" || u.status == "CANCELLED" {
+			t.Fatalf("ownership lost at the result post must post no terminal status, got %q", u.status)
+		}
+	}
+
+	// The contrast that makes the assertion above meaningful: a 409 is a settled mint, which ends
+	// cleanly and IS followed by the (harmless, same-status) SUCCESS post.
+	f = newMintFixture(t, types.KubeconfigMintTierReadonly, types.KubeconfigMintShapeExec, "x")
+	f.api.postErr = mintStatusError("post kubeconfig mint result", http.StatusConflict)
+	if _, err := runMintJob(t, f, mintSnapshot("aws")); err != nil {
+		t.Fatalf("a 409 must end cleanly, got %v", err)
+	}
+	var sawSuccess bool
+	for _, u := range f.api.getStatusUpdates() {
+		sawSuccess = sawSuccess || u.status == "SUCCESS"
+	}
+	if !sawSuccess {
+		t.Fatal("a settled mint (409) is expected to be followed by the SUCCESS post")
+	}
+}
+
 // TestDescribeMintCause_NeverQuotesTheError pins the operational log's description of a cause: a
 // type or a status code, never the text.
 func TestDescribeMintCause_NeverQuotesTheError(t *testing.T) {

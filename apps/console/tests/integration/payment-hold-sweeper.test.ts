@@ -18,26 +18,172 @@
 //        second run writes nothing; it refuses beside an open setup whose subscription may still go
 //        live, and while the payer's lease is busy.
 //   C58  `reconcile --backfill` holds only the never-live checkouts (B1–B6), refunds only a payment that
-//        landed after the end, lists the rest without writing, and a re-run writes nothing new.
+//        landed after the end, lists the rest without writing, and a re-run writes nothing new. ADR 0004
+//        C43 (§9 step 5): B1 covers org-plan subscriptions too, so a linked create-a-team one is held as
+//        an `org_plan` hold of its org.
+//   C6   (ADR 0004 D1 rule 5) a due `org_plan` hold is advanced under `org-plan:<O>`; with that lease
+//        held, the hold is skipped as busy and left unchanged.
+//   C32  (ADR 0004 D8, the sender half) an `org_plan` hold in `refund_pending` is mailed once, to its
+//        Stripe customer's email, in the org-plan copy (#6011); a `released(adopted)` `org_plan` hold is mailed nothing, even beside an
+//        open create-a-team setup with no org naming its subscription.
+//   C3   (ADR 0004, the link's half) the link's refusal beside a live Y meets an `org_plan` hold on X whose
+//        payer key is the creator's id: it is not taken for the creator's own hold — no clause claims its
+//        alert, and the refusal names no hold.
+//   C91  (S9, §5.6 "When a hold ends") T2o adopts a `needs_operator` hold on a live X and the visit runs
+//        the link's core: with an org, X is linked (`linked_at`, the row names X); with no org, or a
+//        creator who lost `manage_billing`, the setup stays open. Beside a live Y the re-link opens a
+//        `link_refused` hold that T2o never adopts (C80). `release` of a live X links it first.
+//   #6043 the re-link's refusal after the sync (X's metadata already names O) whose lease is lost before
+//        the hold opens: the lost lease is thrown, no hold is open, and the operator is alerted once.
+//   C112 (#6078) a re-link that throws once is recorded (`attempts` 1, `last_error`, the 5-minute
+//        backoff), is not retried before its check is due, and the relink pass links X once it is — with
+//        no alert at all.
+//   C113 a re-link that keeps throwing is retried on the backoff schedule and gives up at the sixth
+//        attempt with ONE alert stamped in `alerted_at`, however many ticks follow and with two ticks
+//        overlapping.
+//   C114 the pass never retries a hold whose setup is already linked (no Stripe read), while an open
+//        setup's due hold beside it is linked.
+//   C115 a decided re-link (a creator without manage_billing) alerts ONCE across ticks and is not
+//        retried: the check is cleared and `alerted_at` stamped.
+//   C116 an adopted hold whose relink never ran (the release's own schedule, nothing recorded) is linked by
+//        the next tick's pass.
+//   C117 the pass never retries while an open hold names X: the adopted hold is left as it was.
+//   C118 an alert that reaches no channel stamps nothing; the check stays a day out, and the decision is
+//        made, and alerted, again then.
+//   C119 a relink that always loses its lease is counted as a failed attempt under a lease taken afresh,
+//        and the sixth gives up with ONE alert.
+//
+// The link's core reaches Stripe through the purchase client (`getPurchaseStripe`), faked here over
+// `linkWorld`; the sync applies X to the org's row with the real guarded write
+// (`applySubscriptionToBilling`); and the sessionless manage_billing check answers `linkWorld.allowed`.
 //
 // Every tick here is scoped to the test's own payer (`payerKey`), so no other file's rows are touched.
 
 import { randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+
+/** What the link's core reads and writes in Stripe, and whether the creator holds manage_billing. */
+const linkWorld = vi.hoisted(() => ({
+	subs: new Map<string, { id: string; status: string; customer: string; latest_invoice: string; metadata: Record<string, string> }>(),
+	updates: [] as string[],
+	allowed: true,
+	/** customer id → its Stripe email (C32's recipient). */
+	customerEmails: new Map<string, string>(),
+	/** Runs once at the start of the next sync, before it writes: the race a test stages (#6043). */
+	onSync: null as null | (() => Promise<void>),
+	/** How many of the next `subscriptions.retrieve` calls throw, as Stripe being down does (#6078). */
+	retrieveFailures: 0,
+	/** Every `subscriptions.retrieve` the link's core made. */
+	retrieves: [] as string[],
+	/** Runs at every `subscriptions.retrieve`, before it answers: the lease loss a test stages (#6078). */
+	onRetrieve: null as null | ((id: string) => Promise<void>),
+}));
+vi.mock("@/lib/billing/stripe", () => {
+	const client = {
+		subscriptions: {
+			retrieve: async (id: string) => {
+				linkWorld.retrieves.push(id);
+				await linkWorld.onRetrieve?.(id);
+				if (linkWorld.retrieveFailures > 0) {
+					linkWorld.retrieveFailures -= 1;
+					throw new Error("An error occurred with our connection to Stripe.");
+				}
+				const s = linkWorld.subs.get(id);
+				if (!s) throw Object.assign(new Error(`No such subscription: ${id}`), { code: "resource_missing" });
+				return { ...s, metadata: { ...s.metadata } };
+			},
+			update: async (id: string, params: { metadata: Record<string, string> }) => {
+				const s = linkWorld.subs.get(id);
+				if (!s) throw new Error(`No such subscription: ${id}`);
+				linkWorld.updates.push(`subscriptions.update:${id}`);
+				s.metadata = { ...s.metadata, ...params.metadata };
+				return { ...s, metadata: { ...s.metadata } };
+			},
+		},
+		customers: {
+			retrieve: async (id: string) => {
+				const owner = [...linkWorld.subs.values()].find((s) => s.customer === id)?.metadata.created_by;
+				return { id, deleted: false, email: linkWorld.customerEmails.get(id) ?? null, metadata: { created_by: owner ?? "" } };
+			},
+			update: async (id: string) => {
+				linkWorld.updates.push(`customers.update:${id}`);
+				return { id };
+			},
+		},
+	};
+	return { getStripe: () => client, getPurchaseStripe: () => client, STRIPE_REQUEST_TIMEOUT_MS: 20_000, STRIPE_MAX_NETWORK_RETRIES: 1 };
+});
+vi.mock("@/lib/billing/sync", async (importActual) => {
+	const actual = await importActual<typeof import("@/lib/billing/sync")>();
+	// `applySubscriptionToBilling` is this file's own import (below), read when a sync runs, not here.
+	return {
+		...actual,
+		syncSubscriptionToBilling: async (sub: { id: string; status: string; customer: string; metadata: Record<string, string> }) => {
+			const race = linkWorld.onSync;
+			linkWorld.onSync = null;
+			await race?.();
+			const orgId = sub.metadata.organization_id;
+			if (!orgId) return "ignored";
+			const live = sub.status === "active" || sub.status === "trialing";
+			const applied = await applySubscriptionToBilling({
+				organizationId: orgId,
+				plan: live ? "team" : "community",
+				status: actual.mapStatus(sub.status),
+				stripeCustomerId: sub.customer,
+				stripeSubscriptionId: sub.id,
+				seats: null,
+				currentPeriodEnd: null,
+				eventAt: null,
+			});
+			return applied ? "applied" : "ignored";
+		},
+	};
+});
+// The Q3 email's transport: C32 runs the real sender (`deliverHoldNotice`) and reads who it mailed.
+vi.mock("@/lib/email/billing-email", async (importActual) => ({
+	...(await importActual<typeof import("@/lib/email/billing-email")>()),
+	sendPaymentHoldNoticeEmail: vi.fn(async () => undefined),
+	sendOrgPlanHoldNoticeEmail: vi.fn(async () => undefined),
+}));
+// The operator alert the link's core raises itself (`alertPaymentNeedsSupport`, not the sweep's `alert`
+// dep): recorded here, and answering false as the real one does with no operator org configured.
+vi.mock("@/lib/billing/payment-alert", () => ({ alertPaymentNeedsSupport: vi.fn(async () => false) }));
+vi.mock("@/lib/auth/scope", () => ({
+	getActiveScope: async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId }),
+}));
+vi.mock("@/lib/authz", async (importActual) => {
+	const actual = await importActual<typeof import("@/lib/authz")>();
+	return { ...actual, getPdp: () => ({ can: async () => ({ allowed: linkWorld.allowed }) }) };
+});
+
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
 import * as store from "@/lib/billing/payment-holds/store";
-import { nudgeHold, openHold, payerLeaseKey } from "@/lib/billing/payment-holds/store";
+import { deliverHoldNotice } from "@/lib/billing/payment-holds/emails";
+import { nudgeHold, openHold } from "@/lib/billing/payment-holds/store";
+import { sendOrgPlanHoldNoticeEmail, sendPaymentHoldNoticeEmail } from "@/lib/email/billing-email";
 import * as sweeper from "@/lib/billing/payment-holds/sweeper";
 import { runPaymentHoldSweep, type SweepDeps } from "@/lib/billing/payment-holds/sweeper";
 import {
 	acquirePurchaseLease,
+	PurchaseLeaseLostError,
 	releasePurchaseLease,
 	tryAcquirePurchaseLease,
 } from "@/lib/billing/purchase-lease";
 import { getServiceDb } from "@/lib/db";
-import { type PaymentHoldRow, paymentHolds, pendingOrgSetups, purchaseLeases, user } from "@/lib/db/schema";
-import { releaseHoldCommand, runBackfill, type ServerDeps } from "@/scripts/payment-holds";
+import { applySubscriptionToBilling } from "@/lib/billing/queries";
+import {
+	member,
+	organization,
+	organizationBilling,
+	type PaymentHoldRow,
+	paymentHolds,
+	pendingOrgSetups,
+	purchaseLeases,
+	user,
+} from "@/lib/db/schema";
+import { listLiveOrgHasPlanClosures, releaseHoldCommand, runBackfill, type ServerDeps } from "@/scripts/payment-holds";
 import { describeIfDb } from "./db";
 
 // ── A fake Stripe account: the machine's reads and writes, and the backfill's listing ───────────────
@@ -214,6 +360,16 @@ const payers: string[] = [];
 const subscriptions: string[] = [];
 const users: string[] = [];
 
+/** A create-a-team payer's lease key, written out rather than derived from the code under test. */
+function payerLeaseKey(payer: string): string {
+	return `user:${payer}`;
+}
+
+/** An org's org-plan lease key (ADR 0004 §2 "Lease key"), written out for the same reason. */
+function orgPlanLeaseKey(orgId: string): string {
+	return `org-plan:${orgId}`;
+}
+
 /** A fresh payer id. */
 function newPayer(): string {
 	const payer = randomUUID();
@@ -257,6 +413,68 @@ async function hold(payer: string, sub: string, over: Partial<typeof paymentHold
 	const [row] = await getServiceDb().update(paymentHolds).set(over).where(eq(paymentHolds.id, opened.hold.id)).returning();
 	if (!row) throw new Error("fixture: the hold is gone");
 	return row;
+}
+
+/** Opens an `org_plan` hold for the org `org` on `sub` (E0, `closing`), under its org-plan lease. */
+async function orgPlanHold(org: string, sub: string, over: Partial<typeof paymentHolds.$inferInsert> = {}): Promise<PaymentHoldRow> {
+	const lease = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+	if (!lease) throw new Error("fixture: the org's lease was not free");
+	const opened = await openHold(lease, {
+		scope: "org_plan",
+		subscriptionId: sub,
+		customerId: `cus_${sub}`,
+		payerKey: org,
+		invoiceId: `in_${sub}`,
+		state: "closing",
+		nextCheckAt: new Date(Date.now() - 1000),
+		openedBy: "purchase",
+	});
+	await releasePurchaseLease(lease);
+	if (opened.kind !== "opened") throw new Error(`fixture: the open returned ${opened.kind}`);
+	if (Object.keys(over).length === 0) return opened.hold;
+	const [row] = await getServiceDb().update(paymentHolds).set(over).where(eq(paymentHolds.id, opened.hold.id)).returning();
+	if (!row) throw new Error("fixture: the hold is gone");
+	return row;
+}
+
+const orgs: string[] = [];
+
+/** A team org owned by `owner` (a setup's `created_org_id` needs one), cleaned up after the file. */
+async function newOrg(owner: string): Promise<string> {
+	const id = randomUUID();
+	orgs.push(id);
+	await getServiceDb().insert(organization).values({ id, name: "Relinked", slug: `it-relink-${id.slice(0, 8)}` });
+	await getServiceDb().insert(member).values({ organizationId: id, userId: owner, role: "owner" });
+	return id;
+}
+
+/** Records `payer`'s OPEN create-a-team setup for `sub`, created for the team `orgId`. */
+async function recordSetupWithOrg(payer: string, sub: string, orgId: string): Promise<void> {
+	await getServiceDb().insert(pendingOrgSetups).values({
+		user_id: payer,
+		subscription_id: sub,
+		customer_id: "cus_it_sweep",
+		intended_name: "Held",
+		intended_slug: `held-${sub.slice(-8)}`,
+		created_org_id: orgId,
+	});
+}
+
+/** The setup of `sub` as the database has it now. */
+async function setupOf(sub: string) {
+	const [row] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.subscription_id, sub));
+	if (!row) throw new Error(`no setup names ${sub}`);
+	return row;
+}
+
+/**
+ * Puts X, live and minted by `payer`, in both fakes: the machine's (status only) and the core's. X's
+ * customer is its own, as a create-a-team customer is: the link syncs X to its team's row, and
+ * `organization_billing.stripe_customer_id` is unique across teams.
+ */
+function liveX(stripe: FakeStripe, payer: string, sub: string): void {
+	stripe.add({ id: sub, status: "active", customer: `cus_${sub}`, metadata: { created_by: payer } }, { status: "paid", pis: [] });
+	linkWorld.subs.set(sub, { id: sub, status: "active", customer: `cus_${sub}`, latest_invoice: `in_${sub}`, metadata: { created_by: payer } });
 }
 
 /** Records `payer`'s create-a-team setup for `sub`, open unless `linkedAt` is given. */
@@ -316,6 +534,12 @@ afterAll(async () => {
 	if (payers.length) {
 		await db.delete(paymentHolds).where(inArray(paymentHolds.payer_key, payers));
 		await db.delete(purchaseLeases).where(inArray(purchaseLeases.key, payers.map(payerLeaseKey)));
+		await db.delete(purchaseLeases).where(inArray(purchaseLeases.key, payers.map(orgPlanLeaseKey)));
+	}
+	if (orgs.length) {
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.created_org_id, orgs));
+		await db.delete(organizationBilling).where(inArray(organizationBilling.organizationId, orgs));
+		await db.delete(organization).where(inArray(organization.id, orgs));
 	}
 	if (users.length) await db.delete(user).where(inArray(user.id, users));
 });
@@ -514,6 +738,102 @@ describeIfDb("payment-hold sweeper — C95: the Q3 emails go out at most once pe
 	});
 });
 
+// ── ADR 0004 D1 rule 5 and D8: the sweeper and the sender per scope ─────────────────────────────────
+
+describeIfDb("payment-hold sweeper — ADR 0004 C6: an org_plan hold is advanced under org-plan:<O>", () => {
+	it("advances a due org_plan hold under the org's lease; with that lease held it is busy and unchanged", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const sub = newSub();
+		stripe.add({ id: sub, customer: `cus_${sub}`, metadata: { organization_id: org } });
+		const h = await orgPlanHold(org, sub);
+
+		const held = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+		if (!held) throw new Error("fixture: the org's lease was not free");
+		try {
+			expect(await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: depsOver(stripe) })).toMatchObject({
+				due: 1,
+				advanced: 0,
+				busy: 1,
+			});
+			expect(await read(h.id)).toMatchObject({ state: "closing", version: 0 });
+			expect(stripe.writesFor(sub)).toEqual([]);
+		} finally {
+			await releasePurchaseLease(held);
+		}
+
+		// A user lease keyed on the same id is no lease of this hold's: the tick takes the org's.
+		const userKeyed = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userKeyed) throw new Error("fixture: the user-keyed lease was not free");
+		try {
+			expect(await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: depsOver(stripe) })).toMatchObject({
+				due: 1,
+				advanced: 1,
+				released: 1,
+			});
+		} finally {
+			await releasePurchaseLease(userKeyed);
+		}
+		expect(await read(h.id)).toMatchObject({ state: "released", release_reason: "voided_unpaid" });
+		expect(stripe.writesFor(sub)).toEqual([
+			`invoices.voidInvoice:in_${sub}`,
+			`subscriptions.cancel:${sub}:alethia:checkout_closed:${h.id}`,
+		]);
+	});
+
+	it("a scoped tick selects only that scope's holds", async () => {
+		const stripe = new FakeStripe();
+		const shared = newPayer();
+		const orgSub = newSub();
+		const userSub = newSub();
+		stripe.add({ id: orgSub, customer: `cus_${orgSub}`, metadata: { organization_id: shared } });
+		stripe.add({ id: userSub });
+		const orgHold = await orgPlanHold(shared, orgSub);
+		const userHold = await hold(shared, userSub);
+		expect(await runPaymentHoldSweep({ scope: "new_org", payerKey: shared, deps: depsOver(stripe) })).toMatchObject({ due: 1, released: 1 });
+		expect(await read(userHold.id)).toMatchObject({ state: "released" });
+		expect(await read(orgHold.id)).toMatchObject({ state: "closing", version: 0 });
+	});
+});
+
+describeIfDb("payment-hold sweeper — ADR 0004 C32, the sender half: an org_plan notice goes to the customer's email", () => {
+	afterEach(() => {
+		vi.mocked(sendPaymentHoldNoticeEmail).mockClear();
+		vi.mocked(sendOrgPlanHoldNoticeEmail).mockClear();
+		linkWorld.customerEmails.clear();
+	});
+
+	/** Sweep deps that send through the real sender. */
+	const realSender = (stripe: FakeStripe): SweepDeps => ({ ...depsOver(stripe), deliver: deliverHoldNotice });
+
+	it("refund_pending is mailed ONCE, to the Stripe customer's email, in the org-plan copy", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const sub = newSub();
+		linkWorld.customerEmails.set(`cus_${sub}`, "billing@team.example");
+		const h = await orgPlanHold(org, sub, { state: "refund_pending", next_check_at: new Date(Date.now() + HOUR) });
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(1);
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
+		expect(vi.mocked(sendOrgPlanHoldNoticeEmail).mock.calls).toEqual([[{ to: "billing@team.example", notice: "refund_pending" }]]);
+		expect(sendPaymentHoldNoticeEmail).not.toHaveBeenCalled();
+		expect(await read(h.id)).toMatchObject({ notified_state: "refund_pending" });
+	});
+
+	it("released(adopted) is mailed nothing, even beside an open setup with no org naming its subscription", async () => {
+		const stripe = new FakeStripe();
+		const org = newPayer();
+		const creator = await newUser();
+		const sub = newSub();
+		linkWorld.customerEmails.set(`cus_${sub}`, "billing@team.example");
+		await recordSetup(creator, sub);
+		const h = await orgPlanHold(org, sub, { state: "released", release_reason: "adopted", released_at: new Date(), next_check_at: null });
+		expect((await runPaymentHoldSweep({ scope: "org_plan", payerKey: org, deps: realSender(stripe) })).notices).toBe(0);
+		expect(sendPaymentHoldNoticeEmail).not.toHaveBeenCalled();
+		expect(sendOrgPlanHoldNoticeEmail).not.toHaveBeenCalled();
+		expect(await read(h.id)).toMatchObject({ notified_state: null });
+	});
+});
+
 // ── C19: the operator's release (T16) ───────────────────────────────────────────────────────────────
 
 /** The real server modules over `stripe`, with a short lease wait so a busy lease is refused quickly. */
@@ -614,6 +934,540 @@ describeIfDb("payment-holds release — C19: T16, audited", () => {
 	});
 });
 
+// ── C91, C80: an adoption re-links its setup (§5.6 "When a hold ends", S9) ───────────────────────────
+
+describeIfDb("payment-hold sweeper — C91: an adopted hold's setup is re-linked under the same lease", () => {
+	afterEach(() => {
+		linkWorld.subs.clear();
+		linkWorld.updates = [];
+		linkWorld.allowed = true;
+	});
+
+	it("T2o adopts a needs_operator hold on a live X, and with an org the core links X: linked_at set, the row names X", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		const h = await hold(payer, sub, { state: "needs_operator" });
+
+		expect(await tick(payer, stripe)).toMatchObject({ advanced: 1, released: 1 });
+		expect(await read(h.id)).toMatchObject({ state: "released", release_reason: "adopted" });
+		expect(linkWorld.updates).toEqual([`customers.update:cus_${sub}`, `subscriptions.update:${sub}`]);
+		expect(linkWorld.subs.get(sub)?.metadata).toEqual({ created_by: payer, organization_id: orgId });
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: expect.any(Date) });
+		const [row] = await getServiceDb().select().from(organizationBilling).where(eq(organizationBilling.organizationId, orgId));
+		expect(row).toMatchObject({ stripeSubscriptionId: sub, status: "active" });
+	});
+
+	it("with no org the setup stays open and nothing is written to Stripe", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		liveX(stripe, payer, sub);
+		await recordSetup(payer, sub);
+		const h = await hold(payer, sub, { state: "needs_operator" });
+
+		expect(await tick(payer, stripe)).toMatchObject({ released: 1 });
+		expect(await read(h.id)).toMatchObject({ release_reason: "adopted" });
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+	});
+
+	it("a creator who no longer holds manage_billing gets no link: an alert with X as the subject, the setup open", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+		linkWorld.allowed = false;
+
+		await tick(payer, stripe);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /manage_billing/.test(c[0].detail))).toBe(true);
+	});
+
+	it("BLOCKER: a creator removed from the recorded team is not linked — an alert, the setup open, and `release` names why", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		const other = await newUser();
+		await getServiceDb().insert(member).values({ organizationId: orgId, userId: other, role: "owner" });
+		await getServiceDb().delete(member).where(and(eq(member.organizationId, orgId), eq(member.userId, payer)));
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+
+		await tick(payer, stripe);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /no longer an active member/.test(c[0].detail))).toBe(true);
+	});
+
+	it("a team deleted before the visit reads as no org (created_org_id is ON DELETE SET NULL): the setup stays open and the Q3 email is owed", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		const h = await hold(payer, sub, { state: "needs_operator" });
+		await getServiceDb().delete(organization).where(eq(organization.id, orgId));
+
+		await tick(payer, stripe);
+		expect(await read(h.id)).toMatchObject({ release_reason: "adopted" });
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ created_org_id: null, closed_at: null, linked_at: null });
+		expect(deliver.mock.calls.map((c) => [c[0].id, c[1]])).toContainEqual([h.id, "released:adopted"]);
+	});
+
+	it("advisory 6: a team with NO members is never repaired by the sweeper — no member row is written, no link, an alert", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await getServiceDb().delete(member).where(eq(member.organizationId, orgId));
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+
+		await tick(payer, stripe);
+		const members = await getServiceDb().select().from(member).where(eq(member.organizationId, orgId));
+		expect(members).toEqual([]);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alert.mock.calls.some((c) => c[0].subscriptionId === sub && /has no members/.test(c[0].detail))).toBe(true);
+	});
+
+	it("C3: an org_plan hold on X whose payer key EQUALS the creator's id is not taken for the creator's hold", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await applySubscriptionToBilling({
+			organizationId: orgId,
+			plan: "team",
+			status: "active",
+			stripeCustomerId: `cus_${sub}_y`,
+			stripeSubscriptionId: `${sub}_y`,
+			seats: null,
+			currentPeriodEnd: null,
+			eventAt: null,
+		});
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// An org_plan hold on X, alerted in its current entry, whose payer key is the same string as the
+		// creator's user id.
+		const orgHold = await orgPlanHold(payer, sub, { state: "needs_operator", alerted_at: new Date(Date.now() + 1000) });
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			const result = await sweeper.relinkAdoptedSetup(lease, orgHold, alert);
+			expect(result).toMatchObject({ kind: "refused", hold: null });
+			if (result.kind !== "refused") throw new Error("expected a refusal");
+			expect(result.clause).not.toContain(sweeper.LINK_REFUSED_ALERTED.trim());
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+		// Nothing new was opened beside it, and the org's hold is untouched.
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open.map((h) => [h.id, h.scope, h.version])).toEqual([[orgHold.id, "org_plan", orgHold.version]]);
+	});
+
+	it("C80: beside a live Y the re-link opens a link_refused hold and leaves the setup open (refused_reason), and T2o never adopts it", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		await applySubscriptionToBilling({
+			organizationId: orgId,
+			plan: "team",
+			status: "active",
+			stripeCustomerId: `cus_${sub}_y`,
+			stripeSubscriptionId: `${sub}_y`,
+			seats: null,
+			currentPeriodEnd: null,
+			eventAt: null,
+		});
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		await hold(payer, sub, { state: "needs_operator" });
+
+		await tick(payer, stripe);
+		const [refusedHold] = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(refusedHold).toMatchObject({ state: "needs_operator", open_note: "link_refused", opened_by: "link", payer_key: payer });
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null, refused_reason: "org_has_plan" });
+		expect(linkWorld.updates).toEqual([]);
+
+		if (!refusedHold) throw new Error("no hold");
+		await makeDue(refusedHold.id);
+		await tick(payer, stripe);
+		expect(await read(refusedHold.id)).toMatchObject({ state: "needs_operator" });
+	});
+
+	it("#6043: Y takes the row during the re-link's sync and the payer's lease is lost before the hold opens — the lost lease is thrown, no hold, and the operator is alerted once naming X and O", async () => {
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(new FakeStripe(), payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		// Inside the sync, after X's metadata write: Y takes O's row, and the lease's row expires (another
+		// caller may now take it), so the hold's FOR SHARE read of the lease finds nothing.
+		linkWorld.onSync = async () => {
+			await applySubscriptionToBilling({
+				organizationId: orgId,
+				plan: "team",
+				status: "active",
+				stripeCustomerId: `cus_${sub}_y`,
+				stripeSubscriptionId: `${sub}_y`,
+				seats: null,
+				currentPeriodEnd: null,
+				eventAt: null,
+			});
+			await getServiceDb()
+				.update(purchaseLeases)
+				.set({ expires_at: new Date(Date.now() - 1000) })
+				.where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		};
+
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the creator's lease was not free");
+		try {
+			await expect(sweeper.relinkAdoptedSetup(lease, { payer_key: payer, subscription_id: sub, customer_id: `cus_${sub}` }, alert)).rejects.toBeInstanceOf(PurchaseLeaseLostError);
+		} finally {
+			await releasePurchaseLease(lease);
+		}
+
+		// X's metadata names O, and nothing records the refusal in the database: no open hold, the setup
+		// neither refused nor linked.
+		expect(linkWorld.subs.get(sub)?.metadata.organization_id).toBe(orgId);
+		const open = await getServiceDb()
+			.select()
+			.from(paymentHolds)
+			.where(sql`${paymentHolds.subscription_id} = ${sub} AND ${paymentHolds.state} <> 'released'`);
+		expect(open).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null, refused_reason: null });
+		// So the operator is told at once, about X, naming O.
+		const raised = vi.mocked(alertPaymentNeedsSupport).mock.calls.map((c) => c[0]).filter((a) => a.subscriptionId === sub);
+		expect(raised).toHaveLength(1);
+		expect(raised[0]).toMatchObject({ context: "link_refused", customerId: `cus_${sub}` });
+		expect(raised[0]?.detail).toContain(`team ${orgId}`);
+	});
+
+	it("§5.4: `release` of a live X whose setup has an org links it FIRST, then releases; beside a live Y it refuses and releases nothing", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		const h = await hold(payer, sub, { state: "needs_operator", open_note: "link_refused" });
+		const args = { subscriptionId: sub, reason: "Y refunded by hand", operator: "op-it" };
+		const quiet = () => undefined;
+
+		await applySubscriptionToBilling({
+			organizationId: orgId,
+			plan: "team",
+			status: "active",
+			stripeCustomerId: `cus_${sub}_y`,
+			stripeSubscriptionId: `${sub}_y`,
+			seats: null,
+			currentPeriodEnd: null,
+			eventAt: null,
+		});
+		expect(await releaseHoldCommand(args, serverDeps(stripe), quiet)).toMatchObject({ kind: "refused" });
+		expect(await read(h.id)).toMatchObject({ state: "needs_operator" });
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: null });
+
+		// The operator cancels Y; the row no longer holds a live plan.
+		await getServiceDb().update(organizationBilling).set({ status: "canceled" }).where(eq(organizationBilling.organizationId, orgId));
+		expect(await releaseHoldCommand(args, serverDeps(stripe), quiet)).toMatchObject({ kind: "released" });
+		expect(await read(h.id)).toMatchObject({ state: "released", release_reason: "operator" });
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: expect.any(Date) });
+		expect(linkWorld.subs.get(sub)?.metadata.organization_id).toBe(orgId);
+	});
+});
+
+// ── §8: the S1-era closures ─────────────────────────────────────────────────────────────────────────
+
+// ── #6078: the relink of an adopted hold is retried (§4.1 amendment 2026-10-14) ────────────────────────
+
+describeIfDb("payment-hold sweeper — #6078: a failed re-link is retried with backoff, then alerted once", () => {
+	beforeEach(() => {
+		linkWorld.retrieves = [];
+	});
+
+	afterEach(() => {
+		linkWorld.subs.clear();
+		linkWorld.updates = [];
+		linkWorld.allowed = true;
+		linkWorld.retrieveFailures = 0;
+		linkWorld.retrieves = [];
+		linkWorld.onRetrieve = null;
+		alert.mockImplementation(async () => true);
+	});
+
+	/** The sweep alerts raised with `sub` as the subject. */
+	function alertsOn(sub: string) {
+		return alert.mock.calls.map((c) => c[0]).filter((a) => a.subscriptionId === sub);
+	}
+
+	/** Milliseconds from now until `at`. */
+	function msUntil(at: Date | null): number {
+		if (!at) throw new Error("expected a scheduled relink check");
+		return at.getTime() - Date.now();
+	}
+
+	/** A live X with an org, its open setup, and an open needs_operator hold the next tick adopts. */
+	async function adoptable(stripe: FakeStripe) {
+		const payer = await newUser();
+		const sub = newSub();
+		const orgId = await newOrg(payer);
+		liveX(stripe, payer, sub);
+		await recordSetupWithOrg(payer, sub, orgId);
+		const h = await hold(payer, sub, { state: "needs_operator" });
+		return { payer, sub, orgId, h };
+	}
+
+	it("C112: a re-link that throws once is recorded, waits for its backoff, and the relink pass links X — no alert", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, orgId, h } = await adoptable(stripe);
+		linkWorld.retrieveFailures = 1;
+
+		expect(await tick(payer, stripe)).toMatchObject({ released: 1 });
+		const failed = await read(h.id);
+		expect(failed).toMatchObject({ state: "released", release_reason: "adopted", attempts: 1 });
+		expect(failed.last_error).toMatch(/connection to Stripe/);
+		expect(msUntil(failed.next_check_at)).toBeGreaterThan(4 * 60_000);
+		expect(msUntil(failed.next_check_at)).toBeLessThanOrEqual(5 * 60_000);
+		expect(await setupOf(sub)).toMatchObject({ linked_at: null, closed_at: null });
+		expect(alertsOn(sub)).toEqual([]);
+
+		// Not due yet: the next tick does not touch it.
+		await tick(payer, stripe);
+		expect(linkWorld.retrieves).toEqual([sub]);
+
+		await makeDue(h.id);
+		await tick(payer, stripe);
+		expect(await setupOf(sub)).toMatchObject({ closed_at: null, linked_at: expect.any(Date) });
+		expect(linkWorld.subs.get(sub)?.metadata).toEqual({ created_by: payer, organization_id: orgId });
+		expect(await read(h.id)).toMatchObject({ next_check_at: null, attempts: 1 });
+		expect(alertsOn(sub)).toEqual([]);
+		expect(vi.mocked(alertPaymentNeedsSupport).mock.calls.filter((c) => c[0].subscriptionId === sub)).toEqual([]);
+	});
+
+	it("C113: a re-link that keeps throwing is retried on the backoff schedule, then ONE alert, across ticks and overlapping ticks", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.retrieveFailures = 1_000;
+		const delays = [5, 15, 60, 240, 720].map((m) => m * 60_000);
+
+		await tick(payer, stripe);
+		for (let attempt = 1; attempt <= 5; attempt += 1) {
+			const row = await read(h.id);
+			expect(row.attempts).toBe(attempt);
+			const delay = delays[attempt - 1] ?? 0;
+			expect(msUntil(row.next_check_at)).toBeGreaterThan(delay - 60_000);
+			expect(msUntil(row.next_check_at)).toBeLessThanOrEqual(delay);
+			expect(alertsOn(sub)).toEqual([]);
+			await makeDue(h.id);
+			if (attempt === 5) {
+				// The sixth attempt, from two ticks at once (two instances): the payer's lease admits one.
+				await Promise.all([tick(payer, stripe), tick(payer, stripe)]);
+			} else {
+				await tick(payer, stripe);
+			}
+		}
+
+		const gaveUp = await read(h.id);
+		expect(gaveUp).toMatchObject({ attempts: 6, next_check_at: null });
+		expect(gaveUp.alerted_at).toBeInstanceOf(Date);
+		expect(linkWorld.retrieves).toHaveLength(6);
+		const alerts = alertsOn(sub);
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]?.detail).toMatch(/failed 6 times/);
+
+		// Nothing retries it again, and nothing alerts again.
+		await tick(payer, stripe);
+		await tick(payer, stripe);
+		expect(linkWorld.retrieves).toHaveLength(6);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(await setupOf(sub)).toMatchObject({ linked_at: null, closed_at: null });
+	});
+
+	it("C114: no retry for a hold whose setup is already linked, while an open setup's due hold beside it is linked", async () => {
+		const stripe = new FakeStripe();
+		const linked = await adoptable(stripe);
+		const open = await adoptable(stripe);
+		linkWorld.retrieveFailures = 2;
+		await tick(linked.payer, stripe);
+		await tick(open.payer, stripe);
+		expect(linkWorld.retrieves).toEqual([linked.sub, open.sub]);
+		// The first setup is linked by another path (the creator's own link), and both checks fall due.
+		await getServiceDb().update(pendingOrgSetups).set({ linked_at: new Date() }).where(eq(pendingOrgSetups.subscription_id, linked.sub));
+		await makeDue(linked.h.id);
+		await makeDue(open.h.id);
+		const due = await read(linked.h.id);
+
+		await tick(linked.payer, stripe);
+		await tick(open.payer, stripe);
+		expect(linkWorld.retrieves).toEqual([linked.sub, open.sub, open.sub]);
+		expect(linkWorld.updates).toEqual([`customers.update:cus_${open.sub}`, `subscriptions.update:${open.sub}`]);
+		// No write at all on the linked setup's hold: its version and its due check are as they were.
+		expect(await read(linked.h.id)).toMatchObject({ attempts: 1, version: due.version, next_check_at: due.next_check_at });
+		expect(await setupOf(open.sub)).toMatchObject({ linked_at: expect.any(Date) });
+		expect(alertsOn(linked.sub)).toEqual([]);
+	});
+
+	it("C115: a creator without manage_billing is decided: ONE alert across ticks, the check cleared, no retry", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.allowed = false;
+
+		await tick(payer, stripe);
+		const decided = await read(h.id);
+		await tick(payer, stripe);
+		await tick(payer, stripe);
+
+		expect(decided.alerted_at).toBeInstanceOf(Date);
+		expect(decided.last_error).toMatch(/manage_billing/);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(alertsOn(sub)[0]?.detail).toMatch(/manage_billing/);
+		expect(linkWorld.updates).toEqual([]);
+		expect(await setupOf(sub)).toMatchObject({ linked_at: null, closed_at: null });
+	});
+
+	it("C116: an adopted hold whose relink never ran is linked by the next tick's pass", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		// The release ran (as T2o writes it) and the process stopped before its relink: nothing recorded.
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!lease) throw new Error("fixture: the payer's lease was not free");
+		const released = await store.releaseHold(lease, { id: h.id, version: h.version }, { reason: "adopted" });
+		await releasePurchaseLease(lease);
+		expect(released?.hold.next_check_at).toBeInstanceOf(Date);
+
+		await tick(payer, stripe);
+		expect(await setupOf(sub)).toMatchObject({ linked_at: expect.any(Date) });
+		expect(await read(h.id)).toMatchObject({ next_check_at: null });
+		expect(alertsOn(sub)).toEqual([]);
+	});
+
+	it("C117: no retry while an open hold names X — the adopted hold's due check is not touched", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.retrieveFailures = 1;
+		await tick(payer, stripe);
+		// A new hold on X opens (a refusal's link_refused hold), not due for a day; then the check falls due.
+		await hold(payer, sub, { state: "needs_operator", open_note: "link_refused", next_check_at: new Date(Date.now() + DAY) });
+		await makeDue(h.id);
+		const due = await read(h.id);
+
+		await tick(payer, stripe);
+		expect(linkWorld.retrieves).toEqual([sub]);
+		expect(await read(h.id)).toMatchObject({ version: due.version, next_check_at: due.next_check_at, attempts: 1 });
+		expect(alertsOn(sub)).toEqual([]);
+	});
+
+	it("C118: an alert that reaches no channel stamps nothing and is raised again when its day-later check falls due", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		linkWorld.allowed = false;
+		alert.mockImplementation(async () => false);
+
+		await tick(payer, stripe);
+		const undelivered = await read(h.id);
+		expect(undelivered.alerted_at).toBeNull();
+		expect(msUntil(undelivered.next_check_at)).toBeGreaterThan(DAY - 60_000);
+		expect(alertsOn(sub)).toHaveLength(1);
+
+		// Not due: nothing more. Due: decided again, and alerted again — this time it reaches a channel.
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(1);
+		alert.mockImplementation(async () => true);
+		await makeDue(h.id);
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(2);
+		const delivered = await read(h.id);
+		expect(delivered.alerted_at).toBeInstanceOf(Date);
+		expect(delivered.next_check_at).toBeNull();
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(2);
+	});
+
+	it("C119: a relink that always loses its lease counts as a failed attempt, and the sixth gives up with ONE alert", async () => {
+		const stripe = new FakeStripe();
+		const { payer, sub, h } = await adoptable(stripe);
+		// Every relink outlives its lease: another holder takes it over and lets it lapse mid-read.
+		linkWorld.onRetrieve = async () => {
+			await getServiceDb()
+				.update(purchaseLeases)
+				.set({ holder: randomUUID(), expires_at: sql`now() - interval '1 second'` })
+				.where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		};
+
+		await tick(payer, stripe);
+		const first = await read(h.id);
+		expect(first.attempts).toBe(1);
+		expect(first.last_error).toMatch(/lease/);
+		expect(msUntil(first.next_check_at)).toBeGreaterThan(4 * 60_000);
+		expect(alertsOn(sub)).toEqual([]);
+
+		for (let attempt = 2; attempt <= 6; attempt += 1) {
+			await makeDue(h.id);
+			await tick(payer, stripe);
+			expect((await read(h.id)).attempts).toBe(attempt);
+		}
+		const gaveUp = await read(h.id);
+		expect(gaveUp.next_check_at).toBeNull();
+		expect(gaveUp.alerted_at).toBeInstanceOf(Date);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(alertsOn(sub)[0]?.detail).toMatch(/failed 6 times/);
+		await tick(payer, stripe);
+		expect(alertsOn(sub)).toHaveLength(1);
+		expect(linkWorld.updates).toEqual([]);
+	});
+});
+
+describeIfDb("payment-holds reconcile --backfill — §8: the S1-era org_has_plan closures whose X is live", () => {
+	it("prints each such setup whose subscription reads live, skips an ended one, and writes nothing", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const live = newSub();
+		const ended = newSub();
+		stripe.add({ id: live, status: "active" });
+		stripe.add({ id: ended, status: "canceled" });
+		for (const sub of [live, ended]) {
+			await recordSetup(payer, sub);
+			await getServiceDb()
+				.update(pendingOrgSetups)
+				.set({ closed_at: new Date(), closed_reason: "org_has_plan", refused_reason: "org_has_plan" })
+				.where(eq(pendingOrgSetups.subscription_id, sub));
+		}
+		const printed: string[] = [];
+
+		await listLiveOrgHasPlanClosures(stripe, (line) => printed.push(line));
+
+		expect(printed.some((l) => l.startsWith(`S1-ERA ${live}: reads active`) && l.includes(`user ${payer}`))).toBe(true);
+		expect(printed.some((l) => l.includes(ended))).toBe(false);
+		expect(stripe.log).toEqual([]);
+		const held = await getServiceDb().select().from(paymentHolds).where(inArray(paymentHolds.subscription_id, [live, ended]));
+		expect(held).toEqual([]);
+	});
+});
+
 // ── C58: the backfill ───────────────────────────────────────────────────────────────────────────────
 
 describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-live checkouts, and re-runs safely", () => {
@@ -627,6 +1481,8 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		const paidBefore = newSub();
 		const bankDebit = newSub();
 		const orgOwned = newSub();
+		const orgId = randomUUID();
+		const aiOwned = newSub();
 		stripe.add(
 			{ id: neverPaid, status: "canceled", ended_at: 1000, metadata: mine, cancellation_details: requested },
 			{ pis: [{ id: `pi_${neverPaid}`, status: "requires_payment_method", amount: 1000, pm: null, refunds: [] }] },
@@ -647,7 +1503,16 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 			id: orgOwned,
 			status: "canceled",
 			ended_at: 1000,
-			metadata: { created_by: payer, organization_id: randomUUID() },
+			metadata: { created_by: payer, organization_id: orgId },
+			cancellation_details: requested,
+		});
+		// An AI subscription of the same org, built like `orgOwned` (an open invoice, no payment), which B2–B6
+		// would hold for an operator. Only B1 keeps it out: it is not covered on both runs, and no hold names it.
+		stripe.add({
+			id: aiOwned,
+			status: "canceled",
+			ended_at: 1000,
+			metadata: { organization_id: orgId, product_type: "ai_subscription" },
 			cancellation_details: requested,
 		});
 		const printed: string[] = [];
@@ -656,21 +1521,38 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		};
 
 		const first = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(first).toEqual({ held: 2, toOperator: 0, listed: 2, alreadyHeld: 0, notCreateATeam: 1 });
+		// ADR 0004 §9 step 5 (C43): a linked create-a-team subscription carries `organization_id`, so it is an
+		// org-plan subscription of that org. Its open invoice has no PaymentIntent, so B5 proves nothing: it
+		// is held as `org_plan` for an operator, never advanced.
+		expect(first).toEqual({ held: 2, toOperator: 1, listed: 2, alreadyHeld: 0, notCovered: 1 });
 
 		const rows = await getServiceDb()
 			.select()
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
 		const bySub = new Map(rows.map((r) => [r.subscription_id, r]));
-		expect(rows).toHaveLength(2);
+		expect(rows).toHaveLength(3);
+		expect(bySub.get(orgOwned)).toMatchObject({
+			scope: "org_plan",
+			payer_key: orgId,
+			state: "needs_operator",
+			opened_by: "backfill",
+			open_note: expect.stringMatching(new RegExp(`^backfill: B1 org-plan subscription of ${orgId}; .*B5 unproven`)),
+		});
+		expect(bySub.get(orgOwned)?.alerted_at).not.toBeNull();
+		expect(alert.mock.calls.filter((c) => c[0].subscriptionId === orgOwned)).toHaveLength(1);
+		expect(stripe.writesFor(orgOwned)).toEqual([]);
+		expect(bySub.has(aiOwned)).toBe(false);
+		expect(stripe.writesFor(aiOwned)).toEqual([]);
+		expect(printed.some((l) => l.includes(aiOwned))).toBe(false);
 		expect(bySub.get(neverPaid)).toMatchObject({
 			state: "released",
 			release_reason: "voided_unpaid",
 			opened_by: "backfill",
+			scope: "new_org",
 			payer_key: payer,
 			invoice_id: `in_${neverPaid}`,
-			open_note: expect.stringMatching(/^backfill: B2 canceled/),
+			open_note: expect.stringMatching(new RegExp(`^backfill: B1 create-a-team subscription of ${payer}; B2 canceled`)),
 		});
 		const refundedHold = bySub.get(paidAfter);
 		expect(refundedHold).toMatchObject({ state: "released", release_reason: "refunded", opened_by: "backfill" });
@@ -687,13 +1569,13 @@ describeIfDb("payment-holds reconcile --backfill — C58: holds only the never-l
 		// A second run writes nothing: every subscription a hold has named is skipped.
 		const writesBefore = stripe.log.length;
 		const second = await runBackfill(serverDeps(stripe), stripe, print);
-		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 2, notCreateATeam: 1 });
+		expect(second).toEqual({ held: 0, toOperator: 0, listed: 2, alreadyHeld: 3, notCovered: 1 });
 		expect(stripe.log.length).toBe(writesBefore);
 		const [after] = await getServiceDb()
 			.select({ count: sql<number>`count(*)::int` })
 			.from(paymentHolds)
-			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned]));
-		expect(after?.count).toBe(2);
+			.where(inArray(paymentHolds.subscription_id, [neverPaid, paidAfter, paidBefore, bankDebit, orgOwned, aiOwned]));
+		expect(after?.count).toBe(3);
 	});
 
 	it("two backfills at once open ONE hold per subscription; an invoice with no PaymentIntent is held for an operator and alerted", async () => {

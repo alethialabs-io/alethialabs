@@ -410,11 +410,22 @@ export async function sendOrderConfirmationEmail(order: {
 
 // ── Payment-hold notices (ADR 0002 Q3; sent by the payment-hold sweeper only) ──────────────────────
 
-/** The copy of each payment-hold email: what was READ, never more (ADR 0002 I8, §5.5). */
-const PAYMENT_HOLD_NOTICE_COPY: Record<
-	PaymentHoldNotifiedState,
-	{ subject: string; eyebrow: string; heading: string; body: string[] }
-> = {
+/** One payment-hold email's words. */
+interface PaymentHoldNoticeCopy {
+	subject: string;
+	eyebrow: string;
+	heading: string;
+	body: string[];
+}
+
+/** The emails an `org_plan` hold is sent: never `released:adopted` (ADR 0004 D8). */
+export type OrgPlanHoldNotice = Exclude<PaymentHoldNotifiedState, "released:adopted">;
+
+/**
+ * The copy of each `new_org` (create-a-team) payment-hold email: what was READ, never more (ADR 0002 I8,
+ * §5.5).
+ */
+const NEW_ORG_HOLD_NOTICE_COPY: Record<PaymentHoldNotifiedState, PaymentHoldNoticeCopy> = {
 	refund_pending: {
 		subject: "Your refund from Alethia is on its way",
 		eyebrow: "Refund issued",
@@ -443,20 +454,37 @@ const PAYMENT_HOLD_NOTICE_COPY: Record<
 };
 
 /**
- * One payment-hold email (ADR 0002 Q3) to the payer's own address. Called by the payment-hold sweeper
- * after it claimed the notice (lib/billing/payment-holds/emails.ts), and nowhere else. Carries no
- * amount, card or invoice detail. Throws when the send failed, so the sweeper gives the claim back.
+ * The copy of each `org_plan` payment-hold email (ADR 0004 D8, O7): a plan bought for a team that already
+ * exists, so it names no team setup and nothing to finish. Each email says what ADR 0002 §5.5's clause
+ * for its state says (those clauses name no flow), with the payment named as an earlier plan checkout's.
  */
-export async function sendPaymentHoldNoticeEmail(args: {
-	to: string;
-	notice: PaymentHoldNotifiedState;
-}): Promise<void> {
-	const copy = PAYMENT_HOLD_NOTICE_COPY[args.notice];
+const ORG_PLAN_HOLD_NOTICE_COPY: Record<OrgPlanHoldNotice, PaymentHoldNoticeCopy> = {
+	refund_pending: {
+		subject: "Your refund from Alethia is on its way",
+		eyebrow: "Refund issued",
+		heading: "Your refund is on its way.",
+		body: [
+			"A payment for an earlier plan checkout went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you.",
+			"If you buy again before it arrives and that refund fails, you may see both charges until we have refunded it again.",
+		],
+	},
+	"released:refunded": {
+		subject: "Your Alethia refund is complete",
+		eyebrow: "Refunded",
+		heading: "Your payment was refunded in full.",
+		body: [
+			"A payment for an earlier plan checkout was refunded in full. It can take 5–10 business days to reach you, depending on your bank.",
+		],
+	},
+};
+
+/** Renders and sends one payment-hold email. Throws when the send failed. */
+async function sendHoldNoticeCopy(to: string, copy: PaymentHoldNoticeCopy, devLog: string): Promise<void> {
 	const config = getEmailConfig();
 	await sendGuardedEmail({
 		from: config.from.general,
 		configurationSetName: config.configSet.general,
-		to: args.to,
+		to,
 		subject: copy.subject,
 		react: EmailLayout({
 			preview: copy.heading,
@@ -469,6 +497,33 @@ export async function sendPaymentHoldNoticeEmail(args: {
 				),
 			],
 		}),
-		devLog: `payment hold notice ${args.notice}`,
+		devLog,
 	});
+}
+
+/**
+ * One `new_org` (create-a-team) payment-hold email (ADR 0002 Q3) to the payer's own address. Called by
+ * the payment-hold sweeper after it claimed the notice (lib/billing/payment-holds/emails.ts), and nowhere
+ * else. Carries no amount, card or invoice detail. Throws when the send failed, so the sweeper gives the
+ * claim back.
+ */
+export async function sendPaymentHoldNoticeEmail(args: {
+	to: string;
+	notice: PaymentHoldNotifiedState;
+}): Promise<void> {
+	await sendHoldNoticeCopy(args.to, NEW_ORG_HOLD_NOTICE_COPY[args.notice], `payment hold notice ${args.notice}`);
+}
+
+/**
+ * One `org_plan` payment-hold email (ADR 0004 D8) to the hold's Stripe customer's email. Called by the
+ * payment-hold sweeper after it claimed the notice (lib/billing/payment-holds/emails.ts), and nowhere
+ * else. Carries no amount, card or invoice detail. Throws when the send failed, so the sweeper gives the
+ * claim back.
+ */
+export async function sendOrgPlanHoldNoticeEmail(args: { to: string; notice: OrgPlanHoldNotice }): Promise<void> {
+	await sendHoldNoticeCopy(
+		args.to,
+		ORG_PLAN_HOLD_NOTICE_COPY[args.notice],
+		`org-plan payment hold notice ${args.notice}`,
+	);
 }

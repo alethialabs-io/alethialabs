@@ -14,30 +14,88 @@
 //        miss; the claim is once per hold and state.
 //   C92  (the release half) a release to `voided_unpaid` closes the open setup with `hold_released` in
 //        the SAME transaction; a release to `adopted` leaves it open.
+//   C109 the moved release's `expectOrgRow` (§5.8 step 9): a release over a team row that no longer
+//        names X writes nothing; and the row's `FOR SHARE` lock is held until the release commits, proven
+//        with a second connection whose `UPDATE` of the row times out (55P03) while the release is open.
 //   ---  RLS: `payment_holds` is service-role only.
+//
+// ADR 0004 D1 (O1, #6001), the hold scope:
+//   C3   scope, not the payer key's text, separates holds: with equal `payer_key` strings, each scope's
+//        reader returns only its own, and the create-a-team readers never return an `org_plan` hold.
+//   C4   a state write under the wrong scope's lease changes no row; under its own scope's lease it does.
+//   C5   `openHold` with scope `org_plan` and a `user:` lease throws, and writes nothing.
+//   C7   an `org_plan` release closes no create-a-team setup (C92 above re-runs green for `new_org`).
+//   C8   a row inserted without `scope` reads `new_org`; a scope outside the check is refused.
+//   ---  D1 rule 4: the setup predicates that wait on holds stay scope-free — an open `org_plan` hold on
+//        X keeps X's setup open through the closer, and its verdict says `open`, not `closed`.
+//
+// #6025, the §5.5 refund notice:
+//   ---  its 14-day window is the DATABASE's: day 13 is in and day 15 is out, and an app clock 5 minutes
+//        off on either side moves neither edge; `holdClockNow` is the database's clock.
+//   ---  `stampHoldNotice` is a hint write: no lease, no version bump, no `updated_at`, open or released.
+//   C104 (control) `latestReleasedHoldOn` has no time bound: a refund 30 days old is still returned.
+//
+// #6078, the relink retry (§4.1 amendment 2026-10-14):
+//   C111 an `adopted` `new_org` release schedules its relink check (`next_check_at = now()`) and restarts
+//        `attempts` and `last_error`; every other release, and an `org_plan` adoption, is unscheduled.
+//        `writeAdoptedRelinkState` lands only on a released `adopted` `new_org` hold, at its version and
+//        behind its payer's live lease, bumps `version`, and changes only its four columns.
 
 import { randomUUID } from "node:crypto";
+import { vi } from "vitest";
+
+// The setup closer's one Stripe read in the D1 rule 4 case below: X, read `canceled`. `canceled` is
+// never proven unpaid, so the closer makes no payment read, and nothing else in this file reaches Stripe.
+vi.mock("@/lib/billing/stripe", () => ({
+	getStripe: () => ({
+		subscriptions: {
+			retrieve: async (id: string) => ({ id, status: "canceled", customer: "cus_it_hold", latest_invoice: null, metadata: {} }),
+		},
+	}),
+}));
+
+import * as store from "@/lib/billing/payment-holds/store";
+import * as setups from "@/lib/billing/pending-org-setup";
 import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import postgres from "postgres";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	claimHoldNotice,
 	type HoldRef,
 	nudgeHold,
 	openHold,
 	type OpenHoldInput,
-	payerLeaseKey,
 	releaseHold,
 	reserveRefundAttempt,
+	stampHoldNotice,
 	unclaimHoldNotice,
 	writeHoldState,
 } from "@/lib/billing/payment-holds/store";
 import { type PurchaseLease, releasePurchaseLease, tryAcquirePurchaseLease } from "@/lib/billing/purchase-lease";
 import { getServiceDb, withScope } from "@/lib/db";
-import { paymentHolds, type PaymentHoldRow, pendingOrgSetups, purchaseLeases, user } from "@/lib/db/schema";
+import {
+	organization,
+	organizationBilling,
+	paymentHolds,
+	type PaymentHoldRow,
+	pendingOrgSetups,
+	purchaseLeases,
+	user,
+} from "@/lib/db/schema";
 import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
 
 const payers: string[] = [];
 const subscriptions: string[] = [];
+
+/** A create-a-team payer's lease key, written out rather than derived from the code under test. */
+function payerLeaseKey(payer: string): string {
+	return `user:${payer}`;
+}
+
+/** An org's org-plan lease key (ADR 0004 §2 "Lease key"), written out for the same reason. */
+function orgPlanLeaseKey(orgId: string): string {
+	return `org-plan:${orgId}`;
+}
 
 /** A fresh payer and that payer's live lease. */
 async function payerWithLease(): Promise<{ payer: string; lease: PurchaseLease }> {
@@ -99,7 +157,10 @@ async function expireLease(key: string): Promise<void> {
 afterAll(async () => {
 	const db = getServiceDb();
 	for (const sub of subscriptions) await db.delete(paymentHolds).where(eq(paymentHolds.subscription_id, sub));
-	for (const payer of payers) await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+	for (const payer of payers) {
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(payer)));
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, orgPlanLeaseKey(payer)));
+	}
 });
 
 describeIfDb("payment_holds — C51: the open-row unique index", () => {
@@ -447,6 +508,577 @@ describeIfDb("payment_holds — C92, the release half: a release decides the set
 		expect((await releaseHold(lease, refOf(hold), { reason: "voided_unpaid" }))?.closedSetupId).toBe(setup);
 		expect((await readSetup(setup)).closed_reason).toBe("hold_released");
 		await releasePurchaseLease(lease);
+	});
+});
+
+describeIfDb("payment_holds — C109: the moved release's row check, under FOR SHARE (§5.8 step 9)", () => {
+	const USER = randomUUID();
+	const TEAM = randomUUID();
+	/** Two plain connections beside the pool: B writes the team's row, C holds the hold's row. */
+	let b: postgres.Sql;
+	let c: postgres.Sql;
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await db.insert(user).values({ id: USER, email: `it-hold-moved-${USER}@example.test` });
+		await db.insert(organization).values({ id: TEAM, name: `it-hold-moved-${TEAM.slice(0, 8)}` });
+		await db.insert(organizationBilling).values({ organizationId: TEAM, status: "active" });
+		const url = process.env.ALETHIA_DATABASE_URL ?? "";
+		b = postgres(url, { max: 1 });
+		c = postgres(url, { max: 1 });
+	});
+
+	afterAll(async () => {
+		await b.end({ timeout: 1 });
+		await c.end({ timeout: 1 });
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, USER));
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(USER)));
+		await db.delete(organizationBilling).where(eq(organizationBilling.organizationId, TEAM));
+		await db.delete(organization).where(eq(organization.id, TEAM));
+		await db.delete(user).where(eq(user.id, USER));
+	});
+
+	/** The user's lease, taken fresh for one test. */
+	async function userLease(): Promise<PurchaseLease> {
+		await getServiceDb().delete(purchaseLeases).where(eq(purchaseLeases.key, payerLeaseKey(USER)));
+		const lease = await tryAcquirePurchaseLease(payerLeaseKey(USER));
+		if (!lease) throw new Error("fixture: the user's lease was not free");
+		return lease;
+	}
+
+	/** An open `link_refused` hold of the user on a fresh X, with an open setup; and T's row naming `rowSub`. */
+	async function fixture(rowSub: (x: string) => string) {
+		const lease = await userLease();
+		const x = newSubscription();
+		const [setup] = await getServiceDb()
+			.insert(pendingOrgSetups)
+			.values({
+				user_id: USER,
+				subscription_id: x,
+				customer_id: "cus_it_hold",
+				intended_name: "Moved",
+				intended_slug: `moved-${x.slice(-8)}`,
+			})
+			.returning({ id: pendingOrgSetups.id });
+		if (!setup) throw new Error("fixture: no setup was recorded");
+		const hold = await opened(lease, {
+			...e0(USER, x),
+			state: "needs_operator",
+			openedBy: "link",
+			openNote: "link_refused",
+		});
+		await getServiceDb()
+			.update(organizationBilling)
+			.set({ stripeSubscriptionId: rowSub(x) })
+			.where(eq(organizationBilling.organizationId, TEAM));
+		return { lease, x, hold, setupId: setup.id };
+	}
+
+	/** Whether the setup `id` is still open. */
+	async function setupOpen(id: string): Promise<boolean> {
+		const [row] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, id));
+		return row !== undefined && row.closed_at === null;
+	}
+
+	/**
+	 * Polls (on B, between its statements) until a backend waits on a lock while running `fragment`, so the
+	 * release under test is truly blocked inside its transaction.
+	 */
+	async function untilWaiting(fragment: string): Promise<void> {
+		for (let i = 0; i < 100; i++) {
+			const rows = await b`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE ${`%${fragment}%`}`;
+			if (rows.length > 0) return;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		throw new Error(`no backend ever waited on a lock running ${fragment}`);
+	}
+
+	/** A one-shot signal: `fired` resolves once `fire` is called. */
+	function signal(): { fire: () => void; fired: Promise<void> } {
+		let fire: () => void = () => undefined;
+		const fired = new Promise<void>((resolve) => {
+			fire = resolve;
+		});
+		return { fire, fired };
+	}
+
+	/** B's `UPDATE` of the team's row with a 500ms lock timeout: null when it landed, else its SQLSTATE. */
+	async function updateRowFromB(to: string): Promise<string | null> {
+		try {
+			await b.begin(async (tx) => {
+				await tx`SET LOCAL lock_timeout = '500ms'`;
+				await tx`UPDATE organization_billing SET stripe_subscription_id = ${to} WHERE organization_id = ${TEAM}`;
+			});
+			return null;
+		} catch (err) {
+			return typeof err === "object" && err !== null && "code" in err ? String(err.code) : String(err);
+		}
+	}
+
+	it("with T's row naming Z it writes nothing: the hold stays open at its version, and the setup stays open", async () => {
+		const z = newSubscription();
+		const { lease, x, hold, setupId } = await fixture(() => z);
+		const out = await releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(out).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "needs_operator", version: hold.version });
+		expect(await setupOpen(setupId)).toBe(true);
+		await releasePurchaseLease(lease);
+	});
+
+	it("with T's row naming X it releases, closes the setup, and reports the row it checked", async () => {
+		const { lease, x, hold, setupId } = await fixture((sub) => sub);
+		const out = await releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(out).toMatchObject({ closedSetupId: setupId, checkedOrgRow: { subscriptionId: x, status: "active" } });
+		expect(out?.hold).toMatchObject({ state: "released", release_reason: "operator", release_note: `moved to ${TEAM}: it` });
+		expect(await setupOpen(setupId)).toBe(false);
+		await releasePurchaseLease(lease);
+	});
+
+	it("the FOR SHARE lock holds T's row until the release commits: B's UPDATE times out (55P03) while it is open, and lands after", async () => {
+		const { lease, x, hold } = await fixture((sub) => sub);
+		// C holds the hold's row FIRST, so the release blocks at its own UPDATE of payment_holds — which it
+		// makes AFTER the FOR SHARE read of T's row — and its transaction stays open, holding that lock while
+		// B tries to rewrite the row. C commits only after B's attempt, which frees the release.
+		const held = signal();
+		const cDone = c.begin(async (tx) => {
+			await tx`SELECT id FROM payment_holds WHERE id = ${hold.id} FOR UPDATE`;
+			held.fire();
+			await untilWaiting("payment_holds");
+			return updateRowFromB(newSubscription());
+		});
+		await held.fired;
+		const release = releaseHold(lease, refOf(hold), {
+			reason: "operator",
+			releasedBy: randomUUID(),
+			note: `moved to ${TEAM}: it`,
+			expectOrgRow: { orgId: TEAM, subscriptionId: x },
+		});
+		expect(await cDone).toBe("55P03");
+		expect((await release)?.hold.state).toBe("released");
+		// After the release committed, the same UPDATE lands at once.
+		expect(await updateRowFromB(newSubscription())).toBeNull();
+		await releasePurchaseLease(lease);
+	});
+
+	it("control: WITHOUT expectOrgRow no lock is taken on T's row — B's UPDATE lands while the release is open", async () => {
+		const { lease, x, hold } = await fixture((sub) => sub);
+		const held = signal();
+		const cDone = c.begin(async (tx) => {
+			await tx`SELECT id FROM payment_holds WHERE id = ${hold.id} FOR UPDATE`;
+			held.fire();
+			await untilWaiting("payment_holds");
+			return updateRowFromB(x);
+		});
+		await held.fired;
+		const release = releaseHold(lease, refOf(hold), { reason: "operator", releasedBy: randomUUID(), note: "it" });
+		expect(await cDone).toBeNull();
+		expect((await release)?.hold.state).toBe("released");
+		await releasePurchaseLease(lease);
+	});
+});
+
+// ── ADR 0004 D1: the hold scope ─────────────────────────────────────────────────────────────────────
+
+/** A fresh org id as an `org_plan` payer, and that org's live org-plan lease. */
+async function orgWithLease(): Promise<{ org: string; lease: PurchaseLease }> {
+	const org = randomUUID();
+	payers.push(org);
+	const lease = await tryAcquirePurchaseLease(orgPlanLeaseKey(org));
+	if (!lease) throw new Error("fixture: a fresh org's org-plan lease was not free");
+	return { org, lease };
+}
+
+/** E0's input for an `org_plan` hold of `org` on `subscriptionId`, in `closing`. */
+function e0OrgPlan(org: string, subscriptionId: string): OpenHoldInput {
+	return { ...e0(org, subscriptionId), scope: "org_plan", openedByUserId: null };
+}
+
+describeIfDb("payment_holds — ADR 0004 D1: the hold scope", () => {
+	it("C3: with EQUAL payer_key strings, each scope's reader returns only its own hold", async () => {
+		const shared = randomUUID();
+		payers.push(shared);
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(shared));
+		const orgLease = await tryAcquirePurchaseLease(orgPlanLeaseKey(shared));
+		if (!userLease || !orgLease) throw new Error("fixture: the leases were not free");
+		const newOrgSub = newSubscription();
+		const orgPlanSub = newSubscription();
+		const newOrgHold = await opened(userLease, e0(shared, newOrgSub));
+		const orgPlanHold = await opened(orgLease, e0OrgPlan(shared, orgPlanSub));
+		expect(newOrgHold.scope).toBe("new_org");
+		expect(orgPlanHold.scope).toBe("org_plan");
+
+		// The create-a-team readers (ADR 0004 D1 rule 3) see the new_org hold only.
+		expect((await setups.paymentHoldsOfPayer(shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+		expect((await setups.openPaymentHoldOn(newOrgSub))?.id).toBe(newOrgHold.id);
+		expect(await setups.openPaymentHoldOn(orgPlanSub)).toBeNull();
+
+		// The scoped reader returns each scope's own.
+		expect((await store.paymentHoldsOf("org_plan", shared)).map((h) => h.id)).toEqual([orgPlanHold.id]);
+		expect((await store.paymentHoldsOf("new_org", shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+
+		// The scope-free lookup by subscription (D2 (b) 4) finds either.
+		expect((await store.openHoldOn(orgPlanSub))?.id).toBe(orgPlanHold.id);
+		expect((await store.openHoldOn(newOrgSub))?.id).toBe(newOrgHold.id);
+
+		// Released, the org_plan hold is not the create-a-team link's "newest released hold".
+		await releaseHold(orgLease, refOf(orgPlanHold), { reason: "refunded" });
+		expect(await setups.latestReleasedHoldOn(orgPlanSub)).toBeNull();
+		expect(await setups.openPaymentHoldOn(orgPlanSub)).toBeNull();
+		expect(await store.openHoldOn(orgPlanSub)).toBeNull();
+		// A recent refund stays in the scoped reader's set for its notice; it never enters the payer's.
+		expect((await store.paymentHoldsOf("org_plan", shared)).map((h) => [h.id, h.state])).toEqual([[orgPlanHold.id, "released"]]);
+		expect((await setups.paymentHoldsOfPayer(shared)).map((h) => h.id)).toEqual([newOrgHold.id]);
+
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("paymentHoldsOf keeps a released hold only when it was refunded within the notice window", async () => {
+		const { org, lease } = await orgWithLease();
+		const refunded = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const voided = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const stale = await opened(lease, e0OrgPlan(org, newSubscription()));
+		const open = await opened(lease, e0OrgPlan(org, newSubscription()));
+		await releaseHold(lease, refOf(refunded), { reason: "refunded" });
+		await releaseHold(lease, refOf(voided), { reason: "voided_unpaid" });
+		await releaseHold(lease, refOf(stale), { reason: "already_refunded" });
+		await getServiceDb()
+			.update(paymentHolds)
+			.set({ released_at: sql`now() - interval '15 days'` })
+			.where(eq(paymentHolds.id, stale.id));
+		const ids = (await store.paymentHoldsOf("org_plan", org)).map((h) => h.id);
+		expect(ids.sort()).toEqual([refunded.id, open.id].sort());
+		await releasePurchaseLease(lease);
+	});
+
+	it("C4: an org_plan hold's state writes need org-plan:<O> — a live user:<O> lease changes no row", async () => {
+		const { org, lease: orgLease } = await orgWithLease();
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userLease) throw new Error("fixture: the user-keyed lease was not free");
+		const hold = await opened(orgLease, e0OrgPlan(org, newSubscription()));
+
+		expect(await writeHoldState(userLease, refOf(hold), { state: "cancel_unproven" })).toBeNull();
+		expect(await reserveRefundAttempt(userLease, refOf(hold))).toBeNull();
+		expect(await releaseHold(userLease, refOf(hold), { reason: "operator" })).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "closing", version: 0, refund_attempt: 0 });
+
+		expect(await writeHoldState(orgLease, refOf(hold), { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C4, the mirror: a new_org hold's state writes need user:<U> — a live org-plan:<U> lease changes no row", async () => {
+		const { payer, lease: userLease } = await payerWithLease();
+		const orgLease = await tryAcquirePurchaseLease(orgPlanLeaseKey(payer));
+		if (!orgLease) throw new Error("fixture: the org-plan-keyed lease was not free");
+		const hold = await opened(userLease, e0(payer, newSubscription()));
+
+		expect(await writeHoldState(orgLease, refOf(hold), { state: "cancel_unproven" })).toBeNull();
+		expect(await reserveRefundAttempt(orgLease, refOf(hold))).toBeNull();
+		expect(await releaseHold(orgLease, refOf(hold), { reason: "operator" })).toBeNull();
+		expect(await readHold(hold.id)).toMatchObject({ state: "closing", version: 0, refund_attempt: 0 });
+
+		expect(await writeHoldState(userLease, refOf(hold), { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C5: openHold with scope org_plan and a user: lease throws, and writes nothing", async () => {
+		const org = randomUUID();
+		payers.push(org);
+		const userLease = await tryAcquirePurchaseLease(payerLeaseKey(org));
+		if (!userLease) throw new Error("fixture: the user-keyed lease was not free");
+		const sub = newSubscription();
+		await expect(openHold(userLease, e0OrgPlan(org, sub))).rejects.toThrow(/needs that payer's lease/);
+		expect(await getServiceDb().select().from(paymentHolds).where(eq(paymentHolds.subscription_id, sub))).toEqual([]);
+
+		// And the mirror: a new_org open under an org-plan: lease.
+		const { org: other, lease: orgLease } = await orgWithLease();
+		await expect(openHold(orgLease, e0(other, sub))).rejects.toThrow(/needs that payer's lease/);
+		expect(await getServiceDb().select().from(paymentHolds).where(eq(paymentHolds.subscription_id, sub))).toEqual([]);
+		await releasePurchaseLease(userLease);
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C7: an org_plan release closes no create-a-team setup, whatever its reason", async () => {
+		const creator = randomUUID();
+		await getServiceDb().insert(user).values({ id: creator, email: `it-hold-${creator}@example.test` });
+		try {
+			for (const reason of ["voided_unpaid", "refunded", "operator"] as const) {
+				const { org, lease } = await orgWithLease();
+				const sub = newSubscription();
+				const [setup] = await getServiceDb()
+					.insert(pendingOrgSetups)
+					.values({
+						user_id: creator,
+						subscription_id: sub,
+						customer_id: "cus_it_hold",
+						intended_name: "Held",
+						intended_slug: `held-${sub.slice(-8)}`,
+					})
+					.returning({ id: pendingOrgSetups.id });
+				if (!setup) throw new Error("fixture: no setup was recorded");
+				const hold = await opened(lease, e0OrgPlan(org, sub));
+
+				const released = await releaseHold(lease, refOf(hold), { reason });
+				expect(released).toMatchObject({ closedSetupId: null, hold: { state: "released", release_reason: reason } });
+				const [after] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, setup.id));
+				expect(after).toMatchObject({ closed_at: null, closed_reason: null, linked_at: null });
+				await releasePurchaseLease(lease);
+			}
+		} finally {
+			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
+			await getServiceDb().delete(user).where(eq(user.id, creator));
+		}
+	});
+
+	it("D1 rule 4: an open org_plan hold on X keeps X's setup open — the close and the closer's verdict are scope-free", async () => {
+		const creator = randomUUID();
+		await getServiceDb().insert(user).values({ id: creator, email: `it-hold-${creator}@example.test` });
+		try {
+			const { org, lease } = await orgWithLease();
+			const sub = newSubscription();
+			const [setup] = await getServiceDb()
+				.insert(pendingOrgSetups)
+				.values({
+					user_id: creator,
+					subscription_id: sub,
+					customer_id: "cus_it_hold",
+					intended_name: "Held",
+					intended_slug: `held-${sub.slice(-8)}`,
+				})
+				.returning();
+			if (!setup) throw new Error("fixture: no setup was recorded");
+			await opened(lease, e0OrgPlan(org, sub));
+
+			// The plain close (`noOpenHold`) refuses while the org_plan hold is open.
+			expect(await setups.closePendingOrgSetup({ subscriptionId: sub, reason: "ended" })).toBeNull();
+			// The closer reads X ended, its close matches nothing, and its verdict (`unclosedVerdict`) is
+			// `open`: a hold keeps it. Reading only new_org holds would answer `closed` here.
+			expect(await setups.settleOpenSetup(setup)).toBe("open");
+			const [after] = await getServiceDb().select().from(pendingOrgSetups).where(eq(pendingOrgSetups.id, setup.id));
+			expect(after).toMatchObject({ closed_at: null, linked_at: null });
+			await releasePurchaseLease(lease);
+		} finally {
+			await getServiceDb().delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, creator));
+			await getServiceDb().delete(user).where(eq(user.id, creator));
+		}
+	});
+
+	it("C8: a row inserted without scope reads new_org, and a scope outside the check is refused", async () => {
+		const payer = randomUUID();
+		const sub = newSubscription();
+		const [row] = await getServiceDb()
+			.insert(paymentHolds)
+			.values({
+				subscription_id: sub,
+				customer_id: "cus_it_hold",
+				payer_key: payer,
+				invoice_id: `in_${sub}`,
+				state: "closing",
+				next_check_at: new Date(),
+				opened_by: "backfill",
+			})
+			.returning();
+		expect(row?.scope).toBe("new_org");
+
+		const other = newSubscription();
+		const refused = await refusalText(() =>
+			getServiceDb().execute(sql`INSERT INTO payment_holds
+				(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by, scope)
+				VALUES (${other}, 'cus_it_hold', ${payer}, ${`in_${other}`}, 'closing', now(), 'backfill', 'ai')`),
+		);
+		expect(refused).toMatch(/payment_holds_scope_known/);
+	});
+});
+
+// ── #6025: the refund notice's window, its clock, and the stamp ────────────────────────────────────
+
+/**
+ * Moves `id`'s `released_at` to the database's now minus `ago`, a Postgres interval literal written in
+ * hours and minutes, never days: a day unit follows the session TimeZone across a DST change, which
+ * would eat the 2-minute margins below by an hour. The code under test uses a millisecond interval.
+ */
+async function releasedAgo(id: string, ago: string): Promise<void> {
+	await getServiceDb()
+		.update(paymentHolds)
+		.set({ released_at: sql`now() - ${ago}::interval` })
+		.where(eq(paymentHolds.id, id));
+}
+
+/** A hold of a fresh payer, released `refunded` `ago` before the database's now. */
+async function refundedHold(ago: string): Promise<{ payer: string; lease: PurchaseLease; hold: PaymentHoldRow }> {
+	const { payer, lease } = await payerWithLease();
+	const hold = await opened(lease, e0(payer, newSubscription()));
+	await releaseHold(lease, refOf(hold), { reason: "refunded" });
+	await releasedAgo(hold.id, ago);
+	return { payer, lease, hold };
+}
+
+/** Runs the app's clock `offsetMs` away from the real one (Date only: the driver's timers stay real). */
+function skewAppClock(offsetMs: number): void {
+	const real = Date.now();
+	vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(real + offsetMs);
+}
+
+describeIfDb("payment_holds — #6025: the refund notice window is the database's, and the stamp is a hint", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("day 13 is in the payer's set, day 15 is not — for the create-a-team and the scoped reader alike", async () => {
+		const day13 = await refundedHold("312 hours");
+		const day15 = await refundedHold("360 hours");
+		expect((await setups.paymentHoldsOfPayer(day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(day15.payer)).toEqual([]);
+		expect((await store.paymentHoldsOf("new_org", day13.payer)).map((h) => h.id)).toEqual([day13.hold.id]);
+		expect(await store.paymentHoldsOf("new_org", day15.payer)).toEqual([]);
+		await releasePurchaseLease(day13.lease);
+		await releasePurchaseLease(day15.lease);
+	});
+
+	it("an app clock 5 minutes off on either side moves neither edge of the database's 14 days", async () => {
+		const inside = await refundedHold("335 hours 58 minutes");
+		const outside = await refundedHold("336 hours 2 minutes");
+
+		skewAppClock(5 * 60_000);
+		expect((await setups.paymentHoldsOfPayer(inside.payer)).map((h) => h.id)).toEqual([inside.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(outside.payer)).toEqual([]);
+		vi.useRealTimers();
+
+		skewAppClock(-5 * 60_000);
+		expect((await setups.paymentHoldsOfPayer(inside.payer)).map((h) => h.id)).toEqual([inside.hold.id]);
+		expect(await setups.paymentHoldsOfPayer(outside.payer)).toEqual([]);
+		vi.useRealTimers();
+
+		await releasePurchaseLease(inside.lease);
+		await releasePurchaseLease(outside.lease);
+	});
+
+	it("holdClockNow reads the database's clock, not the app's", async () => {
+		skewAppClock(60 * 60_000);
+		const read = await store.holdClockNow();
+		vi.useRealTimers();
+		const [row] = await getServiceDb().execute<{ epoch_s: number }>(sql`select extract(epoch from now())::double precision as epoch_s`);
+		expect(Math.abs(read.getTime() - Number(row?.epoch_s) * 1000)).toBeLessThan(5_000);
+	});
+
+	it("C104 (control): latestReleasedHoldOn has no time bound — a refund released 30 days ago is still X's", async () => {
+		const { lease, hold } = await refundedHold("720 hours");
+		expect(await setups.latestReleasedHoldOn(hold.subscription_id)).toMatchObject({ id: hold.id, release_reason: "refunded" });
+		await releasePurchaseLease(lease);
+	});
+
+	it("stampHoldNotice writes notice_last_sent_at with no lease, and changes nothing else — so a prepared state write still lands", async () => {
+		const { payer, lease } = await payerWithLease();
+		const hold = await opened(lease, e0(payer, newSubscription()));
+		const prepared = refOf(hold);
+		await releasePurchaseLease(lease);
+
+		expect(await stampHoldNotice([hold.id])).toBe(1);
+		const stamped = await readHold(hold.id);
+		expect(stamped.notice_last_sent_at).not.toBeNull();
+		expect({ ...stamped, notice_last_sent_at: null }).toEqual(hold);
+
+		const again = await tryAcquirePurchaseLease(payerLeaseKey(payer));
+		if (!again) throw new Error("fixture: the payer's lease was not free");
+		expect(await writeHoldState(again, prepared, { state: "cancel_unproven" })).toMatchObject({ version: 1 });
+		await releasePurchaseLease(again);
+	});
+
+	it("a released hold's refund clause is stamped too; an empty set stamps nothing", async () => {
+		const { lease, hold } = await refundedHold("24 hours");
+		expect(await stampHoldNotice([hold.id])).toBe(1);
+		expect((await readHold(hold.id)).notice_last_sent_at).not.toBeNull();
+		expect(await stampHoldNotice([])).toBe(0);
+		await releasePurchaseLease(lease);
+	});
+});
+
+describeIfDb("payment_holds — #6078: the relink write, the one write on a released adopted hold (§4.1 amendment)", () => {
+	it("C111: an adopted new_org release schedules its relink check at once and restarts attempts; every other release is unscheduled", async () => {
+		const { payer, lease } = await payerWithLease();
+		const adopted = await opened(lease, e0(payer, newSubscription()));
+		const failing = await writeHoldState(lease, refOf(adopted), { attempts: 3, lastError: "observe failed" });
+		if (!failing) throw new Error("fixture: the attempts write missed");
+		const released = await releaseHold(lease, refOf(failing), { reason: "adopted" });
+		const clock = await store.holdClockNow();
+		expect(released?.hold).toMatchObject({ state: "released", release_reason: "adopted", attempts: 0, last_error: null });
+		expect(released?.hold.next_check_at).toBeInstanceOf(Date);
+		expect(released?.hold.next_check_at?.getTime()).toBeLessThanOrEqual(clock.getTime());
+
+		const voided = await opened(lease, e0(payer, newSubscription()));
+		expect((await releaseHold(lease, refOf(voided), { reason: "voided_unpaid" }))?.hold).toMatchObject({ next_check_at: null });
+		await releasePurchaseLease(lease);
+
+		const { org, lease: orgLease } = await orgWithLease();
+		const orgHold = await opened(orgLease, e0OrgPlan(org, newSubscription()));
+		expect((await releaseHold(orgLease, refOf(orgHold), { reason: "adopted" }))?.hold).toMatchObject({ next_check_at: null });
+		await releasePurchaseLease(orgLease);
+	});
+
+	it("C111: the relink write lands on a released adopted new_org hold, bumps version, and changes only its four columns", async () => {
+		const { payer, lease } = await payerWithLease();
+		const hold = await opened(lease, e0(payer, newSubscription()));
+		const released = await releaseHold(lease, refOf(hold), { reason: "adopted" });
+		if (!released) throw new Error("fixture: the release missed");
+		const next = new Date(Date.now() + 5 * 60_000);
+		const alertedAt = new Date();
+		const written = await store.writeAdoptedRelinkState(lease, refOf(released.hold), {
+			attempts: 2,
+			lastError: "Stripe is down",
+			nextCheckAt: next,
+			alertedAt,
+		});
+		expect(written).toMatchObject({
+			state: "released",
+			release_reason: "adopted",
+			released_at: released.hold.released_at,
+			attempts: 2,
+			last_error: "Stripe is down",
+			next_check_at: next,
+			alerted_at: alertedAt,
+			version: released.hold.version + 1,
+		});
+		// A write prepared on the old version is a no-op (C65's rule, on the released row).
+		expect(await store.writeAdoptedRelinkState(lease, refOf(released.hold), { nextCheckAt: null })).toBeNull();
+		expect((await readHold(hold.id)).next_check_at).toEqual(next);
+		await releasePurchaseLease(lease);
+	});
+
+	it("C111: the relink write writes nothing on an OPEN hold, on another release reason, on an org_plan hold, or under a lost lease", async () => {
+		const { payer, lease } = await payerWithLease();
+		const open = await opened(lease, e0(payer, newSubscription()));
+		expect(await store.writeAdoptedRelinkState(lease, refOf(open), { nextCheckAt: null })).toBeNull();
+		expect(await readHold(open.id)).toMatchObject({ version: open.version, next_check_at: open.next_check_at });
+
+		const voided = await releaseHold(lease, refOf(await opened(lease, e0(payer, newSubscription()))), { reason: "voided_unpaid" });
+		if (!voided) throw new Error("fixture: the release missed");
+		expect(await store.writeAdoptedRelinkState(lease, refOf(voided.hold), { nextCheckAt: new Date() })).toBeNull();
+
+		const adopted = await releaseHold(lease, refOf(await opened(lease, e0(payer, newSubscription()))), { reason: "adopted" });
+		if (!adopted) throw new Error("fixture: the release missed");
+		await expireLease(payerLeaseKey(payer));
+		expect(await store.writeAdoptedRelinkState(lease, refOf(adopted.hold), { nextCheckAt: null })).toBeNull();
+		expect((await readHold(adopted.hold.id)).version).toBe(adopted.hold.version);
+
+		const { org, lease: orgLease } = await orgWithLease();
+		const orgAdopted = await releaseHold(orgLease, refOf(await opened(orgLease, e0OrgPlan(org, newSubscription()))), { reason: "adopted" });
+		if (!orgAdopted) throw new Error("fixture: the release missed");
+		expect(await store.writeAdoptedRelinkState(orgLease, refOf(orgAdopted.hold), { nextCheckAt: new Date() })).toBeNull();
+		await releasePurchaseLease(orgLease);
 	});
 });
 
