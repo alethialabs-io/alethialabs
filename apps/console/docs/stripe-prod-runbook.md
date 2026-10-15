@@ -133,18 +133,29 @@ Two other log lines are worth a search when a customer asks about a paid team:
 
 ## 7. Payment holds: the sweeper, its alert, and the operator command
 
-A **payment hold** (`payment_holds`, ADR 0002) is a row saying that one create-a-team subscription is
-not yet proven settled: its first invoice may still be paid, a payment on it may still land, or money
-taken after its cancel must be refunded. Each hold moves through one state machine until a Stripe read
-proves it settled, and is then `released` with a reason. Rows are never deleted.
+A **payment hold** (`payment_holds`, ADR 0002) is a row saying that one subscription is not yet proven
+settled: its first invoice may still be paid, a payment on it may still land, or money taken after its
+cancel must be refunded. Each hold moves through one state machine until a Stripe read proves it
+settled, and is then `released` with a reason. Rows are never deleted.
+
+Every hold has a **scope** (ADR 0004 D1), shown as `scope` on every line the command prints:
+
+| Scope | What it holds | Payer (`payer_key`) | Lease |
+|---|---|---|---|
+| `new_org` | a create-a-team subscription (ADR 0002) | the user who created it | `user:<user id>` |
+| `org_plan` | an org-plan subscription: one whose own `organization_id` names the org, and that has no `product_type` (ADR 0004 §2) | the org | `org-plan:<org id>` |
+
+A payer id alone never names a hold: always read it with its scope. An `org_plan` hold closes no team
+setup when it is released, and its emails go to the org's Stripe customer's email.
 
 ### The sweeper
 
 The console advances every open hold that is due, every 5 minutes, on every instance. A hold is due
 when its `next_check_at` has passed, or when it was nudged since its last observation (the Stripe
 webhook nudges holds from ADR 0002 slice 7 on). Each hold is advanced under its payer's purchase lease
-(`user:<payer>`), so two instances never advance the same hold at once, and neither will the purchase
-flow once it opens holds (slice 8). A hold whose lease is busy waits for the next tick.
+(`user:<payer>` for `new_org`, `org-plan:<org>` for `org_plan`), so two instances never advance the
+same hold at once, and neither will the purchase flow once it opens holds (slice 8). A hold whose lease
+is busy waits for the next tick.
 
 The same tick has a twin route for an external cron or a manual run. It needs the bearer secret
 `ALETHIA_CRON_SECRET`, answers 503 when the secret is unset, and returns counts only:
@@ -185,18 +196,28 @@ has sat in one state longer than its bound:
 Each age alert is raised once per state and bound, whether or not it reached a channel. Only
 `needs_operator` re-alerts on its own.
 
+**Production must set `ALETHIA_PLATFORM_ALERT_ORG_ID`.** The relink retry (ADR 0002 §4.1 "The relink
+retry") records its give-up alert, and a failed relink check's alert, only once the alert reaches a
+channel. Without the variable no alert ever reaches one. Each such adopted hold then re-runs its relink
+once a day, for good, and the only signal is a `[billing] payment needs support` error line in the
+console log.
+
 ### The command
 
 Run it with the service connection (`ALETHIA_DATABASE_URL`) and the Stripe key, on Node 22.15 or later:
 
 ```sh
-pnpm -C apps/console billing:payment-holds list --open [--payer <user id>]
+pnpm -C apps/console billing:payment-holds list --open [--scope new_org|org_plan] [--payer <user or org id>]
 pnpm -C apps/console billing:payment-holds show sub_…
 pnpm -C apps/console billing:payment-holds release sub_… \
   --reason "<why>" --operator <your user id>
-pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--payer <user id>]
+pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--scope new_org|org_plan] [--payer <user or org id>]
 ```
 
+- `--scope` names one scope. With `--payer`, the pair is the filter: `--payer` is a user id for
+  `new_org` and an org id for `org_plan`. A `--scope` with no value, or with any other value, is refused
+  before anything is read. On `reconcile`, `--scope` and `--payer` narrow only the sweeper tick. The
+  backfill always reads the whole account, both scopes.
 - `list` and `show` change nothing. `show` prints every hold of the subscription, its setup, and what
   Stripe says about it now: the subscription, the held invoice, and its payments and refunds.
 - `release` is the way out of `needs_operator`, and of a subscription stuck `unpaid` or `paused`. It
@@ -205,11 +226,60 @@ pnpm -C apps/console billing:payment-holds reconcile [--backfill] [--payer <user
   one `billing.payment_hold.released` line. A second run finds no open hold and changes nothing.
   `--operator` is free text: the command does not check that it names a real user. It is recorded as
   `released_by` and in the log line, so type your own user id exactly.
-  A release also closes the subscription's unfinished setup. So while a setup is open, `release`
-  refuses unless Stripe reads the subscription ended or not found: cancel it in the Stripe dashboard
-  first, and refund it if it was paid.
+  It takes the hold's own lease (`user:<payer>` or `org-plan:<org>`).
+  A `new_org` release also closes the subscription's unfinished setup. So while a setup is open, that
+  `release` refuses unless Stripe reads the subscription ended or not found: cancel it in the Stripe
+  dashboard first, and refund it if it was paid. An `org_plan` release closes no setup, so this rule does
+  not apply to it.
 - `reconcile` runs one sweeper tick now, so it can also send the customer emails above. With
   `--backfill` it first runs the backfill below.
+
+### Moving a refused payment to the right team (`release --moved-to`)
+
+When a customer pays for a new team but the team already has an active plan, the payment is not
+linked. Its hold waits for an operator with the note `link_refused`, and the customer is told that
+support "will refund it or move it to the right team". Refunding is the plain `release` above, once the
+subscription is cancelled. Moving it is this path (ADR 0002 §5.8):
+
+```sh
+pnpm -C apps/console billing:payment-holds release sub_… --moved-to <team id> \
+  --reason "<why>" --operator <your user id>
+```
+
+Before you run it, in this order:
+
+1. **Confirm with the payer, in writing, that their own payment method keeps paying.** Stripe cannot
+   move a subscription to another customer, so the subscription's customer, and that customer's default
+   payment method, stay the payer's. Once the team's billing row names the subscription, the row names
+   the payer's customer, so the payer's payment method also pays for **every later purchase the team
+   makes**: plan and seat changes, new plans, and Checkout.
+2. **Ask the team's owners whether a hosted Checkout for the team is open and unpaid.** If one is, it
+   is paid or expired first. The command cannot see an unpaid Checkout, and one paid after the move
+   bills the team twice.
+3. **Check that the payer is an owner of the team.** If they are not, they may be made one only with
+   the agreement of the team's existing owner, because that changes who governs the team, not only who
+   pays. The command refuses (`payer_not_in_team`) unless the payer is an active owner who can manage
+   the team's billing.
+4. **If the team's own payer, not this payer, is meant to pay, do not move the subscription.** Cancel
+   and refund it in Stripe (the plain `release` then settles the hold), and the team buys its own plan.
+5. **Otherwise, in the Stripe dashboard, set `organization_id` to the team's id on the subscription
+   AND on its customer**, then run the command. If it answers `too_soon`, wait until the time it prints
+   and run it again.
+
+The command moves nothing and writes nothing to Stripe. It checks that the move has fully happened, then
+releases the hold with `release_note = "moved to <team id>: <reason>"` and closes the setup. Each
+refusal prints a code and what to do instead. It refuses while the team is billed by, or is buying,
+another plan subscription (`team_has_other_plan`); an AI add-on does not count. The audit line
+`billing.payment_hold.released` also carries `moved_to`, `payer`, `customer_id`, `row_subscription_id`,
+`row_status`, `listed_customers`, `listed_subscription_count` and `setup_closed`.
+
+**An unmeasured assumption.** When the team's billing row already names the subscription, `too_soon`
+waits until 15 minutes after the row **last changed** (`organization_billing.updated_at`, which every
+write to the row bumps: a sync, the usage cap, the AI spend caps, the payer facts), on the assumption that Stripe's search sees everything the team bought before the move by
+then. That lag has **not** been measured yet; it is to be measured in Stripe test mode (ADR 0002 §5.8,
+"The windows that are left").
+
+The plain `release` of such a hold, after the subscription was moved, refuses and names `--moved-to`.
 
 ### The backfill
 
@@ -225,7 +295,9 @@ pnpm -C apps/console billing:payment-holds reconcile --backfill
 It reads every `canceled` and `incomplete_expired` subscription in the account. It holds a subscription
 only when all six tests pass:
 
-1. **B1:** it is a create-a-team subscription (`created_by` set, no `organization_id`).
+1. **B1:** it is an org-plan subscription of some org (its own `organization_id` set, no
+   `product_type`), or a create-a-team subscription (`created_by` set, no `organization_id`). An AI
+   subscription is neither, and is skipped without being printed.
 2. **B2:** it was cancelled on request, or expired.
 3. **B3:** it has exactly one invoice, the first one.
 4. **B4:** that invoice was unpaid when the subscription ended, or was paid after it ended.
@@ -235,10 +307,59 @@ only when all six tests pass:
 Each hold is advanced at once: an unpaid invoice is voided, and a payment that landed after the end is
 refunded. One case is held but not advanced: an invoice with **no** PaymentIntent proves nothing about how
 it would be paid (B5). That hold opens in `needs_operator`, the alert names the subscription, and you
-decide it with `show` and `release`. Every other create-a-team subscription is printed as `LISTED <sub>: <the failed test>`, and
-nothing is written for it. Each one is a support decision: use `show` as the evidence, and refund in the
-Stripe dashboard only when the customer did not mean to keep it. A second run skips every subscription a
-hold has named, so it writes nothing new.
+decide it with `show` and `release`. Every other subscription that passes B1 is printed as
+`LISTED <sub>: <the failed test>`, and nothing is written for it. Each one is a support decision: use
+`show` as the evidence, and refund in the Stripe dashboard only when the customer did not mean to keep
+it. A second run skips every subscription a hold of either scope has named, so it writes nothing new.
+
+Each held subscription is printed as `HELD <sub>: hold <id>, <scope> of <payer>, …`:
+
+| B1 found | Held as | `payer_key` | Taken under |
+|---|---|---|---|
+| an org-plan subscription (`organization_id` set, no `product_type`), including a linked create-a-team one, which carries `organization_id` too | `org_plan` | its `organization_id` | `org-plan:<org id>` |
+| a create-a-team subscription (`created_by` set, no `organization_id`) | `new_org` | its `created_by` | `user:<user id>` |
+
+### The org-plan backfill and the deploy order (ADR 0004 §9)
+
+Until the org-plan purchase opens holds (ADR 0004 slice O6), it cancels never-paid checkouts and keeps
+no record of them. From ADR 0004 slice O5 on, the same `reconcile --backfill` also finds those in Stripe
+and holds them as `org_plan` holds (the table above). B2–B6 are unchanged, and
+everything they cannot prove is listed, never held.
+
+What it cannot tell apart: the old org-plan path stamped none of its cancels, so B2's
+`cancellation_requested` also matches a customer's own cancel. B3 (one `subscription_create` invoice)
+and B4 (unpaid when it ended) keep a cancelled plan that was used out of the holds. A trial's first
+invoice is paid at once, for nothing, before the trial ends, so B4 never holds a trial. Every cancel on the old
+path that it could not settle raised an operator alert, so check the `LISTED` org-plan lines against
+those alerts.
+
+**Deploy O6 only when all three hold** (ADR 0004 §9 step 6):
+
+1. O4's rollout has been complete for **more than 24h**. That is the advisory key's precondition, and
+   the second guard against the keyless-Checkout finding (ADR 0004 rev 2's money-review blocker, case
+   C44; not the backfill's test B1 above): every Checkout session without a session-level key has
+   then reached Stripe's default expiry.
+2. An operator has run the widened backfill (this section, ADR 0004 §9 step 5).
+3. The backfill runs **again** once O6's rollout has completed, because old instances keep cancelling
+   without holds until then.
+
+**Before O6 deploys, also work the open `org_plan` holds.** Once O6 is live, every open `org_plan`
+hold except `refund_pending` refuses its org's plan purchase, Checkout and trial (ADR 0004 §4.1),
+and a `needs_operator` hold stays open until an operator releases it. So after the first backfill:
+
+1. Run `list --open --scope org_plan`, and `show` each `needs_operator` hold.
+2. Release each hold support has decided, with `release <sub> --reason "<why>" --operator <your user
+   id>`. Cancel or refund the subscription in Stripe first where support decided that.
+3. Leave open only the holds that are still undecided. Each one blocks its org's next purchase until it
+   is released.
+
+```sh
+pnpm -C apps/console billing:payment-holds reconcile --backfill   # before O6 deploys
+pnpm -C apps/console billing:payment-holds list --open --scope org_plan
+pnpm -C apps/console billing:payment-holds show sub_…              # each needs_operator hold
+pnpm -C apps/console billing:payment-holds release sub_… --reason "<why>" --operator <your user id>
+pnpm -C apps/console billing:payment-holds reconcile --backfill   # again, once O6 has rolled out everywhere
+```
 
 ## Rollback
 

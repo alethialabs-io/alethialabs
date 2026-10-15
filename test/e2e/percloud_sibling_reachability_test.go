@@ -201,6 +201,7 @@ func TestPerCloudSiblingAllowlistsAreNotStale(t *testing.T) {
 func perCloudSiblingBases(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	fset := token.NewFileSet()
+	//nolint:staticcheck // SA1019: ParseDir ignores build tags, deliberately: a base read behind a //go:build tag must not escape the guard.
 	pkg, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0)

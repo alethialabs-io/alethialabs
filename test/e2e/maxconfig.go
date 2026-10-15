@@ -451,6 +451,7 @@ const hetznerNoManagedService = "Hetzner has no managed equivalent; the console 
 const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deploy " +
 	"(unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
 
+//nolint:unused // NO CELL USES IT TODAY, deliberately: see the doc comment below. It is kept so the CEILING verdict stays expressible.
 const hetznerNoServiceNoChart = "Hetzner has no such service, and this repo offers no chart wired for the kind either " +
 	"— " + hetznerKindHiddenAndRejected
 
@@ -1356,6 +1357,9 @@ func meaningful(v any) bool {
 		return false
 	}
 	rv := reflect.ValueOf(v)
+	// Not exhaustive on purpose. Every kind listed has a "carries signal" test; any other kind (a
+	// struct, a func, a chan) is present, and a present value is meaningful, which is the default.
+	//exhaustive:ignore
 	switch rv.Kind() {
 	case reflect.Bool:
 		return rv.Bool()
@@ -1369,7 +1373,7 @@ func meaningful(v any) bool {
 		return rv.Uint() != 0
 	case reflect.Float32, reflect.Float64:
 		return rv.Float() != 0
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		return !rv.IsNil() && meaningful(rv.Elem().Interface())
 	default:
 		return true

@@ -60,6 +60,7 @@ func stripLineComments(src string) string {
 // nightly or writing down here why it can never run there.
 var nightlyExemptEnv = map[string]string{
 	"ALETHIA_E2E_T1_REQUIRE":              "T1 is hermetic (kind) and runs from ci.yml, not the nightly",
+	"ALETHIA_E2E_T1_PRELOAD_IMAGES":       "T1 only — ci.yml's provision-e2e pulls the list it names (#6044)",
 	"ALETHIA_E2E_T1_RUNNER_LOG":           "T1 only",
 	"ALETHIA_E2E_T1_WAIT":                 "T1 only",
 	"ALETHIA_E2E_T2_WAIT":                 "per-provider default resolved from the provider row; overridden only for local debugging",

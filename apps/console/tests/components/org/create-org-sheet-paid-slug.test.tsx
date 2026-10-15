@@ -156,7 +156,8 @@ describe("CreateOrgSheet — a slug claimed during payment", () => {
 		await payWithClaimedSlug(user);
 
 		expect(await screen.findByText(/your payment went through/i)).toBeInTheDocument();
-		expect(screen.getByText(/won.t be charged/i)).toBeInTheDocument();
+		// ADR 0002 C32: no sheet outcome promises the customer will not be charged again.
+		expect(screen.queryByText(/charged (again|twice)/i)).not.toBeInTheDocument();
 		const field = screen.getByLabelText("Team URL");
 		expect(field).toHaveValue("acme-cloud");
 		const alert = screen.getByRole("alert");

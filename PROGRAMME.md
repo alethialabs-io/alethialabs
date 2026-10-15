@@ -292,7 +292,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `azure/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `azure/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/azure/20260930T095658Z`
 - `alibaba/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
-- `hetzner/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5879 is OPEN and was filed 2026-10-12, AFTER the 2026-09-30 run that proved it
+- `hetzner/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5879 was filed 2026-10-12, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-14 inside this refresh window, so no derivation ever saw it open
 - `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
 - `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
@@ -305,7 +305,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`hetzner/floor`** — contested. ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5879 is OPEN and was filed 2026-10-12, AFTER the 2026-09-30 run that proved it
+**`hetzner/floor`** — contested. ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5879 was filed 2026-10-12, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-14 inside this refresh window, so no derivation ever saw it open
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
@@ -355,11 +355,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 38238366995 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 38238366995 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 38238366995 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 38238366995 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 38238366995 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 38536795737 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 38536795737 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 38536795737 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 38536795737 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 38536795737 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -385,7 +385,7 @@ A nightly that goes red files an **issue** and writes **no ledger row**. So from
 
 | cell | proven by a run dated | red | filed | red's state |
 |---|:---:|---|:---:|---|
-| `hetzner/floor` | 2026-09-30 | #5879 | 2026-10-12 | open |
+| `hetzner/floor` | 2026-09-30 | #5879 | 2026-10-12 | closed 2026-10-14, inside this refresh window |
 
 `contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
 
@@ -402,11 +402,11 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 38279394980 at 2026-10-12T16:45:00Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 38279394980 at 2026-10-12T16:45:00Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 38279394980 at 2026-10-12T16:45:00Z found no orphan runs and verified clean |
-| **alibaba** | ? indeterminate | run 38279394980 at 2026-10-12T16:45:00Z skipped its cloud gate |
-| **hetzner** | ? indeterminate | run 38279394980 at 2026-10-12T16:45:00Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 38567105650 at 2026-10-14T13:03:54Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 38567105650 at 2026-10-14T13:03:54Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 38567105650 at 2026-10-14T13:03:54Z found no orphan runs and verified clean |
+| **alibaba** | ? indeterminate | run 38567105650 at 2026-10-14T13:03:54Z skipped its cloud gate |
+| **hetzner** | ? indeterminate | run 38567105650 at 2026-10-14T13:03:54Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
@@ -445,7 +445,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-10-12T18:15:31Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-10-14T14:05:19Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

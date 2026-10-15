@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // stubbing the predicate a test is about would let the wrong answer pass.
 vi.mock("@/lib/billing/credit-grants", () => ({ ensureIncludedCredit: vi.fn() }));
 vi.mock("@/lib/billing/queries", () => ({
-	applySubscriptionToBilling: vi.fn(async () => true),
+	writeSubscriptionToBilling: vi.fn(async () => ({ applied: true, before: null })),
 	applyAiSubscriptionToBilling: vi.fn(async () => true),
 	// Not the sync's write path any more (#5514): it is the unconditional OFF-Stripe write. Stubbed
 	// so a regression back onto it is caught by an assertion rather than a missing-export crash.
@@ -18,6 +18,8 @@ vi.mock("@/lib/billing/queries", () => ({
 	claimPlanWelcome: vi.fn(async () => false),
 }));
 vi.mock("@/lib/email/billing-email", () => ({ sendPlanWelcomeEmail: vi.fn() }));
+// The two-live detector's alert (ADR 0004 D6b), observed rather than sent.
+vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
 vi.mock("@/lib/billing/config", () => ({
 	planForPriceId: vi.fn(),
 	aiTierForPriceId: vi.fn(),
@@ -33,10 +35,12 @@ import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import {
 	applyAiSubscriptionToBilling,
-	applySubscriptionToBilling,
 	claimPlanWelcome,
+	type PlanSlotBefore,
 	upsertOrgBilling,
+	writeSubscriptionToBilling,
 } from "@/lib/billing/queries";
+import { alertOperator } from "@/lib/billing/operator-alert";
 
 /** A subscription carrying only the fields planFromSubscription reads. */
 function subWithPlan(plan?: string): Stripe.Subscription {
@@ -188,7 +192,7 @@ describe("syncSubscriptionToBilling", () => {
 		vi.mocked(aiTierForPriceId).mockReturnValue(null);
 	});
 	afterEach(() => {
-		vi.mocked(applySubscriptionToBilling).mockClear();
+		vi.mocked(writeSubscriptionToBilling).mockClear();
 		vi.mocked(applyAiSubscriptionToBilling).mockClear();
 	});
 
@@ -197,7 +201,7 @@ describe("syncSubscriptionToBilling", () => {
 	// `plan: live && plan ? plan : "community"` wrote `community` over a live Pro subscription.
 	it("writes the plan off the licensed item even when the meter is listed FIRST", async () => {
 		await syncSubscriptionToBilling(sub([meter, flat]));
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
 				organizationId: "org_1",
 				plan: "team",
@@ -210,7 +214,7 @@ describe("syncSubscriptionToBilling", () => {
 
 	it("writes the same row when the meter is listed SECOND", async () => {
 		await syncSubscriptionToBilling(sub([flat, meter]));
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({ plan: "team", seats: 4 }),
 		);
 	});
@@ -219,7 +223,7 @@ describe("syncSubscriptionToBilling", () => {
 		// An `incomplete` upgrade must not light up Pro in the billing panel; the subscription id
 		// is still retained so the panel can clean it up.
 		await syncSubscriptionToBilling(sub([flat], { status: "incomplete" }));
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
 				plan: "community",
 				status: "none",
@@ -234,7 +238,7 @@ describe("syncSubscriptionToBilling", () => {
 		await syncSubscriptionToBilling(
 			sub([meter], { metadata: { organization_id: "org_1", plan: "enterprise" } }),
 		);
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			// No plan line, so no seats and no period either — every one of them came off that item.
 			expect.objectContaining({ plan: "enterprise", seats: null, currentPeriodEnd: null }),
 		);
@@ -260,13 +264,13 @@ describe("syncSubscriptionToBilling", () => {
 				aiStripeSubscriptionId: "sub_1",
 			}),
 		);
-		expect(applySubscriptionToBilling).not.toHaveBeenCalled();
+		expect(writeSubscriptionToBilling).not.toHaveBeenCalled();
 	});
 
 	it("ignores a subscription with no organization_id rather than guessing a tenant", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		await syncSubscriptionToBilling(sub([flat], { metadata: {} }));
-		expect(applySubscriptionToBilling).not.toHaveBeenCalled();
+		expect(writeSubscriptionToBilling).not.toHaveBeenCalled();
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("no organization_id"));
 		warn.mockRestore();
 	});
@@ -275,7 +279,7 @@ describe("syncSubscriptionToBilling", () => {
 		await syncSubscriptionToBilling(
 			sub([flat], { customer: { id: "cus_expanded" } as Stripe.Customer }),
 		);
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({ stripeCustomerId: "cus_expanded" }),
 		);
 	});
@@ -285,7 +289,7 @@ describe("syncSubscriptionToBilling", () => {
 	it("hands the event time to the guarded write, so a stale event can be refused", async () => {
 		const eventAt = new Date("2026-10-01T12:00:05Z");
 		await syncSubscriptionToBilling(sub([flat], { status: "active" }), { eventAt });
-		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+		expect(writeSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({ stripeSubscriptionId: "sub_1", status: "active", eventAt }),
 		);
 		// The unconditional off-Stripe write is never the subscription path.
@@ -303,7 +307,10 @@ describe("syncSubscriptionToBilling", () => {
 
 	it("a refused write grants no credit and sends no welcome — the org is not on this subscription", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		vi.mocked(applySubscriptionToBilling).mockResolvedValueOnce(false);
+		vi.mocked(writeSubscriptionToBilling).mockResolvedValueOnce({
+			applied: false,
+			before: { subscriptionId: "sub_y", status: "active", currentPeriodEnd: null },
+		});
 		vi.mocked(claimPlanWelcome).mockClear();
 		vi.mocked(ensureIncludedCredit).mockClear();
 
@@ -315,6 +322,67 @@ describe("syncSubscriptionToBilling", () => {
 		expect(ensureIncludedCredit).not.toHaveBeenCalled();
 		expect(claimPlanWelcome).not.toHaveBeenCalled();
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("not applied to org org_1"));
+		warn.mockRestore();
+	});
+	// ── ADR 0004 D6b: a write that REPLACED a live slot is reported, for every caller of the sync ─────
+
+	/** Makes the next guarded write apply over `before`. */
+	function appliesOver(before: PlanSlotBefore): void {
+		vi.mocked(writeSubscriptionToBilling).mockResolvedValueOnce({ applied: true, before });
+	}
+
+	it("D6b: a paid subscription that replaced a past_due one raises one two-live alert, the new one its subject", async () => {
+		vi.mocked(alertOperator).mockClear();
+		appliesOver({ subscriptionId: "sub_y", status: "past_due", currentPeriodEnd: null });
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }));
+		expect(alertOperator).toHaveBeenCalledTimes(1);
+		const [alert] = vi.mocked(alertOperator).mock.calls[0] ?? [];
+		expect(alert?.subject).toEqual({ type: "stripe_subscription", id: "sub_1" });
+		expect(alert?.summary).toContain("sub_y");
+		expect(alert?.summary).not.toMatch(/purchase flow cancelled/);
+	});
+
+	it("D6b: replacing a live, unexpired off-Stripe grant alerts; a lapsed grant, a canceled row or the same subscription does not", async () => {
+		vi.mocked(alertOperator).mockClear();
+		appliesOver({ subscriptionId: null, status: "active", currentPeriodEnd: new Date(Date.now() + 86_400_000) });
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }));
+		expect(alertOperator).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(alertOperator).mock.calls[0]?.[0].summary).toContain("off-Stripe grant");
+
+		appliesOver({ subscriptionId: null, status: "active", currentPeriodEnd: new Date(Date.now() - 86_400_000) });
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }));
+		appliesOver({ subscriptionId: "sub_y", status: "canceled", currentPeriodEnd: null });
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }));
+		appliesOver({ subscriptionId: "sub_1", status: "past_due", currentPeriodEnd: null });
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }));
+		expect(alertOperator).toHaveBeenCalledTimes(1);
+	});
+
+	it("D6b: a REFUSED write beside a live subscription raises nothing here (R2 is the webhook's)", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		vi.mocked(alertOperator).mockClear();
+		vi.mocked(writeSubscriptionToBilling).mockResolvedValueOnce({
+			applied: false,
+			before: { subscriptionId: "sub_y", status: "past_due", currentPeriodEnd: null },
+		});
+		await syncSubscriptionToBilling(sub([flat], { status: "past_due" }));
+		expect(alertOperator).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+
+	it("tells `onPlanWrite` what the guarded org-plan write reported, and only for an org-plan write", async () => {
+		const before: PlanSlotBefore = { subscriptionId: "sub_y", status: "active", currentPeriodEnd: null };
+		vi.mocked(writeSubscriptionToBilling).mockResolvedValueOnce({ applied: false, before });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const onPlanWrite = vi.fn();
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }), { onPlanWrite });
+		expect(onPlanWrite).toHaveBeenCalledWith({ applied: false, before });
+
+		onPlanWrite.mockClear();
+		vi.mocked(aiTierForPriceId).mockReturnValue("ai_plus");
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }), { onPlanWrite });
+		await syncSubscriptionToBilling(sub([flat], { metadata: {} }), { onPlanWrite });
+		expect(onPlanWrite).not.toHaveBeenCalled();
 		warn.mockRestore();
 	});
 });

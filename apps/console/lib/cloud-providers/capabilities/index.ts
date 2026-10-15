@@ -28,7 +28,9 @@ import { syncAzureCapabilities } from "./azure";
 import { syncGcpCapabilities } from "./gcp";
 import { syncHetznerCapabilities } from "./hetzner";
 
-/** Every capability table — for whole-connection purge (on disconnect) + retention GC. */
+/** The region + instance-type capability tables — for whole-connection purge (on disconnect) + retention
+ * GC. The managed-service and quota tables are owned by services-index.ts / quotas-index.ts, which carry
+ * their own purge + GC; disconnectIdentity (connections.ts) calls all three purges. */
 const CAPABILITY_TABLES = [
 	cloudCapabilityInstanceTypes,
 	cloudCapabilityRegions,
@@ -74,8 +76,9 @@ export async function syncCloudCapabilities(
 	}
 }
 
-/** Purges a connection's entire capabilities catalog (called on disconnect — we keep no projection of
- * a cloud we no longer have access to). */
+/** Purges a connection's region + instance-type capability catalog and its change-detection hashes
+ * (called by disconnectIdentity — we keep no projection of a cloud we no longer have access to). The
+ * service and quota catalogs are purged by their own modules' purges, which disconnectIdentity also calls. */
 export async function purgeCloudCapabilities(
 	cloudIdentityId: string,
 ): Promise<void> {

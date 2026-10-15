@@ -512,6 +512,19 @@ describe("listDrafts (§6.4, D22, D23, D30)", () => {
 		expect(h.store.view.getState().drafts.pageOrg).toBeNull();
 	});
 
+	it("a late answer for an older scope never becomes the next list's org hint (D23, the store's check)", async () => {
+		// The reducer drops the late rows on its own; what only the store's check guards is the state it
+		// keeps OUTSIDE the reducer: `lastListedOrg`, which the next call sends as `orgHint`.
+		const h = setup();
+		h.store.load(SCOPE_A);
+		h.store.dispatch({ type: "SCOPE_CHANGE", scope: SCOPE_B });
+		h.list.calls[0]?.resolve({ outcome: "ok", orgId: ORG_A, drafts: [] });
+		await flush();
+		h.store.dispatch({ type: "SCOPE_CHANGE", scope: SCOPE_A });
+		expect(h.list.calls).toHaveLength(3);
+		expect(h.list.calls[2]?.input).toEqual({ projectId: null });
+	});
+
 	it("polls every 10 s while a row is being sent from another tab (D30)", async () => {
 		const h = setup();
 		const sending = row("frozen", 4, {
@@ -566,5 +579,88 @@ describe("selectors", () => {
 		expect(result.current.draft?.local?.text).toBe("deploy");
 		expect(selectUnsent(h.store.view.getState(), SCOPE_B)).toEqual([]);
 		expect(h.store.readActive(SCOPE_A)).toBe(K.conversationId); // §7.3's per-tab mirror
+	});
+});
+
+// ── ADR 0001 §11.2, the close-out of #5464: #21 and #23 ──────────────────────────────────────
+
+describe("writes are debounced (§11.2 #21)", () => {
+	it("a burst of edits sends one save, 800 ms after the last, carrying the last text", async () => {
+		const h = setup();
+		await loadA(h);
+		openNew(h.store);
+		type(h.store, "d");
+		await vi.advanceTimersByTimeAsync(500);
+		type(h.store, "de");
+		await vi.advanceTimersByTimeAsync(500);
+		type(h.store, "deploy");
+		// 1 s after the first keystroke and 500 ms after the second: still nothing on the wire.
+		expect(h.save.calls).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(799);
+		expect(h.save.calls).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(h.save.calls.map((c) => c.input.content.text)).toEqual(["deploy"]);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(h.save.calls).toHaveLength(1);
+	});
+
+	it("a burst of edits writes the tab's cache item once, 300 ms after the last edit", async () => {
+		const item = `${CACHE_PREFIX}${VIEWER}:${keyId(K)}`;
+		const writes: string[] = [];
+		const real = Storage.prototype.setItem;
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+			if (k === item) writes.push(v);
+			real.call(this, k, v);
+		});
+		const h = setup();
+		await loadA(h);
+		openNew(h.store);
+		type(h.store, "d");
+		await vi.advanceTimersByTimeAsync(200);
+		type(h.store, "de");
+		await vi.advanceTimersByTimeAsync(200);
+		type(h.store, "deploy");
+		await vi.advanceTimersByTimeAsync(299);
+		expect(writes).toHaveLength(0);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(writes).toHaveLength(1);
+		expect(writes[0]).toContain("deploy");
+		expect(window.sessionStorage.getItem(item)).toContain("deploy");
+		// …and once for the burst: nothing writes it again before the save goes on the wire, 800 ms
+		// after the last edit. (That save changes the entry, and the store then writes the item
+		// again with the same content; that write is the save's, not the keystrokes'.)
+		await vi.advanceTimersByTimeAsync(499);
+		expect(h.save.calls).toHaveLength(0);
+		expect(writes).toHaveLength(1);
+	});
+});
+
+describe("notices are acknowledged by id (§11.2 #23)", () => {
+	const K2: DraftKey = { ...SCOPE_A, conversationId: "00000000-0000-4000-8000-0000000000c2" };
+
+	/** Types into `key` as a new conversation and fails its first save on the network. */
+	async function failSave(h: Harness, key: DraftKey, text: string): Promise<void> {
+		openNew(h.store, key);
+		type(h.store, text, key);
+		await vi.advanceTimersByTimeAsync(800);
+		h.save.calls.at(-1)?.reject(new TypeError("Failed to fetch"));
+		await flush();
+	}
+
+	it("ack removes only the shown notice ids; one raised after the read is kept", async () => {
+		const h = setup();
+		await loadA(h);
+		await failSave(h, K, "deploy");
+		const shownNow = h.store.view.getState().notices;
+		expect(shownNow.map((n) => n.key.conversationId)).toEqual([K.conversationId]);
+		// A second key fails between the read and the acknowledgement: it has not been shown.
+		await failSave(h, K2, "rollback");
+		expect(h.store.view.getState().notices).toHaveLength(2);
+		h.store.ackNotices(shownNow.map((n) => n.id));
+		const left = h.store.view.getState().notices;
+		expect(left.map((n) => n.key.conversationId)).toEqual([K2.conversationId]);
+		// An id that is not (or no longer) there removes nothing.
+		h.store.ackNotices([...shownNow.map((n) => n.id), 9_999]);
+		expect(h.store.view.getState().notices).toEqual(left);
 	});
 });

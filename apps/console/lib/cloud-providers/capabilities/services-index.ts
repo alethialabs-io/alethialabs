@@ -68,8 +68,9 @@ export async function syncCloudServiceCapabilities(
 	}
 }
 
-/** Purges a connection's entire managed-service capabilities catalog (called on disconnect — we keep no
- * projection of a cloud we no longer have access to). Parallels index.ts's purgeCloudCapabilities. */
+/** Purges a connection's entire managed-service capabilities catalog (called by disconnectIdentity in
+ * connections.ts — we keep no projection of a cloud we no longer have access to). Parallels index.ts's
+ * purgeCloudCapabilities. */
 export async function purgeCloudServiceCapabilities(
 	cloudIdentityId: string,
 ): Promise<void> {

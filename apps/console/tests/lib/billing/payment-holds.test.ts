@@ -7,9 +7,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	advanceHold,
+	decideMovedRelease,
 	decideOpen,
 	type HoldMachineDeps,
 	LINK_REFUSED_NOTE,
+	type MovedOrgRow,
+	type MovedReleaseFacts,
+	type MovedReleaseRefusal,
+	type MovedStripeFacts,
 	operatorRelease,
 } from "@/lib/billing/payment-holds/machine";
 import { HOLD_REFUND_METADATA_KEY } from "@/lib/billing/payment-holds/observe";
@@ -171,6 +176,7 @@ function stripeOf(w: World) {
 function holdRow(over: Partial<PaymentHoldRow> = {}): PaymentHoldRow {
 	return {
 		id: "hold_1",
+		scope: "new_org",
 		subscription_id: "sub_1",
 		customer_id: "cus_1",
 		payer_key: "user_1",
@@ -1155,5 +1161,250 @@ describe("decideOpen (T0, T0h, T0f)", () => {
 			hold: null,
 		});
 		expect(decideOpen({ kind: "lease_lost" }, "user_1")).toEqual({ kind: "refuse_unconfirmed" });
+	});
+});
+
+// ── E2m / T16m: the moved release's decision (§5.8; C99, C100, C108) ───────────────────────────────
+
+describe("operatorRelease: the moved release's additions (§5.8 step 9)", () => {
+	it("hands expectOrgRow to the store and passes closedSetupId and the checked row through; T16 passes no expectOrgRow", async () => {
+		const seen: ReleaseHoldInput[] = [];
+		const released = holdRow({ state: "released", release_reason: "operator" });
+		const store = {
+			write: async () => null,
+			reserveRefundAttempt: async () => null,
+			release: async (_ref: HoldRef, input: ReleaseHoldInput) => {
+				seen.push(input);
+				return {
+					hold: released,
+					closedSetupId: "setup_1",
+					...(input.expectOrgRow ? { checkedOrgRow: { subscriptionId: "sub_1", status: "active" } } : {}),
+				};
+			},
+		};
+		const reader = stripeOf(world({ sub: "active" }));
+		const moved = await operatorRelease(holdRow({ state: "needs_operator" }), { reader, store }, {
+			operatorId: "op_1",
+			reason: "moved to org_t: r",
+			expectOrgRow: { orgId: "org_t", subscriptionId: "sub_1" },
+		});
+		expect(moved).toMatchObject({
+			released,
+			closedSetupId: "setup_1",
+			checkedOrgRow: { subscriptionId: "sub_1", status: "active" },
+		});
+		expect(seen[0]).toEqual({
+			reason: "operator",
+			releasedBy: "op_1",
+			note: "moved to org_t: r",
+			expectOrgRow: { orgId: "org_t", subscriptionId: "sub_1" },
+		});
+		const plain = await operatorRelease(holdRow({ state: "needs_operator" }), { reader, store }, {
+			operatorId: "op_1",
+			reason: "refunded by hand",
+		});
+		expect(plain).toMatchObject({ closedSetupId: "setup_1", checkedOrgRow: null });
+		expect(seen[1]).not.toHaveProperty("expectOrgRow");
+	});
+});
+
+const X = "sub_1";
+const T = "org_t";
+const O = "org_o";
+const NOW_M = new Date("2026-10-14T12:00:00.000Z");
+
+/** T's row naming X, written 20 minutes ago. */
+function rowNaming(subscriptionId: string | null, status = "active", minutesAgo = 20): MovedOrgRow {
+	return { subscriptionId, status, customerId: "cus_t", updatedAt: new Date(NOW_M.getTime() - minutesAgo * MIN) };
+}
+
+/** Step 7's facts for a moved X with nothing else on T, unless overridden. */
+function readFacts(
+	over: Partial<Extract<MovedStripeFacts, { kind: "read" }>> = {},
+): Extract<MovedStripeFacts, { kind: "read" }> {
+	return {
+		kind: "read",
+		x: { status: "active", orgId: T, customerId: "cus_u" },
+		customer: { deleted: false, orgId: T },
+		row: rowNaming(X),
+		others: [],
+		...over,
+	};
+}
+
+/** A fact set that passes every row of §5.8's table (C98's), unless overridden. */
+function movedFacts(over: Partial<MovedReleaseFacts> = {}): MovedReleaseFacts {
+	return {
+		hold: { state: "needs_operator", open_note: LINK_REFUSED_NOTE, subscription_id: X },
+		teamId: T,
+		team: { id: T, metadata: null },
+		setupOrgId: O,
+		payer: { member: { role: "owner", status: "active" }, managesBilling: true },
+		lock: "held",
+		stripe: readFacts(),
+		syncedOnce: false,
+		rowAfterSync: null,
+		now: NOW_M,
+		...over,
+	};
+}
+
+/** The code `decideMovedRelease` refuses with, or the kind of its other answer. */
+function codeOf(f: MovedReleaseFacts): MovedReleaseRefusal | "read_stripe" | "sync_first" | "release" {
+	const d = decideMovedRelease(f);
+	return d.kind === "refuse" ? d.code : d.kind;
+}
+
+describe("decideMovedRelease (§5.8, C99)", () => {
+	it("a fact set that passes every row releases", () => {
+		expect(codeOf(movedFacts())).toBe("release");
+	});
+
+	it("returns each code of rows 1–4, L and 5–14 from a fact set that fails only that row", () => {
+		const cases: Array<[MovedReleaseRefusal, MovedReleaseFacts]> = [
+			["not_link_refused", movedFacts({ hold: { state: "needs_operator", open_note: null, subscription_id: X } })],
+			["not_link_refused", movedFacts({ hold: { state: "refund_due", open_note: LINK_REFUSED_NOTE, subscription_id: X } })],
+			["team_not_found", movedFacts({ team: null })],
+			["same_team", movedFacts({ setupOrgId: T })],
+			["same_team", movedFacts({ team: { id: T, metadata: JSON.stringify({ newOrgSubscriptionId: X }) } })],
+			["payer_not_in_team", movedFacts({ payer: { member: null, managesBilling: false } })],
+			["team_purchase_in_progress", movedFacts({ lock: "busy", stripe: undefined })],
+			["x_missing", movedFacts({ stripe: { kind: "x_missing" } })],
+			["stripe_unreadable", movedFacts({ stripe: { kind: "unreadable", what: "subscriptions.list: 500" } })],
+			["x_ended", movedFacts({ stripe: readFacts({ x: { status: "canceled", orgId: T, customerId: "cus_u" } }) })],
+			["x_ended", movedFacts({ stripe: readFacts({ x: { status: "incomplete_expired", orgId: T, customerId: "cus_u" } }) })],
+			["subscription_not_moved", movedFacts({ stripe: readFacts({ x: { status: "active", orgId: O, customerId: "cus_u" } }) })],
+			["subscription_not_moved", movedFacts({ stripe: readFacts({ x: { status: "active", orgId: null, customerId: "cus_u" } }) })],
+			["customer_not_moved", movedFacts({ stripe: readFacts({ customer: { deleted: false, orgId: O } }) })],
+			["customer_not_moved", movedFacts({ stripe: readFacts({ customer: { deleted: true, orgId: null } }) })],
+			["team_has_other_plan", movedFacts({ stripe: readFacts({ row: rowNaming("sub_z", "past_due") }) })],
+			[
+				"team_has_other_plan",
+				movedFacts({ stripe: readFacts({ others: [{ id: "sub_z", status: "past_due", orgId: T, orgPlan: true }] }) }),
+			],
+			["too_soon", movedFacts({ stripe: readFacts({ row: rowNaming(X, "active", 5) }) })],
+			["row_not_x", movedFacts({ stripe: readFacts({ row: null }), syncedOnce: true, rowAfterSync: null })],
+		];
+		for (const [code, facts] of cases) expect([code, codeOf(facts)]).toEqual([code, code]);
+	});
+
+	it("row 8: X incomplete, unpaid or paused is x_not_movable; past_due passes row 8", () => {
+		for (const status of ["incomplete", "unpaid", "paused", "something_new"]) {
+			const f = movedFacts({ stripe: readFacts({ x: { status, orgId: T, customerId: "cus_u" } }) });
+			expect([status, codeOf(f)]).toEqual([status, "x_not_movable"]);
+		}
+		const pastDue = movedFacts({ stripe: readFacts({ x: { status: "past_due", orgId: T, customerId: "cus_u" } }) });
+		expect(codeOf(pastDue)).toBe("release");
+	});
+
+	it("with rows 1–4 passing and the Stripe facts unread, it answers read_stripe", () => {
+		expect(codeOf(movedFacts({ lock: undefined, stripe: undefined }))).toBe("read_stripe");
+		expect(codeOf(movedFacts({ lock: "held", stripe: undefined }))).toBe("read_stripe");
+	});
+
+	it("the order is pinned: the first failing row wins", () => {
+		// Rows 3 and 9.
+		expect(
+			codeOf(movedFacts({ setupOrgId: T, stripe: readFacts({ x: { status: "active", orgId: O, customerId: "cus_u" } }) })),
+		).toBe("same_team");
+		// Rows 4 and 11.
+		expect(
+			codeOf(
+				movedFacts({
+					payer: { member: { role: "admin", status: "active" }, managesBilling: true },
+					stripe: readFacts({ row: rowNaming("sub_z", "active") }),
+				}),
+			),
+		).toBe("payer_not_in_team");
+		// Rows 7 and 9.
+		expect(
+			codeOf(movedFacts({ stripe: readFacts({ x: { status: "canceled", orgId: O, customerId: "cus_u" } }) })),
+		).toBe("x_ended");
+		// Rows 1 and 2; row 2 and the lock.
+		expect(codeOf(movedFacts({ hold: { state: "needs_operator", open_note: null, subscription_id: X }, team: null }))).toBe(
+			"not_link_refused",
+		);
+		expect(codeOf(movedFacts({ team: null, lock: "busy" }))).toBe("team_not_found");
+	});
+});
+
+describe("decideMovedRelease: sync once, the pre-sync row, N1 and N2 (§5.8 steps 6–8, C100)", () => {
+	it("sync once: T's row naming nothing gives sync_first; the same facts after one sync give row_not_x", () => {
+		const unsynced = movedFacts({ stripe: readFacts({ row: null }) });
+		expect(codeOf(unsynced)).toBe("sync_first");
+		expect(codeOf({ ...unsynced, syncedOnce: true, rowAfterSync: null })).toBe("row_not_x");
+		expect(codeOf({ ...unsynced, syncedOnce: true, rowAfterSync: rowNaming(null, "none") })).toBe("row_not_x");
+		expect(codeOf({ ...unsynced, syncedOnce: true, rowAfterSync: rowNaming(X, "active", 0) })).toBe("release");
+	});
+
+	it("pre-sync row: Z past_due, active, trialing or none (an in-flight incomplete Z) refuses naming Z; Z canceled does not", () => {
+		for (const status of ["past_due", "active", "trialing", "none"]) {
+			const d = decideMovedRelease(movedFacts({ stripe: readFacts({ row: rowNaming("sub_z", status) }) }));
+			expect(d).toMatchObject({ kind: "refuse", code: "team_has_other_plan", detail: `sub_z (${status})` });
+		}
+		expect(codeOf(movedFacts({ stripe: readFacts({ row: rowNaming("sub_z", "canceled") }) }))).toBe("sync_first");
+	});
+
+	it("N1: a just-minted Z, incomplete, listed on T's customer but not yet searchable, refuses", () => {
+		const d = decideMovedRelease(
+			movedFacts({
+				stripe: readFacts({ row: null, others: [{ id: "sub_z", status: "incomplete", orgId: T, orgPlan: true }] }),
+			}),
+		);
+		expect(d).toMatchObject({ kind: "refuse", code: "team_has_other_plan", detail: "sub_z (incomplete)" });
+	});
+
+	it("webhook-first: the row names X 20 min ago and a Z past_due is found; 5 min ago is too_soon with the time; else release", () => {
+		const z = { id: "sub_z", status: "past_due", orgId: T, orgPlan: true };
+		expect(codeOf(movedFacts({ stripe: readFacts({ others: [z] }) }))).toBe("team_has_other_plan");
+		const soon = decideMovedRelease(movedFacts({ stripe: readFacts({ row: rowNaming(X, "active", 5) }) }));
+		expect(soon).toEqual({ kind: "refuse", code: "too_soon", detail: "2026-10-14T12:10:00.000Z" });
+		expect(codeOf(movedFacts())).toBe("release");
+	});
+
+	it("N2: an AI subscription on T never refuses; beside a past_due plan Z, the refusal names Z", () => {
+		const ai = { id: "sub_ai", status: "active", orgId: T, orgPlan: false };
+		expect(codeOf(movedFacts({ stripe: readFacts({ others: [ai] }) }))).toBe("release");
+		const d = decideMovedRelease(
+			movedFacts({ stripe: readFacts({ others: [ai, { id: "sub_z", status: "past_due", orgId: T, orgPlan: true }] }) }),
+		);
+		expect(d).toMatchObject({ code: "team_has_other_plan", detail: "sub_z (past_due)" });
+	});
+
+	it("a canceled or incomplete_expired hit, or one naming another team, does not refuse", () => {
+		const others = [
+			{ id: "sub_c", status: "canceled", orgId: T, orgPlan: true },
+			{ id: "sub_e", status: "incomplete_expired", orgId: T, orgPlan: true },
+			{ id: "sub_o", status: "active", orgId: O, orgPlan: true },
+		];
+		expect(codeOf(movedFacts({ stripe: readFacts({ others }) }))).toBe("release");
+	});
+
+	it("X's metadata naming O gives subscription_not_moved before any listing verdict or sync", () => {
+		const d = decideMovedRelease(
+			movedFacts({
+				stripe: readFacts({
+					x: { status: "active", orgId: O, customerId: "cus_u" },
+					row: null,
+					others: [{ id: "sub_z", status: "active", orgId: T, orgPlan: true }],
+				}),
+			}),
+		);
+		expect(d).toMatchObject({ code: "subscription_not_moved", detail: O });
+	});
+});
+
+describe("decideMovedRelease: row 4, the payer keeps paying (C108)", () => {
+	it("U not a member, an admin, an owner not active, or an active owner without manage_billing: payer_not_in_team", () => {
+		const payers: MovedReleaseFacts["payer"][] = [
+			{ member: null, managesBilling: false },
+			{ member: { role: "admin", status: "active" }, managesBilling: true },
+			{ member: { role: "owner", status: "suspended" }, managesBilling: true },
+			{ member: { role: "owner", status: "active" }, managesBilling: false },
+		];
+		for (const payer of payers) expect(codeOf(movedFacts({ payer }))).toBe("payer_not_in_team");
+		expect(codeOf(movedFacts({ payer: { member: { role: "owner", status: "active" }, managesBilling: true } }))).toBe(
+			"release",
+		);
 	});
 });

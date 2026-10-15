@@ -18,6 +18,7 @@
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 // Stripe is the one boundary faked here (#5714's cases): the guard and the closer read the
@@ -42,6 +43,10 @@ import {
 import {
 	closePendingOrgSetup,
 	findSetupOrg,
+	forgetPendingOrgSetup,
+	liveCheckSetupCustomers,
+	openPaymentHoldOn,
+	paymentHoldsOfPayer,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
 	openPendingOrgSetupsForOrg,
@@ -55,15 +60,18 @@ import {
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { getServiceDb, withOwnerScope, withScope } from "@/lib/db";
+import { pgErrorCode } from "@/lib/db/pg-error";
 import {
 	authzActivityLog,
 	grants,
 	member,
 	organization,
 	organizationBilling,
+	paymentHolds,
 	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
+import { closeSetup } from "@/scripts/pending-org-setups";
 import { APP_ROLE_DISTINCT, describeIfDb, purgeAuthzActivityLog, refusalText } from "./db";
 
 const USER_A = randomUUID();
@@ -445,7 +453,84 @@ describeIfDb("pending_org_setups — keyset pages while records are deleted", ()
 			slug: "pager",
 		});
 		// The first test left records of both customers; cus_page_old now has the newest one.
-		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual(["cus_page_old", "cus_page_new"]);
+		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual({ kind: "all", customers: ["cus_page_old", "cus_page_new"] });
+	});
+});
+
+// ── ADR 0002 S3 (#5754), C21: `unlinkedPendingOrgSetupCustomers` reads every record, or refuses ──────
+//
+// It used to answer the newest 5 customers and drop the rest, so the create-a-team sweep never read a
+// payment still settling on the 6th. It now pages over EVERY unlinked record by keyset (100 a page) and
+// answers `over_cap` — with no list — beyond 50 distinct customers. Each user below owns only its own
+// records, so the files running beside this one cannot change what it reads.
+describeIfDb("pending_org_setups — C21: every unlinked customer, or over_cap", () => {
+	const users: string[] = [];
+
+	/** A user with one unlinked record per entry of `customers`, the first entry the NEWEST record. */
+	async function userWithRecords(customers: readonly string[], at: (i: number) => string): Promise<string> {
+		const id = randomUUID();
+		users.push(id);
+		const db = getServiceDb();
+		await db.insert(user).values({ id, email: `it-c21-${id}@example.test` });
+		await db.insert(pendingOrgSetups).values(
+			customers.map((customer, i) => ({
+				user_id: id,
+				subscription_id: `sub_c21_${randomUUID()}`,
+				customer_id: customer,
+				intended_name: "C21",
+				intended_slug: "c21",
+				created_at: new Date(at(i)),
+			})),
+		);
+		return id;
+	}
+
+	/** One second earlier per index: index 0 is the newest record. */
+	const secondsBefore = (i: number) => new Date(Date.UTC(2026, 9, 9, 12, 0, 0) - i * 1000).toISOString();
+
+	afterAll(async () => {
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.user_id, users));
+		await db.delete(user).where(inArray(user.id, users));
+	});
+
+	it("returns all 7 customers of 7 unlinked records, newest first — not the newest 5", async () => {
+		const customers = Array.from({ length: 7 }, (_, i) => `cus_c21_seven_${i}`);
+		const id = await userWithRecords(customers, secondsBefore);
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({ kind: "all", customers });
+	});
+
+	it("pages past the first 100 records: a customer named only by the oldest record, past a tie, is still returned", async () => {
+		// 1 newest record on cus_head, 249 on cus_bulk all in ONE microsecond (so pages break inside a
+		// tie, which only the id orders), and the oldest on cus_tail — the 251st record, on page 3.
+		const customers = ["cus_c21_head", ...Array.from({ length: 249 }, () => "cus_c21_bulk"), "cus_c21_tail"];
+		const id = await userWithRecords(customers, (i) =>
+			i === 0 ? "2026-10-09T12:00:01.000Z" : i === customers.length - 1 ? "2026-10-09T11:59:59.000Z" : "2026-10-09T12:00:00.000Z",
+		);
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({
+			kind: "all",
+			customers: ["cus_c21_head", "cus_c21_bulk", "cus_c21_tail"],
+		});
+	});
+
+	it("exactly 50 customers are all returned; a 51st answers over_cap, with no list", async () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => `cus_c21_fifty_${i}`);
+		const atCap = await userWithRecords(fifty, secondsBefore);
+		const all = await unlinkedPendingOrgSetupCustomers(atCap);
+		expect(all.kind === "all" ? all.customers : []).toHaveLength(50);
+
+		const overCap = await userWithRecords([...fifty, "cus_c21_fifty_first"], secondsBefore);
+		expect(await unlinkedPendingOrgSetupCustomers(overCap)).toEqual({ kind: "over_cap" });
+	});
+
+	it("leaves out records that are linked, declared, or have an org — they do not count toward the cap", async () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => `cus_c21_live_${i}`);
+		const id = await userWithRecords([...fifty, "cus_c21_done"], secondsBefore);
+		await getServiceDb()
+			.update(pendingOrgSetups)
+			.set({ linked_at: new Date() })
+			.where(and(eq(pendingOrgSetups.user_id, id), eq(pendingOrgSetups.customer_id, "cus_c21_done")));
+		expect(await unlinkedPendingOrgSetupCustomers(id)).toEqual({ kind: "all", customers: fifty });
 	});
 });
 
@@ -656,5 +741,350 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 	it("C81: once the last open setup is closed, the org's guard reads nothing", async () => {
 		await closePendingOrgSetup({ subscriptionId: SUB_OPEN, reason: "operator", closedBy: CO_OWNER, note: "it" });
 		expect(await openPendingOrgSetupsForOrg(ORG)).toEqual([]);
+	});
+});
+
+// ADR 0002 S8 (#5926). I16 (a), C92: a setup whose subscription has an OPEN payment hold is never closed —
+// not by the closer, not by the link's compare-and-set, not by the operator's `close-setup` — and the
+// hold's release decides it. §8: `forgetPendingOrgSetup` keeps a record a hold names unless the hold was
+// released as never payable. C94: the live check's record set includes records whose team exists, and
+// closed ones. Each fails on dev, where none of these predicates reads `payment_holds`.
+describeIfDb("pending_org_setups — S8: payment holds decide the setup (I16, C92), and the live check's records (C94)", () => {
+	const U = randomUUID();
+	const OTHER = randomUUID();
+	const ORG_H = randomUUID();
+	const sub = (tag: string) => `sub_it_s8_${tag}_${randomUUID().slice(0, 8)}`;
+	const SUB_HELD = sub("held");
+	const SUB_F_OPEN = sub("fopen");
+	const SUB_F_REFUNDED = sub("fref");
+	const SUB_F_VOIDED = sub("fvoid");
+	const SUB_F_NONE = sub("fnone");
+	const SUB_OTHER = sub("other");
+	const ALL = [SUB_HELD, SUB_F_OPEN, SUB_F_REFUNDED, SUB_F_VOIDED, SUB_F_NONE, SUB_OTHER];
+	let savedStripeKey: string | undefined;
+
+	/** Inserts a hold of `payer` on `subscriptionId`, open (`closing`) unless `released` names a reason. */
+	async function hold(subscriptionId: string, payer: string, released?: "voided_unpaid" | "refunded"): Promise<void> {
+		await getServiceDb()
+			.insert(paymentHolds)
+			.values({
+				subscription_id: subscriptionId,
+				customer_id: "cus_it_s8",
+				payer_key: payer,
+				invoice_id: `in_${subscriptionId}`,
+				state: released ? "released" : "closing",
+				release_reason: released ?? null,
+				released_at: released ? new Date() : null,
+				next_check_at: released ? null : new Date(),
+				opened_by: "purchase",
+			});
+	}
+
+	/** X as Stripe reads it: canceled, never linked. */
+	const canceledX = (id: string) => ({
+		id,
+		status: "canceled",
+		customer: "cus_it_s8",
+		latest_invoice: null,
+		currency: "eur",
+		items: { data: [] },
+		metadata: { created_by: U },
+	});
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const db = getServiceDb();
+		await db.insert(user).values([
+			{ id: U, email: `it-s8-${U}@example.test` },
+			{ id: OTHER, email: `it-s8-other-${OTHER}@example.test` },
+		]);
+		await db.insert(organization).values({ id: ORG_H, name: "Held", slug: `it-held-${ORG_H.slice(0, 8)}` });
+		for (const [s8, customer] of [
+			[SUB_HELD, "cus_it_s8_org"],
+			[SUB_F_OPEN, "cus_it_s8_a"],
+			[SUB_F_REFUNDED, "cus_it_s8_b"],
+			[SUB_F_VOIDED, "cus_it_s8_c"],
+			[SUB_F_NONE, "cus_it_s8_d"],
+		] as const) {
+			await recordPendingOrgSetup({ userId: U, subscriptionId: s8, customerId: customer, name: "Held", slug: "held" });
+		}
+		await recordPendingOrgSetup({ userId: OTHER, subscriptionId: SUB_OTHER, customerId: "cus_it_s8_other", name: "O", slug: "o" });
+		await db.update(pendingOrgSetups).set({ created_org_id: ORG_H }).where(eq(pendingOrgSetups.subscription_id, SUB_HELD));
+		await hold(SUB_HELD, U);
+		await hold(SUB_F_OPEN, U);
+		await hold(SUB_F_REFUNDED, U, "refunded");
+		await hold(SUB_F_VOIDED, U, "voided_unpaid");
+		await hold(SUB_OTHER, OTHER);
+	});
+
+	afterAll(async () => {
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await db.delete(paymentHolds).where(inArray(paymentHolds.subscription_id, ALL));
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.user_id, [U, OTHER]));
+		await db.delete(organization).where(eq(organization.id, ORG_H));
+		await db.delete(user).where(inArray(user.id, [U, OTHER]));
+	});
+
+	it("C92: with an open hold on an ended X, the closer, the link's compare-and-set and close-setup each leave closed_at null", async () => {
+		const row = await pendingOrgSetupFor(U, SUB_HELD);
+		if (!row) throw new Error("fixture: the held record is missing");
+		await expect(settleOpenSetup(row, { sub: canceledX(SUB_HELD) as never, orgId: ORG_H })).resolves.toBe("open");
+		expect(await closePendingOrgSetup({ subscriptionId: SUB_HELD, reason: "org_has_plan", refusedReason: "org_has_plan" })).toBeNull();
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce(canceledX(SUB_HELD));
+		const printed: string[] = [];
+		const r = await closeSetup({ subscriptionId: SUB_HELD, reason: "it", operator: U }, (line) => printed.push(line));
+		expect(r).toMatchObject({ kind: "refused", reason: expect.stringMatching(/open payment hold \(closing\)/) });
+		expect((await pendingOrgSetupFor(U, SUB_HELD))?.closed_at).toBeNull();
+		// The guard keeps refusing while the hold is open: the setup is still open for the org.
+		expect((await openPendingOrgSetupsForOrg(ORG_H)).map((x) => x.subscription_id)).toEqual([SUB_HELD]);
+	});
+
+	it("C92: once the hold is released, the same closer closes the setup", async () => {
+		await getServiceDb()
+			.update(paymentHolds)
+			.set({ state: "released", release_reason: "operator", released_at: new Date(), next_check_at: null })
+			.where(eq(paymentHolds.subscription_id, SUB_HELD));
+		expect(await openPaymentHoldOn(SUB_HELD)).toBeNull();
+		const row = await pendingOrgSetupFor(U, SUB_HELD);
+		if (!row) throw new Error("fixture: the held record is missing");
+		await expect(settleOpenSetup(row, { sub: canceledX(SUB_HELD) as never, orgId: ORG_H })).resolves.toBe("closed");
+		expect((await pendingOrgSetupFor(U, SUB_HELD))?.closed_reason).toBe("ended");
+	});
+
+	it("§8: forgetPendingOrgSetup drops a record only when no hold names it or the hold proved it never payable", async () => {
+		for (const id of [SUB_F_OPEN, SUB_F_REFUNDED, SUB_F_VOIDED, SUB_F_NONE]) {
+			await forgetPendingOrgSetup(U, { id, status: "incomplete_expired", metadata: { created_by: U } }, "never_paid");
+		}
+		expect(await pendingOrgSetupFor(U, SUB_F_OPEN)).not.toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_REFUNDED)).not.toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_VOIDED)).toBeNull();
+		expect(await pendingOrgSetupFor(U, SUB_F_NONE)).toBeNull();
+	});
+
+	it("C94: the live check lists the customers of unlinked records with a team, and of closed ones; never another user's", async () => {
+		const live = await liveCheckSetupCustomers(U);
+		expect(live).toEqual({ kind: "all", customers: expect.arrayContaining(["cus_it_s8_org", "cus_it_s8_a", "cus_it_s8_b"]) });
+		const unlinked = await unlinkedPendingOrgSetupCustomers(U);
+		expect(unlinked.kind === "all" ? unlinked.customers : []).not.toContain("cus_it_s8_org");
+		expect(live.kind === "all" ? live.customers : []).not.toContain("cus_it_s8_other");
+	});
+
+	it("paymentHoldsOfPayer reads the payer's open holds and recent refunds — never another payer's, never a voided release", async () => {
+		const subs = (await paymentHoldsOfPayer(U)).map((h) => h.subscription_id);
+		expect(subs).toEqual(expect.arrayContaining([SUB_F_OPEN, SUB_F_REFUNDED]));
+		expect(subs).not.toContain(SUB_F_VOIDED);
+		expect(subs).not.toContain(SUB_OTHER);
+	});
+});
+
+// #6052 (S8 follow-up 4, I14): the closer runs without the payer's lease, so E0 can be opening a hold on
+// the same canceled X while the closer closes X's setup. Two real connections, interleaved on purpose:
+// E (standing in for E0's `openHold` transaction) has INSERTED the hold and not committed it when the
+// closer runs. Under READ COMMITTED the close's `NOT EXISTS` cannot see that uncommitted row, so on dev
+// the close lands and the hold commits beneath it — a setup closed while a hold names X (I16 (a)).
+// After #6052 the close waits for E's commit, sees the hold, and leaves the setup open.
+describeIfDb("pending_org_setups — #6052: the closer's check and close are atomic against a hold being opened", () => {
+	const U = randomUUID();
+	const X = `sub_it_6052_${randomUUID().slice(0, 8)}`;
+	/** E: the hold's own transaction, on a connection of its own. B: polls pg_stat_activity beside it. */
+	let e: postgres.Sql;
+	let b: postgres.Sql;
+	let savedStripeKey: string | undefined;
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const url = process.env.ALETHIA_DATABASE_URL ?? "";
+		e = postgres(url, { max: 1 });
+		b = postgres(url, { max: 1 });
+		await getServiceDb().insert(user).values({ id: U, email: `it-6052-${U}@example.test` });
+		await recordPendingOrgSetup({ userId: U, subscriptionId: X, customerId: "cus_it_6052", name: "Race", slug: "race" });
+	});
+
+	afterAll(async () => {
+		await e.end({ timeout: 1 });
+		await b.end({ timeout: 1 });
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await db.delete(paymentHolds).where(eq(paymentHolds.payer_key, U));
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, U));
+		await db.delete(user).where(eq(user.id, U));
+	});
+
+	/**
+	 * Resolves once another backend of this database waits on a lock while running a statement on
+	 * `payment_holds` (the closer, blocked behind E's insert); resolves false when `stop` fires first or
+	 * after ~5s of polling.
+	 */
+	async function closerWaitsOnHolds(stop: { done: boolean }): Promise<boolean> {
+		for (let i = 0; i < 250 && !stop.done; i++) {
+			const rows = await b`SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%payment_holds%'`;
+			if (rows.length > 0) return true;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		return false;
+	}
+
+	it("a hold inserted before the close and committed after it keeps the setup open, and the closer answers open", async () => {
+		const row = await pendingOrgSetupFor(U, X);
+		if (!row) throw new Error("fixture: the setup is missing");
+		expect(row.closed_at).toBeNull();
+		expect(await openPaymentHoldOn(X)).toBeNull();
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({
+			id: X,
+			status: "canceled",
+			customer: "cus_it_6052",
+			latest_invoice: null,
+			metadata: { created_by: U },
+		});
+
+		let inserted: () => void = () => undefined;
+		const holdInserted = new Promise<void>((resolve) => {
+			inserted = resolve;
+		});
+		// Boxed: a promise resolved WITH a promise adopts it, and E would wait for the closer to finish.
+		let started: (box: { closing: Promise<string> }) => void = () => undefined;
+		const closerStarted = new Promise<{ closing: Promise<string> }>((resolve) => {
+			started = resolve;
+		});
+		const stop = { done: false };
+		// E: E0's statement shape (`openHold`): the insert, guarded by the open-row unique index, then a
+		// pause before COMMIT while the closer runs.
+		const opening = e.begin(async (tx) => {
+			await tx`INSERT INTO payment_holds
+				(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by)
+				VALUES (${X}, 'cus_it_6052', ${U}, ${`in_${X}`}, 'closing', now(), 'purchase')
+				ON CONFLICT (subscription_id) WHERE state <> 'released' DO NOTHING`;
+			inserted();
+			// Commit only once the closer has either finished (dev: it never waits) or is blocked behind
+			// this insert (the fix). Either way its read of the holds came while this row was uncommitted.
+			const { closing } = await closerStarted;
+			return Promise.race([
+				closing.then(() => "closer finished"),
+				closerWaitsOnHolds(stop).then((waiting) => (waiting ? "closer waiting" : "timed out")),
+			]);
+		});
+		await holdInserted;
+		const closing = settleOpenSetup(row);
+		started({ closing });
+		const whenCommitted = await opening;
+		stop.done = true;
+		const verdict = await closing;
+
+		// Whichever way the interleaving went, the hold is now committed and open on X.
+		expect((await openPaymentHoldOn(X))?.state).toBe("closing");
+		// I16 (a): the setup is not closed beneath it, and the closer says so.
+		expect((await pendingOrgSetupFor(U, X))?.closed_at).toBeNull();
+		expect(verdict).toBe("open");
+		// The closer really ran while the hold was uncommitted, and waited behind it.
+		expect(whenCommitted).toBe("closer waiting");
+	});
+
+	/**
+	 * Opens a hold write on ANOTHER subscription on E and keeps its transaction open (its ROW EXCLUSIVE
+	 * lock on `payment_holds` held) until `finish` is called; `finish` rolls it back.
+	 */
+	async function holdWriteInFlight(): Promise<{ finish: () => Promise<void> }> {
+		const other = `sub_it_6052_other_${randomUUID().slice(0, 8)}`;
+		let ready: () => void = () => undefined;
+		const isReady = new Promise<void>((resolve) => {
+			ready = resolve;
+		});
+		let release: () => void = () => undefined;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const done = e
+			.begin(async (tx) => {
+				await tx`INSERT INTO payment_holds
+					(subscription_id, customer_id, payer_key, invoice_id, state, next_check_at, opened_by)
+					VALUES (${other}, 'cus_it_6052', ${U}, ${`in_${other}`}, 'closing', now(), 'purchase')`;
+				ready();
+				await released;
+				throw new Error("rollback");
+			})
+			.catch(() => undefined);
+		await isReady;
+		return {
+			finish: async () => {
+				release();
+				await done;
+			},
+		};
+	}
+
+	/** A fresh open setup of U on a fresh subscription, with `held` adding a committed open hold on it. */
+	async function freshSetup(held: boolean): Promise<string> {
+		const x = `sub_it_6052_${randomUUID().slice(0, 8)}`;
+		await recordPendingOrgSetup({ userId: U, subscriptionId: x, customerId: "cus_it_6052", name: "Race", slug: "race" });
+		if (held) {
+			await getServiceDb().insert(paymentHolds).values({
+				subscription_id: x,
+				customer_id: "cus_it_6052",
+				payer_key: U,
+				invoice_id: `in_${x}`,
+				state: "closing",
+				next_check_at: new Date(),
+				opened_by: "purchase",
+			});
+		}
+		return x;
+	}
+
+	it("lock_timeout: a closer that cannot take the lock in 2s throws 55P03 with nothing written — the closer, settleOpenSetup and close-setup alike", async () => {
+		const x = await freshSetup(false);
+		const inFlight = await holdWriteInFlight();
+		try {
+			const started = Date.now();
+			const err = await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }).then(
+				() => null,
+				(e: unknown) => e,
+			);
+			expect(pgErrorCode(err)).toBe("55P03");
+			expect(Date.now() - started).toBeLessThan(10_000);
+			const row = await pendingOrgSetupFor(U, x);
+			if (!row) throw new Error("fixture: the setup is missing");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({
+				id: x,
+				status: "canceled",
+				customer: "cus_it_6052",
+				latest_invoice: null,
+				metadata: { created_by: U },
+			});
+			// The guard turns this throw into the try-again refusal (openSetupRefusal's catch).
+			expect(pgErrorCode(await settleOpenSetup(row).then(() => null, (e: unknown) => e))).toBe("55P03");
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			const printed: string[] = [];
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/not free within 2s/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
+		// Once the hold write is gone, the same close lands.
+		expect((await closePendingOrgSetup({ subscriptionId: x, reason: "ended" }))?.closed_reason).toBe("ended");
+	});
+
+	it("fast path: with a committed open hold on X the close answers null at once, without waiting on the lock", async () => {
+		const x = await freshSetup(true);
+		const inFlight = await holdWriteInFlight();
+		try {
+			// Were the lock taken, this would wait behind E and throw 55P03; it resolves null instead.
+			await expect(closePendingOrgSetup({ subscriptionId: x, reason: "ended" })).resolves.toBeNull();
+			const printed: string[] = [];
+			fakeStripe.subscriptions.retrieve.mockResolvedValueOnce({ id: x, status: "canceled", metadata: {} });
+			await expect(
+				closeSetup({ subscriptionId: x, reason: "it", operator: U }, (line) => printed.push(line)),
+			).resolves.toMatchObject({ kind: "refused", reason: expect.stringMatching(/open payment hold \(closing\)/) });
+			expect((await pendingOrgSetupFor(U, x))?.closed_at).toBeNull();
+		} finally {
+			await inFlight.finish();
+		}
 	});
 });

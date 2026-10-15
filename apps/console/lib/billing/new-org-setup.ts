@@ -18,8 +18,10 @@
 // is proof of who created it for which charge — which is what lets the resume adopt it, and repair
 // its owner membership when better-auth's separate member insert never landed.
 
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import type { NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
+import type { OpenPaymentHoldState, PaymentHoldReleaseReason } from "@/lib/db/schema";
 
 /** The organization-metadata key that names the subscription an organization was created for. */
 export const NEW_ORG_SUBSCRIPTION_KEY = "newOrgSubscriptionId";
@@ -79,8 +81,20 @@ export interface NewOrgSetupState {
 	 * invoice's payments as the server read them — the sheet shows it instead of assuming "active".
 	 */
 	planState: NewOrgPlanState;
-	/** Stripe's hosted page to complete an `action_needed` payment; null otherwise. */
+	/** Stripe's hosted page to complete an `action_needed` payment; null otherwise, and while `hold` is set. */
 	paymentUrl: string | null;
+	/**
+	 * The OPEN payment hold that names this subscription (ADR 0002 §5.6): its state, and the sentence the
+	 * customer is shown about it (§5.5). Null when no hold is open. `resolveNewOrgSetup` and
+	 * `findUnfinishedNewOrgSetup` set it on every state they return.
+	 */
+	hold?: { state: OpenPaymentHoldState; notice: string } | null;
+	/**
+	 * Set when this subscription has ENDED (`canceled` or `incomplete_expired`) and no open hold names it
+	 * (ADR 0002 §5.6 "The lookup reports an ended setup"): the sentence the link would refuse it with
+	 * (`endedSetupRead`, `endedSetupClause`). Null otherwise — an open hold is reported in `hold` instead.
+	 */
+	ended: { clause: string } | null;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */
@@ -106,3 +120,49 @@ export const PAID_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 	"trialing",
 	"past_due",
 ]);
+
+// The sentences for an ENDED subscription with no open hold (ADR 0002 §5.5, §5.6). The link refuses such
+// a subscription with one of them, and the resume lookup reports it with the same one, so both read them
+// from here. The free-plan sentence is appended once, only when a team exists for the setup.
+const LINK_REFUSED_NOT_CHARGED =
+	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged.";
+const LINK_REFUSED_UNCONFIRMED = `This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at ${LEGAL_ENTITY.supportEmail} with the time of the payment.`;
+const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
+/** §5.5's `released(refunded)` clause, for an ended subscription a hold refunded in full. */
+const LINK_REFUSED_REFUNDED =
+	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you.";
+const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
+
+/** What is known of an ended subscription's money: refunded by a hold, never charged, or not proven either. */
+export type EndedSetupRead = "refunded" | "not_charged" | "unconfirmed";
+
+/**
+ * Reads what an ended subscription's money did (ADR 0002 §5.6): `refunded` when the newest released hold
+ * on it released as `refunded` or `already_refunded`; otherwise `not_charged` when its payments read
+ * `not_charged`; otherwise `unconfirmed` — money may have moved, or the read failed.
+ */
+export function endedSetupRead(
+	releasedReason: PaymentHoldReleaseReason | null,
+	planState: NewOrgPlanState,
+): EndedSetupRead {
+	if (releasedReason === "refunded" || releasedReason === "already_refunded") return "refunded";
+	return planState === "not_charged" ? "not_charged" : "unconfirmed";
+}
+
+/**
+ * The sentence for an ended subscription (ADR 0002 §5.5): the clause for `read`, with "We have raised an
+ * alert." only for `unconfirmed` and only when an alert reached a channel (I8), and the free-plan sentence
+ * only when a team exists for the setup.
+ */
+export function endedSetupClause(
+	read: EndedSetupRead,
+	opts: { alerted: boolean; teamExists: boolean },
+): string {
+	const head =
+		read === "refunded"
+			? LINK_REFUSED_REFUNDED
+			: read === "not_charged"
+				? LINK_REFUSED_NOT_CHARGED
+				: `${LINK_REFUSED_UNCONFIRMED}${opts.alerted ? LINK_REFUSED_ALERT_RAISED : ""}`;
+	return `${head}${opts.teamExists ? LINK_REFUSED_FREE_PLAN : ""}`;
+}

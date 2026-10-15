@@ -6,7 +6,7 @@ require (
 	github.com/alethialabs-io/alethialabs/packages/core v0.0.0
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/hashicorp/terraform-json v0.29.0
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

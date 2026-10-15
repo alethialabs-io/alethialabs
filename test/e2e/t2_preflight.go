@@ -701,11 +701,10 @@ func t2RequireCapacityPreflight(ctx context.Context, provider, location string, 
 	}
 	res := capacityPreflightFor(ctx, provider, location, want)
 	switch res.Verdict {
-	case preflightProceed:
-		return false, fmt.Sprintf("capacity preflight [%s]: %s (%s)", res.Verdict, res.Detail, res.Probe)
 	case preflightRefuse:
 		return t2RequireIsHard(), fmt.Sprintf("capacity preflight [%s]: %s (%s)", res.Verdict, res.Detail, res.Probe)
-	default:
-		return false, fmt.Sprintf("capacity preflight [%s]: %s (%s)", res.Verdict, res.Detail, res.Probe)
+	case preflightProceed, preflightUnknown:
+		// Both proceed; UNKNOWN says so in its verdict tag.
 	}
+	return false, fmt.Sprintf("capacity preflight [%s]: %s (%s)", res.Verdict, res.Detail, res.Probe)
 }

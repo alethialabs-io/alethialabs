@@ -15,11 +15,23 @@
 //        secret is returned. After A's failed gate its only Stripe writes are `voidInvoice` on its own
 //        subscription Z's first invoice and a `cancel` stamped `alethia:closeout`, and nothing records Z.
 //        Variant: A's close-out cannot prove the void, so Z is never cancelled; B's next purchase sweeps it.
-//   ---  for one release the purchase also takes the old `new-org:<user>` advisory key, so a pod still
-//        running the older build and a pod running this one exclude each other.
+//   ---  from S3 (#5754) the purchase no longer takes the old `new-org:<user>` advisory key, which S2
+//        took for one release only: an advisory lock held on that key does not hold the purchase back.
 //   ---  the purchase path's Stripe client carries the timeout the mint deadline is computed from; the
 //        shared client keeps the SDK's defaults.
 //   ---  RLS: `purchase_leases` is service-role only.
+//
+// And ADR 0004's `L` cases for the org-plan purchase (O4, #6037), whose `org-plan:<org>` lease runs INSIDE
+// the old `org-plan:<org>` advisory key for one release (D3):
+//   C25  an old pod's advisory key alone holds the new purchase back before it takes the lease; while the
+//        purchase runs it holds both; afterwards neither is held.
+//   C20  A's `org-plan:<org>` lease expires before its mint returns, and another request takes it over.
+//        Under O4 that taker cannot be a second O4 purchase — it would wait on the advisory key A still
+//        holds — so it is a lease-only one: the Pro trial (`startProTrial`, run for real here), or an O6
+//        pod during O6's rollout. The trial mints while A is still stalled. A's gate then fails: no secret
+//        leaves, and A's only Stripe writes after its mint are `voidInvoice` on its own subscription's
+//        first invoice and a `cancel` stamped `alethia:closeout`. The trial hands out no secret either, so
+//        the org ends with one live subscription, the trial, and nothing payable.
 //
 // Stripe is the one boundary faked here, as in pending-org-setups.test.ts; the lease, the advisory lock
 // and the setup record are real.
@@ -28,6 +40,13 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 
+/** One licensed plan line, as the sync and the org-plan classifier read it (`planItem`). */
+interface FakeItem {
+	price: { id: string; recurring: { usage_type: string } };
+	quantity: number;
+	current_period_end: number;
+}
+
 /** One subscription in the fake Stripe account. */
 interface FakeSub {
 	id: string;
@@ -35,6 +54,7 @@ interface FakeSub {
 	status: string;
 	latest_invoice: string;
 	metadata: Record<string, string>;
+	items: { data: FakeItem[] };
 }
 
 const fake = vi.hoisted(() => {
@@ -65,12 +85,17 @@ const fakeStripe = vi.hoisted(() => ({
 	subscriptions: {
 		list: vi.fn(async (q: { customer: string; status: string }) => ({
 			has_more: false,
-			data: [...fake.subs.values()].filter((s) => s.customer === q.customer && s.status === q.status),
+			data: [...fake.subs.values()].filter(
+				(s) => s.customer === q.customer && (q.status === "all" || s.status === q.status),
+			),
 		})),
 		retrieve: vi.fn(async (id: string) => fake.subs.get(id)),
-		create: vi.fn(async (params: { customer: string; metadata: Record<string, string> }, opts: { idempotencyKey: string }) => {
+		create: vi.fn(async (
+			params: { customer: string; metadata: Record<string, string>; trial_period_days?: number },
+			opts?: { idempotencyKey: string },
+		) => {
 			const by = fake.state.by;
-			fake.writes.push({ by, call: "subscriptions.create", id: opts.idempotencyKey });
+			fake.writes.push({ by, call: "subscriptions.create", id: opts?.idempotencyKey ?? "(no idempotency key)" });
 			if (fake.state.stallMint) {
 				const stall = fake.state.stallMint;
 				fake.state.stallMint = null;
@@ -80,12 +105,24 @@ const fakeStripe = vi.hoisted(() => ({
 			const id = `sub_it_lease_${fake.state.minted}_${randomUUIDish()}`;
 			const invoiceId = `in_${id}`;
 			fake.invoices.set(invoiceId, { status: "open" });
-			fake.subs.set(id, { id, customer: params.customer, status: "incomplete", latest_invoice: invoiceId, metadata: params.metadata });
+			// A card-less trial starts `trialing`; every other mint awaits its first payment.
+			const status = params.trial_period_days ? "trialing" : "incomplete";
+			const items = {
+				data: [
+					{
+						price: { id: process.env.STRIPE_PRICE_TEAM ?? "price_it_team", recurring: { usage_type: "licensed" } },
+						quantity: 1,
+						current_period_end: Math.floor(Date.now() / 1000) + 30 * 86_400,
+					},
+				],
+			};
+			fake.subs.set(id, { id, customer: params.customer, status, latest_invoice: invoiceId, metadata: params.metadata, items });
 			return {
 				id,
 				customer: params.customer,
-				status: "incomplete",
+				status,
 				metadata: params.metadata,
+				items,
 				latest_invoice: { id: invoiceId, confirmation_secret: { client_secret: `cs_${id}` } },
 			};
 		}),
@@ -127,10 +164,15 @@ vi.mock("@/lib/billing/stripe", async (importActual) => {
 	return { ...actual, getStripe: () => fakeStripe, getPurchaseStripe: () => fakeStripe };
 });
 // The paid-conversion gate refuses by default (PAID_MARKETS is empty); it is not what this file tests.
-vi.mock("@/lib/billing/eligibility", () => ({ assertPaidConversionAllowed: vi.fn(async () => undefined) }));
+vi.mock("@/lib/billing/eligibility", () => ({
+	assertPaidConversionAllowed: vi.fn(async () => undefined),
+	assertOrgPaidConversionAllowed: vi.fn(async () => undefined),
+}));
 
-import { createNewOrgSubscriptionIntent } from "@/app/server/actions/billing";
+import { createNewOrgSubscriptionIntent, createSubscriptionIntent, startProTrial } from "@/app/server/actions/billing";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
+import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import {
 	acquirePurchaseLease,
@@ -142,8 +184,17 @@ import {
 } from "@/lib/billing/purchase-lease";
 import { withPurchaseLock } from "@/lib/billing/purchase-lock";
 import { getServiceDb, withScope } from "@/lib/db";
-import { pendingOrgSetups, purchaseLeases, user } from "@/lib/db/schema";
-import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
+import {
+	authzActivityLog,
+	grants,
+	member,
+	organization,
+	organizationBilling,
+	pendingOrgSetups,
+	purchaseLeases,
+	user,
+} from "@/lib/db/schema";
+import { APP_ROLE_DISTINCT, describeIfDb, purgeAuthzActivityLog, refusalText } from "./db";
 
 /** A promise and the function that resolves it. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -358,7 +409,7 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		expect(await holderOf(KEY)).toBeNull();
 	});
 
-	it("for one release the purchase also takes the old new-org: advisory key — an old pod's purchase excludes it", async () => {
+	it("S3: the purchase no longer takes the old new-org: advisory key — a lock held on it does not hold the purchase back", async () => {
 		const oldPod = deferred();
 		let oldPodInside = false;
 		const old = withPurchaseLock(`new-org:${USER}`, async () => {
@@ -366,16 +417,14 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 			await oldPod.promise;
 		});
 		await waitFor(() => oldPodInside);
-
-		const mine = purchase("A");
-		// The new build took the lease, but waits on the advisory key the old pod holds: no Stripe write.
-		await waitFor(async () => (await holderOf(KEY)) !== null);
-		await new Promise((r) => setTimeout(r, 500));
-		expect(fake.writes).toEqual([]);
-
-		oldPod.resolve();
-		await old;
-		await expect(mine).resolves.toMatchObject({ kind: "intent" });
+		try {
+			// While the advisory key is held, the purchase runs to the end under the lease alone.
+			await expect(purchase("A")).resolves.toMatchObject({ kind: "intent" });
+			expect(fake.writes.some((w) => w.call === "subscriptions.create")).toBe(true);
+		} finally {
+			oldPod.resolve();
+			await old;
+		}
 	});
 
 	it("C52: A's lease expires before its mint returns; B mints; exactly one secret leaves, and A closes Z out", async () => {
@@ -383,15 +432,15 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		fake.state.stallMint = stall.promise;
 		const aResult = purchase("A");
 		await waitFor(() => fake.writes.some((w) => w.call === "subscriptions.create"));
-		const aHolder = await holderOf(KEY);
 
-		// A stalls past its lease; B takes it over, and waits behind A on the old advisory key.
+		// A stalls past its lease; B takes it over and runs while A is still inside its mint.
 		await expireLease(KEY);
-		const bResult = purchase("B");
-		await waitFor(async () => (await holderOf(KEY)) !== aHolder);
+		// B no longer waits behind A on the old advisory key (S3), so it runs to the end while A is still
+		// stalled — and then A wakes. Awaited in that order, so B's sweep deterministically runs before Z exists.
+		const b = await purchase("B");
 
 		stall.resolve();
-		const [a, b] = await Promise.all([aResult, bResult]);
+		const a = await aResult;
 
 		const secrets = [a, b].filter((r) => r.kind === "intent");
 		expect(secrets).toHaveLength(1);
@@ -403,7 +452,7 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		expect(b).toMatchObject({ kind: "intent" });
 
 		// Z is A's subscription. Apart from the two mints, the only Stripe writes either request made are
-		// A's close-out of Z: B's sweep, run after A let go of the advisory key, found Z already ended.
+		// A's close-out of Z: B's sweep ran before Z existed.
 		const z = [...fake.subs.values()].find((s) => b.kind === "intent" && s.id !== b.subscriptionId);
 		if (!z) throw new Error("A's subscription Z was never minted");
 		const notMints = fake.writes
@@ -450,5 +499,186 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		expect(next).toMatchObject({ kind: "intent" });
 		expect(z?.status).toBe("canceled");
 		expect(fake.writes.find((w) => w.call === "subscriptions.cancel" && w.id === z?.id)?.by).toBe("B");
+	});
+});
+
+describeIfDb("the org-plan purchase under the advisory key AND the org-plan: lease — ADR 0004 C20, C25 (O4)", () => {
+	const OWNER = randomUUID();
+	const ORG = randomUUID();
+	const CUSTOMER = `cus_it_orgplan_${randomUUID().slice(0, 8)}`;
+	const KEY = `org-plan:${ORG}`;
+	const actor: Actor = { userId: OWNER, orgId: ORG, entitlements: ENTITLEMENTS };
+	const saved: Record<string, string | undefined> = {};
+
+	/** The org-plan purchase as request `by` ("A" or "B") makes it, on the org's one customer. */
+	function intent(by: string): ReturnType<typeof createSubscriptionIntent> {
+		return runWithActor(actor, async () => {
+			fake.state.by = by;
+			return createSubscriptionIntent("team", { currency: "eur" });
+		});
+	}
+
+	/** Whether the advisory key `org-plan:<org>` is free right now: taken and given back at once, or not. */
+	async function advisoryKeyFree(): Promise<boolean> {
+		return getServiceDb().transaction(async (tx) => {
+			const [row] = await tx.execute(
+				sql`select pg_try_advisory_xact_lock(hashtextextended(${`purchase:${KEY}`}, 0)) as free`,
+			);
+			return row?.free === true;
+		});
+	}
+
+	beforeAll(async () => {
+		for (const k of ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_TEAM", "NEXT_PUBLIC_APP_URL"]) {
+			saved[k] = process.env[k];
+		}
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		process.env.STRIPE_WEBHOOK_SECRET = "whsec_integration_never_used";
+		process.env.STRIPE_PRICE_TEAM = "price_it_team";
+		process.env.NEXT_PUBLIC_APP_URL ??= "http://localhost:3000";
+		const db = getServiceDb();
+		await seedAuthz(); // the built-in role rows the owner grant references
+		await db.insert(user).values({ id: OWNER, email: `it-orgplan-${OWNER}@example.test` });
+		await db.insert(organization).values({ id: ORG, name: "Org Plan Leased", slug: `it-orgplan-${ORG.slice(0, 8)}` });
+		await db.insert(member).values({ organizationId: ORG, userId: OWNER, role: "owner" });
+		await db.insert(grants).values({
+			org_id: ORG,
+			principal_type: "user",
+			principal_id: OWNER,
+			effect: "allow",
+			role_id: BUILTIN_ROLE_IDS.owner,
+			resource_type: "org",
+			resource_id: null,
+		});
+		await db.insert(organizationBilling).values({
+			organizationId: ORG,
+			plan: "community",
+			status: "none",
+			stripeCustomerId: CUSTOMER,
+		});
+	});
+
+	beforeEach(() => {
+		fake.subs.clear();
+		fake.invoices.clear();
+		fake.writes.length = 0;
+		fake.state.stallMint = null;
+		fake.state.voidFails = false;
+	});
+
+	afterAll(async () => {
+		for (const [k, v] of Object.entries(saved)) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+		const db = getServiceDb();
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, ORG));
+		await db.delete(purchaseLeases).where(eq(purchaseLeases.key, KEY));
+		await db.delete(organizationBilling).where(eq(organizationBilling.organizationId, ORG));
+		await db.delete(grants).where(eq(grants.org_id, ORG));
+		await db.delete(member).where(eq(member.organizationId, ORG));
+		await db.delete(organization).where(eq(organization.id, ORG));
+		await db.delete(user).where(eq(user.id, OWNER));
+	});
+
+	// A pin: the purchase before O4 also waited on this key. What it adds is that the lease is not taken first.
+	it("C25: an old pod's advisory key alone holds the purchase back, before it takes the lease", async () => {
+		const oldPod = deferred();
+		let oldPodInside = false;
+		const old = withPurchaseLock(KEY, async () => {
+			oldPodInside = true;
+			await oldPod.promise;
+		});
+		await waitFor(() => oldPodInside);
+		let result: Awaited<ReturnType<typeof createSubscriptionIntent>> | undefined;
+		const running = intent("A").then((r) => {
+			result = r;
+		});
+		try {
+			await new Promise((r) => setTimeout(r, 600));
+			// Waiting on the advisory key: no lease taken yet, no Stripe write made.
+			expect(result).toBeUndefined();
+			expect(await holderOf(KEY)).toBeNull();
+			expect(fake.writes).toEqual([]);
+		} finally {
+			oldPod.resolve();
+			await old;
+		}
+		await running;
+		expect(result).toMatchObject({ clientSecret: expect.stringMatching(/^cs_/) });
+	});
+
+	it("C25: while the purchase mints it holds both keys, and gives both back when it returns", async () => {
+		const stall = deferred();
+		fake.state.stallMint = stall.promise;
+		const running = intent("A");
+		await waitFor(() => fake.writes.some((w) => w.call === "subscriptions.create"));
+
+		expect(await holderOf(KEY)).not.toBeNull();
+		expect(await advisoryKeyFree()).toBe(false);
+
+		stall.resolve();
+		await expect(running).resolves.toMatchObject({ clientSecret: expect.stringMatching(/^cs_/) });
+		expect(await holderOf(KEY)).toBeNull();
+		expect(await advisoryKeyFree()).toBe(true);
+	});
+
+	it("C20: A's lease expires before its mint returns, and the trial takes it over and mints; A hands out no secret and closes its subscription out", async () => {
+		const db = getServiceDb();
+		const stall = deferred();
+		fake.state.stallMint = stall.promise;
+		const aResult = intent("A");
+		await waitFor(() => fake.writes.some((w) => w.call === "subscriptions.create"));
+		const aHolder = await holderOf(KEY);
+
+		try {
+			// A stalls past its lease. The trial is lease-only, so it takes the expired lease over and runs to the
+			// end while A still holds the advisory key.
+			await expireLease(KEY);
+			await runWithActor(actor, async () => {
+				fake.state.by = "B";
+				await startProTrial({ currency: "eur" });
+			});
+			const trialMints = fake.writes.filter((w) => w.call === "subscriptions.create" && w.by === "B");
+			expect(trialMints).toHaveLength(1);
+			expect(trialMints[0]?.id).toMatch(new RegExp(`^trial-${KEY}-`));
+			expect(trialMints[0]?.id).not.toContain(aHolder ?? "no holder");
+			expect(await advisoryKeyFree()).toBe(false);
+
+			fake.state.by = "A";
+			stall.resolve();
+			const a = await aResult;
+			expect(a).toEqual({
+				error:
+					"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.",
+			});
+			const subs = [...fake.subs.values()];
+			const z = subs.find((s) => s.status !== "trialing");
+			const trial = subs.find((s) => s.status === "trialing");
+			if (!z || !trial) throw new Error("expected A's subscription Z and the trial");
+			// Apart from the two mints, the only Stripe writes are A's close-out of Z.
+			expect(
+				fake.writes.filter((w) => w.call !== "subscriptions.create").map(({ by, call, id, params }) => ({ by, call, id, params })),
+			).toEqual([
+				{ by: "A", call: "invoices.voidInvoice", id: z.latest_invoice, params: undefined },
+				{ by: "A", call: "subscriptions.cancel", id: z.id, params: { cancellation_details: { comment: "alethia:closeout" } } },
+			]);
+			expect(z.status).toBe("canceled");
+			// One live subscription, the trial, and nothing payable: the row names the trial.
+			const [row] = await db
+				.select({ sub: organizationBilling.stripeSubscriptionId, status: organizationBilling.status })
+				.from(organizationBilling)
+				.where(eq(organizationBilling.organizationId, ORG));
+			expect(row).toEqual({ sub: trial.id, status: "trialing" });
+			expect(await holderOf(KEY)).toBeNull();
+		} finally {
+			stall.resolve();
+			await aResult.catch(() => undefined);
+			await db
+				.update(organizationBilling)
+				.set({ plan: "community", status: "none", stripeSubscriptionId: null, currentPeriodEnd: null })
+				.where(eq(organizationBilling.organizationId, ORG));
+			await db.update(user).set({ proTrialConsumedAt: null }).where(eq(user.id, OWNER));
+		}
 	});
 });

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Marketing path-list drift guard. apps/console/microfrontends.json is the single source
+// Marketing path-list drift guard. apps/console/marketing-zones.json (MF_PATH) is the single source
 // of truth for the paths the marketing zone owns. RESERVED_SLUGS (lib/routing.ts) is
 // DERIVED from it (lib/marketing-zone.ts), so the org-slug reservation can never drift —
 // no check needed there. This guard keeps the other two encodings honest:
-//   1. every marketing app/ route is registered in microfrontends.json (so a new page
+//   1. every marketing app/ route is registered in marketing-zones.json (so a new page
 //      can't ship unrouted / unreserved), and
 //   2. the Caddy mirror's @marketing path list matches marketing-zones.json.
 // Plus a cheap asset-prefix consistency check across the three. Run from apps/console
@@ -26,7 +26,7 @@ const REPO_ROOT = "../..";
 
 const failures = [];
 
-// ── Source of truth: microfrontends.json ────────────────────────────────────────────
+// ── Source of truth: marketing-zones.json ───────────────────────────────────────────
 const mf = JSON.parse(readFileSync(MF_PATH, "utf8"));
 const marketing = mf.applications?.marketing;
 if (!marketing?.routing) {
@@ -43,7 +43,7 @@ const mfCanon = new Set(mfPaths.map(canon));
 const firstSeg = (p) => p.replace(/^\//, "").split("/")[0];
 const mfSegments = new Set(mfPaths.map(firstSeg));
 
-// ── Check 1: every marketing app/ route is registered in microfrontends.json ─────────
+// ── Check 1: every marketing app/ route is registered in marketing-zones.json ────────
 /** Does this route subtree produce a page/route handler? */
 function hasRoute(dir) {
 	for (const e of readdirSync(dir)) {
@@ -97,7 +97,7 @@ if (existsSync(MARKETING_APP)) {
 	failures.push(`Marketing app dir not found at ${MARKETING_APP}.`);
 }
 
-// ── Check 2: the Caddy mirror's @marketing path list matches microfrontends.json ──────
+// ── Check 2: the Caddy mirror's @marketing path list matches marketing-zones.json ─────
 for (const caddyPath of CADDY_FILES) {
 	if (!existsSync(caddyPath)) {
 		failures.push(`Caddy mirror not found at ${caddyPath}.`);
@@ -139,7 +139,7 @@ if (assetPrefix) {
 		const re = new RegExp(`assetPrefix:\\s*["']/${assetPrefix}["']`);
 		if (!re.test(cfg)) {
 			failures.push(
-				`apps/marketing/next.config.ts assetPrefix does not match microfrontends.json ("/${assetPrefix}").`,
+				`apps/marketing/next.config.ts assetPrefix does not match ${MF_PATH} ("/${assetPrefix}").`,
 			);
 		}
 	}
@@ -300,7 +300,7 @@ let consoleSegmentCount = 0;
 // version is unaccepted. So the omission that matters most is the one nobody would have picked out
 // of the five by inspection, and the next route added is equally unpredictable.
 //
-// NOTE the asymmetry with check 1. Marketing routes must be in microfrontends.json, which FEEDS
+// NOTE the asymmetry with check 1. Marketing routes must be in marketing-zones.json, which FEEDS
 // RESERVED_SLUGS. Console routes have no such registry — they are reserved by hand — so this
 // compares the app tree against the static list directly.
 const CONSOLE_APP = "app";
@@ -395,7 +395,7 @@ if (staticList === null) {
 // ── Report ───────────────────────────────────────────────────────────────────────────
 if (failures.length > 0) {
 	console.error(
-		"Marketing path list out of sync (source of truth: apps/console/microfrontends.json):",
+		`Marketing path list out of sync (source of truth: apps/console/${MF_PATH}):`,
 	);
 	for (const f of failures) console.error(`  ✗ ${f}`);
 	console.error(

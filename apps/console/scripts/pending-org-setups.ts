@@ -21,7 +21,13 @@
 // in Stripe first (refunding it when it was paid), because closing the setup of a live one would hide it
 // from every reader. Any other read failure refuses and writes nothing.
 //
-// The write is a compare-and-set on `closed_at IS NULL AND linked_at IS NULL`. Only when it returned
+// It also refuses while an OPEN payment hold names the subscription (ADR 0002 I16, C92): that hold is
+// watching the money, and its release decides the setup. `payment-holds release` is the way out then.
+//
+// The write is a compare-and-set on `closed_at IS NULL AND linked_at IS NULL` and on no open hold in the
+// same statement, run under the same lock as the console's closer (#6052): `payment_holds` in SHARE mode,
+// so a hold being opened at that moment is either committed and seen, or waits for the close. When the
+// lock is not free within 2s it refuses and writes nothing; run it again. Only when it returned
 // the row is the audit event `billing.pending_org_setup.closed` written — a structured log line with
 // that stable name (the console has no billing audit table; the durable record is the row's
 // `closed_by` and `closed_note`). A second run matches nothing and emits nothing.
@@ -30,16 +36,18 @@
 // console runs with. Exit codes: 0 — closed, or already not open; 1 — refused, or it could not run.
 
 import { fileURLToPath } from "node:url";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
-import { pendingOrgSetups } from "@/lib/db/schema";
+import { pgErrorCode } from "@/lib/db/pg-error";
+import { paymentHolds, pendingOrgSetups } from "@/lib/db/schema";
 
 // This file reads and writes `pending_org_setups` itself rather than through
 // lib/billing/pending-org-setup.ts: that module is `server-only`, which nothing resolves outside the
-// Next.js server bundle, so a `tsx` script cannot import it. The write below is the same
-// compare-and-set as its `closePendingOrgSetup`.
+// Next.js server bundle, so a `tsx` script cannot import it. The write below repeats its
+// `closePendingOrgSetup` step for step: the 2s `lock_timeout`, the committed-hold fast path, the SHARE
+// lock on `payment_holds`, then the compare-and-set.
 
 /** Subscription statuses under which Stripe will never collect a payment for it again. */
 const ENDED: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
@@ -57,21 +65,51 @@ async function setupBySubscription(subscriptionId: string): Promise<SetupRow | n
 	return row ?? null;
 }
 
-/** Closes the setup if it is still open — one compare-and-set — and returns it, else null. */
+/**
+ * Closes the setup if it is still open and no payment hold on it is — one compare-and-set, under the
+ * SHARE lock on `payment_holds` that makes it atomic against a hold being opened (#6052) — and returns
+ * it, else null. Returns null without locking when a committed open hold is already visible. Throws
+ * (SQLSTATE 55P03) with nothing written when the lock is not free within `HOLD_LOCK_WAIT`.
+ */
 async function closeOpenSetup(subscriptionId: string, operator: string, note: string): Promise<SetupRow | null> {
 	const now = new Date();
-	const [closed] = await getServiceDb()
-		.update(pendingOrgSetups)
-		.set({ closed_at: now, closed_reason: "operator", closed_by: operator, closed_note: note, updated_at: now })
-		.where(
-			and(
-				eq(pendingOrgSetups.subscription_id, subscriptionId),
-				isNull(pendingOrgSetups.closed_at),
-				isNull(pendingOrgSetups.linked_at),
-			),
-		)
-		.returning();
-	return closed ?? null;
+	return getServiceDb().transaction(async (tx) => {
+		await tx.execute(sql`SELECT set_config('lock_timeout', ${HOLD_LOCK_WAIT}, true)`);
+		const held = await tx.execute(
+			sql`SELECT 1 FROM payment_holds WHERE subscription_id = ${subscriptionId} AND state <> 'released' LIMIT 1`,
+		);
+		if (held.length > 0) return null;
+		await tx.execute(sql`LOCK TABLE payment_holds IN SHARE MODE`);
+		const [closed] = await tx
+			.update(pendingOrgSetups)
+			.set({ closed_at: now, closed_reason: "operator", closed_by: operator, closed_note: note, updated_at: now })
+			.where(
+				and(
+					eq(pendingOrgSetups.subscription_id, subscriptionId),
+					isNull(pendingOrgSetups.closed_at),
+					isNull(pendingOrgSetups.linked_at),
+					sql`NOT EXISTS (SELECT 1 FROM payment_holds h WHERE h.subscription_id = ${subscriptionId} AND h.state <> 'released')`,
+				),
+			)
+			.returning();
+		return closed ?? null;
+	});
+}
+
+/** How long the close waits for its lock on `payment_holds` (the console closer's value). */
+const HOLD_LOCK_WAIT = "2s";
+
+/** SQLSTATE `lock_not_available`: `lock_timeout` elapsed while waiting for the lock. */
+const LOCK_NOT_AVAILABLE = "55P03";
+
+/** The state of the open payment hold on `subscriptionId`, or null when none is open. */
+async function openHoldState(subscriptionId: string): Promise<string | null> {
+	const [hold] = await getServiceDb()
+		.select({ state: paymentHolds.state })
+		.from(paymentHolds)
+		.where(and(eq(paymentHolds.subscription_id, subscriptionId), ne(paymentHolds.state, "released")))
+		.limit(1);
+	return hold?.state ?? null;
 }
 
 /** True for Stripe's "No such subscription" error — the id names nothing in this account. */
@@ -130,8 +168,21 @@ export async function closeSetup(
 		xRead = "ended";
 	}
 
-	const closed = await closeOpenSetup(input.subscriptionId, operator, reason);
+	let closed: SetupRow | null;
+	try {
+		closed = await closeOpenSetup(input.subscriptionId, operator, reason);
+	} catch (e) {
+		if (pgErrorCode(e) !== LOCK_NOT_AVAILABLE) throw e;
+		return refuse(print, "Payment holds are being written right now (the lock was not free within 2s); nothing was written. Run it again.");
+	}
 	if (!closed) {
+		const held = await openHoldState(input.subscriptionId);
+		if (held) {
+			return refuse(
+				print,
+				`An open payment hold (${held}) names ${input.subscriptionId}; its release decides this setup. Use "billing:payment-holds show" and "release" instead.`,
+			);
+		}
 		print("The setup is not open (already closed or linked); nothing was changed.");
 		return { kind: "not_open" };
 	}

@@ -904,15 +904,28 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # Go is here for ONE step: check-go-arch-filenames.mjs --self-test cross-checks its hard-coded
-      # GOOS/GOARCH lists against the toolchain's internal/syslist, and FAILS under CI without a `go`
-      # (#5593) — a skip there would be a permanent silent green. No module cache: nothing is built.
+      # Go is here for three steps. check-go-arch-filenames.mjs --self-test cross-checks its
+      # hard-coded GOOS/GOARCH lists against the toolchain's internal/syslist, and FAILS under CI
+      # without a `go` (#5593) — a skip there would be a permanent silent green. `pnpm
+      # compliance:release` runs `go list -m -json all` in apps/cli, apps/runner and packages/core,
+      # and the programme spine mirror runs `go test` in test/e2e; both FETCH modules. With
+      # `cache: false` every run fetches them from proxy.golang.org, so the step right after the
+      # install pre-fetches test/e2e's under a retry, and release-compliance.mjs retries its own
+      # `go list` (#6031).
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
           cache: false
       - id: setup
         run: pnpm install --frozen-lockfile
+      # Retries only a fetch that did not complete (an HTTP/2 stream reset from proxy.golang.org, a
+      # TLS or i/o timeout, a 502/503/504) and fails anything else on the first attempt. A retry
+      # that ends green still leaves a `::warning` on the run. A plain `go mod download` writes only
+      # the module cache: test/e2e's go.mod and go.sum stay as committed. Its self-test runs further
+      # down, next to the chart-fetch retry's.
+      - name: Pre-fetch test/e2e's Go modules (retrying a transient proxy error)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
       - name: Open-core boundary (core must not import ee/)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:ee-boundary
@@ -1827,7 +1840,19 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # A PR into staging/main closes nothing (close-on-dev-merge.yml fires on dev only), so the
+          # script measures nothing for it and says so (#5948).
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
         run: node scripts/ci/check-pr-scope.mjs
+      # Every go.work module gets Dependabot version updates. test/e2e replaces packages/core, so a
+      # core bump that skips it leaves test/e2e/go.mod untidy and the GOWORK=off tidy check red
+      # until someone hand-pushes a tidy (#5948). Hermetic: reads two files, no network.
+      - name: Dependabot gomod covers every go.work module (self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-dependabot-gomod.mjs --self-test
+      - name: ...and every go.work module is in the gomod directories
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-dependabot-gomod.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
@@ -2298,6 +2323,20 @@ jobs:
       - name: The chart-fetch retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/tofu-test-retry-fetch.sh --self-test
+      # The Go module fetch retry (#6031), held to the same two directions under `bash -e`: a
+      # transient proxy error is retried and logged, and a non-network failure — a missing go.sum
+      # entry, a 404 for a version that does not exist, a transport word with no URL — is not.
+      - name: The Go module fetch retry retries a proxy flake and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/go-mod-download-retry.sh --self-test
+      # The image pull retry T1 uses for ArgoCD's images (#6044), held to the same two directions
+      # under `bash -e`: a rate limit or a transport error is retried and logged, and a tag that does
+      # not exist, a private image or a stopped daemon is not. It also pins the mirror mapping
+      # (#6067): only `ecr-public.aws.com/docker/library/*` is served from mirror.gcr.io, and five
+      # mutants of the script must each fail this self-test.
+      - name: The image pull retry retries a rate limit and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/docker-pull-retry.sh --self-test
       # The same shape one host over: Playwright's `--with-deps` shells out to apt, and the runner
       # image carries Google's Chrome channel that Chromium does not need. Both directions pinned —
       # a transient fetch is retried, a real failure is not (#4499).
@@ -2356,6 +2395,21 @@ jobs:
         with:
           go-version-file: go.work
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      # Every module the steps below need, fetched up front under a retry that re-tries ONLY a
+      # transient proxy error (an HTTP/2 stream reset, a TLS or i/o timeout, a 502/503/504) and
+      # fails anything else on the first attempt (#6031). Two fetches: the matrix module in
+      # workspace mode, for build/vet/test and golangci-lint; and on the packages/core leg the
+      # test/e2e harness, a module outside the workspace (GOWORK=off). Each is a plain
+      # `go mod download`, which writes only the module cache and the gitignored go.work.sum —
+      # go.mod and go.sum stay exactly as committed, so every step below sees the committed files.
+      # The standalone tidy guard needs modules this does not fetch (tidy also loads the tests of
+      # dependencies), so it runs its own `go mod tidy` under the same retry instead.
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: |
+          bash scripts/ci/go-mod-download-retry.sh ${{ matrix.module }}
+          if [ "${{ matrix.module }}" = packages/core ]; then
+            GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
+          fi
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
       # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
@@ -2455,10 +2509,13 @@ jobs:
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
+      #
+      # `go mod tidy` fetches the modules it loads, so it runs under the module-fetch retry (#6031):
+      # only a transient proxy error is retried, and the go.mod/go.sum it leaves are tidy's own.
       - name: go.mod tidy guard (standalone — GOWORK=off)
         working-directory: ${{ matrix.module }}
         run: |
-          GOWORK=off go mod tidy
+          GOWORK=off bash "$GITHUB_WORKSPACE/scripts/ci/go-mod-download-retry.sh" -- go mod tidy
           if ! git diff --exit-code go.mod go.sum; then
             echo "::error::${{ matrix.module }}/go.mod or go.sum is not tidy standalone — run 'cd ${{ matrix.module }} && GOWORK=off go mod tidy' and commit." >&2
             exit 1
@@ -2511,6 +2568,78 @@ jobs:
         with:
           version: v2.13.2
           working-directory: ${{ matrix.module }}
+      # The step above lints the DEFAULT build of each matrix module and nothing else (#5967). A
+      # file behind a `//go:build` tag is not in that build, so it was never linted at all — and
+      # test/e2e, the fourth Go module, was not in the matrix either. When this landed, the e2e_t2
+      # build alone carried 23 findings no check could see.
+      #
+      # packages/core's two tags (e2e_local, integration) are purely additive, so one build with
+      # both compiles every file either one selects.
+      - name: golangci-lint — packages/core tagged builds (e2e_local, integration)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          working-directory: packages/core
+          args: --build-tags=e2e_local,integration
+      # The `!cancelled()` on each: one red lint step must not hide the next build's findings.
+      #
+      # test/e2e is outside go.work (GOWORK=off, as its vet step above). It is linted once per tag
+      # and once untagged — the untagged build is a different file set, because three pure tests
+      # carry `!e2e_t1 && !e2e_t2 && !e2e_b6`.
+      #
+      # `unused` is OFF in those four builds, and that is the only linter that is. A helper defined
+      # in an untagged file and called only from an e2e_t2 file is unused in every build but
+      # e2e_t2's, and runPromotionGateShim (called only under e2e_b6) is unused under e2e_t2: in a
+      # single-tag build `unused` reports tag-only symbols, not dead ones (55 under e2e_t1 alone).
+      # It runs instead in the UNION build below, which compiles every tagged file at once and so
+      # is the only build where "no caller" means no caller. Its stated boundary: a symbol defined
+      # only in one of the three `!e2e_*` files is outside the union, and `unused` cannot see it.
+      - name: golangci-lint — test/e2e untagged (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --disable=unused
+      - name: golangci-lint — test/e2e e2e_t1 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t1 --disable=unused
+      - name: golangci-lint — test/e2e e2e_t2 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t2 --disable=unused
+      - name: golangci-lint — test/e2e e2e_b6 (unused in the union step)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_b6 --disable=unused
+      - name: golangci-lint — test/e2e union of tags (e2e_t1,e2e_t2,e2e_b6 — the unused gate)
+        if: ${{ !cancelled() && matrix.module == 'packages/core' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOWORK: "off"
+        with:
+          version: v2.13.2
+          working-directory: test/e2e
+          args: --build-tags=e2e_t1,e2e_t2,e2e_b6
 
   coverage-determinism:
     name: Coverage determinism probe (manual)
@@ -2542,6 +2671,11 @@ jobs:
         with:
           go-version-file: go.work
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      # The `go` job's module pre-fetch, in the GOWORK mode the runs below use (#6031).
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: |
+          GOWORK=${{ matrix.module == 'test/e2e' && 'off' || 'auto' }} \
+            bash scripts/ci/go-mod-download-retry.sh ${{ matrix.module }}
       # Must mirror the `go` job's toolchain EXACTLY, or the numbers this probe prints are not
       # the numbers the ratchet will compare against and flooring from them reds every PR.
       - uses: azure/setup-helm@v5
@@ -2810,11 +2944,31 @@ jobs:
         with:
           version: v3.16.4
       - uses: azure/setup-kubectl@v5
+      # `go install pkg@version` fetches from proxy.golang.org like any module download, so it runs
+      # under the same retry as the harness's own modules below (#6031).
       - name: Install kind CLI (independent kubeconfig + cluster-leak cleanup)
         id: kind
         run: |
-          go install sigs.k8s.io/kind@v0.30.0
+          bash scripts/ci/go-mod-download-retry.sh -- go install sigs.k8s.io/kind@v0.30.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Pre-fetch test/e2e's Go modules (retrying a transient proxy error)
+        run: GOWORK=off bash scripts/ci/go-mod-download-retry.sh test/e2e
+      # ArgoCD's images come from the RUNNER's docker, not from the kubelet inside kind (#6044). The
+      # chart's redis lives on ECR Public, which limits anonymous pulls per source IP in rate AND in
+      # data, and GitHub's runners share IPs: pulled by the kubelet, it hit `toomanyrequests`, sat in
+      # ImagePullBackOff and redded queue batches. Here the list is RENDERED from the argo-cd chart
+      # at the version the runner installs (cmd/argoimages), so a chart bump cannot leave an image
+      # out, and each image is pulled under a retry that waits out a rate limit and says so. An
+      # `ecr-public.aws.com/docker/library/*` image is pulled from mirror.gcr.io and tagged to the
+      # ECR reference the chart renders, because a retry cannot wait out ECR Public's exhausted data
+      # quota (#6067); ECR Public is the fallback, and a notice names the source that served it. The
+      # T1 test then loads them into kind as soon as the runner has created it.
+      - name: Pull the images the pinned ArgoCD chart renders (mirror first, retrying a rate limit)
+        working-directory: test/e2e
+        run: |
+          GOWORK=off go run ./cmd/argoimages > "$RUNNER_TEMP/argocd-images.txt"
+          mapfile -t images < "$RUNNER_TEMP/argocd-images.txt"
+          bash "$GITHUB_WORKSPACE/scripts/ci/docker-pull-retry.sh" "${images[@]}"
       - run: pnpm install --frozen-lockfile
       - name: Migrate the control-plane database (schema + programmables/RLS + app role)
         run: pnpm -C apps/console run db:migrate
@@ -2833,6 +2987,8 @@ jobs:
       # convergence assertion 8m + build/boot headroom) plus teardown margin.
       - name: T1 — real runner claims from the control plane and provisions kind
         working-directory: test/e2e
+        env:
+          ALETHIA_E2E_T1_PRELOAD_IMAGES: ${{ runner.temp }}/argocd-images.txt
         run: GOWORK=off go test -tags=e2e_t1 ./... -run TestT1RealRunnerKindProvisioning -count=1 -timeout 30m -v
       # `always()` is deliberate — a leaked cluster must be swept on a CANCEL too, which is the one
       # thing `!cancelled()` would not do. What it must not do is run when `kind` was never
@@ -2876,6 +3032,21 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # The Go matrix job's packages/core pins: helm v3.21.4 and tofu 1.9.0. This job runs
+      # `go test ./...` over packages/core and apps/runner, so any test that treats a missing binary
+      # as a CI failure fails here too: without tofu, TestNodePoolContract_ReferenceRunsEveryCase
+      # t.Fatal'd on every main push and the Go badge was never published (#5948). Unconditional,
+      # because this job always covers both modules. One helm serves both: the matrix job gives
+      # apps/runner helm v3.16.3, so here the runner suites run against v3.21.4, a pairing no
+      # per-PR job exercises. Keep these pins in step with the matrix job's packages/core leg.
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.21.4
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: "1.9.0"
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh apps/cli apps/runner packages/core
       - name: Cover each Go module
         run: |
           for m in apps/cli apps/runner packages/core; do
@@ -2977,8 +3148,10 @@ jobs:
       - name: TS mutation (Stryker — lib + actions)
         run: pnpm -C apps/console run mutate || true
       - name: Go mutation (Gremlins — all modules)
+        # The install is the one fetch here that can red the job — the run after it is `|| true` —
+        # so it is the one put under the module-fetch retry (#6031).
         run: |
-          go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+          bash scripts/ci/go-mod-download-retry.sh -- go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
           scripts/go-mutation.sh || true
 
   secrets:

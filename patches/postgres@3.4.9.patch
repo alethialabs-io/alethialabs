@@ -1,0 +1,202 @@
+postgres@3.4.9: three guards for a connection whose backend dies mid-use (Alethia #6028, #6041, #6060).
+Each hunk is applied to both builds Node loads: src/ (import) and cjs/src/ (require).
+
+1. connection.js, nextWrite(): reject a write on a closed (null) socket (Alethia #6028).
+   Backport of upstream porsager/postgres PR #1209 ("Guard nextWrite against a closed socket",
+   fixes porsager/postgres#1208), that PR's change verbatim, unreleased as of 3.4.9. Without it, a
+   write on a connection whose backend was killed throws an uncaught TypeError from a setImmediate
+   and leaves the write buffer stuck, so the reconnect never sends its startup message and every
+   later query on that connection hangs or fails with CONNECT_TIMEOUT.
+
+2. index.js, begin(): a transaction whose session has closed refuses every later statement
+   (Alethia #6041). Backport of part 1 of the patch proposed on upstream porsager/postgres#1248
+   (open, no release). Without it, when the pool reconnects the connection a dead transaction was
+   on, the transaction's later statements and its own COMMIT run on the new session outside any
+   transaction, so statements issued after the kill commit on their own while everything before
+   it that was not yet committed was rolled back. With it, the statements the transaction had
+   queued, and every statement it issues after the close (savepoints and its own COMMIT or
+   ROLLBACK included), reject with the close's CONNECTION_CLOSED error and are never sent.
+   CONNECTION_CLOSED from begin() means the transaction's outcome is UNKNOWN, not that nothing
+   committed: if the close landed after COMMIT was sent, the commit may have applied.
+
+3. connection.js, error() and closed(): an error-close rejects the queries still on the
+   connection (Alethia #6060). Backport of the two-line fix proposed on upstream
+   porsager/postgres#1246 (open, no PR or release as of 2026-10-14), verbatim apart from comments. On a TCP reset
+   Node emits the socket's 'error' and then its 'close' on a later tick. errored() left the
+   rejected query in `query`, and closed(hadError = true) skipped error(), so a statement issued in
+   between (begin()'s own ROLLBACK) stayed in `sent`, and after the next reconnect the connection
+   waited forever for the reply to a statement it never sent. error() now clears `query`, and
+   closed() calls error() whatever hadError is. A query that reaches execute() in that window
+   rejects with CONNECTION_CLOSED; its bytes only ever reached the dead socket.
+
+Drop each hunk once a postgres release contains it.
+Test: apps/console/tests/integration/db-connection-kill.test.ts
+
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..125ec84059a670929ef0bbbd8a6f549518caacf9 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function nextWrite(fn) {
++    if (!socket) {
++      // closed() nulls the socket and reconnect() only recreates it on a later
++      // timer. write() is also reached from the 'data' handler, so a throw here
++      // has no query to reject and escapes as an uncaughtException. Settle the
++      // pending queries rather than dropping the write, or the caller hangs.
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
+@@ -383,6 +393,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       return
+ 
+     errored(err)
++    // errored() rejects the active query but leaves it in `query`, so execute() would keep
++    // queueing behind a query that can never complete, and end() would wait on it (#1246).
++    query = null
+     while (sent.length)
+       queryError(sent.shift(), err)
+   }
+@@ -450,7 +463,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // On a reset Node emits 'error' and then 'close' on a later tick, and a query can reach
++    // execute() in between. Reject it on an error-close too, or it stays in `sent` and the
++    // connection waits for its reply after the next reconnect (#1246).
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+diff --git a/cjs/src/index.js b/cjs/src/index.js
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f30d8aa7398ebe0726e09d815fe059bb9f0d726f 100644
+--- a/cjs/src/index.js
++++ b/cjs/src/index.js
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closedError = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          closedError = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
+       }
+ 
+       function handler(q) {
++        if (closedError)
++          return q.reject(closedError)
+         q.catch(e => uncaughtError || (uncaughtError = e))
+         c.queue === full
+           ? queries.push(q)
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..b2ab998a5d12b4e22b1851d48bf7a74a7bffe079 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -252,6 +252,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function nextWrite(fn) {
++    if (!socket) {
++      // closed() nulls the socket and reconnect() only recreates it on a later
++      // timer. write() is also reached from the 'data' handler, so a throw here
++      // has no query to reject and escapes as an uncaughtException. Settle the
++      // pending queries rather than dropping the write, or the caller hangs.
++      nextWriteTimer !== null && clearImmediate(nextWriteTimer)
++      chunk = nextWriteTimer = null
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
++      return false
++    }
+     const x = socket.write(chunk, fn)
+     nextWriteTimer !== null && clearImmediate(nextWriteTimer)
+     chunk = nextWriteTimer = null
+@@ -383,6 +393,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       return
+ 
+     errored(err)
++    // errored() rejects the active query but leaves it in `query`, so execute() would keep
++    // queueing behind a query that can never complete, and end() would wait on it (#1246).
++    query = null
+     while (sent.length)
+       queryError(sent.shift(), err)
+   }
+@@ -450,7 +463,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     if (initial)
+       return reconnect()
+ 
+-    !hadError && (query || sent.length) && error(Errors.connection('CONNECTION_CLOSED', options, socket))
++    // On a reset Node emits 'error' and then 'close' on a later tick, and a query can reach
++    // execute() in between. Reject it on an error-close too, or it stays in `sent` and the
++    // connection waits for its reply after the next reconnect (#1246).
++    if (query || sent.length)
++      error(Errors.connection('CONNECTION_CLOSED', options, socket))
+     closedTime = performance.now()
+     hadError && options.shared.retries++
+     delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
+diff --git a/src/index.js b/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..99d2500d27aef14442ab8ec24f3b3584e22753b3 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -237,12 +237,25 @@ function Postgres(a, b) {
+     let savepoints = 0
+       , connection
+       , prepare = null
++      , closedError = null
+ 
+     try {
+       await sql.unsafe('begin ' + options.replace(/[^a-z ]/ig, ''), [], { onexecute }).execute()
+       return await Promise.race([
+         scope(connection, fn),
+-        new Promise((_, reject) => connection.onclose = reject)
++        new Promise((_, reject) => connection.onclose = e => {
++          // The session closed under the transaction, so the transaction can no longer
++          // complete on this session: anything not yet committed was rolled back. If the
++          // close landed after COMMIT was sent, the commit may have applied, so the outcome
++          // is unknown. The pool can reconnect this same connection, and a statement sent
++          // on that new session would run outside any transaction and commit on its own.
++          // So reject what this transaction has queued, and every statement it issues from
++          // here on, including its savepoints and its own COMMIT or ROLLBACK (#1248).
++          closedError = e
++          while (queries.length)
++            queries.shift().reject(e)
++          reject(e)
++        })
+       ])
+     } catch (error) {
+       throw error
+@@ -289,6 +302,8 @@ function Postgres(a, b) {
+       }
+ 
+       function handler(q) {
++        if (closedError)
++          return q.reject(closedError)
+         q.catch(e => uncaughtError || (uncaughtError = e))
+         c.queue === full
+           ? queries.push(q)
