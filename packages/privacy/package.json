@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
-    "react-hook-form": "^7.89.0",
-    "zod": "^4.6.5"
+    "react-hook-form": "^7.90.0",
+    "zod": "^4.6.6"
   },
   "peerDependencies": {
     "react": "^19.3.0"
