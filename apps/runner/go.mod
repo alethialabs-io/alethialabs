@@ -123,7 +123,7 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	oras.land/oras-go/v2 v2.6.2 // indirect
+	oras.land/oras-go/v2 v2.6.3 // indirect
 )
 
 replace github.com/alethialabs-io/alethialabs/packages/core => ../../packages/core
