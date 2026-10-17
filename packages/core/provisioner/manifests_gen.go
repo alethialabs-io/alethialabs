@@ -57,11 +57,6 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 			strOutputs[k] = s
 		}
 	}
-	// Keyless per-cloud DB auth (#722) is dark by default: only when ALETHIA_KEYLESS_DB_AUTH_ENABLED
-	// is set does a service→database binding to an iam_auth database use the local auth-proxy sidecar
-	// (holding no password) instead of the ExternalSecret path. Off → every credential facet keeps
-	// the existing password path unchanged.
-	keylessOn := os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
 	// A private, non-native registry connector (dockerhub/ghcr/…) creates a dockerconfigjson pull
 	// secret; attach it to every generated app pod so the kubelet can actually authenticate the pull.
 	// "" (native/none) → no imagePullSecrets rendered (public image / own-account ECR-GAR-AR node auth).
@@ -79,9 +74,8 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		Domain:           vc.DNS.DomainName,
 		Outputs:          strOutputs,
 		Provider:         string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
-		KeylessDBAuth:    keylessOn,
-		Databases:        vc.Databases,    // lookup source for a binding target's iam_auth (#722)
-		RunnerImage:      selfimage.Ref(), // the db-authproxy / db-bootstrap sidecar image (#1787)
+		Databases:        vc.Databases,        // lookup source for a binding target's iam_auth (#722)
+		RunnerImage:      selfimage.Ref(),     // the db-authproxy / db-bootstrap sidecar image (#1787)
 		ImagePullSecrets: pullSecrets,
 		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
@@ -129,7 +123,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// ClusterSecretStore) materializes the k8s Secret the workload's secretKeyRef reads. The Secret
 	// name matches BindingSecretName(s.Name, target) — exactly the secretKeyRef.name the renderer
 	// emitted for this service (per-service, so no two ExternalSecrets fight over one Secret).
-	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, keylessOn, secretStores, stdout)
+	esSkips, esCount, err := writeBindingExternalSecrets(dir, vc, strOutputs, secretStores, stdout)
 	if err != nil {
 		return warnings, keyless, err
 	}
@@ -187,14 +181,11 @@ func jobCountSuffix(n int) string {
 // writeBootstrapJobs renders the keyless least-priv DB bootstrap Job (#722 R5) for each keyless
 // database bound by a service, writing the Job (and its admin ExternalSecret on AWS/GCP) into dir for
 // ArgoCD to run as a PreSync hook. Deduped per (kind, name) so multiple services binding the same
-// database share ONE Job. No-op when keyless is off (mopts.KeylessDBAuth). A Job that can't be
+// database share ONE Job. No-op when no service binds an iam_auth database. A Job that can't be
 // rendered (a missing admin tofu output) is REPORTED to stdout AND returned as `skips`, never fatal —
 // the app still deploys (its keyless binding fail-closes in lock-step), and the reason surfaces on the
 // Deploy tab. The skip reasons carry no secret values (kind/name/output names only).
 func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Options, stdout io.Writer) (skips []string, count int, err error) {
-	if !mopts.KeylessDBAuth {
-		return nil, 0, nil
-	}
 	seen := map[string]bool{}
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
@@ -511,7 +502,7 @@ func secretStoreSkipCause(vc *types.ProjectConfig, secretName string) string {
 // Unsatisfiable facets (no store for the cloud, no provisioned secret, a facet the secret lacks)
 // are reported to stdout AND returned as `skips`, never dropped silently. Returns those skip reasons
 // + the count written. The skip reasons carry no secret values (facet/kind/provider names only).
-func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, keylessOn bool, secretStores map[string]manifests.SecretStoreRef, stdout io.Writer) (skips []string, count int, err error) {
+func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs map[string]string, secretStores map[string]manifests.SecretStoreRef, stdout io.Writer) (skips []string, count int, err error) {
 	for _, s := range vc.Services {
 		for _, b := range s.Bindings {
 			// A secret-kind binding materializes a PROJECT SECRET from its pluggable SaaS store
@@ -556,7 +547,7 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 			// instead of a secretKeyRef, so there is no Secret to materialize here. Skip in lock-step
 			// with FromServices' keyless decision (same KeylessDBTarget predicate) so the two lanes
 			// never disagree about which bindings are keyless.
-			if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
+			if manifests.KeylessDBTarget(b.Target, vc.Databases) {
 				continue
 			}
 			yaml, skipped, renderErr := manifests.RenderExternalSecret(manifests.ExternalSecretParams{
