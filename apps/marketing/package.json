@@ -18,7 +18,7 @@
 		"@repo/plan-catalog": "workspace:*",
 		"@repo/privacy": "workspace:*",
 		"@repo/ui": "workspace:*",
-		"@aws-sdk/client-sesv2": "^3.1149.0",
+		"@aws-sdk/client-sesv2": "^3.1151.0",
 		"@hookform/resolvers": "^5.9.1",
 		"@react-email/components": "^1.0.12",
 		"libphonenumber-js": "^1.13.15",
@@ -31,7 +31,7 @@
 		"react-hook-form": "^7.90.0",
 		"sonner": "^2.0.8",
 		"stripe": "^22.6.2",
-		"zod": "^4.6.6"
+		"zod": "^4.6.7"
 	},
 	"devDependencies": {
 		"@vitest/coverage-v8": "^4.1.11",

@@ -17,9 +17,9 @@
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",
-		"fumadocs-core": "16.17.1",
+		"fumadocs-core": "16.17.3",
 		"fumadocs-mdx": "14.3.2",
-		"fumadocs-ui": "16.17.1",
+		"fumadocs-ui": "16.17.3",
 		"lucide-react": "^0.577.0",
 		"mermaid": "^11.17.2",
 		"next": "16.4.0",
