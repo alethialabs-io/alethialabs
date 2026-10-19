@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.8.0...runner-v0.8.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **azure:** call the real ARM action listClusterUserCredential (singular) ([#5407](https://github.com/alethialabs-io/alethialabs/issues/5407)) ([95a82e6](https://github.com/alethialabs-io/alethialabs/commit/95a82e64b40760e9e49b972c5105046067ee80db)), closes [#5287](https://github.com/alethialabs-io/alethialabs/issues/5287)
+* **runner,console:** a mint result refused for lost ownership answers 403, not 409 ([#5945](https://github.com/alethialabs-io/alethialabs/issues/5945)) ([#5955](https://github.com/alethialabs-io/alethialabs/issues/5955)) ([7a5e0d5](https://github.com/alethialabs-io/alethialabs/commit/7a5e0d59b30f8417a8cbad6684bd5346c6794ad9))
+
 ## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.7.0...runner-v0.8.0) (2026-10-02)
 
 
