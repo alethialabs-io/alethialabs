@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/enterprise", () => ({ getEnterprise: vi.fn() }));
+vi.mock("@/lib/enterprise", () => ({ getEnterprise: vi.fn(), editionState: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ getOwnerScope: vi.fn() }));
 vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: vi.fn() }));
@@ -29,7 +29,7 @@ import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { resolveTurnActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
-import { getEnterprise } from "@/lib/enterprise";
+import { editionState, getEnterprise } from "@/lib/enterprise";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const ORG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -63,12 +63,14 @@ const enforce = vi.fn();
 /** Selects the community edition: no enterprise module registered. */
 function community(): void {
 	vi.mocked(getEnterprise).mockReturnValue(null);
+	vi.mocked(editionState).mockReturnValue({ kind: "community", reason: "configured" });
 }
 
 /** Selects the enterprise-shaped edition over the given membership rows. */
 function enterprise(rows: MemberRow[]): void {
 	members = rows;
 	vi.mocked(getEnterprise).mockReturnValue({ resolveScope: enterpriseResolveScope });
+	vi.mocked(editionState).mockReturnValue({ kind: "enterprise" });
 }
 
 beforeEach(() => {

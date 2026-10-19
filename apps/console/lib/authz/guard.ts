@@ -3,7 +3,8 @@
 
 import { and, eq } from "drizzle-orm";
 import { getOwnerScope } from "@/lib/auth/owner";
-import { getActiveScope } from "@/lib/auth/scope";
+import { EditionMisconfiguredError } from "@/lib/auth/errors";
+import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
@@ -62,7 +63,19 @@ export async function currentActor(): Promise<Actor> {
 	//    behaved the same before this change) and `requireHostedBilling` bounds the billing case,
 	//    but it is an inconsistency, not a symmetry, and saying otherwise would be a comment
 	//    asserting a property the code does not have.
-	if (actor.orgId === userId) return actor;
+	//
+	//    ⚠ ONLY IN THE SINGLE-TENANT EDITION BY CONFIGURATION (#6149, F049, ADR 0005 Q5). With an
+	//    enterprise resolver registered, a collapse to the personal scope is the resolver disagreeing
+	//    with an address whose membership was just proved — the shape the 2026-10-19 sandbox hit,
+	//    where every server action answered for the personal workspace while the page rendered the
+	//    org — and it falls through to the substitution refusal below. With the edition UNSET and
+	//    no enterprise package found, a real AGPL checkout and a resolution failure look identical,
+	//    so it is refused and named rather than served.
+	if (actor.orgId === userId) {
+		const mode = tenancyMode();
+		if (mode === "single-tenant") return actor;
+		if (mode === "unconfigured") throw new EditionMisconfiguredError();
+	}
 
 	// 3. A DIFFERENT named org. That is the substitution, and following it would answer a request
 	//    addressed to B from some third org's scope — #3863, on the CLI's `--org` header, reaching
