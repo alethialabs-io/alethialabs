@@ -7,6 +7,7 @@ import { namesNoOrg } from "@/lib/authz/org-path";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
+import { hasAcceptedCurrentDocuments } from "@/lib/billing/eligibility";
 import { errorDigest } from "@/lib/errors";
 import { router } from "@/lib/rpc/router";
 
@@ -62,6 +63,13 @@ async function handle(request: Request): Promise<Response> {
 		if (error instanceof UnauthorizedError) return refusal(401, "Unauthorized");
 		if (error instanceof ForbiddenError) return refusal(403, "Forbidden");
 		throw error;
+	}
+
+	// The clickwrap gate (#2372) applies to EVERY use of the product, and the private layout that
+	// enforces it for pages never runs for a route handler (ADR 0005 stress test R14a). So the read
+	// router asks the same question the layout asks, against the database, before serving anything.
+	if (!(await hasAcceptedCurrentDocuments(actor.userId))) {
+		return refusal(403, "Accept the current Terms to continue.");
 	}
 
 	const { matched, response } = await runWithActor(actor, () =>

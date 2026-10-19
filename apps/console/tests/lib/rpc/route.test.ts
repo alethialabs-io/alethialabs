@@ -13,19 +13,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { currentActor, getJobsPage } = vi.hoisted(() => ({
+const { currentActor, getJobsPage, hasAcceptedCurrentDocuments } = vi.hoisted(() => ({
 	currentActor: vi.fn(),
 	getJobsPage: vi.fn(),
+	hasAcceptedCurrentDocuments: vi.fn(),
 }));
+vi.mock("@/lib/billing/eligibility", () => ({ hasAcceptedCurrentDocuments }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor }));
 vi.mock("@/app/server/actions/jobs", () => ({ getJobsPage }));
 
-import { createORPCClient } from "@orpc/client";
+import { createORPCClient, isDefinedError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import { GET, POST } from "@/app/(private)/[org]/~/rpc/[[...rest]]/route";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { ForbiddenError } from "@/lib/authz/types";
+import { ActionRefusal } from "@/lib/actions/result";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { router, type AppRouter } from "@/lib/rpc/router";
 
@@ -54,6 +57,8 @@ beforeEach(() => {
 	currentActor.mockReset();
 	getJobsPage.mockReset();
 	getJobsPage.mockResolvedValue(PAGE);
+	hasAcceptedCurrentDocuments.mockReset();
+	hasAcceptedCurrentDocuments.mockResolvedValue(true);
 });
 
 describe("the tenant is decided before the procedure runs", () => {
@@ -93,6 +98,14 @@ describe("the tenant is decided before the procedure runs", () => {
 		const res = await GET(new Request("http://console.test/docs/~/rpc/jobs/page"));
 		expect(res.status).toBe(404);
 		expect(currentActor).not.toHaveBeenCalled();
+	});
+
+	it("refuses a user who has not accepted the current Terms, before running anything (R14a)", async () => {
+		currentActor.mockResolvedValue(ACME);
+		hasAcceptedCurrentDocuments.mockResolvedValue(false);
+		const res = await GET(new Request("http://console.test/acme/~/rpc/jobs/page"));
+		expect(res.status).toBe(403);
+		expect(getJobsPage).not.toHaveBeenCalled();
 	});
 
 	it("404s a procedure that does not exist", async () => {
@@ -138,6 +151,35 @@ describe("jobs.page", () => {
 			}),
 		).rejects.toThrow();
 		expect(getJobsPage).not.toHaveBeenCalled();
+	});
+});
+
+describe("a reader's refusal reaches the browser as a TYPED error, not an empty page or a 500 (R11)", () => {
+	/** The error a call rejects with. */
+	async function refusalOf(thrown: unknown): Promise<unknown> {
+		currentActor.mockResolvedValue(ACME);
+		getJobsPage.mockRejectedValue(thrown);
+		return clientFor("http://console.test/acme/~/rpc")
+			.jobs.page({ range: { preset: "7d" } })
+			.then(() => "resolved", (e: unknown) => e);
+	}
+
+	it.each([
+		["a PDP refusal", new ForbiddenError("view", { type: "job" }), "FORBIDDEN"],
+		["no session", new UnauthorizedError(), "UNAUTHORIZED"],
+		["notFound()", Object.assign(new Error("NEXT_HTTP_ERROR_FALLBACK;404"), { digest: "NEXT_HTTP_ERROR_FALLBACK;404" }), "NOT_FOUND"],
+		["a deliberate not-found", new ActionRefusal("not-found", "That job is gone."), "NOT_FOUND"],
+		["a plan gate", new ActionRefusal("entitlement", "Runners are a Pro feature.", "runners"), "ENTITLEMENT_REQUIRED"],
+	])("%s → %s", async (_label, thrown, code) => {
+		const error = await refusalOf(thrown);
+		expect(isDefinedError(error)).toBe(true);
+		expect(error).toMatchObject({ code });
+	});
+
+	it("keeps an unexpected error's text out of the response", async () => {
+		const error = await refusalOf(new Error("relation \"jobs\" does not exist"));
+		expect(isDefinedError(error)).toBe(false);
+		expect(JSON.stringify(error)).not.toContain("relation");
 	});
 });
 
