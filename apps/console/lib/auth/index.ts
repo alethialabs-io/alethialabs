@@ -8,8 +8,10 @@ import { emailOTP, genericOAuth, jwt } from "better-auth/plugins";
 import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { mcp } from "@better-auth/mcp";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import type {
 	BetterAuthOptions,
+	BetterAuthPlugin,
 	SocialProviders,
 } from "better-auth";
 import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
@@ -117,14 +119,81 @@ if (cfg.providers.bitbucket) {
 	});
 }
 
+/**
+ * The machine-readable code a failed sign-in code send answers with. The sign-in form
+ * (components/auth/auth-form.tsx) matches on the same literal — it is a client component
+ * and cannot import this server module — to say "we couldn't send the code" instead of
+ * advancing to the code step. Both tests in tests/lib/auth/sign-in-code-send-failure*.ts
+ * pin the literal, one per side.
+ */
+const SIGN_IN_CODE_SEND_FAILED = "SIGN_IN_CODE_SEND_FAILED";
+
+/**
+ * Requests whose sign-in code email failed to send, keyed on that request's AuthContext.
+ *
+ * Why a side channel at all: Better Auth (1.7.x, plugins/email-otp/routes.mjs) hands our
+ * sender's promise to `ctx.context.runInBackgroundOrAwait`, which AWAITS it but wraps the
+ * await in a try/catch that only logs — so a send that throws still answers
+ * `{ success: true }` and the form says "We sent a 6-digit code" (#6109). Nothing we throw
+ * from the sender can reach the client. So the sender records the failure here and the
+ * after-hook below turns it into an error response.
+ *
+ * The key is the per-request copy of the AuthContext that dispatchAuthEndpoint builds
+ * (api/dispatch.mjs) and passes to both the handler and the after-hooks — never the shared
+ * instance-wide one, so one request's failure cannot leak into another's answer. A WeakSet,
+ * so a request that is never looked at again is not retained. This relies on the send being
+ * AWAITED: setting `advanced.backgroundTasks.handler` would make it fire-and-forget, the
+ * after-hook would run first, and this would go silently back to "code sent". The test in
+ * tests/lib/auth/sign-in-code-send-failure.test.ts runs the real Better Auth pipeline and
+ * fails if that happens.
+ */
+const failedSignInCodeSends = new WeakSet<object>();
+
+/**
+ * Turns a recorded sign-in code send failure into a 503 the client sees as an error.
+ * Registered for the one route the sign-in form calls; every other route that sends an
+ * OTP (password reset, email change) keeps Better Auth's own behaviour.
+ */
+const signInCodeSendFailure = {
+	id: "sign-in-code-send-failure",
+	hooks: {
+		after: [
+			{
+				matcher: (ctx: { path?: string }) =>
+					ctx.path === "/email-otp/send-verification-otp",
+				handler: createAuthMiddleware(async (ctx) => {
+					if (!failedSignInCodeSends.has(ctx.context)) return;
+					throw new APIError("SERVICE_UNAVAILABLE", {
+						code: SIGN_IN_CODE_SEND_FAILED,
+						message: "We couldn’t send the code — try again.",
+					});
+				}),
+			},
+		],
+	},
+} satisfies BetterAuthPlugin;
+
 const plugins: BetterAuthOptions["plugins"] = [
 	emailOTP({
 		otpLength: 6,
 		expiresIn: 600, // 10 minutes — matches the email template copy.
-		async sendVerificationOTP({ email, otp }) {
-			await sendSignInCodeEmail(email, otp);
+		async sendVerificationOTP({ email, otp, type }, ctx) {
+			try {
+				await sendSignInCodeEmail(email, otp);
+			} catch (e) {
+				// The one report of this failure. Deliberately not rethrown: Better Auth would
+				// log it a second time and still answer 200 (see failedSignInCodeSends).
+				console.error(`[auth] ${type} code email failed:`, e);
+				// Only "sign-in" is surfaced. It is the only type the form sends, and the only
+				// one Better Auth sends for an unknown address too (disableSignUp is off) — so a
+				// failure looks the same whether or not the address has an account. The other
+				// types skip the send for unknown addresses, so surfacing THEIR failures would
+				// tell a caller which addresses are registered.
+				if (type === "sign-in" && ctx) failedSignInCodeSends.add(ctx.context);
+			}
 		},
 	}),
+	signInCodeSendFailure,
 	// REQUIRED by mcp(): it supplies the stable signing key for ID/access tokens and
 	// exposes /jwks for resource servers to verify them. Without it mcp() has nothing
 	// to sign with.
