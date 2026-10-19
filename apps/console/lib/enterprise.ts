@@ -9,7 +9,7 @@
 // (scripts/check-ee-boundary.mjs) allowlists ONLY this file. See project 12.
 
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { requireFromWorkingDirectory } from "@/lib/enterprise-require";
 import {
   parseAlethiaEdition,
   type EnterpriseEntrypoint,
@@ -269,34 +269,6 @@ function isEnterprisePackage(
 }
 
 /**
- * Requires the enterprise package, first relative to this module and then relative to the app's
- * working directory.
- *
- * WHY TWO BASES (#6113, finding F049). `import.meta.url` is the location of the CHUNK this module
- * was bundled into, and under the Turbopack dev server a server-action chunk and an RSC chunk do
- * not live in the same place. On the 2026-10-19 sandbox the RSC render resolved `@alethia/ee`
- * while every server action on the same page did not — so in `auto` mode each action's module
- * instance concluded "community" on its own, `currentActor()` collapsed to the personal scope, and
- * the page showed Acme while its actions answered for the user's personal workspace: Enterprise
- * badge next to a Pro upsell, settings that never loaded, nothing red. The working directory is
- * the console app in every way the console runs (dev, standalone, the box), so it is the stable
- * second base. Only a package that BOTH bases fail to find is "not installed".
- */
-function requireEnterprisePackage(pkg: string): unknown {
-  try {
-    return createRequire(import.meta.url)(pkg);
-  } catch (error) {
-    if (!isMissingEnterprisePackage(error)) throw error;
-    try {
-      return createRequire(join(process.cwd(), "package.json"))(pkg);
-    } catch (fallbackError) {
-      if (isMissingEnterprisePackage(fallbackError)) throw error;
-      throw fallbackError;
-    }
-  }
-}
-
-/**
  * One-time, tolerant, SYNCHRONOUS load of the enterprise package. Synchronous so the
  * enterprise auth plugins are available when lib/auth/index.ts builds betterAuth()
  * at module-eval (getAuthPlugins → getEnterprise → here). Community: `@alethia/ee` is
@@ -314,7 +286,14 @@ function loadEnterprise(): void {
   }
   const pkg = "@alethia/ee";
   try {
-    const mod: unknown = requireEnterprisePackage(pkg);
+    let mod: unknown;
+    try {
+      mod = createRequire(import.meta.url)(pkg);
+    } catch (error) {
+      if (!isMissingEnterprisePackage(error)) throw error;
+      mod = requireFromWorkingDirectory(pkg);
+      if (mod === undefined) throw error;
+    }
     if (!isEnterprisePackage(mod)) {
       throw new Error("@alethia/ee does not export register(core).");
     }

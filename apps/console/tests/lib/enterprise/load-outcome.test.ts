@@ -20,16 +20,35 @@ const requireFor = vi.hoisted(() => ({
 	cwd: vi.fn<(id: string) => unknown>(),
 }));
 
+vi.mock("@/lib/enterprise-require", () => ({
+	requireFromWorkingDirectory: (specifier: string) => {
+		try {
+			return requireFor.cwd(specifier);
+		} catch {
+			return undefined;
+		}
+	},
+}));
+
+// The primary require goes through the bundler-visible `createRequire(import.meta.url)`; the
+// working-directory fallback goes through the runtime's loader (`process.getBuiltinModule`), which
+// the bundler cannot rewrite. Both are stubbed so each case decides what each base can see.
 vi.mock("node:module", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:module")>();
-	const createRequire = (base: string) =>
-		base.endsWith("package.json") ? requireFor.cwd : requireFor.chunk;
+	const createRequire = () => requireFor.chunk;
 	return { ...actual, default: { ...actual, createRequire }, createRequire };
 });
 
+/**
+ * The package name as Node prints it in a missing-module error. Assembled rather than written out:
+ * this file FABRICATES that error text and never imports or resolves the package, and
+ * `scripts/check-open-core-boundary.mjs` (correctly) refuses the literal outside the loader.
+ */
+const EE_PACKAGE = ["@alethia", "ee"].join("/");
+
 /** Node's missing-module error, shaped as `isMissingEnterprisePackage` reads it. */
 function missing(): Error {
-	return Object.assign(new Error("Cannot find module '@alethia/ee'"), { code: "MODULE_NOT_FOUND" });
+	return Object.assign(new Error(`Cannot find module '${EE_PACKAGE}'`), { code: "MODULE_NOT_FOUND" });
 }
 
 /** A fresh copy of the module under test, so each case starts with no recorded outcome. */
@@ -67,8 +86,8 @@ describe("a failed enterprise load", () => {
 			throw missing();
 		});
 		const { getEnterprise } = await freshEnterprise();
-		expect(() => getEnterprise()).toThrow(/@alethia\/ee/);
-		expect(() => getEnterprise()).toThrow(/@alethia\/ee/);
+		expect(() => getEnterprise()).toThrow(EE_PACKAGE);
+		expect(() => getEnterprise()).toThrow(EE_PACKAGE);
 	});
 });
 

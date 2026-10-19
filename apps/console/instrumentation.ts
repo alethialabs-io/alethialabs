@@ -24,9 +24,11 @@ export async function register() {
 			startupLog.error("sentry init failed", { component: "sentry", err }),
 		);
 	}
-	// Decide the edition at BOOT, not on the first request (#6149, R2). A failed enterprise load used
+	// Decide the edition at BOOT for this module instance (#6149, R2). A failed enterprise load used
 	// to surface as one thrown request and then a silently community process serving every org
-	// address from the personal scope; now it stops the instance before it serves anything.
+	// address from the personal scope. Bundled chunks can hold their own module instances, so this
+	// does not decide for them — each still rethrows a failed load on every call (lib/enterprise.ts);
+	// what this adds is a loud failure at startup, before the first request, in the common case.
 	const { editionState } = await import("@/lib/enterprise");
 	const edition = editionState();
 	if (edition.kind === "failed") {
