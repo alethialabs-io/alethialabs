@@ -139,6 +139,12 @@ tier_separation:
     issue: "#2649"
     reason: DisabledReason renders a real tooltip; its suite opens it on hover and on keyboard focus and reads the popup's text.
 
+  - path: src/alert-dialog.tsx
+    suite: [tests/button-variants.test.tsx]
+    symbols: [AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogTitle]
+    issue: "#2649"
+    reason: The button-variants suite opens a real confirm dialog and resolves the destructive Action's rendered colours through tokens.css in both themes (#6108).
+
 baseline:
   # ── exports hidden behind a module a suite DOES execute ───────────────────────────────────────
   #
@@ -195,22 +201,17 @@ baseline:
   - path: src/alert-dialog.tsx
     symbols:
       [
-        AlertDialog,
-        AlertDialogAction,
         AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
         AlertDialogFooter,
         AlertDialogHeader,
         AlertDialogMedia,
         AlertDialogOverlay,
         AlertDialogPortal,
-        AlertDialogTitle,
         AlertDialogTrigger,
       ]
     issue: "#2649"
-    state: no-test
-    reason: The confirm-dialog primitive every destructive console action routes through is named by no suite in this package.
+    state: untested-export
+    reason: The button-variants suite mounts a real confirm (root, content, title, description, action); these seven parts are the ones it does not name. Overlay and Portal run inside AlertDialogContent but are not imported by name.
 
   - path: src/alert.tsx
     symbols: [Alert, AlertDescription, AlertTitle]
