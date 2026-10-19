@@ -1145,12 +1145,59 @@ push_tree() {
   #                             closes the window in between, during which a recompile would
   #                             otherwise catch the console with no dist at all. It also means
   #                             a laptop that happens to have built one can never SEND it.
+  #
+  # LOCAL JUNK THAT IS NOT SOURCE (#6110). The main checkout carried an untracked `.pnpm-store/`
+  # (1.7 GB) and `.codex-run-base/` (198 MB); neither is excluded above, so the first `env:up` of
+  # 2026-10-19 spent ~25 minutes shipping a package store and a tool's scratch copy to a box that
+  # installs its own. Two layers, because each covers what the other cannot:
+  #
+  #   1. A STATIC list of the known offenders. Unconditional, so it holds even where git cannot be
+  #      asked (no repo, no git on PATH), and it is what scripts/lib/env-suite-reap-test.sh pins.
+  #   2. A RULE: every TOP-LEVEL DOT-DIRECTORY that git reports as WHOLLY UNTRACKED (ignored or
+  #      not). The next tool to drop a cache at the root will name it `.something/`, and nothing
+  #      should have to remember to add it here.
+  #
+  # Why not "everything git ignores or does not track": this push ships the WORKING TREE on
+  # purpose — a new source file you have not `git add`ed yet must reach the box, or the env runs
+  # code you are not looking at. So untracked is not junk in general. And "everything ignored" is
+  # not safe either: rsync's gitignore reading (`:- .gitignore`) is not git's (no `!` negation,
+  # no global excludes), and an ignored path the box needs would vanish with no error. The rule is
+  # bounded where the cost of a wrong guess is smallest: a hidden directory at the ROOT, every file
+  # in it untracked. Source never lives there today — `.github`/`.claude`/`.githooks` are tracked,
+  # and a directory holding even one tracked file is not "wholly untracked", so it still ships
+  # (its own untracked files with it). The one thing this can withhold is a brand-new top-level
+  # hidden directory you have not added yet, and it says so below rather than skipping it silently.
+  #
+  # Excluding is also safe against `--delete`: without `--delete-excluded`, rsync never removes an
+  # excluded path on the receiver, so a box-side `.something/` survives either way.
+  local -a excludes=(
+    --exclude=node_modules --exclude=.next --exclude=.git --exclude=.turbo
+    --exclude=test-results --exclude=playwright-report --exclude='*.tfstate*'
+    --exclude=.terraform --exclude=/ee/dist
+    --exclude=/.env --exclude='.env.local' --exclude='.env.*.local'
+    --exclude='apps/*/.env.local'
+    --exclude=/.pnpm-store --exclude=/.codex-run-base
+  )
+  local entry withheld=""
+  # `--others --directory` (no --exclude-standard) lists untracked AND ignored paths, collapsing a
+  # wholly-untracked directory to one `name/` line instead of walking it. `|| true`: no repo or no
+  # git degrades to the static list, never to a failed push.
+  while IFS= read -r entry; do
+    case "$entry" in
+      .*/) entry="${entry%/}" ;;
+      *) continue ;;
+    esac
+    case "$entry" in
+      */* | . | .. | .git | .pnpm-store | .codex-run-base) continue ;;
+    esac
+    excludes+=("--exclude=/$entry")
+    withheld="$withheld $entry/"
+  done < <(git -C "$ROOT" ls-files --others --directory --no-empty-directory 2>/dev/null || true)
+  [ -z "$withheld" ] ||
+    echo "  push: not shipping untracked top-level dot-dirs:$withheld (git add a file in one to ship it)" >&2
+
   rsync -az --delete \
-    --exclude=node_modules --exclude=.next --exclude=.git --exclude=.turbo \
-    --exclude=test-results --exclude=playwright-report --exclude='*.tfstate*' \
-    --exclude=.terraform --exclude=/ee/dist \
-    --exclude=/.env --exclude='.env.local' --exclude='.env.*.local' \
-    --exclude='apps/*/.env.local' \
+    "${excludes[@]}" \
     -e "ssh -o StrictHostKeyChecking=accept-new" \
     "$ROOT/" "root@$ip:$REMOTE/envs/$slug_/" || rsync_rc=$?
 
