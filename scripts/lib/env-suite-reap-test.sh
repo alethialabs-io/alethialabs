@@ -604,6 +604,129 @@ SH
 	*NOT-EMPTY*) bad "read_registry returned content from an unreachable box" ;;
 	esac
 
+	# C. An EXISTING env's .env is reconciled, not left behind (#6111).
+	#
+	# The `dev` env predated ALETHIA_SANDBOX=1, and `test -f … || cat >` meant no env:up would ever
+	# give it the key: sign-in codes went nowhere and nothing was red. dotenv_reconcile runs ON THE
+	# BOX as text shipped by `declare -f`, so it is driven here the same way — under `sh`, not the
+	# bash that defined it.
+	for f in dotenv_template dotenv_secret_keys dotenv_required_keys dotenv_reconcile env_dotenv_gaps; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/dotenv.sh"
+		grep -q "^$f() {" "$TMP/dotenv.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	cat >"$TMP/drive-dotenv.sh" <<'SH'
+set -euo pipefail
+. "$1"; shift
+file="$1" fresh="$2"
+render() { dotenv_template s1 3100 8400 db_s1 https://s1.example NEWSECRET1 NEWSECRET2 NEWSECRET3 \
+	NEWSECRET4 NEWOIDC NEWRECEIPT NEWSNAPSHOT NEWBOOTSTRAP; }
+# shellcheck disable=SC2046
+render | sh -c "$(declare -f dotenv_reconcile); dotenv_reconcile \"\$@\"" sh "$file" "$fresh" $(dotenv_secret_keys)
+SH
+	# An env as `dev` was: minted before ALETHIA_SANDBOX and ALETHIA_LICENSE_ACTIVE, one value edited
+	# by hand, no trailing newline. Its secrets must come through byte-for-byte.
+	legacy() { # <file> [drop-key]
+		dotenv_render_old >"$1.full"
+		grep -v -e '^ALETHIA_SANDBOX=' -e '^ALETHIA_LICENSE_ACTIVE=' ${2:+-e "^$2="} "$1.full" |
+			sed 's/^ALETHIA_DB_PORT=5433$/ALETHIA_DB_PORT=6543/' >"$1.tmp"
+		printf '%s' "$(cat "$1.tmp")" >"$1"
+		rm -f "$1.full" "$1.tmp"
+	}
+	dotenv_render_old() {
+		bash -c '. "$1"; dotenv_template s1 3100 8400 db_s1 https://s1.example OLDSECRET1 OLDSECRET2 \
+			OLDSECRET3 OLDSECRET4 OLDOIDC OLDRECEIPT OLDSNAPSHOT OLDBOOTSTRAP' _ "$TMP/dotenv.sh"
+	}
+	before="$fails"
+	dv="$TMP/dotenv-case"
+	mkdir -p "$dv"
+
+	# C1. No file: the whole render, as before.
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/new.env" "" 2>&1)" || bad "a first mint failed: $out"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/new.env" || bad "a first mint did not write ALETHIA_SANDBOX=1"
+	grep -qx 'BETTER_AUTH_SECRET=NEWSECRET1' "$dv/new.env" || bad "a first mint did not write its secrets"
+
+	# C2. The `dev` shape: the static keys are appended, nothing present is touched.
+	legacy "$dv/old.env"
+	cp "$dv/old.env" "$dv/old.orig"
+	rc=0
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/old.env" "" 2>&1)" || rc=$?
+	[ "$rc" = 0 ] || bad "reconciling static keys returned $rc: $out"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/old.env" ||
+		bad "an env minted before ALETHIA_SANDBOX still lacks it after env:up — #6111 unfixed"
+	grep -qx 'ALETHIA_LICENSE_ACTIVE=false' "$dv/old.env" || bad "ALETHIA_LICENSE_ACTIVE was not reconciled"
+	# The original bytes are a PREFIX of the result: appended, never rewritten. The missing
+	# trailing newline must not glue the first new key onto the last old line.
+	head -c "$(wc -c <"$dv/old.orig")" "$dv/old.env" | cmp -s - "$dv/old.orig" ||
+		bad "reconciling REWROTE the existing .env instead of appending to it"
+	grep -q 'NEWSECRET\|NEWOIDC\|NEWRECEIPT\|NEWSNAPSHOT\|NEWBOOTSTRAP' "$dv/old.env" &&
+		bad "reconciling replaced or duplicated a secret the env already had"
+	grep -qx 'ALETHIA_DB_PORT=6543' "$dv/old.env" || bad "a hand-edited value did not survive"
+	[ "$(grep -c '^ALETHIA_DB_PORT=' "$dv/old.env")" = 1 ] || bad "a present key was appended a second time"
+	case "$out" in
+	*OLD[A-Z]*[0-9A-Z]* | *NEW[A-Z]*[0-9A-Z]*) bad "reconcile printed a VALUE: $out" ;;
+	esac
+	case "$out" in
+	*"added: ALETHIA_SANDBOX ALETHIA_LICENSE_ACTIVE"*) ;;
+	*) bad "reconcile did not name the keys it added: $out" ;;
+	esac
+	# Idempotent: a second env:up adds nothing.
+	cp "$dv/old.env" "$dv/old.once"
+	bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/old.env" "" >/dev/null 2>&1 || bad "a second reconcile failed"
+	cmp -s "$dv/old.env" "$dv/old.once" || bad "a second env:up changed an already-reconciled .env"
+
+	# C3. A missing SECRET is refused with status 3 and its name — not minted into a live env —
+	# while the static keys still land.
+	legacy "$dv/sec.env" BETTER_AUTH_SECRET
+	rc=0
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/sec.env" "" 2>&1)" || rc=$?
+	[ "$rc" = 3 ] || bad "a missing secret returned $rc, not the refusal (3)"
+	case "$out" in
+	*"secret-missing: BETTER_AUTH_SECRET"*) ;;
+	*) bad "the refusal does not name the missing secret: $out" ;;
+	esac
+	case "$out" in
+	*OLD[A-Z]*[0-9A-Z]* | *NEW[A-Z]*[0-9A-Z]*) bad "the refusal printed a VALUE: $out" ;;
+	esac
+	grep -q '^BETTER_AUTH_SECRET=' "$dv/sec.env" && bad "a secret was minted into a LIVE env without --fresh"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/sec.env" || bad "a missing secret blocked the static keys as well"
+
+	# C4. Under --fresh (the database is about to be dropped) the missing secret is minted.
+	rc=0
+	bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/sec.env" fresh >/dev/null 2>&1 || rc=$?
+	[ "$rc" = 0 ] || bad "env:up --fresh still refused a missing secret (status $rc)"
+	grep -qx 'BETTER_AUTH_SECRET=NEWSECRET1' "$dv/sec.env" || bad "--fresh did not mint the missing secret"
+	grep -qx 'CLI_JWT_SECRET=OLDSECRET2' "$dv/sec.env" || bad "--fresh rotated a secret that was present"
+
+	# C5. The secret classification is DERIVED from the template; pin that it says the right thing.
+	secrets="$(bash -c '. "$1"; dotenv_secret_keys' _ "$TMP/dotenv.sh" | tr '\n' ' ')"
+	for k in BETTER_AUTH_SECRET ALETHIA_OIDC_SIGNING_KEY ALETHIA_APP_DATABASE_URL ALETHIA_CRED_ENCRYPTION_KEY; do
+		case " $secrets" in *" $k "*) ;; *) bad "$k is not classified as a minted secret" ;; esac
+	done
+	for k in ALETHIA_SANDBOX ALETHIA_DEPLOYMENT_MODE ALETHIA_LICENSE_ACTIVE ALETHIA_RUNNER_OPERATOR; do
+		case " $secrets" in *" $k "*) bad "$k is classified as a secret, so env:up would refuse it" ;; esac
+	done
+
+	# C6. env:status names an env whose .env lacks a key — through a stubbed box.
+	box="$TMP/box"
+	mkdir -p "$box/envs/stale" "$box/envs/fine"
+	legacy "$box/envs/stale/.env"
+	dotenv_render_old >"$box/envs/fine/.env"
+	cat >"$TMP/drive-gaps.sh" <<'SH'
+set -euo pipefail
+. "$1"
+REMOTE="$2"
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"stale":{},"fine":{},"gone":{}}' ;; *) sh -c "$1" ;; esac; }
+env_dotenv_gaps
+SH
+	out="$(bash "$TMP/drive-gaps.sh" "$TMP/dotenv.sh" "$box" 2>&1)" || bad "env_dotenv_gaps failed: $out"
+	printf '%s\n' "$out" | grep -qx 'stale missing:ALETHIA_SANDBOX,ALETHIA_LICENSE_ACTIVE' ||
+		bad "env:status does not flag an env missing ALETHIA_SANDBOX: $out"
+	printf '%s\n' "$out" | grep -qx 'fine ok' || bad "env:status flags a complete .env: $out"
+	printf '%s\n' "$out" | grep -qx 'gone no-file' || bad "env:status is silent about an env with no .env: $out"
+
+	[ "$fails" = "$before" ] &&
+		ok "an existing .env gains the keys it predates, keeps every value it has, refuses a missing secret without --fresh, and env:status names the gap"
+
 	[ "$fails" = 0 ] || echo "functions($env_sh): $fails failed" >&2
 	exit "$fails"
 fi
@@ -776,6 +899,20 @@ AWK
 # containment turns a CAUGHT failure into an uncaught assignment status that errexit acts on.
 mutate_fn ssh-box-exits-instead-of-returning <<'AWK'
 { sub(/ip="\$\(require_box\)" \|\| return \$\?/, "ip=\"$(require_box)\" || exit $?"); print }
+AWK
+
+# #6111, the defect verbatim and its two nearest misses. Write-once restored (an existing .env is
+# left alone); a missing secret minted into a live env; and env:status reporting every env as ok.
+mutate_fn dotenv-write-once-again <<'AWK'
+/^dotenv_reconcile\(\) \{/ { inside = 1 }
+{ print }
+inside && /^  _new="\$\(cat\)"$/ { print "  return 0"; inside = 0 }
+AWK
+mutate_fn dotenv-secret-minted-into-a-live-env <<'AWK'
+{ sub(/^      \[ "\$_s" = "\$_k" \] && _is_secret=1$/, "      :"); print }
+AWK
+mutate_fn status-never-reports-a-gap <<'AWK'
+{ sub(/\|\| m="\$m\$\{m:\+,\}\$k"$/, "|| :"); print }
 AWK
 
 # ── 9. and it must NOT fire on a legal reflow ─────────────────────────────────────────────────
