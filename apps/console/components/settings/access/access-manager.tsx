@@ -481,7 +481,7 @@ export function AccessManager({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleting && void revoke(deleting)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
             >
               Revoke access
             </AlertDialogAction>

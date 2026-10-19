@@ -415,7 +415,7 @@ export function TeamsList() {
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => deleting && void remove(deleting)}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							variant="destructive"
 						>
 							Delete team
 						</AlertDialogAction>

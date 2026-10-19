@@ -174,7 +174,7 @@ export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelet
 						<AlertDialogFooter>
 							<AlertDialogCancel>Cancel</AlertDialogCancel>
 							<AlertDialogAction
-								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+								variant="destructive"
 								onClick={() => {
 									setConfirmDelete(false);
 									onDelete();

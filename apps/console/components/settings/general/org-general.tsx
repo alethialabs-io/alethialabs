@@ -395,7 +395,7 @@ export function OrgGeneral() {
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={() => void remove()}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     Delete organization
                   </AlertDialogAction>

@@ -303,7 +303,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => deleting && void confirmDelete(deleting)}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							variant="destructive"
 						>
 							Remove provider
 						</AlertDialogAction>

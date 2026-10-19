@@ -223,7 +223,7 @@ export function ProjectGeneral({
                   <AlertDialogAction
                     onClick={() => void onDelete()}
                     disabled={deleting}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     {deleting ? "Deleting…" : "Delete project"}
                   </AlertDialogAction>
