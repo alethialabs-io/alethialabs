@@ -509,6 +509,66 @@ SH
 	[ "$fails" = "$before" ] &&
 		ok "push_tree's status is the rsync's: a failed push stops the watch chain, a failed touch does not"
 
+	# A2. push_tree does not ship local junk, and still ships untracked source (#6110).
+	#
+	# Driven through a REAL rsync into a local directory — the stub only drops `-e ssh` and swaps
+	# the remote destination — so what is asserted is what rsync actually copied under push_tree's
+	# filters, not how the argument list happens to be spelled.
+	if command -v rsync >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+		src="$TMP/push-src"
+		dst="$TMP/push-dst"
+		mkdir -p "$src/apps/console" "$src/.github" "$src/.pnpm-store/v3" "$src/.codex-run-base/x" \
+			"$src/.newcache" "$src/newpkg" "$dst"
+		echo tracked >"$src/apps/console/page.ts"
+		echo tracked >"$src/.github/ci.yml"
+		git -C "$src" init -q
+		git -C "$src" add apps .github
+		echo store >"$src/.pnpm-store/v3/blob"
+		echo base >"$src/.codex-run-base/x/copy"
+		echo cache >"$src/.newcache/c"
+		echo new >"$src/apps/console/new-untracked.ts"
+		echo new >"$src/.github/new-untracked.yml"
+		echo new >"$src/newpkg/index.ts"
+		cat >"$TMP/drive-excl.sh" <<'SH'
+set -euo pipefail
+ROOT="$1"; DST="$2"; REMOTE=/opt/alethia
+require_box() { printf '1.2.3.4'; }
+slug() { printf 's1'; }
+ssh_box() { :; }
+rsync() {
+	local a=() skip=0 x
+	for x in "$@"; do
+		if [ "$skip" = 1 ]; then skip=0; continue; fi
+		[ "$x" = "-e" ] && { skip=1; continue; }
+		a+=("$x")
+	done
+	unset 'a[${#a[@]}-1]'
+	command rsync "${a[@]}" "$DST/"
+}
+. "$3"
+push_tree
+SH
+		bash "$TMP/drive-excl.sh" "$src" "$dst" "$TMP/push_tree.sh" >/dev/null 2>&1 ||
+			bad "push_tree failed against a local rsync"
+		before="$fails"
+		for junk in .pnpm-store .codex-run-base .newcache; do
+			[ -e "$dst/$junk" ] && bad "push_tree shipped $junk/ — local junk reaches the box"
+		done
+		for want in apps/console/page.ts apps/console/new-untracked.ts .github/ci.yml \
+			.github/new-untracked.yml newpkg/index.ts; do
+			[ -e "$dst/$want" ] || bad "push_tree withheld $want — the working tree must ship, untracked source included"
+		done
+		# The static half must hold where git cannot be asked.
+		for junk in .pnpm-store .codex-run-base; do
+			grep -Fq -- "--exclude=/$junk" "$TMP/push_tree.sh" ||
+				bad "push_tree's static exclude list does not name /$junk"
+		done
+		[ "$fails" = "$before" ] &&
+			ok "push_tree excludes .pnpm-store, .codex-run-base and untracked top-level dot-dirs, and still ships untracked source"
+	else
+		bad "rsync and git are required to drive push_tree's excludes"
+	fi
+
 	# B. ssh_box RETURNS on an unreachable box; it does not exit the caller's shell.
 	#
 	# `exit` inside a function ends the shell, so `|| true` cannot catch it — it never returns to
@@ -695,6 +755,21 @@ inside && /^  if \[ "\$rsync_rc" = 0 \]; then$/ { next }
 inside && /^  fi$/ { next }
 { print }
 inside && /^\}$/ { inside = 0 }
+AWK
+
+# #6110, both halves and the over-reach. The static list gone (the rule would still cover the
+# fixture, so only the source check can see it); the rule gone (a new `.cache/` ships again); and
+# the rule widened to every untracked top-level directory, which withholds new source.
+mutate_fn static-junk-excludes-dropped <<'AWK'
+/^    --exclude=\/\.pnpm-store --exclude=\/\.codex-run-base$/ { next }
+{ print }
+AWK
+mutate_fn dot-dir-rule-dropped <<'AWK'
+/^    excludes\+=\("--exclude=\/\$entry"\)$/ { next }
+{ print }
+AWK
+mutate_fn rule-widened-to-every-untracked-dir <<'AWK'
+{ sub(/^      \.\*\/\) entry=/, "      */) entry="); print }
 AWK
 
 # ssh_box exiting instead of returning: `|| true` can never catch it, and inside `$( )` the
