@@ -297,7 +297,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
                   <AlertDialogAction
                     onClick={handleRemove}
                     disabled={acting}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     {acting ? "Removing..." : "Remove"}
                   </AlertDialogAction>
