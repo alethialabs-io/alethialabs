@@ -140,11 +140,14 @@ export const urlScopedOrgId = cache(
 			// only `digest`. There is no supported way to ask "was this a ForbiddenError?" there, so
 			// the mapping has to happen on the server, at the throw.
 			//
-			// SAFE HERE SPECIFICALLY, because this branch cannot run outside a page render:
-			// `urlOrgSlug()` returns null whenever the address names no org — `/api/**`, `/dashboard`,
-			// `/cli/login` and every other `RESERVED_SLUGS` prefix — and `currentActor()` falls back to
-			// the session on null without ever reaching this query. A route handler therefore still
-			// gets its catchable `ForbiddenError` from `enforce()`; only a `/{org}/` page reaches here.
+			// WHERE THIS RUNS. `urlOrgSlug()` returns null whenever the address names no org — `/api/**`,
+			// `/dashboard`, `/cli/login` and every other `RESERVED_SLUGS` prefix — and `currentActor()`
+			// falls back to the session on null without reaching this query. But a ROUTE HANDLER under
+			// `/{org}/` DOES reach it (an earlier version of this comment said only pages could): the
+			// invoice PDF route and the read router at `/{org}/~/rpc` both live there. A route handler
+			// must therefore catch this signal itself — `errorDigest(e)` starts with
+			// `NEXT_HTTP_ERROR_FALLBACK;404` — and answer 404; both of those do (#6113, ADR 0005 stress
+			// test R4).
 			//
 			// And 404 rather than 403 is the better answer on its own terms: a 403 confirms the slug
 			// exists, so a stranger could enumerate org names by reading status codes. The unknown-org

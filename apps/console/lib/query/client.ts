@@ -6,6 +6,7 @@ import {
 	defaultShouldDehydrateQuery,
 	isServer,
 } from "@tanstack/react-query";
+import { cache } from "react";
 
 /**
  * Builds a QueryClient with the console's shared defaults. `staleTime` of 30s mirrors
@@ -33,16 +34,37 @@ function makeQueryClient(): QueryClient {
 	});
 }
 
-let browserQueryClient: QueryClient | undefined;
+/**
+ * One request-scoped client per server render (#6113). `cache()` memoises inside a React server
+ * render, so every component that prefetches in one request shares one client and one dehydrated
+ * state; outside a server render it is a pass-through, i.e. a fresh client per call as before.
+ */
+const serverQueryClient = cache(makeQueryClient);
 
 /**
- * Returns a QueryClient that is request-scoped on the server (a fresh client per render
- * so caches never leak across users/requests) and a process-wide singleton in the
- * browser (so React suspense re-renders don't discard the cache). This is the official
- * Next.js App Router pattern for server prefetch + client hydration.
+ * Browser clients, ONE PER TENANT SCOPE (#6113, ADR 0005 stress test R1). oRPC query keys are
+ * `[path, { input, type }]` and carry no org, so a single browser-wide client would serve org A's
+ * cached rows under org B's address after a client-side org switch. A client per org segment
+ * makes a cross-org cache hit impossible by construction rather than by key discipline.
  */
-export function getQueryClient(): QueryClient {
-	if (isServer) return makeQueryClient();
-	if (!browserQueryClient) browserQueryClient = makeQueryClient();
-	return browserQueryClient;
+const browserQueryClients = new Map<string, QueryClient>();
+
+/** The scope key used before any org is known (sign-in, onboarding, the CLI hand-off). */
+export const UNSCOPED = "";
+
+/**
+ * Returns a QueryClient that is request-scoped on the server (caches never leak across users or
+ * requests) and, in the browser, one long-lived client per tenant scope — the org segment of the
+ * URL — so React suspense re-renders keep the cache while switching org never shows another org's
+ * rows. This is the Next.js App Router pattern for server prefetch + client hydration, extended
+ * with the tenant partition.
+ */
+export function getQueryClient(scope: string = UNSCOPED): QueryClient {
+	if (isServer) return serverQueryClient();
+	let client = browserQueryClients.get(scope);
+	if (!client) {
+		client = makeQueryClient();
+		browserQueryClients.set(scope, client);
+	}
+	return client;
 }

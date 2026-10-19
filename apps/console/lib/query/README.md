@@ -5,6 +5,17 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Console data fetching (TanStack Query)
 
+> **Superseded in part by [ADR 0005](../../../../docs/adr/0005-console-data-architecture.md)
+> (#6113).** Reads now travel over the GET read router (`lib/rpc`, oRPC) — **never** as a server
+> action in a `queryFn`, which Next dispatches one at a time (F001). New reads:
+> `useQuery(orpc.<domain>.<proc>.queryOptions({ input }))` in the browser and
+> `getQueryClient().prefetchQuery(serverOrpc().<domain>.<proc>.queryOptions({ input }))` in the
+> server component, with the SAME input. Writes stay server actions, defined with `defineAction`
+> and called through `useActionMutation` (`lib/actions/`). The browser keeps one QueryClient per
+> org. `pnpm -F console check:read-transport` ratchets the old pattern down. The jobs page
+> (`app/(private)/[org]/~/jobs/`) is the reference implementation. The sections below describe the
+> pattern being migrated away from.
+
 The console fetches server data through **TanStack Query v5**, with server-side
 prefetch + client hydration so list pages render with data on first paint (no
 post-hydration `useEffect` waterfall). Server actions in `app/server/actions/*` remain
@@ -15,7 +26,7 @@ invalidation.
 
 | File | Role |
 | --- | --- |
-| `lib/query/client.ts` | `getQueryClient()` — request-scoped on the server, singleton in the browser. |
+| `lib/query/client.ts` | `getQueryClient(scope)` — request-scoped (and `cache()`-shared) on the server, **one per org segment** in the browser. |
 | `app/providers.tsx` | `<QueryClientProvider>` (+ dev devtools), mounted in `app/layout.tsx`. |
 | `lib/query/keys.ts` | `qk` typed key factory. Keys are **org-scoped** so switching orgs never serves another org's cache. |
 | `lib/query/use-*-query.ts` | Per-resource hooks: a `useXQuery()` read + `useXMutation()` writes. |

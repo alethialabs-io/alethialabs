@@ -61,8 +61,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-/** Jobs default to a wide window so history isn't hidden; users narrow with the range picker. */
-const JOBS_DEFAULT_PRESET = "12mo";
+import {
+	JOBS_DEFAULT_PRESET,
+	type JobsRange,
+	jobsPageInputFrom,
+	jobsPresetForLabel,
+} from "@/lib/rpc/inputs/jobs";
 
 const STATUS_LABELS = new Map(
 	["QUEUED", "CLAIMED", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED"].map((s) => [
@@ -103,6 +107,9 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const [range, setRange] = useState<DateRange>(() =>
 		presetRange(JOBS_DEFAULT_PRESET),
 	);
+	// What the READ asks for: the preset while one is picked (resolved on the server at read time,
+	// so the server's prefetch key and this key are identical), explicit bounds otherwise (#6113).
+	const [rangeSpec, setRangeSpec] = useState<JobsRange>({ preset: JOBS_DEFAULT_PRESET });
 	const [rangeLabel, setRangeLabel] = useState(
 		RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
 			"Last 12 months",
@@ -116,18 +123,21 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// object (and so the structural TanStack key) is stable until the debounced value moves.
 	const debouncedSearch = useDebouncedValue(filters.search, 300, { urlRead });
 
-	// The normalized query IS the key: equal filters hit the cache, and the range's
-	// concrete ISO bounds only change when the user picks a range.
-	const query = useMemo(
+	// The normalized query IS the key: equal filters hit the cache, and the range changes the key
+	// only when the user picks a different range.
+	const input = useMemo(
 		() =>
-			normalizeJobsQuery(
-				{ ...filters, search: debouncedSearch },
-				{ from: range.from.toISOString(), to: range.to.toISOString() },
-				projectId,
+			jobsPageInputFrom(
+				normalizeJobsQuery(
+					{ ...filters, search: debouncedSearch },
+					{ from: range.from.toISOString(), to: range.to.toISOString() },
+					projectId,
+				),
+				rangeSpec,
 			),
-		[filters, debouncedSearch, range, projectId],
+		[filters, debouncedSearch, range, rangeSpec, projectId],
 	);
-	const page = useJobsPageQuery(query);
+	const page = useJobsPageQuery(input);
 	const rows = useMemo(() => page.data?.rows ?? [], [page.data]);
 	const facets = page.data?.facets;
 
@@ -164,7 +174,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// Reset the visible window whenever the filters change (the set may shrink).
 	useEffect(() => {
 		setVisibleCount(20);
-	}, [query]);
+	}, [input]);
 
 	const columns = useMemo(
 		() => buildJobColumns({ showProject: !projectId, authorById, orgSlug }),
@@ -193,6 +203,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const clearAll = () => {
 		reset();
 		setRange(presetRange(JOBS_DEFAULT_PRESET));
+		setRangeSpec({ preset: JOBS_DEFAULT_PRESET });
 		setRangeLabel(
 			RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
 				"Last 12 months",
@@ -263,6 +274,12 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							onChange={(r, l) => {
 								setRange(r);
 								if (l !== undefined) setRangeLabel(l);
+								setRangeSpec(
+									jobsPresetForLabel(l, RANGE_PRESETS) ?? {
+										from: r.from.toISOString(),
+										to: r.to.toISOString(),
+									},
+								);
 							}}
 						/>
 						<DateRangeFilter
@@ -270,6 +287,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 							onChange={(r) => {
 								setRange(r);
 								setRangeLabel(formatRangeLabel(r));
+								setRangeSpec({ from: r.from.toISOString(), to: r.to.toISOString() });
 							}}
 						/>
 						<MultiCombobox

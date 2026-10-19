@@ -1130,6 +1130,15 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-filter-standard.mjs --self-test
+      # Reads travel over the GET read router, never as server actions (ADR 0005 D1, #6113): a
+      # server action as a `queryFn` queues every read on the page behind every other (F001). The
+      # ledger fails in both directions — new action-backed reads, and entries whose read has moved.
+      - name: Console reads do not travel as server actions (ADR 0005 D1 ratchet)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -F console check:read-transport
+      - name: ...and that ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-read-transport.mjs --self-test
       # The filter bar's other half, in the e2e suite (#5800). React leaves the server's copy of a
       # streamed Suspense section in a hidden `<div hidden id="S:n">`, and `getByLabel` /
       # `getByPlaceholder` match inside it while `getByRole` does not — so a spec that asks for a

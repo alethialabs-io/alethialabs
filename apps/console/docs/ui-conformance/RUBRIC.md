@@ -431,6 +431,22 @@ clean page — it must raise.
 
 ---
 
+## Family B — behaviour  ·  live only  (ADR 0005, #6113 · measured by #6116)
+
+The families above score SHAPE: a route can pass all of them and still load in a queue, flash a
+default identity, and say "No results." while it waits — every page of the 2026-10-19 hunt did. Family
+B scores what the user experiences. Each predicate is measured on the running console, calibrated
+first on the jobs page (the ADR 0005 reference slice).
+
+| ID | Predicate | Measured by |
+| --- | --- | --- |
+| B1 | No client data fetch before first paint: the route's reads are server-prefetched and the first paint needs no request it could have had. | Count of data requests between navigation and first contentful paint is 0 for prefetched regions. |
+| B2 | The skeleton has the final layout's shape. | Cumulative layout shift from skeleton to data ≤ 0.02. |
+| B3 | No empty state while pending. | With the read held, the region shows its skeleton or busy state, never its empty copy. |
+| B4 | Error ≠ empty ≠ endless skeleton. | With every read forced to fail, each region renders an error state within its timeout; none shows its empty copy or stays a skeleton. Depends on the typed read-side refusal (`ReadResult`). |
+| B5 | One error boundary per data region. | A failing region does not take its siblings down. |
+| B6 | Live by default (maintainer ruling, ADR 0005 Q3). | A change made elsewhere appears without reload within the stream's latency budget; no `refetchInterval` / `setInterval` data poll (`check:no-polling`). |
+
 ## The scoreboard and the ratchet
 
 **Both halves are built** — the static one in #3618, the live one in #3634.

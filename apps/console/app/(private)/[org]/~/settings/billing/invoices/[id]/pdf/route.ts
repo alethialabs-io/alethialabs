@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { authorize } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
+import { errorDigest } from "@/lib/errors";
 import { getOrgInvoice } from "@/lib/billing/invoices";
 import { storage } from "@/lib/storage";
 import { INVOICE_PDF_BUCKET } from "@/lib/storage/invoice-pdf";
@@ -27,6 +28,12 @@ export async function GET(
 	} catch (err) {
 		if (err instanceof ForbiddenError) {
 			return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+		}
+		// A non-member of the org this address names: `urlScopedOrgId` signals `notFound()`. Answer
+		// it as the unknown org it is indistinguishable from — not 401, which wrongly says "sign in"
+		// and confirms nothing (#6113, ADR 0005 stress test R4).
+		if ((errorDigest(err) ?? "").startsWith("NEXT_HTTP_ERROR_FALLBACK;404")) {
+			return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
 		}
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
