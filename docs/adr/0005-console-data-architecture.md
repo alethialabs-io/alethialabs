@@ -169,9 +169,10 @@ Five decisions, in dependency order. Each names what enforces it.
 4. **SSR: keep the documented RSC-prefetch + `HydrationBoundary` pattern**, with two fixes:
    - prefetch calls the router **in-process** (`createRouterClient` with a context that resolves the
      actor from the same request) — no HTTP hop [O2];
-   - `getQueryClient` is wrapped in React `cache()` on the server [T1][TR1], and prefetches are
-     `void`ed (not awaited) with the existing pending-dehydration rule (`lib/query/client.ts:31-35`), so
-     the page streams instead of blocking on the slowest query.
+   - `getQueryClient` is wrapped in React `cache()` on the server [T1][TR1]. A page that renders a
+     region behind its own `<Suspense>` may `void` its prefetch (the pending-dehydration rule in
+     `lib/query/client.ts` streams it); a page whose first paint IS the data (the jobs slice) awaits it,
+     so the first paint never shows a placeholder.
    - **Not adopted:** `@tanstack/react-query-next-experimental` (`ReactQueryStreamedHydration` +
      `useSuspenseQuery` in client components). TanStack's own docs say it "only flattens waterfalls on
      the initial load" and produces a deep waterfall on navigation [T1].
@@ -604,12 +605,17 @@ the decisions below. Where this section and the sections above disagree, **this 
 - Actions that call slow external services (the purchase flow holds a tab's action queue ~40 s)
   enqueue a job or become route handlers; `onSettled` invalidation goes through the coalescer.
 
-**Q4 — the tenancy proof** is an enumeration over the router, not one sample: every procedure is
-reachable only through the handler that resolves the address first (`tests/lib/rpc/route.test.ts`).
+**Q4 — the tenancy proof** must be an enumeration over the router, not one sample. What #6113's
+first PR proves: every procedure is declared GET and served only after the handler resolved the
+address (`tests/lib/rpc/route.test.ts`, with `currentActor` stubbed). What it does NOT yet prove,
+and #6113 owes: an integration test where a session on org X with an address naming org Y is served
+Y, for every procedure, through BOTH entry points — the route handler and the in-process server
+caller (`lib/rpc/server.ts`), which reaches procedures without the handler.
 
-**Q5 — edition.** Landed separately in #6149: the enterprise load records its outcome, a failed
-load rethrows on every call, and `currentActor()` serves the personal scope for an org address only
-in the community edition by configuration.
+**Q5 — edition.** Lands separately in #6149 (PR #6153): the enterprise load records its outcome, a
+failed load rethrows on every call, and `currentActor()` serves the personal scope for an org
+address only in the community edition by configuration. Until it merges, the read router inherits
+today's behaviour.
 
 **Order.** No lane fans out before the jobs slice (#6113) and the bus with the jobs topic (#6115) are
 measured; every page lane copies that slice.

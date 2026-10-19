@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { getQueryClient } from "@/lib/query/client";
-import { rpcUrl } from "@/lib/rpc/client";
+import { rpcUrl, tenantSegment } from "@/lib/rpc/client";
 
 describe("one browser cache per tenant", () => {
 	it("gives each org its own client and reuses it within the org", () => {
@@ -31,5 +31,12 @@ describe("reads go to the org the browser is on", () => {
 		["/", "https://console.test/~/~/rpc"],
 	])("%s → %s", (pathname, url) => {
 		expect(rpcUrl(pathname, "https://console.test")).toBe(url);
+	});
+});
+
+describe("one tenant derivation for both the cache and the read URL", () => {
+	it.each([["/acme/~/jobs", "acme"], ["/~/~/jobs", "~"], ["/", "~"], ["", "~"]])("%s → %s", (path, seg) => {
+		expect(tenantSegment(path)).toBe(seg);
+		expect(rpcUrl(path, "https://c.test")).toBe(`https://c.test/${seg}/~/rpc`);
 	});
 });

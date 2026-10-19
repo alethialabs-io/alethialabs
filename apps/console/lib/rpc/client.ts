@@ -15,8 +15,16 @@ import type { AppRouter } from "@/lib/rpc/router";
  * org switch can never send B's reads to A's endpoint.
  */
 export function rpcUrl(pathname: string, origin: string): string {
-	const segment = pathname.split("/")[1] || "~";
-	return `${origin}/${segment}/~/rpc`;
+	return `${origin}/${tenantSegment(pathname)}/~/rpc`;
+}
+
+/**
+ * The tenant a path belongs to: its first segment (`acme`, or `~` for the personal scope), `~`
+ * when there is none. The browser cache partition (`app/providers.tsx`) and the read URL above use
+ * THIS one function, so the cache a read lands in and the org it was asked of cannot disagree.
+ */
+export function tenantSegment(pathname: string): string {
+	return pathname.split("/")[1] || "~";
 }
 
 const link = new RPCLink({

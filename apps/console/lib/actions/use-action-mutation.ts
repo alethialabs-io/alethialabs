@@ -83,10 +83,13 @@ export function useActionMutation<T, V>(
 			return { entries };
 		},
 		onError: (failure, _variables, snapshot) => {
-			for (const entry of snapshot?.entries ?? []) {
+			// Newest first: two patches on one key restore the value from BEFORE the first one.
+			for (const entry of [...(snapshot?.entries ?? [])].reverse()) {
 				queryClient.setQueryData(entry.key, entry.value);
 			}
-			handleFailure(failure.error, options, () => router.push("/login"));
+			handleFailure(failure.error, options, () =>
+				router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`),
+			);
 		},
 		onSuccess: (data, variables) => {
 			const message =

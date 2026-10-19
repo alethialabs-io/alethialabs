@@ -8,6 +8,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import type React from "react";
 import { ConsentProvider } from "@repo/privacy/consent-provider";
 import { getQueryClient } from "@/lib/query/client";
+import { tenantSegment } from "@/lib/rpc/client";
 import { AnalyticsProvider } from "@/components/providers/analytics-provider";
 import { legalUrl } from "@/lib/legal";
 
@@ -20,7 +21,7 @@ import { legalUrl } from "@/lib/legal";
  * the matching choice. AnalyticsProvider then mounts only providers configured via runtime env.
  */
 export function Providers({ children }: { children: React.ReactNode }) {
-	const queryClient = getQueryClient(usePathname().split("/")[1] ?? "");
+	const queryClient = getQueryClient(tenantSegment(usePathname()));
 	return (
 		<ConsentProvider cookieNoticeHref={legalUrl("/cookies")}>
 			<QueryClientProvider client={queryClient}>

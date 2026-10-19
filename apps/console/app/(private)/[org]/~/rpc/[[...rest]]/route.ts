@@ -3,6 +3,7 @@
 
 import { RPCHandler } from "@orpc/server/fetch";
 import { UnauthorizedError } from "@/lib/auth/errors";
+import { namesNoOrg } from "@/lib/authz/org-path";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
@@ -43,8 +44,13 @@ function refusal(status: number, error: string): Response {
  * here writes the session's active org.
  */
 async function handle(request: Request): Promise<Response> {
-	const prefix = rpcPrefix(new URL(request.url).pathname);
+	const pathname = new URL(request.url).pathname;
+	const prefix = rpcPrefix(pathname);
 	if (!prefix) return refusal(404, "Not found");
+	// An address whose first segment names no org (`/docs/~/rpc`, `/blog/~/rpc`, …) would make
+	// `currentActor()` fall back to the SESSION's org — the shape "the address decides the tenant"
+	// exists to rule out. The read router has no org-less mount, so it is simply not found.
+	if (namesNoOrg(pathname)) return refusal(404, "Not found");
 
 	let actor: Actor;
 	try {

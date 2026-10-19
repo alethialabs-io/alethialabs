@@ -111,7 +111,7 @@ describe("useActionMutation", () => {
 		await act(async () => {
 			await b.current.mutateAsync(undefined).catch(() => {});
 		});
-		expect(push).toHaveBeenCalledWith("/login");
+		expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/login\?next=/));
 	});
 
 	it("is pending while the action runs (the double-submit guard binds to this)", async () => {

@@ -88,6 +88,13 @@ describe("the tenant is decided before the procedure runs", () => {
 		expect(getJobsPage).not.toHaveBeenCalled();
 	});
 
+	it("404s an address whose first segment names no org, instead of falling back to the session", async () => {
+		currentActor.mockResolvedValue(ACME);
+		const res = await GET(new Request("http://console.test/docs/~/rpc/jobs/page"));
+		expect(res.status).toBe(404);
+		expect(currentActor).not.toHaveBeenCalled();
+	});
+
 	it("404s a procedure that does not exist", async () => {
 		currentActor.mockResolvedValue(ACME);
 		const res = await GET(new Request("http://console.test/acme/~/rpc/nope/missing"));
