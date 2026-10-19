@@ -60,15 +60,17 @@ vi.mock("@/lib/auth/owner", () => ({
  *
  * Mocking only the first is mocking the assumption under test.
  */
-let edition: "enterprise" | "community" = "enterprise";
+let edition: "enterprise" | "community" | "unconfigured" = "enterprise";
 vi.mock("@/lib/auth/scope", () => ({
 	getActiveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? userId })),
+	tenancyMode: vi.fn(() => (edition === "community" ? "single-tenant" : edition === "unconfigured" ? "unconfigured" : "multi-tenant")),
 }));
 
 import { currentActor } from "@/lib/authz/guard";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { ForbiddenError } from "@/lib/authz/types";
+import { EditionMisconfiguredError } from "@/lib/auth/errors";
 
 /** The org id `currentActor()` handed to the scope resolver — what every reader is scoped by. */
 const scopedWith = () => vi.mocked(getActiveScope).mock.calls.at(-1)?.[1];
@@ -76,7 +78,7 @@ const scopedWith = () => vi.mocked(getActiveScope).mock.calls.at(-1)?.[1];
 beforeEach(() => {
 	vi.mocked(getActiveScope).mockReset();
 	vi.mocked(getActiveScope).mockImplementation(async (userId: string, orgId?: string) =>
-		edition === "community"
+		edition !== "enterprise"
 			? { userId, orgId: userId }
 			: { userId, orgId: orgId ?? userId },
 	);
@@ -224,5 +226,42 @@ describe("the single-tenant edition is not a substitution", () => {
 		// Community refuses on the same membership join, and lands the same way. The edition changes
 		// which org a RESOLVED slug maps to, never whether an unresolvable one is answered.
 		await expect(currentActor()).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
+	});
+});
+
+// F049 (#6149): the sandbox of 2026-10-19 served every server action on `/demo-acme` from the
+// PERSONAL scope while the page rendered Acme — a resolver that collapsed to personal in an edition
+// that HAS an enterprise resolver. Arm 2 used to accept that shape in every edition; it is the
+// single-tenant answer only where no enterprise resolver is registered.
+describe("a personal-scope collapse in the enterprise edition is a substitution, not an answer", () => {
+	it("refuses instead of serving the user's personal workspace under the org's address", async () => {
+		requestPath = "/demo-acme/~/settings/general";
+		orgRow = [{ id: ORG_B }];
+		vi.mocked(getActiveScope).mockResolvedValueOnce({ userId: USER, orgId: USER });
+		await expect(currentActor()).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	it("...while the same collapse in community is still the single-tenant answer", async () => {
+		edition = "community";
+		requestPath = "/demo-acme/~/settings/general";
+		orgRow = [{ id: ORG_B }];
+		const actor = await currentActor();
+		expect(actor.orgId).toBe(USER);
+	});
+});
+
+describe("an unset edition with no enterprise package is refused, not guessed", () => {
+	it("names the misconfiguration instead of serving the personal scope under an org address", async () => {
+		edition = "unconfigured";
+		requestPath = "/demo-acme/~/settings/general";
+		orgRow = [{ id: ORG_B }];
+		await expect(currentActor()).rejects.toBeInstanceOf(EditionMisconfiguredError);
+	});
+
+	it("...while the personal address is still served in every edition", async () => {
+		edition = "unconfigured";
+		requestPath = "/~/settings/general";
+		const actor = await currentActor();
+		expect(actor.orgId).toBe(USER);
 	});
 });

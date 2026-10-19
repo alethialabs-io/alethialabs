@@ -24,6 +24,22 @@ export async function register() {
 			startupLog.error("sentry init failed", { component: "sentry", err }),
 		);
 	}
+	// Decide the edition at BOOT, not on the first request (#6149, R2). A failed enterprise load used
+	// to surface as one thrown request and then a silently community process serving every org
+	// address from the personal scope; now it stops the instance before it serves anything.
+	const { editionState } = await import("@/lib/enterprise");
+	const edition = editionState();
+	if (edition.kind === "failed") {
+		startupLog.error("enterprise edition failed to load — refusing to start", {
+			component: "edition",
+			err: edition.error,
+		});
+		throw edition.error;
+	}
+	startupLog.info("edition decided", {
+		component: "edition",
+		edition: edition.kind === "community" ? `community (${edition.reason})` : "enterprise",
+	});
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
 	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy

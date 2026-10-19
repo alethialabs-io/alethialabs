@@ -9,6 +9,7 @@
 // (scripts/check-ee-boundary.mjs) allowlists ONLY this file. See project 12.
 
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import {
   parseAlethiaEdition,
   type EnterpriseEntrypoint,
@@ -226,8 +227,19 @@ export type EnterpriseRegister = EnterpriseEntrypoint<
   EnterpriseModule
 >;
 
+/**
+ * What the one-time load decided. Recorded as an OUTCOME, not a boolean (#6149, R2): the old
+ * boolean was latched before the attempt, so a `register()` that threw once left every later
+ * `getEnterprise()` answering null — the community edition — in a process configured as enterprise,
+ * and `currentActor()` then served every org address from the personal scope with a 200.
+ */
+export type EditionState =
+  | { kind: "community"; reason: "configured" | "not-installed" }
+  | { kind: "enterprise" }
+  | { kind: "failed"; error: unknown };
+
 let registered: EnterpriseModule | null = null;
-let loaded = false;
+let state: EditionState | null = null;
 
 /** Whether an unknown error is Node's missing-module error for the optional package. */
 function isMissingEnterprisePackage(error: unknown): boolean {
@@ -257,6 +269,34 @@ function isEnterprisePackage(
 }
 
 /**
+ * Requires the enterprise package, first relative to this module and then relative to the app's
+ * working directory.
+ *
+ * WHY TWO BASES (#6113, finding F049). `import.meta.url` is the location of the CHUNK this module
+ * was bundled into, and under the Turbopack dev server a server-action chunk and an RSC chunk do
+ * not live in the same place. On the 2026-10-19 sandbox the RSC render resolved `@alethia/ee`
+ * while every server action on the same page did not — so in `auto` mode each action's module
+ * instance concluded "community" on its own, `currentActor()` collapsed to the personal scope, and
+ * the page showed Acme while its actions answered for the user's personal workspace: Enterprise
+ * badge next to a Pro upsell, settings that never loaded, nothing red. The working directory is
+ * the console app in every way the console runs (dev, standalone, the box), so it is the stable
+ * second base. Only a package that BOTH bases fail to find is "not installed".
+ */
+function requireEnterprisePackage(pkg: string): unknown {
+  try {
+    return createRequire(import.meta.url)(pkg);
+  } catch (error) {
+    if (!isMissingEnterprisePackage(error)) throw error;
+    try {
+      return createRequire(join(process.cwd(), "package.json"))(pkg);
+    } catch (fallbackError) {
+      if (isMissingEnterprisePackage(fallbackError)) throw error;
+      throw fallbackError;
+    }
+  }
+}
+
+/**
  * One-time, tolerant, SYNCHRONOUS load of the enterprise package. Synchronous so the
  * enterprise auth plugins are available when lib/auth/index.ts builds betterAuth()
  * at module-eval (getAuthPlugins → getEnterprise → here). Community: `@alethia/ee` is
@@ -265,16 +305,16 @@ function isEnterprisePackage(
  * resolve (and fail to find) it in a community build.
  */
 function loadEnterprise(): void {
-  if (loaded) return;
-  loaded = true;
+  if (state) return;
   const edition = parseAlethiaEdition(process.env.ALETHIA_EDITION);
   if (edition === "community") {
     registered = null;
+    state = { kind: "community", reason: "configured" };
     return;
   }
   const pkg = "@alethia/ee";
   try {
-    const mod: unknown = createRequire(import.meta.url)(pkg);
+    const mod: unknown = requireEnterprisePackage(pkg);
     if (!isEnterprisePackage(mod)) {
       throw new Error("@alethia/ee does not export register(core).");
     }
@@ -320,11 +360,22 @@ function loadEnterprise(): void {
         getConfig: getOpenFgaConfig,
       },
     });
+    state = { kind: "enterprise" };
   } catch (error) {
     if (edition !== "enterprise" && isMissingEnterprisePackage(error)) {
+      // `auto` concluding "community" is a legitimate answer for an AGPL install, but it is also
+      // what a resolution failure looks like (F049) — so it is SAID, once per process, rather than
+      // left for a scope collapse three layers up to reveal.
+      console.warn(
+        "[enterprise] ALETHIA_EDITION is unset (auto) and @alethia/ee could not be resolved — " +
+          "running as the community edition. Set ALETHIA_EDITION explicitly to make this a decision.",
+      );
       registered = null;
+      state = { kind: "community", reason: "not-installed" };
       return;
     }
+    registered = null;
+    state = { kind: "failed", error };
     throw error;
   }
 }
@@ -332,11 +383,28 @@ function loadEnterprise(): void {
 /** Explicit registration hook (tests / non-bundler hosts). Marks load complete. */
 export function registerEnterprise(mod: EnterpriseModule): void {
   registered = mod;
-  loaded = true;
+  state = { kind: "enterprise" };
+}
+
+/**
+ * The edition this process decided on, loading it on first call. Unlike {@link getEnterprise} this
+ * does not throw for a failed load: it reports it, so a caller can name the misconfiguration.
+ */
+export function editionState(): EditionState {
+  if (!state) {
+    try {
+      loadEnterprise();
+    } catch {
+      // Recorded in `state` as `failed`; reported to the caller rather than thrown here.
+    }
+  }
+  return state ?? { kind: "failed", error: new Error("edition load did not record an outcome") };
 }
 
 /** The registered enterprise module, or null in a community build. */
 export function getEnterprise(): EnterpriseModule | null {
-  if (!loaded) loadEnterprise();
+  if (!state) loadEnterprise();
+  // A failed load is rethrown on EVERY call, never degraded to community after the first (R2).
+  if (state?.kind === "failed") throw state.error;
   return registered;
 }
