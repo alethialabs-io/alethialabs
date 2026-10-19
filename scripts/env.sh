@@ -1322,7 +1322,7 @@ cmd_up() {
 
   echo "→ pushing working tree"
   push_tree
-  mint_env "$slug_" "$cport" "$sport" "$db"
+  mint_env "$slug_" "$cport" "$sport" "$db" "$fresh"
 
   # The flag refusal above stops at the LAPTOP, and a POSITIONAL argument has no handshake.
   # scripts/box/ ships from $MAIN_CHECKOUT (see provision_box), which CLAUDE.md §7 pins to
@@ -1401,8 +1401,13 @@ cmd_up() {
 # break every cloud trust already pinned to this issuer, and Entra caches the JWKS for
 # ~24h so the breakage would outlive the fix. A reap-and-recreate DOES re-mint: reconnect
 # the connectors, or stash this file before `pnpm env:reap`.
+#
+# Written once is not the same as never touched again, and treating it so cost a sign-in (#6111):
+# an env minted before a key existed never received it. So an existing .env is RECONCILED —
+# missing keys appended, present ones left byte-for-byte alone — by dotenv_reconcile below, and
+# `env:status` names any env still lacking one.
 mint_env() {
-  local slug_="$1" cport="$2" sport="$3" db="$4" fqdn url
+  local slug_="$1" cport="$2" sport="$3" db="$4" fresh="${5:-}" fqdn url
   fqdn="$(env_fqdn "$slug_" "$cport")"
   url="https://$fqdn"
 
@@ -1434,8 +1439,34 @@ mint_env() {
   snapshot_key="$(openssl rand -base64 32)"
   bootstrap_token="$(openssl rand -hex 32)"
 
+  local out rc=0 secrets
+  secrets="$(dotenv_secret_keys | tr '\n' ' ')"
+  # The function travels as TEXT (`declare -f`), so the box needs nothing from scripts/box/ — which
+  # ships from the main checkout and drifts (see the SEED_REQUEST handshake in cmd_up). Stdout
+  # carries key NAMES only; the minted values go in on stdin and never come back out.
   # shellcheck disable=SC2029
-  ssh_box "test -f $REMOTE/envs/$slug_/.env || cat > $REMOTE/envs/$slug_/.env" <<ENV
+  out="$(dotenv_template "$slug_" "$cport" "$sport" "$db" "$url" "$secret1" "$secret2" "$secret3" \
+    "$secret4" "$oidc_key" "$receipt_key" "$snapshot_key" "$bootstrap_token" |
+    ssh_box "$(declare -f dotenv_reconcile); dotenv_reconcile '$REMOTE/envs/$slug_/.env' '$fresh' $secrets")" ||
+    rc=$?
+  local added missing
+  added="$(printf '%s\n' "$out" | sed -n 's/^added://p')"
+  missing="$(printf '%s\n' "$out" | sed -n 's/^secret-missing://p')"
+  [ -z "$added" ] || echo "  .env: added keys this env predates:$added"
+  [ "$rc" != 3 ] || die "env '$slug_' was minted before these secrets existed:$missing
+  A secret is never minted into a LIVE env: its database may already hold state written without
+  it, and env:up cannot tell which. The non-secret keys it lacked have been added. To mint the
+  missing secrets too — this DROPS the env's database, then appends them — run:
+      pnpm env:up --fresh"
+  [ "$rc" = 0 ] || die "could not write or reconcile the .env for '$slug_' on the box (status $rc)."
+}
+
+# The env's .env, rendered from values mint_env generated. Formatting only — no openssl, no ssh —
+# so dotenv_secret_keys can render it with sentinels and the self-test can render it at all.
+dotenv_template() { # <slug> <cport> <sport> <db> <url> <s1> <s2> <s3> <s4> <oidc> <receipt> <snapshot> <bootstrap>
+  local slug_="$1" cport="$2" sport="$3" db="$4" url="$5" secret1="$6" secret2="$7" secret3="$8"
+  local secret4="$9" oidc_key="${10}" receipt_key="${11}" snapshot_key="${12}" bootstrap_token="${13}"
+  cat <<ENV
 # Minted by scripts/env.sh for the '$slug_' environment. Not copied from any laptop.
 ALETHIA_DATABASE_URL=postgres://alethia:alethia-dev-secret@localhost:5433/$db
 ALETHIA_APP_DATABASE_URL=postgres://alethia_app:$secret4@localhost:5433/$db
@@ -1464,7 +1495,7 @@ ALETHIA_RUNNER_BOOTSTRAP_TOKEN=$bootstrap_token
 
 OPENFGA_API_URL=http://localhost:8082
 ALETHIA_DEPLOYMENT_MODE=hosted
-# This box is a sandbox, and saying so is what makes the line above survivable. `hosted` is
+# This box is a sandbox, and saying so is what makes the line above survivable. 'hosted' is
 # deliberate — it is how the sandbox rehearses Stripe-driven billing — but no mail credential
 # is ever copied here, and packages/email correctly refuses to degrade a HOSTED deployment to
 # the development log fallback. Without this flag those two truths cancelled out and sign-in
@@ -1476,6 +1507,73 @@ ALETHIA_LICENSE_ACTIVE=false
 ALETHIA_RUNNER_OPERATOR=self
 PORT=$cport
 ENV
+}
+
+# Which keys of the template carry a MINTED value — derived by rendering it with a sentinel in
+# every generated slot, not kept as a second list beside it. A hand-written list would go stale
+# the first time a secret is added to the template, and the cost of that staleness is exactly the
+# wrong one: a new secret classified as static gets appended to every LIVE env by the next env:up.
+dotenv_secret_keys() {
+  local m=@ALETHIA-MINTED@
+  dotenv_template s 3100 8400 db https://x "$m" "$m" "$m" "$m" "$m" "$m" "$m" "$m" |
+    sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$m.*/\1/p"
+}
+
+# Every key the template writes — what env:status holds each env's .env against.
+dotenv_required_keys() {
+  dotenv_template s 3100 8400 db https://x a b c d e f g h |
+    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'
+}
+
+# RUNS ON THE BOX, shipped as text by mint_env. POSIX sh on purpose: it must not care which shell
+# root's login shell is. stdin: the freshly rendered .env. Args: <file> <''|fresh> <secret key>...
+#
+# A missing file gets the whole render — the original write-once behaviour, unchanged. An EXISTING
+# file is never rewritten: a key it lacks is APPENDED, and nothing it has is touched, so a value
+# someone edited by hand, and every secret it was minted with, survive (#6111). The `dev` env
+# predated ALETHIA_SANDBOX=1 (#2958), so its sign-in codes went nowhere and nothing was red.
+#
+# A missing SECRET is the exception, and is refused (status 3) rather than minted — unless the
+# caller passed `fresh`, i.e. this env's database is about to be dropped, so no state on it can
+# have been written under a different value. Stdout is key names only (`added: …`,
+# `secret-missing: …`); a value is never printed.
+dotenv_reconcile() {
+  _f="$1"
+  _fresh="$2"
+  shift 2
+  if [ ! -f "$_f" ]; then
+    cat >"$_f"
+    return
+  fi
+  _new="$(cat)"
+  _add=""
+  _secret=""
+  for _k in $(printf '%s\n' "$_new" | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
+    grep -Eq "^(export[[:space:]]+)?$_k=" "$_f" && continue
+    _is_secret=""
+    for _s in "$@"; do
+      [ "$_s" = "$_k" ] && _is_secret=1
+    done
+    if [ -n "$_is_secret" ] && [ "$_fresh" != fresh ]; then
+      _secret="$_secret $_k"
+    else
+      _add="$_add $_k"
+    fi
+  done
+  if [ -n "$_add" ]; then
+    # A file that does not end in a newline would glue the first appended key onto its last line.
+    [ -z "$(tail -c1 "$_f")" ] || echo >>"$_f"
+    echo "# Added by scripts/env.sh env:up $(date -u +%Y-%m-%dT%H:%M:%SZ): keys introduced after this env was minted." >>"$_f"
+    for _k in $_add; do
+      printf '%s\n' "$_new" | grep -m1 "^$_k=" >>"$_f"
+    done
+    echo "added:$_add"
+  fi
+  if [ -n "$_secret" ]; then
+    echo "secret-missing:$_secret"
+    return 3
+  fi
+  return 0
 }
 
 cmd_down() {
@@ -1642,6 +1740,34 @@ probe '$s' '$p'"
   ssh_box "$script" 2>/dev/null || true
 }
 
+# → lines of "<slug> ok" | "<slug> missing:K1,K2" | "<slug> no-file", one round trip for every
+# env (#6111). Held against dotenv_required_keys — the template itself — so a key added to the
+# template is checked here from the same commit, with no list to update. Key NAMES only cross
+# the wire; the check is grep -q, so no value is read back.
+env_dotenv_gaps() {
+  local slugs keys script s
+  slugs="$(ssh_box "$REMOTE/bin/env-registry.sh list" 2>/dev/null | jq -r 'keys[]' 2>/dev/null)" || return 0
+  [ -n "$slugs" ] || return 0
+  keys="$(dotenv_required_keys | tr '\n' ' ')"
+  script='
+gap() {
+  f="'"$REMOTE"'/envs/$1/.env"
+  [ -f "$f" ] || { echo "$1 no-file"; return; }
+  m=""
+  for k in '"$keys"'; do
+    grep -Eq "^(export[[:space:]]+)?$k=" "$f" || m="$m${m:+,}$k"
+  done
+  if [ -n "$m" ]; then echo "$1 missing:$m"; else echo "$1 ok"; fi
+}'
+  while read -r s; do
+    [ -n "$s" ] || continue
+    script="$script
+gap '$s'"
+  done <<<"$slugs"
+  # shellcheck disable=SC2029
+  ssh_box "$script" 2>/dev/null || true
+}
+
 cmd_status() {
   need jq
   local ip domain
@@ -1660,16 +1786,18 @@ cmd_status() {
   # The scope is asked of every env in one round trip, before the listing renders, and joined
   # in by slug. An env missing from `scopes` prints `?` rather than nothing: a blank line
   # there would read as "fine", which is the exact failure this is here to stop.
-  local scopes
+  local scopes gaps
   scopes="$(env_scopes)"
+  gaps="$(env_dotenv_gaps)"
   # `owner` is now an INSTANCE, not a machine — so this can finally say which one is you.
   # It is the same string env:reap compares, printed verbatim: a status line that renders a
   # prettier form of the value the guard tests is a second source of truth waiting to drift.
   ssh_box "$REMOTE/bin/env-registry.sh list" |
-    jq -r --arg d "$domain" --arg scopes "$scopes" --arg me "$(env_owner)" '
+    jq -r --arg d "$domain" --arg scopes "$scopes" --arg gaps "$gaps" --arg me "$(env_owner)" '
       ($scopes | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $sc |
+      ($gaps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $gp |
       to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    owner  \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    .env   \(($gp[.key] // "?-not-checked") | if startswith("missing:") then "⚠ MISSING " + (.[8:] | gsub(","; " ")) + " — run pnpm env:up on that branch" elif . == "no-file" then "⚠ NO .env — run pnpm env:up on that branch" else . end)\n    owner  \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Scope: which EDITION that env's console is serving, measured against the running process
@@ -1690,6 +1818,11 @@ cmd_status() {
   `?-probe-failed-rcN` (the probe is on the box and exited N without producing a verdict; N is
   the lead — 126/127 mean the file is not runnable and any `pnpm env:up` re-ships it, anything
   else is a defect in the probe rather than in the box).
+
+  .env: whether that env's box-side .env carries every key scripts/env.sh mints today. An env
+  minted before a key existed never got it, and nothing went red (#6111 — `dev` lacked
+  ALETHIA_SANDBOX=1, so its sign-in codes went nowhere). `pnpm env:up` on that branch appends
+  the missing non-secret keys; a missing SECRET makes it refuse and name `--fresh`.
 
   Reclaiming a `?-not-running` env: there is no non-destructive path today. `pnpm env:down`
   is the only way to free the slot and it DESTROYS that env's database and storage, so this
