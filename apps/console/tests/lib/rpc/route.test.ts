@@ -160,6 +160,7 @@ describe("the router carries reads only (stress test R12: no CSRF plugin in oRPC
 	it("every procedure is declared GET", () => {
 		const all = procedures(router);
 		expect(all.length).toBeGreaterThan(0);
-		for (const p of all) expect(p, p.path).toMatchObject({ method: "GET" });
+		// Asserting on the whole list names any non-GET procedure by its path in the failure diff.
+		expect(all.filter((p) => p.method !== "GET")).toEqual([]);
 	});
 });
