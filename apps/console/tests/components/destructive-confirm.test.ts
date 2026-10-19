@@ -14,13 +14,27 @@
 // console's own `app/globals.css`). The token set is READ from those files, not typed here, so
 // adding a token is enough to allow its class.
 //
+// THE SHARED CONFIRM. The third test renders the real `AlertDialogAction` from `@repo/ui` with
+// `variant="destructive"`, which every console destructive confirm now goes through. It asserts that
+// the rendered button carries exactly one text colour, and that the colour has a token. A sweep of
+// the console's own files cannot see a phantom class introduced inside the shared variant.
+//
 // SCOPE, stated so a green run is not read as wider than it is: every .ts/.tsx under apps/console
 // except node_modules, .next and tests. Only `*-foreground` names are checked, not every colour
 // utility. Classes assembled from string fragments at runtime cannot be seen.
 
+import { render } from "@testing-library/react";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createElement } from "react";
 import { describe, expect, it } from "vitest";
+
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogContent,
+	AlertDialogTitle,
+} from "@repo/ui/alert-dialog";
 
 const CONSOLE = join(__dirname, "../..");
 const STYLESHEETS = [
@@ -85,6 +99,29 @@ describe("console *-foreground colour utilities", () => {
 		expect(phantoms(old, known)).toEqual(["<input>:1 text-destructive-foreground"]);
 		expect(phantoms("hover:text-destructive-foreground/80", known)).toHaveLength(1);
 		expect(phantoms("text-muted-foreground border-l-foreground", known)).toEqual([]);
+	});
+
+	it("renders the shared destructive confirm with one text colour, and that colour has a token", () => {
+		render(
+			createElement(
+				AlertDialog,
+				{ open: true },
+				createElement(
+					AlertDialogContent,
+					null,
+					createElement(AlertDialogTitle, null, "Delete project?"),
+					createElement(AlertDialogAction, { variant: "destructive" }, "Delete project"),
+				),
+			),
+		);
+		const action = document.querySelector('[data-slot="alert-dialog-action"]');
+		if (!action) throw new Error("the shared confirm did not render");
+		const classes = action.className;
+		expect(phantoms(classes, known)).toEqual([]);
+		const textColours = classes
+			.split(/\s+/)
+			.filter((c) => /^text-/.test(c) && known.has(c.slice("text-".length)));
+		expect(textColours).toEqual(["text-foreground"]);
 	});
 
 	it("names a token for every *-foreground utility under apps/console", () => {
