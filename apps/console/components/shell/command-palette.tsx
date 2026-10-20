@@ -27,7 +27,7 @@ import {
 } from "@/components/shell/nav-config";
 import { globalHref, projectHref, projectSettingsHref } from "@/lib/routing";
 import { useCommandPalette } from "@/lib/stores/use-command-palette";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 
@@ -64,7 +64,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 	const setOpen = useCommandPalette((s) => s.setOpen);
 	const toggle = useCommandPalette((s) => s.toggle);
 	const { data: projects = [] } = useProjectsQuery();
-	const { data: jobs = [] } = useJobsQuery();
+	const { data: jobs = [] } = useRecentJobsQuery();
 
 	// ⌘K / Ctrl+K anywhere; bare F only when not typing into a field.
 	useEffect(() => {

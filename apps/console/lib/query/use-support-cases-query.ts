@@ -3,21 +3,22 @@
 "use client";
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { listMyCases } from "@/app/server/actions/support";
 import type { CaseListItem } from "@/lib/queries/support";
-import { qk } from "./keys";
+import { orpc } from "@/lib/rpc/client";
 
 /**
- * Shared support-cases cache. The notifications bell and the live toaster both call this and
- * TanStack Query dedupes them (plus the "My cases" list's `qk.supportCases("all")` query) to a
- * single request. Cases are owner-scoped server-side, so — unlike jobs — the key isn't org
- * scoped; it reuses the same `"all"` key the "My cases" page prefetches. Polls every 30s so a
- * staff/AI reply surfaces in the bell and fires a toast without a manual refresh.
+ * The shell's support-case feed, over the read router's `workspace.supportCases` (GET). The
+ * notifications bell and the live toaster share this one entry, and the `[org]` layout prefetches
+ * it. The read is scoped to the ADDRESS's org (the actor the read router resolves), and the browser
+ * keeps one cache per org (`lib/query/client.ts`), so org A's cases are never rendered under B.
+ *
+ * STILL POLLS every 30 s, so a staff/AI reply reaches the bell and fires a toast. The `support` topic
+ * maps this key (`lib/query/topics.ts`), but nothing PRODUCES that topic yet: the server routes no
+ * change to it until #6130 adds the support trigger. Delete the `refetchInterval` with that PR.
  */
 export function useSupportCasesQuery(): UseQueryResult<CaseListItem[]> {
 	return useQuery({
-		queryKey: qk.supportCases("all"),
-		queryFn: () => listMyCases({}),
+		...orpc.workspace.supportCases.queryOptions(),
 		refetchInterval: 30_000,
 	});
 }

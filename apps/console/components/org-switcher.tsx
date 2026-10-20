@@ -4,7 +4,7 @@
 
 import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { OrgAvatar } from "@/components/org/org-avatar";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
@@ -23,7 +23,8 @@ import { Separator } from "@repo/ui/separator";
 import { planMeta } from "@repo/plan-catalog";
 import {
 	useActiveOrgSlug,
-	useWorkspaceStore,
+	useActiveWorkspaceOrg,
+	useWorkspaceContextQuery,
 } from "@/lib/stores/use-workspace-store";
 import { orgHref } from "@/lib/routing";
 
@@ -35,6 +36,11 @@ import { orgHref } from "@/lib/routing";
  * "Personal" (Free). "Create" opens the create sheet (name → pay → invite). The trigger is a
  * split button: clicking the org name/avatar navigates to the org home, only the chevron opens
  * the switcher.
+ *
+ * It renders from the workspace context the `[org]` layout prefetched (#6114), so the server render
+ * and the first client paint already name the org the address is on, with its plan. It used to
+ * read a store that only a client fetch filled, so every hard load painted "Personal" and the
+ * community plan, then flipped (F002).
  */
 /**
  * Where choosing `orgId` should navigate to, or null when there is nowhere to go.
@@ -45,11 +51,8 @@ import { orgHref } from "@/lib/routing";
  * switch produces the TARGET org's url and not a refresh of the one being left — pinned at unit
  * speed, and leaves only the two-line `push`/`refresh` wiring to the e2e path.
  *
- * ⚠ It can only be as good as the slug it is given. `getWorkspaceContext` substitutes the reserved
- * personal segment for an org whose `slug` column is null (`organization.slug` is nullable), so a
- * slug-less TEAM org arrives here indistinguishable from the personal one and this would navigate
- * to `/~` while `switchOrg` has already written the session to that team. The substitution is the
- * defect and it is upstream of this file; nothing here can tell the two apart.
+ * It can only be as good as the slug it is given. The workspace context reports a slug-less org's
+ * slug as `null` (never the personal `~`, #4134), and that answers null here — nowhere to go.
  */
 export function switchTargetHref(
 	// `slug: string | null`, not `string`: #4134 made `WorkspaceOrg.slug` nullable so a slugless org
@@ -67,19 +70,18 @@ export function OrgSwitcher() {
 	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
-	const { activeOrgId, organizations, fetchWorkspace } = useWorkspaceStore();
-
-	useEffect(() => {
-		fetchWorkspace();
-	}, [fetchWorkspace]);
-
-	const active =
-		organizations.find((o) => o.id === activeOrgId) ?? organizations[0] ?? null;
-	const meta = planMeta(active?.plan ?? "community");
+	const { data } = useWorkspaceContextQuery();
+	const organizations = data?.organizations ?? [];
+	const active = useActiveWorkspaceOrg();
+	// While the context is not there (only when the layout's prefetch failed and the client's retry
+	// is in flight) the trigger names the org by its ADDRESS and shows no plan — never a guessed
+	// "Personal" or a default plan, which would be a claim about a tenant the page is not on.
+	const name = active?.name ?? orgSlug;
+	const meta = active ? planMeta(active.plan) : null;
 
 	const handleSelect = (orgId: string) => {
 		setOpen(false);
-		if (orgId === activeOrgId) return;
+		if (orgId === active?.id) return;
 		// The extracted, TESTED helper from this branch (tests/components/org-switcher-target.test.ts),
 		// kept over the inline lookup that #4134 landed — same answer, and this one is reachable from
 		// a test without mounting the component.
@@ -123,17 +125,19 @@ export function OrgSwitcher() {
 					ariaLabel="Switch organization"
 					leading={
 						<OrgAvatar
-							name={active?.name ?? "Personal"}
+							name={name}
 							logo={active?.logo}
 							size={24}
 							className="rounded-full"
 						/>
 					}
-					label={active?.name ?? "Personal"}
+					label={name}
 					badge={
-						<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
-							{meta.name}
-						</span>
+						meta ? (
+							<span className="shrink-0 rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
+								{meta.name}
+							</span>
+						) : undefined
 					}
 				/>
 				<PopoverContent className="w-72 p-0" align="start">
