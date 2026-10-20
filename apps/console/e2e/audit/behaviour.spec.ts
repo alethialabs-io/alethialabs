@@ -68,7 +68,7 @@ import {
 	pageEntry,
 	manifestConsistencyProblems,
 	manifestKnowsWorkers,
-	shellReadsFor,
+	shellClassifier,
 	B5_READ_CAP,
 	type BControlResult,
 	type BVerdict,
@@ -146,6 +146,12 @@ interface BehaviourState {
 	ctx: AuditContext;
 	control: BControlResult;
 	routes: Record<string, RouteState>;
+	/**
+	 * What the manifest check found against the observed actions, once it has run. Non-empty withholds
+	 * B3, B4 and B5 for the rest of the run — they classify reads through the manifest — and is kept
+	 * here so a worker restarted after the check withholds them too.
+	 */
+	manifestProblems?: string[];
 }
 
 /** Structural check on a persisted state — the fields this spec reads, never trusted blind. */
@@ -240,7 +246,8 @@ test.beforeAll(async ({ browser }, testInfo) => {
 				"page per action — family B cannot tell a page's reads from its shell's, and will not score without it",
 		);
 	}
-	const { control } = current();
+	const { control, manifestProblems } = current();
+	if (manifestProblems && manifestProblems.length > 0) report.withhold(["B3", "B4", "B5"], `${MANIFEST_WITHHELD}: ${manifestProblems.slice(0, 3).join("; ")}`);
 	if (control.broken.length > 0) {
 		report.withhold(control.broken, `positive control failed: ${control.lines.join("; ")}`);
 		console.error(`ui-audit/B: THE POSITIVE CONTROL IS BROKEN for ${control.broken.join(", ")}.\n  ${control.lines.join("\n  ")}`);
@@ -329,13 +336,16 @@ test("the behaviour instrument's positive control still fires", () => {
 });
 
 /** The one shell classifier B3, B4 and B5 share, over every route's reads this run has seen so far. */
-function shellOf(route: RouteRecord): ReadonlySet<string> {
+function shellOf(route: RouteRecord): (key: string) => boolean {
 	const s = current();
 	const chains = new Map(manifest.routes.map((r) => [r.route, r.shellChain.join(" > ")]));
 	const readsByRoute = new Map(Object.entries(s.routes).map(([r, v]) => [r, v.reads]));
 	const entries = new Map(manifest.routes.map((r) => [r.route, pageEntry(r.file)]));
-	return new Set(shellReadsFor(route.route, chains, readsByRoute, entries));
+	return shellClassifier(route.route, chains, readsByRoute, entries);
 }
+
+/** B3–B5's NOT MEASURED reason when the manifest does not describe the run. */
+const MANIFEST_WITHHELD = "manifest-mismatch — the build manifest does not describe the actions this run observed, so no read can be told the page's from the shell's";
 
 test.describe("phase 1 · the answered load of every route — the reads the classifier needs", () => {
 	for (const route of manifest.routes) {
@@ -351,6 +361,23 @@ test.describe("phase 1 · the answered load of every route — the reads the cla
 					saveState();
 				})
 				.catch(() => {});
+			// …and a COLD load, in a context of its own like B3's and B4's. A shell read a fresh session
+			// makes and the warm answered load does not (#6180's fourth review) is then on record for every
+			// route before any route is classified, so the classifier sees it on the OTHER routes whatever
+			// order the tests run in. Only its reads are kept.
+			const mine = s.routes[route.route];
+			if (mine) {
+				const cold = await isolatedContext();
+				try {
+					const c = await loadAnswered(cold, url);
+					s.routes[route.route] = { ...mine, reads: [...new Set([...mine.reads, ...c.reads])] };
+					saveState();
+				} catch {
+					// The answered reads stand; a missing cold load narrows the classifier's evidence, nothing more.
+				} finally {
+					await cold.close();
+				}
+			}
 		});
 	}
 });
@@ -362,6 +389,13 @@ test("the build manifest describes the actions the run observed", () => {
 	const readsByRoute = new Map(Object.entries(current().routes).map(([r, v]) => [r, v.reads]));
 	const entries = new Map(manifest.routes.map((r) => [r.route, pageEntry(r.file)]));
 	const problems = manifestConsistencyProblems(readsByRoute, entries);
+	// A mismatch WITHHOLDS B3, B4 and B5 for the rest of the run, before any of them is recorded: they
+	// classify every read through this manifest, and the artifact must not carry verdicts built on it.
+	// The import refuses a scored cell turning NOT MEASURED, so a mismatched run cannot be imported
+	// over a good one without saying why.
+	current().manifestProblems = problems;
+	saveState();
+	if (problems.length > 0) report.withhold(["B3", "B4", "B5"], `${MANIFEST_WITHHELD}: ${problems.slice(0, 3).join("; ")}`);
 	expect(problems.slice(0, 10), `${problems.length} observed action(s) the manifest does not place on their route`).toEqual([]);
 });
 
@@ -379,7 +413,7 @@ test.describe("phase 2 · B1–B4 on every route, in a seeded organisation of it
 				for (const id of ["B1", "B3", "B4"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: "phase-one-missing — the answered load of this route did not complete" });
 			} else {
 				const a = { snapshot: mine.answered, settled: mine.settled, reads: mine.reads };
-				const shell = shellOf(route);
+				const isShell = shellOf(route);
 				// A route whose measurement THROWS records NOT MEASURED with the error and the test goes on:
 				// one flaky load is a gap in one cell, and the floor test is what turns a systemic one red.
 				await measured(route, url, ["B1", "B3", "B4"], async () => {
@@ -387,10 +421,10 @@ test.describe("phase 2 · B1–B4 on every route, in a seeded organisation of it
 					const held = await loadHeld(context(), url);
 					put(route, url, "B1", judgeB1(a, held));
 					// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
-					const pageHeld = await loadHeld(context(), url, (key) => shell.has(key));
+					const pageHeld = await loadHeld(context(), url, isShell);
 					put(route, url, "B3", judgeB3(a, pageHeld));
 					const failed = await loadFailed(isolatedContext, url);
-					put(route, url, "B4", judgeB4(a, failed, (key) => !shell.has(key)));
+					put(route, url, "B4", judgeB4(a, failed, (key) => !isShell(key)));
 					// A route's read set is the UNION of every load made of it, so one cold load that happened
 					// not to fire a read cannot turn B5's verdict for that route into NOT MEASURED.
 					const reads = new Set(mine.reads);
@@ -441,8 +475,9 @@ test.describe("phase 3 · B5, each of a page's own reads failed alone", () => {
 				report.notMeasured({ route: route.route, url, predicate: "B5", reason: "phase-one-missing — phase 1 recorded no reads for this route" });
 				return;
 			}
-			const shell = [...shellOf(route)];
-			const pageReads = mine.reads.filter((k) => !shell.includes(k));
+			const isShell = shellOf(route);
+			const shell = mine.reads.filter(isShell);
+			const pageReads = mine.reads.filter((k) => !isShell(k));
 			const failures: OneFailure[] = [];
 			await measured(route, url, ["B5"], async () => {
 				if (mine.settled && pageReads.length >= 1 && pageReads.length <= B5_READ_CAP) {

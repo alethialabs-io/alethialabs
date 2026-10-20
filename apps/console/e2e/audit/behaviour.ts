@@ -179,6 +179,11 @@ export function manifestConsistencyProblems(
 	workers: (key: string) => ReadonlySet<string> | null = workersOf,
 ): string[] {
 	const problems: string[] = [];
+	// No action observed at all is not a clean manifest: it is a run that measured nothing the check
+	// could test, and every classification downstream would rest on an unchecked input.
+	if (![...readsByRoute.values()].some((reads) => reads.some((k) => k.startsWith("action ")))) {
+		problems.push("the run observed no server action at all, so the manifest could not be checked against anything");
+	}
 	for (const [route, reads] of readsByRoute) {
 		const entry = entries.get(route);
 		for (const key of reads) {
@@ -717,11 +722,47 @@ export function structurallyShell(key: string, chainEntries: readonly string[], 
 }
 
 /**
- * The shell's reads for `route` — THE one classifier B3, B4 and B5 share. A key is the shell's when
- * every page under the route's shells references it in the build AND another route was seen making
- * it, or when every route under those shells made it (the intersection). Everything else the route
- * made is its own.
+ * THE one classifier B3, B4 and B5 share: for `route`, is `key` the SHELL's read?
+ *
+ * It classifies the KEY, not the route's answered reads. A route's B3 and B4 loads run in contexts of
+ * their own and make shell reads its warm answered load never made; when only the answered reads were
+ * classified, those reads counted as the page's, and B4 PASSed five `~/support*` routes on nothing but
+ * a failed shell action (#6180's fourth review). So any key, from any load, is the shell's when:
+ *
+ *   · STRUCTURE, CONFIRMED BY OBSERVATION — the build's server-reference manifest places it in EVERY
+ *     page under the route's shells AND another route was seen making it, in any load. Reference is
+ *     not use: `app-shell.tsx` imports `useJobsQuery` → `getJob`, so `getJob` is in every AppShell
+ *     bundle while only `~/jobs/[id]` calls it, and the reference-only rule called it "shell"
+ *     (#6180's third review); or
+ *   · every route under those shells made it (the intersection; over every route when fewer than
+ *     three share the chain).
+ *
+ * Everything else is the page's. `readsByRoute` should already hold a COLD load of every route
+ * (`behaviour.spec.ts` phase 1), so a shell read that fires only on a fresh context has been seen on
+ * the other routes before any route is measured, whatever order the tests run in.
  */
+export function shellClassifier(
+	route: string,
+	chains: ReadonlyMap<string, string>,
+	readsByRoute: ReadonlyMap<string, readonly string[]>,
+	entries: ReadonlyMap<string, string> = new Map(),
+	workers: (key: string) => ReadonlySet<string> | null = workersOf,
+): (key: string) => boolean {
+	const chain = chains.get(route);
+	const peers = [...readsByRoute.keys()].filter((r) => chains.get(r) === chain);
+	const chainEntries = [...chains].filter(([, c]) => c === chain).map(([r]) => entries.get(r)).filter((e): e is string => e !== undefined);
+	const pool = peers.length >= 3 ? peers : [...readsByRoute.keys()];
+	const [first, ...rest] = pool;
+	const common = new Set(first === undefined ? [] : (readsByRoute.get(first) ?? []));
+	for (const r of rest) {
+		const reads = new Set(readsByRoute.get(r) ?? []);
+		for (const k of [...common]) if (!reads.has(k)) common.delete(k);
+	}
+	const observedElsewhere = (key: string) => [...readsByRoute].some(([r, ks]) => r !== route && ks.includes(key));
+	return (key) => common.has(key) || (chainEntries.length > 0 && structurallyShell(key, chainEntries, workers) && observedElsewhere(key));
+}
+
+/** The route's reads that `shellClassifier` assigns to the shell — the evidence B5 records. */
 export function shellReadsFor(
 	route: string,
 	chains: ReadonlyMap<string, string>,
@@ -729,36 +770,8 @@ export function shellReadsFor(
 	entries: ReadonlyMap<string, string> = new Map(),
 	workers: (key: string) => ReadonlySet<string> | null = workersOf,
 ): string[] {
-	const chain = chains.get(route);
-	const peers = [...readsByRoute.keys()].filter((r) => chains.get(r) === chain);
-	// STRUCTURE, CONFIRMED BY OBSERVATION. The build's server-reference manifest says which page
-	// entries REFERENCE each action, and an action every page under the same shells references is the
-	// shells' candidate (a layout's client graph is bundled into every page beneath it). Reference is
-	// not use: `app-shell.tsx` imports `useJobsQuery` → `getJob`, so `getJob` is in every AppShell
-	// bundle while only `~/jobs/[id]` calls it — and classifying it "shell" turned that route's B4
-	// FAIL into NOT MEASURED (#6180's third review). So a referenced-everywhere action is the shell's
-	// only when ANOTHER route was also seen making it. That keeps what the structural half was added
-	// for — a shell poll that one route's load happened to miss is still the shell's, because other
-	// routes made it — and gives a page its own read back.
-	const chainEntries = [...chains].filter(([, c]) => c === chain).map(([r]) => entries.get(r)).filter((e): e is string => e !== undefined);
-	const observedElsewhere = (key: string) => [...readsByRoute].some(([r, ks]) => r !== route && ks.includes(key));
-	const structural = new Set<string>();
-	if (chainEntries.length > 0) {
-		for (const key of readsByRoute.get(route) ?? []) {
-			if (structurallyShell(key, chainEntries, workers) && observedElsewhere(key)) structural.add(key);
-		}
-	}
-	// Fewer than three routes under one chain cannot separate a page read from a shell read, so the
-	// intersection widens to every measured route: whatever EVERY route reads is the outer shell's.
-	const pool = peers.length >= 3 ? peers : [...readsByRoute.keys()];
-	const [first, ...rest] = pool;
-	if (first === undefined) return [];
-	const common = new Set(readsByRoute.get(first) ?? []);
-	for (const r of rest) {
-		const reads = new Set(readsByRoute.get(r) ?? []);
-		for (const k of [...common]) if (!reads.has(k)) common.delete(k);
-	}
-	return [...new Set([...common, ...structural])].sort();
+	const isShell = shellClassifier(route, chains, readsByRoute, entries, workers);
+	return [...new Set(readsByRoute.get(route) ?? [])].filter(isShell).sort();
 }
 
 /** The snapshot without its texts — what a record's evidence carries. */
@@ -1174,6 +1187,7 @@ export const B_CONTROL_MODES = [
 	"swap-list",
 	"swap-bars",
 	"action-page-read",
+	"cold-shell",
 ] as const;
 
 /**
@@ -1200,13 +1214,13 @@ const FIXTURE_WORKERS = workersFromManifest({
 	},
 });
 
-/** The fixture's shell reads, given what its page was seen making — the peer only ever makes `fx-shell`. */
-function fixtureShellSet(reads: readonly string[]): ReadonlySet<string> {
+/** The fixture's shell classifier, given what its page was seen making — the peer only ever makes `fx-shell`. */
+function fixtureClassifier(reads: readonly string[]): (key: string) => boolean {
 	const readsByRoute = new Map<string, readonly string[]>([
 		[FIXTURE_ROUTE, reads],
 		[FIXTURE_PEER, ["action fx-shell"]],
 	]);
-	return new Set(shellReadsFor(FIXTURE_ROUTE, FIXTURE_CHAINS, readsByRoute, FIXTURE_ENTRY_MAP, FIXTURE_WORKERS));
+	return shellClassifier(FIXTURE_ROUTE, FIXTURE_CHAINS, readsByRoute, FIXTURE_ENTRY_MAP, FIXTURE_WORKERS);
 }
 
 /** One fixture mode. */
@@ -1236,6 +1250,11 @@ function rows(names) { return '<table><tbody>' + names.map(function (n) { return
 function read(name) { return fetch('/acme/~/rpc/fixture/' + name).then(function (r) { if (!r.ok) throw new Error('read failed'); return r.json(); }); }
 function shellRead() { return fetch(location.pathname, { method: 'POST', headers: { 'Next-Action': 'fx-shell' } }).then(function (r) { if (!r.ok) throw new Error('shell read failed'); }); }
 function pageAction() { return fetch(location.pathname, { method: 'POST', headers: { 'Next-Action': 'fx-page' } }).then(function (r) { if (!r.ok) throw new Error('page read failed'); }); }
+if (MODE === "cold-shell") {
+	// The shell read fires only on a COLD context — the first visit, before this origin's storage holds
+	// anything — the way a real shell read can fire on a fresh session and not on a warm one.
+	if (!localStorage.getItem('fx-warm')) { localStorage.setItem('fx-warm', '1'); shellRead().then(function () {}, function () {}); }
+}
 if (MODE === "action-page-read") {
 	shellRead().then(function () {}, function () {});
 	pageAction().then(function () {}, function () { set('region', EMPTY, false); });
@@ -1303,7 +1322,7 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
-	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read") return { a: rows, b: none, staticCopy: none };
+	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
 	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error" || mode === "empty-after-hydration") {
@@ -1377,14 +1396,24 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		}
 	};
 	try {
+		// B3's and B4's loads run COLD — a context of their own, as the routes' do — and the answered
+		// load runs WARM, after a first visit, so a read that only a cold context makes is one the
+		// answered load never saw. The classifier has to place it by its KEY.
 		const measure = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
+			await loadAnswered(context, url);
 			const answered = await loadAnswered(context, url);
-			const shell = fixtureShellSet(answered.reads);
+			const isShell = fixtureClassifier(answered.reads);
 			const held = await loadHeld(context, url);
-			const pageHeld = await loadHeld(context, url, (k) => shell.has(k));
+			const cold = await newContext();
+			let pageHeld: HeldLoad;
+			try {
+				pageHeld = await loadHeld(cold, url, isShell);
+			} finally {
+				await cold.close();
+			}
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !shell.has(k)) };
+			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
 		};
 		const good = await measure("prefetched");
 		expectVerdict("B1", "prefetched", good.b1, "PASS");
@@ -1416,14 +1445,19 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		// A page read made over a server ACTION, referenced by every page entry and called by this
 		// page alone: it is the page's, so failing it is measured — and the page renders an empty state.
 		expectVerdict("B4", "action-page-read", (await measure("action-page-read")).b4, "FAIL");
+		// A shell read made ONLY on a cold context: the warm answered load never saw it, the cold B3 and
+		// B4 loads do. Classified by its key it is the shell's, and neither predicate measured the page.
+		const coldShell = await measure("cold-shell");
+		expectVerdict("B3", "cold-shell", coldShell.b3, "NOT MEASURED", "no-page-reads");
+		expectVerdict("B4", "cold-shell", coldShell.b4, "NOT MEASURED", "no-page-reads");
 
 		const b5 = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
 			const failures: OneFailure[] = [];
 			for (const key of answered.reads) failures.push({ key, ...(await loadWithOneFailure(context, url, key)) });
-			const shell = fixtureShellSet(answered.reads);
-			return judgeB5(answered, answered.reads.filter((k) => !shell.has(k)), [...shell], failures);
+			const isShell = fixtureClassifier(answered.reads);
+			return judgeB5(answered, answered.reads.filter((k) => !isShell(k)), answered.reads.filter(isShell), failures);
 		};
 		expectVerdict("B5", "two-regions-contained", await b5("two-regions-contained"), "PASS");
 		expectVerdict("B5", "two-regions-blanked", await b5("two-regions-blanked"), "FAIL");

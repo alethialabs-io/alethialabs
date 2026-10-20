@@ -16,7 +16,7 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { manifestConsistencyProblems, readKey, shellReadsFor, workersFromManifest } from "./behaviour";
+import { manifestConsistencyProblems, readKey, shellClassifier, shellReadsFor, workersFromManifest } from "./behaviour";
 import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
@@ -829,6 +829,7 @@ test("a build manifest that does not describe the observed run fails closed", ()
 	expect(manifestConsistencyProblems(reads, entries, good)).toEqual([]);
 	expect(manifestConsistencyProblems(reads, entries, renamed).length, "renamed worker keys").toBe(2);
 	expect(manifestConsistencyProblems(reads, entries, workersFromManifest({ node: {} })).length, "an action the manifest omits").toBe(2);
+	expect(manifestConsistencyProblems(new Map([["/a", ["rpc x"]]]), entries, good).length, "a run that observed no action at all").toBe(1);
 });
 
 // A read the build references from every page is the SHELL's only when another route was seen making
@@ -840,4 +841,9 @@ test("the shell classifier needs a referenced-everywhere read to be OBSERVED els
 	const workers = workersFromManifest({ node: { poll: everywhere, getJob: everywhere } });
 	const reads = new Map([["/a", ["action poll", "action getJob"]], ["/b", ["action poll"]]]);
 	expect(shellReadsFor("/a", chains, reads, entries, workers)).toEqual(["action poll"]);
+	// The KEY is classified, not the route's answered reads: a shell read /b made and /a's warm load did
+	// not is still the shell's when /a's cold load makes it.
+	const coldOnly = new Map([["/a", ["action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action poll")).toBe(true);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action getJob")).toBe(false);
 });

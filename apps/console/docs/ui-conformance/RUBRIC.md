@@ -476,15 +476,23 @@ digit, no relative time — and fails only when the held render has FEWER of the
 stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`). The first calibration run failed
 the jobs slice on exactly those two, which is how they were found.
 
-**One classifier tells the page's reads from the shell's, for B3, B4 and B5 alike** (`shellReadsFor`). A
-read is the shell's when the build's server-reference manifest places it in every page under the
-route's shells AND another route was seen making it — or when every route under those shells made it.
+**One classifier tells the page's reads from the shell's, for B3, B4 and B5 alike** (`shellClassifier`).
+It classifies the KEY, whichever load made it: a read is the shell's when the build's server-reference
+manifest places it in every page under the route's shells AND another route was seen making it in any
+load — or when every route under those shells made it. Classifying only the reads of a route's warm
+answered load let the shell reads its COLD B3 and B4 loads made count as the page's: B4 PASSed five
+`~/support*` routes on nothing but a failed shell action (#6180's fourth review). Phase 1 therefore
+loads every route twice — answered, and cold in a context of its own — so a shell read only a fresh
+session makes is on record for every route before any is classified, whatever order the tests run in.
 Reference is not use: `app-shell.tsx` imports `useJobsQuery` → `getJob`, so `getJob` is in every AppShell
 bundle while only `~/jobs/[id]` calls it, and the reference-only rule called it "shell" and turned that
 route's B4 FAIL into NOT MEASURED (#6180's third review). The classifier needs every route's reads, so the
 spec loads every route ANSWERED first (phase 1), checks the manifest against what it observed — an
 action a route made that the manifest does not place on that route's page fails the run closed, which
-is what a manifest from another build or with renamed worker keys does — and only then measures.
+is what a manifest from another build or with renamed worker keys does, and so does a run that observed
+no action at all — and only then measures. A failed check WITHHOLDS B3, B4 and B5 for the whole run (the
+state persists across worker restarts), so the artifact carries no verdict built on that manifest, and
+the import refuses the scored cells it would turn NOT MEASURED.
 
 **B3 and B4 count only the PAGE's reads.** A route on which no read of its own was held (B3) or failed
 (B4) is **NOT MEASURED `no-page-reads`**, as for B5 — the first cut PASSed routes that exercised nothing
