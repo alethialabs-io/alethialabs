@@ -46,13 +46,17 @@ let listener: ReturnType<typeof postgres>;
 const heard: Notice[] = [];
 const created: string[] = [];
 
-/** Waits until the sentinel `n` has been heard, then returns (and forgets) every support notice before it. */
+/**
+ * Waits until the sentinel `n` has been heard, then returns (and forgets) every support notice
+ * before it ABOUT THIS FILE'S CASES. The channel is database-wide and other suites open cases too
+ * (the tenancy suite seeds two), so a notice is attributed by its id, never by arrival alone.
+ */
 async function drainUntil(n: string): Promise<Notice[]> {
 	for (let i = 0; i < 200; i++) {
 		const at = heard.findIndex((x) => x.t === "_sentinel" && x.n === n);
 		if (at >= 0) {
 			const before = heard.splice(0, at + 1).slice(0, at);
-			return before.filter((x) => x.t === "support");
+			return before.filter((x) => x.t === "support" && x.id !== null && created.includes(x.id));
 		}
 		await new Promise((r) => setTimeout(r, 25));
 	}
@@ -67,8 +71,8 @@ async function emitted(op: () => Promise<unknown>): Promise<Notice[]> {
 	return drainUntil(n);
 }
 
-/** Opens a case for REQUESTER in ORG (status `open`). Returns its id. */
-async function openCase(subject = "it-6130 case"): Promise<string> {
+/** Inserts a case for REQUESTER in ORG (status `open`). Returns its id. */
+async function insertCase(subject: string): Promise<string> {
 	const [row] = await db()
 		.insert(supportCases)
 		.values({
@@ -86,6 +90,19 @@ async function openCase(subject = "it-6130 case"): Promise<string> {
 		.returning({ id: supportCases.id });
 	created.push(row.id);
 	return row.id;
+}
+
+/**
+ * Opens a case and CONSUMES its own insert notice, so the operation a test measures next starts
+ * from a drained channel (otherwise the insert hint would be counted against that operation).
+ */
+async function openCase(subject = "it-6130 case"): Promise<string> {
+	let id = "";
+	const notices = await emitted(async () => {
+		id = await insertCase(subject);
+	});
+	expect(notices).toHaveLength(1);
+	return id;
 }
 
 /** A public reply exactly as both apps write one: the message, then the case bump, in one transaction. */
@@ -134,7 +151,7 @@ describeIfDb("support_cases change triggers — what reaches alethia_change (#61
 	it("a new case emits exactly one notice: its id, its org, its requester — identifiers only", async () => {
 		let id = "";
 		const notices = await emitted(async () => {
-			id = await openCase();
+			id = await insertCase("it-6130 case");
 		});
 		expect(notices).toEqual([{ t: "support", id, o: ORG, u: REQUESTER, p: null }]);
 	});
