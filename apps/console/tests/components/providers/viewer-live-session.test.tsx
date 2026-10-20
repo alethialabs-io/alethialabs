@@ -41,6 +41,9 @@ const ADA: Viewer = {
 	createdAt: new Date("2026-01-15T09:00:00.000Z"),
 };
 
+/** Ada as better-auth's live session carries her (it has fields the `Viewer` does not). */
+const LIVE_USER = { ...ADA, updatedAt: ADA.createdAt, emailVerified: true };
+
 /** A fresh copy of the provider module: its "session changed" flag is module state. */
 async function load() {
 	vi.resetModules();
@@ -81,7 +84,7 @@ describe("useViewer and the live session (F003)", () => {
 				<Name />
 			</ViewerProvider>,
 		);
-		h.get.mockReturnValue({ data: { user: { ...ADA, name: "Ada King" } }, isPending: false, error: null });
+		h.get.mockReturnValue({ data: { user: { ...LIVE_USER, name: "Ada King" } }, isPending: false, error: null });
 		act(() => {
 			for (const notify of h.changed) notify();
 		});
@@ -91,7 +94,7 @@ describe("useViewer and the live session (F003)", () => {
 
 	it("UNSEEDED: follows the live session from the start", async () => {
 		const { useViewer } = await load();
-		h.get.mockReturnValue({ data: { user: ADA }, isPending: false, error: null });
+		h.get.mockReturnValue({ data: { user: LIVE_USER }, isPending: false, error: null });
 		/** Prints the viewer's name. */
 		function Name() {
 			return <span>{useViewer().viewer?.name ?? "nobody"}</span>;

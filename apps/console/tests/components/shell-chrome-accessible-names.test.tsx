@@ -17,13 +17,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as renderBare, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
+import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NAME_REQUIRED, unnamedControls } from "../support/accessible-names";
 
 const { pathname, environments, LIVE } = vi.hoisted(() => ({
 	LIVE: { data: { user: { name: "User", email: "user@example.com" } }, isPending: false, error: null },
 	pathname: { current: "/acme/~/support/my-cases" },
-	environments: { current: [] as { id: string; name: string; is_default: boolean }[] },
+	environments: { current: new Array<SwitcherEnv>() },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -127,7 +128,9 @@ describe("shell chrome — accessible names", () => {
 
 	it("names every button in the topbar inside a project, with the env switcher mounted", async () => {
 		pathname.current = "/acme/atlas/environments";
-		environments.current = [{ id: "env_1", name: "production", is_default: true }];
+		environments.current = [
+			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
+		];
 		const { container } = render(<Topbar onOpenSidebar={() => {}} />);
 		// The env switcher mounts only with its list — wait for it, or this asserts against a
 		// topbar that never rendered the control the audit flagged.
@@ -154,7 +157,9 @@ describe("shell chrome — accessible names", () => {
 
 	it("puts the switcher's purpose ahead of the current selection", async () => {
 		pathname.current = "/acme/atlas/environments";
-		environments.current = [{ id: "env_1", name: "production", is_default: true }];
+		environments.current = [
+			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
+		];
 		render(<Topbar onOpenSidebar={() => {}} />);
 
 		// The name is context + selection, not one or the other: "Switch project" alone never says

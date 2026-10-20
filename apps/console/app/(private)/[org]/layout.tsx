@@ -10,6 +10,7 @@ import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
 import { getQueryClient } from "@/lib/query/client";
+import { qk } from "@/lib/query/keys";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
 import { serverOrpc } from "@/lib/rpc/server";
 import { AppShell } from "@/components/shell/app-shell";
@@ -22,7 +23,10 @@ import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
  */
 function isShellRead(query: Query): boolean {
 	const [path] = query.queryKey;
-	return query.state.status === "success" && Array.isArray(path) && path[0] === "workspace";
+	if (query.state.status !== "success") return false;
+	// The job feed's `qk.jobs(org)` — exactly two segments, so the jobs PAGE's keys under it are not.
+	if (path === "jobs" && query.queryKey.length === 2) return true;
+	return Array.isArray(path) && path[0] === "workspace";
 }
 
 /**
@@ -87,7 +91,8 @@ export default async function OrgLayout({
 		orgHasSelfRunners(orgId),
 		queryClient.prefetchQuery(rpc.workspace.context.queryOptions()),
 		queryClient.prefetchQuery(rpc.workspace.projects.queryOptions()),
-		queryClient.prefetchQuery(rpc.workspace.jobs.queryOptions()),
+		// The job feed keeps its legacy key (see `useJobsQuery`): the jobs pages follow its poll.
+		queryClient.prefetchQuery({ queryKey: qk.jobs(org), queryFn: () => rpc.workspace.jobs.call() }),
 		queryClient.prefetchQuery(rpc.workspace.supportCases.queryOptions()),
 		queryClient.prefetchQuery(rpc.workspace.setupGuide.queryOptions()),
 	]);

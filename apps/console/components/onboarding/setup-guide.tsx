@@ -243,9 +243,11 @@ function ProgressRing({
 	return (
 		<span className="relative inline-flex shrink-0 items-center justify-center">
 			<svg width={size} height={size} className="-rotate-90">
-				<title>
-					{done} of {total} steps done
-				</title>
+				{/* ONE text node. `{done} of {total}` renders three, which React separates with `<!-- -->`
+				    markers; a `<title>` cannot hold those, so the browser keeps them as text and the
+				    hydrating render no longer matches — React #418 on every org page once this ring
+				    was server-rendered from the layout's seed (#6114). */}
+				<title>{`${done} of ${total} steps done`}</title>
 				<circle
 					cx={size / 2}
 					cy={size / 2}

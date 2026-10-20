@@ -35,7 +35,6 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaseListItem } from "@/lib/queries/support";
 import { qk } from "@/lib/query/keys";
-import { orpc } from "@/lib/rpc/client";
 import { makeJob } from "../fixtures/jobs";
 
 vi.mock("next/navigation", () => ({
@@ -134,7 +133,7 @@ afterEach(() => {
 describe("a page reading a query the shell also reads hydrates cleanly (#5786)", () => {
 	it("the overview's Recent jobs card", async () => {
 		const browser = client((qc) =>
-			qc.setQueryData(orpc.workspace.jobs.queryKey(), [makeJob({ id: "j1", project_name: "payments", status: "SUCCESS" })]),
+			qc.setQueryData(qk.jobs("acme"), [makeJob({ id: "j1", project_name: "payments", status: "SUCCESS" })]),
 		);
 		const { serverHtml, recoverable } = await serverThenHydrate(<RecentJobsCard orgSlug="acme" />, browser);
 
