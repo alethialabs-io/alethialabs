@@ -181,11 +181,28 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     # @alethia/ee and refuses to start without ee/dist — and so would any other 5xx on this route
     # under that pin. So the why names both causes as a question, and the boot prints whether
     # ee/dist/index.js is there and sends the operator to the log first.
-    if [ "$edition" = "enterprise" ]; then
+    #
+    # AN INVALID PIN IS THE SAME BROKEN ENV (#6171). parseAlethiaEdition
+    # (packages/enterprise-api/src/index.ts) accepts EXACTLY `community`, `enterprise`, `auto` and
+    # unset/empty — case-sensitive, no aliases (`Enterprise`, `ee`, `oss` are all rejected), no
+    # trimming — and throws on anything else. loadEnterprise calls it before it records any state,
+    # so it throws again on every call and this route answers 5xx forever, exactly as above. The
+    # pin read here is the normalised one (quotes, outer whitespace and CRs removed, the same
+    # reading dotenv_edition makes — C9 holds the two in parity), so the accepted set is checked
+    # against THAT; an inner space or a wrong case survives normalisation and is invalid here, as
+    # it is to the console. (Where the console is stricter than this reading — it keeps a \r — a
+    # CR-bearing pin still reads as valid here; see the \r note at the top of this function.)
+    case "$edition" in
+    enterprise)
       echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing, or present and throwing on load?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
-    else
+      ;;
+    "" | community | auto)
       echo "unknown the console did not answer the probe (status $code)"
-    fi
+      ;;
+    *)
+      echo "DEFECT ALETHIA_EDITION=$edition is not a valid edition (the console accepts community, enterprise or auto, exactly) — it answered $code, because it rejects the pin on every call, sign-in included"
+      ;;
+    esac
     ;;
   404)
     # A pinned community edition is a legitimate thing to run — it is how the community
@@ -368,9 +385,17 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "a 5xx unpinned is still unknown"      500 ""          "unknown"
   scope "a 5xx under auto is still unknown"    500 "auto"      "unknown"
   scope "a 5xx pinned community is unknown"    500 "community" "unknown"
-  # Exact, like parseAlethiaEdition: `Enterprise` is not the enterprise pin (the console rejects it
-  # as invalid), so it is not evidence of what the env expected to load.
-  scope "a mis-cased pin is not the pin"       500 "Enterprise" "unknown"
+  # #6171: a pin parseAlethiaEdition REJECTS is a broken env, not a silent one. It is exact —
+  # case-sensitive, no aliases, no inner whitespace — so each of those is its own cell, and the
+  # three accepted values plus empty are already asserted `unknown` above. `Enterprise` is not the
+  # enterprise pin, but it is not "no evidence" either: the console refuses every call under it.
+  scope "a mis-cased pin is an invalid pin"    500 "Enterprise" "DEFECT"
+  scope "…an alias is an invalid pin"          503 "ee"         "DEFECT"
+  scope "…an inner space is an invalid pin"    500 "comm unity" "DEFECT"
+  scope "…a quoted invalid pin is still one"   502 '"Community"' "DEFECT"
+  # …and only under a 5xx: the pin does not invent a verdict the console did not give.
+  scope "an invalid pin with no answer is unknown" 000 "Enterprise" "unknown"
+  scope "an invalid pin that answered 400 is what answered" 400 "Enterprise" "enterprise"
   # The pin does not turn silence into a verdict: no answer is no answer, whatever was expected.
   scope "no answer under enterprise is unknown" 000 "enterprise" "unknown"
 
@@ -393,6 +418,27 @@ if [ "${1:-}" = "--self-test" ]; then
   *)
     fail=$((fail + 1))
     echo "  ✗ the pinned-enterprise 5xx does not name the pin and both ee/dist causes: $why"
+    ;;
+  esac
+
+  # The invalid-pin why is the deliverable too (#6171): it must name the pin AS WRITTEN (after the
+  # normalisation the two readers share) and say it is not a valid edition — and must not send the
+  # operator after ee/dist or COMMUNITY, which are the other two DEFECTs' causes.
+  why="$(scope_verdict 500 '"Enterprise"')"
+  why="${why#* }"
+  case "$why" in
+  "ALETHIA_EDITION=Enterprise is not a valid edition"*)
+    case "$why" in
+    *COMMUNITY* | *ee/dist*)
+      fail=$((fail + 1))
+      echo "  ✗ the invalid-pin 5xx is described as another DEFECT: $why"
+      ;;
+    *) pass=$((pass + 1)) ;;
+    esac
+    ;;
+  *)
+    fail=$((fail + 1))
+    echo "  ✗ the invalid-pin 5xx does not say 'ALETHIA_EDITION=Enterprise is not a valid edition': $why"
     ;;
   esac
 
@@ -420,6 +466,7 @@ if [ "${1:-}" = "--self-test" ]; then
   probe "probe: 500 under auto"                500 "ALETHIA_EDITION=auto"       "unknown 500"
   probe "probe: 500 with no pin at all"        500 "Y=2"                        "unknown 500"
   probe "probe: the LAST pin wins"             500 "$(printf 'ALETHIA_EDITION=enterprise\nALETHIA_EDITION=auto')" "unknown 500"
+  probe "probe: 500 under an invalid pin"      500 "ALETHIA_EDITION=Enterprise" "DEFECT 500"
   rm -f "$probe_env"
 
   # boot_rc — what the caller in scripts/env.sh actually reads. The cell that matters is the
@@ -448,6 +495,7 @@ if [ "${1:-}" = "--self-test" ]; then
   # off scope_verdict rather than hand-typed as DEFECT, so a verdict word the boot does not refuse
   # cannot pass here while the cells above pass on their own.
   rc_case "env:up refuses a pinned-enterprise 5xx" "$(scope_verdict 500 enterprise | cut -d' ' -f1)" "" 1
+  rc_case "env:up refuses an invalid-pin 5xx"     "$(scope_verdict 500 Enterprise | cut -d' ' -f1)" "" 1
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
@@ -878,12 +926,19 @@ for _ in $(seq 1 150); do
       # TWO defects share this verdict (scope_verdict says why it is one word, not two), and
       # they want different words: the 404 one is SERVING community entitlements; the 5xx one
       # (#6161) is pinned to enterprise, could not load it, and is serving nothing that touches
-      # auth. Keyed on the status, which is what scope_verdict itself keyed on. Keep this block
-      # SHORTER than the 20-line tail restart_env_console in scripts/env.sh re-prints, or a
-      # restart decapitates the headline.
+      # auth. Keyed on the status, which is what scope_verdict itself keyed on. A THIRD (#6171)
+      # is a 5xx under a pin the console rejects outright; scope_verdict is the only writer of
+      # "is not a valid edition", so that phrase in its why is what tells it from the second.
+      # Keep this block SHORTER than the 20-line tail restart_env_console in scripts/env.sh
+      # re-prints, or a restart decapitates the headline.
       echo "" >&2
-      case "$SCOPE_CODE" in
-      5[0-9][0-9])
+      case "$SCOPE_CODE:$SCOPE_WHY" in
+      5[0-9][0-9]:*"is not a valid edition"*)
+        echo "✗ $SLUG cannot start any edition — $SCOPE_WHY" >&2
+        echo "" >&2
+        echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (a 5xx under an invalid pin)" >&2
+        ;;
+      5[0-9][0-9]:*)
         echo "✗ $SLUG cannot serve the edition it is pinned to — $SCOPE_WHY" >&2
         echo "  Under ALETHIA_EDITION=enterprise a failed @alethia/ee load is never degraded to" >&2
         echo "  community: every call that needs it fails, sign-in included." >&2
@@ -902,8 +957,14 @@ for _ in $(seq 1 150); do
       echo "  ee/dist/index.js: $( [ -f "$REPO/ee/dist/index.js" ] && echo present || echo MISSING)" >&2
       echo "  ALETHIA_EDITION in this env's .env: ${SCOPE_EDITION:-unset (= auto)}" >&2
       echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
-      case "$SCOPE_CODE" in
-      5[0-9][0-9])
+      case "$SCOPE_CODE:$SCOPE_WHY" in
+      5[0-9][0-9]:*"is not a valid edition"*)
+        # env:up appends a MISSING key and never rewrites a present one, so re-running it alone
+        # changes nothing: the line itself has to be corrected first.
+        echo "  Fix the pin in this env's .env (community, enterprise or auto — exactly), then" >&2
+        echo "  pnpm env:up to restart the console with it." >&2
+        ;;
+      5[0-9][0-9]:*)
         # The LOG FIRST. This boot built @alethia/ee above and exits before starting the console
         # if ee/dist/index.js is absent, so here the dist is almost always present and threw on
         # load (or the 5xx is not ee's at all); loadEnterprise rethrows that error on every call,

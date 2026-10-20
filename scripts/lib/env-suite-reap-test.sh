@@ -810,7 +810,8 @@ SH
 		'ALETHIA_EDITION=  community  ' 'ALETHIA_EDITION=comm unity' 'ALETHIA_EDITION=enterprise' \
 		'export ALETHIA_EDITION=community' 'ALETHIA_EDITION=' 'ALETHIA_EDITION="\x27community\x27"' \
 		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community' \
-		'ALETHIA_EDITION=comm\runity'; do
+		'ALETHIA_EDITION=comm\runity' 'ALETHIA_EDITION=Enterprise' 'ALETHIA_EDITION=ee' \
+		'ALETHIA_EDITION=auto' "ALETHIA_EDITION=' enterprise'"; do
 		i=$((i + 1))
 		printf 'X=1\n%b\r\n' "$line" >"$pv/$i.env"
 		pin="$(sh -c "$(bash -c '. "$1"; declare -f dotenv_edition' _ "$TMP/dotenv.sh"); dotenv_edition \"\$1\"" sh "$pv/$i.env")"
@@ -819,6 +820,19 @@ SH
 		case "$pin:$verdict" in
 		community:community | enterprise:DEFECT | unset:DEFECT | auto:DEFECT | other:DEFECT) ;;
 		*) bad "the two pin readers disagree on '$line': dotenv_edition=$pin, scope_probe=$verdict" ;;
+		esac
+		# …and at a 5xx (#6171), where the pin decides WHICH answer a broken console gets: `other` on
+		# the edition row must be exactly the invalid-pin DEFECT on the scope row. At 404 every
+		# non-community pin is DEFECT alike, so this is the only status that separates `other`
+		# from `enterprise`, `auto` and `unset`.
+		v5="$(bash -c 'curl() { printf 500; }; sleep() { :; }; . "$1"; scope_probe 1 "$2" 1 1' _ "$TMP/scope.sh" "$pv/$i.env")"
+		case "${v5%% *}" in
+		DEFECT) case "$v5" in *"is not a valid edition"*) v5=invalid ;; *) v5=ee ;; esac ;;
+		*) v5="${v5%% *}" ;;
+		esac
+		case "$pin:$v5" in
+		community:unknown | enterprise:ee | unset:unknown | auto:unknown | other:invalid) ;;
+		*) bad "the two pin readers disagree at a 5xx on '$line': dotenv_edition=$pin, scope_probe=$v5" ;;
 		esac
 	done
 
@@ -840,7 +854,10 @@ REMOTE=/opt/alethia
 # Upper-case on purpose: mint_env declares `local pinned`, which would shadow a stub's variable.
 MINT_LOG="$3"; REQUESTED="$4"; PIN_ANSWER="$5"
 die() { echo "DIED: $1" >>"$MINT_LOG"; exit 9; }
-openssl() { echo X; }
+# `openssl base64` is the READ end of `openssl genpkey | openssl base64 -A` in mint_env: a stub that
+# exits without reading lets the writer die of SIGPIPE, and under pipefail + errexit that kills the
+# driver with 141 — a race, seen under macOS bash 3.2, that reads as a mint_env defect.
+openssl() { if [ "$1" = base64 ]; then cat >/dev/null; fi; echo X; }
 ed25519_raw_b64() { echo X; }
 env_fqdn() { echo s1.example; }
 ssh_box() {
@@ -880,6 +897,14 @@ SH
 	done
 	d404='DEFECT 404 the organization plugin is absent'
 	d500='DEFECT 500 ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load'
+	# #6171. The why scope_verdict writes for a pin parseAlethiaEdition rejects, read off the REAL
+	# scope_verdict (lifted for C9 above) rather than hand-typed, so a reworded phrase cannot leave
+	# this fixture matching while env.sh no longer does.
+	d500i="$(bash -c '. "$1"; v=$(scope_verdict 503 Enterprise); echo "${v%% *} 503 ${v#* }"' _ "$TMP/scope.sh")"
+	case "$d500i" in
+	"DEFECT 503 ALETHIA_EDITION=Enterprise is not a valid edition"*) ;;
+	*) bad "scope_verdict no longer writes the invalid-pin DEFECT env.sh keys on: $d500i" ;;
+	esac
 
 	# D1. env_scopes — its probe body runs ON THE BOX as text, so it is run here under `sh`, against
 	# a fixture env-mode.sh that answers per port with the line the real probe prints.
@@ -891,6 +916,7 @@ SH
 case "\$2" in
 3101) echo "$d404" ;;
 3102) echo "$d500" ;;
+3104) echo "$d500i" ;;
 *) echo "enterprise 422 the organization plugin is registered" ;;
 esac
 SH
@@ -899,13 +925,14 @@ SH
 set -euo pipefail
 . "$1"
 REMOTE="$2"
-ssh_box() { case "$1" in *env-registry.sh*) echo '{"c":{"consolePort":3101},"e":{"consolePort":3102},"ok":{"consolePort":3103}}' ;; *) sh -c "$1" ;; esac; }
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"c":{"consolePort":3101},"e":{"consolePort":3102},"ok":{"consolePort":3103},"i":{"consolePort":3104}}' ;; *) sh -c "$1" ;; esac; }
 env_scopes
 SH
 	out="$(bash "$TMP/drive-scopes.sh" "$TMP/defect.sh" "$sbox" 2>&1)" || bad "env_scopes failed: $out"
 	printf '%s\n' "$out" | grep -qx 'c COMMUNITY' || bad "env:status does not label a 404 DEFECT COMMUNITY: $out"
 	printf '%s\n' "$out" | grep -qx 'e EE-NOT-LOADED' || bad "env:status labels a pinned-enterprise 5xx DEFECT as something else: $out"
 	printf '%s\n' "$out" | grep -qx 'ok enterprise' || bad "env:status mislabels an enterprise console: $out"
+	printf '%s\n' "$out" | grep -qx 'i INVALID-PIN' || bad "env:status labels an invalid-pin 5xx DEFECT as something else: $out"
 	# …and the edition row it feeds does not call that measured scope "not measured".
 	erow enterprise EE-NOT-LOADED "pinned enterprise, but the console cannot load the enterprise edition"
 
@@ -930,6 +957,13 @@ SH
 	*"DIED: 's1' cannot load the enterprise edition its .env pins"*"answers 500"*"pnpm env:logs"*) ;;
 	*) bad "env:test does not name the enterprise load failure for a 5xx DEFECT: $t500" ;;
 	esac
+	t500i="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d500i" 2>&1)"
+	case "$t500i" in
+	*COMMUNITY* | *upgrade_required* | *NOT-REFUSED* | *"enterprise edition its .env pins"* | *env:logs*)
+		bad "env:test describes an invalid-pin 5xx as another DEFECT, or does not refuse it: $t500i" ;;
+	*"DIED: 's1' has an ALETHIA_EDITION pin the console rejects"*"answers 503"*"ALETHIA_EDITION=Enterprise is not a valid edition"*"fix the pin in that env's .env"*"then pnpm env:up"*) ;;
+	*) bad "env:test does not name an invalid pin, with its remedy, for that 5xx DEFECT: $t500i" ;;
+	esac
 
 	# D3. The restart after a run, and the restore after a reboot: exit 3 is "up, in the wrong
 	# scope" for BOTH, so the line under it must ask which.
@@ -952,6 +986,7 @@ restore_live_envs
 SH
 	r404="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d404" 2>&1)"
 	r500="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d500" 2>&1)"
+	r500i="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d500i" 2>&1)"
 	case "$r404" in
 	*"the console is back, but it is serving COMMUNITY entitlements"*"=== restore"*"s1 is back, but it is serving COMMUNITY entitlements"*"must run: pnpm env:up"*) ;;
 	*) bad "restart/restore do not report a 404 DEFECT as COMMUNITY: $r404" ;;
@@ -960,6 +995,11 @@ SH
 	*COMMUNITY*) bad "restart/restore describe a pinned-enterprise 5xx as COMMUNITY: $r500" ;;
 	*"the console is back, but it cannot load the enterprise edition"*"pnpm env:logs"*"=== restore"*"s1 is back, but it cannot load the enterprise edition"*"must run: pnpm env:logs"*) ;;
 	*) bad "restart/restore do not name the enterprise load failure for a 5xx DEFECT: $r500" ;;
+	esac
+	case "$r500i" in
+	*COMMUNITY* | *env:logs* | *"enterprise edition its .env pins"*) bad "restart/restore describe an invalid-pin 5xx as another DEFECT: $r500i" ;;
+	*"the console is back, but it has an ALETHIA_EDITION pin the console rejects"*"fix the pin in that env's .env"*"=== restore"*"s1 is back, but it has an ALETHIA_EDITION pin the console rejects"*"must run: fix the pin in that env's .env"*) ;;
+	*) bad "restart/restore do not name an invalid pin for that 5xx DEFECT: $r500i" ;;
 	esac
 	# D4. The restore restarts EVERY env, not the first. ssh forwards its stdin to the remote command,
 	# so an ssh_box inside the slug loop that inherits the loop's stdin swallows the rest of the list.
@@ -983,7 +1023,7 @@ SH
 	done
 
 	[ "$fails" = "$d_before" ] &&
-		ok "a 404 DEFECT reads COMMUNITY and a pinned-enterprise 5xx DEFECT reads EE-NOT-LOADED in env:test, env:status, the restart and the restore — and both are still refused"
+		ok "a 404 DEFECT reads COMMUNITY, a pinned-enterprise 5xx DEFECT reads EE-NOT-LOADED and an invalid-pin 5xx DEFECT reads INVALID-PIN in env:test, env:status, the restart and the restore — and all three are still refused"
 
 	[ "$fails" = "$before" ] &&
 		ok "an existing .env gains the keys it predates, keeps every value it has, refuses a missing secret without --fresh, and env:status names the gap"
@@ -1218,10 +1258,10 @@ AWK
 # #6166: each site that described a pinned-enterprise 5xx DEFECT as COMMUNITY, put back the way it
 # shipped — plus the shared label collapsing to one word, and the remedy losing the log.
 mutate_fn status-labels-every-defect-community <<'AWK'
-{ sub(/^    DEFECT\)     echo "\$s \$\(scope_defect_label "\$\{2:-\}"\)" ;;$/, "    DEFECT)     echo \"$s COMMUNITY\" ;;"); print }
+{ sub(/^    DEFECT\)     echo "\$s \$\(scope_defect_label "\$v"\)" ;;$/, "    DEFECT)     echo \"$s COMMUNITY\" ;;"); print }
 AWK
 mutate_fn defect-label-ignores-the-status <<'AWK'
-/^  5\[0-9\]\[0-9\]\) echo EE-NOT-LOADED ;;$/ { next }
+/^  5\[0-9\]\[0-9\]:\*\) echo EE-NOT-LOADED ;;$/ { next }
 { print }
 AWK
 mutate_fn env-test-refuses-a-5xx-in-community-words <<'AWK'
@@ -1243,6 +1283,26 @@ AWK
 # The restore loop fed by a pipe on stdin again, so the first ssh in it eats the remaining slugs.
 mutate_fn restore-loop-reads-stdin-again <<'AWK'
 { sub(/^  while read -r sl <&3; do$/, "  printf '%s\\n' \"$slugs\" | while read -r sl; do"); sub(/^  done 3< <\(printf '%s\\n' "\$slugs"\) <\/dev\/null$/, "  done"); print }
+AWK
+# #6171: an invalid pin folded back into the ee-load fault (by the label, and by env:test's arm);
+# its remedy losing the .env line; and dotenv_edition accepting a mis-cased pin the console rejects,
+# which C9 can only see at a 5xx — at a 404 `enterprise` and `other` are both DEFECT.
+mutate_fn invalid-pin-labelled-ee-not-loaded <<'AWK'
+/^  5\[0-9\]\[0-9\]:\*"is not a valid edition"\*\) echo INVALID-PIN ;;$/ { next }
+{ print }
+AWK
+mutate_fn env-test-refuses-an-invalid-pin-in-ee-words <<'AWK'
+/^cmd_test\(\) \{/ { inside = 1 }
+inside && /^    INVALID-PIN\)$/ { sub(/INVALID-PIN/, "INVALID-NEVER") }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+mutate_fn invalid-pin-remedy-drops-the-env-line <<'AWK'
+{ sub(/^  DEFECT:INVALID-PIN\) echo "fix the pin in that env's .env \(community, enterprise or auto — exactly\), then pnpm env:up" ;;$/, "  DEFECT:INVALID-PIN) echo \"pnpm env:up\" ;;"); print }
+AWK
+mutate_fn pin-reader-accepts-a-mis-cased-pin <<'AWK'
+/^  enterprise \| community \| auto\) echo "\$_e" ;;$/ { print "  Enterprise) echo enterprise ;;" }
+{ print }
 AWK
 mutate_fn remedy-drops-the-log <<'AWK'
 /^  DEFECT:EE-NOT-LOADED\) echo "pnpm env:logs/ { next }
