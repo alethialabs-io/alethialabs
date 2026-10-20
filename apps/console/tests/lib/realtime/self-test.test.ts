@@ -22,7 +22,16 @@ vi.mock("@/lib/realtime/index", () => ({
 
 import { selfTestOnce } from "@/lib/realtime/self-test";
 
-const STATS = { streams: 2, keys: 6, delivered: 10, filtered: 1, dropped: 0 };
+const STATS = {
+	streams: 2,
+	keys: 6,
+	users: 1,
+	maxPerUser: 2,
+	delivered: 10,
+	filtered: 1,
+	dropped: 0,
+	refused: 0,
+};
 
 function deps(over: { listening?: boolean; heard?: boolean; notifyError?: Error } = {}) {
 	const bus = {

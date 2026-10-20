@@ -45,7 +45,7 @@ import { GET } from "@/app/(private)/[org]/~/events/route";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import type { Actor } from "@/lib/authz/types";
 import { ForbiddenError } from "@/lib/authz/types";
-import { ChangeBus } from "@/lib/realtime/bus";
+import { ChangeBus, MAX_STREAMS_PER_USER } from "@/lib/realtime/bus";
 import type { ChangeValue } from "@/lib/realtime/index";
 import { PdpMemo } from "@/lib/realtime/pdp-memo";
 
@@ -99,7 +99,12 @@ function jobNotice(p: string | null, o = ORG, id = JOB): ChangeValue {
 
 /** The data objects of every `hint` event in `text`. */
 function hintsIn(text: string): unknown[] {
-	return [...text.matchAll(/event: hint\nid: \d+\ndata: (.*)\n\n/g)].map((m) => JSON.parse(m[1]));
+	return [...text.matchAll(/event: hint\nid: [^\n]+\ndata: (.*)\n\n/g)].map((m) => JSON.parse(m[1]));
+}
+
+/** The `id:` of every event in `text`, in order. */
+function idsIn(text: string): string[] {
+	return [...text.matchAll(/\nid: ([^\n]+)\n/g)].map((m) => m[1]);
 }
 
 beforeEach(() => {
@@ -132,7 +137,7 @@ afterEach(() => {
 });
 
 describe("the tenant is decided before anything streams", () => {
-	it("answers a non-member (or an unknown org) with 404, never a 403 that confirms the slug", async () => {
+	it("answers a non-member exactly as an unknown org: 404", async () => {
 		h.currentActor.mockRejectedValue(notFoundSignal());
 		const res = await GET(request("/someone-elses-org/~/events"));
 		expect(res.status).toBe(404);
@@ -210,17 +215,59 @@ describe("the stream", () => {
 		expect(Number(retry![1])).toBeGreaterThanOrEqual(3000);
 		expect(Number(retry![1])).toBeLessThan(8000);
 		const hello = JSON.parse(/event: hello\ndata: (.*)\n\n/.exec(text)![1]);
-		expect(hello).toMatchObject({ v: 1, cursor: "0" });
+		expect(hello).toMatchObject({ v: 1 });
+		expect(hello.cursor).toMatch(/^[A-Za-z0-9_-]{8}\.0$/);
 		expect(hello.boot).toMatch(/^[0-9a-f-]{36}$/);
 		ac.abort();
 	});
 
-	it("subscribes the org, owner and org-owner keys of the ADDRESS's actor", async () => {
+	it("subscribes the org key and the caller's own key in the ADDRESS's org", async () => {
 		const ac = new AbortController();
 		await GET(request("/acme/~/events", ac.signal));
-		expect(bus.stats()).toMatchObject({ streams: 1, keys: 3 });
-		expect(bus.cursorFor([`o:${ORG}`])).toBe("0");
+		expect(bus.stats()).toMatchObject({ streams: 1, keys: 2 });
 		ac.abort();
+	});
+
+	it("moves the cursor only for events THIS stream was sent, never for notices filtered out of it", async () => {
+		const ac = new AbortController();
+		const res = await GET(request("/acme/~/events", ac.signal));
+		const reader = res.body!.getReader();
+		const hello = await readUntil(reader, /event: hello/);
+		const tag = /"cursor":"([^".]+)\.0"/.exec(hello)![1];
+		emit(jobNotice(SECRET_PROJECT)); // filtered out of this stream
+		emit(jobNotice(null, OTHER_ORG)); // routed to another org
+		emit(jobNotice(PROJECT)); // the first event this stream is sent
+		const text = await readUntil(reader, /event: hint/);
+		expect(idsIn(text)).toEqual([`${tag}.1`]);
+		ac.abort();
+	});
+
+	it("gives every stream its own cursor, so a reconnect never matches the previous stream", async () => {
+		const a = new AbortController();
+		const b = new AbortController();
+		const one = await readUntil((await GET(request("/acme/~/events", a.signal))).body!.getReader(), /hello/);
+		const two = await readUntil((await GET(request("/acme/~/events", b.signal))).body!.getReader(), /hello/);
+		const cursor = (t: string) => /"cursor":"([^"]+)"/.exec(t)![1];
+		expect(cursor(one)).not.toBe(cursor(two));
+		a.abort();
+		b.abort();
+	});
+
+	it("refuses a person's ninth stream in this process with 429 and Retry-After", async () => {
+		const open: AbortController[] = [];
+		for (let i = 0; i < MAX_STREAMS_PER_USER; i++) {
+			const ac = new AbortController();
+			open.push(ac);
+			expect((await GET(request("/acme/~/events", ac.signal))).status).toBe(200);
+		}
+		const refused = await GET(request("/acme/~/events"));
+		expect(refused.status).toBe(429);
+		expect(refused.headers.get("retry-after")).toBe("30");
+		expect(bus.stats()).toMatchObject({ streams: MAX_STREAMS_PER_USER, refused: 1 });
+		open[0].abort();
+		const ac = new AbortController();
+		expect((await GET(request("/acme/~/events", ac.signal))).status).toBe(200);
+		for (const c of [...open, ac]) c.abort();
 	});
 
 	it("sends {t, id} and nothing else for a notice the reader may see", async () => {
@@ -310,7 +357,7 @@ describe("the stream", () => {
 		await readUntil(reader, new RegExp(ids(999)));
 		emit(jobNotice(null, ORG, ids(6000)));
 		const text = await readUntil(reader, /event: resync/);
-		expect(text).toMatch(/event: resync\nid: \d+\ndata: \{"reason":"backpressure"\}/);
+		expect(text).toMatch(/event: resync\nid: [^\n]+\ndata: \{"reason":"backpressure"\}/);
 		ac.abort();
 	});
 });
@@ -370,8 +417,21 @@ describe("re-authorisation every 60 s", () => {
 		vi.advanceTimersByTime(60_000);
 		const text = await readUntil(reader, /event: resync/);
 		expect(text).toContain('"reason":"keys-changed"');
-		expect(bus.stats().keys).toBe(4); // + platform
+		expect(bus.stats().keys).toBe(3); // + platform
 		ac.abort();
+	});
+
+	it("ends with revoked {unauthorized} when the re-check does not answer in time", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+		h.reauthorize.mockImplementation(() => new Promise(() => {}));
+		const res = await GET(request("/acme/~/events"));
+		const reader = res.body!.getReader();
+		await readUntil(reader, /event: hello/);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await vi.advanceTimersByTimeAsync(10_000);
+		const text = await readUntil(reader, /event: revoked/);
+		expect(text).toContain('event: revoked\ndata: {"reason":"unauthorized"}');
+		expect(bus.stats().streams).toBe(0);
 	});
 
 	it("uses the personal scope's own id for `~`", async () => {

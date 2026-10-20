@@ -23,6 +23,10 @@
 //                 refreshes the counter), and read the deep /health: `loops[realtime-bus].lastResult
 //                 .streams` must be 0 and RSS must be back within 10 % of baseline.
 //
+// ONE SESSION, MANY STREAMS. The bus caps one person's streams per process (8 by default). Start the
+// console under test with ALETHIA_REALTIME_MAX_STREAMS_PER_USER at or above --streams, or every
+// stream past the cap is answered 429 and the run fails at OPEN.
+//
 // Output is one JSON document on stdout (or --out). Run it three times on a STANDALONE build: behind
 // caddy:2 with deploy/prod/Caddyfile, with deploy/prod/Caddyfile.tunnel, and through the env's
 // public tunnel. A Turbopack dev server is not the product and its RSS means nothing here.
@@ -52,7 +56,8 @@ const HELP = `bench-realtime — the change bus under N open streams (#6115)
   --db URL              Postgres URL that may UPDATE public.jobs (required; never printed)
   --job UUID            a TERMINAL job visible to that session (required)
   --health-secret S     ALETHIA_CRON_SECRET, for the deep /health document (required; never printed)
-  --streams N           streams to open (default 1000)
+  --streams N           streams to open (default 1000; the console needs
+                        ALETHIA_REALTIME_MAX_STREAMS_PER_USER >= N, the per-user cap is 8)
   --updates N           sequential updates to time (default 500)
   --settle-ms N         idle wait before each RSS sample (default 30000)
   --teardown-ms N       wait after closing every stream (default 35000; must exceed the 30 s self-test)

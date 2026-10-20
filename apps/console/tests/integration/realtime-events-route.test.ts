@@ -71,12 +71,14 @@ const ORG = randomUUID();
 const SLUG = `it-6115-${ORG.slice(0, 8)}`;
 const U = {
 	active: randomUUID(),
+	toSuspend: randomUUID(), // active at connect, suspended mid-stream
 	suspended: randomUUID(),
 	stranger: randomUUID(), // no member row at all
 	colleague: randomUUID(), // writes jobs the active member may or may not see
 };
 const VISIBLE = randomUUID();
 const HIDDEN = randomUUID();
+const GONE = randomUUID(); // deleted mid-test: its job becomes a project-less row of the org
 const createdJobs: string[] = [];
 const db = () => getServiceDb();
 
@@ -134,6 +136,7 @@ describeIfDb("GET /{org}/~/events — tenancy and delivery against real Postgres
 			.insert(member)
 			.values([
 				{ organizationId: ORG, userId: U.active, role: "viewer" },
+				{ organizationId: ORG, userId: U.toSuspend, role: "viewer" },
 				{ organizationId: ORG, userId: U.suspended, role: "viewer", status: "suspended" },
 			]);
 		// Community stamps an org address's work into the actor's personal scope, so the colleague's
@@ -143,6 +146,7 @@ describeIfDb("GET /{org}/~/events — tenancy and delivery against real Postgres
 			.values([
 				{ id: VISIBLE, user_id: U.colleague, org_id: U.active, project_name: `v-${SLUG}`, region: "eu-central-1", iac_version: "1.9.5" },
 				{ id: HIDDEN, user_id: U.colleague, org_id: U.active, project_name: `h-${SLUG}`, region: "eu-central-1", iac_version: "1.9.5" },
+				{ id: GONE, user_id: U.colleague, org_id: U.active, project_name: `g-${SLUG}`, region: "eu-central-1", iac_version: "1.9.5" },
 			]);
 	});
 
@@ -152,7 +156,7 @@ describeIfDb("GET /{org}/~/events — tenancy and delivery against real Postgres
 
 	afterAll(async () => {
 		if (createdJobs.length) await db().delete(jobs).where(inArray(jobs.id, createdJobs));
-		await db().delete(projects).where(inArray(projects.id, [VISIBLE, HIDDEN]));
+		await db().delete(projects).where(inArray(projects.id, [VISIBLE, HIDDEN, GONE]));
 		await db().delete(member).where(eq(member.organizationId, ORG));
 		await db().delete(organization).where(eq(organization.id, ORG));
 		await db().delete(user).where(inArray(user.id, Object.values(U)));
@@ -181,7 +185,7 @@ describeIfDb("GET /{org}/~/events — tenancy and delivery against real Postgres
 
 		const job = await insertJob(U.active, null);
 		const text = await readUntil(reader, new RegExp(job));
-		expect(text).toMatch(new RegExp(`event: hint\\nid: \\d+\\ndata: \\{"t":"jobs","id":"${job}"\\}`));
+		expect(text).toMatch(new RegExp(`event: hint\\nid: [^\\n]+\\ndata: \\{"t":"jobs","id":"${job}"\\}`));
 		expect(text).not.toContain(U.active); // the routing ids never reach the wire
 		ac.abort();
 		await reader.cancel().catch(() => {});
@@ -203,6 +207,39 @@ describeIfDb("GET /{org}/~/events — tenancy and delivery against real Postgres
 		expect(text).not.toContain(hidden);
 		ac.abort();
 		await reader.cancel().catch(() => {});
+	});
+
+	it("delivers the org's hint for a job whose project was deleted (it is now a project-less row)", async () => {
+		// The PDP stub answers "no" for GONE; once GONE no longer exists it is not asked.
+		const job = await insertJob(U.colleague, GONE);
+		const ac = new AbortController();
+		const res = await open(U.active, `/${SLUG}/~/events`, ac.signal);
+		const reader = res.body!.getReader();
+		await readUntil(reader, /event: hello/);
+		expect(await getChangeTransport().whenListening(5000)).toBe(true);
+
+		await db().delete(projects).where(eq(projects.id, GONE)); // ON DELETE SET NULL → one notice, p = GONE
+		const text = await readUntil(reader, new RegExp(job));
+		expect(text).toContain(job);
+		ac.abort();
+		await reader.cancel().catch(() => {});
+	});
+
+	it("ends with `revoked` within one re-auth tick of the member being SUSPENDED mid-stream", async () => {
+		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+		const res = await open(U.toSuspend, `/${SLUG}/~/events`);
+		expect(res.status).toBe(200);
+		const reader = res.body!.getReader();
+		await readUntil(reader, /event: hello/);
+
+		await db()
+			.update(member)
+			.set({ status: "suspended" })
+			.where(eq(member.userId, U.toSuspend));
+		vi.advanceTimersByTime(60_000);
+		const text = await readUntil(reader, /event: revoked/);
+		expect(text).toContain('event: revoked\ndata: {"reason":"not-member"}');
+		expect((await reader.read()).done).toBe(true);
 	});
 
 	it("ends with `revoked` within one re-auth tick of the member being removed mid-stream", async () => {

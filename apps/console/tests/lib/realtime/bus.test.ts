@@ -19,10 +19,17 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/realtime/index", () => ({ getChangeTransport: vi.fn() }));
 
 import type { Actor } from "@/lib/authz/types";
-import { ChangeBus, type StreamSink } from "@/lib/realtime/bus";
+import {
+	ChangeBus,
+	MAX_PENDING_PER_STREAM,
+	MAX_STREAMS_PER_USER,
+	maxStreamsPerUser,
+	type StreamSink,
+	type Subscription,
+} from "@/lib/realtime/bus";
 import type { ChangeValue } from "@/lib/realtime/index";
 import { PdpMemo } from "@/lib/realtime/pdp-memo";
-import type { ChangeNotice } from "@/lib/realtime/routing";
+import { type ChangeNotice, subscriptionKeys } from "@/lib/realtime/routing";
 import type { Hint, ResyncReason } from "@/lib/realtime/topics";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -57,11 +64,15 @@ function fakeTransport() {
 
 /** A sink that records what a stream was sent. */
 function recorder() {
-	const hints: Array<{ hint: Hint; cursor: string }> = [];
-	const resyncs: Array<{ reason: ResyncReason; cursor: string }> = [];
+	const hints: Array<{ hint: Hint }> = [];
+	const resyncs: Array<{ reason: ResyncReason }> = [];
 	const sink: StreamSink = {
-		hint: (hint, cursor) => hints.push({ hint, cursor }),
-		resync: (reason, cursor) => resyncs.push({ reason, cursor }),
+		hint: (hint) => {
+			hints.push({ hint });
+		},
+		resync: (reason) => {
+			resyncs.push({ reason });
+		},
 	};
 	return { sink, hints, resyncs };
 }
@@ -71,12 +82,20 @@ function job(over: Partial<ChangeNotice> = {}): ChangeNotice {
 	return { kind: "change", t: "jobs", id: JOB, o: ORG, u: OTHER_USER, p: PROJECT, ...over };
 }
 
+const NO_CAPS = { fleetView: false, manageSupport: false };
 const member: Actor = { userId: USER, orgId: ORG };
-const memberKeys = [`o:${ORG}`, `u:${USER}`, `ou:${ORG}:${USER}`];
+const memberKeys = subscriptionKeys(member, NO_CAPS);
 
 /** Lets queued PDP decisions settle. */
-async function settle(): Promise<void> {
-	for (let i = 0; i < 10; i++) await Promise.resolve();
+async function settle(turns = 10): Promise<void> {
+	for (let i = 0; i < turns; i++) await Promise.resolve();
+}
+
+/** Subscribes, failing the test if the bus refused. */
+function open(actor: Actor, keys: readonly string[], sink: StreamSink): Subscription {
+	const sub = bus.subscribe(actor, keys, sink);
+	if (!sub) throw new Error("the bus refused the stream");
+	return sub;
 }
 
 let transport: ReturnType<typeof fakeTransport>;
@@ -122,7 +141,7 @@ describe("fan-out", () => {
 		check.mockResolvedValue(false);
 		const r = recorder();
 		bus.subscribe(member, memberKeys, r.sink);
-		// The member's own job, in a project they can no longer view: RLS still returns it to them.
+		// The member's own job in this org: the owner arm, unfiltered, as the jobs read is.
 		transport.emit(job({ u: USER }));
 		await settle();
 		expect(check).not.toHaveBeenCalled();
@@ -138,10 +157,23 @@ describe("fan-out", () => {
 		expect(r.hints).toHaveLength(1);
 	});
 
+	it("delivers a person's own job only on the stream of the org the job belongs to", async () => {
+		const here = recorder();
+		const there = recorder();
+		bus.subscribe(member, memberKeys, here.sink);
+		const elsewhere: Actor = { userId: USER, orgId: OTHER_ORG };
+		bus.subscribe(elsewhere, subscriptionKeys(elsewhere, NO_CAPS), there.sink);
+		// Written by USER, stamped OTHER_ORG: it belongs to the OTHER_ORG stream alone.
+		transport.emit(job({ o: OTHER_ORG, u: USER, p: null }));
+		await settle();
+		expect(here.hints).toEqual([]);
+		expect(there.hints).toHaveLength(1);
+	});
+
 	it("delivers once to a stream matched by two keys (personal scope, o == u)", async () => {
 		const personal: Actor = { userId: USER, orgId: USER };
 		const r = recorder();
-		bus.subscribe(personal, [`o:${USER}`, `u:${USER}`, `ou:${USER}:${USER}`], r.sink);
+		bus.subscribe(personal, subscriptionKeys(personal, NO_CAPS), r.sink);
 		transport.emit(job({ o: USER, u: USER, p: null }));
 		await settle();
 		expect(r.hints).toHaveLength(1);
@@ -149,7 +181,8 @@ describe("fan-out", () => {
 
 	it("never delivers to a stream of another org", async () => {
 		const r = recorder();
-		bus.subscribe({ userId: USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`, `u:${USER}`], r.sink);
+		const elsewhere: Actor = { userId: USER, orgId: OTHER_ORG };
+		bus.subscribe(elsewhere, subscriptionKeys(elsewhere, NO_CAPS), r.sink);
 		transport.emit(job());
 		await settle();
 		expect(r.hints).toEqual([]);
@@ -179,7 +212,6 @@ describe("fan-out", () => {
 		release(true);
 		await settle();
 		expect(r.hints.map((h) => h.hint.id)).toEqual([first, second]);
-		expect(Number(r.hints[0].cursor)).toBeLessThan(Number(r.hints[1].cursor));
 	});
 
 	it("re-uses a memoised PDP answer instead of asking again", async () => {
@@ -194,24 +226,7 @@ describe("fan-out", () => {
 	});
 });
 
-describe("cursor and resync", () => {
-	it("moves a stream's cursor on every routed notice, even one it was filtered out of", async () => {
-		check.mockResolvedValue(false);
-		const before = bus.cursorFor(memberKeys);
-		bus.start();
-		transport.emit(job()); // nobody subscribed yet: the cursor still has to move
-		bus.subscribe(member, memberKeys, recorder().sink);
-		expect(bus.cursorFor(memberKeys)).not.toBe(before);
-	});
-
-	it("does not move the cursor of a stream whose keys a notice did not route to", () => {
-		const keys = [`o:${OTHER_ORG}`, `u:${USER}`];
-		const before = bus.cursorFor(keys);
-		bus.start();
-		transport.emit(job());
-		expect(bus.cursorFor(keys)).toBe(before);
-	});
-
+describe("resync", () => {
 	it("tells every stream to resync on a LISTEN reconnect", () => {
 		const a = recorder();
 		const b = recorder();
@@ -224,7 +239,7 @@ describe("cursor and resync", () => {
 
 	it("resyncs a stream whose keys changed on re-auth, and routes by the new keys", async () => {
 		const r = recorder();
-		const sub = bus.subscribe(member, memberKeys, r.sink);
+		const sub = open(member, memberKeys, r.sink);
 		sub.update(member, [`o:${OTHER_ORG}`]);
 		expect(r.resyncs.map((x) => x.reason)).toEqual(["keys-changed"]);
 		transport.emit(job());
@@ -234,7 +249,7 @@ describe("cursor and resync", () => {
 
 	it("does not resync a stream whose keys did not change", () => {
 		const r = recorder();
-		const sub = bus.subscribe(member, memberKeys, r.sink);
+		const sub = open(member, memberKeys, r.sink);
 		sub.update(member, [...memberKeys].reverse());
 		expect(r.resyncs).toEqual([]);
 	});
@@ -249,25 +264,66 @@ describe("bookkeeping", () => {
 	});
 
 	it("returns streams and keys to zero when every stream closes", () => {
-		const a = bus.subscribe(member, memberKeys, recorder().sink);
-		const b = bus.subscribe({ userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], recorder().sink);
-		expect(bus.stats()).toMatchObject({ streams: 2, keys: 4 });
+		const a = open(member, memberKeys, recorder().sink);
+		const b = open({ userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], recorder().sink);
+		expect(bus.stats()).toMatchObject({ streams: 2, keys: 3, users: 2, maxPerUser: 1 });
 		a.close();
 		b.close();
 		b.close(); // idempotent
-		expect(bus.stats()).toMatchObject({ streams: 0, keys: 0 });
+		expect(bus.stats()).toMatchObject({ streams: 0, keys: 0, users: 0, maxPerUser: 0 });
 	});
 
 	it("delivers nothing to a stream that closed while its PDP answer was pending", async () => {
 		let release: (v: boolean) => void = () => {};
 		check.mockImplementationOnce(() => new Promise<boolean>((res) => (release = res)));
 		const r = recorder();
-		const sub = bus.subscribe(member, memberKeys, r.sink);
+		const sub = open(member, memberKeys, r.sink);
 		transport.emit(job());
 		sub.close();
 		release(true);
 		await settle();
 		expect(r.hints).toEqual([]);
+	});
+
+	it("caps one person's streams per process, counts the refusals, and frees a slot on close", () => {
+		const subs = Array.from({ length: MAX_STREAMS_PER_USER }, () =>
+			open(member, memberKeys, recorder().sink),
+		);
+		expect(bus.hasRoomFor(USER)).toBe(false);
+		expect(bus.subscribe(member, memberKeys, recorder().sink)).toBeNull();
+		expect(bus.stats()).toMatchObject({
+			streams: MAX_STREAMS_PER_USER,
+			maxPerUser: MAX_STREAMS_PER_USER,
+			refused: 1,
+		});
+		// Another person is unaffected.
+		expect(bus.hasRoomFor(OTHER_USER)).toBe(true);
+		subs[0].close();
+		expect(bus.hasRoomFor(USER)).toBe(true);
+	});
+
+	it("bounds the PDP wait per stream: past the bound it drops the waiting hints and resyncs once", async () => {
+		let release: (v: boolean) => void = () => {};
+		const gate = new Promise<boolean>((res) => (release = res));
+		check.mockImplementation(() => gate);
+		const r = recorder();
+		bus.subscribe(member, memberKeys, r.sink);
+		const total = MAX_PENDING_PER_STREAM + 5;
+		for (let i = 0; i < total; i++) {
+			const p = `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`;
+			transport.emit(job({ p }));
+		}
+		await settle();
+		expect(r.resyncs).toEqual([]); // not before the queue has drained
+		release(true);
+		await settle(20 * total);
+		expect(r.hints).toEqual([]);
+		expect(r.resyncs.map((x) => x.reason)).toEqual(["backpressure"]);
+		expect(bus.stats().dropped).toBe(total);
+		// Drained: the next notice is delivered normally.
+		transport.emit(job({ p: null }));
+		await settle();
+		expect(r.hints).toHaveLength(1);
 	});
 
 	it("counts dropped hints reported by a stream", () => {
@@ -330,6 +386,13 @@ describe("PdpMemo", () => {
 		expect(check).toHaveBeenCalledTimes(2);
 	});
 
+	it("reads a PDP answer slower than its timeout as a deny, and does not cache it", async () => {
+		check.mockImplementationOnce(() => new Promise<boolean>(() => {}));
+		const memo = new PdpMemo({ check, timeoutMs: 20 });
+		await expect(memo.allowed(member, PROJECT)).resolves.toBe(false);
+		expect(memo.peek(member, PROJECT)).toBeUndefined();
+	});
+
 	it("does not cache a PDP error", async () => {
 		check.mockRejectedValueOnce(new Error("down"));
 		const memo = new PdpMemo({ check });
@@ -345,5 +408,30 @@ describe("PdpMemo", () => {
 		memo.evictUser(USER);
 		expect(memo.peek(member, PROJECT)).toBeUndefined();
 		expect(memo.peek(other, PROJECT)).toBe(true);
+	});
+});
+
+describe("maxStreamsPerUser", () => {
+	it("is 8 unless ALETHIA_REALTIME_MAX_STREAMS_PER_USER is a positive integer", () => {
+		const before = process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER;
+		try {
+			delete process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER;
+			expect(maxStreamsPerUser()).toBe(MAX_STREAMS_PER_USER);
+			process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER = "1200";
+			expect(maxStreamsPerUser()).toBe(1200);
+			for (const bad of ["0", "-3", "1.5", "lots"]) {
+				process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER = bad;
+				expect(maxStreamsPerUser()).toBe(MAX_STREAMS_PER_USER);
+			}
+		} finally {
+			if (before === undefined) delete process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER;
+			else process.env.ALETHIA_REALTIME_MAX_STREAMS_PER_USER = before;
+		}
+	});
+
+	it("a bus built with a higher cap admits that many streams for one person", () => {
+		const big = new ChangeBus({ transport: fakeTransport(), maxStreamsPerUser: 20 });
+		for (let i = 0; i < 20; i++) expect(big.subscribe(member, memberKeys, recorder().sink)).not.toBeNull();
+		expect(big.subscribe(member, memberKeys, recorder().sink)).toBeNull();
 	});
 });

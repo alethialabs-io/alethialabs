@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { randomBytes } from "node:crypto";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { namesNoOrg } from "@/lib/authz/org-path";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
@@ -36,6 +37,12 @@ const elog = log.child({ component: "realtime-events" });
 const HEARTBEAT_MS = 20_000;
 const REAUTH_EVERY = 3;
 
+/** How long one re-authorisation may take; past it the stream ends with `revoked`. */
+const REAUTH_TIMEOUT_MS = 10_000;
+
+/** What a 429 tells the client to wait before trying again (seconds). */
+const RETRY_AFTER_S = 30;
+
 /**
  * How many bytes a stream may have queued and unread before it stops being sent hints and is told
  * to resync instead. Bounds the memory a stalled client can pin to ~64 KB (ADR 0005 §5).
@@ -49,8 +56,8 @@ function refusal(status: number, error: string): Response {
 
 /**
  * Resolves the caller for this address exactly as the read router does (`/{org}/~/rpc`): the
- * ADDRESS decides the tenant, a non-member is a 404 like an unknown org (never a 403 that would
- * confirm the slug), no session is a 401, a resolver that lands elsewhere is a 403. Returns the
+ * ADDRESS decides the tenant, a non-member is answered exactly as an unknown org (404), no session
+ * is a 401, a resolver that lands elsewhere is a 403. Returns the
  * refusal instead of the actor when there is one.
  */
 async function resolveCaller(pathname: string): Promise<Actor | Response> {
@@ -112,6 +119,28 @@ export async function GET(request: Request): Promise<Response> {
 	const bus = getChangeBus();
 	const keys = subscriptionKeys(actor, caps);
 
+	// One person's streams per process are capped (PR B opens one per browser per org).
+	if (!bus.hasRoomFor(actor.userId)) {
+		bus.noteRefused();
+		return Response.json(
+			{ error: "Too many open live-update streams" },
+			{
+				status: 429,
+				headers: { "Cache-Control": "private, no-store", "Retry-After": String(RETRY_AFTER_S) },
+			},
+		);
+	}
+
+	// The stream's cursor: opaque, and it moves only when THIS stream is sent an event. A random tag
+	// per stream, so a reconnect never compares equal to a previous stream and always resyncs, and a
+	// count of the events sent on it. The client only ever compares two cursors for equality.
+	const streamTag = randomBytes(6).toString("base64url");
+	let sent = 0;
+	const nextCursor = () => {
+		sent += 1;
+		return `${streamTag}.${sent.toString(36)}`;
+	};
+
 	// The client's disconnect, read once here. The `Request` must stay reachable while the stream runs:
 	// its signal stops following the disconnect once the `Request` is collected, and nothing below
 	// reads `request` again except the `holdRequest` in teardown (see lib/http/hold-request.ts).
@@ -140,7 +169,7 @@ export async function GET(request: Request): Promise<Response> {
 
 				// Hints are coalesced per (topic, id) and written once per microtask, so a burst of one
 				// row's changes is one frame. A stream that is not being read drops them and owes a resync.
-				const pending = new Map<string, { hint: Hint; cursor: string }>();
+				const pending = new Map<string, Hint>();
 				let flushQueued = false;
 				let owesResync = false;
 				const flush = () => {
@@ -157,15 +186,13 @@ export async function GET(request: Request): Promise<Response> {
 					if (owesResync) {
 						owesResync = false;
 						pending.clear();
-						write(resyncFrame("backpressure", subscription?.cursor() ?? "0"));
+						write(resyncFrame("backpressure", nextCursor()));
 						return;
 					}
 					if (pending.size === 0) return;
-					const frames = [...pending.values()].sort(
-						(a, b) => Number(a.cursor) - Number(b.cursor),
-					);
+					const hints = [...pending.values()];
 					pending.clear();
-					write(frames.map((f) => hintFrame(f.hint, f.cursor)).join(""));
+					write(hints.map((h) => hintFrame(h, nextCursor())).join(""));
 				};
 				const schedule = () => {
 					if (flushQueued) return;
@@ -173,36 +200,50 @@ export async function GET(request: Request): Promise<Response> {
 					queueMicrotask(flush);
 				};
 				const sink: StreamSink = {
-					hint(hint, cursor) {
+					hint(hint) {
 						if (closed) return;
 						const key = `${hint.t}|${hint.id ?? ""}`;
 						pending.delete(key);
-						pending.set(key, { hint, cursor });
+						pending.set(key, hint);
 						schedule();
 					},
-					resync(reason: ResyncReason, cursor) {
+					resync(reason: ResyncReason) {
 						if (closed) return;
 						pending.clear();
 						if (congested()) {
 							owesResync = true;
 							return;
 						}
-						write(resyncFrame(reason, cursor));
+						write(resyncFrame(reason, nextCursor()));
 					},
 				};
 
 				let reauthorising = false;
 				const recheck = async () => {
-					let result: Awaited<ReturnType<typeof reauthorize>>;
+					let result: Awaited<ReturnType<typeof reauthorize>> | "timeout";
+					let timer: ReturnType<typeof setTimeout> | undefined;
 					try {
-						result = await reauthorize(snapshot);
+						result = await Promise.race([
+							reauthorize(snapshot),
+							new Promise<"timeout">((resolve) => {
+								timer = setTimeout(() => resolve("timeout"), REAUTH_TIMEOUT_MS);
+							}),
+						]);
 					} catch (err) {
 						// Not a revocation and not a pass: end the stream; the reconnect re-runs the connect path.
 						elog.warn("stream re-authorisation failed; closing the stream", { err });
 						stop();
 						return;
+					} finally {
+						clearTimeout(timer);
 					}
 					if (closed) return;
+					if (result === "timeout") {
+						// An answer that cannot be had in time is not a pass.
+						write(revokedFrame("unauthorized"));
+						stop();
+						return;
+					}
 					if (!result.ok) {
 						write(revokedFrame(result.reason));
 						stop();
@@ -213,7 +254,7 @@ export async function GET(request: Request): Promise<Response> {
 				};
 
 				write(retryFrame(retryDelayMs()));
-				write(helloFrame(bootId(), bus.cursorFor(keys)));
+				write(helloFrame(bootId(), `${streamTag}.0`));
 				// A client that left before this point aborted before the listener below existed, and an
 				// abort listener never hears an abort that already happened. Stop here, before the
 				// subscription and the heartbeat exist; `closed` covers a `cancel()` in the same gap.
@@ -222,6 +263,10 @@ export async function GET(request: Request): Promise<Response> {
 					return;
 				}
 				subscription = bus.subscribe(actor, keys, sink);
+				if (!subscription) {
+					stop(); // the per-user cap was reached between the check above and here
+					return;
+				}
 
 				let beats = 0;
 				heartbeat = setInterval(() => {

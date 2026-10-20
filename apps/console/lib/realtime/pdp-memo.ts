@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
+import { eq } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import type { Actor } from "@/lib/authz/types";
+import { getServiceDb } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 
 const mlog = log.child({ component: "realtime-pdp-memo" });
@@ -13,6 +16,9 @@ const PDP_MEMO_MAX = 10_000;
 
 /** How long one answer is trusted (ADR 0005 D3: "TTL ≤ 60 s"). */
 const PDP_MEMO_TTL_MS = 60_000;
+
+/** How long one PDP question may take; a slower answer is a deny (and is not cached). */
+export const PDP_CHECK_TIMEOUT_MS = 2_000;
 
 /** The question the memo answers: may this actor view this project? */
 export type ProjectViewCheck = (actor: Actor, projectId: string) => Promise<boolean>;
@@ -27,18 +33,29 @@ interface Entry {
  * `can(actor, 'view', project)` — NOT `enforce`, which records an activity-log entry for every call
  * (lib/authz/guard.ts `authorizeQuiet` says why that matters): the bus asks this once per hint per
  * stream, and none of those asks is a user action.
+ *
+ * A project that no longer exists is answered "yes". A job keeps its notice's OLD.project_id after its
+ * project is deleted (ON DELETE SET NULL), and that job is now a project-less row of the org, which
+ * the org arm delivers unfiltered; the read decides what the reader is shown.
  */
-const defaultCheck: ProjectViewCheck = async (actor, projectId) =>
-	(await getPdp().can(actor, "view", { type: "project", id: projectId })).allowed;
+const defaultCheck: ProjectViewCheck = async (actor, projectId) => {
+	const [row] = await getServiceDb()
+		.select({ id: projects.id })
+		.from(projects)
+		.where(eq(projects.id, projectId))
+		.limit(1);
+	if (!row) return true;
+	return (await getPdp().can(actor, "view", { type: "project", id: projectId })).allowed;
+};
 
 /**
  * A bounded, short-lived memo of project `view` decisions for the bus's PDP filter (#6115).
  *
  * LRU by Map insertion order, capped at {@link PDP_MEMO_MAX}; each answer expires after
  * {@link PDP_MEMO_TTL_MS}, and a stream's re-authorisation evicts its user's answers outright, so a
- * grant that was revoked stops being honoured within one re-auth tick at the latest. A PDP that
- * THROWS is a deny and is not cached: a hint withheld costs one refetch at the next resync, a hint
- * leaked names a project the reader may not see.
+ * changed grant is reflected within one re-auth tick at the latest. A PDP that THROWS, or answers
+ * slower than {@link PDP_CHECK_TIMEOUT_MS}, is a deny and is not cached: hints follow project view,
+ * and when the answer is unknown the hint waits for the next resync.
  */
 export class PdpMemo {
 	private readonly entries = new Map<string, Entry>();
@@ -47,6 +64,7 @@ export class PdpMemo {
 	private readonly ttlMs: number;
 	private readonly now: () => number;
 	private readonly check: ProjectViewCheck;
+	private readonly timeoutMs: number;
 
 	constructor(
 		opts: {
@@ -54,8 +72,10 @@ export class PdpMemo {
 			ttlMs?: number;
 			now?: () => number;
 			check?: ProjectViewCheck;
+			timeoutMs?: number;
 		} = {},
 	) {
+		this.timeoutMs = opts.timeoutMs ?? PDP_CHECK_TIMEOUT_MS;
 		this.max = opts.max ?? PDP_MEMO_MAX;
 		this.ttlMs = opts.ttlMs ?? PDP_MEMO_TTL_MS;
 		this.now = opts.now ?? Date.now;
@@ -80,12 +100,25 @@ export class PdpMemo {
 	async allowed(actor: Actor, projectId: string): Promise<boolean> {
 		const cached = this.peek(actor, projectId);
 		if (cached !== undefined) return cached;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timedOut = new Promise<"timeout">((resolve) => {
+			timer = setTimeout(() => resolve("timeout"), this.timeoutMs);
+		});
 		let allowed: boolean;
 		try {
-			allowed = await this.check(actor, projectId);
+			const answer = await Promise.race([this.check(actor, projectId), timedOut]);
+			if (answer === "timeout") {
+				mlog.warn("project view check timed out; withholding the hint", {
+					timeoutMs: this.timeoutMs,
+				});
+				return false;
+			}
+			allowed = answer;
 		} catch (err) {
 			mlog.warn("project view check failed; withholding the hint", { err });
 			return false;
+		} finally {
+			clearTimeout(timer);
 		}
 		this.store(keyOf(actor, projectId), actor.userId, allowed);
 		return allowed;

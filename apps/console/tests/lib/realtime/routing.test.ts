@@ -3,7 +3,7 @@
 
 // #6115 (ADR 0005 D3, §10 R6): who may hear about a change. Pure — every population the routing rule
 // has to get right is one case here, and the wire boundary (nothing but a topic and a uuid can become
-// a hint) is pinned on hostile payloads.
+// a hint) is pinned on malformed payloads.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -65,26 +65,40 @@ describe("parseNotice — the payload boundary", () => {
 	});
 });
 
-describe("keysFor — the arms of jobs' owner_all policy", () => {
-	it("a project job routes to the org arm (PDP-filtered on its project) and the owner arm (not)", () => {
+describe("keysFor — the arms of jobs' owner_all policy, each inside the row's org", () => {
+	it("a project job routes to the org arm (PDP-filtered on its project) and the owner arm in that org (not)", () => {
 		expect(keysFor(jobs())).toEqual([
 			{ key: `o:${ORG}`, filterProject: PROJECT },
-			{ key: `u:${USER}`, filterProject: null },
+			{ key: `ou:${ORG}:${USER}`, filterProject: null },
 		]);
 	});
 
 	it("a project-less job is visible to the whole org by RLS, so its org arm is unfiltered", () => {
 		expect(keysFor(jobs({ p: null }))).toEqual([
 			{ key: `o:${ORG}`, filterProject: null },
-			{ key: `u:${USER}`, filterProject: null },
+			{ key: `ou:${ORG}:${USER}`, filterProject: null },
 		]);
 	});
 
-	it("a service insert stamped org_id = user_id (R6) routes to the same person on both arms", () => {
+	it("a service insert stamped org_id = user_id (R6) routes into that person's personal scope", () => {
 		expect(keysFor(jobs({ o: USER, p: null })).map((r) => r.key)).toEqual([
 			`o:${USER}`,
-			`u:${USER}`,
+			`ou:${USER}:${USER}`,
 		]);
+	});
+
+	it("a row with an owner but no org routes to u:, which only the personal scope holds", () => {
+		expect(keysFor(jobs({ o: null })).map((r) => r.key)).toEqual([`u:${USER}`]);
+	});
+
+	it("a person's job in org B shares no key with that person's org-A stream", () => {
+		const OTHER = "55555555-5555-4555-8555-555555555555";
+		const inB = keysFor(jobs({ o: OTHER, p: null })).map((r) => r.key);
+		const streamA = subscriptionKeys(
+			{ userId: USER, orgId: ORG },
+			{ fleetView: true, manageSupport: true },
+		);
+		expect(inB.filter((k) => streamA.includes(k))).toEqual([]);
 	});
 
 	it("a row with neither org nor owner routes nowhere", () => {
@@ -99,10 +113,10 @@ describe("keysFor — the arms of jobs' owner_all policy", () => {
 });
 
 describe("subscriptionKeys — what a stream holds", () => {
-	it("a member holds the org, owner and org-owner keys, and nothing platform-wide", () => {
+	it("a member holds the org key and their own key in that org, and nothing platform-wide", () => {
 		expect(
 			subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false }),
-		).toEqual([`o:${ORG}`, `u:${USER}`, `ou:${ORG}:${USER}`]);
+		).toEqual([`o:${ORG}`, `ou:${ORG}:${USER}`]);
 	});
 
 	it("fleet:view adds the platform key; manage_support adds the org's support key", () => {
@@ -114,10 +128,10 @@ describe("subscriptionKeys — what a stream holds", () => {
 		expect(keys).toContain(`osupport:${ORG}`);
 	});
 
-	it("the personal scope (orgId === userId) holds o: and u: of the same person", () => {
+	it("only the personal scope (orgId === userId) also holds u:", () => {
 		expect(
 			subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false }),
-		).toEqual([`o:${USER}`, `u:${USER}`, `ou:${USER}:${USER}`]);
+		).toEqual([`o:${USER}`, `ou:${USER}:${USER}`, `u:${USER}`]);
 	});
 
 	it("an org member never holds another org's key", () => {

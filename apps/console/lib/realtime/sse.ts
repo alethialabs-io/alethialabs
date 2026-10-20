@@ -10,8 +10,8 @@ import {
 } from "./topics";
 
 // The frames of `/{org}/~/events` (#6115). Every frame is built here and nowhere else, so what can
-// reach the wire is exactly what these functions write: a topic name, a row uuid, a cursor (a
-// decimal counter), a boot uuid and a fixed reason word. A notice's org, owner and project ids are
+// reach the wire is exactly what these functions write: a topic name, a row uuid, the stream's
+// opaque cursor, a boot uuid and a fixed reason word. A notice's org, owner and project ids are
 // never an argument to anything in this file.
 
 /** A comment frame. Sent every 20 s, well under Cloudflare's 125 s proxy read timeout (ADR 0005 D3). */

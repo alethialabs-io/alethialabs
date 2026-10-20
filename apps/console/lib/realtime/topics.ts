@@ -62,9 +62,11 @@ export const PROTOCOL_VERSION = 1;
 /**
  * Every event the server sends on `/{org}/~/events`, as the client's parser sees it.
  *
- * - `hello` opens every stream: the process's boot id and this stream's cursor. A client that saw a
- *   different boot, or a different cursor, before it reconnected missed something and resyncs.
- * - `hint` carries one {@link Hint}; its SSE `id:` is the cursor after it.
+ * - `hello` opens every stream: the process's boot id and this stream's starting cursor. A cursor is
+ *   opaque and belongs to one stream; it moves only for events sent on that stream, and the client
+ *   compares cursors for equality only. A reconnect is a new stream, so it never matches and the
+ *   client resyncs (with jitter); the boot id tells a deploy apart for herd control.
+ * - `hint` carries one {@link Hint}; its SSE `id:` is the stream's cursor after it.
  * - `resync` means "invalidate everything you show for this org" (a LISTEN reconnect, a dropped burst).
  * - `revoked` ends the stream: the session ended, the membership went, or the Terms changed.
  */

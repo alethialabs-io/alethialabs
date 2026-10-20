@@ -31,8 +31,8 @@ import type { RevokedReason } from "./topics";
 //      (the three arms of `currentActor()`, lib/authz/guard.ts: the org itself; the personal scope
 //      only in the single-tenant edition by configuration; an unconfigured edition throws)
 //
-// KEEP THIS IN STEP WITH `currentActor()` + `urlScopedOrgId()`. A rule added there and not here is a
-// stream that outlives the access that opened it by however long the tab stays open.
+// KEEP THIS IN STEP WITH `currentActor()` + `urlScopedOrgId()`: a rule added there belongs here too,
+// so an open stream is held to the same rules as a fresh connect.
 // tests/lib/realtime/reauth.test.ts drives each arm.
 //
 // A lookup that FAILS throws; it is never reported as a revocation (the client would stop for good

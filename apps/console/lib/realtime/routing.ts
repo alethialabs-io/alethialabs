@@ -1,27 +1,32 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Who may hear about a change (#6115, ADR 0005 D3 + §10 R6). Pure: no database, no PDP, no I/O, so
+// Who hears about a change (#6115, ADR 0005 D3 + §10 R6). Pure: no database, no PDP, no I/O, so
 // every population below is a unit test (tests/lib/realtime/routing.test.ts).
 //
-// THE RULE. A topic's routing keys are the ARMS OF ITS TABLE'S RLS POLICY, so no member is told about
-// a row their read could not return. `jobs`' policy is `owner_all`:
+// THE RULE. A topic's routing keys follow the arms of its table's RLS policy, and every key is
+// scoped to ONE org: a stream opened for an org hears about that org's rows and nothing else.
+// `jobs`' policy is `owner_all`:
 //
 //     user_id = current_owner  OR  org_id = current_org          (lib/db/programmables.sql)
 //
-// so a jobs notice routes to `u:<user_id>` (the owner arm) and to `o:<org_id>` (the org arm). The org
-// arm is coarse — an org member who cannot view the job's project would still match it — so a
-// delivery reached ONLY through the org arm is then filtered through the PDP's `view` on the project
-// (lib/realtime/bus.ts). The owner arm is not filtered: RLS returns a person's own jobs regardless of
-// project grants, and `getJobsPage` relies on that, so the hint must not be stricter than the read.
+// so a jobs notice routes to two keys, both inside the row's own org:
+//   · the org arm   `o:<org_id>`           — every member of the org; a delivery reached ONLY through
+//                                            it is filtered through the PDP's `view` on the job's
+//                                            project (lib/realtime/bus.ts);
+//   · the owner arm `ou:<org_id>:<user_id>` — the person who wrote the job, in that org; unfiltered,
+//                                            because the jobs read returns a person's own jobs
+//                                            whatever their project grants.
+// A row with no org (none exist for jobs today) routes to `u:<user_id>`, which only the personal
+// scope (`/~/~/events`, org === user) subscribes to.
 //
 // The populations this has to get right (§10 R6):
-//   · a project job                       → o:<project's org>, u:<creator>; PDP on the org arm.
+//   · a project job                       → o:<project's org>, ou:<that org>:<creator>.
 //   · a project-less job from a service    → org_id was stamped = user_id (set_org_id_from_project's
-//     insert inside a hosted org             last fallback), so o: and u: are the SAME person; the
-//                                            subscriber is matched once (the bus dedupes per notice).
-//   · a job whose project was deleted      → the trigger carries OLD.project_id, so the PDP still asks
-//                                            about the project the reader last saw it under.
+//     insert inside a hosted org             last fallback), so it lives in the creator's personal
+//                                            scope and is heard on `/~/~/events`.
+//   · a job whose project was deleted      → the trigger carries OLD.project_id; the bus treats a
+//                                            project that no longer exists as unfiltered.
 //   · managed runners (org_id/user_id NULL), fleet tables (no org_id) → the `platform` key, held only
 //     by a stream whose actor may `view` the fleet. No topic routes there yet (#6123).
 
@@ -66,7 +71,7 @@ export interface StreamIdentity {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A uuid string, or null for anything else (a forged or malformed payload routes nowhere). */
+/** A uuid string, or null for anything else (a malformed payload routes nowhere). */
 function uuidOrNull(value: unknown): string | null {
 	return typeof value === "string" && UUID.test(value) ? value.toLowerCase() : null;
 }
@@ -101,8 +106,11 @@ export function keysFor(notice: ChangeNotice): Route[] {
 			// The org arm. A job with no project is visible to the whole org by RLS, so it is unfiltered;
 			// a project job is filtered on that project's `view`.
 			if (notice.o) routes.push({ key: orgKey(notice.o), filterProject: notice.p });
-			// The owner arm: never filtered (see the header).
-			if (notice.u) routes.push({ key: userKey(notice.u), filterProject: null });
+			// The owner arm, inside the row's own org: never filtered (see the header).
+			if (notice.u) {
+				const key = notice.o ? orgUserKey(notice.o, notice.u) : userKey(notice.u);
+				routes.push({ key, filterProject: null });
+			}
 			return routes;
 		}
 		// TODO(#6119/#6120): project_environments + the component tables — o:, u: where an owner arm
@@ -133,12 +141,12 @@ function orgKey(orgId: string): string {
 	return `o:${orgId}`;
 }
 
-/** The routing key of a person's own rows (the owner arm), in every org. */
+/** The routing key of a person's own rows that carry no org (personal scope only). */
 function userKey(userId: string): string {
 	return `u:${userId}`;
 }
 
-/** The routing key of a person's own rows inside one org (support cases). */
+/** The routing key of a person's own rows inside one org (the owner arm). */
 function orgUserKey(orgId: string, userId: string): string {
 	return `ou:${orgId}:${userId}`;
 }
@@ -152,18 +160,15 @@ function orgSupportKey(orgId: string): string {
 export const PLATFORM_KEY = "platform";
 
 /**
- * The keys a stream subscribes to. In the personal scope `orgId === userId`, so `o:` and `u:` name
- * the same person; both are kept because they are different arms of different tables' policies.
+ * The keys a stream subscribes to — all of them scoped to the stream's org. `u:` (rows with no org)
+ * is held only by the personal scope, where org and user are the same id.
  */
 export function subscriptionKeys(
 	actor: StreamIdentity,
 	caps: StreamCapabilities,
 ): string[] {
-	const keys = [
-		orgKey(actor.orgId),
-		userKey(actor.userId),
-		orgUserKey(actor.orgId, actor.userId),
-	];
+	const keys = [orgKey(actor.orgId), orgUserKey(actor.orgId, actor.userId)];
+	if (actor.orgId === actor.userId) keys.push(userKey(actor.userId));
 	if (caps.fleetView) keys.push(PLATFORM_KEY);
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
 	return keys;
