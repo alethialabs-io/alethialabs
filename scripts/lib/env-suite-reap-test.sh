@@ -809,7 +809,8 @@ SH
 	for line in 'ALETHIA_EDITION=community' 'ALETHIA_EDITION="community"' "ALETHIA_EDITION='community'" \
 		'ALETHIA_EDITION=  community  ' 'ALETHIA_EDITION=comm unity' 'ALETHIA_EDITION=enterprise' \
 		'export ALETHIA_EDITION=community' 'ALETHIA_EDITION=' 'ALETHIA_EDITION="\x27community\x27"' \
-		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community'; do
+		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community' \
+		'ALETHIA_EDITION=comm\runity'; do
 		i=$((i + 1))
 		printf 'X=1\n%b\r\n' "$line" >"$pv/$i.env"
 		pin="$(sh -c "$(bash -c '. "$1"; declare -f dotenv_edition' _ "$TMP/dotenv.sh"); dotenv_edition \"\$1\"" sh "$pv/$i.env")"
@@ -866,6 +867,123 @@ SH
 	printf '%s\n' "$up_body" | grep -qx '  edition="\$UP_EDITION"' || bad "cmd_up does not read UP_EDITION"
 	printf '%s\n' "$up_body" | grep -qx '  mint_env "\$slug_" "\$cport" "\$sport" "\$db" "\$fresh" "\$edition"' ||
 		bad "cmd_up does not pass the edition to mint_env"
+
+	# D. A DEFECT is described as the fault it IS (#6166). env-mode.sh gives a 404 (serving
+	# community) and a 5xx under the enterprise pin (ee did not load; every auth call fails) the
+	# same verdict word, and env.sh described both as COMMUNITY in four places. Each place is
+	# driven here for BOTH statuses, with only ssh_box stubbed — the probe's answer is the input.
+	d_before="$fails"
+	for f in scope_defect_label scope_headline scope_remedy measure_scope env_scopes cmd_test \
+		restart_env_console restore_live_envs; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/defect.sh"
+		grep -q "^$f() {" "$TMP/defect.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	d404='DEFECT 404 the organization plugin is absent'
+	d500='DEFECT 500 ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load'
+
+	# D1. env_scopes — its probe body runs ON THE BOX as text, so it is run here under `sh`, against
+	# a fixture env-mode.sh that answers per port with the line the real probe prints.
+	sbox="$TMP/scopebox"
+	mkdir -p "$sbox/bin"
+	cat >"$sbox/bin/env-mode.sh" <<SH
+#!/bin/sh
+# scope_probe — present, so env_scopes asks it rather than reporting a stale script.
+case "\$2" in
+3101) echo "$d404" ;;
+3102) echo "$d500" ;;
+*) echo "enterprise 422 the organization plugin is registered" ;;
+esac
+SH
+	chmod +x "$sbox/bin/env-mode.sh"
+	cat >"$TMP/drive-scopes.sh" <<'SH'
+set -euo pipefail
+. "$1"
+REMOTE="$2"
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"c":{"consolePort":3101},"e":{"consolePort":3102},"ok":{"consolePort":3103}}' ;; *) sh -c "$1" ;; esac; }
+env_scopes
+SH
+	out="$(bash "$TMP/drive-scopes.sh" "$TMP/defect.sh" "$sbox" 2>&1)" || bad "env_scopes failed: $out"
+	printf '%s\n' "$out" | grep -qx 'c COMMUNITY' || bad "env:status does not label a 404 DEFECT COMMUNITY: $out"
+	printf '%s\n' "$out" | grep -qx 'e EE-NOT-LOADED' || bad "env:status labels a pinned-enterprise 5xx DEFECT as something else: $out"
+	printf '%s\n' "$out" | grep -qx 'ok enterprise' || bad "env:status mislabels an enterprise console: $out"
+	# …and the edition row it feeds does not call that measured scope "not measured".
+	erow enterprise EE-NOT-LOADED "pinned enterprise, but the console cannot load the enterprise edition"
+
+	# D2. env:test's refusal: both DEFECTs are refused (die), each in its own words.
+	cat >"$TMP/drive-test.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia; ANSWER="$2"
+need() { :; }; slug() { echo s1; }; env_fqdn() { echo s1.example; }; push_tree() { :; }; build_ee() { :; }
+die() { echo "DIED: $1"; exit 9; }
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"s1":{"consolePort":3101}}' ;; *--scope*) echo "$ANSWER" ;; *) echo "UNEXPECTED: $1"; return 1 ;; esac; }
+cmd_test
+echo "NOT-REFUSED"
+SH
+	t404="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d404" 2>&1)"
+	case "$t404" in
+	*"DIED: 's1' is serving COMMUNITY entitlements — the organization plugin is absent"*"upgrade_required"*"pnpm env:up"*) ;;
+	*) bad "env:test does not refuse a 404 DEFECT as COMMUNITY: $t404" ;;
+	esac
+	t500="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d500" 2>&1)"
+	case "$t500" in
+	*COMMUNITY* | *upgrade_required* | *NOT-REFUSED*) bad "env:test describes a pinned-enterprise 5xx as COMMUNITY, or does not refuse it: $t500" ;;
+	*"DIED: 's1' cannot load the enterprise edition its .env pins"*"answers 500"*"pnpm env:logs"*) ;;
+	*) bad "env:test does not name the enterprise load failure for a 5xx DEFECT: $t500" ;;
+	esac
+
+	# D3. The restart after a run, and the restore after a reboot: exit 3 is "up, in the wrong
+	# scope" for BOTH, so the line under it must ask which.
+	cat >"$TMP/drive-restart.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia; ANSWER="$2"
+env_rss_mb() { echo 100; }
+ssh_box() {
+	case "$1" in
+	*env-registry.sh*) echo '{"s1":{"consolePort":3101,"storagePort":8400,"database":"db_s1"}}' ;;
+	*has-session*) return 1 ;;
+	*--scope*) echo "$ANSWER" ;;
+	*keep*) echo "boot output"; return 3 ;;
+	*) return 0 ;;
+	esac
+}
+restart_env_console s1
+echo "=== restore"
+restore_live_envs
+SH
+	r404="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d404" 2>&1)"
+	r500="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d500" 2>&1)"
+	case "$r404" in
+	*"the console is back, but it is serving COMMUNITY entitlements"*"=== restore"*"s1 is back, but it is serving COMMUNITY entitlements"*"must run: pnpm env:up"*) ;;
+	*) bad "restart/restore do not report a 404 DEFECT as COMMUNITY: $r404" ;;
+	esac
+	case "$r500" in
+	*COMMUNITY*) bad "restart/restore describe a pinned-enterprise 5xx as COMMUNITY: $r500" ;;
+	*"the console is back, but it cannot load the enterprise edition"*"pnpm env:logs"*"=== restore"*"s1 is back, but it cannot load the enterprise edition"*"must run: pnpm env:logs"*) ;;
+	*) bad "restart/restore do not name the enterprise load failure for a 5xx DEFECT: $r500" ;;
+	esac
+	# D4. The restore restarts EVERY env, not the first. ssh forwards its stdin to the remote command,
+	# so an ssh_box inside the slug loop that inherits the loop's stdin swallows the rest of the list.
+	# The stub READS stdin on every call, the way ssh does.
+	cat >"$TMP/drive-restore-all.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia
+ssh_box() {
+	cat >/dev/null
+	case "$1" in
+	*env-registry.sh*) echo '{"a":{"consolePort":3101,"storagePort":8400,"database":"db_a"},"b":{"consolePort":3102,"storagePort":8401,"database":"db_b"},"c":{"consolePort":3103,"storagePort":8402,"database":"db_c"}}' ;;
+	*has-session*) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+restore_live_envs </dev/null
+SH
+	ra="$(bash "$TMP/drive-restore-all.sh" "$TMP/defect.sh" 2>&1)"
+	for e in a b c; do
+		printf '%s\n' "$ra" | grep -q "^    $e — restarting" || bad "restore_live_envs never reached env '$e' — an ssh in its loop swallowed the slug list: $ra"
+	done
+
+	[ "$fails" = "$d_before" ] &&
+		ok "a 404 DEFECT reads COMMUNITY and a pinned-enterprise 5xx DEFECT reads EE-NOT-LOADED in env:test, env:status, the restart and the restore — and both are still refused"
 
 	[ "$fails" = "$before" ] &&
 		ok "an existing .env gains the keys it predates, keeps every value it has, refuses a missing secret without --fresh, and env:status names the gap"
@@ -1095,6 +1213,40 @@ mutate_fn community-request-silently-ignored <<'AWK'
 inside && /^  if \[ "\$requested" = community \]; then$/ { sub(/community/, "nobody") }
 { print }
 inside && /^\}$/ { inside = 0 }
+AWK
+
+# #6166: each site that described a pinned-enterprise 5xx DEFECT as COMMUNITY, put back the way it
+# shipped — plus the shared label collapsing to one word, and the remedy losing the log.
+mutate_fn status-labels-every-defect-community <<'AWK'
+{ sub(/^    DEFECT\)     echo "\$s \$\(scope_defect_label "\$\{2:-\}"\)" ;;$/, "    DEFECT)     echo \"$s COMMUNITY\" ;;"); print }
+AWK
+mutate_fn defect-label-ignores-the-status <<'AWK'
+/^  5\[0-9\]\[0-9\]\) echo EE-NOT-LOADED ;;$/ { next }
+{ print }
+AWK
+mutate_fn env-test-refuses-a-5xx-in-community-words <<'AWK'
+/^cmd_test\(\) \{/ { inside = 1 }
+inside && /^    EE-NOT-LOADED\)$/ { sub(/EE-NOT-LOADED/, "EE-NEVER") }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+mutate_fn restore-says-community-again <<'AWK'
+{ sub(/is back, but it \$\(scope_headline "\$scope_"\) \(see above\)/, "is back but serving COMMUNITY entitlements (see above)"); print }
+AWK
+mutate_fn restart-says-community-again <<'AWK'
+{ sub(/the console is back, but it \$\(scope_headline "\$scope_"\)\./, "the console is back, but it came up serving COMMUNITY entitlements."); print }
+AWK
+mutate_fn edition-row-calls-ee-not-loaded-unmeasured <<'AWK'
+/^  EE-NOT-LOADED\) echo "⚠ pinned/ { next }
+{ print }
+AWK
+# The restore loop fed by a pipe on stdin again, so the first ssh in it eats the remaining slugs.
+mutate_fn restore-loop-reads-stdin-again <<'AWK'
+{ sub(/^  while read -r sl <&3; do$/, "  printf '%s\\n' \"$slugs\" | while read -r sl; do"); sub(/^  done 3< <\(printf '%s\\n' "\$slugs"\) <\/dev\/null$/, "  done"); print }
+AWK
+mutate_fn remedy-drops-the-log <<'AWK'
+/^  DEFECT:EE-NOT-LOADED\) echo "pnpm env:logs/ { next }
+{ print }
 AWK
 
 # ── 9. and it must NOT fire on a legal reflow ─────────────────────────────────────────────────
