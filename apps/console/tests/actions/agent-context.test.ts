@@ -17,6 +17,7 @@ vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withActorScope: vi.fn() })
 
 import {
 	canEditAgentContext,
+	getProjectKnowledgePreview,
 	upsertAgentContext,
 } from "@/app/server/actions/agent-context";
 import { orgAgentContextEnabled } from "@/lib/ai/org-agent-context-flag";
@@ -24,6 +25,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { getPdp } from "@/lib/authz";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope, withOwnerScope } from "@/lib/db";
+import { jobs, projects } from "@/lib/db/schema";
 
 // Captures the object passed to `.values()` on the insert chain.
 const captured: { values?: Record<string, unknown> } = {};
@@ -191,5 +193,64 @@ describe("upsertAgentContext — document validation (documentSchema, lib/ai/kno
 		expect(authorize).not.toHaveBeenCalled();
 		expect(withOwnerScope).not.toHaveBeenCalled();
 		expect(captured.values).toBeUndefined();
+	});
+});
+
+describe("getProjectKnowledgePreview — the Knowledge panel's derived block", () => {
+	/**
+	 * A read tx whose `select().from(table)…` chain records every table it is asked to read and
+	 * answers with `rowsFor(table)`; the chain is awaitable at any depth, like drizzle's builder.
+	 */
+	function makeReadTx(rowsFor: (table: unknown) => unknown[]) {
+		const read: unknown[] = [];
+		const tx = {
+			select: () => ({
+				from: (table: unknown) => {
+					read.push(table);
+					const chain = {
+						where: () => chain,
+						orderBy: () => chain,
+						limit: () => chain,
+						then: (ok: (rows: unknown[]) => unknown) => ok(rowsFor(table)),
+					};
+					return chain;
+				},
+			}),
+		};
+		return { tx, read };
+	}
+
+	beforeEach(() => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+	});
+
+	it("asks the PDP for `view` on that project before building anything", async () => {
+		const { tx, read } = makeReadTx((table) =>
+			table === projects
+				? [{ project_name: "payments", slug: "payments", region: "eu", user_id: "user-2", org_id: "org-1" }]
+				: [],
+		);
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never,
+		);
+		vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+
+		const preview = await getProjectKnowledgePreview(PROJECT);
+
+		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: PROJECT });
+		expect(preview).toContain("payments");
+		expect(read).toContain(jobs);
+	});
+
+	it("a member without `view` on the project is refused, and no job is read", async () => {
+		const { tx, read } = makeReadTx(() => []);
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never,
+		);
+		vi.mocked(authorize).mockRejectedValueOnce(new Error("Forbidden"));
+
+		await expect(getProjectKnowledgePreview(PROJECT)).rejects.toThrow(/Forbidden/);
+		expect(withActorScope).not.toHaveBeenCalled();
+		expect(read).not.toContain(jobs);
 	});
 });

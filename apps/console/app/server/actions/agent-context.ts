@@ -112,13 +112,17 @@ export async function upsertAgentContext(
 
 /**
  * The read-only "what Elench already knows" preview shown in the Knowledge panel — the same
- * derived block that rides the project's system prompt.
+ * derived block that rides the project's system prompt. It summarises the project, its
+ * environments and its recent jobs, so it asks the same question every project read asks: may
+ * this actor `view` the project. The project assistant route gates its own copy of this block on
+ * the same permission. A refusal throws before anything is read; the panel renders it as no
+ * preview.
  */
 export async function getProjectKnowledgePreview(
 	projectId: string,
 ): Promise<string> {
 	const id = z.string().uuid().parse(projectId);
-	const actor = await currentActor();
+	const actor = await authorize("view", { type: "project", id });
 	return buildProjectKnowledge(actor, id);
 }
 
