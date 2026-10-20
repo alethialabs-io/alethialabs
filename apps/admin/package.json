@@ -18,7 +18,6 @@
 		"@repo/support": "workspace:*",
 		"@repo/ui": "workspace:*",
 		"stripe": "^22.6.2",
-		"@react-email/components": "^1.0.12",
 		"@tanstack/react-query": "^5.104.2",
 		"date-fns": "^4.4.0",
 		"drizzle-orm": "^0.45.4",
