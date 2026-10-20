@@ -14,7 +14,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The runtime half: evaluating the popover module must not evaluate streamdown. The mock factory
+// runs only when something imports "streamdown", so the flag records whether anything did.
+const streamdownEvaluated = vi.hoisted(() => ({ value: false }));
+vi.mock("streamdown", () => {
+	streamdownEvaluated.value = true;
+	return { defaultRehypePlugins: {}, Streamdown: () => null };
+});
+vi.mock("@/app/server/actions/runners", () => ({ getReleaseNotes: vi.fn() }));
+vi.mock("@/lib/query/use-runners-query", () => ({
+	useUpdateRunner: () => ({ mutateAsync: vi.fn() }),
+}));
 
 const ROOT = path.resolve(__dirname, "../../..");
 const RENDERER = path.join(ROOT, "components/runners/release-notes-markdown.tsx");
@@ -72,6 +84,13 @@ const ROUTES = {
 };
 
 describe("release-notes renderer stays out of first hydration", () => {
+	it("evaluating the popover module does not evaluate streamdown; the renderer module does", async () => {
+		await import("@/components/runners/release-notes-popover");
+		expect(streamdownEvaluated.value).toBe(false);
+		await import("@/components/runners/release-notes-markdown");
+		expect(streamdownEvaluated.value).toBe(true);
+	});
+
 	it("the walker can see a static streamdown import (the instrument is live)", () => {
 		const { packages } = walk([RENDERER]);
 		expect(packages.has("streamdown")).toBe(true);
