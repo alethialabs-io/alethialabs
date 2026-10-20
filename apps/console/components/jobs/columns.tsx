@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { StatusBadge } from "@repo/ui/status-badge";
+import { cn } from "@repo/ui/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import {
   HoverCard,
@@ -21,7 +22,7 @@ import { projectHref } from "@/lib/routing";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Layers, Server } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useHydrated } from "@/hooks/use-hydrated";
 
 export { JOB_TYPES };
@@ -47,9 +48,9 @@ function LiveDuration({ createdAt }: { createdAt: Date | string }) {
     return () => clearInterval(id);
   }, []);
   return (
-    <span className="text-xs tabular-nums text-muted-foreground">
-      {hydrated ? formatDuration(Date.now() - new Date(createdAt).getTime()) : "\u00a0"}
-    </span>
+    <ClockSlot sizer={DURATION_SIZER} className="text-xs tabular-nums text-muted-foreground">
+      {hydrated ? formatDuration(Date.now() - new Date(createdAt).getTime()) : null}
+    </ClockSlot>
   );
 }
 
@@ -59,13 +60,44 @@ function LiveDuration({ createdAt }: { createdAt: Date | string }) {
  */
 function RelativeTime({ at }: { at: Date | string }) {
   const hydrated = useHydrated();
+  const instant = new Date(at);
+  // A value that is not a date (a malformed string, Postgres `infinity`) must not take the whole
+  // table down: `toISOString()` throws on it, and `formatRelative` already answers "—".
+  if (Number.isNaN(instant.getTime())) {
+    return <span className="text-xs text-muted-foreground">{formatRelative(null)}</span>;
+  }
   return (
-    <time
-      dateTime={new Date(at).toISOString()}
-      className="whitespace-nowrap text-xs text-muted-foreground"
-    >
-      {hydrated ? formatRelative(at) : "\u00a0"}
+    <time dateTime={instant.toISOString()} className="text-xs text-muted-foreground">
+      <ClockSlot sizer={RELATIVE_SIZER}>{hydrated ? formatRelative(instant) : null}</ClockSlot>
     </time>
+  );
+}
+
+/** Widest strings each clock cell prints, so the slot is that wide before the clock is read. */
+const RELATIVE_SIZER = "less than a minute ago";
+const DURATION_SIZER = "00h 00m";
+
+/**
+ * Reserves the clock text's width while it is blank during hydration, so the table does not
+ * reflow when the text arrives a commit later (the invisible-sizer pattern of #5849). The sizer
+ * and the text share one grid cell; the wider of the two sets the width.
+ */
+function ClockSlot({
+  sizer,
+  className,
+  children,
+}: {
+  sizer: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className={cn("inline-grid whitespace-nowrap", className)}>
+      <span aria-hidden className="invisible col-start-1 row-start-1">
+        {sizer}
+      </span>
+      <span className="col-start-1 row-start-1">{children}</span>
+    </span>
   );
 }
 

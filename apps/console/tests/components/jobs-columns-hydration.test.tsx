@@ -99,10 +99,37 @@ describe("the jobs table hydrates server-rendered rows whatever the clock says (
 
 		expect(recoverable).toEqual([]);
 		// Once hydration is over the clock text is on screen, read against the browser's clock.
-		expect(container.textContent).toMatch(/ago/);
+		expect(container.textContent).toContain("4 minutes ago");
+		// The running job's elapsed time, read against the browser's clock: 50 s + 180 s.
+		expect(container.textContent).toContain("3m 50s");
 		expect(container.querySelector("time")?.getAttribute("dateTime")).toBe(
 			new Date(T0.getTime() - 50_000).toISOString(),
 		);
+	});
+
+	it("a created_at that is not a date renders a dash instead of crashing the table", () => {
+		const bad = makeJob({ id: "job-bad", created_at: new Date(Number.NaN) });
+		function BadRow() {
+			const table = useReactTable({
+				data: [bad],
+				columns: buildJobColumns({ authorById: new Map(), orgSlug: "acme" }),
+				getCoreRowModel: getCoreRowModel(),
+			});
+			return (
+				<table>
+					<tbody>
+						{table.getRowModel().rows.map((row) => (
+							<tr key={row.id}>
+								{row.getVisibleCells().map((cell) => (
+									<td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+								))}
+							</tr>
+						))}
+					</tbody>
+				</table>
+			);
+		}
+		expect(() => renderToString(<BadRow />)).not.toThrow();
 	});
 
 	it("the server's HTML carries the rows themselves (first paint is not empty)", () => {
