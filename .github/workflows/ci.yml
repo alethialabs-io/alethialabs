@@ -412,10 +412,25 @@ jobs:
       # personal-scope collapse when the edition is unconfigured (#6149). The configured edition is
       # the one an AGPL install is told to run, so it is the one measured.
       #
+      # A FRESH DATABASE, not the one the enterprise pass just used. Some suites assert on
+      # database-wide state — reconcile-b2c's `gc_fleet_actions` counts every old row in the table —
+      # so a second pass over the first pass's leftovers fails for a reason that is not the
+      # edition. Measured on #6169: the shared-database version failed exactly that test, and the
+      # same pass on a fresh database (locally) was green. The app role is cluster-wide, so the
+      # migration below grants it on the new database exactly as on the first.
+      #
       # No coverage fingerprint moves: this job records no coverage (vitest.integration.config.ts).
+      - name: Create and migrate a fresh database for the community pass
+        env:
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia_community
+        run: |
+          psql postgres://alethia:alethia-dev-secret@localhost:5432/alethia -c 'CREATE DATABASE alethia_community'
+          pnpm -C apps/console run db:migrate
       - name: Integration tests — community edition (the AGPL path)
         env:
           ALETHIA_EDITION: community
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia_community
+          ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia_community
         run: pnpm -C apps/console run test:integration --exclude tests/integration/rpc-tenancy.enterprise.test.ts
 
   e2e-browser:
