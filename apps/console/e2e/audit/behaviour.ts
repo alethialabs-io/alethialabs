@@ -168,6 +168,30 @@ export function manifestKnowsWorkers(): boolean {
 }
 
 /**
+ * Every way the manifest disagrees with what the run OBSERVED: an action a route made whose manifest
+ * entry does not list that route's page. Empty for a manifest that describes this build. A manifest
+ * whose worker keys were renamed, or one from another build, names none of the observed routes and
+ * fails here — closed — instead of classifying every read as the page's.
+ */
+export function manifestConsistencyProblems(
+	readsByRoute: ReadonlyMap<string, readonly string[]>,
+	entries: ReadonlyMap<string, string>,
+	workers: (key: string) => ReadonlySet<string> | null = workersOf,
+): string[] {
+	const problems: string[] = [];
+	for (const [route, reads] of readsByRoute) {
+		const entry = entries.get(route);
+		for (const key of reads) {
+			if (!key.startsWith("action ")) continue;
+			const w = workers(key);
+			if (w === null) problems.push(`${route} made ${key}, which the manifest does not list`);
+			else if (entry === undefined || !w.has(entry)) problems.push(`${route} made ${key}, and the manifest does not list ${entry ?? "its page"} under it`);
+		}
+	}
+	return problems;
+}
+
+/**
  * The build entries (`app/(private)/[org]/~/jobs/page`) whose client graph references a server
  * action, from the same manifest — or `null` when the build does not say. Read by `shellReadsFor`.
  */
@@ -692,6 +716,12 @@ export function structurallyShell(key: string, chainEntries: readonly string[], 
 	return w !== null && chainEntries.length > 0 && chainEntries.every((e) => w.has(e));
 }
 
+/**
+ * The shell's reads for `route` — THE one classifier B3, B4 and B5 share. A key is the shell's when
+ * every page under the route's shells references it in the build AND another route was seen making
+ * it, or when every route under those shells made it (the intersection). Everything else the route
+ * made is its own.
+ */
 export function shellReadsFor(
 	route: string,
 	chains: ReadonlyMap<string, string>,
@@ -701,17 +731,21 @@ export function shellReadsFor(
 ): string[] {
 	const chain = chains.get(route);
 	const peers = [...readsByRoute.keys()].filter((r) => chains.get(r) === chain);
-	// STRUCTURAL FIRST. The build's server-reference manifest says which page entries reference each
-	// action; one that EVERY page under the same shells references lives in those shells (a layout's
-	// client graph is bundled into every page beneath it). That needs no run to have caught the read —
-	// the intersection below misses a shell poll that happened not to fire on one route, and then
-	// calls it the page's. Measured on the first run: seven "page reads" on the jobs slice, all shell.
+	// STRUCTURE, CONFIRMED BY OBSERVATION. The build's server-reference manifest says which page
+	// entries REFERENCE each action, and an action every page under the same shells references is the
+	// shells' candidate (a layout's client graph is bundled into every page beneath it). Reference is
+	// not use: `app-shell.tsx` imports `useJobsQuery` → `getJob`, so `getJob` is in every AppShell
+	// bundle while only `~/jobs/[id]` calls it — and classifying it "shell" turned that route's B4
+	// FAIL into NOT MEASURED (#6180's third review). So a referenced-everywhere action is the shell's
+	// only when ANOTHER route was also seen making it. That keeps what the structural half was added
+	// for — a shell poll that one route's load happened to miss is still the shell's, because other
+	// routes made it — and gives a page its own read back.
 	const chainEntries = [...chains].filter(([, c]) => c === chain).map(([r]) => entries.get(r)).filter((e): e is string => e !== undefined);
+	const observedElsewhere = (key: string) => [...readsByRoute].some(([r, ks]) => r !== route && ks.includes(key));
 	const structural = new Set<string>();
 	if (chainEntries.length > 0) {
 		for (const key of readsByRoute.get(route) ?? []) {
-			const w = workers(key);
-			if (w !== null && chainEntries.every((e) => w.has(e))) structural.add(key);
+			if (structurallyShell(key, chainEntries, workers) && observedElsewhere(key)) structural.add(key);
 		}
 	}
 	// Fewer than three routes under one chain cannot separate a page read from a shell read, so the
@@ -1139,19 +1173,40 @@ export const B_CONTROL_MODES = [
 	"swap-height",
 	"swap-list",
 	"swap-bars",
+	"action-page-read",
 ] as const;
 
 /**
- * The fixture's build manifest: one server action, `fx-shell`, referenced by the fixture's page entry
- * — so `structurallyShell` classifies it as a SHELL read through the same parser the routes go
- * through (`workersFromManifest`), and every other fixture read as the page's.
+ * The fixture's build: two page entries under one shell — the fixture page and a PEER — and two
+ * server actions, BOTH referenced by both entries. `fx-shell` is the shell's: the peer makes it too.
+ * `fx-page` is referenced everywhere and called by the fixture page alone — the `getJob` shape that
+ * the first classifier called "shell" (#6180's third review). The fixture's reads are classified by
+ * `shellReadsFor`, the same function the routes go through, over this manifest and the peer's reads.
  */
-const FIXTURE_ENTRIES: readonly string[] = ["app/fixture/page"];
-const FIXTURE_WORKERS = workersFromManifest({ node: { "fx-shell": { workers: { "app/fixture/page": {} } } } });
+const FIXTURE_ROUTE = "/fixture";
+const FIXTURE_PEER = "/peer";
+const FIXTURE_ENTRY_MAP: ReadonlyMap<string, string> = new Map([
+	[FIXTURE_ROUTE, "app/fixture/page"],
+	[FIXTURE_PEER, "app/fixture/other"],
+]);
+const FIXTURE_CHAINS: ReadonlyMap<string, string> = new Map([
+	[FIXTURE_ROUTE, "FixtureShell"],
+	[FIXTURE_PEER, "FixtureShell"],
+]);
+const FIXTURE_WORKERS = workersFromManifest({
+	node: {
+		"fx-shell": { workers: { "app/fixture/page": {}, "app/fixture/other": {} } },
+		"fx-page": { workers: { "app/fixture/page": {}, "app/fixture/other": {} } },
+	},
+});
 
-/** Whether a fixture read is the shell's, by the fixture's manifest. */
-function fixtureShell(key: string): boolean {
-	return structurallyShell(key, FIXTURE_ENTRIES, FIXTURE_WORKERS);
+/** The fixture's shell reads, given what its page was seen making — the peer only ever makes `fx-shell`. */
+function fixtureShellSet(reads: readonly string[]): ReadonlySet<string> {
+	const readsByRoute = new Map<string, readonly string[]>([
+		[FIXTURE_ROUTE, reads],
+		[FIXTURE_PEER, ["action fx-shell"]],
+	]);
+	return new Set(shellReadsFor(FIXTURE_ROUTE, FIXTURE_CHAINS, readsByRoute, FIXTURE_ENTRY_MAP, FIXTURE_WORKERS));
 }
 
 /** One fixture mode. */
@@ -1180,6 +1235,11 @@ var ROUTE_ERROR = '<div class="__ROUTE_ERROR__"><p>Something went wrong loading 
 function rows(names) { return '<table><tbody>' + names.map(function (n) { return '<tr><td>' + n + '</td></tr>'; }).join('') + '</tbody></table>'; }
 function read(name) { return fetch('/acme/~/rpc/fixture/' + name).then(function (r) { if (!r.ok) throw new Error('read failed'); return r.json(); }); }
 function shellRead() { return fetch(location.pathname, { method: 'POST', headers: { 'Next-Action': 'fx-shell' } }).then(function (r) { if (!r.ok) throw new Error('shell read failed'); }); }
+function pageAction() { return fetch(location.pathname, { method: 'POST', headers: { 'Next-Action': 'fx-page' } }).then(function (r) { if (!r.ok) throw new Error('page read failed'); }); }
+if (MODE === "action-page-read") {
+	shellRead().then(function () {}, function () {});
+	pageAction().then(function () {}, function () { set('region', EMPTY, false); });
+}
 function set(id, html, busy) { var el = document.getElementById(id); if (!el) return; el.innerHTML = html; if (busy) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); }
 if (MODE === "client-fetch" || MODE === "empty-while-pending" || MODE === "endless-skeleton" || MODE === "region-error") {
 	read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { if (MODE !== "endless-skeleton") set('region', MODE === "region-error" ? REGION_ERROR : ERROR, false); });
@@ -1243,7 +1303,7 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
-	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only") return { a: rows, b: none, staticCopy: none };
+	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
 	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error" || mode === "empty-after-hydration") {
@@ -1307,20 +1367,24 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		return c;
 	};
 	const context = await newContext();
-	const expectVerdict = (id: BControlResult["broken"][number], mode: BControlMode, got: BVerdict, want: BVerdict["verdict"]) => {
-		if (got.verdict !== want) {
+	// The REASON is asserted with the verdict: a NOT MEASURED for the wrong cause (action interception
+	// broken, so `no-reads-failed` where `no-page-reads` was meant) is the instrument failing quietly.
+	const expectVerdict = (id: BControlResult["broken"][number], mode: BControlMode, got: BVerdict, want: BVerdict["verdict"], reason?: string) => {
+		const reasonOk = reason === undefined || (got.verdict === "NOT MEASURED" && got.reason.startsWith(reason));
+		if (got.verdict !== want || !reasonOk) {
 			broken.add(id);
-			lines.push(`${id} on the \`${mode}\` fixture: expected ${want}, got ${got.verdict}${got.verdict === "NOT MEASURED" ? ` (${got.reason})` : ""}`);
+			lines.push(`${id} on the \`${mode}\` fixture: expected ${want}${reason === undefined ? "" : ` \`${reason}\``}, got ${got.verdict}${got.verdict === "NOT MEASURED" ? ` (${got.reason})` : ""}`);
 		}
 	};
 	try {
 		const measure = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
+			const shell = fixtureShellSet(answered.reads);
 			const held = await loadHeld(context, url);
-			const pageHeld = await loadHeld(context, url, fixtureShell);
+			const pageHeld = await loadHeld(context, url, (k) => shell.has(k));
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !fixtureShell(k)) };
+			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !shell.has(k)) };
 		};
 		const good = await measure("prefetched");
 		expectVerdict("B1", "prefetched", good.b1, "PASS");
@@ -1344,24 +1408,28 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		// that vanished silently, and fails B4 on a page that did the right thing.
 		expectVerdict("B4", "region-error", (await measure("region-error")).b4, "PASS");
 		// A page that made no read has nothing to fail, which is not a pass.
-		expectVerdict("B4", "static", (await measure("static")).b4, "NOT MEASURED");
+		expectVerdict("B4", "static", (await measure("static")).b4, "NOT MEASURED", "no-reads-failed");
 		// A page whose only read is its SHELL's: B3 and B4 exercised nothing of the page's own.
 		const shellOnly = await measure("shell-only");
-		expectVerdict("B3", "shell-only", shellOnly.b3, "NOT MEASURED");
-		expectVerdict("B4", "shell-only", shellOnly.b4, "NOT MEASURED");
+		expectVerdict("B3", "shell-only", shellOnly.b3, "NOT MEASURED", "no-page-reads");
+		expectVerdict("B4", "shell-only", shellOnly.b4, "NOT MEASURED", "no-page-reads");
+		// A page read made over a server ACTION, referenced by every page entry and called by this
+		// page alone: it is the page's, so failing it is measured — and the page renders an empty state.
+		expectVerdict("B4", "action-page-read", (await measure("action-page-read")).b4, "FAIL");
 
 		const b5 = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
 			const failures: OneFailure[] = [];
 			for (const key of answered.reads) failures.push({ key, ...(await loadWithOneFailure(context, url, key)) });
-			return judgeB5(answered, answered.reads, [], failures);
+			const shell = fixtureShellSet(answered.reads);
+			return judgeB5(answered, answered.reads.filter((k) => !shell.has(k)), [...shell], failures);
 		};
 		expectVerdict("B5", "two-regions-contained", await b5("two-regions-contained"), "PASS");
 		expectVerdict("B5", "two-regions-blanked", await b5("two-regions-blanked"), "FAIL");
 		expectVerdict("B5", "one-read-contained", await b5("one-read-contained"), "PASS");
 		expectVerdict("B5", "one-read-route-error", await b5("one-read-route-error"), "FAIL");
-		expectVerdict("B5", "static", await b5("static"), "NOT MEASURED");
+		expectVerdict("B5", "static", await b5("static"), "NOT MEASURED", "no-page-reads");
 
 		const swaps: [BControlMode, BVerdict["verdict"]][] = [
 			["swap-matching", "PASS"],
