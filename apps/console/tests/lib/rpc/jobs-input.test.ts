@@ -7,7 +7,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/app/server/actions/jobs", () => ({ getJobsPage: vi.fn() }));
 
 import { RANGE_PRESETS } from "@repo/ui/range";
 import { JOBS_DEFAULT_PRESET, jobsPageInputFrom, jobsPresetForLabel } from "@/lib/rpc/inputs/jobs";

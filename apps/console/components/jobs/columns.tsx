@@ -27,8 +27,13 @@ import { useHydrated } from "@/hooks/use-hydrated";
 
 export { JOB_TYPES };
 
-/** A job row enriched with joined project/runner/provider/environment data from getJobs(). */
+/** A job row enriched with joined project/runner/provider/environment data (the jobs page read). */
 type JobRow = JobWithMeta;
+
+/** A job's detail page. */
+export function jobHref(orgSlug: string, jobId: string): string {
+  return `/${orgSlug}/~/jobs/${jobId}`;
+}
 
 const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
@@ -40,7 +45,7 @@ const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
  * mismatch, React #418, and React throws the page's server HTML away. So the clock is read only
  * once hydration is over (`useHydrated`, #5786) — the row itself still paints on first load.
  */
-function LiveDuration({ createdAt }: { createdAt: Date | string }) {
+export function LiveDuration({ createdAt }: { createdAt: Date | string }) {
   const hydrated = useHydrated();
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -58,7 +63,7 @@ function LiveDuration({ createdAt }: { createdAt: Date | string }) {
  * "3 minutes ago", read against the browser's clock only after hydration — for the same #418
  * reason as `LiveDuration`. `<time>` carries the instant itself for assistive tech meanwhile.
  */
-function RelativeTime({ at }: { at: Date | string }) {
+export function RelativeTime({ at }: { at: Date | string }) {
   const hydrated = useHydrated();
   const instant = new Date(at);
   // A value that is not a date (a malformed string, Postgres `infinity`) must not take the whole
@@ -82,7 +87,7 @@ const DURATION_SIZER = "00h 00m";
  * reflow when the text arrives a commit later (the invisible-sizer pattern of #5849). The sizer
  * and the text share one grid cell; the wider of the two sets the width.
  */
-function ClockSlot({
+export function ClockSlot({
   sizer,
   className,
   children,
@@ -293,18 +298,26 @@ export function buildJobColumns({
       cell: ({ row }) => {
         const type = row.getValue<ProvisionJobType>("job_type");
         const info = JOB_TYPES[type];
-        if (!info) return <span className="text-xs">{type}</span>;
-        const Icon = info.icon;
+        const Icon = info?.icon;
+        // The row's REAL LINK (F025): an `<a href>` to the job, so a cmd-, ctrl- or middle-click
+        // opens it in a new tab and "copy link" works. The row's own click handler covers a plain
+        // click anywhere else on the row; the link stops that click from navigating twice.
         return (
-          <div className="flex items-center gap-2">
-            <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <Link
+            href={jobHref(orgSlug, row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {Icon && <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
             <div className="min-w-0">
-              <span className="text-xs font-medium">{info.label}</span>
-              <p className="hidden text-ui-2xs text-muted-foreground sm:block">
-                {info.description}
-              </p>
+              <span className="text-xs font-medium">{info?.label ?? type}</span>
+              {info && (
+                <p className="hidden text-ui-2xs text-muted-foreground sm:block">
+                  {info.description}
+                </p>
+              )}
             </div>
-          </div>
+          </Link>
         );
       },
     },

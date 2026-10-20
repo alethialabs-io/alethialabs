@@ -47,15 +47,14 @@ vi.mock("@/lib/realtime", () => ({
 vi.mock("@/lib/http/hold-request", () => ({ holdRequest: () => {} }));
 
 import { GET as streamJobLogs } from "@/app/api/stream/jobs/[id]/route";
+import { cancelJob, getJobs, rerunJob } from "@/app/server/actions/jobs";
+import { RERUN_FROM_PROJECT } from "@/lib/jobs/operation";
 import {
-	cancelJob,
-	getJob,
-	getJobStatus,
-	getJobs,
-	getJobsPage,
-	getPlanResult,
-	rerunJob,
-} from "@/app/server/actions/jobs";
+	readJob as getJob,
+	readJobStatus as getJobStatus,
+	readJobsPage as getJobsPage,
+	readPlanResult as getPlanResult,
+} from "@/lib/rpc/procedures/jobs";
 import {
 	getProject,
 	getProjectsList,
@@ -365,8 +364,8 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 
 		it(`a job outside the addressed organization is not found (${label})`, async () => {
 			expect(await as(actor, () => getJob(jobB))).toBeNull();
-			await expect(as(actor, () => getJobStatus(jobB))).rejects.toThrow("Failed to get job status");
-			await expect(as(actor, () => getPlanResult(jobB))).rejects.toThrow("Failed to get plan result");
+			await expect(as(actor, () => getJobStatus(jobB))).rejects.toThrow("Job not found.");
+			await expect(as(actor, () => getPlanResult(jobB))).rejects.toThrow("Job not found.");
 		});
 
 		it(`a project outside the addressed organization is not listed or found (${label})`, async () => {
@@ -432,7 +431,10 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 	});
 
 	it("jobs outside the addressed organization are unaffected by cancel", async () => {
-		await expect(as(inA, () => cancelJob(jobB))).rejects.toThrow("Job not found");
+		expect(await as(inA, () => cancelJob({ jobId: jobB }))).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Job not found." },
+		});
 		const [row] = await getServiceDb()
 			.select({ status: jobs.status })
 			.from(jobs)
@@ -441,7 +443,10 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 	});
 
 	it("jobs outside the addressed organization are unaffected by re-run", async () => {
-		await expect(as(inA, () => rerunJob(jobB))).rejects.toThrow("Original job not found");
+		expect(await as(inA, () => rerunJob({ jobId: jobB }))).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Job not found." },
+		});
 		const fresh = await getServiceDb()
 			.select({ id: jobs.id })
 			.from(jobs)
@@ -450,18 +455,27 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 		expect(fresh).toHaveLength(0);
 	});
 
-	it("a re-run takes its org from the project and stays within the addressed organization", async () => {
+	it("a re-run stays within the addressed organization", async () => {
 		// A personal-org job is visible from A, but re-running it there would move it into A.
-		await expect(as(inA, () => rerunJob(jobPersonal))).rejects.toThrow(
-			"This job belongs to your personal workspace — switch to it to run this.",
-		);
+		expect(await as(inA, () => rerunJob({ jobId: jobPersonal }))).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message: "This job belongs to your personal workspace — switch to it to run this.",
+			},
+		});
 
-		const created = await as(inA, () => rerunJob(jobA));
-		const [row] = await getServiceDb()
-			.select({ org_id: jobs.org_id, project_id: jobs.project_id, user_id: jobs.user_id })
-			.from(jobs)
-			.where(eq(jobs.id, created.id));
-		expect(row).toEqual({ org_id: A, project_id: projectA, user_id: U });
+		// A project's job runs again through the project's own entry point (lib/jobs/operation.ts),
+		// which stamps the project's org; a drift check is not one of those, so it is refused here and
+		// nothing is queued anywhere.
+		const onA = async () =>
+			(await getServiceDb().select({ id: jobs.id }).from(jobs).where(eq(jobs.project_id, projectA))).length;
+		const before = await onA();
+		expect(await as(inA, () => rerunJob({ jobId: jobA }))).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: RERUN_FROM_PROJECT },
+		});
+		expect(await onA()).toBe(before);
 
 		const onB = await getServiceDb()
 			.select({ id: jobs.id })

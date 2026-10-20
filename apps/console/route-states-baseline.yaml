@@ -92,7 +92,6 @@ predicates:
       - /[org]/~/clusters: does-not-call-not-found
       - /[org]/~/connectors: does-not-call-not-found
       - /[org]/~/evidence: does-not-call-not-found
-      - /[org]/~/jobs/[id]: does-not-call-not-found
       - /[org]/~/jobs: does-not-call-not-found
       - /[org]/~/new: does-not-call-not-found
       - /[org]/~/runners: does-not-call-not-found
