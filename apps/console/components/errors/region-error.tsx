@@ -20,10 +20,13 @@ import { cn } from "@repo/ui/utils";
 interface RegionErrorProps {
 	/** What failed, in the reader's terms. Defaults to a generic "Couldn't load this". */
 	title?: string;
-	/** One line on what to do. Never a raw error message: those can carry server detail. */
+	/** One line on what failed. Never a raw error message: those can carry server detail. */
 	description?: string;
-	/** Re-run the failed read. Omit it only when there is nothing to retry. */
-	onRetry?: () => void;
+	/**
+	 * Re-run the failed read. REQUIRED: a region error is a failed read, and a failed read can
+	 * always be retried, so an error with nothing to press is a dead end this type refuses.
+	 */
+	onRetry: () => void;
 	className?: string;
 }
 
@@ -36,15 +39,23 @@ interface RegionErrorProps {
  * sit in the same place at the same size, but with its own mark and copy and `data-state="error"`,
  * and it is announced (`role="alert"`) because it replaces content the viewer was waiting for.
  *
- * A whole route that fails is `ErrorState` in a route's `error.tsx`. An expected refusal
- * (forbidden, not found, plan-gated) is its own render too, and none of them is this.
+ * THE RULE — one answer per question:
+ * - a data REGION that failed to load (a table, a panel, a list, a card) → `RegionError`;
+ * - a whole ROUTE that failed or was not found → `ErrorState`, from `error.tsx` / `not-found.tsx`
+ *   only. It renders the route's one heading, which is right for a boundary that replaces the
+ *   page and wrong for a region inside it (a second `<h1>` under the breadcrumb);
+ * - a TABLE does neither by hand: pass `query={q}` to `DataTable`, which renders this for a failed
+ *   first load and keeps its rows behind a one-line notice for a failed refresh;
+ * - an expected refusal (forbidden, not found, plan-gated) is its own render, and is not this.
+ * `tests/components/errors/error-state-placement.test.ts` holds `ErrorState` to its half.
  *
  * @example
- * if (query.isError) return <RegionError onRetry={() => query.refetch()} />;
+ * if (query.isError && query.data === undefined)
+ *   return <RegionError title="Couldn't load runners" onRetry={() => query.refetch()} />;
  */
 export function RegionError({
 	title = "Couldn't load this",
-	description = "Something went wrong while loading. Try again.",
+	description = "Something went wrong while loading.",
 	onRetry,
 	className,
 }: RegionErrorProps) {
@@ -60,15 +71,13 @@ export function RegionError({
 					<CircleAlert aria-hidden />
 				</EmptyMedia>
 				<EmptyTitle className="text-ui-lg">{title}</EmptyTitle>
-				<EmptyDescription className="text-ui-md">{description}</EmptyDescription>
+				<EmptyDescription className="text-ui-md leading-relaxed">{description}</EmptyDescription>
 			</EmptyHeader>
-			{onRetry ? (
-				<EmptyContent>
-					<Button variant="outline" size="sm" onClick={onRetry}>
-						Try again
-					</Button>
-				</EmptyContent>
-			) : null}
+			<EmptyContent>
+				<Button variant="outline" size="sm" onClick={onRetry}>
+					Try again
+				</Button>
+			</EmptyContent>
 		</Empty>
 	);
 }

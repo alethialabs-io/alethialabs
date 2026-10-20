@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The single branded surface for 404s and error boundaries. No "use client" —
+// The single branded surface for 404s and error boundaries — ROUTES only. No "use client" —
 // usable from both server components (not-found.tsx) and client error boundaries
 // (error.tsx / global-error.tsx). Actions are passed in by the caller so each
 // boundary supplies its own links / reset() buttons.
+//
+// A data REGION that failed to load is not a route error: use `RegionError`
+// (./region-error.tsx), or `DataTable`'s `query` prop for a table. This one renders the route's
+// heading, which is right when it replaces the page and a stray second `<h1>` inside it.
+// tests/components/errors/error-state-placement.test.ts holds the line (#6117).
 
 import type { ReactNode } from "react";
 import { AlethiaMark } from "@repo/brand/lockup";

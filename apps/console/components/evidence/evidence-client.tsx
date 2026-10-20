@@ -11,9 +11,8 @@
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
@@ -74,14 +73,10 @@ export function EvidenceClient() {
 	// branded error surface with a retry instead.
 	if (isError) {
 		return (
-			<ErrorState
+			<RegionError
 				title="Couldn't load evidence"
 				description="Something went wrong fetching your environment evidence. Check your connection and try again."
-				actions={
-					<Button variant="outline" size="sm" onClick={() => refetch()}>
-						Retry
-					</Button>
-				}
+				onRetry={() => refetch()}
 			/>
 		);
 	}

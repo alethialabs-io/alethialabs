@@ -22,6 +22,7 @@ import {
 	ArrowUpDown,
 	ChevronLeft,
 	ChevronRight,
+	CircleAlert,
 } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 
@@ -68,6 +69,31 @@ export function rowKeyActivation(activate: () => void) {
 	};
 }
 
+/**
+ * The slice of a TanStack Query result `DataTable` reads. A `UseQueryResult` or
+ * `UseInfiniteQueryResult` satisfies it as-is, which is the point: pass the result, not fields
+ * you picked out of it.
+ *
+ * Why not separate `isPending` / `error` / `onRetry` props: each one has a wrong-but-plausible
+ * value. `isPending` is TRUE FOREVER for a disabled query with no data (TanStack v5: status
+ * `pending`, fetchStatus `idle`), which is an endless skeleton. An `error` without a retry draws
+ * a dead end. And `error` alone cannot tell a failed first load from a failed background refetch
+ * behind rows that are still worth showing. Reading the result answers all three once:
+ *
+ * - loading  = `isLoading` (pending AND fetching), so a disabled query settles to the empty row;
+ * - failed   = `isError` with no `data`: the full region error, with a retry;
+ * - stale    = `isError` WITH `data`: the rows stay, under a one-line "couldn't refresh" notice;
+ * - retry    = `refetch`, always present, so there is never an error with nothing to press.
+ */
+export interface DataTableQuery {
+	/** Pending AND fetching. False for a disabled query, which is what keeps it from spinning. */
+	isLoading: boolean;
+	isError: boolean;
+	/** The query's data, read only for presence: present means a failure is a stale refresh. */
+	data?: unknown;
+	refetch: () => unknown;
+}
+
 interface DataTableProps<TData extends { id?: string }, TValue> {
 	columns: ColumnDef<TData, TValue>[];
 	data: TData[];
@@ -82,32 +108,52 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	scrollHeight?: string;
 	/**
 	 * Message shown in the empty-state row when `data` is empty (default "No results."). It is
-	 * NEVER shown while `isPending` or `error` is set: an empty table and a table still loading
-	 * are different answers, and showing the first for the second is a lie about the data (F004).
+	 * NEVER shown while the read is loading or has failed: an empty table and a table still
+	 * loading are different answers, and showing the first for the second is a lie about the
+	 * data (F004).
 	 */
 	emptyMessage?: string;
 	/**
-	 * The first load has not answered yet — pass the query's `isPending` (no data at all), NOT
-	 * `isFetching`, which is also true while a refetch runs behind rows already on screen. The
-	 * real header stays and the body is drawn as placeholder rows.
+	 * The read behind `data`. Pass the TanStack query result itself — `query={jobsQuery}` — and
+	 * the table derives its loading, error and stale states from it. See {@link DataTableQuery}.
+	 * Omit it only for rows that are not read from anywhere (a constant list, a computed one).
 	 */
-	isPending?: boolean;
-	/** Placeholder rows to draw while `isPending` (default 6). Match the page's usual row count. */
+	query?: DataTableQuery;
+	/** Placeholder rows to draw while the first load runs (default 6). Match the usual row count. */
 	skeletonRows?: number;
-	/**
-	 * The read failed. Any non-null value replaces the body with an error state — never the empty
-	 * row — and takes precedence over `isPending` and over `data`. Pass the query's `error`. The
-	 * error's own message is not shown: it can carry server detail.
-	 */
-	error?: unknown;
-	/** Re-run the failed read; renders a "Try again" button in the error state. */
-	onRetry?: () => void;
 	/**
 	 * Opt into a "Show more" footer (like the Activity log) instead of page-number controls. The
 	 * caller grows the visible window itself — pass `pageSize` as the current visible count and
 	 * `onLoadMore` to extend it. Pagination is pinned to the first page (page 0) in this mode.
 	 */
 	loadMore?: { hasMore: boolean; onLoadMore: () => void };
+}
+
+/**
+ * The notice a table shows when a refetch failed behind rows it already has: the rows are still
+ * the last good answer, so they stay, and this line says they may be out of date. With
+ * live-by-default invalidation every update is a refetch, so this is the COMMON failure, and
+ * replacing a good table with a full error for it would be worse than the failure.
+ *
+ * Built from what the table already uses (its border, a ghost `Button`, a named ink tier), so it
+ * adds no colour of its own. Polite (`role="status"`): nothing the viewer had has gone away.
+ */
+function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
+	return (
+		<div
+			data-slot="data-table-stale"
+			role="status"
+			className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 text-ui-sm text-text-secondary"
+		>
+			<span className="flex items-center gap-2">
+				<CircleAlert className="size-3.5 shrink-0" aria-hidden />
+				{"Couldn't refresh — showing earlier data"}
+			</span>
+			<Button variant="ghost" size="xs" onClick={onRetry}>
+				Try again
+			</Button>
+		</div>
+	);
 }
 
 /**
@@ -131,10 +177,12 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
  *   client-side. `components/evidence/evidence-table.tsx` is the worked example and says why.
  * - **A `<div className="grid">` is not a table.** There is no third option.
  *
- * It renders four distinct bodies, and a page should reach every one of them through props rather
- * than by swapping the table out: rows; the empty row (`emptyMessage`); placeholder rows under the
- * real header (`isPending`); and an error state with a retry (`error`, `onRetry`). Before
- * `isPending` existed, a table that had not loaded yet said "No results." (#6117, F004).
+ * It renders four distinct bodies, and a page reaches every one of them by passing its query
+ * (`query={q}`) rather than by swapping the table out: rows; the empty row (`emptyMessage`);
+ * placeholder rows under the real header (first load); and `RegionError` with a retry (the read
+ * failed with nothing to show). A refetch that fails behind rows keeps the rows and adds a
+ * one-line notice with its own retry. Before this, a table that had not loaded yet said
+ * "No results." (#6117, F004).
  */
 export function DataTable<TData extends { id?: string }, TValue>({
 	columns,
@@ -148,16 +196,18 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	onPageIndexChange,
 	scrollHeight,
 	emptyMessage = "No results.",
-	isPending = false,
+	query,
 	skeletonRows = DEFAULT_SKELETON_ROWS,
-	error,
-	onRetry,
 	loadMore,
 }: DataTableProps<TData, TValue>) {
-	// One status for the body, decided once. Error first: a failed read with stale rows still
-	// has to say it failed. Then pending, so the empty row can never stand in for a load.
-	const hasError = error !== undefined && error !== null && error !== false;
-	const bodyState = hasError ? "error" : isPending ? "pending" : "ready";
+	// One status for the body, decided once (see `DataTableQuery`). A failure with data is NOT
+	// an error body: the rows stay and `staleRefresh` adds a notice above them.
+	const hasData = query?.data !== undefined;
+	const bodyState = query?.isError && !hasData ? "error" : query?.isLoading ? "pending" : "ready";
+	const staleRefresh = Boolean(query?.isError && hasData);
+	const retry = () => {
+		void query?.refetch();
+	};
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
 		externalFilters ?? [],
@@ -216,6 +266,9 @@ export function DataTable<TData extends { id?: string }, TValue>({
 			pagination: { pageSize },
 		},
 	});
+	// The header's real width in cells. `columns.length` counts top-level defs, so a grouped def
+	// (one def, several leaf columns) or a hidden column would put a full-width row out of step.
+	const leafColumnCount = table.getVisibleLeafColumns().length;
 
 	// Auto-grow the "Show more" window as the footer scrolls into view (the button stays as an
 	// explicit fallback). Windowing is synchronous, so re-arm the observer on the rendered count.
@@ -281,12 +334,12 @@ export function DataTable<TData extends { id?: string }, TValue>({
 			<TableBody aria-busy={bodyState === "pending" || undefined}>
 				{bodyState === "error" ? (
 					<TableRow className="hover:bg-transparent">
-						<TableCell colSpan={columns.length} className="whitespace-normal p-0">
-							<RegionError onRetry={onRetry} />
+						<TableCell colSpan={leafColumnCount} className="whitespace-normal p-0">
+							<RegionError onRetry={retry} />
 						</TableCell>
 					</TableRow>
 				) : bodyState === "pending" ? (
-					<DataTableSkeletonRows columns={columns.length} rows={skeletonRows} />
+					<DataTableSkeletonRows columns={leafColumnCount} rows={skeletonRows} />
 				) : table.getRowModel().rows?.length ? (
 					table.getRowModel().rows.map((row) => (
 						<TableRow
@@ -311,7 +364,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 					))
 				) : (
 					<TableRow>
-						<TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
+						<TableCell colSpan={leafColumnCount} className="h-24 text-center text-muted-foreground">
 							{emptyMessage}
 						</TableCell>
 					</TableRow>
@@ -323,6 +376,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	return (
 		<div className={cn("space-y-3", className)}>
 			<div className={DATA_TABLE_FRAME} data-state={bodyState}>
+				{staleRefresh ? <StaleRefreshNotice onRetry={retry} /> : null}
 				{scrollHeight ? (
 					<ScrollArea className={scrollHeight}>{tableEl}</ScrollArea>
 				) : (
