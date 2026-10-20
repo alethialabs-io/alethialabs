@@ -23,6 +23,7 @@ import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { CONTENT_FRAME } from "./content-frame";
 import { JobToaster } from "./job-toaster";
+import { RealtimeMount } from "./realtime-mount";
 import { SidebarRail } from "./sidebar-rail";
 import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
@@ -152,6 +153,9 @@ export function AppShell({
 
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />
+
+			{/* The org's one real-time stream (ADR 0005 D3). Headless; #6115 fills it in. */}
+			<RealtimeMount />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />
