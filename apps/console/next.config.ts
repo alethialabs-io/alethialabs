@@ -52,16 +52,29 @@ const nextConfig: NextConfig = {
 	allowedDevOrigins: PUBLIC_DEV_ORIGINS,
 	// Also allow the Server Action Origin check behind the proxy (production-mode renders).
 	//
-	// ⚠️ Do NOT add `staleTimes` here without reading `resolveOrgScope` first (#4089).
-	// `app/(private)/[org]/layout.tsx` resolves the URL's org segment and WRITES the
-	// session's active organization; the rest of the request, and the next write the
-	// user makes, are scoped by that. It only happens because Next 16's default
-	// `staleTimes.dynamic = 0` re-runs the dynamic segment on every navigation.
-	// Setting `staleTimes.dynamic > 0` serves `/{org}/…` from the client Router Cache
-	// instead, so the layout does not re-run — and the session is then NEVER re-scoped
-	// on a soft navigation between two orgs. Nothing errors, no check goes red: the
-	// user simply keeps writing into whichever org they were last hard-loaded under.
-	// `tests/hooks/use-active-org-slug.test.tsx` asserts this key stays absent.
+	// ⚠️ Do NOT add `staleTimes` here without reading this first (#4089; re-verified for
+	// ADR 0005 Q4 in #6113). `app/(private)/[org]/layout.tsx` (`resolveOrgScope`) WRITES the
+	// session's active organization each time an `/{org}/…` segment renders, and it renders
+	// on every navigation only because Next 16's default `staleTimes.dynamic = 0` re-runs
+	// dynamic segments. With `staleTimes.dynamic > 0` the client Router Cache serves the
+	// segment, the layout does not re-run, and a soft navigation between two orgs leaves the
+	// session on the org the user was last rendered under. Nothing errors when that happens.
+	//
+	// What that session write still decides, and what it no longer does:
+	//   · NOT the tenant of a request whose address names an org. Since #4147
+	//     `currentActor()` takes the org from the address (`urlScopedOrgId`,
+	//     `lib/authz/org-scope.ts`); it still READS the session's org (`getOwnerScope`) and
+	//     then ignores it there. For the read router that is measured, not asserted:
+	//     `tests/integration/rpc-tenancy.{enterprise,community}.test.ts` drive EVERY procedure
+	//     in `lib/rpc/router.ts`, through the `/{org}/~/rpc` handler and through `serverOrpc()`,
+	//     with the session on org X and the address on org Y, and get exactly the
+	//     session-on-Y answer (and a 404 for a caller who is not a member of Y). Server
+	//     actions posted from an `/{org}/…` page resolve through the same `currentActor()`,
+	//     but no test enumerates them.
+	//   · Everything whose address names NO org still falls back to the session: `/dashboard`,
+	//     `/cli/login`, `/api/**` and the MCP token path. A session left on the wrong org
+	//     would scope those, silently. That is why this key stays absent, and
+	//     `tests/hooks/use-active-org-slug.test.tsx` asserts that it does.
 	experimental: { serverActions: { allowedOrigins: PUBLIC_DEV_ORIGINS } },
 	// Monorepo: trace workspace files from the repo root so the standalone
 	// bundle is self-contained inside Docker.
