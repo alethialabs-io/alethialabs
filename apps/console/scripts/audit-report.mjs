@@ -615,30 +615,37 @@ export const LIVE_DEBT = /** @type {const} */ ({});
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {
-	// FIRST IMPORT — run 39438241593 @ `ce9a5fdaf`. Every row is MEASURED DEBT, owned by the epic
-	// #6112 lane whose scope holds the route (its issue title and \`scope:\` globs). No row is a
+	// SECOND IMPORT — run 39470371473 @ `f7d0c0985`, on the instrument #6180's review corrected
+	// (per-block B2, interception-proven B5, B3 on a hydrated page, markup-only empty states). Every
+	// row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\` globs hold the route —
+	// `[project]/settings/**` is #6128's, the org-level people & access pages #6129's. No row is a
 	// \`reason:\` yet: nothing here was found to be built this way on purpose.
 	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" }, B4: { lifts: "#6118" } },
+	"/[org]/[project]/architecture": { B2: { lifts: "#6119" } },
 	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
 	"/[org]/[project]/environments": { B1: { lifts: "#6120" }, B4: { lifts: "#6120" } },
-	"/[org]/[project]/jobs": { B1: { lifts: "#6121" }, B3: { lifts: "#6121" }, B5: { lifts: "#6121" } },
-	"/[org]/[project]/settings/activity": { B1: { lifts: "#6129" } },
+	"/[org]/[project]/jobs": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B3: { lifts: "#6121" }, B5: { lifts: "#6121" } },
+	"/[org]/[project]/settings/access": { B2: { lifts: "#6128" } },
+	"/[org]/[project]/settings/activity": { B1: { lifts: "#6128" } },
 	"/[org]/[project]/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
-	"/[org]/~/alerts": { B2: { lifts: "#6125" } },
 	"/[org]/~/clusters": { B2: { lifts: "#6122" } },
 	"/[org]/~/connectors": { B2: { lifts: "#6124" } },
+	"/[org]/~/evidence": { B2: { lifts: "#6126" } },
+	"/[org]/~/jobs": { B2: { lifts: "#6121" } },
 	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B4: { lifts: "#6121" } },
 	"/[org]/~/new": { B2: { lifts: "#6131" } },
 	"/[org]/~/runners": { B1: { lifts: "#6123" } },
-	"/[org]/~/settings/activity": { B1: { lifts: "#6129" } },
-	"/[org]/~/settings/billing": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
+	"/[org]/~/settings/activity": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" } },
+	"/[org]/~/settings/billing": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
 	"/[org]/~/settings/billing/invoices": { B1: { lifts: "#6127" } },
 	"/[org]/~/settings/classification": { B2: { lifts: "#6129" } },
-	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" } },
+	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" }, B5: { lifts: "#6128" } },
 	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
 	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
+	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6130" } },
+	"/[org]/~/support/my-cases": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
-	"/[org]/~/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+	"/[org]/~/usage": { B1: { lifts: "#6127" }, B2: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
 };
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */
@@ -1100,7 +1107,14 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 				const block = e.worstBlock && typeof e.worstBlock === "object" ? e.worstBlock : null;
 				const blockClause =
 					block && Number(block.score) >= score && block.skeleton && typeof block.skeleton === "object"
-						? ` — a ${Math.round(Number(block.skeleton.h))}px skeleton block became ${block.region && typeof block.region === "object" ? `${Math.round(Number(block.region.h))}px` : "nothing"}`
+						? ` — a ${Math.round(Number(block.skeleton.h))}px skeleton block became ${
+								block.region && typeof block.region === "object"
+									? `${Math.round(Number(block.region.h))}px${(() => {
+											const dy = Math.round(Number(block.region.y) - Number(block.skeleton.y));
+											return dy === 0 ? "" : `, ${Math.abs(dy)}px ${dy > 0 ? "lower" : "higher"}`;
+										})()}`
+									: "nothing"
+							}`
 						: "";
 				parts.push(`the skeleton moves ${score.toFixed(3)} against the page (budget ${budget})${blockClause}`);
 			}
@@ -4476,8 +4490,13 @@ function selfTest() {
 	raises("a B2 FAIL whose evidence shows neither RAISES", () => summariseLiveEvidence("B2", { score: 0.001, budget: 0.02, columns: { skeleton: 1, final: 1 } }), "no shift over budget or column mismatch");
 	ok(
 		"B2 names the block whose height the skeleton got wrong, through the worst-of-swaps wrapper",
-		summariseLiveEvidence("B2", { worst: { score: 0.05, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.05, skeleton: { h: 494 }, region: { h: 96 } } }, swaps: ["FAIL", "PASS"] }) ===
+		summariseLiveEvidence("B2", { worst: { score: 0.05, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.05, skeleton: { y: 100, h: 494 }, region: { y: 100, h: 96 } } }, swaps: ["FAIL", "PASS"] }) ===
 			"the skeleton moves 0.050 against the page (budget 0.02) — a 494px skeleton block became 96px",
+	);
+	ok(
+		"...and says how far it MOVED when the block kept its height but not its place",
+		summariseLiveEvidence("B2", { score: 0.047, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.047, skeleton: { y: 149, h: 630 }, region: { y: 250, h: 632 } } }) ===
+			"the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower",
 	);
 	ok("B3 counts the empty copy against the answered render", summariseLiveEvidence("B3", { heldEmpty: 2, answeredEmpty: 0 }) === "2 empty-copy regions while every read was held, against 0 once answered");
 	raises("a B3 FAIL with no extra empty copy RAISES", () => summariseLiveEvidence("B3", { heldEmpty: 1, answeredEmpty: 1 }), "no empty copy beyond");

@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/39438241593",
-		"commit": "ce9a5fdafeb704eea2ea80b560234947b84e1502"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/39470371473",
+		"commit": "f7d0c0985b449a5ceab7814a9ca55c3a50d2f8a6"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1792506621680-686125",
+			"runKey": "e2e-e2e-1792519391545-536233",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1911,7 +1911,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1792507210345-1",
+			"runKey": "e2e-e2e-audit-owner-1792520222599-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2081,7 +2081,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1792506602653-295966",
+			"runKey": "e2e-e2e-1792519543577-805513",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2969,7 +2969,7 @@
 			"persona": "the owner of an organisation the spec signs up itself",
 			"org": "a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-audit-behaviour-1792506689201-1",
+			"runKey": "e2e-e2e-audit-behaviour-1792519522491-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2986,8 +2986,7 @@
 				{
 					"route": "/[org]",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]",
@@ -3038,7 +3037,8 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.042 against the page (budget 0.02) — a 788px skeleton block became 847px; the skeleton sets 1 block side by side and the page 0"
 				},
 				{
 					"route": "/[org]/[project]/architecture",
@@ -3053,7 +3053,8 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/[project]/clusters",
@@ -3070,8 +3071,7 @@
 				{
 					"route": "/[org]/[project]/clusters",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/clusters",
@@ -3081,7 +3081,8 @@
 				{
 					"route": "/[org]/[project]/clusters",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/[project]/environments",
@@ -3119,7 +3120,8 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
@@ -3177,13 +3179,13 @@
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.033 against the page (budget 0.02) — a 160px skeleton block became 319px"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
@@ -3194,7 +3196,8 @@
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
@@ -3245,13 +3248,13 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
 					"predicate": "B1",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
@@ -3261,8 +3264,7 @@
 				{
 					"route": "/[org]/[project]/settings/preview",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
@@ -3310,14 +3312,13 @@
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "B2",
-					"verdict": "FAIL",
-					"detail": "the skeleton sets 2 blocks side by side and the page 1"
+					"verdict": "NOT MEASURED",
+					"reason": "hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition"
 				},
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/alerts",
@@ -3328,7 +3329,8 @@
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/clusters",
@@ -3345,8 +3347,7 @@
 				{
 					"route": "/[org]/~/clusters",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/clusters",
@@ -3356,7 +3357,8 @@
 				{
 					"route": "/[org]/~/clusters",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/connectors",
@@ -3382,7 +3384,8 @@
 				{
 					"route": "/[org]/~/connectors",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/evidence",
@@ -3393,13 +3396,13 @@
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.032 against the page (budget 0.02) — a 160px skeleton block became 192px, 156px higher"
 				},
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/evidence",
@@ -3409,7 +3412,8 @@
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/jobs",
@@ -3419,7 +3423,8 @@
 				{
 					"route": "/[org]/~/jobs",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower"
 				},
 				{
 					"route": "/[org]/~/jobs",
@@ -3446,12 +3451,13 @@
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton's outline moves 0.024 against the page's (budget 0.02)"
+					"detail": "the skeleton moves 0.038 against the page (budget 0.02) — a 630px skeleton block became 707px, 1px lower"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
@@ -3467,8 +3473,7 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "B1",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -3479,8 +3484,7 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -3490,7 +3494,8 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -3501,12 +3506,14 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition"
 				},
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -3562,8 +3569,7 @@
 				{
 					"route": "/[org]/~/settings/access",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/access",
@@ -3574,7 +3580,8 @@
 				{
 					"route": "/[org]/~/settings/access",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
@@ -3585,7 +3592,8 @@
 				{
 					"route": "/[org]/~/settings/activity",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.026 against the page (budget 0.02) — a 402px skeleton block became 301px; the skeleton sets 1 block side by side and the page 0"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
@@ -3627,7 +3635,8 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -3664,7 +3673,7 @@
 					"route": "/[org]/~/settings/classification",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton sets 1 block side by side and the page 2"
+					"detail": "the skeleton moves 0.152 against the page (budget 0.02) — a 86px skeleton block became 532px; the skeleton sets 1 block side by side and the page 2"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
@@ -3679,7 +3688,8 @@
 				{
 					"route": "/[org]/~/settings/classification",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/general",
@@ -3691,7 +3701,7 @@
 					"route": "/[org]/~/settings/general",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton sets 0 blocks side by side and the page 2"
+					"detail": "the skeleton moves 0.039 against the page (budget 0.02) — a 285px skeleton block became 515px, 7px lower"
 				},
 				{
 					"route": "/[org]/~/settings/general",
@@ -3707,13 +3717,13 @@
 				{
 					"route": "/[org]/~/settings/general",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "one read failing alone blanked every region — the `getOrgSettings (apps/console/app/server/actions/org-settings.ts)` server action"
 				},
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "B1",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/members",
@@ -3723,14 +3733,12 @@
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "B4",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/members",
@@ -3740,31 +3748,29 @@
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "B1",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton sets 1 block side by side and the page 2"
+					"detail": "the skeleton moves 0.036 against the page (budget 0.02) — a 203px skeleton block became 80px, 53px lower; the skeleton sets 1 block side by side and the page 2"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "B3",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "B4",
-					"verdict": "NOT MEASURED",
-					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -3775,7 +3781,8 @@
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -3792,7 +3799,8 @@
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
@@ -3803,7 +3811,8 @@
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
@@ -3844,7 +3853,8 @@
 				{
 					"route": "/[org]/~/support",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/support/abuse",
@@ -3869,7 +3879,8 @@
 				{
 					"route": "/[org]/~/support/abuse",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/support/ask",
@@ -3894,7 +3905,8 @@
 				{
 					"route": "/[org]/~/support/ask",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -3905,7 +3917,8 @@
 				{
 					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.038 against the page (budget 0.02) — a 350px skeleton block became 142px, 39px lower"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -3922,7 +3935,8 @@
 				{
 					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/support/my-cases",
@@ -3932,7 +3946,8 @@
 				{
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.041 against the page (budget 0.02) — a 367px skeleton block became 139px, 55px lower"
 				},
 				{
 					"route": "/[org]/~/support/my-cases",
@@ -3947,7 +3962,8 @@
 				{
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/support/submit",
@@ -3973,7 +3989,8 @@
 				{
 					"route": "/[org]/~/support/submit",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/usage",
@@ -3984,7 +4001,8 @@
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.034 against the page (budget 0.02) — a 231px skeleton block became nothing"
 				},
 				{
 					"route": "/[org]/~/usage",
@@ -4021,12 +4039,14 @@
 				{
 					"route": "/cli/login",
 					"predicate": "B4",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-reads-failed — the route made no data read, so forcing reads to fail reached nothing"
 				},
 				{
 					"route": "/cli/login",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser"
 				},
 				{
 					"route": "/dashboard/[[...rest]]",
