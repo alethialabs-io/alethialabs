@@ -23,7 +23,11 @@ vi.mock("@/components/providers/viewer-provider", () => ({
 }));
 vi.mock("@/lib/rpc/client", () => ({
 	tenantSegment: (p: string) => p.split("/")[1] || "~",
-	orpc: { jobs: { key: () => ["jobs-orpc"] } },
+	orpc: {
+		jobs: { key: () => ["jobs-orpc"] },
+		// The overview's reads ride the jobs, usage and alerts topics (#6118).
+		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
+	},
 }));
 
 import { RealtimeMount } from "@/components/shell/realtime-mount";

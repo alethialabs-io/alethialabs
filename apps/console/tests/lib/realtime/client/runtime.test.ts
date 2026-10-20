@@ -24,6 +24,8 @@ vi.mock("@/lib/rpc/client", () => ({
 			projects: { key: () => ["ws-projects"] },
 			supportCases: { key: () => ["ws-support-cases"] },
 		},
+		// The overview's reads ride the jobs, usage and alerts topics (#6118).
+		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
 	},
 }));
 

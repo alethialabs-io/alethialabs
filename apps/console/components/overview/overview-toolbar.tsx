@@ -10,6 +10,7 @@
 import { lookup } from "@/lib/typed-object";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowDownAZ,
@@ -38,8 +39,8 @@ import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import { ViewToggle } from "@repo/ui/view-toggle";
 import type { ProjectListResult } from "@/app/server/actions/projects";
-import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
+import { overviewUsageQuery } from "@/components/overview/usage-card";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { globalHref } from "@/lib/routing";
@@ -446,17 +447,13 @@ function CreateMenu({ orgSlug }: { orgSlug: string }) {
   // closing.
   const [inviteOpen, setInviteOpen] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
-  const [canInvite, setCanInvite] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    getCollaborationAccess()
-      .then((a) => alive && setCanInvite(a.canInvite))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // The invite gate rides on the overview's usage read (prefetched by the page, #6118) — the same
+  // cache entry the Usage card reads, so it costs no request of its own. Until it answers, or if it
+  // failed, the item opens the upsell, as it did before.
+  const { data: canInvite = false } = useQuery({
+    ...overviewUsageQuery(),
+    select: (usage) => usage.canInvite,
+  });
 
   return (
     <>
