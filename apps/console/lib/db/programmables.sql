@@ -216,6 +216,19 @@ UPDATE public.jobs j SET provider = ci.provider
 FROM public.cloud_identities ci
 WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
 
+-- Job snapshots carry no runner token. A runner-lifecycle job's target token is minted when the job
+-- is claimed and travels only in the claim response (lib/runners/lifecycle-token.ts); this removes
+-- the key from rows written before that. SETTLED rows only: an in-flight row keeps its signed
+-- snapshot as enqueued, and a later migrate reaches it once it settles. A scrubbed row's signature no
+-- longer describes its snapshot, so it is cleared — a NULL signature reads as unsigned
+-- (lib/runners/snapshot-sig.ts), and a settled job is never claimed again. Idempotent: matches
+-- nothing once no settled row carries the key.
+UPDATE public.jobs
+   SET config_snapshot = config_snapshot - 'runner_token',
+       config_snapshot_sig = NULL
+ WHERE config_snapshot ? 'runner_token'
+   AND status NOT IN ('QUEUED', 'CLAIMED', 'PROCESSING');
+
 -- TRUE iff another job currently holds the tofu state lock for this (project, environment) — i.e. a
 -- live writer is mid-plan/apply/destroy on the very state file the candidate job would open.
 --
