@@ -68,7 +68,12 @@ export function KubeconfigDownload({
 		const controller = new AbortController();
 		abort.current = controller;
 		let outcome: DownloadOutcome;
-		if (!(await x25519Supported())) {
+		// WebCrypto (`crypto.subtle`) exists only in a secure context, so a console served over plain
+		// HTTP can never seal the download. Say that, rather than blaming the browser. (Compared with
+		// `false` so an environment that does not report the flag at all falls to the probe below.)
+		if (window.isSecureContext === false) {
+			outcome = { kind: "insecure-context" };
+		} else if (!(await x25519Supported())) {
 			outcome = { kind: "unsupported" };
 		} else {
 			try {

@@ -10,6 +10,7 @@ import { getProvider } from "@/lib/cloud-providers";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
+import { copyText } from "@repo/ui/copy-text";
 import { StatusBadge, statusTier, type StatusTier } from "@repo/ui/status-badge";
 import {
 	Boxes,
@@ -116,7 +117,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 			className="h-6 w-6 shrink-0 text-text-tertiary"
 			aria-label={label}
 			onClick={async () => {
-				await navigator.clipboard.writeText(value);
+				if (!(await copyText(value))) return;
 				setCopied(true);
 				setTimeout(() => setCopied(false), 2000);
 			}}

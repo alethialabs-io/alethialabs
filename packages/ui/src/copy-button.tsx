@@ -5,8 +5,10 @@
 
 import { Check, Copy } from "lucide-react";
 import { useCallback, useState } from "react";
+import { copyText } from "./copy-text";
 import { cn } from "./utils";
 
+/** An icon button that copies `text`, showing a check once the copy succeeded. */
 export function CopyButton({
 	text,
 	className,
@@ -16,8 +18,10 @@ export function CopyButton({
 }) {
 	const [copied, setCopied] = useState(false);
 
-	const handleCopy = useCallback(() => {
-		navigator.clipboard.writeText(text);
+	const handleCopy = useCallback(async () => {
+		// `copyText` falls back to a selection copy where the Clipboard API is absent (plain HTTP),
+		// and the check only shows when the text really was copied.
+		if (!(await copyText(text))) return;
 		setCopied(true);
 		setTimeout(() => setCopied(false), 2000);
 	}, [text]);

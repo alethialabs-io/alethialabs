@@ -11,6 +11,7 @@ import { postCaseMessage } from "@/app/server/actions/support";
 import type { SupportCaseStatus } from "@/lib/db/schema/enums";
 import { qk } from "@/lib/query/keys";
 import type { CaseWithThread, PublicMessage } from "@/lib/queries/support";
+import { randomUuid } from "@/lib/random-id";
 
 /**
  * The reply composer for a case thread. On send it optimistically appends the customer's
@@ -37,7 +38,7 @@ export function CaseComposer({
 			await queryClient.cancelQueries({ queryKey: key });
 			const previous = queryClient.getQueryData<CaseWithThread | null>(key);
 			const optimistic: PublicMessage = {
-				id: `optimistic-${crypto.randomUUID()}`,
+				id: `optimistic-${randomUuid()}`,
 				case_id: caseId,
 				author_type: "customer",
 				author_id: null,

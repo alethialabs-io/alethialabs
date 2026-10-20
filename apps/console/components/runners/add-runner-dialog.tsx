@@ -22,6 +22,7 @@ import { useCloudProviderStore as useCloudProvider } from "@/lib/stores/use-clou
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
+import { copyText } from "@repo/ui/copy-text";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import {
@@ -445,7 +446,10 @@ function CopyField({ label, value }: { label: string; value: string }) {
 	const [copied, setCopied] = useState(false);
 
 	const copy = async () => {
-		await navigator.clipboard.writeText(value);
+		if (!(await copyText(value))) {
+			toast.error(`Could not copy the ${label.toLowerCase()}. Select it and copy it manually.`);
+			return;
+		}
 		setCopied(true);
 		setTimeout(() => setCopied(false), 2000);
 	};

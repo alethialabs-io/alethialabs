@@ -39,6 +39,7 @@
     "check:no-network-fonts": "node scripts/check-no-network-fonts.mjs",
     "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
+    "check:secure-context-apis": "node scripts/check-secure-context-apis.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
     "check:go-arch-filenames": "node scripts/check-go-arch-filenames.mjs",
     "check:console-test-inputs": "node scripts/check-console-test-inputs.mjs",

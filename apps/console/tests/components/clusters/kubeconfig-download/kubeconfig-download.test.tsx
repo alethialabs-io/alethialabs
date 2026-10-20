@@ -128,6 +128,20 @@ describe("KubeconfigDownload", () => {
 		expect(screen.getByText(/API endpoint is private/)).toBeInTheDocument();
 	});
 
+	it("over plain HTTP (not a secure context) says it needs HTTPS and requests nothing", async () => {
+		vi.mocked(canDownloadKubeconfig).mockResolvedValue(true);
+		// jsdom does not report isSecureContext; a browser on a plain-HTTP origin reports false.
+		Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+		try {
+			render();
+			await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+			expect(await screen.findByRole("alert")).toHaveTextContent(/needs HTTPS/);
+			expect(requestKubeconfigDownload).not.toHaveBeenCalled();
+		} finally {
+			Reflect.deleteProperty(window, "isSecureContext");
+		}
+	});
+
 	it("shows the refusal's message and saves nothing", async () => {
 		vi.mocked(canDownloadKubeconfig).mockResolvedValue(true);
 		vi.mocked(requestKubeconfigDownload).mockResolvedValue({ ok: false, status: 429 });

@@ -49,6 +49,7 @@ import {
 	agentStepDataSchema,
 } from "@/lib/ai/agent-steps";
 import { hasAcceptedApproval } from "@/lib/agent/turn-key";
+import { copyText } from "@repo/ui/copy-text";
 import { cn } from "@repo/ui/utils";
 
 export type AgentChatStatus = "submitted" | "streaming" | "ready" | "error";
@@ -168,7 +169,8 @@ export function AgentChat({
 	}, [initialFeedback]);
 
 	const copyMessage = (message: UIMessage) => {
-		void navigator.clipboard.writeText(messageText(message)).then(() => {
+		void copyText(messageText(message)).then((copied) => {
+			if (!copied) return;
 			setCopiedId(message.id);
 			setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1500);
 		});
