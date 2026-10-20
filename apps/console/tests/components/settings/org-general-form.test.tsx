@@ -361,15 +361,19 @@ describe("controls a role cannot use are disabled, with the reason (review advis
 		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeDisabled();
 		for (const button of screen.getAllByRole("button", { name: "Save changes" })) {
 			expect(button).toBeDisabled();
-			expect(button).toHaveAccessibleDescription("Only an owner or admin can change these settings");
+			expect(button).toHaveAccessibleDescription("Only the organization's owner can change these settings");
 		}
 	});
 
-	it("an admin may edit but not delete — Delete says only the owner can", () => {
+	it("an admin may neither edit nor delete — the plugin grants organization:update to the owner only", () => {
 		const client = seededClient();
 		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("admin"));
 		renderOrgGeneral(undefined, client);
-		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeEnabled();
+		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeDisabled();
+		for (const button of screen.getAllByRole("button", { name: "Save changes" })) {
+			expect(button).toBeDisabled();
+			expect(button).toHaveAccessibleDescription("Only the organization's owner can change these settings");
+		}
 		const del = screen.getByRole("button", { name: "Delete organization" });
 		expect(del).toBeDisabled();
 		expect(del).toHaveAccessibleDescription("Only the organization's owner can delete it");
