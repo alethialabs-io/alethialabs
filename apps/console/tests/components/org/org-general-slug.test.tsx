@@ -4,22 +4,22 @@
 // #5445 — Settings · General: renaming the org's URL onto a reserved or taken slug is refused
 // UNDER THE SLUG FIELD, before and after the request.
 //
-// The form saved through `authClient.organization.update` and checked neither rule first. On the old
-// form a reserved slug went straight to the server (where nothing refused it until ee/'s hook), and
-// a taken one came back as better-auth's own sentence in a toast — nowhere near the field, with the
-// field not marked invalid. Each case below fails against that form.
+// #6128 moved the save from the browser's `authClient.organization.update` to the `saveOrgGeneral`
+// action. The rules did not move: a RESERVED slug is the shared schema's (the form refuses it
+// without a request), and a TAKEN one only the server can know — it now comes back as a
+// `validation` result naming the slug field, which the form puts under the field. Each case below
+// still fails against the form #5445 replaced, which checked neither and toasted better-auth's text.
 
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const update = vi.fn();
-const isOrgSlugAvailable = vi.fn();
+const saveOrgGeneral = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 
 vi.mock("next/navigation", () => ({
-	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+	useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 vi.mock("sonner", () => ({
 	toast: {
@@ -27,46 +27,22 @@ vi.mock("sonner", () => ({
 		success: (...a: unknown[]) => toastSuccess(...a),
 	},
 }));
-vi.mock("@/lib/auth/client", () => ({
-	authClient: {
-		organization: {
-			update: (...a: unknown[]) => update(...a),
-			delete: vi.fn(),
-		},
-	},
-}));
-vi.mock("@/lib/stores/use-workspace-store", () => ({
-	useWorkspaceStore: (
-		pick: (s: { activeOrgId: string; fetchWorkspace: () => Promise<void> }) => unknown,
-	) => pick({ activeOrgId: "org-1", fetchWorkspace: vi.fn().mockResolvedValue(undefined) }),
-}));
 vi.mock("@/app/server/actions/org-settings", () => ({
-	getOrgSettings: vi.fn().mockResolvedValue({
-		name: "Acme",
-		slug: "acme",
-		logo: null,
-		description: "",
-		primaryAddress: null,
-		region: "eu-west-1",
-		defaultEnv: "staging",
-		terraformVersion: "1.9.0",
-	}),
-}));
-vi.mock("@/app/server/actions/billing", () => ({
-	isOrgSlugAvailable: (...a: unknown[]) => isOrgSlugAvailable(...a),
+	saveOrgGeneral: (...a: unknown[]) => saveOrgGeneral(...a),
+	deleteOrganization: vi.fn(),
 }));
 vi.mock("@/components/org/org-logo-upload", () => ({ OrgLogoUpload: () => null }));
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
-import { OrgGeneral } from "@/components/settings/general/org-general";
+import { renderOrgGeneral } from "../../support/general-settings";
 
 const RESERVED = "That slug is reserved — try another.";
 const TAKEN = "That slug is taken — try another.";
 
-/** Renders the panel, waits for the loaded slug, and replaces it with `next`. */
+/** Renders the panel and replaces the loaded slug with `next`. */
 async function renameTo(user: ReturnType<typeof userEvent.setup>, next: string) {
-	render(<OrgGeneral />);
-	const slug = await screen.findByDisplayValue("acme");
+	renderOrgGeneral();
+	const slug = screen.getByDisplayValue("acme");
 	await user.clear(slug);
 	await user.type(slug, next);
 	return slug;
@@ -79,8 +55,10 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	isOrgSlugAvailable.mockResolvedValue(true);
-	update.mockResolvedValue({ data: {}, error: null });
+	saveOrgGeneral.mockImplementation(async (values: { name: string; slug: string }) => ({
+		ok: true,
+		data: { name: values.name, slug: values.slug },
+	}));
 });
 
 describe("OrgGeneral — a slug it refuses", () => {
@@ -93,56 +71,39 @@ describe("OrgGeneral — a slug it refuses", () => {
 		expect(alert).toHaveTextContent(RESERVED);
 		expect(slug).toHaveAttribute("aria-invalid", "true");
 		expect(slug).toHaveAttribute("aria-describedby", alert.id);
-		expect(update).not.toHaveBeenCalled();
+		expect(saveOrgGeneral).not.toHaveBeenCalled();
 		expect(toastError).not.toHaveBeenCalled();
 	});
 
-	it("refuses a TAKEN slug under the field, before the save", async () => {
-		isOrgSlugAvailable.mockResolvedValue(false);
-		const user = userEvent.setup();
-		await renameTo(user, "globex");
-		await save(user);
-
-		expect(await screen.findByRole("alert")).toHaveTextContent(TAKEN);
-		expect(isOrgSlugAvailable).toHaveBeenCalledWith("globex");
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	it("puts the SERVER's refusal under the field too (the client check skipped or raced)", async () => {
-		update.mockResolvedValue({
-			data: null,
-			error: { code: "ORGANIZATION_SLUG_RESERVED", message: RESERVED },
+	it("puts the SERVER's taken refusal under the field, never in a toast", async () => {
+		saveOrgGeneral.mockResolvedValue({
+			ok: false,
+			error: { kind: "validation", message: TAKEN, fields: { slug: [TAKEN] } },
 		});
 		const user = userEvent.setup();
-		await renameTo(user, "acme-two");
+		const slug = await renameTo(user, "globex");
 		await save(user);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(RESERVED);
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent(TAKEN);
+		expect(slug).toHaveAttribute("aria-invalid", "true");
+		expect(slug).toHaveAttribute("aria-describedby", alert.id);
+		expect(saveOrgGeneral).toHaveBeenCalledWith(expect.objectContaining({ slug: "globex" }));
 		expect(toastError).not.toHaveBeenCalled();
 		expect(toastSuccess).not.toHaveBeenCalled();
+		// The refused slug stays in the box for the user to change.
+		expect(slug).toHaveValue("globex");
 	});
 
-	it("names better-auth's own taken refusal as taken, under the field", async () => {
-		update.mockResolvedValue({
-			data: null,
-			error: { code: "ORGANIZATION_SLUG_ALREADY_TAKEN", message: "Organization slug already taken" },
-		});
+	it("saves the org's OWN slug unchanged, with no refusal", async () => {
 		const user = userEvent.setup();
-		await renameTo(user, "acme-two");
+		renderOrgGeneral();
+		// Change something else so the form is dirty; the slug is the one the org already holds.
+		await user.type(screen.getByRole("textbox", { name: "Description" }), "Platform team");
 		await save(user);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(TAKEN);
-	});
-
-	it("does not count the org's OWN slug as taken, and saves", async () => {
-		isOrgSlugAvailable.mockResolvedValue(false);
-		const user = userEvent.setup();
-		render(<OrgGeneral />);
-		await screen.findByDisplayValue("acme");
-		await save(user);
-
-		await vi.waitFor(() => expect(update).toHaveBeenCalled());
-		expect(isOrgSlugAvailable).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(saveOrgGeneral).toHaveBeenCalled());
+		expect(saveOrgGeneral).toHaveBeenCalledWith(expect.objectContaining({ slug: "acme" }));
 		expect(toastSuccess).toHaveBeenCalledWith("Organization updated.");
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
@@ -159,17 +120,14 @@ describe("OrgGeneral — typing a hyphen into the URL", () => {
 		expect(slug).toHaveValue("my-t");
 	});
 
-	it("trims a trailing hyphen on save, and checks and saves the trimmed slug", async () => {
+	it("trims a trailing hyphen on save, and saves the trimmed slug", async () => {
 		const user = userEvent.setup();
 		const slug = await renameTo(user, "acme-two-");
 		expect(slug).toHaveValue("acme-two-");
 		await save(user);
 
-		await vi.waitFor(() => expect(update).toHaveBeenCalled());
-		expect(isOrgSlugAvailable).toHaveBeenCalledWith("acme-two");
-		expect(update).toHaveBeenCalledWith(
-			expect.objectContaining({ data: expect.objectContaining({ slug: "acme-two" }) }),
-		);
-		expect(slug).toHaveValue("acme-two");
+		await vi.waitFor(() => expect(saveOrgGeneral).toHaveBeenCalled());
+		expect(saveOrgGeneral).toHaveBeenCalledWith(expect.objectContaining({ slug: "acme-two" }));
+		await vi.waitFor(() => expect(slug).toHaveValue("acme-two"));
 	});
 });

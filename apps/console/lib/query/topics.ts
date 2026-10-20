@@ -73,7 +73,13 @@ export const TOPIC_KEYS = {
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
 	],
-	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
+	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
+	// (switcher, breadcrumbs, palette), the setup guide, and the project's Settings → General.
+	projects: (): QueryKey[] => [
+		orpc.workspace.projects.key(),
+		orpc.workspace.setupGuide.key(),
+		orpc.settings.project.key(),
+	],
 	clusters: (): QueryKey[] => [],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
@@ -89,4 +95,7 @@ export const TOPIC_KEYS = {
 	// open case's thread (#6130). Hints come from the `support_cases` trigger (programmables.sql).
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key(), orpc.support.key()],
 	usage: (): QueryKey[] => [orpc.overview.usage.key()],
+	// The org row changed (#6128): its name, slug and logo in the switcher and breadcrumb (the
+	// workspace context) and Settings → General.
+	organization: (): QueryKey[] => [orpc.workspace.context.key(), orpc.settings.org.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

@@ -95,7 +95,7 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 }
 
 /**
- * The routing keys of one notice. `jobs`, `environments`, `addons` and `support` have producers; every other topic is declared
+ * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `projects` and `organization` have producers; every other topic is declared
  * and routes NOWHERE until its lane adds both its trigger and its row here — a topic that routed
  * before its RLS arms were written down would be a guess about who may read it.
  */
@@ -135,8 +135,16 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "environments":
 		case "addons":
 			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
-		// TODO(#6131): projects — o:, u:; project view filter on the row's own id.
+		// #6128: a project row. Both arms of its RLS policy are on `org_id` (`org_id = current_org OR
+		// org_id = current_owner`), and the personal scope's stream subscribes `o:<its user>`, which is
+		// that scope's org — so the org arm is the only route. Filtered on the project ITSELF (the
+		// trigger sends its own id as `p`); a deleted project no longer exists and is unfiltered.
 		case "projects":
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
+		// #6128: the organization row (name, slug, logo, General settings). Every member reads it, so
+		// the org arm is unfiltered.
+		case "organization":
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
 		// TODO(#6122): project_cluster — o: only; project view filter.
 		case "clusters":
 		// TODO(#6123): runners — o:/u: for self runners; managed runners (org_id NULL) → platform.

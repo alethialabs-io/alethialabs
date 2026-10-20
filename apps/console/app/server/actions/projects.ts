@@ -3794,26 +3794,6 @@ export async function deleteEnvironment(
 // Project settings — General tab.
 // ============================================================
 
-/** The editable general fields for a project (project → Settings → General). */
-export async function getProjectGeneral(
-	projectId: string,
-): Promise<{ id: string; project_name: string; slug: string | null }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		const [row] = await tx
-			.select({
-				id: projects.id,
-				project_name: projects.project_name,
-				slug: projects.slug,
-			})
-			.from(projects)
-			.where(eq(projects.id, projectId))
-			.limit(1);
-		if (!row) notFound(); // render loader: stale/deleted id → 404, not a captured error
-		return row;
-	});
-}
-
 /**
  * Renames a project. The slug is intentionally left stable so existing URLs / bookmarks keep
  * resolving — only the display name changes.

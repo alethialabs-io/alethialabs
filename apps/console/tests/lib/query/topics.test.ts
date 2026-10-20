@@ -37,6 +37,32 @@ describe("TOPIC_KEYS", () => {
 		expect(client.getQueryState(["projects", "acme"])?.isInvalidated).toBe(false);
 	});
 
+	it("#6128: organization invalidates the org's General settings and the workspace context (switcher, breadcrumb)", async () => {
+		const client = new QueryClient();
+		const settings: unknown[] = [...orpc.settings.org.queryKey()];
+		const context: unknown[] = [...orpc.workspace.context.queryKey()];
+		const projects: unknown[] = [...orpc.workspace.projects.queryKey()];
+		client.setQueryData(settings, { scope: "personal" });
+		client.setQueryData(context, {});
+		client.setQueryData(projects, []);
+		for (const queryKey of TOPIC_KEYS.organization()) await client.invalidateQueries({ queryKey });
+		expect(client.getQueryState(settings)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(context)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(projects)?.isInvalidated).toBe(false);
+	});
+
+	it("#6128: projects invalidates the shell's list and every project's General settings read", async () => {
+		const client = new QueryClient();
+		const list: unknown[] = [...orpc.workspace.projects.queryKey()];
+		const a: unknown[] = [...orpc.settings.project.queryKey({ input: { project: "shop" } })];
+		const b: unknown[] = [...orpc.settings.project.queryKey({ input: { project: "api" } })];
+		const org: unknown[] = [...orpc.settings.org.queryKey()];
+		for (const key of [list, a, b, org]) client.setQueryData(key, null);
+		for (const queryKey of TOPIC_KEYS.projects()) await client.invalidateQueries({ queryKey });
+		for (const key of [list, a, b]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(org)?.isInvalidated).toBe(false);
+	});
+
 	it("lists exactly the topics the wire can carry (lib/realtime/topics.ts), empty until a lane moves its reads", () => {
 		expect(Object.keys(TOPIC_KEYS).sort()).toEqual([...TOPICS].sort());
 	});
