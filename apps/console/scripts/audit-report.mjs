@@ -1089,12 +1089,21 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 			return `with every read held, the region differs from its answered render in: ${differs.join(", ")}`;
 		}
 		if (predicate === "B2") {
-			const e = asObject(evidence, predicate);
+			// `judgeB2Worst` wraps the worst swap's evidence as `{ worst, swaps }`; a bare one is read as is.
+			const outer = asObject(evidence, predicate);
+			const e = "worst" in outer ? asObject(outer.worst, predicate) : outer;
 			const columns = asObject(e.columns, predicate);
 			const score = Number(e.score);
 			const budget = Number(e.budget);
 			const parts = [];
-			if (score > budget) parts.push(`the skeleton's outline moves ${score.toFixed(3)} against the page's (budget ${budget})`);
+			if (score > budget) {
+				const block = e.worstBlock && typeof e.worstBlock === "object" ? e.worstBlock : null;
+				const blockClause =
+					block && Number(block.score) >= score && block.skeleton && typeof block.skeleton === "object"
+						? ` — a ${Math.round(Number(block.skeleton.h))}px skeleton block became ${block.region && typeof block.region === "object" ? `${Math.round(Number(block.region.h))}px` : "nothing"}`
+						: "";
+				parts.push(`the skeleton moves ${score.toFixed(3)} against the page (budget ${budget})${blockClause}`);
+			}
 			if (columns.skeleton !== columns.final) {
 				parts.push(`the skeleton sets ${plural(Number(columns.skeleton), "block")} side by side and the page ${Number(columns.final)}`);
 			}
@@ -1219,7 +1228,49 @@ const describe = (v) => (v === null ? "null" : Array.isArray(v) ? "an array" : t
  * @param {{routes: unknown, permissions: unknown}} raw parsed `test-results/ui-audit*.json`
  * @param {{run: string, commit: string}} provenance
  */
-export function importLive(raw, provenance) {
+/**
+ * Every cell the PREVIOUS import scored (PASS or FAIL) that this one does not — it reads NOT
+ * MEASURED, or has no record at all — and that `explained` does not account for.
+ *
+ * A floor on how many routes a predicate scored cannot see a cell that quietly stopped being
+ * measured: the count can stay above it while the cells under it change. So an import compares cell
+ * by cell against the committed records, and a scored cell that becomes withheld refuses the import
+ * unless `--explain=<file>` names it (`{"<route> <predicate>": "<why>"}`) — an instrument change, a
+ * route that genuinely cannot be reached any more. An explanation for a cell that did NOT become
+ * withheld is refused too, so the file cannot carry stale excuses forward.
+ *
+ * @param {Record<string, {records: {route: string, predicate: string, verdict: string}[]}>} previous  the committed `runs`
+ * @param {Record<string, {records: {route: string, predicate: string, verdict: string}[]}>} next      the imported `runs`
+ * @param {Record<string, string>} explained
+ * @returns {string[]}
+ */
+export function newlyWithheldProblems(previous, next, explained = {}) {
+	/** @type {Map<string, string>} */
+	const now = new Map();
+	for (const sec of Object.values(next ?? {})) for (const r of sec.records ?? []) now.set(`${r.route} ${r.predicate}`, r.verdict);
+	/** @type {string[]} */
+	const problems = [];
+	const used = new Set();
+	for (const sec of Object.values(previous ?? {})) {
+		for (const r of sec.records ?? []) {
+			if (r.verdict !== "PASS" && r.verdict !== "FAIL") continue;
+			const key = `${r.route} ${r.predicate}`;
+			const verdict = now.get(key);
+			if (verdict === "PASS" || verdict === "FAIL" || verdict === "N/A") continue;
+			if (typeof explained[key] === "string" && explained[key].trim()) {
+				used.add(key);
+				continue;
+			}
+			problems.push(`${key} was ${r.verdict} and is now ${verdict ?? "absent"} — explain it with --explain, or find out why the run stopped measuring it.`);
+		}
+	}
+	for (const key of Object.keys(explained)) {
+		if (!used.has(key)) problems.push(`--explain names ${key}, which did not stop being measured — an excuse for nothing is refused.`);
+	}
+	return problems;
+}
+
+export function importLive(raw, provenance, previous = null, explained = {}) {
 	const owned = livePredicateSections();
 	if (!provenance.run || !provenance.commit) {
 		throw new Error("--import-live needs both --run=<url or id> and --commit=<sha>: a baseline nobody can cite is not one.");
@@ -1271,6 +1322,12 @@ export function importLive(raw, provenance) {
 			})
 			.sort((a, b) => a.route.localeCompare(b.route) || a.predicate.localeCompare(b.predicate));
 		runs[key] = { runKey: body.runKey, records };
+	}
+	if (previous !== null) {
+		const withheld = newlyWithheldProblems(previous, runs, explained);
+		if (withheld.length > 0) {
+			throw new Error(`the import stops measuring cells the committed records scored:\n  - ${withheld.join("\n  - ")}`);
+		}
 	}
 	const body = {
 		$comment: [
@@ -4394,17 +4451,34 @@ function selfTest() {
 		"ui-audit-behaviour.json: no `records` array",
 	);
 
+	// ── an import may not quietly stop measuring a scored cell ──────────────────────────────────
+	{
+		const prev = { behaviour: { records: [{ route: "/a", predicate: "B5", verdict: "PASS" }, { route: "/b", predicate: "B5", verdict: "FAIL" }, { route: "/c", predicate: "B5", verdict: "NOT MEASURED" }] } };
+		const next = { behaviour: { records: [{ route: "/a", predicate: "B5", verdict: "NOT MEASURED" }, { route: "/b", predicate: "B5", verdict: "PASS" }] } };
+		ok("a scored cell that becomes NOT MEASURED is refused", newlyWithheldProblems(prev, next).some((p) => p.startsWith("/a B5 was PASS")));
+		ok("...and so is one that VANISHES from the import", newlyWithheldProblems(prev, { behaviour: { records: [] } }).some((p) => p.includes("/b B5 was FAIL and is now absent")));
+		ok("...unless it is explained", newlyWithheldProblems(prev, next, { "/a B5": "instrument change" }).length === 0);
+		ok("...a cell that was already withheld is not a regression", !newlyWithheldProblems(prev, next).some((p) => p.includes("/c B5")));
+		ok("an explanation for a cell that is still measured is refused", newlyWithheldProblems(prev, next, { "/a B5": "x", "/b B5": "y" }).some((p) => p.includes("--explain names /b B5")));
+		raises("importLive raises on it", () => importLive(rawArtifacts, { run: "r", commit: "c" }, { behaviour: { records: [{ route: "/zz", predicate: "B1", verdict: "PASS" }] } }), "stops measuring cells");
+	}
+
 	// ── family B's summaries mirror the verdict ──────────────────────────────────────────────
 	ok(
 		"B2 names the outline shift AND the column mismatch when both failed",
 		summariseLiveEvidence("B2", { score: 0.0312, budget: 0.02, columns: { skeleton: 1, final: 2 } }) ===
-			"the skeleton's outline moves 0.031 against the page's (budget 0.02); the skeleton sets 1 block side by side and the page 2",
+			"the skeleton moves 0.031 against the page (budget 0.02); the skeleton sets 1 block side by side and the page 2",
 	);
 	ok(
 		"...and only the column mismatch when the outline held",
 		summariseLiveEvidence("B2", { score: 0, budget: 0.02, columns: { skeleton: 1, final: 2 } }) === "the skeleton sets 1 block side by side and the page 2",
 	);
 	raises("a B2 FAIL whose evidence shows neither RAISES", () => summariseLiveEvidence("B2", { score: 0.001, budget: 0.02, columns: { skeleton: 1, final: 1 } }), "no shift over budget or column mismatch");
+	ok(
+		"B2 names the block whose height the skeleton got wrong, through the worst-of-swaps wrapper",
+		summariseLiveEvidence("B2", { worst: { score: 0.05, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.05, skeleton: { h: 494 }, region: { h: 96 } } }, swaps: ["FAIL", "PASS"] }) ===
+			"the skeleton moves 0.050 against the page (budget 0.02) — a 494px skeleton block became 96px",
+	);
 	ok("B3 counts the empty copy against the answered render", summariseLiveEvidence("B3", { heldEmpty: 2, answeredEmpty: 0 }) === "2 empty-copy regions while every read was held, against 0 once answered");
 	raises("a B3 FAIL with no extra empty copy RAISES", () => summariseLiveEvidence("B3", { heldEmpty: 1, answeredEmpty: 1 }), "no empty copy beyond");
 	ok(
@@ -4739,7 +4813,7 @@ export const USAGE = [
  */
 export function parseCliArgs(argv) {
 	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--filter-surfaces": "filter-surfaces", "--help": "help", "-h": "help" };
-	const VALUED = ["--import-live", "--run", "--commit", "--step-summary"];
+	const VALUED = ["--import-live", "--run", "--commit", "--step-summary", "--explain"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
 	/** @type {Record<string, string>} */
@@ -4771,7 +4845,14 @@ export function parseCliArgs(argv) {
 				error: `--import-live needs ${missing.join(" and ")}: a baseline nobody can cite the provenance of is not one`,
 			};
 		}
-		return { mode: "import-live", error: null, dir: values["--import-live"], run: values["--run"], commit: values["--commit"] };
+		return {
+			mode: "import-live",
+			error: null,
+			dir: values["--import-live"],
+			run: values["--run"],
+			commit: values["--commit"],
+			...("--explain" in values ? { explain: values["--explain"] } : {}),
+		};
 	}
 	if ("--step-summary" in values) {
 		if (distinct.length > 0) return { mode: null, error: `--step-summary and ${distinct.join(" and ")} cannot both be asked for` };
@@ -4908,7 +4989,11 @@ if (invokedDirectly) {
 		/** @type {ReturnType<typeof parseLive>} */
 		let parsedBack;
 		try {
-			body = importLive(raw, { run: parsed.run, commit: parsed.commit });
+			/** @type {Record<string, string>} */
+			let explained = {};
+			if (parsed.explain !== undefined) explained = JSON.parse(readFileSync(path.resolve(parsed.explain), "utf8"));
+			const previous = JSON.parse(readFileSync(path.join(REPO_ROOT, LIVE_JSON), "utf8")).runs;
+			body = importLive(raw, { run: parsed.run, commit: parsed.commit }, previous, explained);
 			parsedBack = parseLive(body);
 		} catch (err) {
 			console.error(`audit-report: ${err instanceof Error ? err.message : String(err)}`);

@@ -15,9 +15,11 @@
 // signup walk, `signup.ts`, the way T7 does — and seeds THAT organisation, leaving every other
 // spec's subject untouched whatever order the runner picks.
 //
-// The plan is the default (Hobby), deliberately: that is what a new organisation is, and a gated
-// page renders its upsell there — the shape F021 found ("the skeleton promises a table and the page
-// is an upsell card"), which is B2's to measure.
+// The plan is the default one a new organisation gets. What that does NOT give this leg is the
+// hosted product's plan gating: the release gate boots a SELF-MANAGED console, which never renders
+// an upsell, so F021 ("the skeleton promises a table and the page is an upsell card") cannot be
+// reproduced here. B2 on the gated routes is therefore NOT MEASURED `hosted-only` (see `GATED`),
+// never scored against a list the hosted product would not show.
 //
 // ── THE ORDER ───────────────────────────────────────────────────────────────────────────────────
 //
@@ -52,7 +54,7 @@ import { seedFilterFixtures } from "../helpers/seed-filters";
 import {
 	behaviourControl,
 	judgeB1,
-	judgeB2,
+	judgeB2Worst,
 	judgeB3,
 	judgeB4,
 	judgeB5,
@@ -62,6 +64,7 @@ import {
 	loadWithOneFailure,
 	measureSkeletonSwap,
 	pageEntry,
+	structurallyShell,
 	shellReadsFor,
 	B5_READ_CAP,
 	type BControlResult,
@@ -97,6 +100,20 @@ const REFERENCE_ROUTE = "/[org]/~/jobs";
 const MIN_MEASURED = 10;
 
 const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly PredicateId[];
+
+/**
+ * The routes the hosted product gates by plan (F021, 2026-10-19 hunt): on a plan without the
+ * feature they render an upsell where a self-managed console renders the list. Their skeleton is
+ * the F021 question, and only a leg booted as the hosted edition can ask it.
+ */
+const GATED: ReadonlySet<string> = new Set(["/[org]/~/alerts", "/[org]/~/runners", "/[org]/~/settings/teams", "/[org]/~/settings/sso"]);
+
+/** B2's NOT MEASURED reason on a gated route. */
+const HOSTED_ONLY =
+	"hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition";
+
+/** How many times B2 drives the swap; the worst measured one is the verdict (`judgeB2Worst`). */
+const B2_SWAPS = 2;
 
 /** What phase 1 learned about one route, for phase 2. */
 interface RouteState {
@@ -300,14 +317,18 @@ test.describe("phase 1 · B1–B4 on every route, in a seeded organisation of it
 				const a = await loadAnswered(context(), url);
 				s.routes[route.route] = { reads: a.reads, settled: a.settled, answered: a.snapshot };
 				saveState();
-				const held = await loadHeld(context(), url);
-				put(route, url, "B1", judgeB1(a, held));
-				put(route, url, "B3", judgeB3(a, held));
+				// B1 holds EVERY read: its subject is the server render.
+				put(route, url, "B1", judgeB1(a, await loadHeld(context(), url)));
+				// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
+				const chainEntries = manifest.routes.filter((r) => r.shellChain.join(" > ") === route.shellChain.join(" > ")).map((r) => pageEntry(r.file));
+				put(route, url, "B3", judgeB3(a, await loadHeld(context(), url, (key) => structurallyShell(key, chainEntries))));
 				put(route, url, "B4", judgeB4(a, await loadFailed(isolatedContext, url)));
 			});
 			const loading = route.boundaries.loading?.file ?? null;
 			if (loading === null) {
 				report.record({ route: route.route, url, predicate: "B2", verdict: "N/A", reason: "no-loading-boundary" });
+			} else if (GATED.has(route.route)) {
+				report.notMeasured({ route: route.route, url, predicate: "B2", reason: HOSTED_ONLY });
 			} else {
 				await measured(route, url, ["B2"], async () => {
 					const origin = originFor(route, loading);
@@ -315,12 +336,16 @@ test.describe("phase 1 · B1–B4 on every route, in a seeded organisation of it
 						report.notMeasured({ route: route.route, url, predicate: "B2", reason: "no-origin — no route in the manifest sits outside this route's loading boundary" });
 						return;
 					}
-					const page = await context().newPage();
-					try {
-						put(route, url, "B2", judgeB2(await measureSkeletonSwap(page, materialize(origin, s.ctx), url)));
-					} finally {
-						await page.close();
+					const swaps = [];
+					for (let i = 0; i < B2_SWAPS; i++) {
+						const page = await context().newPage();
+						try {
+							swaps.push(await measureSkeletonSwap(page, materialize(origin, s.ctx), url));
+						} finally {
+							await page.close();
+						}
 					}
+					put(route, url, "B2", judgeB2Worst(swaps));
 				});
 			}
 		});
@@ -348,8 +373,8 @@ test.describe("phase 2 · B5, each of a page's own reads failed alone", () => {
 			const pageReads = mine.reads.filter((k) => !shell.includes(k));
 			const failures: OneFailure[] = [];
 			await measured(route, url, ["B5"], async () => {
-				if (mine.settled && pageReads.length >= 2 && pageReads.length <= B5_READ_CAP) {
-					for (const key of pageReads) failures.push({ key, snapshot: await loadWithOneFailure(context(), url, key) });
+				if (mine.settled && pageReads.length >= 1 && pageReads.length <= B5_READ_CAP) {
+					for (const key of pageReads) failures.push({ key, ...(await loadWithOneFailure(context(), url, key)) });
 				}
 				put(route, url, "B5", judgeB5({ snapshot: mine.answered, settled: mine.settled, reads: mine.reads }, pageReads, shell, failures));
 			});

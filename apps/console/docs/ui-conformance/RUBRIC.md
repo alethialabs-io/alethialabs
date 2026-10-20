@@ -441,25 +441,30 @@ B scores what the user experiences. B1–B5 are measured by `e2e/audit/behaviour
 | id | predicate | PASS when | N/A when |
 |---|---|---|---|
 | **B1** | no client data fetch before first paint | with EVERY data read held (never answered), `main` already carries its data: no skeleton, the same rows, empty states and error surfaces, and no fewer content-bearing text elements than once answered | `redirect-only` |
-| **B2** | the skeleton has the final layout's shape | the route's own loading state, painted by a soft navigation whose data response is held, and the page it becomes occupy the same frame — a CLS-style outline score ≤ **0.02** — and, where either sets two or more blocks side by side, the same number | `redirect-only`; `no-loading-boundary` — no `loading.tsx` anywhere in the chain (T1 reports that absence) |
-| **B3** | no empty state while pending | with every read held, `main` shows no empty copy (`@repo/ui/empty`, "No results.", "No … yet") beyond what the answered render shows | `redirect-only` |
-| **B4** | error ≠ empty ≠ endless skeleton | with every read answered **500** — on the cold load AND on the stale refetch a prefetched region makes later — `main` never keeps a skeleton or `aria-busy`, never shows empty copy the answered render does not, and never drops content without an error surface in its place | `redirect-only` |
-| **B5** | one failing read takes down one region | each of the page's OWN reads, failed alone, leaves text outside an error surface — no single read blanks every region | `redirect-only` |
+| **B2** | the skeleton has the final layout's shape | the route's own loading state, painted by a soft navigation whose data response is held, and the page it becomes score ≤ **0.02** on a CLS-style formula — over the outline AND each skeleton block against the region that replaced it, bottom edge included unless that region is an open-ended list — and, where either sets two or more blocks side by side, the same number | `redirect-only`; `no-loading-boundary` — no `loading.tsx` anywhere in the chain (T1 reports that absence) |
+| **B3** | no empty state while pending | with the shell's reads answered and every read of the page's own held, `main` shows no empty state (`@repo/ui/empty`, `DataTable`'s empty row) beyond what the answered render shows | `redirect-only` |
+| **B4** | error ≠ empty ≠ endless skeleton | with every read answered **500** — on the cold load AND on the stale refetch a prefetched region makes later — `main` never keeps a skeleton or `aria-busy`, never shows an empty state the answered render does not, and never drops content without an error surface in its place | `redirect-only` |
+| **B5** | one failing read takes down one region | each of the page's OWN reads, failed alone (and proven failed), never brings up the route's error page or leaves `main` blank with no error surface; with two or more such reads, it also leaves text outside an error surface | `redirect-only` |
 | **B6** | live by default (maintainer ruling, ADR 0005 Q3) | a change made elsewhere appears without reload within the stream's latency budget; no `refetchInterval` / `setInterval` data poll (`check:no-polling`) | — |
 
 **A "read" is a server-action POST or a call to the read router (`/{org}/~/rpc/…`).** Those are the two
 transports a console page reads data over, and the only requests B1–B5 hold or fail. A navigation's
-RSC payload, `/api/auth/*` and static chunks pass through untouched. A read over any other transport —
-an SSE stream, a bare `fetch("/api/…")` — is invisible to the family; that is its stated bound.
+RSC payload, `/api/auth/*`, static chunks and the change stream (`/{org}/~/events`, any request sent
+with `Accept: text/event-stream`, and its `?probe=1`) pass through untouched — the stream stays open for
+the life of the page, so counting it would make every route "fetch on mount" (#6178). A read over any
+other transport — a bare `fetch("/api/…")` — is invisible to the family; that is its stated bound.
 
 **Every verdict is a COMPARISON with the same route answered.** An absolute reading is wrong both ways:
-"No limit" is a label, not empty copy, and a static banner with `role="alert"` is not an error the
-reads caused. Only what changes between the disturbed render and the answered one is attributed to
-the reads. The cost is the one render a comparison cannot read: **a route whose answered render is its
-own empty state** looks the same whether the empty answer came from the server or from a client read
-that has not answered. B1, B3 and B4 report it **NOT MEASURED `answered-empty`** — never PASS — and the
-spec runs in an organisation of its own **seeded with two rows in every list** so that as few routes as
-possible answer empty. The persona's organisation cannot be used: `routes.spec.ts` keeps it empty for T5.
+a static banner with `role="alert"` is not an error the reads caused, and a label is not an empty
+state. Only what changes between the disturbed render and the answered one is attributed to the reads.
+An empty state is recognised by its MARKUP — `data-slot="empty"`, or `DataTable`'s empty row (one body
+row whose single cell spans the table) — never by its wording: the first cut matched phrases, and read
+labels such as "No limit" as empty copy. The cost of comparing is the one render a comparison cannot
+read: **a route whose answered render is its own empty state** looks the same whether the empty answer
+came from the server or from a client read that has not answered. B1, B3 and B4 report it **NOT
+MEASURED `answered-empty`** — never PASS — and the spec runs in an organisation of its own **seeded with
+two rows in every list** so that as few routes as possible answer empty. The persona's organisation
+cannot be used: `routes.spec.ts` keeps it empty for T5.
 
 **B1's subject is the server render, because the held page may never hydrate.** Measured on the jobs
 slice: the first server action the shell sends is held, hydration stalls behind it, and what the user
@@ -471,55 +476,96 @@ digit, no relative time — and fails only when the held render has FEWER of the
 stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`). The first calibration run failed
 the jobs slice on exactly those two, which is how they were found.
 
+**B3 is measured on a HYDRATED page.** Holding every read (B1's load) stalls hydration, so an empty
+state a client component renders after it mounts — while its read is still pending — never appears
+there, and B3 used to PASS it. B3's load answers the reads the build's server-reference manifest places
+in the route's shells and holds every other one, so the page hydrates and its own reads stay pending.
+One limit is the browser's, not this instrument's: Next sends server actions one at a time, so the
+first held action keeps every later action from being SENT. Held or never sent, none answers — which is
+the condition B3 asks about.
+
 **B2 is not the browser's CLS, because the browser's CLS cannot see a skeleton swap.** Layout
 Instability scores elements that exist in both frames and MOVE; a loading fallback replaced by the page
 moves nothing — the old nodes are removed and new ones inserted — so it scores 0 for any skeleton at
-all. B2 therefore tags every element of the painted loading state, releases the held response, and
-compares the frame the removed elements occupied with the frame the new ones occupy, with CLS's own
-formula: the union area of both as a fraction of the viewport, times the furthest the top, left or
-right edge moved as a fraction of the viewport's larger side. The BOTTOM edge is excluded on purpose —
-a skeleton cannot know how many rows the answer has, and a list that answers with two rows under an
-eight-row skeleton moves nothing on screen. Layout that survives the swap (a shell inside `main`) is in
-neither frame. The outline cannot see a one-column skeleton over a two-column page (F007), so B2 also
-counts the bordered or filled blocks, at least 64px tall and a fifth of the region wide, that sit side
-by side; when either frame sets two or more side by side, the two counts must agree. (One filled
-skeleton box over a page with no bordered block — a canvas, plain text — is not a column question;
-the first run failed two such routes whose outlines matched.) **What B2 does not see**, stated: an inner arrangement that keeps
-the outline and the column count — a missing toolbar row above an otherwise matching table, for one —
-passes. The origin of the navigation is chosen so that the fallback painted is the route's OWN loading
-boundary: it shares every segment with the route above that boundary and differs at it. When the
-loading state never paints while the response is held, B2 is NOT MEASURED saying so.
+all. B2 tags every element of the painted loading state (captured once it has held still for 600ms, so
+a nested boundary half-way through resolving is not the frame measured), releases the held response,
+and compares what the skeleton occupied with what replaced it, with CLS's own formula — union area as
+a fraction of the viewport, times the furthest an edge moved as a fraction of the viewport's larger side:
+
+- **the outline** — top, left and right edges. The shell pins those on most routes, so on its own it
+  scored exactly 0 on 33 of 36 routes in the first run, and a 494px panel skeleton that became a 96px
+  card PASSED (#6180's review);
+- **every skeleton block** (bordered or filled, at least 64px tall and a fifth of the region wide)
+  against the final block that overlaps it most, or, where the page drew no frame there, the text that
+  replaced it — **with the bottom edge**, because a block of the wrong height moves everything below it.
+  The bottom edge is excluded only where the replacing region is an **open-ended list** (it holds table
+  body rows or list items): no skeleton can know how many rows the answer has, and two rows under an
+  eight-row skeleton move nothing above them. A skeleton block nothing replaced scores as vanishing.
+
+The score is the worst of those. The column rule stands beside it: when either frame sets two or more
+blocks side by side, the counts must agree (F007). The swap is driven twice and the worse result is the
+verdict — `~/settings/general` flipped between runs on one capture. The origin of the navigation is
+chosen so that the fallback painted is the route's OWN loading boundary: it shares every segment with
+the route above that boundary and differs at it. When the loading state never paints while the
+response is held, B2 is NOT MEASURED saying so. **What B2 does not see**, stated: an open-ended list
+whose rows are the wrong shape, and a missing row above a matching block only through that block's move.
+
+**The plan-gated skeleton (F021) is not measured here.** The release gate boots a SELF-MANAGED console,
+which never renders the hosted product's upsell, so on the gated routes (`~/alerts`, `~/runners`,
+`~/settings/teams`, `~/settings/sso`) B2 is **NOT MEASURED `hosted-only`**, never scored against a list
+the hosted product would not show. Measuring it needs a release-gate leg that boots the console as the
+hosted edition; no such leg exists today, and the plan-gating design (#6132) is its owner.
 
 **B4 has two phases because a prefetched region makes no read on its cold load.** Failing its reads
 there proves nothing about it; what it does later is refetch, on focus once stale and on its own
 interval. So the page's clock is moved six minutes — past every `staleTime` the console sets — and the
 page is told it is visible again, and whatever the refetch fails into is the second phase. Without it,
-"render the empty state on error" on the jobs slice would PASS forever.
+"render the empty state on error" on the jobs slice would PASS forever. A route on which NO read was
+failed in either phase is **NOT MEASURED `no-reads-failed`**: nothing was forced to fail.
 
-**B5 fails the page's reads, not the shell's.** A server action the build's server-reference manifest
-lists under EVERY page entry beneath the same shells is the shell's — a layout's client graph is
-bundled into every page under it — and so is any read every route under those shells made in the run
-(the intersection; over every route when fewer than three share the chain). Failing a shell read on
-forty routes would measure the sidebar forty times. The structural half came first from evidence: the
-intersection alone left seven shell polls on the jobs slice, because a poll that did not fire on one
-route fell out of it. A page with at most one
-read of its own has no sibling region for one failure to take down and PASSES on that structure, with
-the evidence saying so. A page with more than eight reads of its own is NOT MEASURED with the count. The
-shell's own containment is NOT measured by B5 — that is a stated gap, owned by #6114.
+**B5 fails the page's reads, not the shell's, and proves each failure happened.** A server action the
+build's server-reference manifest lists under EVERY page entry beneath the same shells is the shell's —
+a layout's client graph is bundled into every page under it — and so is any read every route under
+those shells made in the run (the intersection; over every route when fewer than three share the
+chain). Each failure load COUNTS the 500s it served; a read the run saw once and that load never made
+fails nothing. So:
+
+- a route with **no read of its own** is **NOT MEASURED `no-page-reads`** — its regions are
+  server-rendered, and no failure of its own can be injected from the browser;
+- a route on which **no failure was intercepted** is **NOT MEASURED `not-intercepted`**;
+- a route with **one** read of its own is measured too: failing it must not bring up the route's
+  `ErrorState` or leave `main` with no text and no error surface (a skeleton that never resolves —
+  `~/settings/general`, F050/F051);
+- with **two or more**, a failure must also leave text outside an error surface: its siblings were fed
+  by reads that answered.
+
+The first cut PASSED any route with at most one read of its own — 25 of 34 PASSes, 17 of them on
+routes nothing was failed on (#6180's review). A page with more than eight reads of its own is NOT
+MEASURED with the count. The shell's own containment is NOT measured by B5 — a stated gap, owned by #6114.
 
 **The instrument before the tree.** `behaviourControl()` drives every predicate, through the same
 loaders and judges the routes go through, against fixture pages with known answers — a page that must
-PASS and, per predicate, a page one defect away that must FAIL (a client fetch on mount, empty copy
-while pending, empty copy on a failed refetch, a skeleton that never resolves, a failure that blanks
-both regions, a skeleton with the wrong columns, a skeleton whose frame moves). A predicate the control
-names is withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS all
-five, and every predicate must have produced a PASS or a FAIL on at least ten routes.
+PASS and, per predicate, pages one defect away that must FAIL: a client fetch on mount; an empty state
+while pending, and one that appears only after hydration; an empty state on a failed refetch; content
+that vanishes with no error; a skeleton that never resolves; a failure that brings up the route's error
+page, and one that blanks both regions; a skeleton with the wrong columns, one whose frame moves, and
+one whose height alone is wrong. A shorter open-ended list, a `RegionError` with no `role`, and a page
+with no reads (NOT MEASURED, never PASS) are its other known answers. A predicate the control names is
+withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS all five,
+and every predicate must have produced a PASS or a FAIL on at least ten routes.
+
+**A scored cell may not quietly stop being scored.** That floor of ten cannot see a single cell going
+from PASS to NOT MEASURED, so `--import-live` compares the new records with the committed ones cell by
+cell and refuses an import in which a cell that was PASS or FAIL becomes NOT MEASURED or disappears,
+unless `--explain=<file>` names it with a reason. This is a check at import time, not a ratchet on the
+scores: a verdict may still move from PASS to FAIL, and the ledger below is what records that.
 
 **A route that FAILS a B predicate does not fail its test.** The verdict reaches the scoreboard through
 `--import-live`, where `apps/console/scripts/audit-report.mjs` holds every B FAIL to a per-route ledger,
 `BEHAVIOUR_LEDGER`, with CLAUDE.md §6's two kinds of row: `lifts: "#n"` is measured debt the named lane
 removes; `reason:` is a decision. Both directions are checked — a FAIL with no row and a row whose cell
-no longer fails are both errors.
+no longer fails are both errors. It is a ledger, not a ratchet: it records what fails, and nothing in it
+stops a PASS from becoming a FAIL except the row that FAIL then has to gain.
 
 ## The scoreboard and the ratchet
 
