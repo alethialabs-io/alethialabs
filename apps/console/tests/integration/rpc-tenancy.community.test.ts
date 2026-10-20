@@ -3,7 +3,18 @@
 
 // #6113 (ADR 0005 Q4): the read router's tenancy proof in the COMMUNITY edition — the single-tenant
 // answer, where every org address a member names resolves to the caller's PERSONAL scope
-// (`currentActor()` arm 2, `lib/authz/guard.ts`), so the session still never changes the answer.
+// (`currentActor()` arm 2, `lib/authz/guard.ts`).
+//
+// WHAT CAN FAIL HERE, AND WHAT CANNOT. Community's `getActiveScope` ignores its org argument, so
+// neither the session's org nor the address's org can change who U is served as.
+//   · The non-member 404s (both entry points) CAN fail: the membership check on the address
+//     (`urlScopedOrgId`) is the only org-aware step left in community, and ignoring the address
+//     turned both red (#6113, mutation 1).
+//   · The "session X ≡ session Y" equalities CANNOT fail in community — the session is ignored by
+//     construction, not by anything this file measures. Mutation 1 left them green.
+//   · The "neither marker" checks fail only if community stops being single-tenant (serves an
+//     org's rows instead of the personal scope). They pin what community MEANS; they do not
+//     measure the address.
 // The body, and what it does and does not claim, is `rpc-tenancy.shared.ts`.
 //
 // `ALETHIA_EDITION=community` is the configured single-tenant edition: ee/dist is not loaded even
@@ -47,4 +58,4 @@ afterAll(() => {
 	else process.env.ALETHIA_EDITION = h.previous;
 });
 
-runRpcTenancySuite({ edition: "community", h });
+await runRpcTenancySuite({ edition: "community", h });
