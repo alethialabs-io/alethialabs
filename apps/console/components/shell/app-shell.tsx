@@ -154,7 +154,7 @@ export function AppShell({
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />
 
-			{/* The org's one real-time stream (ADR 0005 D3). Headless; #6115 fills it in. */}
+			{/* The org's change stream (ADR 0005 D3, #6115) and its connection notice: a fixed live region, no layout. */}
 			<RealtimeMount />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}

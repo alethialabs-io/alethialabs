@@ -6,9 +6,11 @@
 // Same stubs as realtime-events-route.test.ts (session read, Terms gate, the PDP's decision); the
 // membership joins, the triggers and the LISTEN are real.
 //
-// RUNS ONLY WHERE `@alethia/ee` LOADS — its dist is a build output (`pnpm -F @alethia/ee build`).
-// The CI integration job does not build it (building it there would switch every integration file
-// to the enterprise edition in auto mode), so there this file SKIPS, and says so on stderr.
+// REQUIRES `ee/dist/index.js` (`pnpm -F @alethia/ee build`), as rpc-tenancy.enterprise.test.ts does.
+// With `ALETHIA_EDITION=enterprise` a missing or broken module makes the load FAIL
+// (`lib/enterprise.ts`, #6149), and `beforeAll` asserts `editionState()` is enterprise, so this file
+// goes red rather than skipping into a community answer. It skips only when the database is down.
+// CI builds ee/dist in the Integration job and guards that it exists (#6169).
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -50,17 +52,7 @@ import { jobs, member, organization, user } from "@/lib/db/schema";
 import { editionState } from "@/lib/enterprise";
 import { getChangeBus } from "@/lib/realtime/bus";
 import { getChangeTransport } from "@/lib/realtime/index";
-import { DB_UP } from "./db";
-
-const EE = editionState().kind === "enterprise";
-if (DB_UP && !EE) {
-	process.stderr.write(
-		"\n[integration] @alethia/ee did not load — realtime-events-route-ee.test.ts is SKIPPING. Run `pnpm -F @alethia/ee build` to run it.\n",
-	);
-}
-// TODO(#6169): once that PR builds ee/dist in the integration job, follow
-// rpc-tenancy.enterprise.test.ts — skip only when the DB is down, and assert the edition in beforeAll.
-const describeIfEe = DB_UP && EE ? describe : describe.skip;
+import { describeIfDb } from "./db";
 
 // At FILE level, so the edition is restored even when the suite below is skipped.
 afterAll(() => {
@@ -119,8 +111,16 @@ async function insertJob(userId: string, orgId: string): Promise<string> {
 	return row.id;
 }
 
-describeIfEe("GET /{org}/~/events — enterprise edition", () => {
+describeIfDb("GET /{org}/~/events — enterprise edition", () => {
 	beforeAll(async () => {
+		// The edition is the premise of every assertion below: an ee module that failed to register
+		// must fail this suite, never skip it into the community answer.
+		const state = editionState();
+		if (state.kind !== "enterprise") {
+			throw new Error(
+				`ee/dist/index.js must be built (\`pnpm -F @alethia/ee build\`) — the enterprise edition did not register: ${JSON.stringify(state)}`,
+			);
+		}
 		await db()
 			.insert(user)
 			.values(Object.values(U).map((id) => ({ id, email: `it-6115-ee-${id}@example.test` })));

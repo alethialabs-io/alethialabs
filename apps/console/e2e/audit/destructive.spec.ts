@@ -613,6 +613,16 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 const LONG_LIVED_REQUESTS: ReadonlySet<string> = new Set(["eventsource", "websocket"]);
 
 /**
+ * A `fetch` that ASKS for an event stream — the console's change stream (`/{org}/~/events`, #6115)
+ * sends `Accept: text/event-stream` and stays open for the life of the page. It is told apart by that
+ * request header, which no server action or read sends, rather than by its URL; its `?probe=1`
+ * requests send no such header and are tracked like any other request.
+ */
+function isEventStreamFetch(req: Request): boolean {
+	return (req.headers()["accept"] ?? "").includes("text/event-stream");
+}
+
+/**
  * The TOTAL time one snapshot spends waiting for the page's requests to finish, across all its
  * readings — not per reading, so a request that never finishes cannot multiply it by
  * {@link SETTLE_ROUNDS} and eat the test's budget. Past it, the snapshot proceeds and says so.
@@ -641,7 +651,7 @@ function trackInFlight(page: Page): InFlight {
 	const open = new Set<Request>();
 	let waiters: Array<() => void> = [];
 	const onRequest = (req: Request) => {
-		if (LONG_LIVED_REQUESTS.has(req.resourceType())) return;
+		if (LONG_LIVED_REQUESTS.has(req.resourceType()) || isEventStreamFetch(req)) return;
 		open.add(req);
 	};
 	const onDone = (req: Request) => {
@@ -2127,6 +2137,23 @@ test("self-test — a request that NEVER finishes bounds the wait and is NAMED, 
 	inFlight.dispose();
 	expect(Date.now() - started, "the wait is bounded").toBeLessThan(5_000);
 	expect(pending).toEqual(["GET /hangs"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — a fetch that asks for an event stream is not waited on; the same fetch without it is", async ({ page }) => {
+	// The console's change stream never finishes by design (#6115). It must not eat the settle budget,
+	// and the exclusion must be the Accept header, not "any fetch that hangs".
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	const stream = page.waitForRequest("https://settle.self-test.invalid/acme/~/events");
+	const plain = page.waitForRequest("https://settle.self-test.invalid/hangs");
+	await page.setContent(
+		`<script>fetch("https://settle.self-test.invalid/acme/~/events", { headers: { Accept: "text/event-stream" } }); fetch("https://settle.self-test.invalid/hangs")</script>`,
+	);
+	await Promise.all([stream, plain]);
+	const pending = await inFlight.idle(300);
+	inFlight.dispose();
+	expect(pending, "only the plain request is still waited on").toEqual(["GET /hangs"]);
 	await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 

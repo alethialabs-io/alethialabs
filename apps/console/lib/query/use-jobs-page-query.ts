@@ -8,13 +8,14 @@
 //
 // #6113 (ADR 0005 D1): the read is the `jobs.page` GET procedure, no longer a server-action POST,
 // so it never queues behind other actions; the route prefetches the same key on the server.
+//
+// #6115: no poll. A job that changes is a `jobs` hint on the org's change stream, which invalidates
+// this key (lib/query/topics.ts); while the stream is down the one fallback poll covers it
+// (lib/realtime/client/fallback-poll.ts).
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { orpc } from "@/lib/rpc/client";
 import type { JobsPageInput } from "@/lib/rpc/inputs/jobs";
-
-/** Statuses that warrant fast polling (mirrors useJobsQuery's cadence). */
-const ACTIVE_STATUSES = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
 /** Filtered rows + unfiltered facet counts + the true total for the jobs page. */
 export function useJobsPageQuery(input: JobsPageInput) {
@@ -22,10 +23,6 @@ export function useJobsPageQuery(input: JobsPageInput) {
 		orpc.jobs.page.queryOptions({
 			input,
 			placeholderData: keepPreviousData,
-			// Poll fast only while something in view is still moving, then idle. #6115 replaces this
-			// with the jobs real-time topic and deletes it.
-			refetchInterval: (q) =>
-				q.state.data?.rows.some((j) => ACTIVE_STATUSES.has(j.status)) ? 5_000 : 30_000,
 		}),
 	);
 }
