@@ -15,8 +15,8 @@ import {
 	isRunnerDeployProvider,
 	runnerDeployUnsupportedMessage,
 } from "@/lib/runners/deploy-providers";
+import { unheldRunnerTokenHash } from "@/lib/runners/lifecycle-token";
 import { notifyScaler } from "@/lib/scaler";
-import { createHash, randomBytes } from "crypto";
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
@@ -129,9 +129,6 @@ export async function POST(req: Request) {
 
 		const imageTag = latestRelease?.version ?? "latest";
 
-		const runnerToken = randomBytes(32).toString("hex");
-		const tokenHash = createHash("sha256").update(runnerToken).digest("hex");
-
 		const [runner] = await db
 			.insert(runners)
 			.values({
@@ -142,14 +139,15 @@ export async function POST(req: Request) {
 				name,
 				operator: "self",
 				provisioning: "deployed",
-				token_hash: tokenHash,
+				// No usable credential until the DEPLOY_RUNNER job is claimed: the claim mints the token
+				// and hands it to the executing runner alone (lib/runners/lifecycle-token.ts).
+				token_hash: unheldRunnerTokenHash(),
 				cloud_identity_id,
 			})
 			.returning({ id: runners.id, name: runners.name });
 
 		const configSnapshot = {
 			runner_id: runner.id,
-			runner_token: runnerToken,
 			runner_name: name,
 			image_tag: imageTag,
 			region,

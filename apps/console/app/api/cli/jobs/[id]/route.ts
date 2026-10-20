@@ -7,6 +7,7 @@ import { jobs } from "@/lib/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { jobWire } from "@/lib/validations/cli-contract";
 
 /** Fetches a single job by ID, enforcing view·job + org scope. */
@@ -41,7 +42,7 @@ export async function GET(
 			return NextResponse.json({ error: "Job not found" }, { status: 404 });
 		}
 
-		return cliJson(jobWire, job);
+		return cliJson(jobWire, redactJobRow(job));
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

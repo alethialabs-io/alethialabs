@@ -16,8 +16,10 @@ import {
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { likeTerm } from "@/lib/db/like";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
+import { snapshotWithoutRunnerToken } from "@/lib/runners/lifecycle-token";
 import { notifyScaler } from "@/lib/scaler";
 import { provisionJobStatus, provisionJobType } from "@/lib/db/schema/enums";
 import { and, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
@@ -36,7 +38,7 @@ export async function getJobStatus(jobId: string) {
 	});
 }
 
-/** Fetches a single job (owner-scoped) by id, or null. */
+/** Fetches a single job (owner-scoped) by id, or null; its snapshot is read-side redacted. */
 export async function getJob(jobId: string) {
 	const actor = await authorize("view", { type: "job", id: jobId });
 	const owner = actor.userId;
@@ -46,11 +48,11 @@ export async function getJob(jobId: string) {
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
 			.limit(1);
-		return row ?? null;
+		return row ? redactJobRow(row) : null;
 	});
 }
 
-/** Fetches all jobs with project project_name and runner name joined. */
+/** Fetches all jobs with project project_name and runner name joined; snapshots are redacted. */
 export async function getJobs() {
 	const actor = await authorize("view", { type: "job" });
 	const owner = actor.userId;
@@ -78,7 +80,7 @@ export async function getJobs() {
 			.orderBy(desc(jobs.created_at));
 
 		return rows.map((r) => ({
-			...r.job,
+			...redactJobRow(r.job),
 			project_name: r.project_name ?? null,
 			project_slug: r.project_slug ?? null,
 			runner_name: r.runner_name ?? null,
@@ -258,7 +260,7 @@ export async function getJobsPage(query: JobsQuery = {}) {
 
 		return {
 			rows: rows.map((r) => ({
-				...r.job,
+				...redactJobRow(r.job),
 				project_name: r.project_name ?? null,
 				project_slug: r.project_slug ?? null,
 				runner_name: r.runner_name ?? null,
@@ -302,15 +304,17 @@ export async function getPlanResult(jobId: string) {
 	});
 }
 
+/** Fetches one project's jobs, newest first; snapshots are read-side redacted. */
 export async function getProjectJobs(projectId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
-		return tx
+		const rows = await tx
 			.select()
 			.from(jobs)
 			.where(eq(jobs.project_id, projectId))
 			.orderBy(desc(jobs.created_at));
+		return rows.map(redactJobRow);
 	});
 }
 
@@ -367,7 +371,7 @@ export async function rerunJob(jobId: string) {
 				org_id: actor.orgId,
 				job_type: original.job_type,
 				initiated_by: "user",
-				config_snapshot: original.config_snapshot,
+				config_snapshot: snapshotWithoutRunnerToken(original.config_snapshot),
 				cloud_identity_id: original.cloud_identity_id,
 				project_id: original.project_id,
 				status: "QUEUED",
