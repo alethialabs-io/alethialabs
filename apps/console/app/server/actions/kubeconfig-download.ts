@@ -28,7 +28,11 @@ import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligi
 import { errorName } from "@/lib/errors";
 import { collectGate, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
-import { type MintRequestRefusal, requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
+import {
+	KUBECONFIG_MINT_IDENTITY_UNAVAILABLE_REASON,
+	type MintRequestRefusal,
+	requestKubeconfigMint,
+} from "@/lib/kubeconfig-mint/request";
 import { log } from "@/lib/observability/log";
 import {
 	type CliKubeconfigMintPollResponse,
@@ -76,6 +80,7 @@ function refusalStatus(refusal: MintRequestRefusal): KubeconfigDownloadRefusal {
 		case "unsupported-cloud":
 		case "static-only":
 		case "shared-cluster":
+		case "identity-unavailable":
 			return 422;
 	}
 }
@@ -136,9 +141,13 @@ export async function requestKubeconfigDownload(input: {
 			sourceIp: await sourceIp(),
 		});
 		if (!outcome.ok) {
-			return outcome.refusal === "shared-cluster"
-				? { ok: false, status: 422, message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON }
-				: { ok: false, status: refusalStatus(outcome.refusal) };
+			if (outcome.refusal === "shared-cluster") {
+				return { ok: false, status: 422, message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON };
+			}
+			if (outcome.refusal === "identity-unavailable") {
+				return { ok: false, status: 422, message: KUBECONFIG_MINT_IDENTITY_UNAVAILABLE_REASON };
+			}
+			return { ok: false, status: refusalStatus(outcome.refusal) };
 		}
 		return {
 			ok: true,
