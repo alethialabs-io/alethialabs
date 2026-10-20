@@ -8,28 +8,26 @@
 //
 // WHERE EACH FILTER IS APPLIED, and why they differ:
 //
-//   bucket (all / active / resolved)  →  SERVER. `listMyCases({ status })` takes exactly
-//                                        this one argument, and it is the only dimension
-//                                        the query key varies on, so `qk.supportCases(bucket)`
-//                                        stays byte-identical to the key `my-cases/page.tsx`
-//                                        prefetches and `use-support-cases-query.ts` polls.
-//                                        Hydration hits on first paint because of that.
+//   bucket (all / active / resolved)  →  SERVER. The `support.cases` read takes exactly
+//                                        this one input, and it is the only dimension the
+//                                        query key varies on, so the list's key stays
+//                                        byte-identical to the key `my-cases/page.tsx`
+//                                        prefetches. Hydration hits on first paint because of that.
 //
 //   search / severity / type          →  CLIENT, over the rows the bucket returned.
-//                                        `listMyCases` accepts no other filter and the action
-//                                        is outside this change's scope (#2880 scopes to
-//                                        components/support/** + lib/stores/use-support-filters.ts).
-//                                        They are deliberately NOT in the query key: keying on a
+//                                        `support.cases` accepts no other filter (#2880 kept
+//                                        them client-side; #6130 kept that split). They are deliberately NOT in the query key: keying on a
 //                                        dimension the server never sees only fragments the cache
 //                                        and breaks the prefetch match, so the refinement runs as
 //                                        a pure predicate here instead.
 //
-// Widening `listMyCases` (and computing the facet counts server-side over the unfiltered
+// Widening `support.cases` (and computing the facet counts server-side over the unfiltered
 // universe, as the standard prescribes) is the follow-up that makes those two client-side
 // dimensions server-side; the shape here does not change when it lands, only where
 // `matchesSupportCaseQuery` runs.
 
 import { coerceEnum } from "@/lib/coerce";
+import { caseLabel } from "@/lib/support/case-status";
 import type { CaseListItem } from "@/lib/queries/support";
 
 /** The lifecycle buckets `listCasesForOwner` understands; "all" means no server filter. */
@@ -58,6 +56,15 @@ export type SupportCaseFilters = {
 	severity: string[];
 	/** Selected `support_case_type` values; empty means every type. */
 	type: string[];
+};
+
+/**
+ * The lifecycle bucket is the only filter the URL renames — `?status=active` reads better than
+ * `?bucket=active`. Shared by the list's URL sync and the route's prefetch, which must decode the
+ * same link into the same key.
+ */
+export const CASE_LIST_PARAM_NAMES: Partial<Record<keyof SupportCaseFilters, string>> = {
+	bucket: "status",
 };
 
 /** Pristine filters — the store's defaults and the Reset target. */
@@ -103,19 +110,9 @@ export function normalizeSupportCaseQuery(
 	return query;
 }
 
-/**
- * The argument `listMyCases` takes for a bucket. "all" is the absence of a filter, not a
- * value the action accepts, so it maps to `{}` rather than `{ status: "all" }`.
- */
-export function serverFilterForBucket(
-	bucket: CaseBucket,
-): { status?: "active" | "resolved" } {
-	return bucket === "all" ? {} : { status: bucket };
-}
-
-/** Formats a case number as the zero-padded `CASE-000123` reference. */
+/** Formats a case number as the zero-padded `CASE-000123` reference (the one `caseLabel`). */
 export function formatCaseNumber(caseNumber: number): string {
-	return `CASE-${String(caseNumber).padStart(6, "0")}`;
+	return caseLabel(caseNumber);
 }
 
 /**

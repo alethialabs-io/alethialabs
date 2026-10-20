@@ -5,8 +5,9 @@
 import { ArrowUpRight, Check, LifeBuoy, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { submitCase } from "@/app/server/actions/support";
 import { fitClientToolText } from "@/components/agent/approval-card";
+import { useSubmitCase } from "@/components/support/use-submit-case";
+import { describeActionError } from "@/lib/actions/result";
 import type { SupportCaseProposal } from "@/lib/ai/support/case";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
@@ -14,10 +15,10 @@ import { cn } from "@repo/ui/utils";
 type Phase = "idle" | "running" | "done" | "rejected" | "denied";
 
 /**
- * HITL approval for an assistant-proposed support case. Approve calls the
- * `submitCase` server action (the model only PROPOSED the case; the write happens on
- * the user's click, mirroring the plan/deploy `ApprovalCard`) and then links to the
- * created case at `/{org}/~/support/cases/{id}`. A failure surfaces the action's error.
+ * HITL approval for an assistant-proposed support case. Approve opens the case through the
+ * mutation contract (`useSubmitCase` → `submitCase`; the model only PROPOSED the case; the write
+ * happens on the user's click, mirroring the plan/deploy `ApprovalCard`) and then links to the
+ * created case at `/{org}/~/support/cases/{id}`. A refusal surfaces the action's own message.
  */
 export function SupportCaseApprovalCard({
 	proposal,
@@ -35,33 +36,43 @@ export function SupportCaseApprovalCard({
 	const [caseNumber, setCaseNumber] = useState<number | null>(null);
 	const [caseId, setCaseId] = useState<string | null>(null);
 
-	const approve = async () => {
+	const submit = useSubmitCase(orgSlug, { navigate: false });
+
+	const approve = () => {
+		if (submit.isPending) return;
 		setPhase("running");
 		setReason(null);
-		try {
-			const { id, caseNumber } = await submitCase({
-				type: proposal.type,
-				category: proposal.category,
-				severity: proposal.severity,
-				subject: proposal.subject,
-				description: proposal.description,
-				context: proposal.context ?? {},
-			});
-			setCaseId(id);
-			setCaseNumber(caseNumber);
-			setPhase("done");
-			onResolve?.({ status: "submitted", caseId: id, caseNumber });
-		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not open the case.";
-			setPhase("denied");
-			setReason(message);
-			// Cut to the stored output's bounds, so a long error never makes the card unsendable.
-			const reason = fitClientToolText("create_support_case", message, (r) => ({
-				status: "failed",
-				reason: r,
-			}));
-			onResolve?.({ status: "failed", reason });
-		}
+		submit.mutate(
+			{
+				values: {
+					type: proposal.type,
+					category: proposal.category,
+					severity: proposal.severity,
+					subject: proposal.subject,
+					description: proposal.description,
+					context: proposal.context ?? {},
+				},
+			},
+			{
+				onSuccess: ({ id, caseNumber }) => {
+					setCaseId(id);
+					setCaseNumber(caseNumber);
+					setPhase("done");
+					onResolve?.({ status: "submitted", caseId: id, caseNumber });
+				},
+				onError: (failure) => {
+					const message = describeActionError(failure.error);
+					setPhase("denied");
+					setReason(message);
+					// Cut to the stored output's bounds, so a long error never makes the card unsendable.
+					const reason = fitClientToolText("create_support_case", message, (r) => ({
+						status: "failed",
+						reason: r,
+					}));
+					onResolve?.({ status: "failed", reason });
+				},
+			},
+		);
 	};
 
 	const dismiss = () => {

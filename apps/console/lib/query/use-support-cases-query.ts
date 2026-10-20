@@ -12,13 +12,12 @@ import { orpc } from "@/lib/rpc/client";
  * it. The read is scoped to the ADDRESS's org (the actor the read router resolves), and the browser
  * keeps one cache per org (`lib/query/client.ts`), so org A's cases are never rendered under B.
  *
- * STILL POLLS every 30 s, so a staff/AI reply reaches the bell and fires a toast. The `support` topic
- * maps this key (`lib/query/topics.ts`), but nothing PRODUCES that topic yet: the server routes no
- * change to it until #6130 adds the support trigger. Delete the `refetchInterval` with that PR.
+ * NO POLL (#6130). A staff or AI reply moves the case row, which the `support_cases` trigger turns
+ * into a `support` hint on the change stream for the people who can see that case (the requester,
+ * and the org's `manage_support` holders — lib/realtime/routing.ts); the hint invalidates this key
+ * (`lib/query/topics.ts`), so the bell and the toaster update within about a second. While the
+ * stream is down the one sanctioned fallback poll covers it (lib/realtime/client/fallback-poll.ts).
  */
 export function useSupportCasesQuery(): UseQueryResult<CaseListItem[]> {
-	return useQuery({
-		...orpc.workspace.supportCases.queryOptions(),
-		refetchInterval: 30_000,
-	});
+	return useQuery(orpc.workspace.supportCases.queryOptions());
 }

@@ -1948,6 +1948,51 @@ CREATE TRIGGER support_messages_notify
   AFTER INSERT ON public.support_messages
   FOR EACH ROW EXECUTE FUNCTION public.notify_support_message();
 
+-- The console's real-time bus, `support` topic (#6130; see emit_change above). A case the console
+-- shows changed → ONE `alethia_change` notice carrying the case id, its org and its requester — no
+-- subject, no body, no contact: identifiers only. lib/realtime/routing.ts delivers it to the
+-- requester inside the case's org and to the org's `manage_support` holders, which is exactly who
+-- the tiered support_cases policy above lets read it.
+--
+-- Triggered on the CASE, not on support_messages, and that is what keeps it to one hint per reply:
+-- every PUBLIC reply — a customer's (app/server/actions/support.ts) or staff's (the admin app) —
+-- bumps last_message_at/last_author_type on its case in the same transaction. An INTERNAL staff
+-- note bumps nothing, so it emits nothing, and the customer never had anything to refetch.
+-- tests/integration/realtime-notify-support.test.ts pins those, both ways.
+CREATE OR REPLACE FUNCTION public.notify_support_case_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('support', OLD.id, OLD.org_id, OLD.user_id, NULL);
+  ELSE
+    PERFORM public.emit_change('support', NEW.id, NEW.org_id, NEW.user_id, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The column list is what the console renders of a case: the list row and the bell (status,
+-- severity, subject, type, category, last_message_at, last_author_type) and the case view
+-- (resolved_at, closed_at). Deliberately NOT listed: updated_at (moves with every write, so it
+-- would turn a no-op into a hint), assigned_staff_id (an admin-app field the console never shows),
+-- contact, context and abuse (not shown in the list or bell; a change there is the viewer's own),
+-- and org_id/user_id (stamped on insert).
+DROP TRIGGER IF EXISTS support_cases_notify_change_upd ON public.support_cases;
+CREATE TRIGGER support_cases_notify_change_upd
+  AFTER UPDATE ON public.support_cases
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.severity, OLD.subject, OLD.type, OLD.category, OLD.last_message_at,
+     OLD.last_author_type, OLD.resolved_at, OLD.closed_at)
+    IS DISTINCT FROM
+    (NEW.status, NEW.severity, NEW.subject, NEW.type, NEW.category, NEW.last_message_at,
+     NEW.last_author_type, NEW.resolved_at, NEW.closed_at)
+  )
+  EXECUTE FUNCTION public.notify_support_case_change();
+
+DROP TRIGGER IF EXISTS support_cases_notify_change_insdel ON public.support_cases;
+CREATE TRIGGER support_cases_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.support_cases
+  FOR EACH ROW EXECUTE FUNCTION public.notify_support_case_change();
+
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
 CREATE POLICY audit_select ON public.audit_log FOR SELECT

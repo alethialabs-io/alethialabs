@@ -141,7 +141,7 @@ const PROJECT_SLUG = "it-6114-shared-slug";
  *   address on X deep-equals the output for an address on Y, in both editions. A non-member is
  *   STILL a 404 at Y — the handler refuses the address before any procedure runs, so a read's kind
  *   cannot change that, and asserting otherwise would assert a property the code does not have.
- * - `by-id` (#6119 — the board's reads, each addressed by a project or an identity id): its input
+ * - `by-id` (#6119 — the board's reads, each addressed by a project or an identity id; #6130 — one support case): its input
  *   names a row, so there is no org-wide output to look for markers in. Its claim is about the row:
  *   at an address on Y, Y's row is revealed and X's is not (enterprise), neither is revealed
  *   (community), and the session never changes the outcome — a refusal included, by its code.
@@ -160,6 +160,16 @@ export type Fixture =
 			/** Whether the output IS that row's answer — a refusal or an empty answer reveals nothing. */
 			reveals(out: unknown, seeded: Seeded, org: Org): boolean;
 	  };
+
+/** The seeded support case of `org` (opened by the caller U). */
+const caseOf = (s: Seeded, org: Org) => (org === "x" ? s.caseX : s.caseY);
+
+/** Whether a case read's output is the case with this id (`{ case: { id } }`). */
+function isCase(out: unknown, id: string): boolean {
+	if (typeof out !== "object" || out === null || !("case" in out)) return false;
+	const row: unknown = out.case;
+	return typeof row === "object" && row !== null && "id" in row && row.id === id;
+}
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -254,6 +264,18 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "org-scoped",
 		input: undefined,
 		markers: (out, s) => ({ x: hasElement(out, "id", s.caseX), y: hasElement(out, "id", s.caseY) }),
+	},
+	// The support pages' reads (#6130). The list is the caller's cases IN the addressed org; the case
+	// read is addressed by id, and only the addressed org's case is revealed.
+	"support.cases": {
+		kind: "org-scoped",
+		input: { bucket: "all" },
+		markers: (out, s) => ({ x: hasElement(out, "id", s.caseX), y: hasElement(out, "id", s.caseY) }),
+	},
+	"support.case": {
+		kind: "by-id",
+		input: (s, org) => ({ id: caseOf(s, org) }),
+		reveals: (out, s, org) => isCase(out, caseOf(s, org)),
 	},
 	"workspace.setupGuide": {
 		// Its counts are the addressed org's: X has three members (U, V, W), Y has two (U, W).
@@ -723,6 +745,39 @@ export async function runRpcTenancySuite(opts: {
 				if (outcome.ok) return;
 				if (call === viaRoute) expect(outcome.status).toBe(404);
 				else expect(isNotFound(outcome.error), `not a 404: ${String(outcome.error)}`).toBe(true);
+			});
+		});
+
+		// #6130 — a support case can carry sensitive customer text, so its by-id read is held to the
+		// tiered policy INSIDE an org as well as across orgs: the requester and the org's
+		// owners/admins (`manage_support`) read it; a teammate who is neither gets the same NOT_FOUND
+		// a case that never existed gets. U opened `caseX`; V is a viewer of X; W is X's admin.
+		describe.each(ENTRY_POINTS)("#6130 support.case by id, inside the org — through %s", (_label, call) => {
+			const read = (user: string, id: string) =>
+				call("support.case", { path: rpcPath(SLUG_X, "support.case"), user, sessionOrg: ORG_X }, { id });
+
+			it("a teammate who did not open the case and cannot manage support gets NOT_FOUND", async () => {
+				const outcome = await read(V, seeded.caseX);
+				expect(summary(outcome)).toEqual({ ok: false, code: "NOT_FOUND" });
+			});
+
+			it("the requester and an admin (manage_support) read it — in the multi-tenant edition", async () => {
+				const requester = await read(U, seeded.caseX);
+				const admin = await read(W, seeded.caseX);
+				if (edition === "enterprise") {
+					expect(requester.ok && isCase(requester.value, seeded.caseX)).toBe(true);
+					expect(admin.ok && isCase(admin.value, seeded.caseX)).toBe(true);
+				} else {
+					// Community serves every org address from the caller's personal scope, where no
+					// org case is visible to anybody.
+					expect(summary(requester)).toEqual({ ok: false, code: "NOT_FOUND" });
+					expect(summary(admin)).toEqual({ ok: false, code: "NOT_FOUND" });
+				}
+			});
+
+			it("an id that is not a case id at all reads the same as a case you cannot see", async () => {
+				const outcome = await read(U, randomUUID());
+				expect(summary(outcome)).toEqual({ ok: false, code: "NOT_FOUND" });
 			});
 		});
 	});
