@@ -150,8 +150,7 @@ function broadcastSessionChange(): void {
  *   · a client auth call in this tab (sign-out, profile edit — better-auth's session signal), which
  *     is also broadcast to other tabs here, since the unmounted atom would not;
  *   · another tab's session change (better-auth's broadcast);
- *   · this tab becoming visible or focused again (rate-limited), when the session may have expired
- *     or been replaced elsewhere.
+ *   · this tab becoming visible or focused again (rate-limited).
  * From then on the atom is mounted and better-auth follows every later change itself.
  */
 export const liveSession = {

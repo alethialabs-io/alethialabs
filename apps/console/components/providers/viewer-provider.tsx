@@ -115,9 +115,8 @@ function getSessionChanged(): boolean {
  * on every page, and a subscription is what makes better-auth fetch `/get-session` — a request
  * on each load for an answer the server had just sent. It starts following the live session as
  * soon as the session MAY have changed: a client auth call in this tab, a session change in
- * another tab, or this tab coming back into view (`liveSession.onPossibleChange`) — the ways the
- * seed goes stale without a navigation, since a soft navigation never re-runs the layout. Once
- * following it stays following. Until the live answer settles it keeps showing the seed, so the
+ * another tab, or this tab coming back into view (`liveSession.onPossibleChange`). Once following
+ * it stays following. Until the live answer settles it keeps showing the seed, so the
  * UI does not blink to "signed out"; a settled answer with no session, or a 401, is signed out.
  *
  * UNSEEDED (no `ViewerProvider` above: a public route, a test): follows the live session, and the

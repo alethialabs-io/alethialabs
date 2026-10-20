@@ -4,14 +4,12 @@
 // A SEEDED viewer still follows session changes from other tabs and on focus (#6114).
 //
 // The private layout seeds `useViewer()` with the session it read, and a seeded viewer does not
-// subscribe to better-auth's session atom on load (subscribing is a `/get-session` request). But a
-// soft navigation never re-runs the layout, so the seed goes stale whenever the session changes
-// elsewhere: another tab signs out or in as someone else, or the session expires while the tab is
-// in the background. These tests drive the REAL `liveSession` seam (`lib/auth/client.ts`) and the
-// real provider; only better-auth's client is replaced, by two minimal atoms, so what is asserted
-// is: after another tab's broadcast, or after the tab is focused again, the viewer follows the live
-// session — and a live answer of "no session" renders as signed out. And this tab's own sign-out is
-// still broadcast while nothing had the atom mounted.
+// subscribe to better-auth's session atom on load (subscribing is a `/get-session` request). It
+// follows session changes from other tabs and on focus. These tests drive the REAL `liveSession`
+// seam (`lib/auth/client.ts`) and the real provider; only better-auth's client is replaced, by two
+// minimal atoms. Asserted: after another tab's broadcast, or after the tab is focused again, the
+// viewer follows the live session, and a live answer of "no session" renders as signed out; and a
+// session change in this tab is broadcast while nothing had the atom mounted.
 
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
