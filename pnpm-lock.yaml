@@ -65,6 +65,9 @@ importers:
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@repo/format':
+        specifier: workspace:*
+        version: link:../../packages/format
       '@repo/org-slug':
         specifier: workspace:*
         version: link:../../packages/org-slug
@@ -80,9 +83,6 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.104.2
         version: 5.104.2(react@19.3.1)
-      date-fns:
-        specifier: ^4.4.0
-        version: 4.4.0
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm))
@@ -423,9 +423,6 @@ importers:
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
-      date-fns:
-        specifier: ^4.4.0
-        version: 4.4.0
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9(patch_hash=tvkhi2gcifqks2umxny5hj6dwm))
