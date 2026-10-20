@@ -72,6 +72,73 @@ CREATE TRIGGER jobs_runner_wake
   FOR EACH ROW WHEN (NEW.status = 'QUEUED')
   EXECUTE FUNCTION public.notify_runner_wake();
 
+-- ── The console's real-time bus (#6115, ADR 0005 D3 + §10). A change the UI shows becomes ONE
+-- pg_notify on `alethia_change` carrying identifiers only — {t: topic, id, o: org_id, u: user_id,
+-- p: project_id} — far under the 8000-byte payload cap. Each console process holds one LISTEN
+-- connection (lib/realtime/bus.ts), routes the notice to the streams whose RLS arms could read that
+-- row (lib/realtime/routing.ts) and sends them a {t, id} invalidation hint; o/u/p never leave the
+-- server. Triggers, not app code, because most writers of these rows are the runner's SQL RPCs, which
+-- never pass through Next.
+--
+-- The UPDATE trigger fires only when a column the UI renders CHANGED (`IS DISTINCT FROM` over the
+-- row tuple, ADR 0005 §10 R5). That is what keeps the high-frequency writers silent:
+--   · claim_next_job / runner_heartbeat / runner_present write `runners`, not `jobs`;
+--   · insert_job_log stamps jobs.progress_at (not listed) at most once per 55s;
+--   · update_job_status re-posting PROCESSING with NULL metadata changes no listed column
+--     (started_at is already set; progress_at and updated_at are not listed).
+-- A real state change (QUEUED→CLAIMED, PROCESSING→SUCCESS, a stage's execution_metadata) emits
+-- exactly one notice. tests/integration/realtime-notify.test.ts pins each of those, both ways.
+--
+-- NOTIFY is transactional: it is delivered at COMMIT, and not at all on rollback. It also takes a
+-- database-wide lock at commit, which is why scripts/bench-notify-commit.mjs exists (ADR 0005 §10).
+--
+-- No migration: a trigger on existing columns changes no table shape, and migrate.mjs re-applies
+-- this file on every migrate. Other topics add their own thin per-table trigger functions calling
+-- emit_change() in their own lanes; this file is shared, so those land one at a time.
+CREATE OR REPLACE FUNCTION public.emit_change(
+  p_topic text, p_id uuid, p_org uuid, p_user uuid, p_project uuid
+) RETURNS void LANGUAGE sql AS $$
+  SELECT pg_notify('alethia_change', json_build_object(
+    't', p_topic, 'id', p_id, 'o', p_org, 'u', p_user, 'p', p_project
+  )::text);
+$$;
+
+-- The jobs-shaped notifier: the row carries id, org_id, user_id and project_id. On UPDATE the OLD
+-- project_id is the fallback, so a job whose project was deleted (ON DELETE SET NULL) still routes
+-- through the project the reader last saw it under; on DELETE the OLD row is the only row there is.
+CREATE OR REPLACE FUNCTION public.notify_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id, OLD.user_id, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id, NEW.user_id,
+      COALESCE(NEW.project_id, CASE WHEN TG_OP = 'UPDATE' THEN OLD.project_id END));
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- Two triggers, not one: an INSERT trigger's WHEN may not reference OLD. The column list is the jobs
+-- UI's (components/jobs/columns.tsx + the job detail page). Deliberately NOT listed: progress_at and
+-- updated_at (heartbeat-like), claimed_at and attempts (they move with status), usage_reported_at,
+-- priority, provider, assigned_runner_id, traceparent, and org_id (a backfill-only write).
+DROP TRIGGER IF EXISTS jobs_notify_change_upd ON public.jobs;
+CREATE TRIGGER jobs_notify_change_upd
+  AFTER UPDATE ON public.jobs
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.error_message, OLD.runner_id, OLD.started_at, OLD.completed_at,
+     OLD.project_id, OLD.environment_id, OLD.execution_metadata)
+    IS DISTINCT FROM
+    (NEW.status, NEW.error_message, NEW.runner_id, NEW.started_at, NEW.completed_at,
+     NEW.project_id, NEW.environment_id, NEW.execution_metadata)
+  )
+  EXECUTE FUNCTION public.notify_change('jobs');
+
+DROP TRIGGER IF EXISTS jobs_notify_change_insdel ON public.jobs;
+CREATE TRIGGER jobs_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.notify_change('jobs');
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
 -- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from
