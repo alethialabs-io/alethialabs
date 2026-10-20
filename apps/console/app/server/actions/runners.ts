@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries/runners";
 import type { RunnerWithRelease } from "@/lib/query/resource-fetchers";
 import { generateRunnerToken } from "@/lib/runners/auth";
+import { unheldRunnerTokenHash } from "@/lib/runners/lifecycle-token";
 import {
 	isRunnerDeployProvider,
 	runnerDeployUnsupportedMessage,
@@ -312,7 +313,6 @@ export async function deployRunner(params: {
 	if (params.assignedRunnerId)
 		await assertRunnerInOrg(getServiceDb(), params.assignedRunnerId, actor.orgId, actor.userId);
 	const owner = actor.userId;
-	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
 	await assertJobQuotaAllowed(actor.orgId);
 
@@ -338,14 +338,15 @@ export async function deployRunner(params: {
 				name: params.name,
 				operator: "self",
 				provisioning: "deployed",
-				token_hash: tokenHash,
+				// No usable credential until the DEPLOY_RUNNER job is claimed: the claim mints the token
+				// and hands it to the executing runner alone (lib/runners/lifecycle-token.ts).
+				token_hash: unheldRunnerTokenHash(),
 				cloud_identity_id: params.cloudIdentityId,
 			})
 			.returning({ id: runners.id, name: runners.name });
 
 		const configSnapshot = {
 			runner_id: runner.id,
-			runner_token: runnerToken,
 			runner_name: params.name,
 			image_tag: params.imageTag || "latest",
 			region: params.region,
@@ -436,7 +437,7 @@ function buildRunnerConfigSnapshot(
 		Awaited<ReturnType<typeof fetchDeployedRunner>>["deployConfig"]
 	>,
 	provider: string | null | undefined,
-	overrides?: { runner_token?: string; image_tag?: string },
+	overrides?: { image_tag?: string },
 ) {
 	const cloudProvider = provider ?? deployConfig.cloud_provider;
 	if (!cloudProvider)
@@ -446,7 +447,6 @@ function buildRunnerConfigSnapshot(
 
 	return {
 		runner_id: runner.id,
-		runner_token: overrides?.runner_token ?? "",
 		runner_name: runner.name,
 		region: deployConfig.region,
 		cloud_provider: cloudProvider,
@@ -515,7 +515,7 @@ export async function destroyRunner(
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
 		// DESTROY needs no runner token: the runner's destroy path uses a placeholder tfvar and never
-		// authenticates as the target, so we pass none (the token is no longer persisted, #945).
+		// authenticates as the target, so none is issued at claim either.
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
@@ -555,10 +555,9 @@ export async function updateRunner(runnerId: string) {
 
 	await assertJobQuotaAllowed(actor.orgId);
 
-	// UPDATE re-deploys the runner container, so mint a FRESH token and store only its hash — the
-	// live plaintext is handed to this job once and never persisted at rest (#945). This also rotates
-	// the credential on every update, invalidating the previous one.
-	const { token: newToken, hash: newTokenHash } = generateRunnerToken();
+	// UPDATE re-deploys the runner container with a FRESH token. The previous credential is retired
+	// here, at enqueue, and the new one is minted when the job is claimed and handed to the executing
+	// runner alone (lib/runners/lifecycle-token.ts) — so the job row never carries it.
 
 	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
@@ -573,17 +572,14 @@ export async function updateRunner(runnerId: string) {
 
 		await tx
 			.update(runners)
-			.set({ token_hash: newTokenHash })
+			.set({ token_hash: unheldRunnerTokenHash() })
 			.where(eq(runners.id, runnerId));
 
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
 			identity?.provider,
-			{
-				runner_token: newToken,
-				image_tag: latestRelease.version,
-			},
+			{ image_tag: latestRelease.version },
 		);
 
 		const [job] = await tx

@@ -20,6 +20,7 @@ import {
 	cancelJob,
 	getJob,
 	getJobs,
+	getJobsPage,
 	getJobStatus,
 	getPlanResult,
 	getProjectJobs,
@@ -174,6 +175,65 @@ describe("getProjectJobs", () => {
 		const rows = await getProjectJobs("proj-1");
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "proj-1" });
 		expect(rows).toHaveLength(2);
+	});
+});
+
+// Job snapshots are shown to every job viewer, so every read returns them through the one read-side
+// filter (lib/jobs/redact-snapshot.ts): a deny-listed key never leaves, whatever the row holds.
+describe("job snapshot redaction on read", () => {
+	const SENTINEL = "SENTINEL-read-redaction-5b21";
+	const snapshot = () => ({
+		runner_id: "r-1",
+		runner_token: SENTINEL,
+		nested: { password: SENTINEL, region: "eu" },
+	});
+
+	it("getJob", async () => {
+		mockDb([[{ id: "job-1", config_snapshot: snapshot() }]]);
+		const job = await getJob("job-1");
+		expect(job?.config_snapshot).toEqual({ runner_id: "r-1", nested: { region: "eu" } });
+		expect(JSON.stringify(job)).not.toContain(SENTINEL);
+	});
+
+	it("getJobs", async () => {
+		mockDb([[{ job: { id: "j-1", config_snapshot: snapshot() }, project_name: null }]]);
+		const rows = await getJobs();
+		expect(rows[0].config_snapshot).toEqual({ runner_id: "r-1", nested: { region: "eu" } });
+		expect(JSON.stringify(rows)).not.toContain(SENTINEL);
+	});
+
+	it("getJobsPage", async () => {
+		mockDb([[{ job: { id: "j-1", config_snapshot: snapshot() }, project_name: null }], []]);
+		const page = await getJobsPage({});
+		expect(page.rows[0].config_snapshot).toEqual({ runner_id: "r-1", nested: { region: "eu" } });
+		expect(JSON.stringify(page)).not.toContain(SENTINEL);
+	});
+
+	it("getProjectJobs", async () => {
+		mockDb([[{ id: "j-1", config_snapshot: snapshot() }]]);
+		const rows = await getProjectJobs("proj-1");
+		expect(rows[0].config_snapshot).toEqual({ runner_id: "r-1", nested: { region: "eu" } });
+		expect(JSON.stringify(rows)).not.toContain(SENTINEL);
+	});
+
+	it("rerunJob copies the snapshot without a runner token (the new job is issued its own)", async () => {
+		const { valuesSpy } = mockDb([
+			[
+				{
+					job_type: "UPDATE_RUNNER",
+					config_snapshot: { runner_id: "r-1", runner_token: SENTINEL, region: "eu" },
+					cloud_identity_id: "ci-1",
+					project_id: null,
+					org_id: "org-1",
+				},
+			],
+			[{ id: "new-job" }],
+		]);
+		await rerunJob("job-1");
+		expect(valuesSpy).toHaveBeenCalledWith(
+			expect.objectContaining({ config_snapshot: { runner_id: "r-1", region: "eu" } }),
+		);
+		expect(JSON.stringify(valuesSpy.mock.calls)).not.toContain(SENTINEL);
 	});
 });
 
