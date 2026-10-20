@@ -77,6 +77,11 @@ export default defineConfig({
 				// Authored behaviour: keeps a disabled control's reason reachable by pointer, keyboard
 				// and screen reader (#4996). tests/disabled-reason.test.tsx proves each channel.
 				"src/disabled-reason.tsx",
+				// Authored behaviour (#6117): the toolbar's count pill is content-sized and its
+				// skeleton shares the row's classes; a read-only value stays off the input surface.
+				// tests/page-toolbar.test.tsx and tests/read-only-value.test.tsx prove each.
+				"src/page-toolbar.tsx",
+				"src/read-only-value.tsx",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming
