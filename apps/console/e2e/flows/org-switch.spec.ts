@@ -12,6 +12,17 @@
 // because the server never served the wrong rows. The integration proof of the SERVER half is
 // `tests/integration/rpc-tenancy.*.test.ts`.
 //
+// ⚠ WHAT THIS SPEC DOES NOT PROVE (measured, #6113 review advisory 5). It does NOT, today, catch a
+// broken per-org cache. With `getQueryClient` ignoring its scope — ONE browser client for every org —
+// it stayed GREEN in two release-gate qa runs on a throwaway mutation branch (runs 39418376795 and
+// 39421132139), the second with the record-reading observer below. The cached team query exists
+// under the same key and `HydrationBoundary` hydrates an EXISTING query only in an effect, so a
+// stale first render was expected; none reached the DOM, and why was not established (no runtime
+// to debug it on). What it does prove: after a real client-side switch, no node carrying the
+// previous org's job is ever inserted on the way to, or on, the new org's jobs page. The per-org
+// cache itself is held by `tests/lib/query/query-client-scope.test.ts`, which the same mutation
+// turns red (2 of 10), not by this file.
+//
 // THE FIXTURE. The `member` persona is the two-org user the suite already builds: it signs up with
 // its own Hobby org, then is invited into `ownerTeam`'s org (global-setup.ts). Its record names the
 // TEAM org; its own org is read from the database. The team marker job is authored by the TEAM
