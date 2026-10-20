@@ -416,12 +416,13 @@ describeIfDb("project component family: org_id is derived, never written (#4116)
 			);
 			expect(asOtherOrg).toHaveLength(0);
 
-			// The owner arm is unchanged: the project's creator, scoped to a DIFFERENT org, still
-			// sees it — exactly as the join-through policy this replaced allowed.
+			// The owner arm reads `projects` through a sub-select, and that read is bounded by the
+			// `projects` policy (the addressed org, or the caller's personal org). A scope naming a
+			// different org sees nothing, whoever's id is on the project.
 			const asOwnerElsewhere = await withScope({ ownerId: OWNER_A, orgId: ORG_C }, (tx) =>
 				tx.select({ id: projectCluster.id }).from(projectCluster).where(eq(projectCluster.id, id)),
 			);
-			expect(asOwnerElsewhere).toHaveLength(1);
+			expect(asOwnerElsewhere).toHaveLength(0);
 		},
 	);
 

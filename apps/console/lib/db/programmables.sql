@@ -736,19 +736,27 @@ BEGIN
 END;
 $$;
 
--- set_default_runner: owner passed as a parameter (no implicit session-user lookup).
-CREATE OR REPLACE FUNCTION public.set_default_runner(p_user_id UUID, p_runner_id UUID DEFAULT NULL)
-RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- set_default_runner: owner AND org passed as parameters (no implicit session lookup). A default is
+-- chosen within one org — the addressed org, or the personal workspace (org = the user's id): only a
+-- runner of that org created by that user can be flagged, and only that user's default in that org
+-- is cleared. A default the user holds in another org is untouched (idx_runners_one_default_per_user_org
+-- is per user per org). The two-argument form is dropped so no caller can reach the unscoped one.
+DROP FUNCTION IF EXISTS public.set_default_runner(UUID, UUID);
+CREATE OR REPLACE FUNCTION public.set_default_runner(
+    p_user_id UUID, p_org_id UUID, p_runner_id UUID DEFAULT NULL
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-    UPDATE public.runners SET is_default = false WHERE user_id = p_user_id AND is_default = true;
+    UPDATE public.runners SET is_default = false
+     WHERE user_id = p_user_id AND org_id = p_org_id AND is_default = true;
     IF p_runner_id IS NOT NULL THEN
-        UPDATE public.runners SET is_default = true WHERE id = p_runner_id AND user_id = p_user_id;
-        IF NOT FOUND THEN RAISE EXCEPTION 'Runner not found or not owned by user'; END IF;
+        UPDATE public.runners SET is_default = true
+         WHERE id = p_runner_id AND user_id = p_user_id AND org_id = p_org_id;
+        IF NOT FOUND THEN RAISE EXCEPTION 'Runner not found in this organization'; END IF;
     END IF;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID) TO alethia_app;
+GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID, UUID) TO alethia_app;
 
 -- ── Runner model backfill (legacy `mode` → operator/provisioning) + the
 -- data-dependent CHECK constraints. Runs here, after the schema migration adds the
@@ -999,19 +1007,38 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- jobs carry a project_id, and a job ALWAYS belongs to the org that owns its project.
--- Deriving org_id from projects.org_id makes it a *structural* invariant of the FK —
--- drift-proof and independent of session state or a forgotten stamp (projects.org_id
--- is the authoritative, correctly-stamped source; jobs.org_id is a denormalized cache
--- that had drifted). The parent lookup is itself RLS-guarded on the app connection: a
--- cross-org project_id the caller can't see returns no row, so it can never leak another
--- org's id — it falls through to the session/personal fallback instead. project_id NULL
--- (runner/scan jobs) also falls through to session → personal.
+-- jobs carry a project_id, and a job ALWAYS belongs to the org that owns its project. That is a
+-- CONSTRAINT here, not a default: on every INSERT, and on every UPDATE that names project_id or
+-- org_id, a project-bearing job either takes its project's org (org_id left NULL) or must already
+-- carry it — an explicit org_id that disagrees with the project's raises (23514), so no enqueue path
+-- can file a job under an org other than its project's. projects.org_id is the authoritative source;
+-- jobs.org_id is a denormalized copy kept equal to it by this trigger. project_id NULL (runner/scan
+-- jobs) keeps the explicit org, else the session org, else the author's personal org.
+--
+-- DEFINER RIGHTS, for the reason derive_component_org_id gives below: the lookup must see the one
+-- project row the FK names whatever the writer's RLS scope, or "the caller cannot see this project"
+-- would read as "this project has no org" and the check could not tell a mismatch from an invisible
+-- parent. It widens only what the CHECK can see: the value lands on the caller's own row, and the
+-- jobs `owner_all` WITH CHECK then refuses an app-role write whose derived org is outside the
+-- addressed organization. `row_security = off` and a pinned `search_path`, as there.
 CREATE OR REPLACE FUNCTION public.set_org_id_from_project()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE project_org UUID;
 BEGIN
-  IF NEW.org_id IS NULL AND NEW.project_id IS NOT NULL THEN
-    SELECT org_id INTO NEW.org_id FROM public.projects WHERE id = NEW.project_id;
+  IF NEW.project_id IS NOT NULL THEN
+    SELECT p.org_id INTO project_org FROM public.projects p WHERE p.id = NEW.project_id;
+    IF NEW.org_id IS NULL THEN
+      NEW.org_id := project_org;
+    ELSIF project_org IS NOT NULL AND NEW.org_id IS DISTINCT FROM project_org THEN
+      -- The text carries no value read here: project_org is read with definer rights.
+      RAISE EXCEPTION 'jobs.org_id does not match the org of its project'
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   IF NEW.org_id IS NULL THEN
     NEW.org_id = coalesce(
@@ -1020,7 +1047,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Non-project-bearing tables use the generic session/personal resolver.
 DO $$
@@ -1038,18 +1065,46 @@ END $$;
 
 -- jobs: parent-derived org_id (the drift-proof path above).
 DROP TRIGGER IF EXISTS jobs_set_org_id ON public.jobs;
-CREATE TRIGGER jobs_set_org_id BEFORE INSERT ON public.jobs
+CREATE TRIGGER jobs_set_org_id BEFORE INSERT OR UPDATE OF project_id, org_id ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.set_org_id_from_project();
 
--- Backfill historical jobs whose org_id drifted from their project's org (the root of
--- the org-usage 0s). Idempotent + self-healing: after the trigger fix, re-runs match
--- nothing. projects.org_id is authoritative; only project-bearing jobs are correctable
--- here (project-less jobs keep their existing org_id).
+-- A project-bearing job with no org_id takes its project's org (history from before the trigger).
+-- Idempotent: matches nothing once every such row has an org.
 UPDATE public.jobs j
    SET org_id = p.org_id
   FROM public.projects p
  WHERE j.project_id = p.id
-   AND j.org_id IS DISTINCT FROM p.org_id;
+   AND j.org_id IS NULL
+   AND p.org_id IS NOT NULL;
+
+-- A project-bearing job whose org_id disagrees with its project's takes the project's org: the
+-- project's org is the job's owner. The trigger above makes the shape impossible to write, so this
+-- only realigns history (a restore, a replica-mode load, rows written before the trigger), and it
+-- says how many it moved — a count, never ids — without ever failing the migrate. Idempotent:
+-- matches nothing once every row agrees.
+DO $$
+DECLARE n BIGINT;
+BEGIN
+  UPDATE public.jobs j
+     SET org_id = p.org_id
+    FROM public.projects p
+   WHERE j.project_id = p.id
+     AND p.org_id IS NOT NULL
+     AND j.org_id IS DISTINCT FROM p.org_id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n > 0 THEN
+    RAISE NOTICE 'jobs realigned to their project''s org: %', n;
+  END IF;
+END $$;
+
+-- A job with no project and no org_id (history from before the jobs_set_org_id trigger) goes to its
+-- author's personal org — the same fallback the trigger applies on insert when neither a project
+-- nor a session org is there to name one. The jobs `owner_all` policy below is bounded on org_id
+-- alone, so a row left NULL would be visible from no scope at all. Idempotent: matches nothing once
+-- every row has an org.
+UPDATE public.jobs
+   SET org_id = user_id
+ WHERE org_id IS NULL;
 
 -- ── The project component family: a tenant column the database owns (#4116) ─────────────────────
 --
@@ -1187,11 +1242,14 @@ CREATE TRIGGER projects_propagate_org_id
 -- two are identical — isolation is unchanged. Fine-grained decisions live in the PDP
 -- (lib/authz). NULL when unset → deny. Service/superuser bypasses RLS. ──
 
--- Owned tables (direct user_id + org_id)
+-- Owned tables (direct user_id + org_id) whose rows are the USER's own, wherever they sit: every
+-- insert into these stamps org_id = user_id (a thread, a widget, an artifact, a feedback vote), or
+-- they are written and read only by the service role (the AI ledger and grants). The owner arm is
+-- what lists a user's own rows in every org they act from.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback', 'org_signing_key']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_message_feedback']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -1200,6 +1258,45 @@ BEGIN
                 OR org_id = current_setting(''app.current_org'', true)::uuid)
          WITH CHECK (user_id = current_setting(''app.current_owner'', true)::uuid
                 OR org_id = current_setting(''app.current_org'', true)::uuid)', tbl);
+  END LOOP;
+END $$;
+
+-- Org-bounded tables: rows that belong to an ORGANIZATION, not to the person who wrote them. Visible
+-- in the org they belong to (org_id = current_org) and, from any scope, in the caller's PERSONAL org
+-- (org_id = current_owner: a personal org's id IS its user's id). The arm is on `org_id` alone — the
+-- console twin of the CLI's `org_id IN (<org>, <personal org>)` (app/api/jobs/route.ts) — so a row
+-- is reachable only from the org it belongs to, whoever's id is in `user_id`. Visibility follows
+-- the row's organization, never its author.
+--
+-- What each arm keeps:
+--   * `org_id = current_org` — every row of the org the request is scoped to.
+--   * `org_id = current_owner` — the personal org from every scope: the pre-#3942 runner jobs that
+--     were stamped `org_id = <user id>` while their author acted in a team org stay listed there,
+--     exactly as `GET /api/jobs` lists them, and a legacy per-user `agent_context` row stays readable.
+--   * Community: current_org = current_owner = user id and every row is stamped org_id = user id
+--     (set_org_id / set_org_id_from_project fall back to the session's org, which is the user), so
+--     both arms name the same single tenant.
+--
+-- Rows with no org_id would match neither arm; the backfills above (`set_org_id` loop for projects,
+-- agent_context and org_signing_key, and the jobs backfill) leave none before this runs.
+--
+-- The tables whose policies reach these through a sub-select — project_environments and the other
+-- project child tables, the component family's owner arm, job_logs, audit_log, topic_subscriptions,
+-- cluster_admins, service_bindings — inherit the same bound: a policy's sub-select on `projects` or
+-- `jobs` is itself filtered by that table's policy, so it can only return rows this one admits.
+-- tests/integration/jobs-org-bounded-reads.test.ts drives that for project_environments and job_logs.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['projects', 'jobs', 'agent_context', 'org_signing_key']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)
+         WITH CHECK (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)', tbl);
   END LOOP;
 END $$;
 
@@ -1433,29 +1530,33 @@ BEGIN
   END LOOP;
 END $$;
 
--- runners: reads are owner/org-scoped. Managed (platform-fleet) rows have no owner/org, so they
--- are NOT visible through the tenant RLS path — they leak fleet topology/COGS to every tenant
+-- runners: reads and writes are bounded to the addressed organization or the personal scope, the
+-- same arm as the org-bounded tables above: `org_id = current_org OR org_id = current_owner`. A self
+-- runner registered in an org is that org's; a self runner in the caller's personal org (org_id =
+-- user_id, which includes the pre-#3874 CLI runners) is reachable from every scope of theirs.
+-- Managed (platform-fleet) rows have no owner and no org, so they match neither arm and are NOT
+-- visible through the tenant RLS path — they would expose fleet topology/COGS to every tenant
 -- otherwise. The fleet controller, scaler, runner claim/heartbeat/wake, and the self-managed
 -- operator's fleet view all read managed rows via the service role (getServiceDb), which bypasses
--- RLS. Writes remain owner/org-scoped self runners.
+-- RLS. Inserts are self runners only.
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
   WITH CHECK (operator = 'self'::public.runner_operator
-         AND (user_id = current_setting('app.current_owner', true)::uuid
-              OR org_id = current_setting('app.current_org', true)::uuid));
+         AND (org_id = current_setting('app.current_org', true)::uuid
+              OR org_id = current_setting('app.current_owner', true)::uuid));
 DROP POLICY IF EXISTS runners_update ON public.runners;
 CREATE POLICY runners_update ON public.runners FOR UPDATE
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 DROP POLICY IF EXISTS runners_delete ON public.runners;
 CREATE POLICY runners_delete ON public.runners FOR DELETE
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 
 -- The project component family (#4116): the org arm binds to the row's OWN org_id column.
 --
@@ -1463,7 +1564,10 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
 -- on the column the tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
 -- org)`; `org_id` here equals `projects.org_id` for every row (the derive/propagate triggers and the
 -- CHECK above make that structural, not a convention), so the org arm is the same set, and the
--- owner arm still reaches through `projects` because these tables carry no user_id. WITH CHECK
+-- owner arm still reaches through `projects` because these tables carry no user_id. That sub-select
+-- is itself filtered by the `projects` policy, so the owner arm admits only a project of the
+-- request's org or the caller's personal org: reads are bounded to the addressed organization or
+-- the personal scope. WITH CHECK
 -- mirrors USING: the trigger fills org_id BEFORE the check runs, so a write naming another tenant's
 -- project arrives here carrying that tenant's org and is refused, as it was before.
 --
@@ -1772,15 +1876,16 @@ CREATE POLICY owner_all ON public.service_binding_injections FOR ALL
                WHERE p.user_id = current_setting('app.current_owner', true)::uuid
                   OR p.org_id = current_setting('app.current_org', true)::uuid)));
 
--- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
+-- job_logs: visible exactly when the parent job is (the jobs owner_all bound, restated here).
+-- audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS logs_select ON public.job_logs;
 CREATE POLICY logs_select ON public.job_logs FOR SELECT
   USING (EXISTS (SELECT 1 FROM public.jobs j
     WHERE j.id = job_logs.job_id
-      AND (j.user_id = current_setting('app.current_owner', true)::uuid
-           OR j.org_id = current_setting('app.current_org', true)::uuid)));
+      AND (j.org_id = current_setting('app.current_org', true)::uuid
+           OR j.org_id = current_setting('app.current_owner', true)::uuid)));
 
 -- Support case child tables: tenancy + visibility flow through the parent support_cases
 -- (like job_logs) — the subquery uses the SAME tiered predicate (org-scoped, then

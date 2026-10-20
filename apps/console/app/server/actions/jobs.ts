@@ -4,6 +4,7 @@
 
 import { authorize } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
+import { projectOrgRefusal } from "@/lib/projects/project-org";
 import { withOwnerScope, withScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -313,6 +314,14 @@ export async function getProjectJobs(projectId: string) {
 	});
 }
 
+/**
+ * Re-enqueues a job as a fresh user-initiated run of the same type, design and cloud identity.
+ *
+ * Only a job of the actor's active org can be re-run: the original must carry `org_id =
+ * actor.orgId`, and when it names a project, that project must be visible in this scope and live in
+ * the same org (see {@link projectOrgRefusal}). The new row is stamped with that org, which is
+ * therefore its project's — the org `jobs_set_org_id` requires of any job that names a project.
+ */
 export async function rerunJob(jobId: string) {
 	const actor = await authorize("create", { type: "job" });
 	await assertUsageAllowed(actor.orgId);
@@ -325,12 +334,31 @@ export async function rerunJob(jobId: string) {
 				config_snapshot: jobs.config_snapshot,
 				cloud_identity_id: jobs.cloud_identity_id,
 				project_id: jobs.project_id,
+				org_id: jobs.org_id,
 			})
 			.from(jobs)
 			.where(eq(jobs.id, jobId))
 			.limit(1);
 
 		if (!original) throw new Error("Original job not found");
+		if (original.org_id !== actor.orgId) {
+			throw new Error(
+				original.org_id === actor.userId
+					? "This job belongs to your personal workspace — switch to it to run this."
+					: "This job belongs to another organization — switch to it to run this.",
+			);
+		}
+
+		if (original.project_id) {
+			const [project] = await tx
+				.select({ org_id: projects.org_id })
+				.from(projects)
+				.where(eq(projects.id, original.project_id))
+				.limit(1);
+			if (!project) throw new Error("Project not found.");
+			const refusal = projectOrgRefusal(project.org_id, actor);
+			if (refusal) throw new Error(refusal);
+		}
 
 		const [newJob] = await tx
 			.insert(jobs)

@@ -31,6 +31,8 @@ export interface RunnerReleaseInfo {
 
 export type RunnerWithRelease = Runner & {
 	runner_releases: RunnerReleaseInfo | null;
+	/** A runner of the caller's personal workspace listed from a team org: its default is chosen there. */
+	personal_elsewhere: boolean;
 	/** Provisioned hours this calendar month for managed runners; null otherwise. */
 	provisioned_hours: number | null;
 };
