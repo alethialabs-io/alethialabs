@@ -2967,6 +2967,15 @@
 					"reason": "redirect-only"
 				}
 			]
+		},
+		"behaviour": {
+			"artifact": "test-results/ui-audit-behaviour.json",
+			"spec": "apps/console/e2e/audit/behaviour.spec.ts",
+			"persona": "the owner of an organisation the spec signs up itself",
+			"org": "a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches",
+			"covers": "every route the manifest names",
+			"runKey": "",
+			"records": []
 		}
 	}
 }

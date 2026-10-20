@@ -72,9 +72,9 @@ lowers a number here in the same commit as its code.
 
 **40 private routes** · 4 redirect-only · 36 real pages.
 
-RUBRIC.md defines **38 predicates**. This report scores **38** of them —
-24 from the tree and 14 from the committed live audit records.
-0 have no instrument anywhere today.
+RUBRIC.md defines **44 predicates**. This report scores **43** of them —
+24 from the tree and 19 from the committed live audit records.
+1 has no instrument anywhere today.
 
 | source | what it contributes |
 |---|---|
@@ -85,7 +85,7 @@ RUBRIC.md defines **38 predicates**. This report scores **38** of them —
 | `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |
 | `apps/console/tests/lib/queries/filter-standard-facets.test.ts` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |
 | `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 0`) |
-| `apps/console/ui-conformance-live.json` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright `audit` project |
+| `apps/console/ui-conformance-live.json` | T5–T7, R1–R8, F8–F10 and B1–B5 as MEASURED, imported from a CI run of the Playwright `audit` and `audit-interaction` projects |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
 ## Which predicates have an instrument
@@ -102,15 +102,20 @@ Playwright `audit` project and joined in from the committed records, not inferre
 | **H** — shared surface | 9 | 9 | 0 | 0 |
 | **F** — filter standard | 10 | 7 | 3 | 0 |
 | **R** — rendered integrity | 8 | 0 | 8 | 0 |
-| **total** | 38 | 24 | 14 | 0 |
+| **B** — behaviour | 6 | 0 | 5 | 1 |
+| **total** | 44 | 24 | 19 | 1 |
 
-Every predicate has an instrument; nothing below is rendered `—` for want of one. H3 was the last without, until #3797.
+The un-instrumented one, with the issue that owns it:
 
-## The live half — three artifacts, three questions, never pooled
+| id | owner | what is not being measured |
+|---|---|---|
+| **B6** | #6115 | live by default — a change made elsewhere appears without reload, and no data poll remains; the instrument is the real-time bus and `check:no-polling`. |
 
-T5–T7 and R1–R8 are measured in a browser, not read off the tree. The records below were
+## The live half — 4 artifacts, 4 questions, never pooled
+
+T5–T7, R1–R8, F8–F10 and B1–B5 are measured in a browser, not read off the tree. The records below were
 imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/36058527139** at commit `8f5c3953a19062f4d725accfd6cbca53b4c1b7f0` and committed to
-`apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **three files, joined and never
+`apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **4 files, joined and never
 pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
 each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
 
@@ -119,6 +124,7 @@ each section declares the predicates it may carry, and a record in the wrong one
 | `routes` | `test-results/ui-audit.json` | the run's own owner | a fresh, empty organisation created for the run | T5, T6, R1, R2, R3, R4, R5, R6, R7 | 360 | 40 |
 | `permissions` | `test-results/ui-audit-permissions.json` | the `member` persona, compared against the owner of the same org | a SECOND organisation, created by that spec and never touched by the primary run | T7 | 27 | 27 |
 | `interaction` | `test-results/ui-audit-interaction.json` | the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm | a fresh, empty organisation created for the run | F8, F9, F10, R8 | 160 | 40 |
+| `behaviour` | `test-results/ui-audit-behaviour.json` | the owner of an organisation the spec signs up itself | a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches | B1, B2, B3, B4, B5 | 0 | 0 |
 
 **A cell no artifact carries is `NOT MEASURED`, never N/A and never a pass.** An N/A is a claim
 about the page — RUBRIC.md's rule 2 requires it to be derivable from the route record — and
@@ -128,6 +134,11 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 
 | withheld | routes | why the instrument did not answer |
 |---|---:|---|
+| **B1** | 40 | the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet |
+| **B2** | 40 | the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet |
+| **B3** | 40 | the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet |
+| **B4** | 40 | the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet |
+| **B5** | 40 | the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet |
 | **F10** | 1 | the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach |
 | **F8** | 1 | no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one |
 | **F8** | 1 | the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
@@ -143,6 +154,15 @@ loudly as a missing one:
 | predicate | FAIL | owner | what is failing |
 |---|---:|---|---|
 | **F8** | 1 | #4999 | ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back; Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs 35872640708 and 35896826914, with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data. |
+
+**Family B is held per ROUTE** (`BEHAVIOUR_LEDGER`), because every page lane fixes B1–B5 on its own
+routes and a per-predicate row could never shrink one lane at a time. A row is either `lifts` — measured
+debt the named issue removes — or `reason` — a decision that the route is built this way. Checked in both
+directions, like the table above:
+
+| route | predicate | ledger | what fails |
+|---|---|---|---|
+| — | — | — | no family-B predicate fails on any route |
 
 ## Per predicate
 
@@ -190,6 +210,12 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **R6** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R8** | R | live — `interaction` | 35 | 0 | 5 | 0 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
+| **B1** | B | live — `behaviour` | 0 | 0 | 0 | 40 | — | — |
+| **B2** | B | live — `behaviour` | 0 | 0 | 0 | 40 | — | — |
+| **B3** | B | live — `behaviour` | 0 | 0 | 0 | 40 | — | — |
+| **B4** | B | live — `behaviour` | 0 | 0 | 0 | 40 | — | — |
+| **B5** | B | live — `behaviour` | 0 | 0 | 0 | 40 | — | — |
+| **B6** | B | **none** — #6115 | — | — | — | — | — | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
 carrying the rubric's `renders-no-table` / `renders-no-formatted-value` / `declares-no-z-index`.
@@ -200,7 +226,7 @@ on it. Every page is asked, and a page with no table passes H4 by not hand-rolli
 ## Per route
 
 Each cell is `PASS/scored · score` over that family's instrumented predicates —
-S 4/4, T 7/7, H 9/9, F 10/10, R 8/8.
+S 4/4, T 7/7, H 9/9, F 10/10, R 8/8, B 5/6.
 
 **The size of each page's module closure is deliberately not in this file.** It is the set the H
 column was measured over, but it is not a predicate and scores nothing, and it moves by one on
@@ -213,52 +239,52 @@ score is over the rest, and the cell says so rather than letting a narrower meas
 
 **The overall column carries its withheld count ALWAYS, including when it is zero.** A score is
 not comparable to another score until you know how many predicates each one is an answer to, and
-`0.97 · 4 withheld of 38` is a different claim from `0.97 · 0 withheld of 38` — the first is an
-answer about 34 predicates wearing the shape of an answer about 38. The zero is printed rather than
+`0.97 · 4 withheld of 44` is a different claim from `0.97 · 0 withheld of 44` — the first is an
+answer about 40 predicates wearing the shape of an answer about 44. The zero is printed rather than
 implied by a missing suffix, because a suffix that is usually absent is read as decoration.
 
-| route | S | T | H | F | R | overall |
-|---|---|---|---|---|---|---|
-| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
-| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 8/8 · 1.00 | **0.97** · 1 withheld of 38 |
-| `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/[project]` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/architecture` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/settings/activity` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
-| `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/usage` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
-| `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/cli/login` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/dashboard/[[...rest]]` · | all N/A | 3/3 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 0 withheld of 38 |
+| route | S | T | H | F | R | B | overall |
+|---|---|---|---|---|---|---|---|
+| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **0.96** · 6 withheld of 44 |
+| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 8/8 · 1.00 | all withheld (5) | **0.97** · 6 withheld of 44 |
+| `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/[project]` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/architecture` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/settings/activity` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | all withheld (5) | **1.00** · 8 withheld of 44 |
+| `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/usage` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | all withheld (5) | **1.00** · 7 withheld of 44 |
+| `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/cli/login` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/dashboard/[[...rest]]` · | all N/A | 3/3 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
 route-state predicates and passes the H rows on a closure of one file that renders nothing. It is
