@@ -63,6 +63,12 @@ export interface LoopHealthReport {
 	ageMs: number | null;
 	runs: number;
 	failures: number;
+	/**
+	 * The last successful tick's numeric counts (`superviseLoop` keeps only the numbers), or null.
+	 * For `realtime-bus` this is the change bus's {streams, keys, delivered, filtered, dropped} —
+	 * `streams` is the open-stream leak counter (#6115).
+	 */
+	lastResult: Record<string, number> | null;
 	/** Only present for the reconcile loop: its per-reconciler sub-task heartbeats. */
 	tasks?: ReconcileTaskHealth[];
 }
@@ -161,6 +167,7 @@ function loopReports(now: Date): LoopHealthReport[] {
 			ageMs: ageMsOf(hb, now),
 			runs: hb.runs,
 			failures: hb.failures,
+			lastResult: hb.lastResult,
 		};
 		if (hb.id === RECONCILE_LOOP_ID) {
 			report.tasks = getReconcileTaskHeartbeats().map((t) => ({
