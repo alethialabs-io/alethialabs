@@ -13,7 +13,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/rpc/client", () => ({
-	orpc: { jobs: { key: () => ["jobs-orpc"] } },
+	orpc: {
+		jobs: { key: () => ["jobs-orpc"] },
+		// The shell's reads the topic map also reaches (#6114).
+		workspace: {
+			setupGuide: { key: () => ["ws-setup-guide"] },
+			environments: { key: () => ["ws-environments"] },
+			projects: { key: () => ["ws-projects"] },
+			supportCases: { key: () => ["ws-support-cases"] },
+		},
+	},
 }));
 
 import { createConnectionStore } from "@/lib/realtime/client/connection-state";

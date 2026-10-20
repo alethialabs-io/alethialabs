@@ -11,7 +11,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { qk } from "@/lib/query/keys";
-import { TOPIC_KEYS, type Topic } from "@/lib/query/topics";
+import { TOPIC_KEYS } from "@/lib/query/topics";
+import type { Topic } from "@/lib/realtime/topics";
 import { orpc } from "@/lib/rpc/client";
 
 /** The keys the shell's hooks read, each with the topic that must reach it. */
