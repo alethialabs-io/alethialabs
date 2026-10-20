@@ -19,8 +19,9 @@
 // visible in every org the member opens and could not tell a cache leak from a policy answer.
 //
 // WHAT "FIRST PAINT" MEANS HERE. A MutationObserver armed once the switch has landed records whether
-// the team marker is ever in the page's VISIBLE text afterwards — so a frame that showed it and was
-// then replaced still fails, which a final-state assertion alone would miss.
+// a node carrying the team marker is ever INSERTED afterwards — so a render that showed it and was
+// then replaced still fails, even within one task, which a final-state assertion alone would miss.
+// See `watchFor` for why it reads the mutation records rather than the page.
 
 import type { Page } from "@playwright/test";
 import fs from "node:fs";
@@ -55,16 +56,31 @@ async function ownOrgOf(userId: string, teamOrgId: string): Promise<{ id: string
 	return own;
 }
 
-/** Arms an observer that flags any later moment `marker` is in the page's visible text. */
+/**
+ * Arms an observer that flags any later INSERTION of `marker` into the document.
+ *
+ * It reads each mutation RECORD's added nodes, not the document after the fact. A MutationObserver
+ * callback runs as a microtask, and React can commit the stale rows and replace them (the hydration
+ * effect) inside one task — so a callback that re-reads the page sees only the final state and
+ * misses the stale render entirely. That is exactly what the first version of this spec did: with
+ * one QueryClient shared across orgs it stayed GREEN (#6113 review, advisory 5). An added node keeps
+ * its text after it is removed, so a stale row is caught even if it never survives to a paint —
+ * which makes this stricter than "painted", deliberately.
+ */
 async function watchFor(page: Page, marker: string): Promise<void> {
 	await page.evaluate(
 		({ marker, flag }) => {
 			Reflect.set(window, flag, false);
-			const check = () => {
-				if (document.body.innerText.includes(marker)) Reflect.set(window, flag, true);
+			const hit = (text: string | null) => {
+				if (text?.includes(marker)) Reflect.set(window, flag, true);
 			};
-			new MutationObserver(check).observe(document.body, { childList: true, subtree: true, characterData: true });
-			check();
+			new MutationObserver((records) => {
+				for (const record of records) {
+					record.addedNodes.forEach((node) => hit(node.textContent));
+					if (record.type === "characterData") hit(record.target.textContent);
+				}
+			}).observe(document.body, { childList: true, subtree: true, characterData: true });
+			hit(document.body.innerText);
 		},
 		{ marker, flag: SAW_PREVIOUS },
 	);
