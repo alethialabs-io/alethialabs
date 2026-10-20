@@ -18,7 +18,9 @@ vi.mock("@/lib/rpc/client", () => ({
 
 import { createConnectionStore } from "@/lib/realtime/client/connection-state";
 import type { ChannelLike, LockManagerLike } from "@/lib/realtime/client/leader";
+import { electLeader, newElectionRegistry } from "@/lib/realtime/client/leader";
 import { electionName, newDocumentScope, readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
+import { FakeWebLocks } from "./fake-web-locks";
 import { helloFrame, hintFrame, revokedFrame } from "@/lib/realtime/sse";
 
 /** Exclusive locks by name, each with a FIFO queue — the Web Locks semantics the election relies on. */
@@ -390,6 +392,49 @@ describe("startRealtime — one runtime per document", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("startRealtime — two copies of the module in one document (the bundler case, seen live)", () => {
+	it("share one page scope: one lock request, one runtime", async () => {
+		const keys = [Symbol.for("alethia.realtime.elections"), Symbol.for("alethia.realtime.runtimes")];
+		for (const k of keys) Reflect.deleteProperty(globalThis, k);
+		const fake = new FakeWebLocks();
+		const holder = electLeader({ registry: newElectionRegistry(), name: electionName("u1", "acme"), locks: fake.client("A"), openChannel: () => null, onLead: () => {} });
+		await new Promise((r) => setTimeout(r, 0));
+		vi.resetModules();
+		const copy1 = await import("@/lib/realtime/client/runtime");
+		vi.resetModules();
+		const copy2 = await import("@/lib/realtime/client/runtime");
+		expect(copy1.startRealtime).not.toBe(copy2.startRealtime);
+		const base = {
+			userId: "u1",
+			tenant: "acme",
+			onRemoved: () => {},
+			locks: fake.client("B"),
+			openChannel,
+			fetch: eventsServer().fetchImpl,
+			isVisible: () => true,
+			pageEvents: null,
+		};
+		const client = new QueryClient();
+		const spy = vi.spyOn(client, "invalidateQueries");
+		const stop1 = copy1.startRealtime({ ...base, queryClient: client, store: createConnectionStore() });
+		const stop2 = copy2.startRealtime({ ...base, queryClient: client, store: createConnectionStore() });
+		expect(fake.requestsOf("B")).toBe(1); // at once, not only after the first copy's give-up has run
+		await new Promise((r) => setTimeout(r, 0));
+		expect(fake.requestsOf("B")).toBe(1);
+		// A hint relayed from the leader's tab reaches ONE relay listener in this document, not two.
+		const leaderRelay = new BroadcastChannel(electionName("u1", "acme"));
+		leaderRelay.postMessage({ type: "hint", hint: { t: "jobs" } });
+		await vi.waitFor(() => expect(spy).toHaveBeenCalled(), { timeout: 3000 });
+		await new Promise((r) => setTimeout(r, 1200));
+		expect(spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === '["jobs"]')).toHaveLength(1);
+		leaderRelay.close();
+		stop1();
+		stop2();
+		holder.stop();
+		for (const k of keys) Reflect.deleteProperty(globalThis, k);
 	});
 });
 

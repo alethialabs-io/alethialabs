@@ -26,7 +26,7 @@ vi.mock("@/lib/rpc/client", () => ({
 }));
 
 import { RealtimeMount } from "@/components/shell/realtime-mount";
-import { electLeader } from "@/lib/realtime/client/leader";
+import { electLeader, newElectionRegistry } from "@/lib/realtime/client/leader";
 import { electionName } from "@/lib/realtime/client/runtime";
 
 const NAME = electionName("u1", "acme");
@@ -69,7 +69,7 @@ describe("RealtimeMount under StrictMode — one lock request per document", () 
 	it("a FOLLOWER (another document holds the lock): mount → unmount → mount leaves exactly one PENDING request", async () => {
 		// Another tab leads: this document's requests queue, so only aborting them removes them.
 		const other = electLeader({
-			registry: new Map(),
+			registry: newElectionRegistry(),
 			name: NAME,
 			locks: locks.client("doc-0"),
 			openChannel: () => null,

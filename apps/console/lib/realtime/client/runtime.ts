@@ -23,6 +23,8 @@ import {
 	type ElectionRegistry,
 	electLeader,
 	type LockManagerLike,
+	newElectionRegistry,
+	pageElectionRegistry,
 } from "./leader";
 import { runStream, type StreamPosition } from "./stream";
 
@@ -135,11 +137,31 @@ export interface DocumentScope {
 
 /** A fresh document scope — for tests that model several tabs in one process. */
 export function newDocumentScope(): DocumentScope {
-	return { runtimes: new Map(), elections: new Map() };
+	return { runtimes: new Map(), elections: newElectionRegistry() };
 }
 
-/** This page's scope. */
-const pageScope: DocumentScope = newDocumentScope();
+/**
+ * This page's scope, on `globalThis` under registered symbols: a bundler can instantiate this module
+ * more than once in one document (seen live under the dev server), and every copy must share it.
+ */
+function pageScope(): DocumentScope {
+	const key = Symbol.for("alethia.realtime.runtimes");
+	const existing: unknown = Reflect.get(globalThis, key);
+	let runtimes: Map<string, () => void>;
+	if (existing instanceof Map) {
+		runtimes = existing;
+	} else {
+		runtimes = new Map();
+		Reflect.set(globalThis, key, runtimes);
+	}
+	return { runtimes, elections: pageElectionRegistry() };
+}
+
+/** Says, in development only, that a start replaced one still running — the next live check can see it. */
+function noteSuperseded(name: string): void {
+	if (process.env.NODE_ENV !== "development") return;
+	console.debug(`[realtime] a second start for ${name} replaced one still running in this document`, new Error("started here").stack);
+}
 
 /**
  * Starts the org's real-time client; returns the stop function (idempotent). It never throws: if any part of it
@@ -154,8 +176,12 @@ export function startRealtime(options: RealtimeOptions): () => void {
 		options.pageEvents === undefined ? (typeof window === "undefined" ? null : window) : options.pageEvents;
 	const name = electionName(options.userId, options.tenant);
 	const url = `/${encodeURIComponent(options.tenant)}/~/events`;
-	const scope = options.scope ?? pageScope;
-	scope.runtimes.get(name)?.();
+	const scope = options.scope ?? pageScope();
+	const previous = scope.runtimes.get(name);
+	if (previous) {
+		noteSuperseded(name);
+		previous();
+	}
 
 	store.reset(); // a new runtime starts from a first connect: a previous `removed` does not carry over
 	const coalescer = createCoalescer({ queryClient: options.queryClient, topicKeys: TOPIC_KEYS, isVisible });

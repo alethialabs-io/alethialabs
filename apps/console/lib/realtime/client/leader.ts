@@ -62,7 +62,7 @@ export interface LeaderOptions {
 	now?: () => number;
 	/** Whether this tab is being looked at (the lease prefers a visible leader). */
 	isVisible?: () => boolean;
-	/** This document's elections (default: the module's, i.e. this page's). */
+	/** This document's elections (default: the page's, shared on `globalThis`). */
 	registry?: ElectionRegistry;
 }
 
@@ -89,63 +89,159 @@ function outranks(a: { tab: string; visible: boolean }, b: { tab: string; visibl
 	return a.tab < b.tab;
 }
 
-/**
- * The elections this DOCUMENT is in, by name. A document is one voter: it must never hold two
- * requests for one election. A second request queued behind the first would, once granted, hold the
- * lock with no stream behind it. Starting an election therefore supersedes any this document still
- * has under that name (a remount, React StrictMode's mount → unmount → mount, a start whose stop was
- * lost), whatever the caller did.
- */
-const documentElections = new Map<string, Election>();
+/** One document's Web Locks request for one election name, shared by every election started under it. */
+interface LockSlot {
+	/** The election that leads when the lock is (or is already) ours; null while nobody wants it. */
+	voter: Voter | null;
+	/** `queued`: a request is waiting; `held`: the lock is ours; `releasing`: being given back (a new
+	 * election must re-request, not lead); `idle`: no request at all. */
+	state: "idle" | "queued" | "held" | "releasing";
+	/** Aborts the queued request. */
+	queue: AbortController | null;
+	/** Gives the held lock back. */
+	release: (() => void) | null;
+}
 
-/** One document's registry of elections by name. Tests that model several tabs in one process give
- * each "tab" its own; the browser uses the module's. */
-export type ElectionRegistry = Map<string, Election>;
+/** One election's stake in a {@link LockSlot}. */
+interface Voter {
+	onLead(signal: AbortSignal): void;
+	lead: AbortController;
+	leading: boolean;
+}
+
+/**
+ * One document's elections. A document is ONE voter per election name: it must never hold two
+ * requests for one name, because a second request queued behind the first, once granted, holds the
+ * lock with no stream behind it. So under Web Locks a document keeps a single request per name
+ * (`slots`) and later elections take it over rather than queue another; under the lease, a new
+ * election stops the previous one (`elections`).
+ */
+export interface ElectionRegistry {
+	elections: Map<string, Election>;
+	slots: Map<string, LockSlot>;
+}
+
+/** An empty registry — what a test gives each "tab" it models in one process. */
+export function newElectionRegistry(): ElectionRegistry {
+	return { elections: new Map(), slots: new Map() };
+}
+
+/** Whether a value is a registry (it may come from another copy of this module). */
+function isRegistry(value: unknown): value is ElectionRegistry {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"elections" in value &&
+		value.elections instanceof Map &&
+		"slots" in value &&
+		value.slots instanceof Map
+	);
+}
+
+/**
+ * The page's registry, on `globalThis` under a registered symbol: a bundler can instantiate this
+ * module more than once in one document (seen live under the dev server), and every copy must see
+ * the same registry or each would hold its own request.
+ */
+export function pageElectionRegistry(): ElectionRegistry {
+	const key = Symbol.for("alethia.realtime.elections");
+	const existing: unknown = Reflect.get(globalThis, key);
+	if (isRegistry(existing)) return existing;
+	const made = newElectionRegistry();
+	Reflect.set(globalThis, key, made);
+	return made;
+}
 
 /** Elects this tab's org leader with Web Locks when it can, the lease when it cannot. */
 export function electLeader(options: LeaderOptions): Election {
-	const registry = options.registry ?? documentElections;
-	registry.get(options.name)?.stop();
-	const inner = options.locks ? lockElection(options, options.locks) : leaseElection(options);
+	const registry = options.registry ?? pageElectionRegistry();
+	if (options.locks) return lockElection(options, options.locks, registry);
+	registry.elections.get(options.name)?.stop();
+	const inner = leaseElection(options);
 	const election: Election = {
 		isLeader: () => inner.isLeader(),
 		stop() {
 			inner.stop();
-			if (registry.get(options.name) === election) registry.delete(options.name);
+			if (registry.elections.get(options.name) === election) registry.elections.delete(options.name);
 		},
 	};
-	registry.set(options.name, election);
+	registry.elections.set(options.name, election);
 	return election;
 }
 
-/** The Web Locks election: hold the lock until stopped; the next queued tab inherits it. */
-function lockElection(options: LeaderOptions, locks: LockManagerLike): Election {
-	const queue = new AbortController(); // leaves the queue if we never got the lock
-	const lead = new AbortController(); // ends our leadership if we did
-	let leading = false;
-	locks
-		.request(options.name, { signal: queue.signal }, () => {
-			// Granted after this election was stopped (the abort lost the race): release at once, so
-			// the next document in the queue gets the lock instead of a holder with no stream.
-			if (lead.signal.aborted) return Promise.resolve();
-			leading = true;
-			options.onLead(lead.signal);
-			return new Promise<void>((resolve) => {
-				lead.signal.addEventListener("abort", () => resolve());
+/**
+ * The Web Locks election. The document's ONE request for the name is shared: a new election takes
+ * it over (and the lock, if it is already held) instead of queueing a second; stopping only gives it
+ * up if, by the end of the current task, no other election has taken it over (React StrictMode's
+ * mount → unmount → mount, a remount) — so the request is never dropped and re-queued at the back.
+ * A lock granted when nobody wants it any more is released at once.
+ */
+function lockElection(options: LeaderOptions, locks: LockManagerLike, registry: ElectionRegistry): Election {
+	const name = options.name;
+	let slot = registry.slots.get(name);
+	if (!slot) {
+		slot = { voter: null, state: "idle", queue: null, release: null };
+		registry.slots.set(name, slot);
+	}
+	const own = slot;
+	const voter: Voter = { onLead: options.onLead, lead: new AbortController(), leading: false };
+
+	const lead = (v: Voter) => {
+		v.leading = true;
+		v.onLead(v.lead.signal);
+	};
+
+	const request = () => {
+		const queue = new AbortController();
+		own.queue = queue;
+		own.state = "queued";
+		locks
+			.request(name, { signal: queue.signal }, () => {
+				const current = own.voter;
+				if (!current) return Promise.resolve(); // nobody wants it any more: release at once
+				own.state = "held";
+				return new Promise<void>((resolve) => {
+					own.release = resolve;
+					lead(current);
+				});
+			})
+			.catch(() => {
+				/* aborted while queued */
+			})
+			.finally(() => {
+				if (own.queue !== queue) return;
+				own.queue = null;
+				own.release = null;
+				own.state = "idle";
+				if (own.voter) request(); // someone took it over while it was being given up
 			});
-		})
-		.catch(() => {
-			/* aborted while queued: we left before our turn */
-		})
-		.finally(() => {
-			leading = false;
-		});
+	};
+
+	// Take the document's stake over from any earlier election under this name.
+	if (own.voter) {
+		own.voter.leading = false;
+		own.voter.lead.abort();
+	}
+	own.voter = voter;
+	if (own.state === "held") lead(voter);
+	else if (own.state === "idle") request();
+
 	return {
-		isLeader: () => leading,
+		isLeader: () => voter.leading && own.voter === voter,
 		stop() {
-			leading = false;
-			lead.abort();
-			queue.abort();
+			voter.leading = false;
+			voter.lead.abort();
+			if (own.voter !== voter) return; // already superseded
+			own.voter = null;
+			// Give the request (or the lock) up at the end of this task, unless an election took it over.
+			queueMicrotask(() => {
+				if (own.voter !== null) return;
+				if (own.state === "held") {
+					own.state = "releasing";
+					own.release?.();
+				}
+				else if (own.state === "queued") own.queue?.abort();
+			});
 		},
 	};
 }
