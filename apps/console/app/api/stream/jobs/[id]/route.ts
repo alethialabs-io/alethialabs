@@ -38,21 +38,20 @@ export async function GET(
 	const actor = await getActiveScope(owner);
 	const db = getServiceDb();
 
-	// This read uses the service DB (RLS-bypassing), so re-apply the tenant predicate by hand.
-	// It MUST mirror the jobs `owner_all` RLS policy exactly — `user_id = current_owner OR
-	// org_id = current_org` (programmables.sql) — not a stricter org-only check: the `set_org_id`
-	// trigger stamps `org_id = user_id` for any job whose insert didn't set org_id, so on a hosted
-	// org (orgId ≠ userId) a legitimately-owned job can carry `org_id = userId`. A strict
-	// `org_id === actor.orgId` gate 404s those, the EventSource error is swallowed, and the job's
-	// logs silently never render even though the list (RLS) shows the job.
+	// This read uses the service DB (RLS-bypassing), so the tenant predicate is applied here by hand,
+	// and it is the jobs `owner_all` RLS policy (programmables.sql): `org_id = current_org OR
+	// org_id = current_owner` — the job's org is the active org, or the caller's PERSONAL org (whose
+	// id is the user's id). The second arm keeps a job stamped `org_id = user_id` (the `set_org_id`
+	// fallback, pre-#3942 runner jobs) streaming on a hosted org, as the list shows it. The predicate
+	// is on the job's org alone: a job is reachable from the org it belongs to.
 	const [job] = await db
-		.select({ org_id: jobs.org_id, user_id: jobs.user_id })
+		.select({ org_id: jobs.org_id })
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
-	// Re-apply the owner_all RLS predicate on this no-RLS read; the PDP (authorizeUserId) gated above.
-	const owns = !!job && (job.user_id === actor.userId || job.org_id === actor.orgId); // authz-scope-ok
-	if (!owns) {
+	// The PDP (authorizeUserId) gated the action above; this bounds the row to the caller's tenancy.
+	const inScope = !!job && (job.org_id === actor.orgId || job.org_id === actor.userId); // authz-scope-ok
+	if (!inScope) {
 		return new Response("Not found", { status: 404 });
 	}
 

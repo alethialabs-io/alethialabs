@@ -7,6 +7,7 @@
 // values (operator/provisioning/job_type/config_snapshot), the hosted-vs-self-managed branches, the
 // duplicate-destroy guard, and that notifyScaler fires after queueing jobs.
 
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
@@ -276,6 +277,14 @@ describe("setDefaultRunner", () => {
 		await setDefaultRunner("r1");
 		expect(authorize).toHaveBeenCalledWith("edit", { type: "runner", id: "r1" });
 		expect(mock.execute).toHaveBeenCalledTimes(1);
+	});
+
+	it("chooses the default within the addressed org: user, org and runner, in that order", async () => {
+		vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+		await setDefaultRunner("r1");
+		const q = new PgDialect().sqlToQuery(mock.execute.mock.calls[0][0]);
+		expect(q.sql).toContain("set_default_runner(");
+		expect(q.params).toEqual(["user-1", "org-1", "r1"]);
 	});
 
 	it("clears the default (null) without an id on the resource", async () => {

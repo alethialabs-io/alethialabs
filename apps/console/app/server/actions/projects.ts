@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { projectOrgRefusal } from "@/lib/projects/project-org";
 import { createHash } from "node:crypto";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -1159,6 +1160,10 @@ async function buildConfigSnapshot(
 			.where(eq(projects.id, projectId))
 			.limit(1);
 		if (!project) notFound(); // stale/deleted id → 404, not a captured error
+		// The job is filed under the project's org (the database refuses any other), while quota,
+		// audit and idempotency are the actor's org's: so the work runs where the project lives.
+		const orgRefusal = projectOrgRefusal(project.org_id, { userId: owner, orgId });
+		if (orgRefusal) throw new JobRefusalError(orgRefusal);
 
 		// M1: resolve which environment this job provisions (the given one, else the
 		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
