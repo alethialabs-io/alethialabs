@@ -1040,16 +1040,21 @@ restore_live_envs() {
     # demo owner's org already holds non-demo projects the seeder throws by design, the
     # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
     # was fine. A restore restarts; it never writes data.
-    # Exit 3 is env-mode.sh's "it is UP, and it is serving COMMUNITY entitlements" (boot_rc
-    # there). It is not a failure to come back, and calling it one would name the wrong fault
-    # on an env this restore does not own; it is also not a success, and folding it into the
+    # Exit 3 is env-mode.sh's "it is UP, and it is in the wrong scope" (boot_rc there).
+    # It is not a failure to come back, and calling it one would name the wrong fault on an env this restore does not own; it is also not a success, and folding it into the
     # `||` success path would leave the diagnostic that just printed above with nothing
     # saying it was a verdict.
     local restore_rc=0
     ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" || restore_rc=$?
     case "$restore_rc" in
     0) ;;
-    3) echo "      ⚠ $sl is back but serving COMMUNITY entitlements (see above) — its owner must pnpm env:up" ;;
+    3)
+      # Exit 3 says only "up, and in the wrong scope" — not WHICH defect (#6166). Asked again
+      # rather than parsed out of the boot's prose, which went straight to the terminal anyway.
+      local scope_
+      scope_="$(measure_scope "$sl" "$cport" 2 10)"
+      echo "      ⚠ $sl is back, but it $(scope_headline "$scope_") (see above) — its owner must run: $(scope_remedy "$scope_")"
+      ;;
     *) echo "      ✗ $sl did not come back — pnpm env:up from its worktree" ;;
     esac
   done
@@ -1767,6 +1772,63 @@ cmd_verify() {
   exit 1
 }
 
+# ── WHAT A DEFECT SCOPE MEANS (#6166) ────────────────────────────────────────────
+#
+# env-mode.sh's scope_verdict gives ONE verdict word, DEFECT, to two different faults, so that
+# every caller below refuses or flags both without learning a new word. They are not the same
+# fault, and naming the second in the first one's words sent the operator after the wrong cause:
+#   404 — the organization plugin is absent: the console is SERVING community entitlements.
+#   5xx — only under a pinned ALETHIA_EDITION=enterprise (#6161): @alethia/ee did not load, and
+#         lib/enterprise.ts refuses every call rather than fall back, sign-in included. It is
+#         serving nothing that touches auth — calling it "COMMUNITY" was simply false.
+# The probe already prints "<verdict> <status> <why>", and these key on the STATUS — the same
+# thing scope_verdict and the boot's diagnostic key on. The why is prose; the status is the
+# contract. They change WORDS only: which cases are refused is still decided by the verdict.
+
+# The label env:status prints for a DEFECT. Shipped to the box as text (env_scopes), so it stays
+# plain sh.
+scope_defect_label() { # <probe status> → COMMUNITY | EE-NOT-LOADED
+  case "$1" in
+  5[0-9][0-9]) echo EE-NOT-LOADED ;;
+  *) echo COMMUNITY ;;
+  esac
+}
+
+# What the env IS, as a predicate: "'<slug>' <this>" and "…, but it <this>" both read. Takes the
+# whole probe line so a caller can hand it whatever the probe said: a line that is not a DEFECT
+# (a re-probe that no longer sees one) gets a headline that claims no cause.
+scope_headline() { # <probe line "<verdict> <status> <why>"> → predicate
+  local verdict="${1%% *}" rest status
+  rest="${1#* }"
+  status="${rest%% *}"
+  if [ "$verdict" != DEFECT ]; then
+    echo "came up in the wrong scope (a re-probe now reads: ${1:-no answer})"
+    return
+  fi
+  case "$(scope_defect_label "$status")" in
+  EE-NOT-LOADED) echo "cannot load the enterprise edition its .env pins — every auth call answers $status, sign-in included" ;;
+  *) echo "is serving COMMUNITY entitlements" ;;
+  esac
+}
+
+# The remedy for that headline. The 5xx one leads with the LOG: env-mode.sh builds @alethia/ee
+# before it boots and refuses to start without ee/dist, so at boot the likelier cause is a dist
+# that is present and threw on load, and only the console log says what it threw.
+scope_remedy() { # <probe line> → the command(s) its owner runs
+  local rest="${1#* }"
+  case "${1%% *}:$(scope_defect_label "${rest%% *}")" in
+  DEFECT:EE-NOT-LOADED) echo "pnpm env:logs (the load error is there), then pnpm env:push to rebuild ee/dist, or pnpm env:up" ;;
+  *) echo "pnpm env:up" ;;
+  esac
+}
+
+# The probe, asked once, the way env:test asks it. Exits 0 with whatever came back (empty when the
+# box did not answer) — the callers decide what an answer means. </dev/null because two callers
+# sit inside a `while read` loop and ssh would otherwise swallow the rest of its input.
+measure_scope() { # <slug> <console port> <attempts> <seconds per attempt>
+  ssh_box "$REMOTE/bin/env-mode.sh --scope '$2' '$REMOTE/envs/$1/.env' $3 $4" </dev/null 2>/dev/null || true
+}
+
 # ── WHICH EDITION IS EACH ENV SERVING? ───────────────────────────────────────────
 #
 # `env:status` printed a URL, ports, an owner and a timestamp — everything about whether the
@@ -1824,7 +1886,7 @@ env_scopes() { # → lines of "<slug> <verdict>"
   # file was read and the probe is not in it, `?-no-probe` when it could not be read at all,
   # and `?-probe-failed-rcN` when the probe IS there and still did not produce a verdict —
   # the one case that is a defect in this code rather than in the box.
-  script='
+  script="$(declare -f scope_defect_label)"'
 mode="'"$REMOTE"'/bin/env-mode.sh"
 sup=0
 grep -q scope_probe "$mode" >/dev/null 2>&1 || sup=$?
@@ -1841,7 +1903,7 @@ probe() {
   case "${1:-}" in
     enterprise) echo "$s enterprise" ;;
     community)  echo "$s community-pinned" ;;
-    DEFECT)     echo "$s COMMUNITY" ;;
+    DEFECT)     echo "$s $(scope_defect_label "${2:-}")" ;;
     unknown)
       case "${2:-000}" in
         000|"")
@@ -1919,6 +1981,9 @@ edition_row() {
   case "$scope" in
   enterprise) served=enterprise ;;
   community-pinned | COMMUNITY) served=community ;;
+  # MEASURED, so not "not compared" — but it is not an edition being served either: the console
+  # is pinned to enterprise and cannot load it (#6166), which the scope row already names.
+  EE-NOT-LOADED) echo "⚠ pinned $pin, but the console cannot load the enterprise edition — see the scope row"; return ;;
   *) echo "$pin (pinned) — not compared: the scope was not measured"; return ;;
   esac
   if [ "$pin" = "$served" ]; then
@@ -1979,6 +2044,9 @@ cmd_status() {
   resolved the community entitlement baseline: a team/active subscription row on that env is
   still refused with 403 upgrade_required, so EVERY enterprise-scoped verification on it is
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
+  `EE-NOT-LOADED` is a different fault: the .env pins enterprise, @alethia/ee did not load,
+  and the console answers 5xx to every auth call, sign-in included — it is serving no edition
+  at all. Read `pnpm env:logs` for the load error, then `pnpm env:push` or `pnpm env:up`.
   A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
   actually measured: `?-no-answer` (the console did not respond, but its tmux session is there
   — it is up and busy, or wedged), `?-not-running` (there is NO session behind this
@@ -2164,7 +2232,7 @@ cmd_test() {
   # report reads as a product defect. `unknown` stays a warning for the same reason the boot
   # does not refuse on it — an unanswered probe is not a verdict either way.
   local scope_ verdict_
-  scope_="$(ssh_box "$REMOTE/bin/env-mode.sh --scope '$cport' '$REMOTE/envs/$slug_/.env' 3 30" 2>/dev/null || true)"
+  scope_="$(measure_scope "$slug_" "$cport" 3 30)"
   verdict_="${scope_%% *}"
   case "$verdict_" in
   enterprise) ;;
@@ -2173,10 +2241,22 @@ cmd_test() {
     echo "  enterprise-scoped spec in this run will be vacuous, not passing." >&2
     ;;
   DEFECT)
-    die "'$slug_' is serving COMMUNITY entitlements — ${scope_#* * }
+    # The headline and the remedy name the actual fault (#6166): a 404 is a console serving
+    # community entitlements, a 5xx under the enterprise pin is one that cannot sign anyone in.
+    # Both are refused — the verdict decides that, not the words.
+    case "$(scope_defect_label "$(printf '%s' "$scope_" | cut -d' ' -f2)")" in
+    EE-NOT-LOADED)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
+  Every spec that signs in would fail on authentication rather than on what it tests. Fix the
+  env first:  $(scope_remedy "$scope_")"
+      ;;
+    *)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
   A team/active subscription row on it is still refused with 403 upgrade_required, so every
   enterprise-scoped spec would pass vacuously or fail for the wrong reason. Fix the env
-  first:  pnpm env:up"
+  first:  $(scope_remedy "$scope_")"
+      ;;
+    esac
     ;;
   *)
     echo "⚠ could not measure which edition '$slug_' is serving: ${scope_:-no answer from the box}" >&2
@@ -2278,7 +2358,7 @@ restart_env_console() { # <slug>
   # happened), but the reason it failed has to survive.
   #
   # THE EXIT CODE IS READ, not just tested against 0. env-mode.sh exits 3 for "the console is
-  # up, and it is serving COMMUNITY entitlements" (boot_rc there); making that case non-fatal
+  # up, and it is in the wrong scope" (boot_rc there); making that case non-fatal
   # is what stops a restart from claiming a running console "did not come back", and reading
   # the 3 here is what stops the same case from printing a clean `console restarted` line and
   # discarding the diagnostic the boot just wrote. Those two halves were added together and
@@ -2296,9 +2376,13 @@ restart_env_console() { # <slug>
   case "$rc" in
   0) ;;
   3)
-    echo "  ⚠ the console is back, but it came up serving COMMUNITY entitlements — every" >&2
-    echo "    enterprise-scoped check against '$slug_' is vacuous until its OWNER runs" >&2
-    echo "    pnpm env:up from that branch's worktree." >&2
+    # Exit 3 is "up, in the wrong scope" for BOTH DEFECTs; the status says which (#6166). Asked
+    # of the console again, the way env:test asks, rather than grepped out of the boot's prose.
+    local scope_
+    scope_="$(measure_scope "$slug_" "$cport" 2 10)"
+    echo "  ⚠ the console is back, but it $(scope_headline "$scope_")." >&2
+    echo "    No enterprise-scoped check against '$slug_' can be trusted until its OWNER runs" >&2
+    echo "    $(scope_remedy "$scope_") from that branch's worktree." >&2
     ;;
   *)
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2

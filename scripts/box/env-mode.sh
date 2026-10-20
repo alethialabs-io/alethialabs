@@ -141,7 +141,9 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
   # `set -a && . .env`, which is how the console's session actually gets it — strips all
   # three, so the console really IS community while an un-normalised compare reads "unset,
   # therefore auto" and refuses to boot the one env the design says must stay runnable.
-  edition="${edition//$'\r'/}"
+  # The \r needs no strip of its own: it is in [:space:], so the trailing trim below removes it
+  # (the self-test's CRLF cells hold that, and go red without the trim). An INNER \r is no
+  # longer removed: the console's `set -a && . .env` keeps one too, so it is not a pin there.
   edition="${edition#"${edition%%[![:space:]]*}"}"
   edition="${edition%"${edition##*[![:space:]]}"}"
   case "$edition" in
@@ -159,9 +161,10 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     # auth plugins are built through getEnterprise(), so this probe's route answers 5xx and keeps
     # answering it however long anyone waits. Every branch env pins enterprise since #6158, so a
     # missing ee/dist reaches the probe as exactly this, where under `auto` it reached it as the
-    # 404 above. (A dist that exists but throws fails this way under EITHER pin; only the pinned
-    # case is named here, because only there is the pin itself evidence of what was expected.) Reading it as `unknown` let env:up
-    # exit green with "scope: UNKNOWN" on an env that cannot sign anyone in.
+    # 404 above. (A dist that exists but throws fails this way under EITHER pin; only the
+    # pinned case is named here, because only there is the pin itself evidence of what was
+    # expected.) Reading it as `unknown` let env:up exit green with "scope: UNKNOWN" on an env
+    # that cannot sign anyone in.
     #
     # The verdict is DEFECT, not a fifth word, on purpose: env:up (boot_rc), env:test and
     # env:status in scripts/env.sh already refuse or flag DEFECT, and a word they have never seen
@@ -169,10 +172,12 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     # The why is what tells it apart from the community DEFECT; the boot below keys on the status.
     #
     # What it does NOT claim: that ee/dist is missing. A dist that exists but throws on import
-    # fails the same way, and so would any other 5xx on this route under that pin, which is why
-    # the why ends in a question mark and the boot prints whether ee/dist/index.js is there.
+    # fails the same way — and at boot that is the LIKELIER cause, because this script builds
+    # @alethia/ee and refuses to start without ee/dist — and so would any other 5xx on this route
+    # under that pin. So the why names both causes as a question, and the boot prints whether
+    # ee/dist/index.js is there and sends the operator to the log first.
     if [ "$edition" = "enterprise" ]; then
-      echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
+      echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing, or present and throwing on load?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
     else
       echo "unknown the console did not answer the probe (status $code)"
     fi
@@ -364,12 +369,13 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "no answer under enterprise is unknown" 000 "enterprise" "unknown"
 
   # The why is prose, but for THIS cell the words are the deliverable: the community DEFECT and
-  # this one share a verdict, and the why is the only thing env:test's refusal prints to tell them
-  # apart. Assert it names the pin and ee/dist, and does not say COMMUNITY.
+  # this one share a verdict, and every refusal in scripts/env.sh prints the why under its
+  # headline. Assert it names the pin and BOTH causes of a failed ee load — a missing dist, and
+  # one that is present and throws, which at boot is the likelier — and does not say COMMUNITY.
   why="$(scope_verdict 500 enterprise)"
   why="${why#* }"
   case "$why" in
-  *"ALETHIA_EDITION=enterprise"*"ee/dist"*)
+  *"ALETHIA_EDITION=enterprise"*"ee/dist missing"*"throwing on load"*)
     case "$why" in
     *COMMUNITY*)
       fail=$((fail + 1))
@@ -380,7 +386,7 @@ if [ "${1:-}" = "--self-test" ]; then
     ;;
   *)
     fail=$((fail + 1))
-    echo "  ✗ the pinned-enterprise 5xx does not name the pin and ee/dist: $why"
+    echo "  ✗ the pinned-enterprise 5xx does not name the pin and both ee/dist causes: $why"
     ;;
   esac
 
@@ -892,10 +898,12 @@ for _ in $(seq 1 150); do
       echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
       case "$SCOPE_CODE" in
       5[0-9][0-9])
-        # MISSING is the case #6161 was filed for; `present` means the dist exists and threw on
-        # load; loadEnterprise rethrows that error, so the console log is where it surfaces.
-        echo "  Build it (pnpm env:push rebuilds ee/dist), or pnpm env:up again. If ee/dist is" >&2
-        echo "  present, it loaded and threw: look for the error in pnpm env:logs." >&2
+        # The LOG FIRST. This boot built @alethia/ee above and exits before starting the console
+        # if ee/dist/index.js is absent, so here the dist is almost always present and threw on
+        # load (or the 5xx is not ee's at all); loadEnterprise rethrows that error on every call,
+        # so the console log is where it surfaces. A rebuild is the remedy for the rarer case.
+        echo "  Read the error first: pnpm env:logs (a dist that loaded and threw, or any other" >&2
+        echo "  5xx, shows there). Then rebuild: pnpm env:push rebuilds ee/dist, or pnpm env:up." >&2
         ;;
       *)
         # This boot ALREADY scrubbed the tmux server's global environment and started the
