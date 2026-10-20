@@ -4,10 +4,10 @@
 
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
 import { cn } from "@repo/ui/utils";
-import { format } from "date-fns";
 import { EyeOff } from "lucide-react";
 import type { SupportAuthorType } from "@repo/support/enums";
 import type { StaffCaseDetail } from "@/lib/queries";
+import { CaseTime } from "./staff-case-time";
 
 /** The full staff thread message shape (includes the internal-note flag). */
 type StaffMessage = StaffCaseDetail["messages"][number];
@@ -37,7 +37,7 @@ const ROLE_INITIALS: Record<SupportAuthorType, string> = {
  */
 function ThreadMessage({ message }: { message: StaffMessage }) {
 	const label = message.author_name || ROLE_LABEL[message.author_type];
-	const timestamp = format(new Date(message.created_at), "MMM d, yyyy · HH:mm");
+	const timestamp = <CaseTime at={message.created_at} style="datetime" />;
 
 	if (message.is_internal) {
 		return (
