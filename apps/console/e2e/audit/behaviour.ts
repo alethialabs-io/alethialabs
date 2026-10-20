@@ -139,6 +139,35 @@ function namesFromManifest(): Map<string, string> {
 }
 
 /**
+ * A `workers` lookup over a server-reference manifest's JSON — the same shape the build writes. The
+ * positive control hands it a FIXTURE manifest, so its shell reads are classified by the code path the
+ * routes' are, not by a stand-in rule.
+ */
+export function workersFromManifest(manifest: unknown): (key: string) => ReadonlySet<string> | null {
+	const map = new Map<string, Set<string>>();
+	const node = typeof manifest === "object" && manifest !== null && "node" in manifest ? manifest.node : null;
+	if (typeof node === "object" && node !== null) {
+		for (const [id, entry] of Object.entries(node)) {
+			if (typeof entry !== "object" || entry === null) continue;
+			const workers = "workers" in entry && typeof entry.workers === "object" && entry.workers !== null ? Object.keys(entry.workers) : [];
+			if (workers.length > 0) map.set(id, new Set(workers));
+		}
+	}
+	return (key) => (key.startsWith("action ") ? (map.get(key.slice("action ".length)) ?? null) : null);
+}
+
+/**
+ * Whether the build's server-reference manifest is on disk and says which pages reference each
+ * action. B3, B4 and B5 tell the PAGE's reads from the shell's through it; without it every shell
+ * read would count as the page's, and a route that exercised only its shell would read as measured.
+ * `behaviour.spec.ts` refuses to score when this is false — loudly, never by falling back.
+ */
+export function manifestKnowsWorkers(): boolean {
+	namesFromManifest();
+	return (actionWorkers?.size ?? 0) > 0;
+}
+
+/**
  * The build entries (`app/(private)/[org]/~/jobs/page`) whose client graph references a server
  * action, from the same manifest — or `null` when the build does not say. Read by `shellReadsFor`.
  */
@@ -397,6 +426,8 @@ export interface FailedPhase {
 	snapshot: RegionSnapshot;
 	/** How many reads were answered 500 by the end of this phase. */
 	failed: number;
+	/** WHICH reads were answered 500 by the end of this phase — the evidence, and what B4 classifies. */
+	failedKeys: string[];
 }
 
 /** Makes a fresh, isolated context — B4 installs a fake clock, and a clock is per context. */
@@ -420,24 +451,27 @@ export async function loadFailed(newContext: ContextFactory, url: string): Promi
 		await context.clock.install();
 		const { page } = await openTracked(context);
 		let failed = 0;
+		const failedKeys = new Set<string>();
 		const pathname = new URL(url, "http://placeholder.invalid").pathname;
 		await page.route(readCarrier(pathname), async (route) => {
 			if (readKey(route.request()) === null) return route.fallback();
 			failed += 1;
+			const k = readKey(route.request());
+			if (k !== null) failedKeys.add(k);
 			await failRead(route);
 		});
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 		await page.waitForLoadState("load").catch(() => {});
 		// `quietMs` outlasts the console's one query retry (TanStack's first retry waits ~1 s).
 		await waitStill(page, { minMs: 2_000, quietMs: 2_500, capMs: 12_000 });
-		const cold: FailedPhase = { phase: "cold load", snapshot: await snapshotRegion(page), failed };
+		const cold: FailedPhase = { phase: "cold load", snapshot: await snapshotRegion(page), failed, failedKeys: [...failedKeys] };
 		await context.clock.fastForward(B4_STALE_JUMP_MS);
 		await page.evaluate(() => {
 			document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
 			window.dispatchEvent(new Event("focus"));
 		});
 		await waitStill(page, { minMs: 3_000, quietMs: 2_500, capMs: 12_000 });
-		const stale: FailedPhase = { phase: "stale refetch", snapshot: await snapshotRegion(page), failed };
+		const stale: FailedPhase = { phase: "stale refetch", snapshot: await snapshotRegion(page), failed, failedKeys: [...failedKeys] };
 		return [cold, stale];
 	} finally {
 		await context.close();
@@ -506,6 +540,10 @@ function onlyIn(a: readonly string[], b: readonly string[]): string[] {
 export const NOT_SETTLED =
 	"answered-not-settled — the route still showed a skeleton or `aria-busy` after the readiness budget with every read answered, so there is no answered render to compare against";
 
+/** The NOT MEASURED reason for a route none of whose OWN reads was held or failed. */
+export const NO_PAGE_READS =
+	"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser";
+
 /** The NOT MEASURED reason for a route whose answered render is its own empty state. */
 export const ANSWERED_EMPTY =
 	"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same";
@@ -539,11 +577,15 @@ export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
 
 /** B3: with every PAGE read held (the shell's answered), no empty state the answered render does not show. */
 export function judgeB3(answered: AnsweredLoad, held: HeldLoad): BVerdict {
+	// `held` is the PAGE's reads: the load answered every read the manifest places in the shells.
 	const evidence = { heldEmpty: held.snapshot.empty, answeredEmpty: answered.snapshot.empty, held: held.held };
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
+	// Nothing of the page's own was pending, so "no empty state while pending" was never asked. The
+	// first cut PASSed these: a route that exercised only its shell read as measured (#6180 re-review).
+	if (held.held.length === 0) return { verdict: "NOT MEASURED", reason: NO_PAGE_READS, evidence };
 	if (held.snapshot.empty > answered.snapshot.empty) return { verdict: "FAIL", evidence };
 	if (held.snapshot.empty === 0) return { verdict: "PASS", evidence };
-	return held.held.length > 0 ? { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence } : { verdict: "PASS", evidence };
+	return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
 }
 
 /** What a failed phase did wrong, against the answered render. Empty when nothing. */
@@ -559,14 +601,24 @@ export function failureProblems(answered: RegionSnapshot, failed: RegionSnapshot
 }
 
 /** B4: neither failed phase leaves a skeleton, shows empty copy, or drops content silently. */
-export function judgeB4(answered: AnsweredLoad, phases: readonly FailedPhase[]): BVerdict {
-	const results = phases.map((p) => ({ phase: p.phase, failed: p.failed, problems: failureProblems(answered.snapshot, p.snapshot), render: summary(p.snapshot) }));
+export function judgeB4(answered: AnsweredLoad, phases: readonly FailedPhase[], isPageRead: (key: string) => boolean = () => true): BVerdict {
+	const results = phases.map((p) => ({
+		phase: p.phase,
+		failed: p.failed,
+		failedKeys: p.failedKeys,
+		pageReadsFailed: p.failedKeys.filter(isPageRead),
+		problems: failureProblems(answered.snapshot, p.snapshot),
+		render: summary(p.snapshot),
+	}));
 	const evidence = { phases: results, answered: summary(answered.snapshot) };
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
-	if (results.some((r) => r.problems.length > 0)) return { verdict: "FAIL", evidence };
 	const failedAny = phases.some((p) => p.failed > 0);
 	// Nothing was failed, so nothing was measured: a route that made no read has no failure to render.
 	if (!failedAny) return { verdict: "NOT MEASURED", reason: "no-reads-failed — the route made no data read, so forcing reads to fail reached nothing", evidence };
+	// Only the SHELL's reads were failed: whatever `main` did, the page's own regions were never
+	// asked to render a failure. Counted through the manifest, as B5 counts (#6180 re-review).
+	if (!results.some((r) => r.pageReadsFailed.length > 0)) return { verdict: "NOT MEASURED", reason: NO_PAGE_READS, evidence };
+	if (results.some((r) => r.problems.length > 0)) return { verdict: "FAIL", evidence };
 	const errorShown = phases.some((p) => p.snapshot.errors > answered.snapshot.errors);
 	if (answered.snapshot.empty > 0 && failedAny && !errorShown) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
 	return { verdict: "PASS", evidence };
@@ -615,11 +667,7 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 	};
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
 	if (pageReads.length === 0) {
-		return {
-			verdict: "NOT MEASURED",
-			reason: "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser",
-			evidence,
-		};
+		return { verdict: "NOT MEASURED", reason: NO_PAGE_READS, evidence };
 	}
 	if (pageReads.length > B5_READ_CAP) {
 		return {
@@ -844,7 +892,13 @@ export function judgeB2(outcome: SwapOutcome): BVerdict {
 		};
 	}
 	const outlineScore = outlineShift(s, f, B_VIEWPORT);
-	const blocks = blockScores(outcome.skeleton, outcome.final, B_VIEWPORT);
+	const scored = blockScores(outcome.skeleton, outcome.final, B_VIEWPORT);
+	// A skeleton of THIN BARS has no block-sized element, so per-block scoring has nothing to score
+	// and the outline (whose top, left and right the shell pins) reads 0 — `~/support/abuse` PASSED
+	// with its bottom edge 241px off (#6180 re-review). Such a skeleton is ONE block: its whole
+	// outline against the page's, bottom included — unless the page ends in an open-ended list.
+	const pageEndsInList = outcome.final.some((c) => c.list && Math.abs(c.box.y + c.box.h - (f.y + f.h)) <= 1);
+	const blocks = scored.length > 0 ? scored : [{ skeleton: s, region: f, list: pageEndsInList, score: blockShift(s, f, pageEndsInList, B_VIEWPORT) }];
 	const worst = blocks.reduce<BlockScore | null>((w, b) => (w === null || b.score > w.score ? b : w), null);
 	const score = Math.max(outlineScore, worst?.score ?? 0);
 	const columns = { skeleton: columnCount(outcome.skeleton.filter((c) => c.block).map((c) => c.box)), final: columnCount(outcome.final.filter((c) => c.block).map((c) => c.box)) };
@@ -852,7 +906,8 @@ export function judgeB2(outcome: SwapOutcome): BVerdict {
 		score: Number(score.toFixed(4)),
 		outlineScore: Number(outlineScore.toFixed(4)),
 		worstBlock: worst === null ? null : { ...worst, score: Number(worst.score.toFixed(4)) },
-		blocks: blocks.length,
+		blocks: scored.length,
+		wholeSkeletonAsOneBlock: scored.length === 0,
 		budget: B2_BUDGET,
 		columns,
 		outline: { skeleton: s, final: f },
@@ -876,8 +931,13 @@ export function judgeB2Worst(outcomes: readonly SwapOutcome[]): BVerdict {
 	const verdicts = outcomes.map(judgeB2);
 	const measured = verdicts.filter((v) => v.verdict !== "NOT MEASURED");
 	if (measured.length === 0) return verdicts[0] ?? { verdict: "NOT MEASURED", reason: "no-swap — B2 drove no navigation", evidence: null };
-	const fail = measured.find((v) => v.verdict === "FAIL");
-	const chosen = fail ?? measured[0];
+	// The WORST measured swap: a FAIL over a PASS, and between two of a kind the higher score — so a
+	// PASS reports the closer call, not whichever swap ran first.
+	const scoreOf = (v: BVerdict): number => {
+		const e = v.evidence;
+		return typeof e === "object" && e !== null && "score" in e && typeof e.score === "number" ? e.score : 0;
+	};
+	const chosen = [...measured].sort((a, b) => Number(b.verdict === "FAIL") - Number(a.verdict === "FAIL") || scoreOf(b) - scoreOf(a))[0];
 	return { ...chosen, evidence: { worst: chosen.evidence, swaps: verdicts.map((v) => v.verdict) } };
 }
 
@@ -1064,6 +1124,7 @@ export const B_CONTROL_MODES = [
 	"client-fetch",
 	"empty-while-pending",
 	"empty-after-hydration",
+	"shell-only",
 	"empty-on-error",
 	"vanish-on-error",
 	"endless-skeleton",
@@ -1077,7 +1138,21 @@ export const B_CONTROL_MODES = [
 	"swap-shifted",
 	"swap-height",
 	"swap-list",
+	"swap-bars",
 ] as const;
+
+/**
+ * The fixture's build manifest: one server action, `fx-shell`, referenced by the fixture's page entry
+ * — so `structurallyShell` classifies it as a SHELL read through the same parser the routes go
+ * through (`workersFromManifest`), and every other fixture read as the page's.
+ */
+const FIXTURE_ENTRIES: readonly string[] = ["app/fixture/page"];
+const FIXTURE_WORKERS = workersFromManifest({ node: { "fx-shell": { workers: { "app/fixture/page": {} } } } });
+
+/** Whether a fixture read is the shell's, by the fixture's manifest. */
+function fixtureShell(key: string): boolean {
+	return structurallyShell(key, FIXTURE_ENTRIES, FIXTURE_WORKERS);
+}
 
 /** One fixture mode. */
 export type BControlMode = (typeof B_CONTROL_MODES)[number];
@@ -1086,8 +1161,8 @@ export type BControlMode = (typeof B_CONTROL_MODES)[number];
  * One fixture page, every mode. Plain DOM in the slots the console renders — `data-slot="skeleton"`,
  * `aria-busy`, `role="alert"`, `data-slot="empty"`, a `DataTable`-shaped empty row, table rows, the
  * route boundary's `ErrorState` classes — and reads over the read router's own URL shape, so the
- * loaders intercept them exactly as they intercept a console page's. A read whose name ends in
- * `shell` stands for a shell read: B3's load answers it (see `loadHeld`). `window.next.router` is a
+ * loaders intercept them exactly as they intercept a console page's. The `fx-shell` server action is
+ * the SHELL's read, classified through a fixture build manifest (`FIXTURE_WORKERS`). `window.next.router` is a
  * stand-in with the two methods B2 calls; its push paints a skeleton, then fetches the route's data
  * the way the App Router does (`RSC: 1`), so the hold-and-release in `measureSkeletonSwap` is
  * exercised for real.
@@ -1104,12 +1179,16 @@ var REGION_ERROR = '<div data-slot="region-error" data-state="error"><p>Couldn\\
 var ROUTE_ERROR = '<div class="__ROUTE_ERROR__"><p>Something went wrong loading this page</p></div>';
 function rows(names) { return '<table><tbody>' + names.map(function (n) { return '<tr><td>' + n + '</td></tr>'; }).join('') + '</tbody></table>'; }
 function read(name) { return fetch('/acme/~/rpc/fixture/' + name).then(function (r) { if (!r.ok) throw new Error('read failed'); return r.json(); }); }
+function shellRead() { return fetch(location.pathname, { method: 'POST', headers: { 'Next-Action': 'fx-shell' } }).then(function (r) { if (!r.ok) throw new Error('shell read failed'); }); }
 function set(id, html, busy) { var el = document.getElementById(id); if (!el) return; el.innerHTML = html; if (busy) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); }
 if (MODE === "client-fetch" || MODE === "empty-while-pending" || MODE === "endless-skeleton" || MODE === "region-error") {
 	read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { if (MODE !== "endless-skeleton") set('region', MODE === "region-error" ? REGION_ERROR : ERROR, false); });
 }
+if (MODE === "shell-only") {
+	shellRead().then(function () {}, function () {});
+}
 if (MODE === "empty-after-hydration") {
-	read('shell').then(function () {
+	shellRead().then(function () {
 		set('region', EMPTY, false);
 		read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { set('region', ERROR, false); });
 	}, function () {});
@@ -1134,7 +1213,9 @@ if (MODE === "two-regions-contained" || MODE === "two-regions-blanked") {
 if (MODE.indexOf("swap-") === 0) {
 	var FRAME = MODE === "swap-list"
 		? '<div class="frame">' + SKELETON + SKELETON + SKELETON + '</div>'
-		: '<div class="frame"><div data-slot="skeleton" class="sk" style="margin:16px"></div></div>';
+		: MODE === "swap-bars"
+			? '<div data-slot="skeleton" style="height:16px;background:#ddd;margin:0 0 8px"></div><div data-slot="skeleton" style="height:16px;background:#ddd"></div>'
+			: '<div class="frame"><div data-slot="skeleton" class="sk" style="margin:16px"></div></div>';
 	var FINAL = MODE === "swap-columns"
 		? '<div style="display:flex;gap:16px"><div class="frame" style="flex:1"><p>alpha</p></div><div class="frame" style="flex:1"><p>beta</p></div></div>'
 		: MODE === "swap-shifted"
@@ -1143,7 +1224,9 @@ if (MODE.indexOf("swap-") === 0) {
 				? '<div class="frame" style="height:200px"><p style="margin:16px">alpha</p></div>'
 				: MODE === "swap-list"
 					? '<div class="listframe">' + rows(['alpha', 'beta']) + '</div>'
-					: '<div class="frame"><p style="margin:16px">alpha</p></div>';
+					: MODE === "swap-bars"
+						? '<div style="height:320px"><p>alpha</p><p>beta</p><p>gamma</p></div>'
+						: '<div class="frame"><p style="margin:16px">alpha</p></div>';
 	window.next = { router: {
 		prefetch: function (href) { fetch(href, { headers: { 'RSC': '1', 'Next-Router-Prefetch': '1' } }); },
 		push: function (href) {
@@ -1160,7 +1243,7 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
-	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static") return { a: rows, b: none, staticCopy: none };
+	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
 	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error" || mode === "empty-after-hydration") {
@@ -1231,14 +1314,13 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		}
 	};
 	try {
-		const shellRead = (key: string) => key.endsWith("shell");
 		const measure = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
 			const held = await loadHeld(context, url);
-			const pageHeld = await loadHeld(context, url, shellRead);
+			const pageHeld = await loadHeld(context, url, fixtureShell);
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed) };
+			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !fixtureShell(k)) };
 		};
 		const good = await measure("prefetched");
 		expectVerdict("B1", "prefetched", good.b1, "PASS");
@@ -1263,6 +1345,10 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		expectVerdict("B4", "region-error", (await measure("region-error")).b4, "PASS");
 		// A page that made no read has nothing to fail, which is not a pass.
 		expectVerdict("B4", "static", (await measure("static")).b4, "NOT MEASURED");
+		// A page whose only read is its SHELL's: B3 and B4 exercised nothing of the page's own.
+		const shellOnly = await measure("shell-only");
+		expectVerdict("B3", "shell-only", shellOnly.b3, "NOT MEASURED");
+		expectVerdict("B4", "shell-only", shellOnly.b4, "NOT MEASURED");
 
 		const b5 = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
@@ -1283,6 +1369,8 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			["swap-shifted", "FAIL"],
 			["swap-height", "FAIL"],
 			["swap-list", "PASS"],
+			// Bars only — no block-sized element — over a taller page: only the whole-skeleton block sees it.
+			["swap-bars", "FAIL"],
 		];
 		for (const [mode, want] of swaps) {
 			const page = await context.newPage();

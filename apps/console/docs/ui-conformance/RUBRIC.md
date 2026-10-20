@@ -476,6 +476,13 @@ digit, no relative time — and fails only when the held render has FEWER of the
 stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`). The first calibration run failed
 the jobs slice on exactly those two, which is how they were found.
 
+**B3 and B4 count only the PAGE's reads.** A route on which no read of its own was held (B3) or failed
+(B4) is **NOT MEASURED `no-page-reads`**, as for B5 — the first cut PASSed routes that exercised nothing
+but their shell. The classification is the build's server-reference manifest, the same for all three
+predicates, and the spec refuses to score at all when the manifest is missing: a fallback would count
+every shell read as the page's. A route's read set is the UNION of every load phase 1 makes of it, so a
+read that one cold load happened not to fire does not turn a scored cell into NOT MEASURED.
+
 **B3 is measured on a HYDRATED page.** Holding every read (B1's load) stalls hydration, so an empty
 state a client component renders after it mounts — while its read is still pending — never appears
 there, and B3 used to PASS it. B3's load answers the reads the build's server-reference manifest places
@@ -500,9 +507,13 @@ a fraction of the viewport, times the furthest an edge moved as a fraction of th
   replaced it — **with the bottom edge**, because a block of the wrong height moves everything below it.
   The bottom edge is excluded only where the replacing region is an **open-ended list** (it holds table
   body rows or list items): no skeleton can know how many rows the answer has, and two rows under an
-  eight-row skeleton move nothing above them. A skeleton block nothing replaced scores as vanishing.
+  eight-row skeleton move nothing above them. A skeleton block nothing replaced scores as vanishing;
+- **a skeleton with no block at all** — thin bars only — as ONE block: its whole outline against the
+  page's, bottom included unless the page ends in an open-ended list. Without it the score fell back to
+  the shell-pinned outline and `~/support/abuse` PASSED with its bottom edge 241px off (#6180 re-review).
 
-The score is the worst of those. The column rule stands beside it: when either frame sets two or more
+The score is the worst of those, and between two swaps the worse one is reported — the higher score
+when both pass. The column rule stands beside it: when either frame sets two or more
 blocks side by side, the counts must agree (F007). The swap is driven twice and the worse result is the
 verdict — `~/settings/general` flipped between runs on one capture. The origin of the navigation is
 chosen so that the fallback painted is the route's OWN loading boundary: it shares every segment with
@@ -510,10 +521,13 @@ the route above that boundary and differs at it. When the loading state never pa
 response is held, B2 is NOT MEASURED saying so. **What B2 does not see**, stated: an open-ended list
 whose rows are the wrong shape, and a missing row above a matching block only through that block's move.
 
-**The plan-gated skeleton (F021) is not measured here.** The release gate boots a SELF-MANAGED console,
-which never renders the hosted product's upsell, so on the gated routes (`~/alerts`, `~/runners`,
-`~/settings/teams`, `~/settings/sso`) B2 is **NOT MEASURED `hosted-only`**, never scored against a list
-the hosted product would not show. Measuring it needs a release-gate leg that boots the console as the
+**Hosted-only pages are not measured by B2 here.** The release gate boots a SELF-MANAGED console. It
+never renders the hosted product's upsell on the plan-gated routes (`~/alerts`, `~/runners`,
+`~/settings/teams`, `~/settings/sso` — F021), and on `~/settings/billing`, `~/usage` and
+`[project]/usage` it renders a "Self-managed deployment" notice in place of the panels their skeletons
+were drawn for. On all seven B2 is **NOT MEASURED `hosted-only`**, never scored against a page the hosted
+product would not show. B1, B4 and B5 on billing and usage stay scored: they measure the self-managed
+render that ships, not the hosted panels. Measuring it needs a release-gate leg that boots the console as the
 hosted edition; no such leg exists today, and the plan-gating design (#6132) is its owner.
 
 **B4 has two phases because a prefetched region makes no read on its cold load.** Failing its reads
@@ -554,8 +568,10 @@ PASS and, per predicate, pages one defect away that must FAIL: a client fetch on
 while pending, and one that appears only after hydration; an empty state on a failed refetch; content
 that vanishes with no error; a skeleton that never resolves; a failure that brings up the route's error
 page, and one that blanks both regions; a skeleton with the wrong columns, one whose frame moves, and
-one whose height alone is wrong. A shorter open-ended list, a `RegionError` with no `role`, and a page
-with no reads (NOT MEASURED, never PASS) are its other known answers. A predicate the control names is
+one whose height alone is wrong, and a bars-only skeleton over a taller page. A shorter open-ended list,
+a `RegionError` with no `role`, a page with no reads and a page whose only read is its shell's (both NOT
+MEASURED, never PASS — the shell read classified through a fixture build manifest, by the same parser)
+are its other known answers. A predicate the control names is
 withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS B1, B3, B4
 and B5, and must be MEASURED on B2, which it FAILS: its skeleton has no PageToolbar row and a one-row
 filter bar, so the table frame paints about 100px above where the page puts it. That is debt (#6121),

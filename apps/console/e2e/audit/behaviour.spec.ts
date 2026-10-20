@@ -65,6 +65,7 @@ import {
 	measureSkeletonSwap,
 	pageEntry,
 	structurallyShell,
+	manifestKnowsWorkers,
 	shellReadsFor,
 	B5_READ_CAP,
 	type BControlResult,
@@ -102,15 +103,28 @@ const MIN_MEASURED = 10;
 const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly PredicateId[];
 
 /**
- * The routes the hosted product gates by plan (F021, 2026-10-19 hunt): on a plan without the
- * feature they render an upsell where a self-managed console renders the list. Their skeleton is
- * the F021 question, and only a leg booted as the hosted edition can ask it.
+ * The routes whose page the hosted product renders differently from the release gate's SELF-MANAGED
+ * console, so their skeleton is a hosted question:
+ *   · plan-gated (F021, 2026-10-19 hunt) — on a plan without the feature the hosted product renders an
+ *     upsell where a self-managed console renders the list;
+ *   · billing and usage — with no hosted billing connected, the page is a "Self-managed deployment"
+ *     notice (`billing-panel.tsx`, `usage-panel.tsx`), and the panels its skeleton was drawn for never
+ *     render in the gate.
+ * Only a leg booted as the hosted edition can ask B2 there.
  */
-const GATED: ReadonlySet<string> = new Set(["/[org]/~/alerts", "/[org]/~/runners", "/[org]/~/settings/teams", "/[org]/~/settings/sso"]);
+const HOSTED_RENDER: ReadonlySet<string> = new Set([
+	"/[org]/~/alerts",
+	"/[org]/~/runners",
+	"/[org]/~/settings/teams",
+	"/[org]/~/settings/sso",
+	"/[org]/~/settings/billing",
+	"/[org]/~/usage",
+	"/[org]/[project]/usage",
+]);
 
-/** B2's NOT MEASURED reason on a gated route. */
+/** B2's NOT MEASURED reason on a route whose page is hosted-only. */
 const HOSTED_ONLY =
-	"hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition";
+	"hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition";
 
 /** How many times B2 drives the swap; the worst measured one is the verdict (`judgeB2Worst`). */
 const B2_SWAPS = 2;
@@ -214,6 +228,14 @@ test.beforeAll(async ({ browser }, testInfo) => {
 			await signup.close();
 		}
 	}
+	// B3, B4 and B5 tell the page's reads from the shell's through the build's server-reference
+	// manifest. Without it every shell read would count as the page's — refused, never defaulted.
+	if (!manifestKnowsWorkers()) {
+		throw new Error(
+			"the build's server-reference manifest (.next/server/server-reference-manifest.json) is missing or names no " +
+				"page per action — family B cannot tell a page's reads from its shell's, and will not score without it",
+		);
+	}
 	const { control } = current();
 	if (control.broken.length > 0) {
 		report.withhold(control.broken, `positive control failed: ${control.lines.join("; ")}`);
@@ -315,19 +337,31 @@ test.describe("phase 1 · B1–B4 on every route, in a seeded organisation of it
 			// flaky load is a gap in one cell, and the floor test below is what turns a systemic one red.
 			await measured(route, url, ["B1", "B3", "B4"], async () => {
 				const a = await loadAnswered(context(), url);
-				s.routes[route.route] = { reads: a.reads, settled: a.settled, answered: a.snapshot };
-				saveState();
-				// B1 holds EVERY read: its subject is the server render.
-				put(route, url, "B1", judgeB1(a, await loadHeld(context(), url)));
-				// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
+				const reads = new Set(a.reads);
+				const remember = () => {
+					s.routes[route.route] = { reads: [...reads], settled: a.settled, answered: a.snapshot };
+					saveState();
+				};
+				remember();
 				const chainEntries = manifest.routes.filter((r) => r.shellChain.join(" > ") === route.shellChain.join(" > ")).map((r) => pageEntry(r.file));
-				put(route, url, "B3", judgeB3(a, await loadHeld(context(), url, (key) => structurallyShell(key, chainEntries))));
-				put(route, url, "B4", judgeB4(a, await loadFailed(isolatedContext, url)));
+				const isShell = (key: string) => structurallyShell(key, chainEntries);
+				// B1 holds EVERY read: its subject is the server render.
+				const held = await loadHeld(context(), url);
+				put(route, url, "B1", judgeB1(a, held));
+				// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
+				const pageHeld = await loadHeld(context(), url, isShell);
+				put(route, url, "B3", judgeB3(a, pageHeld));
+				const failed = await loadFailed(isolatedContext, url);
+				put(route, url, "B4", judgeB4(a, failed, (key) => !isShell(key)));
+				// A route's read set is the UNION of every load phase 1 made of it, so one cold load that
+				// happened not to fire a read cannot turn B5's verdict for that route into NOT MEASURED.
+				for (const k of [...held.held, ...pageHeld.held, ...failed.flatMap((p) => p.failedKeys)]) reads.add(k);
+				remember();
 			});
 			const loading = route.boundaries.loading?.file ?? null;
 			if (loading === null) {
 				report.record({ route: route.route, url, predicate: "B2", verdict: "N/A", reason: "no-loading-boundary" });
-			} else if (GATED.has(route.route)) {
+			} else if (HOSTED_RENDER.has(route.route)) {
 				report.notMeasured({ route: route.route, url, predicate: "B2", reason: HOSTED_ONLY });
 			} else {
 				await measured(route, url, ["B2"], async () => {
