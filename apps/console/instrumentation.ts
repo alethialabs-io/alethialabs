@@ -87,6 +87,10 @@ export async function register() {
 		"@/lib/observability/heartbeats"
 	);
 	startHeartbeatWatcher();
+	// The console's change bus (#6115): one `alethia_change` LISTEN for this process, proved by a
+	// NOTIFY round trip at boot and every 30 s (supervised — a deaf LISTEN turns /health degraded).
+	const { startRealtimeBus } = await import("@/lib/realtime/self-test");
+	startRealtimeBus();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) =>
