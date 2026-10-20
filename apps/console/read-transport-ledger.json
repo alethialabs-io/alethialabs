@@ -45,13 +45,10 @@
 		"lib/query/use-environment-status-query.ts :: getEnvironmentComponentStatus",
 		"lib/query/use-evidence-query.ts :: getOrgEvidence",
 		"lib/query/use-jobs-query.ts :: getJob",
-		"lib/query/use-jobs-query.ts :: getJobs",
 		"lib/query/use-members-query.ts :: getMembersPage",
-		"lib/query/use-projects-query.ts :: getProjects",
 		"lib/query/use-roles-query.ts :: listRoles",
 		"lib/query/use-runners-page-query.ts :: getRunnersPage",
 		"lib/query/use-sso-query.ts :: listSsoProviders",
-		"lib/query/use-support-cases-query.ts :: listMyCases",
 		"lib/query/use-teams-query.ts :: getTeamsPage"
 	]
 }

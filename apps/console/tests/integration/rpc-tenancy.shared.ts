@@ -65,7 +65,17 @@ import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getServiceDb } from "@/lib/db";
-import { authzActivityLog, grants, jobs, member, organization, user } from "@/lib/db/schema";
+import {
+	authzActivityLog,
+	grants,
+	jobs,
+	member,
+	organization,
+	projectEnvironments,
+	projects,
+	supportCases,
+	user,
+} from "@/lib/db/schema";
 import { editionState } from "@/lib/enterprise";
 import { errorDigest } from "@/lib/errors";
 import { procedurePaths } from "@/lib/rpc/procedure-paths";
@@ -82,9 +92,20 @@ export interface RpcTenancyRequest {
 
 /** The seeded world a fixture's markers are read against. */
 export interface Seeded {
+	orgX: string;
+	orgY: string;
 	jobX: string;
 	jobY: string;
+	/** One project per org, both under the SAME slug (`PROJECT_SLUG`) — slugs are unique per org. */
+	projectX: string;
+	projectY: string;
+	/** One support case per org, opened by the CALLER U (see `caseX` in the seeding below). */
+	caseX: string;
+	caseY: string;
 }
+
+/** The project slug seeded in BOTH orgs, so one fixture input can address either org's project. */
+const PROJECT_SLUG = "it-6114-shared-slug";
 
 /**
  * One procedure's tenancy fixture. Two kinds, because not every read is org-scoped, and a read that
@@ -117,6 +138,28 @@ function hasRow(out: unknown, id: string): boolean {
 	);
 }
 
+/** Whether an array output carries an element whose `field` equals `value`. */
+function hasElement(out: unknown, field: string, value: string): boolean {
+	if (!Array.isArray(out)) return false;
+	return out.some(
+		(el: unknown) => typeof el === "object" && el !== null && field in el && Reflect.get(el, field) === value,
+	);
+}
+
+/** A numeric field of an object output, or undefined. */
+function numberField(out: unknown, field: string): number | undefined {
+	if (typeof out !== "object" || out === null || !(field in out)) return undefined;
+	const value: unknown = Reflect.get(out, field);
+	return typeof value === "number" ? value : undefined;
+}
+
+/** A string field of an object output, or undefined. */
+function stringField(out: unknown, field: string): string | undefined {
+	if (typeof out !== "object" || out === null || !(field in out)) return undefined;
+	const value: unknown = Reflect.get(out, field);
+	return typeof value === "string" ? value : undefined;
+}
+
 /**
  * EVERY procedure in `router`, keyed by its dotted path. A new read procedure must add its entry
  * here — an input that reaches its reader, and a marker test that names X's and Y's seeded rows —
@@ -127,6 +170,47 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "org-scoped",
 		input: { range: { preset: "12mo" } },
 		markers: (out, s) => ({ x: hasRow(out, s.jobX), y: hasRow(out, s.jobY) }),
+	},
+	// The app shell's reads (#6114).
+	"workspace.context": {
+		// The org list is the CALLER's (the same at X and Y); `activeOrgId` and the entitlements are
+		// the addressed org's — so the marker is which org the context says the request is on.
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({
+			x: stringField(out, "activeOrgId") === s.orgX,
+			y: stringField(out, "activeOrgId") === s.orgY,
+		}),
+	},
+	"workspace.projects": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.projectX), y: hasElement(out, "id", s.projectY) }),
+	},
+	"workspace.jobs": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.jobX), y: hasElement(out, "id", s.jobY) }),
+	},
+	"workspace.supportCases": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.caseX), y: hasElement(out, "id", s.caseY) }),
+	},
+	"workspace.setupGuide": {
+		// Its counts are the addressed org's: X has three members (U, V, W), Y has two (U, W).
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({ x: numberField(out, "memberCount") === 3, y: numberField(out, "memberCount") === 2 }),
+	},
+	"workspace.environments": {
+		// The same slug names a project in each org; the answer must be the ADDRESSED org's project's.
+		kind: "org-scoped",
+		input: { project: PROJECT_SLUG },
+		markers: (out, s) => ({
+			x: hasElement(out, "project_id", s.projectX),
+			y: hasElement(out, "project_id", s.projectY),
+		}),
 	},
 };
 
@@ -182,7 +266,16 @@ export async function runRpcTenancySuite(opts: {
 	const V = randomUUID(); // member of X only — the non-member of Y
 	const W = randomUUID(); // member of X and Y — authors the marker rows, never calls
 	const USERS = [U, V, W];
-	const seeded: Seeded = { jobX: "", jobY: "" };
+	const seeded: Seeded = {
+		orgX: ORG_X,
+		orgY: ORG_Y,
+		jobX: "",
+		jobY: "",
+		projectX: "",
+		projectY: "",
+		caseX: "",
+		caseY: "",
+	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
 	async function viaRoute(path: string, req: RpcTenancyRequest): Promise<Outcome> {
@@ -273,6 +366,50 @@ export async function runRpcTenancySuite(opts: {
 
 			seeded.jobX = await seedJob(W, ORG_X);
 			seeded.jobY = await seedJob(W, ORG_Y);
+
+			// One project per org under the same slug, each with its default environment (W authors).
+			const seedProject = async (orgId: string): Promise<string> => {
+				const [p] = await db
+					.insert(projects)
+					.values({
+						user_id: W,
+						org_id: orgId,
+						project_name: `it-6114-${orgId.slice(0, 8)}`,
+						slug: PROJECT_SLUG,
+						region: "eu-west-1",
+						iac_version: "1.0.0",
+					})
+					.returning({ id: projects.id });
+				await db
+					.insert(projectEnvironments)
+					.values({ project_id: p.id, user_id: W, name: "prod", status: "DRAFT", is_default: true });
+				return p.id;
+			};
+			seeded.projectX = await seedProject(ORG_X);
+			seeded.projectY = await seedProject(ORG_Y);
+
+			// Support cases are the one marker U authors. A viewer sees only cases they opened (the
+			// requester arm) — so a W-authored case would be invisible to U at BOTH addresses and prove
+			// nothing. The policy is org-scoped FIRST (`org_id = current_org AND (…)`,
+			// programmables.sql), so U's case in X must still not appear at Y: that is the org arm.
+			const seedCase = async (orgId: string): Promise<string> => {
+				const row: typeof supportCases.$inferInsert = {
+					user_id: U,
+					org_id: orgId,
+					type: "technical",
+					category: "other",
+					severity: "normal",
+					status: "open",
+					subject: `it-6114 ${orgId.slice(0, 8)}`,
+					context: {},
+					contact: { notifyEmail: "it-6114@example.test", channel: "email" },
+					last_author_type: "customer",
+				};
+				const [c] = await db.insert(supportCases).values(row).returning({ id: supportCases.id });
+				return c.id;
+			};
+			seeded.caseX = await seedCase(ORG_X);
+			seeded.caseY = await seedCase(ORG_Y);
 			// The stamp is the premise of the markers; read it back rather than trust the insert.
 			const stamped = await db
 				.select({ id: jobs.id, org: jobs.org_id })
@@ -289,6 +426,12 @@ export async function runRpcTenancySuite(opts: {
 		afterAll(async () => {
 			const db = getServiceDb();
 			await db.delete(jobs).where(inArray(jobs.org_id, [ORG_X, ORG_Y]));
+			await db.delete(supportCases).where(inArray(supportCases.org_id, [ORG_X, ORG_Y]));
+			const seededProjects = [seeded.projectX, seeded.projectY].filter((id) => id !== "");
+			if (seededProjects.length > 0) {
+				await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, seededProjects));
+				await db.delete(projects).where(inArray(projects.id, seededProjects));
+			}
 			await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(grants).where(inArray(grants.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));

@@ -17,19 +17,21 @@ import { orpc } from "@/lib/rpc/client";
  * list (`lib/realtime/topics.ts`), so a topic the server can send always has an entry here.
  *
  * `jobs` also carries the legacy `["jobs"]` prefix, which covers `qk.jobs` / `qk.jobsPage` / `qk.job`
- * (lib/query/keys.ts) for every org: those reads still poll until #6114 moves them, and with this the
- * lane can delete its polls without touching the bus. The per-org QueryClient is what keeps the prefix
+ * (lib/query/keys.ts) for every org — the shell's job feed among them (#6114), which keeps that key
+ * because other pages share its cache entry. The per-org QueryClient is what keeps the prefix
  * from reaching another org's cache.
  */
 export const TOPIC_KEYS = {
-	jobs: (): QueryKey[] => [orpc.jobs.key(), ["jobs"]],
-	environments: (): QueryKey[] => [],
-	projects: (): QueryKey[] => [],
+	// The shell's job feed (bell, toasts, breadcrumbs — on `qk.jobs(org)`, reached by the `["jobs"]`
+	// prefix) and the setup guide's "provisioned" step change with every job (#6114).
+	jobs: (): QueryKey[] => [orpc.jobs.key(), ["jobs"], orpc.workspace.setupGuide.key()],
+	environments: (): QueryKey[] => [orpc.workspace.environments.key()],
+	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
 	clusters: (): QueryKey[] => [],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
 	addons: (): QueryKey[] => [],
 	alerts: (): QueryKey[] => [],
-	support: (): QueryKey[] => [],
+	support: (): QueryKey[] => [orpc.workspace.supportCases.key()],
 	usage: (): QueryKey[] => [],
 } satisfies Record<Topic, () => QueryKey[]>;

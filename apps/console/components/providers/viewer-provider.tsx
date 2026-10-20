@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-// THE ONLY PLACE IN THE CONSOLE THAT READS `authClient.useSession()` (#5382). eslint refuses it
-// anywhere else in product code — see the `useSession` block in apps/console/eslint.config.mjs.
+// THE ONLY PLACE IN THE CONSOLE THAT READS THE LIVE CLIENT SESSION (#5382), through `liveSession`
+// (lib/auth/client.ts). better-auth's own `authClient.useSession()` is refused by eslint everywhere
+// — see the `useSession` block in apps/console/eslint.config.mjs.
 //
 // Why: better-auth's React binding (`useStore`) calls `useSyncExternalStore(subscribe, get, get)`,
 // so the LIVE client session is also handed over as the SERVER snapshot. A component that renders
@@ -13,11 +14,12 @@
 //
 // `useViewer()` closes that race: until this component has hydrated it returns the value the
 // SERVER rendered with — the session the private layout read for this request, passed down through
-// `ViewerProvider` — and only after hydration does it follow the live session.
+// `ViewerProvider`. And while that seed is current it does not subscribe to the live session at all,
+// because subscribing is what makes better-auth fetch `/get-session` (#6114) — see `useViewer`.
 
-import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from "react";
 import type React from "react";
-import { authClient } from "@/lib/auth/client";
+import { type LiveSessionRead, liveSession } from "@/lib/auth/client";
 import { toViewer, type Viewer } from "@/lib/auth/viewer";
 
 /**
@@ -74,18 +76,62 @@ function useHydrated(): boolean {
 	);
 }
 
+/** The live session's answer while it is not being followed — the same as before its first fetch. */
+const NOT_FOLLOWED: LiveSessionRead = { data: null, isPending: true, error: null };
+
+/** Unsubscribing from nothing. */
+function noop(): void {}
+
+/** Whether a client auth call has changed the session since this page loaded (module-wide). */
+let sessionChanged = false;
+const changeListeners = new Set<() => void>();
+let detachChange: (() => void) | null = null;
+
+/** Subscribes to "the session changed on this client"; attaches to better-auth on first use. */
+function subscribeSessionChanged(listener: () => void): () => void {
+	changeListeners.add(listener);
+	detachChange ??= liveSession.onChange(() => {
+		sessionChanged = true;
+		for (const notify of changeListeners) notify();
+	});
+	return () => {
+		changeListeners.delete(listener);
+	};
+}
+
+/** The current answer to "has the session changed on this client". */
+function getSessionChanged(): boolean {
+	return sessionChanged;
+}
+
 /**
- * The hydration-safe signed-in person. Renders with the server's seed until the component has
- * hydrated, then follows the live better-auth session — falling back to the seed while that
- * session is still loading or its fetch failed, so the UI does not blink to "signed out".
+ * The hydration-safe signed-in person.
  *
- * With no `ViewerProvider` above (a public route, a test), the pre-hydration answer is
- * `{ viewer: null, isPending: true }` on both sides, which is equally hydration-safe: it just
- * renders the loading state first.
+ * SEEDED (every private route — the layout read the session for this request): renders the seed,
+ * and asks the browser for nothing (#6114). It used to subscribe to the live better-auth session
+ * on every page, and a subscription is what makes better-auth fetch `/get-session` — a request
+ * on each load for an answer the server had just sent. It follows the live session only once a
+ * client call has CHANGED the session (a profile edit, a sign-out — better-auth's session signal),
+ * which is the one way the seed can go stale without a navigation; until that live answer
+ * settles it keeps showing the seed, so the UI does not blink to "signed out".
+ *
+ * UNSEEDED (no `ViewerProvider` above: a public route, a test): follows the live session, and the
+ * pre-hydration answer is `{ viewer: null, isPending: true }` on both sides, which is equally
+ * hydration-safe: it just renders the loading state first.
  */
 export function useViewer(): ViewerState {
 	const seed = useContext(ViewerSeedContext);
-	const live = authClient.useSession();
+	const changed = useSyncExternalStore(subscribeSessionChanged, getSessionChanged, () => false);
+	const follow = seed === null || changed;
+	const subscribe = useCallback(
+		(listener: () => void) => (follow ? liveSession.subscribe(listener) : noop),
+		[follow],
+	);
+	const live = useSyncExternalStore(
+		subscribe,
+		() => (follow ? liveSession.get() : NOT_FOLLOWED),
+		() => NOT_FOLLOWED,
+	);
 	const hydrated = useHydrated();
 	// Memoised on the session's own user object, which better-auth keeps stable between session
 	// ticks: a fresh `Viewer` every render would re-fire every effect keyed on it.

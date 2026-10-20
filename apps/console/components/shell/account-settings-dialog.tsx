@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { Calendar, Mail, Shield, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -42,6 +43,24 @@ const profileSchema = z.object({
 });
 type ProfileInput = z.infer<typeof profileSchema>;
 
+/**
+ * The signed-in user's linked sign-in providers, for the badges. better-auth answers
+ * `{ data, error }` rather than throwing, so an error is rethrown here to land in the query's error
+ * state instead of reading as "no providers".
+ */
+async function linkedProviders(): Promise<string[]> {
+	const res = await authClient.listAccounts();
+	if (res.error) throw new Error(res.error.message ?? "Could not list linked accounts");
+	return (res.data ?? []).map((a) => a.providerId);
+}
+
+/**
+ * The cache key for {@link linkedProviders}. Not an oRPC key: this is better-auth's own endpoint.
+ * One entry for the whole session, however many copies of the dialog are mounted (the sidebar, the
+ * mobile drawer and the icon rail each mount one).
+ */
+const LINKED_PROVIDERS_KEY = ["auth", "linked-providers"] as const;
+
 interface AccountSettingsDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -60,7 +79,17 @@ export function AccountSettingsDialog({
 	onOpenChange,
 }: AccountSettingsDialogProps) {
 	const { viewer: user } = useViewer();
-	const [providers, setProviders] = useState<string[]>([]);
+	// Fetched once, and only when the dialog is first OPENED (#6114, F003): the dialog is mounted up
+	// to three times by the shell, and each copy used to fetch on mount — three requests on every
+	// page load for badges nobody had opened. The linked providers do not change while a page is
+	// open, so the answer is kept for the session.
+	const { data: providers = [] } = useQuery({
+		queryKey: LINKED_PROVIDERS_KEY,
+		queryFn: linkedProviders,
+		enabled: open && !!user,
+		staleTime: Number.POSITIVE_INFINITY,
+		gcTime: Number.POSITIVE_INFINITY,
+	});
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [requesting, setRequesting] = useState(false);
 
@@ -74,18 +103,15 @@ export function AccountSettingsDialog({
 		values: { name: user?.name ?? "" },
 	});
 
-	// Load the linked auth providers once a session exists (for the badges).
-	useEffect(() => {
-		if (!user) return;
-		authClient.listAccounts().then((res) => {
-			setProviders((res.data ?? []).map((a) => a.providerId));
-		});
-	}, [user]);
-
-	/** Persists the new display name, then toasts; the session hook reflects the change. */
+	/**
+	 * Persists the new display name, then toasts. better-auth signals the session change, and
+	 * `useViewer()` follows the live session from then on, so the shell shows the new name.
+	 */
 	const onSubmit = handleSubmit(async (values) => {
 		try {
-			await authClient.updateUser({ name: values.name });
+			const res = await authClient.updateUser({ name: values.name });
+			// better-auth answers a refusal as `{ error }` rather than throwing; it is a failure.
+			if (res.error) throw new Error(res.error.message ?? "Profile update refused");
 			toast.success("Profile updated");
 			reset({ name: values.name });
 		} catch {

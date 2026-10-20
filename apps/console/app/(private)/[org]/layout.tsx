@@ -2,15 +2,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type React from "react";
+import { HydrationBoundary, type Query, dehydrate } from "@tanstack/react-query";
 import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
 import { currentActor } from "@/lib/authz/guard";
 import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
+import { getQueryClient } from "@/lib/query/client";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
+import { serverOrpc } from "@/lib/rpc/server";
 import { AppShell } from "@/components/shell/app-shell";
 import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
+
+/**
+ * Whether a cached query is one of the shell reads this layout prefetched, and settled. The server
+ * QueryClient is one per request (`cache()`), shared with the page below, so without this filter the
+ * layout would also hand down whatever the page happened to have in flight at that instant.
+ */
+function isShellRead(query: Query): boolean {
+	const [path] = query.queryKey;
+	return query.state.status === "success" && Array.isArray(path) && path[0] === "workspace";
+}
 
 /**
  * C2 slug-tree layout. Resolves the `{org}` segment to a scope and syncs the
@@ -59,12 +72,32 @@ export default async function OrgLayout({
 	const isHosted = deploymentMode() === "hosted";
 	// Runners is a self-operator surface only — gate the nav item on whether this org runs
 	// its own runners (managed warm pools are internal/support-admin). Resolved server-side.
-	const selfRunners = await orgHasSelfRunners(orgId);
+	//
+	// The shell's own reads are prefetched HERE, in parallel, and handed to the client hydrated
+	// (#6114, ADR 0005 D1): the org, its plan and the user's org list; the project list; the job and
+	// support-case feeds behind the bell and the toasts; the setup guide. The chrome therefore paints
+	// with data on the server render and on the first client paint — no "Personal" / "All projects"
+	// placeholder that flips when a client fetch lands (F002), and no request of its own on load
+	// (F003). Each goes through the read router in-process, so it is served from the actor the
+	// ADDRESS resolves, exactly as the browser's GET would be. A prefetch that fails is simply not
+	// dehydrated, and the client's own query retries it.
+	const queryClient = getQueryClient();
+	const rpc = serverOrpc();
+	const [selfRunners] = await Promise.all([
+		orgHasSelfRunners(orgId),
+		queryClient.prefetchQuery(rpc.workspace.context.queryOptions()),
+		queryClient.prefetchQuery(rpc.workspace.projects.queryOptions()),
+		queryClient.prefetchQuery(rpc.workspace.jobs.queryOptions()),
+		queryClient.prefetchQuery(rpc.workspace.supportCases.queryOptions()),
+		queryClient.prefetchQuery(rpc.workspace.setupGuide.queryOptions()),
+	]);
 	return (
-		<UpgradeSheetProvider>
-			<AppShell isHosted={isHosted} selfRunners={selfRunners} pageOrgId={pageOrgId}>
-				{children}
-			</AppShell>
-		</UpgradeSheetProvider>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isShellRead })}>
+			<UpgradeSheetProvider>
+				<AppShell isHosted={isHosted} selfRunners={selfRunners} pageOrgId={pageOrgId}>
+					{children}
+				</AppShell>
+			</UpgradeSheetProvider>
+		</HydrationBoundary>
 	);
 }

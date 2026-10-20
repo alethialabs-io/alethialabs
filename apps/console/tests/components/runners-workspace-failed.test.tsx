@@ -8,11 +8,11 @@
 // failed load used to leave the store in the never-fetched shape, so the skeleton stayed for good —
 // no error, no retry. The page now says the workspace could not be loaded and offers Retry, which
 // re-runs `fetchWorkspace()`; and it still renders neither the runners nor the upsell. Real hook,
-// real store; the server action and the page's data hooks are mocked.
+// real store; the workspace read and the page's data hooks are mocked.
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceContext } from "@/app/server/actions/workspace";
+import type { WorkspaceContext } from "@/lib/rpc/procedures/workspace";
 
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
@@ -21,13 +21,16 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(""),
 }));
 
-const { getWorkspaceContext } = vi.hoisted(() => ({
-	getWorkspaceContext: vi.fn<() => Promise<WorkspaceContext>>(),
+const { readContext } = vi.hoisted(() => ({
+	readContext: vi.fn<() => Promise<WorkspaceContext>>(),
 }));
-vi.mock("@/app/server/actions/workspace", () => ({
-	getWorkspaceContext,
-	setActiveOrganization: vi.fn(),
+// The store reads the workspace over the read router's GET procedure (#6114); only that call is
+// stubbed — the query helpers and the tenant partition stay real.
+vi.mock("@/lib/rpc/client", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/rpc/client")>()),
+	rpcClient: { workspace: { context: readContext } },
 }));
+vi.mock("@/app/server/actions/workspace", () => ({ setActiveOrganization: vi.fn() }));
 
 vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/lib/query/use-fleet-query", () => ({
@@ -74,15 +77,15 @@ function context(byoRunners: boolean): WorkspaceContext {
 	};
 }
 
-/** Runs the store's real load against a failing server action. */
+/** Runs the store's real load against a failing workspace read. */
 async function failLoad(): Promise<void> {
-	getWorkspaceContext.mockRejectedValueOnce(new Error("network down"));
+	readContext.mockRejectedValueOnce(new Error("network down"));
 	await act(() => useWorkspaceStore.getState().fetchWorkspace());
 }
 
 beforeEach(() => {
 	sessionStorage.clear();
-	getWorkspaceContext.mockReset();
+	readContext.mockReset();
 	useWorkspaceStore.setState({
 		activeOrgId: null,
 		organizations: [],
@@ -118,9 +121,9 @@ describe("Runners when the workspace load failed (#5895)", () => {
 	it("Retry re-runs the workspace load, and a successful one shows the page", async () => {
 		render(<RunnersClient />);
 		await failLoad();
-		getWorkspaceContext.mockResolvedValueOnce(context(true));
+		readContext.mockResolvedValueOnce(context(true));
 		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-		expect(getWorkspaceContext).toHaveBeenCalledTimes(2);
+		expect(readContext).toHaveBeenCalledTimes(2);
 		await waitFor(() => expect(screen.queryByText(ERROR_TITLE)).toBeNull());
 		expect(useWorkspaceStore.getState().loadStatus).toBe("loaded");
 		expect(screen.queryByText(UPSELL)).toBeNull();

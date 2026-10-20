@@ -4,24 +4,27 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
-import { getJob, getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
+import { getJob, type JobWithMeta } from "@/app/server/actions/jobs";
 import type { Job } from "@/lib/db/schema";
+import { orpc } from "@/lib/rpc/client";
 import { qk } from "./keys";
 
 /** Job statuses that warrant fast polling (something is still moving). */
 const ACTIVE_STATUSES = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
 /**
- * Shared jobs cache. Every consumer (jobs page, command palette, breadcrumbs, overview
- * card, runners page, plan flow) calls this and TanStack Query dedupes them to a single
- * request keyed by org. Polls every 5s only while a job is in-flight, then idles —
- * replacing the old blanket `setInterval` timers.
+ * The shell's job feed, over the read router's `workspace.jobs` (GET). Every consumer (the job
+ * toasts, the bell, breadcrumbs, command palette, overview card, runners page) shares this one
+ * cache entry; the `[org]` layout prefetches it, so first paint issues no request. The org is the
+ * browser cache's partition (`lib/query/client.ts`), so the key needs none of its own.
+ *
+ * Still polls every 5s while a job is in flight, then idles: the real-time client (#6115 PR B) is
+ * not on dev yet. The `jobs` topic already maps this key (`lib/query/topics.ts`), so when the bus
+ * lands this `refetchInterval` is deleted, not replaced.
  */
 export function useJobsQuery(): UseQueryResult<JobWithMeta[]> {
-	const { org } = useParams<{ org: string }>();
 	return useQuery({
-		queryKey: qk.jobs(org),
-		queryFn: () => getJobs(),
+		...orpc.workspace.jobs.queryOptions(),
 		refetchInterval: (query) => {
 			const data = query.state.data;
 			return data?.some((j) => ACTIVE_STATUSES.has(j.status)) ? 5_000 : false;
