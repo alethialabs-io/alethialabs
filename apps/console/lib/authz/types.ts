@@ -21,6 +21,21 @@ export interface Actor {
 	 * pair; getActiveScope is the single place that guarantees this is populated.
 	 */
 	entitlements?: Entitlements;
+	/**
+	 * `"service_token"` when this actor came from a CLI service token, and absent otherwise.
+	 *
+	 * For a service token `userId` is the profile that MINTED the credential, not a caller, so a
+	 * rule keyed on "the person asking" — which personal cloud identities this actor may bind or
+	 * use — must not read `userId` as that person. Server actions see only the `Actor` (the CLI
+	 * routes reach them through `runWithActor`), so the kind travels on it. Every route that hands
+	 * a service-token actor to a server action builds it in one of two places, and both set it:
+	 * `authorizeCliWith` (the `/api/cli` routes) and the `POST /api/jobs` route. The provider routes
+	 * resolve a token actor of their own (`resolveCliProvider`) without it; they call no server
+	 * action. Absent means the actor was resolved from a person — a console session, a CLI device
+	 * login, an MCP OAuth grant — or by one of those provider routes. Read it through
+	 * `personalIdentityAuthor` (lib/authz/actor-credential.ts), never directly.
+	 */
+	credential?: "service_token";
 }
 
 /** What an action targets. `id` is omitted for create/list; `orgId` for cross-checks. */

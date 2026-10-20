@@ -7,6 +7,7 @@ import { EditionMisconfiguredError } from "@/lib/auth/errors";
 import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
 import {
@@ -621,8 +622,11 @@ async function authorizeCliWith(
 		}
 		// The pin is a named org like a header is, so it gets the same treatment: a scope that
 		// resolves to anything other than the pinned org is refused, never substituted.
-		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg);
-		if (!serviceActor) return { error: forbidden() };
+		const resolved = await resolveNamedOrgScope(userId, serviceOrg);
+		if (!resolved) return { error: forbidden() };
+		// Marked on the actor itself, so a server action this route reaches through `runWithActor`
+		// can tell that `userId` is the minter (see `personalIdentityAuthor`).
+		const serviceActor = actorWithCredential(resolved, "service_token");
 		if (!(await decide(serviceActor, action, { type: resource.type, id: resource.id }))) {
 			return { error: forbidden() };
 		}

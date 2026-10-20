@@ -64,17 +64,21 @@ export function claimIdentityWhere(job: ClaimIdentityJob): SQL | undefined {
 }
 
 /**
- * The WHERE clause that admits identity `id` for a caller acting in `orgId` through
- * `getServiceDb()` — the `scoped_all` RLS policy written out:
+ * The WHERE clause that admits the cloud identities a caller acting in `orgId` may see and use,
+ * through `getServiceDb()` — the `scoped_all` RLS policy written out:
  *
  * - an `org`-scope identity of `orgId`;
  * - a `personal` identity authored by `personalAuthorId`, when one is passed. Pass the caller's id
- *   for a SESSION only: for a service token the actor's `userId` is the profile that MINTED it
- *   (`userIdIsTheCaller` in lib/authz/guard.ts), so passing it would hand the minter's personal
- *   credentials to a credential pinned to an org.
+ *   for a PERSON only: for a service token the actor's `userId` is the profile that MINTED it
+ *   (`userIdIsTheCaller` in lib/authz/guard.ts, `personalIdentityAuthor` in
+ *   lib/authz/actor-credential.ts), so passing it would
+ *   hand the minter's personal credentials to a credential pinned to an org.
+ *
+ * Every read or write that names an identity for a caller uses this rule — the design writes, the
+ * job snapshot, the CLI identity list and inventory, the runner routes — so "which identities may
+ * this caller use" has one answer.
  */
-export function actorIdentityWhere(
-	id: string,
+export function identityScopeWhere(
 	orgId: string,
 	personalAuthorId: string | undefined,
 ): SQL | undefined {
@@ -82,17 +86,26 @@ export function actorIdentityWhere(
 		eq(cloudIdentities.org_id, orgId),
 		eq(cloudIdentities.scope, "org"),
 	);
+	return personalAuthorId === undefined
+		? orgShared
+		: or(
+				orgShared,
+				and(
+					eq(cloudIdentities.user_id, personalAuthorId),
+					eq(cloudIdentities.scope, "personal"),
+				),
+			);
+}
+
+/** {@link identityScopeWhere} narrowed to the one identity `id`. */
+export function actorIdentityWhere(
+	id: string,
+	orgId: string,
+	personalAuthorId: string | undefined,
+): SQL | undefined {
 	return and(
 		eq(cloudIdentities.id, id),
-		personalAuthorId === undefined
-			? orgShared
-			: or(
-					orgShared,
-					and(
-						eq(cloudIdentities.user_id, personalAuthorId),
-						eq(cloudIdentities.scope, "personal"),
-					),
-				),
+		identityScopeWhere(orgId, personalAuthorId),
 	);
 }
 

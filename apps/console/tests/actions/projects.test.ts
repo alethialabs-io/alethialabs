@@ -92,6 +92,7 @@ import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
+import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identities";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
@@ -213,6 +214,12 @@ function setupDb(cfg: {
 	): Rows => {
 		const v = map?.get(table);
 		if (typeof v === "function") return v(where);
+		// The design-identity check reads `cloud_identities` before a create or a design save. A test
+		// that seeds no identity rows is about something else, so it gets a usable identity rather
+		// than a refusal; a test about the identity seeds `[cloudIdentities]` itself.
+		if (v === undefined && table === cloudIdentities && cfg.default === undefined) {
+			return [{ id: "ci-1", provider: "aws" }];
+		}
 		return v ?? def;
 	};
 
@@ -4206,5 +4213,177 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(r).toEqual({ ok: false, error: expect.stringContaining("rds_extra_credentials") });
 		expect(JSON.stringify(r)).not.toContain("hunter2");
 		expect(insertSpy).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================
+// Which cloud identities a design write may name, and a job may carry
+// ============================================================
+
+// `projects.cloud_identity_id` and each component's are plain foreign keys, which ignore RLS. So the
+// design writes check every id they store against the rule the console reads identities with: an
+// `org` identity of the active org, or a PERSON's own `personal` one (lib/cloud-providers/
+// design-identities.ts). A CLI service token reaches these actions through `runWithActor` with the
+// MINTER as `userId`, and gets the org arm only. An id the project already stores passes unchanged.
+//
+// The fake `cloud_identities` table below answers a WHERE by its rendered parameters: a row is
+// returned when its id is asked for and, for a scoped read, its tenancy values are too. It is a
+// stand-in for the predicate, not a copy of it — the SQL itself is run against Postgres in
+// tests/integration/identity-binding.test.ts.
+describe("design writes name only cloud identities the caller may use", () => {
+	interface IdentityRow {
+		id: string;
+		org_id: string;
+		user_id: string;
+		scope: "org" | "personal";
+		provider: string;
+	}
+	const ORG_ID = "ci-org";
+	const FOREIGN = "ci-foreign";
+	const MINE = "ci-mine";
+	const THEIRS = "ci-theirs";
+	const IDENTITIES: IdentityRow[] = [
+		{ id: ORG_ID, org_id: "org-1", user_id: "user-9", scope: "org", provider: "aws" },
+		{ id: FOREIGN, org_id: "org-2", user_id: "user-7", scope: "org", provider: "aws" },
+		{ id: MINE, org_id: "org-1", user_id: "user-1", scope: "personal", provider: "aws" },
+		{ id: THEIRS, org_id: "org-1", user_id: "user-2", scope: "personal", provider: "aws" },
+	];
+	/** The fake table: see the block comment above. */
+	const identityTable: RowsResolver = (where) => {
+		const params = where instanceof SQL ? new PgDialect().sqlToQuery(where).params : [];
+		const scoped = params.includes("org") || params.includes("personal");
+		return IDENTITIES.filter(
+			(r) =>
+				params.includes(r.id) &&
+				(!scoped ||
+					(r.scope === "org"
+						? params.includes("org") && params.includes(r.org_id)
+						: params.includes("personal") && params.includes(r.user_id))),
+		).map((r) => ({ id: r.id, provider: r.provider }));
+	};
+	const design = (projectIdentity: string, dbIdentity?: string) => ({
+		project: {
+			project_name: "Shop",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: projectIdentity,
+			iac_version: "1.11.4",
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: {},
+		databases: [
+			{ name: "orders", engine: "postgres", cloud_identity_id: dbIdentity ?? null },
+		],
+	});
+	/** A db whose project row stores `stored` as its identity. */
+	const db = (stored: string | null = ORG_ID) =>
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[cloudIdentities, identityTable],
+				[projects, [{ cloud_identity_id: stored }]],
+			]),
+		});
+	const asServiceToken = () =>
+		vi.mocked(authorize).mockResolvedValue({
+			userId: "user-1",
+			orgId: "org-1",
+			credential: "service_token",
+		} as never);
+
+	it("refuses another org's identity before touching a row", async () => {
+		const { deleteSpy, insertSpy, setSpy } = db();
+		const save = updateProjectDesign("p1", "env-1", design(FOREIGN) as never);
+		await expect(save).rejects.toBeInstanceOf(CloudIdentityRefusedError);
+		await expect(save).rejects.toThrow(/\(project\)/);
+		expect(deleteSpy).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("refuses another member's personal identity", async () => {
+		const { setSpy } = db();
+		await expect(
+			updateProjectDesign("p1", "env-1", design(THEIRS) as never),
+		).rejects.toBeInstanceOf(CloudIdentityRefusedError);
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("refuses it on a component, naming the component", async () => {
+		db();
+		await expect(
+			updateProjectDesign("p1", "env-1", design(ORG_ID, THEIRS) as never),
+		).rejects.toThrow(/databases "orders"/);
+	});
+
+	it("keeps an identity the project already stores, so an existing binding stays editable", async () => {
+		const { setSpy } = db(THEIRS);
+		await updateProjectDesign("p1", "env-1", design(THEIRS) as never);
+		expect(setSpy).toHaveBeenCalledWith(
+			projects,
+			expect.objectContaining({ cloud_identity_id: THEIRS }),
+		);
+	});
+
+	it("accepts the org's identity and the person's own personal one", async () => {
+		const { setSpy } = db();
+		await updateProjectDesign("p1", "env-1", design(MINE, ORG_ID) as never);
+		expect(setSpy).toHaveBeenCalledWith(
+			projects,
+			expect.objectContaining({ cloud_identity_id: MINE }),
+		);
+	});
+
+	it("refuses a service token its minter's personal identity", async () => {
+		asServiceToken();
+		const { setSpy } = db();
+		const save = updateProjectDesign("p1", "env-1", design(MINE) as never);
+		await expect(save).rejects.toThrow(/service token can use only/);
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("createProject refuses an identity the caller may not use, and tryCreateProject returns the sentence", async () => {
+		const { insertSpy } = db();
+		const r = await tryCreateProject(design(THEIRS) as never);
+		expect(r).toEqual({ ok: false, error: expect.stringContaining("not available to you here") });
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("a service token's PLAN of a project bound to its minter's personal identity is refused", async () => {
+		asServiceToken();
+		const { insertSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, identityTable],
+					[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: MINE, region: "us-east-1" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/personal cloud account, and a service token/);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("the same PLAN by the person who owns the identity is queued", async () => {
+		const { insertSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, identityTable],
+					[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: MINE, region: "us-east-1" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
+		expect(insertSpy).toHaveBeenCalledWith(jobs);
 	});
 });

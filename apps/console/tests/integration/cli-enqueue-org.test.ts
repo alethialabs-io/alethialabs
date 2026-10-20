@@ -223,8 +223,11 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 		} as never);
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
 		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: TEAM_ORG } as never);
+		// `credential` as the real guard always returns it: the runner-deploy route asks it which
+		// identity arm the caller gets (a session may use its own personal identity).
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: TEAM_ORG },
+			credential: "session",
 		} as never);
 	});
 

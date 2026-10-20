@@ -28,6 +28,8 @@ const events: string[] = [];
 const inserted: unknown[] = [];
 
 let target: Record<string, unknown> | null = null;
+/** The ON conditions the cluster read joined with, in order. */
+const joins: unknown[] = [];
 let deploy: Record<string, unknown> | null = null;
 
 /** A select chain answering the next queued read. */
@@ -35,7 +37,10 @@ function selectChain(queue: (Record<string, unknown> | null)[]) {
 	const chain = {
 		from: () => chain,
 		innerJoin: () => chain,
-		leftJoin: () => chain,
+		leftJoin: (_t: unknown, on: unknown) => {
+			joins.push(on);
+			return chain;
+		},
 		where: () => chain,
 		orderBy: () => chain,
 		limit: async () => {
@@ -99,6 +104,14 @@ import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import type { MintCredential } from "@/lib/kubeconfig-mint/audit";
 import { requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+
+/** The bound parameters of the identity join (the last ON condition the cluster read used). */
+function identityJoinParams(): unknown[] {
+	const on = joins.at(-1);
+	return on instanceof SQL ? new PgDialect().sqlToQuery(on).params : [];
+}
 
 const TOKEN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SESSION: MintCredential = { kind: "session" };
@@ -112,6 +125,7 @@ function cluster(over: Record<string, unknown> = {}) {
 		environmentId: ENV,
 		environmentStatus: "ACTIVE",
 		placementMode: "dedicated",
+		boundIdentityId: IDENTITY,
 		cloudIdentityId: IDENTITY,
 		provider: "aws",
 		...over,
@@ -122,6 +136,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	events.length = 0;
 	inserted.length = 0;
+	joins.length = 0;
 	insertCount = 0;
 	target = cluster();
 	deploy = { config_snapshot: { provider: "aws", cluster: { name: "eks-prod" } } };
@@ -161,6 +176,36 @@ describe("refusals", () => {
 	it.each(["digitalocean", "civo", null])("a cluster on %s has no minter", async (provider) => {
 		target = cluster({ provider });
 		expect(await run("static")).toEqual({ ok: false, refusal: "unsupported-cloud" });
+	});
+
+	// The cluster is bound to an identity, but the scoped join (identityScopeWhere) dropped it: a
+	// personal identity a service token may not use, or another member's. Refused before any guard
+	// or write, rather than queued for the claim route to refuse.
+	it("a cluster bound to an identity the caller may not use is identity-unavailable, and nothing is written", async () => {
+		target = cluster({ cloudIdentityId: null, provider: null });
+		expect(await run("exec", "readonly", TOKEN)).toEqual({
+			ok: false,
+			refusal: "identity-unavailable",
+		});
+		expect(events).toEqual(["read"]);
+		expect(inserted).toEqual([]);
+	});
+
+	// Which identity the mint job may carry is asked in the join: the org's, and a PERSON's own
+	// personal one. A service token's actor id is its minter, so it gets no personal arm.
+	it("joins the identity through the caller's scope: a session's own personal one, never a token's minter's", async () => {
+		await run("exec", "readonly", SESSION);
+		expect(identityJoinParams()).toEqual(expect.arrayContaining([ORG, "org", USER, "personal"]));
+		insertCount = 0;
+		await run("exec", "readonly", TOKEN);
+		expect(identityJoinParams()).toEqual(expect.arrayContaining([ORG, "org"]));
+		expect(identityJoinParams()).not.toContain(USER);
+		expect(identityJoinParams()).not.toContain("personal");
+	});
+
+	it("a cluster bound to no identity at all keeps its old answer", async () => {
+		target = cluster({ boundIdentityId: null, cloudIdentityId: null, provider: null });
+		expect(await run()).toEqual({ ok: false, refusal: "unsupported-cloud" });
 	});
 
 	it.each(["DRAFT", "DESTROYING", "DESTROYED", null])(

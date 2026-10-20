@@ -837,7 +837,9 @@ describe("authorizeCli with a service-account token", () => {
 		// PERSON last had active, i.e. somebody's session state standing in for a machine's scope.
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
 		expect(result).toEqual({
-			actor: SERVICE_ACTOR,
+			// Marked on the actor itself, so a server action reached through runWithActor can tell
+			// the minter is not the caller (lib/authz/actor-credential.ts).
+			actor: { ...SERVICE_ACTOR, credential: "service_token" },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
@@ -851,7 +853,9 @@ describe("authorizeCli with a service-account token", () => {
 
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
 		expect(result).toEqual({
-			actor: SERVICE_ACTOR,
+			// Marked on the actor itself, so a server action reached through runWithActor can tell
+			// the minter is not the caller (lib/authz/actor-credential.ts).
+			actor: { ...SERVICE_ACTOR, credential: "service_token" },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
