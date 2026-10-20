@@ -58,6 +58,8 @@ if (DB_UP && !EE) {
 		"\n[integration] @alethia/ee did not load — realtime-events-route-ee.test.ts is SKIPPING. Run `pnpm -F @alethia/ee build` to run it.\n",
 	);
 }
+// TODO(#6169): once that PR builds ee/dist in the integration job, follow
+// rpc-tenancy.enterprise.test.ts — skip only when the DB is down, and assert the edition in beforeAll.
 const describeIfEe = DB_UP && EE ? describe : describe.skip;
 
 // At FILE level, so the edition is restored even when the suite below is skipped.

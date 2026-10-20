@@ -37,6 +37,10 @@ interface Entry {
  * A project that no longer exists is answered "yes". A job keeps its notice's OLD.project_id after its
  * project is deleted (ON DELETE SET NULL), and that job is now a project-less row of the org, which
  * the org arm delivers unfiltered; the read decides what the reader is shown.
+ *
+ * The existence read MUST go through the service connection, which sees every project. Pointed at an
+ * RLS-scoped connection or a lagging replica, "not found" would stop meaning "deleted", and this
+ * would answer "yes" for projects that exist.
  */
 const defaultCheck: ProjectViewCheck = async (actor, projectId) => {
 	const [row] = await getServiceDb()

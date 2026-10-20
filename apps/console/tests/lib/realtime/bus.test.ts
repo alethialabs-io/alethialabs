@@ -308,18 +308,22 @@ describe("bookkeeping", () => {
 		check.mockImplementation(() => gate);
 		const r = recorder();
 		bus.subscribe(member, memberKeys, r.sink);
-		const total = MAX_PENDING_PER_STREAM + 5;
-		for (let i = 0; i < total; i++) {
-			const p = `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`;
-			transport.emit(job({ p }));
-		}
+		const project = (i: number) => `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`;
+		// One delivery is already waiting on the PDP when the burst arrives.
+		transport.emit(job({ p: project(0) }));
+		await settle();
+		expect(check).toHaveBeenCalledTimes(1);
+		const burst = MAX_PENDING_PER_STREAM + 5;
+		for (let i = 1; i <= burst; i++) transport.emit(job({ p: project(i) }));
 		await settle();
 		expect(r.resyncs).toEqual([]); // not before the queue has drained
+		// The in-flight answer arrives AFTER the overflow: its `true` is discarded, not delivered.
 		release(true);
-		await settle(20 * total);
+		await settle(20 * burst);
+		expect(check).toHaveBeenCalledTimes(1); // nothing queued behind the overflow asked the PDP
 		expect(r.hints).toEqual([]);
 		expect(r.resyncs.map((x) => x.reason)).toEqual(["backpressure"]);
-		expect(bus.stats().dropped).toBe(total);
+		expect(bus.stats().dropped).toBe(burst + 1);
 		// Drained: the next notice is delivered normally.
 		transport.emit(job({ p: null }));
 		await settle();

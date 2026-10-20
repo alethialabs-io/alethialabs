@@ -49,6 +49,17 @@ const RETRY_AFTER_S = 30;
  */
 const STREAM_HIGH_WATER_BYTES = 64 * 1024;
 
+/** The per-person stream cap's answer: 429 with Retry-After. */
+function tooManyStreams(): Response {
+	return Response.json(
+		{ error: "Too many open live-update streams" },
+		{
+			status: 429,
+			headers: { "Cache-Control": "private, no-store", "Retry-After": String(RETRY_AFTER_S) },
+		},
+	);
+}
+
 /** A refusal with no internals in it. */
 function refusal(status: number, error: string): Response {
 	return Response.json({ error }, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -101,6 +112,9 @@ export async function GET(request: Request): Promise<Response> {
 	}
 
 	if (url.searchParams.get("probe") === "1") {
+		// The probe answers what a new stream would get, the per-person cap included, so a client that
+		// could not see a refused stream's status backs off on Retry-After rather than on `retry:`.
+		if (!getChangeBus().hasRoomFor(actor.userId)) return tooManyStreams();
 		return new Response(null, { status: 204, headers: { "Cache-Control": "private, no-store" } });
 	}
 
@@ -122,13 +136,7 @@ export async function GET(request: Request): Promise<Response> {
 	// One person's streams per process are capped (PR B opens one per browser per org).
 	if (!bus.hasRoomFor(actor.userId)) {
 		bus.noteRefused();
-		return Response.json(
-			{ error: "Too many open live-update streams" },
-			{
-				status: 429,
-				headers: { "Cache-Control": "private, no-store", "Retry-After": String(RETRY_AFTER_S) },
-			},
-		);
+		return tooManyStreams();
 	}
 
 	// The stream's cursor: opaque, and it moves only when THIS stream is sent an event. A random tag
@@ -239,8 +247,11 @@ export async function GET(request: Request): Promise<Response> {
 					}
 					if (closed) return;
 					if (result === "timeout") {
-						// An answer that cannot be had in time is not a pass.
-						write(revokedFrame("unauthorized"));
+						// Not a pass and not a revocation (`revoked` is terminal for the client): end the
+						// stream like a failed lookup, and the reconnect re-runs the connect path.
+						elog.warn("stream re-authorisation timed out; closing the stream", {
+							timeoutMs: REAUTH_TIMEOUT_MS,
+						});
 						stop();
 						return;
 					}

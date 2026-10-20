@@ -181,6 +181,21 @@ describe("the tenant is decided before anything streams", () => {
 });
 
 describe("?probe=1", () => {
+	it("answers 429 with Retry-After when a new stream would be refused by the per-person cap", async () => {
+		const open: AbortController[] = [];
+		for (let i = 0; i < MAX_STREAMS_PER_USER; i++) {
+			const ac = new AbortController();
+			open.push(ac);
+			await GET(request("/acme/~/events", ac.signal));
+		}
+		const probe = await GET(request("/acme/~/events?probe=1"));
+		expect(probe.status).toBe(429);
+		expect(probe.headers.get("retry-after")).toBe("30");
+		open[0].abort();
+		expect((await GET(request("/acme/~/events?probe=1"))).status).toBe(204);
+		for (const c of open) c.abort();
+	});
+
 	it("answers 204 with no stream after the same checks pass", async () => {
 		const res = await GET(request("/acme/~/events?probe=1"));
 		expect(res.status).toBe(204);
@@ -421,16 +436,18 @@ describe("re-authorisation every 60 s", () => {
 		ac.abort();
 	});
 
-	it("ends with revoked {unauthorized} when the re-check does not answer in time", async () => {
+	it("ends the stream WITHOUT revoked when the re-check does not answer in time", async () => {
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
 		h.reauthorize.mockImplementation(() => new Promise(() => {}));
 		const res = await GET(request("/acme/~/events"));
 		const reader = res.body!.getReader();
 		await readUntil(reader, /event: hello/);
 		await vi.advanceTimersByTimeAsync(60_000);
+		expect(bus.stats().streams).toBe(1); // still waiting inside its 10 s budget
 		await vi.advanceTimersByTimeAsync(10_000);
-		const text = await readUntil(reader, /event: revoked/);
-		expect(text).toContain('event: revoked\ndata: {"reason":"unauthorized"}');
+		const text = await readUntil(reader, /never/); // reads to the end of the stream
+		expect(text).not.toContain("revoked"); // `revoked` is terminal; a slow re-check is not
+		expect((await reader.read()).done).toBe(true);
 		expect(bus.stats().streams).toBe(0);
 	});
 
