@@ -41,7 +41,8 @@ export interface LiveSessionRead {
 	isPending: boolean;
 	error: unknown;
 	/**
-	 * True once the live session has answered successfully at least once in this page. From then on
+	 * True once the live session has answered at least once in this page — successfully, or with a
+	 * 401 (nobody signed in). From then on
 	 * `data` is that answer — better-auth keeps the last good data through a later failed or
 	 * in-flight fetch — so it stays the viewer even while `error` or `isPending` is set.
 	 */
@@ -114,7 +115,11 @@ function readLiveSession(value: unknown): LiveSessionRead {
 	const error = "error" in value ? value.error : null;
 	const data = "data" in value ? value.data : null;
 	const user = typeof data === "object" && data !== null && "user" in data ? readUser(data.user) : null;
-	if (!isPending && (error ?? null) === null) settledOnce = true;
+	// A 401 is an answer too — nobody is signed in — so it settles like a successful one. better-auth
+	// keeps `data` null after it, so a later failed fetch still reads as signed out.
+	const unauthorized =
+		typeof error === "object" && error !== null && "status" in error && error.status === 401;
+	if (!isPending && ((error ?? null) === null || unauthorized)) settledOnce = true;
 	return { data: user ? { user } : null, isPending, error: error ?? null, settled: settledOnce };
 }
 

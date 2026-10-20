@@ -157,6 +157,17 @@ describe("a seeded viewer follows session changes (#6114)", () => {
 		expect(screen.getByText("signed out")).toBeInTheDocument();
 	});
 
+	it("a 401 is an answer: a later failed refetch stays signed out, never the seed", async () => {
+		const { session } = await load();
+		broadcast();
+		// better-auth's answer to a session it no longer recognises: no data, a 401.
+		act(() => session.set({ data: null, isPending: false, error: { status: 401, message: "Unauthorized" } }));
+		expect(screen.getByText("signed out")).toBeInTheDocument();
+		act(() => session.set({ data: null, isPending: false, error: { status: 503, message: "Unavailable" } }));
+		expect(screen.getByText("signed out")).toBeInTheDocument();
+		expect(screen.queryByText("Ada Lovelace")).toBeNull();
+	});
+
 	it("before the live session has ever answered, a failed fetch keeps the seed", async () => {
 		const { session } = await load();
 		broadcast();
