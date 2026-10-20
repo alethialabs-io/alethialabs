@@ -17,7 +17,7 @@ import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import { listMyCases } from "@/app/server/actions/support";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import {
 	caseFacetOptions,
 	DEFAULT_SUPPORT_CASE_FILTERS,
@@ -157,14 +157,10 @@ export function CaseList({
 
 			{isError ? (
 				// A fetch failure must not render as "no cases yet".
-				<ErrorState
+				<RegionError
 					title="Couldn't load your cases"
 					description="Something went wrong fetching your support cases. Check your connection and try again."
-					actions={
-						<Button variant="outline" size="sm" onClick={() => refetch()}>
-							Retry
-						</Button>
-					}
+					onRetry={() => refetch()}
 				/>
 			) : visible.length === 0 && !isPending ? (
 				// Two different empties: nothing to show at all, versus nothing that

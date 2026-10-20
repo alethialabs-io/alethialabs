@@ -10,7 +10,7 @@ import { lookup } from "@/lib/typed-object";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { PoolCard, PoolCardSkeleton, PoolsEmpty } from "@/components/runners/pool-card";
 import { FleetPoolWizard } from "@/components/runners/fleet-pool-wizard";
 import { RunnerCard, RunnerCardSkeleton } from "@/components/runners/runner-card";
@@ -348,14 +348,10 @@ export function RunnersClient() {
 
 					{isError ? (
 						// A fetch failure must not render as "no runners".
-						<ErrorState
+						<RegionError
 							title="Couldn't load runners"
 							description="Something went wrong fetching your runners. Check your connection and try again."
-							actions={
-								<Button variant="outline" size="sm" onClick={() => refetch()}>
-									Retry
-								</Button>
-							}
+							onRetry={() => refetch()}
 						/>
 					) : isLoading ? (
 						<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
