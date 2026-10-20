@@ -81,6 +81,11 @@ const REGIONS = [
 ];
 const ENVS = ["staging", "development", "production"];
 
+/** Why Save is disabled for a role better-auth will refuse (it updates the org for owner and admin). */
+const EDIT_REFUSED = "Only an owner or admin can change these settings";
+/** Why Delete is disabled for anyone but the owner (better-auth deletes the org for the owner only). */
+const DELETE_REFUSED = "Only the organization's owner can delete it";
+
 /** The form's fields — the keys a server field error may name. */
 const FORM_FIELDS: readonly FieldPath<OrgGeneralInput>[] = [
   "name",
@@ -195,8 +200,21 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   /** Every key that shows this org's name, slug, logo or settings. */
   const orgKeys = [orpc.settings.org.key(), orpc.workspace.context.key()];
 
+  // What the caller may do here, from the workspace context the layout already hydrated — read from
+  // the cache, never fetched for this. better-auth lets an owner or admin update the org and only
+  // the owner delete it; the server still decides (this only saves a refused round trip). An
+  // unknown role (no context cached) leaves the controls enabled for the server to rule on.
+  const context = useQuery(orpc.workspace.context.queryOptions({ enabled: false }));
+  const role =
+    context.data?.organizations.find((o) => o.id === context.data?.activeOrgId)?.role ?? null;
+  const canEdit = role === null || role === "owner" || role === "admin";
+  const canDelete = role === null || role === "owner";
+
   const save = useActionMutation(saveOrgGeneral, {
-    invalidates: orgKeys,
+    // A slug rename leaves this address naming nothing: a refetch under it would only paint a
+    // refusal before the navigation lands. The new address is a new tenant cache, filled by its own
+    // server render, so nothing is invalidated here then; otherwise every key showing the org is.
+    invalidates: (saved) => (saved && saved.slug !== settings.slug ? [] : orgKeys),
     successMessage: "Organization updated.",
     onValidationError: (fields: FieldErrors) => {
       for (const [key, messages] of Object.entries(fields)) {
@@ -214,7 +232,9 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   });
 
   const remove = useActionMutation(deleteOrganization, {
-    invalidates: [orpc.workspace.context.key()],
+    // The org is gone, so nothing under this address can be read again; `/dashboard` resolves the
+    // next org and its own cache. Invalidating here would only refetch into a refusal.
+    invalidates: [],
     successMessage: "Organization deleted.",
     onSuccess: () => router.push("/dashboard"),
   });
@@ -228,178 +248,188 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   });
 
   const busy = isSubmitting || save.isPending;
-  const saveBtn = (
+  const saveBtn = canEdit ? (
     <Button type="submit" size="sm" disabled={!isDirty || busy}>
       {busy ? "Saving…" : "Save changes"}
     </Button>
+  ) : (
+    <DisabledReason reason={EDIT_REFUSED}>
+      <Button type="submit" size="sm" disabled>
+        Save changes
+      </Button>
+    </DisabledReason>
   );
 
   return (
     <div>
       <form noValidate onSubmit={onSubmit} aria-label="Organization settings">
-        <SettingsColumns>
-          <SettingsSection title="Organization profile">
-            <SettingsPanel>
-              <div className="py-1">
-                <SettingsField
-                  label="Logo"
-                  hint="A square avatar, generated from the name until you upload one."
-                >
-                  <OrgLogoUpload
-                    name={settings.name}
-                    logo={settings.logo}
-                    onChange={() => {
-                      for (const queryKey of orgKeys) void queryClient.invalidateQueries({ queryKey });
-                    }}
-                  />
-                </SettingsField>
-                <SettingsField
-                  label="Organization name"
-                  hint="Shown across the console and in invitations."
-                >
-                  <SettingsInput
-                    className={cn(settingsControl, settingsControlSize)}
-                    autoComplete="off"
-                    maxLength={ORG_NAME_MAX_LENGTH}
-                    aria-invalid={errors.name ? true : undefined}
-                    aria-describedby={errors.name ? ids.name : undefined}
-                    {...form.register("name")}
-                  />
-                  <FieldError id={ids.name} message={errors.name?.message} />
-                </SettingsField>
-                <SettingsField
-                  label="Organization URL"
-                  hint="The slug for your organization's URL."
-                >
-                  <Controller
-                    control={form.control}
-                    name="slug"
-                    render={({ field }) => (
-                      <div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken">
-                        <span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
-                          {orgHost()}/
-                        </span>
-                        <SettingsInput
-                          className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
-                          name={field.name}
-                          ref={field.ref}
-                          value={field.value}
-                          // A draft, so a hyphen can be typed: trimming it on every keystroke made
-                          // `acme-` into `acme` before the next letter arrived (#5453). The dash at
-                          // the end is trimmed on blur and by the schema on save.
-                          onChange={(e) => field.onChange(slugifyDraft(e.target.value))}
-                          onBlur={() => {
-                            field.onChange(finishSlugDraft(field.value));
-                            field.onBlur();
-                          }}
-                          aria-invalid={errors.slug ? true : undefined}
-                          aria-describedby={errors.slug ? ids.slug : undefined}
-                          autoComplete="off"
-                        />
-                      </div>
+        {/* A role that cannot save cannot edit either: every field is read-only, and the Save
+            buttons say why. */}
+        <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+          <SettingsColumns>
+            <SettingsSection title="Organization profile">
+              <SettingsPanel>
+                <div className="py-1">
+                  <SettingsField
+                    label="Logo"
+                    hint="A square avatar, generated from the name until you upload one."
+                  >
+                    <OrgLogoUpload
+                      name={settings.name}
+                      logo={settings.logo}
+                      onChange={() => {
+                        for (const queryKey of orgKeys) void queryClient.invalidateQueries({ queryKey });
+                      }}
+                    />
+                  </SettingsField>
+                  <SettingsField
+                    label="Organization name"
+                    hint="Shown across the console and in invitations."
+                  >
+                    <SettingsInput
+                      className={cn(settingsControl, settingsControlSize)}
+                      autoComplete="off"
+                      maxLength={ORG_NAME_MAX_LENGTH}
+                      aria-invalid={errors.name ? true : undefined}
+                      aria-describedby={errors.name ? ids.name : undefined}
+                      {...form.register("name")}
+                    />
+                    <FieldError id={ids.name} message={errors.name?.message} />
+                  </SettingsField>
+                  <SettingsField
+                    label="Organization URL"
+                    hint="The slug for your organization's URL."
+                  >
+                    <Controller
+                      control={form.control}
+                      name="slug"
+                      render={({ field }) => (
+                        <div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken">
+                          <span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
+                            {orgHost()}/
+                          </span>
+                          <SettingsInput
+                            className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
+                            name={field.name}
+                            ref={field.ref}
+                            value={field.value}
+                            // A draft, so a hyphen can be typed: trimming it on every keystroke made
+                            // `acme-` into `acme` before the next letter arrived (#5453). The dash at
+                            // the end is trimmed on blur and by the schema on save.
+                            onChange={(e) => field.onChange(slugifyDraft(e.target.value))}
+                            onBlur={() => {
+                              field.onChange(finishSlugDraft(field.value));
+                              field.onBlur();
+                            }}
+                            aria-invalid={errors.slug ? true : undefined}
+                            aria-describedby={errors.slug ? ids.slug : undefined}
+                            autoComplete="off"
+                          />
+                        </div>
+                      )}
+                    />
+                    {errors.slug ? (
+                      <FieldError id={ids.slug} message={errors.slug.message} />
+                    ) : (
+                      <span className="font-mono text-ui-2xs text-text-tertiary">
+                        Lowercase, numbers and hyphens.
+                      </span>
                     )}
-                  />
-                  {errors.slug ? (
-                    <FieldError id={ids.slug} message={errors.slug.message} />
-                  ) : (
-                    <span className="font-mono text-ui-2xs text-text-tertiary">
-                      Lowercase, numbers and hyphens.
-                    </span>
-                  )}
-                </SettingsField>
-                <SettingsField
-                  label="Description"
-                  hint="Optional. A short line for teammates and audit context."
-                >
-                  <SettingsTextarea
-                    className={cn(settingsControl, "min-h-16 resize-y py-2.5 leading-normal")}
-                    placeholder="What does this organization manage?"
-                    maxLength={ORG_DESCRIPTION_MAX_LENGTH}
-                    aria-invalid={errors.description ? true : undefined}
-                    aria-describedby={errors.description ? ids.description : undefined}
-                    {...form.register("description")}
-                  />
-                  <FieldError id={ids.description} message={errors.description?.message} />
-                </SettingsField>
-                <SettingsField
-                  label="Primary address"
-                  hint="Set from billing checkout when you opt to reuse the billing address."
-                >
-                  {settings.primaryAddress ? (
-                    // Set from checkout, not here — so plain text, not the input surface (#6117).
-                    <ReadOnlyValue>
-                      <address className="not-italic leading-relaxed">
-                        {formatPrimaryAddress(settings.primaryAddress)}
-                      </address>
-                    </ReadOnlyValue>
-                  ) : (
-                    <span className="font-mono text-ui-xs text-text-tertiary">
-                      Not set — check &ldquo;use as primary address&rdquo; during checkout.
-                    </span>
-                  )}
-                </SettingsField>
-              </div>
-              <SettingsCardFoot note="Applies across the console">{saveBtn}</SettingsCardFoot>
-            </SettingsPanel>
-          </SettingsSection>
+                  </SettingsField>
+                  <SettingsField
+                    label="Description"
+                    hint="Optional. A short line for teammates and audit context."
+                  >
+                    <SettingsTextarea
+                      className={cn(settingsControl, "min-h-16 resize-y py-2.5 leading-normal")}
+                      placeholder="What does this organization manage?"
+                      maxLength={ORG_DESCRIPTION_MAX_LENGTH}
+                      aria-invalid={errors.description ? true : undefined}
+                      aria-describedby={errors.description ? ids.description : undefined}
+                      {...form.register("description")}
+                    />
+                    <FieldError id={ids.description} message={errors.description?.message} />
+                  </SettingsField>
+                  <SettingsField
+                    label="Primary address"
+                    hint="Set from billing checkout when you opt to reuse the billing address."
+                  >
+                    {settings.primaryAddress ? (
+                      // Set from checkout, not here — so plain text, not the input surface (#6117).
+                      <ReadOnlyValue>
+                        <address className="not-italic leading-relaxed">
+                          {formatPrimaryAddress(settings.primaryAddress)}
+                        </address>
+                      </ReadOnlyValue>
+                    ) : (
+                      <span className="font-mono text-ui-xs text-text-tertiary">
+                        Not set — check &ldquo;use as primary address&rdquo; during checkout.
+                      </span>
+                    )}
+                  </SettingsField>
+                </div>
+                <SettingsCardFoot note="Applies across the console">{saveBtn}</SettingsCardFoot>
+              </SettingsPanel>
+            </SettingsSection>
 
-          <SettingsSection title="Defaults">
-            <SettingsPanel>
-              <div className="py-1">
-                <SettingsField
-                  label="Data region"
-                  hint="Residency for the control plane and Project state."
-                >
-                  <Controller
-                    control={form.control}
-                    name="region"
-                    render={({ field }) => (
-                      <SettingsSelect
-                        value={field.value}
-                        onChange={field.onChange}
-                        options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
-                      />
-                    )}
-                  />
-                  <span className="font-mono text-ui-2xs text-text-tertiary">
-                    Region migration requires a support request.
-                  </span>
-                </SettingsField>
-                <SettingsField
-                  label="Default Project environment"
-                  hint="Pre-selected stage for newly planted Projects."
-                >
-                  <Controller
-                    control={form.control}
-                    name="defaultEnv"
-                    render={({ field }) => (
-                      <SettingsSelect
-                        value={field.value}
-                        onChange={field.onChange}
-                        options={ENVS.map((en) => ({ value: en, label: en }))}
-                      />
-                    )}
-                  />
-                </SettingsField>
-                <SettingsField
-                  label="Terraform version"
-                  hint="Pinned across runners unless a Project overrides it."
-                >
-                  <SettingsInput
-                    className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
-                    autoComplete="off"
-                    maxLength={TERRAFORM_VERSION_MAX_LENGTH}
-                    aria-invalid={errors.terraformVersion ? true : undefined}
-                    aria-describedby={errors.terraformVersion ? ids.terraformVersion : undefined}
-                    {...form.register("terraformVersion")}
-                  />
-                  <FieldError id={ids.terraformVersion} message={errors.terraformVersion?.message} />
-                </SettingsField>
-              </div>
-              <SettingsCardFoot note="Applies to new resources only">{saveBtn}</SettingsCardFoot>
-            </SettingsPanel>
-          </SettingsSection>
-        </SettingsColumns>
+            <SettingsSection title="Defaults">
+              <SettingsPanel>
+                <div className="py-1">
+                  <SettingsField
+                    label="Data region"
+                    hint="Residency for the control plane and Project state."
+                  >
+                    <Controller
+                      control={form.control}
+                      name="region"
+                      render={({ field }) => (
+                        <SettingsSelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          options={REGIONS.map((r) => ({ value: r.split(" ")[0], label: r }))}
+                        />
+                      )}
+                    />
+                    <span className="font-mono text-ui-2xs text-text-tertiary">
+                      Region migration requires a support request.
+                    </span>
+                  </SettingsField>
+                  <SettingsField
+                    label="Default Project environment"
+                    hint="Pre-selected stage for newly planted Projects."
+                  >
+                    <Controller
+                      control={form.control}
+                      name="defaultEnv"
+                      render={({ field }) => (
+                        <SettingsSelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          options={ENVS.map((en) => ({ value: en, label: en }))}
+                        />
+                      )}
+                    />
+                  </SettingsField>
+                  <SettingsField
+                    label="Terraform version"
+                    hint="Pinned across runners unless a Project overrides it."
+                  >
+                    <SettingsInput
+                      className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
+                      autoComplete="off"
+                      maxLength={TERRAFORM_VERSION_MAX_LENGTH}
+                      aria-invalid={errors.terraformVersion ? true : undefined}
+                      aria-describedby={errors.terraformVersion ? ids.terraformVersion : undefined}
+                      {...form.register("terraformVersion")}
+                    />
+                    <FieldError id={ids.terraformVersion} message={errors.terraformVersion?.message} />
+                  </SettingsField>
+                </div>
+                <SettingsCardFoot note="Applies to new resources only">{saveBtn}</SettingsCardFoot>
+              </SettingsPanel>
+            </SettingsSection>
+          </SettingsColumns>
+        </fieldset>
       </form>
 
       <SettingsSection title="Danger zone" className="mb-0">
@@ -428,44 +458,52 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
               </>
             }
           >
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  // The name says WHAT it deletes. The dialog this opens is titled "Delete
-                  // organization"; a trigger announced only "Delete" disagreed with its own
-                  // dialog, on a control that cannot be undone (#4462).
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="Delete organization"
-                    disabled={remove.isPending}
-                  >
-                    {remove.isPending ? "Deleting…" : "Delete"}
-                  </Button>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete this organization?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently deletes the organization, its members, and its access
-                    grants. This cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      if (!remove.isPending) remove.mutate({});
-                    }}
-                    disabled={remove.isPending}
-                    variant="destructive"
-                  >
-                    Delete organization
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {!canDelete ? (
+              <DisabledReason reason={DELETE_REFUSED}>
+                <Button variant="outline" size="sm" aria-label="Delete organization" disabled>
+                  Delete
+                </Button>
+              </DisabledReason>
+            ) : (
+              <AlertDialog>
+                <AlertDialogTrigger
+                  render={
+                    // The name says WHAT it deletes. The dialog this opens is titled "Delete
+                    // organization"; a trigger announced only "Delete" disagreed with its own
+                    // dialog, on a control that cannot be undone (#4462).
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Delete organization"
+                      disabled={remove.isPending}
+                    >
+                      {remove.isPending ? "Deleting…" : "Delete"}
+                    </Button>
+                  }
+                />
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this organization?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently deletes the organization, its members, and its access
+                      grants. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => {
+                        if (!remove.isPending) remove.mutate({});
+                      }}
+                      disabled={remove.isPending}
+                      variant="destructive"
+                    >
+                      Delete organization
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </SettingsDangerRow>
         </SettingsPanel>
       </SettingsSection>

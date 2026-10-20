@@ -12,6 +12,8 @@
 //     project the PDP will not show as FORBIDDEN — through the router's typed refusals.
 
 import { createRouterClient, ORPCError } from "@orpc/server";
+import { is, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -19,7 +21,7 @@ vi.mock("server-only", () => ({}));
 // the reader issues it, takes the next result (the project row, then the preview config, fabrics
 // and credentials).
 const { rows } = vi.hoisted(() => ({
-	rows: { org: new Array<unknown>(), scoped: new Array<unknown[]>() },
+	rows: { org: new Array<unknown>(), scoped: new Array<unknown[]>(), wheres: new Array<unknown>() },
 }));
 
 /** A drizzle-ish chain whose terminal (`limit`, `orderBy`, or a bare `await`) answers `result()`. */
@@ -28,7 +30,10 @@ function chain(result: () => unknown[]): unknown {
 	Object.assign(db, {
 		select: () => db,
 		from: () => db,
-		where: () => db,
+		where: (condition: unknown) => {
+			rows.wheres.push(condition);
+			return db;
+		},
 		limit: () => Promise.resolve(result()),
 		orderBy: () => Promise.resolve(result()),
 		then: (resolve: (v: unknown[]) => unknown) => resolve(result()),
@@ -62,6 +67,7 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue(actor("org-1"));
 	rows.org = [];
 	rows.scoped = [];
+	rows.wheres = [];
 });
 
 describe("settings.org", () => {
@@ -132,6 +138,21 @@ describe("settings.project", () => {
 		rows.scoped = [[ROW]];
 		expect(await client(actor("org-1")).project({ project: "my-app" })).toEqual(ROW);
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: ROW.id });
+	});
+
+	// Review blocker on #6216: RLS admits two arms (`org_id = current_org OR org_id = current_owner`),
+	// so inside an org the caller's PERSONAL projects are visible too. A same-slug personal project
+	// could be the row the slug resolved to, and Rename/Delete would act on it. The lookup must name
+	// the addressed org itself. (The DB-level proof is tests/integration/settings-project-scope.test.ts.)
+	it("resolves the slug INSIDE the addressed org, not whatever RLS also lets the caller see", async () => {
+		rows.scoped = [[ROW]];
+		await client(actor("org-from-the-address")).project({ project: "my-app" });
+		const [where] = rows.wheres;
+		if (!is(where, SQL)) throw new Error("the project lookup passed no SQL condition");
+		const rendered = new PgDialect().sqlToQuery(where);
+		expect(rendered.sql).toMatch(/"projects"\."org_id" = \$\d/);
+		expect(rendered.params).toContain("org-from-the-address");
+		expect(rendered.params).toContain("my-app");
 	});
 
 	it("answers null for a slug that names no project in the org — the page's 404", async () => {

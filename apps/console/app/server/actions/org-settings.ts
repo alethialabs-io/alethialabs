@@ -15,7 +15,7 @@
 // schema first, answer in the `ActionResult` contract, and dispatch the plugin in-process.
 
 import { headers } from "next/headers";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import {
 	ORG_SLUG_INVALID_FORMAT_CODE,
@@ -25,8 +25,11 @@ import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult, FieldRefusal } from "@/lib/actions/result";
 import { auth } from "@/lib/auth";
 import { UnauthorizedError } from "@/lib/auth/errors";
-import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
-import { ForbiddenError } from "@/lib/authz/types";
+import { emitActionEvent } from "@/lib/alerts/emit";
+import { getPdp } from "@/lib/authz";
+import { enforceDecision, recordActivity } from "@/lib/authz/activity";
+import { authorizeInOrg, currentActor } from "@/lib/authz/guard";
+import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
 import { type OrgPrimaryAddress, withPrimaryAddress } from "@/lib/org/settings";
@@ -129,6 +132,37 @@ async function storedMetadata(orgId: string): Promise<Record<string, unknown>> {
 	}
 }
 
+/**
+ * Whether ANOTHER organization holds `slug`. Asked only after the organization endpoint failed in a
+ * way it did not explain: two admins renaming two orgs onto one free slug both pass better-auth's
+ * own pre-check, and the loser's write then hits the unique index — a server failure with no code,
+ * which must still read to that user as "taken", under the field, like the ordinary case.
+ */
+async function slugHeldElsewhere(slug: string, orgId: string): Promise<boolean> {
+	const [row] = await getServiceDb()
+		.select({ id: organization.id })
+		.from(organization)
+		.where(and(eq(organization.slug, slug), ne(organization.id, orgId)))
+		.limit(1);
+	return typeof row?.id === "string" && row.id !== orgId;
+}
+
+/** The org as a PDP resource (org-wide: no id). */
+const ORG_RESOURCE: ResourceRef = { type: "org" };
+
+/**
+ * The PDP's `edit` on the addressed org, decided WITHOUT recording an allow. A refusal is recorded
+ * and thrown here, as `authorize()` would (`enforceDecision`). An allow is recorded by the caller
+ * AFTER the operation succeeds, under the name of what was done — `authorize()` would have logged
+ * "edit org" before a delete had happened, and kept it if the delete then failed.
+ */
+async function decideOrgEdit(): Promise<Actor> {
+	const actor = await currentActor();
+	const decision = await getPdp().can(actor, "edit", ORG_RESOURCE);
+	if (!decision.allowed) enforceDecision(actor, "edit", ORG_RESOURCE, decision);
+	return actor;
+}
+
 /** What a successful General-settings save answers: the values as stored. */
 export interface OrgGeneralSaved {
 	name: string;
@@ -139,8 +173,8 @@ export interface OrgGeneralSaved {
  * Saves the addressed org's General settings (name, slug, description, data region, default
  * environment, Terraform version) — the org the page's ADDRESS names, never one the client sends.
  *
- * The PDP's `edit` on the org runs first: it refuses a viewer or operator before anything is
- * written, AND a member whose membership is not active — the `/api/auth` route refuses those
+ * The PDP's `edit` on the org runs first (`decideOrgEdit`): it refuses a viewer or operator before
+ * anything is written, AND a member whose membership is not active — the `/api/auth` route refuses those
  * before better-auth runs (#5472), and this in-process dispatch does not pass through that route.
  *
  * The metadata keeps every stored key the form does not edit (the billing-derived primary address,
@@ -162,7 +196,7 @@ async function writeOrgGeneral(input: OrgGeneralValues): Promise<OrgGeneralSaved
 	if (actor.orgId === actor.userId) {
 		throw new ActionRefusal("not-found", "The personal workspace has no organization settings.");
 	}
-	await authorize("edit", { type: "org" });
+	await decideOrgEdit();
 	const metadata = {
 		...(await storedMetadata(actor.orgId)),
 		description: input.description,
@@ -174,7 +208,16 @@ async function writeOrgGeneral(input: OrgGeneralValues): Promise<OrgGeneralSaved
 		organizationId: actor.orgId,
 		data: { name: input.name, slug: input.slug, metadata },
 	});
-	if (!outcome.ok) throw refusalFor(outcome);
+	if (!outcome.ok) {
+		const refusal = refusalFor(outcome);
+		// A failure better-auth did not explain may be the unique index refusing a concurrent rename.
+		if (!(refusal instanceof FieldRefusal) && outcome.status >= 500 && (await slugHeldElsewhere(input.slug, actor.orgId))) {
+			throw new FieldRefusal({ slug: [SLUG_TAKEN] }, SLUG_TAKEN);
+		}
+		throw refusal;
+	}
+	recordActivity(actor, "edit", { type: "org", id: actor.orgId });
+	emitActionEvent(actor, "edit", ORG_RESOURCE, true);
 	return { name: input.name, slug: input.slug };
 }
 
@@ -196,11 +239,14 @@ async function removeOrganization(): Promise<{ deleted: true }> {
 	if (actor.orgId === actor.userId) {
 		throw new ActionRefusal("not-found", "The personal workspace can't be deleted.");
 	}
-	await authorize("edit", { type: "org" });
+	await decideOrgEdit();
 	const outcome = await callOrganizationEndpoint("/organization/delete", {
 		organizationId: actor.orgId,
 	});
 	if (!outcome.ok) throw refusalFor(outcome);
+	// Named for what happened, and only once it has: the Activity log reads "destroy org", not the
+	// "edit org" the permission check is spelled as.
+	recordActivity(actor, "destroy", { type: "org", id: actor.orgId });
 	return { deleted: true };
 }
 

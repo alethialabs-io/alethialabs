@@ -18,7 +18,7 @@ import "server-only";
 // The actor is the one the read router bound for the request's ADDRESS (`lib/rpc/base.ts`), never
 // the session's org.
 
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
@@ -68,9 +68,9 @@ export interface ProjectGeneral {
  * project in that org has the slug (a stale link, a project renamed away, one deleted in another
  * tab). The page turns `null` into its 404; a project the caller may not see is FORBIDDEN.
  *
- * The slug resolves under RLS (`withActorScope`: the org arm), exactly as `resolveProjectId` does,
- * and then the PDP's `view` on the project decides — so a project grant narrower than the org is
- * honoured.
+ * The slug resolves inside the addressed org EXPLICITLY (`org_id = actor.orgId`, under RLS as
+ * well), and then the PDP's `view` on the project decides — so a project grant narrower than the org
+ * is honoured, and a same-slug project in the caller's personal scope is never the answer.
  */
 async function readProjectGeneral(
 	actor: Actor,
@@ -80,7 +80,11 @@ async function readProjectGeneral(
 		const [found] = await tx
 			.select({ id: projects.id, project_name: projects.project_name, slug: projects.slug })
 			.from(projects)
-			.where(eq(projects.slug, projectSlug))
+			// The ADDRESSED org's project, named explicitly. RLS alone admits two arms (`org_id =
+			// current_org OR org_id = current_owner`), so inside an org the caller's PERSONAL projects
+			// are visible too, and a personal project under the same slug could otherwise be the row
+			// this answered — and the page's Rename and Delete would then act on it.
+			.where(and(eq(projects.slug, projectSlug), eq(projects.org_id, actor.orgId)))
 			.limit(1);
 		return found ?? null;
 	});

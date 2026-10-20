@@ -25,9 +25,21 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/auth", () => ({ auth: { handler: vi.fn() } }));
 vi.mock("@/lib/authz/guard", () => ({
 	currentActor: vi.fn(),
-	authorize: vi.fn(),
 	authorizeInOrg: vi.fn(),
 }));
+const { pdpCan } = vi.hoisted(() => ({ pdpCan: vi.fn() }));
+vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can: pdpCan }) }));
+vi.mock("@/lib/alerts/emit", () => ({ emitActionEvent: vi.fn() }));
+// `enforceDecision` keeps its real contract (a refusal throws); both recorders are spies.
+vi.mock("@/lib/authz/activity", async () => {
+	const { ForbiddenError } = await import("@/lib/authz/types");
+	return {
+		recordActivity: vi.fn(),
+		enforceDecision: vi.fn((_actor: unknown, action: "edit", resource: { type: "org" }, decision: { allowed: boolean }) => {
+			if (!decision.allowed) throw new ForbiddenError(action, resource);
+		}),
+	};
+});
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 
 import {
@@ -36,7 +48,8 @@ import {
 	updateOrgPrimaryAddress,
 } from "@/app/server/actions/org-settings";
 import { auth } from "@/lib/auth";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { enforceDecision, recordActivity } from "@/lib/authz/activity";
+import { currentActor } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 
@@ -89,7 +102,7 @@ async function dispatched(): Promise<{ path: string; body: unknown; cookie: stri
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(currentActor).mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
-	vi.mocked(authorize).mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
+	pdpCan.mockResolvedValue({ allowed: true });
 	authAnswers(200, { id: "org-1" });
 	mockDb([{ metadata: JSON.stringify({ region: "us-east-1" }) }]);
 });
@@ -106,7 +119,7 @@ describe("saveOrgGeneral — the schema refuses before anything is dispatched (F
 		const result = await saveOrgGeneral(input);
 		expect(result).toMatchObject({ ok: false, error: { kind: "validation", fields: { [field]: [message] } } });
 		expect(auth.handler).not.toHaveBeenCalled();
-		expect(authorize).not.toHaveBeenCalled();
+		expect(pdpCan).not.toHaveBeenCalled();
 	});
 });
 
@@ -114,7 +127,7 @@ describe("saveOrgGeneral — a save", () => {
 	it("asks the PDP for edit on the org, then updates the ADDRESSED org as the caller", async () => {
 		const result = await saveOrgGeneral(VALID);
 		expect(result).toEqual({ ok: true, data: { name: "Acme Corp", slug: "acme-corp" } });
-		expect(authorize).toHaveBeenCalledWith("edit", { type: "org" });
+		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1" }, "edit", { type: "org" });
 		const sent = await dispatched();
 		expect(sent.path).toBe("/api/auth/organization/update");
 		expect(sent.cookie).toBe("better-auth.session_token=s1");
@@ -160,14 +173,83 @@ describe("saveOrgGeneral — a save", () => {
 	});
 
 	it("stops at a PDP refusal (a viewer, or a member who is not active) — nothing is dispatched", async () => {
-		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("edit", { type: "org" }));
+		pdpCan.mockResolvedValue({ allowed: false, reason: "no grant" });
 		const result = await saveOrgGeneral(VALID);
 		expect(result).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(auth.handler).not.toHaveBeenCalled();
+		// The refusal is recorded (by `enforceDecision`, as `authorize()` would); no allow is.
+		expect(enforceDecision).toHaveBeenCalled();
+		expect(recordActivity).not.toHaveBeenCalled();
+	});
+});
+
+describe("saveOrgGeneral — what the client cannot add (review on #6216)", () => {
+	it("drops raw-input keys the schema does not own — a forged primary address or setup marker never reaches the write", async () => {
+		const stored = {
+			primaryAddress: { name: "Acme", line1: "1 St", country: "EE" },
+			newOrgSubscriptionId: "sub_real",
+		};
+		mockDb([{ metadata: JSON.stringify(stored) }]);
+		const forged = {
+			...VALID,
+			primaryAddress: { name: "Mallory", line1: "2 Rd", country: "US" },
+			newOrgSubscriptionId: "sub_forged",
+			newOrgCreatedBy: "user-2",
+			metadata: { anything: true },
+			logo: "https://evil.example/x.png",
+		};
+		expect(await saveOrgGeneral(forged)).toMatchObject({ ok: true });
+		const sent = await dispatched();
+		expect(sent.body).toEqual({
+			organizationId: "org-1",
+			data: {
+				name: "Acme Corp",
+				slug: "acme-corp",
+				metadata: {
+					...stored,
+					description: "Platform team",
+					region: "eu-west-1",
+					defaultEnv: "staging",
+					terraformVersion: "1.9.5",
+				},
+			},
+		});
+	});
+});
+
+describe("saveOrgGeneral — the Activity log records what happened, once it happened", () => {
+	it("records the edit AFTER a successful save", async () => {
+		await saveOrgGeneral(VALID);
+		expect(recordActivity).toHaveBeenCalledWith(
+			{ orgId: "org-1", userId: "user-1" },
+			"edit",
+			{ type: "org", id: "org-1" },
+		);
+	});
+
+	it("records no allow when the save failed", async () => {
+		authAnswers(400, { code: "ORGANIZATION_SLUG_ALREADY_TAKEN" });
+		await saveOrgGeneral(VALID);
+		expect(recordActivity).not.toHaveBeenCalled();
 	});
 });
 
 describe("saveOrgGeneral — better-auth's refusals in the contract's kinds", () => {
+	it("a concurrent rename that loses on the unique index → the same 'taken' under the slug field", async () => {
+		// The winner committed first; better-auth's own pre-check passed for both, so the loser's write
+		// fails on the index with no code. Another org now holds the slug.
+		mockDb([{ metadata: null, id: "org-2" }]);
+		authAnswers(500, { message: "duplicate key value violates unique constraint" });
+		expect(await saveOrgGeneral(VALID)).toEqual({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "That slug is taken — try another.",
+				fields: { slug: ["That slug is taken — try another."] },
+			},
+		});
+	});
+
 	it("a slug another org holds → under the slug field", async () => {
 		authAnswers(400, { code: "ORGANIZATION_SLUG_ALREADY_TAKEN", message: "Organization slug already taken" });
 		expect(await saveOrgGeneral(VALID)).toEqual({
@@ -209,17 +291,33 @@ describe("saveOrgGeneral — better-auth's refusals in the contract's kinds", ()
 });
 
 describe("deleteOrganization", () => {
+	it("records the delete as a DESTROY of the org, after it succeeded", async () => {
+		await deleteOrganization({});
+		expect(recordActivity).toHaveBeenCalledTimes(1);
+		expect(recordActivity).toHaveBeenCalledWith(
+			{ orgId: "org-1", userId: "user-1" },
+			"destroy",
+			{ type: "org", id: "org-1" },
+		);
+	});
+
+	it("records nothing as done when better-auth refused the delete", async () => {
+		authAnswers(403, { code: "YOU_ARE_NOT_ALLOWED_TO_DELETE_THIS_ORGANIZATION" });
+		await deleteOrganization({});
+		expect(recordActivity).not.toHaveBeenCalled();
+	});
+
 	it("asks the PDP first, then deletes the ADDRESSED org", async () => {
 		const result = await deleteOrganization({});
 		expect(result).toEqual({ ok: true, data: { deleted: true } });
-		expect(authorize).toHaveBeenCalledWith("edit", { type: "org" });
+		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1" }, "edit", { type: "org" });
 		const sent = await dispatched();
 		expect(sent.path).toBe("/api/auth/organization/delete");
 		expect(sent.body).toEqual({ organizationId: "org-1" });
 	});
 
 	it("dispatches nothing when the PDP refuses", async () => {
-		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("edit", { type: "org" }));
+		pdpCan.mockResolvedValue({ allowed: false, reason: "no grant" });
 		expect(await deleteOrganization({})).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(auth.handler).not.toHaveBeenCalled();
 	});
