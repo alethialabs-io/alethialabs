@@ -350,7 +350,7 @@ jobs:
       # out, and reconcile-b2c's database-wide GC then counting the rows it left. No file assumed
       # community. This job's own run is the CI confirmation.
       # `rpc-tenancy.community.test.ts` pins `community` for itself and restores the value after.
-      # No coverage fingerprint moves: this job records no coverage (vitest.integration.config.ts).
+      # The community edition gets its own full pass — see the step after the enterprise one.
       ALETHIA_EDITION: enterprise
     steps:
       - uses: actions/checkout@v7
@@ -395,6 +395,28 @@ jobs:
           }
       - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
         run: pnpm -C apps/console run test:integration
+      # THE COMMUNITY (AGPL) EDITION KEEPS ITS OWN PASS (#6113 review). Before ee/dist was built here,
+      # 27 files ran their community branch — `auto` with no ee found — and building ee/dist moved
+      # every one of them to enterprise. "All pass in enterprise" does not mean "none lost the
+      # community path it covered", so the whole suite runs again with the edition pinned to
+      # `community`. A second STEP, not a matrix: a matrix renames this job, and its name is a
+      # required check. Cost: one more suite run, ~200s on this job (measured on #6169).
+      #
+      # `rpc-tenancy.enterprise.test.ts` is EXCLUDED here by name, not skipped: it pins `enterprise`
+      # for itself and has already run in the step above; it is not a community test, and it fails
+      # rather than skip when its edition cannot load. `rpc-tenancy.community.test.ts` runs in both
+      # passes (it pins `community` itself).
+      #
+      # Explicit `community` is the CONFIGURED single-tenant edition, not the `auto`/not-installed
+      # state the 27 files ran under on dev; the two differ in one place — `currentActor()` refuses a
+      # personal-scope collapse when the edition is unconfigured (#6149). The configured edition is
+      # the one an AGPL install is told to run, so it is the one measured.
+      #
+      # No coverage fingerprint moves: this job records no coverage (vitest.integration.config.ts).
+      - name: Integration tests — community edition (the AGPL path)
+        env:
+          ALETHIA_EDITION: community
+        run: pnpm -C apps/console run test:integration --exclude tests/integration/rpc-tenancy.enterprise.test.ts
 
   e2e-browser:
     name: E2E (browser · Playwright hero path)
