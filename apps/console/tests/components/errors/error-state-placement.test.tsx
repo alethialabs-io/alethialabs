@@ -14,7 +14,11 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+
+import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ROOTS = ["app", "components"];
@@ -47,6 +51,16 @@ function importers(): string[] {
 		.filter((f) => IMPORT.test(readFileSync(f, "utf8")))
 		.map((f) => relative(CONSOLE, f));
 }
+
+describe("why the line is where it is", () => {
+	it("ErrorState draws the route's heading; RegionError draws none", () => {
+		const route = render(<ErrorState title="Not found" />);
+		expect(screen.getByRole("heading", { level: 1, name: "Not found" })).toBeInTheDocument();
+		route.unmount();
+		render(<RegionError onRetry={() => {}} />);
+		expect(screen.queryByRole("heading")).toBeNull();
+	});
+});
 
 describe("ErrorState placement", () => {
 	const found = importers();

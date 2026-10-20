@@ -9,7 +9,7 @@
 // A data REGION that failed to load is not a route error: use `RegionError`
 // (./region-error.tsx), or `DataTable`'s `query` prop for a table. This one renders the route's
 // heading, which is right when it replaces the page and a stray second `<h1>` inside it.
-// tests/components/errors/error-state-placement.test.ts holds the line (#6117).
+// tests/components/errors/error-state-placement.test.tsx holds the line (#6117).
 
 import type { ReactNode } from "react";
 import { AlethiaMark } from "@repo/brand/lockup";

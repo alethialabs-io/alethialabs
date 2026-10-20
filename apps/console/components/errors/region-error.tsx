@@ -47,7 +47,7 @@ interface RegionErrorProps {
  * - a TABLE does neither by hand: pass `query={q}` to `DataTable`, which renders this for a failed
  *   first load and keeps its rows behind a one-line notice for a failed refresh;
  * - an expected refusal (forbidden, not found, plan-gated) is its own render, and is not this.
- * `tests/components/errors/error-state-placement.test.ts` holds `ErrorState` to its half.
+ * `tests/components/errors/error-state-placement.test.tsx` holds `ErrorState` to its half.
  *
  * @example
  * if (query.isError && query.data === undefined)
