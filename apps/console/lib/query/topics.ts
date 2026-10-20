@@ -5,6 +5,7 @@
 
 import type { QueryKey } from "@tanstack/react-query";
 import type { Topic } from "@/lib/realtime/topics";
+import { DESTROY_HOLD_KEY } from "@/components/design-project/canvas/cards/destroy-hold-key";
 import { orpc } from "@/lib/rpc/client";
 
 /**
@@ -25,7 +26,9 @@ export const TOPIC_KEYS = {
 	// The shell's capped job feed (bell, toasts, breadcrumbs, palette), the full list (runners, plan
 	// flow — on `qk.jobs(org)`, reached by the `["jobs"]` prefix) and the setup guide's "provisioned"
 	// step change with every job (#6114). So does the overview's usage read, which counts runner
-	// minutes and jobs in flight (#6118).
+	// minutes and jobs in flight (#6118). The board's environment status carries the in-flight job,
+	// the last PLAN's cost and the drift a job wrote; its Activity card is the environment's job
+	// history; a held destroy waits on jobs (#6119).
 	jobs: (): QueryKey[] => [
 		orpc.jobs.key(),
 		["jobs"],
@@ -33,13 +36,30 @@ export const TOPIC_KEYS = {
 		orpc.workspace.jobs.key(),
 		orpc.workspace.setupGuide.key(),
 		orpc.overview.usage.key(),
+		orpc.canvas.environmentStatus.key(),
+		orpc.canvas.environmentJobs.key(),
+		[...DESTROY_HOLD_KEY],
 	],
-	environments: (): QueryKey[] => [orpc.workspace.environments.key()],
+	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
+	// board's node states), its described chart workloads and its BYO IaC source (#6119).
+	environments: (): QueryKey[] => [
+		orpc.workspace.environments.key(),
+		orpc.canvas.environmentStatus.key(),
+		orpc.canvas.chartWorkloads.key(),
+		orpc.canvas.iacSource.key(),
+		[...DESTROY_HOLD_KEY],
+	],
 	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
 	clusters: (): QueryKey[] => [],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
-	addons: (): QueryKey[] => [],
+	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
+	// the board, so its health also shows through the environment status (#6119).
+	addons: (): QueryKey[] => [
+		orpc.canvas.addons.key(),
+		orpc.canvas.byoCharts.key(),
+		orpc.canvas.environmentStatus.key(),
+	],
 	alerts: (): QueryKey[] => [orpc.overview.alerts.key()],
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key()],
 	usage: (): QueryKey[] => [orpc.overview.usage.key()],

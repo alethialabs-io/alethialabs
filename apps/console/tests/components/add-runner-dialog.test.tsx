@@ -20,14 +20,20 @@ vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ data: { runners: [] } }),
 	useDeployRunner: () => ({ mutateAsync: vi.fn() }),
 }));
-vi.mock("@/lib/stores/use-cloud-provider-store", () => ({
-	useCloudProviderStore: () => ({
-		provider: "aws",
-		cachedResources: null,
-		setIdentity: vi.fn(),
-		isLoading: false,
-	}),
-}));
+vi.mock("@/lib/stores/use-cloud-provider-store", () => {
+	// The selection is a Zustand store read through a selector; the inventory is its query hook.
+	const store = { provider: "aws", identityId: null, setIdentity: vi.fn() };
+	return {
+		useCloudProviderStore: (select: (s: typeof store) => unknown) => select(store),
+		useCloudProviderResources: () => ({
+			provider: "aws",
+			identityId: null,
+			cachedResources: null,
+			isLoading: false,
+			error: null,
+		}),
+	};
+});
 vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useActiveOrgSlug: () => "acme",
 }));

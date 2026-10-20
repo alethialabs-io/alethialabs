@@ -16,7 +16,7 @@ vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
-import { getEnvironmentJobs } from "@/app/server/actions/canvas-jobs";
+import { readEnvironmentJobs as getEnvironmentJobs } from "@/lib/rpc/procedures/canvas";
 import { getServiceDb } from "@/lib/db";
 
 interface Row {
@@ -70,7 +70,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 });
 
-describe("getEnvironmentJobs", () => {
+describe("readEnvironmentJobs (canvas.environmentJobs)", () => {
 	it("fetches one row past the limit and returns a cursor only when it came back", async () => {
 		const rows = Array.from({ length: 4 }, (_, i) => row(i + 1));
 		const calls = mockDb(rows);
@@ -116,5 +116,22 @@ describe("getEnvironmentJobs", () => {
 		expect(calls.limit).toBe(101);
 		await getEnvironmentJobs("p1", "e1", { limit: 0 });
 		expect(calls.limit).toBe(2);
+	});
+
+	it("refuses an environment outside the actor's org as NOT_FOUND — a typed refusal, not an empty history", async () => {
+		const chain: Record<string, unknown> = {};
+		Object.assign(chain, {
+			from: () => chain,
+			innerJoin: () => chain,
+			where: () => chain,
+			orderBy: () => chain,
+			limit: () => chain,
+			then: (resolve: (v: unknown) => void) => resolve([]), // the env guard finds nothing
+		});
+		vi.mocked(getServiceDb).mockReturnValue({ select: () => chain } as never);
+		await expect(getEnvironmentJobs("p1", "e-foreign")).rejects.toMatchObject({
+			name: "ActionRefusal",
+			kind: "not-found",
+		});
 	});
 });

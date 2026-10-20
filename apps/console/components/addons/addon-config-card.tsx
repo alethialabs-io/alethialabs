@@ -193,8 +193,8 @@ export function AddonConfigForm({
   provider: CloudProviderSlug | null;
   onDone: () => void;
 }) {
-  const enable = useEnableAddon(projectId, environmentId);
-  const disable = useDisableAddon(projectId, environmentId);
+  const enable = useEnableAddon();
+  const disable = useDisableAddon();
   // Remove is not undoable and its effect lands on the next Deploy — the chart is uninstalled and
   // whatever it owns in the cluster goes with it — so the click OPENS a confirm rather than firing
   // the mutation (#4281).

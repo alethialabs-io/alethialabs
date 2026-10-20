@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
@@ -19,7 +21,8 @@ import {
 	type ProjectFormData,
 	type ProjectFormInput,
 } from "@/lib/validations/project-form.schema";
-import { DesignProjectCanvas } from "./canvas/design-project-canvas";
+import { RegionError } from "@/components/errors/region-error";
+import { CanvasSkeleton } from "./canvas/canvas-skeleton";
 import { formToGraph } from "./canvas/graph/form-to-graph";
 import { ConnectorsProvider } from "./connectors-context";
 import { RepositoryProvider } from "./repository-context";
@@ -28,6 +31,34 @@ import {
 	sourceRevision,
 	type SourceProjectData,
 } from "./source-project";
+
+/**
+ * The board, loaded at the point of use (#6119). It is the whole of `@xyflow/react`, `motion` and
+ * every card, palette and inspector; a static import put all of it in front of the route's FIRST
+ * hydration (the #5849 lesson). React Flow measures the DOM, so there is nothing to server-render:
+ * the server sends the skeleton, and the client swaps the board in over the same footprint.
+ */
+const DesignProjectCanvas = dynamic(
+	() => import("./canvas/design-project-canvas").then((m) => m.DesignProjectCanvas),
+	{ ssr: false, loading: () => <CanvasSkeleton /> },
+);
+
+/**
+ * The design read failed on a project route. Not an empty board, and not an endless skeleton: the
+ * seed refuses to paint a blank default over a real design (see the seed effect), so without this
+ * the board would wait forever for a design that is not coming (RUBRIC B4).
+ */
+function DesignLoadError() {
+	const router = useRouter();
+	return (
+		<RegionError
+			className="h-full"
+			title="Couldn't load this environment's design"
+			description="The board was not drawn rather than shown blank. Nothing was changed."
+			onRetry={() => router.refresh()}
+		/>
+	);
+}
 
 interface DesignProjectWorkbenchProps {
 	cloudIdentities: CloudIdentityOption[];
@@ -143,6 +174,8 @@ export function DesignProjectWorkbench({
 			cancelled = true;
 		};
 	}, [projectId, environmentId, revision]);
+
+	if (projectId && !sourceProject) return <DesignLoadError />;
 
 	return (
 		<ConnectorsProvider connectors={connectors}>

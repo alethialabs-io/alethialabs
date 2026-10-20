@@ -25,6 +25,7 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
 
@@ -72,6 +73,7 @@ function renderCard(c: DestroyEnvironmentControl, status: Partial<EnvironmentSta
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...status }}>
 			<EnvSettingsCard destroyEnvironment={c} />
 		</EnvironmentStatusProvider>,
+		{ wrapper: queryWrapper() },
 	);
 }
 
@@ -227,6 +229,7 @@ describe("a held destroy — waiting on its tenants", () => {
 			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...held }}>
 				<ActivityStatusLine loadDestroyTree={loadTree} />
 			</EnvironmentStatusProvider>,
+			{ wrapper: queryWrapper() },
 		);
 		const line = screen.getByRole("button", { name: /open the activity log/i });
 		await waitFor(() => expect(line).toHaveTextContent("Waiting on dev-1 +1"));
@@ -241,6 +244,7 @@ describe("a held destroy — waiting on its tenants", () => {
 			>
 				<ActivityStatusLine loadDestroyTree={loadTree} />
 			</EnvironmentStatusProvider>,
+			{ wrapper: queryWrapper() },
 		);
 		expect(loadTree).not.toHaveBeenCalled();
 		expect(screen.getByRole("button", { name: /open the activity log/i })).toHaveTextContent(/running/i);

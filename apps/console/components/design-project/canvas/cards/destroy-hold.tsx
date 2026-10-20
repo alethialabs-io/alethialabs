@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useQuery } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { DESTROY_HOLD_KEY } from "./destroy-hold-key";
 import {
 	type DestroyTreeNode,
 	environmentSettingsHref,
@@ -16,8 +17,6 @@ import {
 	splitDestroyTree,
 } from "./destroy-tree-view";
 
-/** How often a held destroy re-reads what it is waiting on. The env status poll does not carry it. */
-const HOLD_POLL_MS = 15_000;
 
 /** One tenant a held DESTROY is waiting on, from the owner's `waiting_on`. */
 interface HeldOn {
@@ -40,8 +39,9 @@ export interface DestroyHold {
  *
  * `claim_next_job` will not hand an owner's DESTROY to a runner while a live tenant remains on its
  * Fabric, so the job sits QUEUED — which, without this, reads exactly like a destroy nobody has
- * picked up yet. This asks the destroy tree only while a DESTROY is QUEUED, and re-asks on an
- * interval because the environment status poll does not carry the tenants.
+ * picked up yet. This asks the destroy tree only while a DESTROY is QUEUED, and re-asks whenever an
+ * environment or a job in the org changes (see {@link DESTROY_HOLD_KEY}), because the environment
+ * status does not carry the tenants.
  *
  * Returns null when nothing is held (no queued DESTROY, no `loadTree`, or the read failed).
  */
@@ -51,39 +51,27 @@ export function useDestroyHold(
 	const env = useEnvironmentStatus();
 	const job = env.activeJob;
 	const heldJobId = job && job.type === "DESTROY" && job.status === "QUEUED" ? job.id : null;
-	const [hold, setHold] = useState<DestroyHold | null>(null);
-
-	useEffect(() => {
-		if (!heldJobId || !loadTree) return;
-		let cancelled = false;
-		/** One read of the tree, folded into the owner's waiting list. */
-		const read = () =>
-			loadTree()
-				.then((tree) => {
-					if (cancelled) return;
-					const split = splitDestroyTree(tree);
-					const ids = new Map<string, string>(
-						split?.tenants.map((t): [string, string] => [t.name, t.environment_id]) ?? [],
-					);
-					setHold({
-						jobId: heldJobId,
-						waitingOn: (split?.target.waiting_on ?? []).map((w) => ({
-							name: w.name,
-							status: w.status,
-							environmentId: ids.get(w.name) ?? null,
-						})),
-					});
-				})
-				.catch(() => {
-					// Best-effort: a failed read leaves the last answer (or none) rather than inventing one.
-				});
-		void read();
-		const timer = setInterval(() => void read(), HOLD_POLL_MS);
-		return () => {
-			cancelled = true;
-			clearInterval(timer);
-		};
-	}, [heldJobId, loadTree]);
+	const { data: hold } = useQuery({
+		queryKey: [...DESTROY_HOLD_KEY, heldJobId],
+		queryFn: async (): Promise<DestroyHold | null> => {
+			if (!heldJobId || !loadTree) return null;
+			const split = splitDestroyTree(await loadTree());
+			const ids = new Map<string, string>(
+				split?.tenants.map((t): [string, string] => [t.name, t.environment_id]) ?? [],
+			);
+			return {
+				jobId: heldJobId,
+				waitingOn: (split?.target.waiting_on ?? []).map((w) => ({
+					name: w.name,
+					status: w.status,
+					environmentId: ids.get(w.name) ?? null,
+				})),
+			};
+		},
+		enabled: !!heldJobId && !!loadTree,
+		// Best-effort: a failed read leaves the last answer (or none) rather than inventing one.
+		retry: false,
+	});
 
 	if (!heldJobId || !hold || hold.jobId !== heldJobId) return null;
 	return hold;

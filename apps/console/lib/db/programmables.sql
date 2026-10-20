@@ -2585,3 +2585,109 @@ DO $$ BEGIN
     EXECUTE 'REVOKE ALL ON public.enterprise_contract, public.platform_audit FROM alethia_app';
   END IF;
 END $$;
+
+-- ── The board's topics (#6119): `environments` and `addons`. ──────────────────────────────────────
+-- At the END of this file because it reads project_component_tables(), defined above, and reuses
+-- emit_change() / notify_change() from the real-time block near the top.
+-- What the Architecture board shows that changes without the viewer acting: an environment's
+-- lifecycle, its components' lifecycles (the node states), its BYO IaC module, its described chart
+-- workloads, and its add-ons' install/health/sync. Same contract as the jobs triggers above:
+-- identifiers only, an UPDATE fires only when a column the board renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts): both topics route on the ORG arm only, filtered through the
+-- PDP's `view` on the row's project. Their RLS owner arm is the PROJECT's owner
+-- (`projects.user_id = current_owner`), not a column of these rows — project_environments.user_id
+-- is its creator, which is not an RLS arm — so `u` is carried but never used as a route.
+
+-- project_environments and project_fabrics carry id, org_id, user_id and project_id: the jobs-shaped
+-- notifier fits. Not listed (heartbeat-like or not on the board): the heal/reap counters and
+-- timestamps, cost_cap, namespace, region, last_deployed_at, created_at, updated_at.
+DROP TRIGGER IF EXISTS project_environments_notify_change_upd ON public.project_environments;
+CREATE TRIGGER project_environments_notify_change_upd
+  AFTER UPDATE ON public.project_environments
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.name, OLD.stage, OLD.is_default, OLD.fabric_id, OLD.placement_mode,
+     OLD.lifecycle, OLD.expires_at, OLD.deployed_config_hash)
+    IS DISTINCT FROM
+    (NEW.status, NEW.name, NEW.stage, NEW.is_default, NEW.fabric_id, NEW.placement_mode,
+     NEW.lifecycle, NEW.expires_at, NEW.deployed_config_hash)
+  )
+  EXECUTE FUNCTION public.notify_change('environments');
+
+DROP TRIGGER IF EXISTS project_environments_notify_change_insdel ON public.project_environments;
+CREATE TRIGGER project_environments_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.project_environments
+  FOR EACH ROW EXECUTE FUNCTION public.notify_change('environments');
+
+DROP TRIGGER IF EXISTS project_fabrics_notify_change_upd ON public.project_fabrics;
+CREATE TRIGGER project_fabrics_notify_change_upd
+  AFTER UPDATE ON public.project_fabrics
+  FOR EACH ROW WHEN ((OLD.status, OLD.status_message) IS DISTINCT FROM (NEW.status, NEW.status_message))
+  EXECUTE FUNCTION public.notify_change('environments');
+
+-- The component family has org_id (derive_component_org_id) and project_id but no user_id, so it
+-- gets its own thin notifier. TG_ARGV[0] is the topic.
+CREATE OR REPLACE FUNCTION public.notify_component_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id, NULL, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id, NULL, NEW.project_id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- Every family table but project_addons (its own topic, below) notifies `environments`. The family
+-- is read from project_component_tables(), never restated, so a new component table is covered the
+-- day it joins the family. The UPDATE trigger's column list is DERIVED per table: the lifecycle and
+-- health columns the board renders, intersected with the columns that table actually has. A table
+-- with none of them gets the INSERT/DELETE trigger only.
+DO $$
+DECLARE
+  tbl TEXT;
+  cols TEXT[];
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    CONTINUE WHEN tbl = 'project_addons';
+    SELECT array_agg(c.column_name::text ORDER BY c.column_name)
+      INTO cols
+      FROM information_schema.columns c
+     WHERE c.table_schema = 'public' AND c.table_name = tbl
+       AND c.column_name IN ('status', 'status_message', 'health', 'sync_status', 'scan_status',
+                             'commit_sha', 'deployed_commit_sha', 'enabled', 'rendered');
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_upd ON public.%1$I', tbl);
+    IF cols IS NOT NULL THEN
+      EXECUTE format(
+        'CREATE TRIGGER %1$s_notify_change_upd AFTER UPDATE ON public.%1$I FOR EACH ROW
+           WHEN ((%2$s) IS DISTINCT FROM (%3$s))
+           EXECUTE FUNCTION public.notify_component_change(''environments'')',
+        tbl,
+        (SELECT string_agg('OLD.' || quote_ident(x), ', ') FROM unnest(cols) x),
+        (SELECT string_agg('NEW.' || quote_ident(x), ', ') FROM unnest(cols) x));
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_insdel ON public.%1$I', tbl);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_notify_change_insdel AFTER INSERT OR DELETE ON public.%1$I
+         FOR EACH ROW EXECUTE FUNCTION public.notify_component_change(''environments'')', tbl);
+  END LOOP;
+END $$;
+
+-- project_addons: catalog add-ons AND BYO charts (source = 'byo'). Not listed: last_synced_at and
+-- scanned_at (stamped on every reconcile/scan, with or without a change), created_at, updated_at.
+DROP TRIGGER IF EXISTS project_addons_notify_change_upd ON public.project_addons;
+CREATE TRIGGER project_addons_notify_change_upd
+  AFTER UPDATE ON public.project_addons
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.status_message, OLD.health, OLD.sync_status, OLD.enabled, OLD.version,
+     OLD.mode, OLD.scan_status, OLD."values", OLD.values_yaml, OLD.namespace)
+    IS DISTINCT FROM
+    (NEW.status, NEW.status_message, NEW.health, NEW.sync_status, NEW.enabled, NEW.version,
+     NEW.mode, NEW.scan_status, NEW."values", NEW.values_yaml, NEW.namespace)
+  )
+  EXECUTE FUNCTION public.notify_component_change('addons');
+
+DROP TRIGGER IF EXISTS project_addons_notify_change_insdel ON public.project_addons;
+CREATE TRIGGER project_addons_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.project_addons
+  FOR EACH ROW EXECUTE FUNCTION public.notify_component_change('addons');

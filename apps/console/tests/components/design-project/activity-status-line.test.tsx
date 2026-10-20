@@ -14,12 +14,14 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 function renderWith(status: Partial<EnvironmentStatus>) {
 	return render(
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...status }}>
 			<ActivityStatusLine />
 		</EnvironmentStatusProvider>,
+		{ wrapper: queryWrapper() },
 	);
 }
 
