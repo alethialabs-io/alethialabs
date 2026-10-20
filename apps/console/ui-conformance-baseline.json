@@ -23,7 +23,7 @@
 		"notInstrumented": 1,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 220
+		"liveNotMeasured": 47
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/36058527139",
-			"commit": "8f5c3953a19062f4d725accfd6cbca53b4c1b7f0"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/39438241593",
+			"commit": "ce9a5fdafeb704eea2ea80b560234947b84e1502"
 		},
 		"sections": {
 			"routes": {
@@ -95,18 +95,223 @@
 					"B4",
 					"B5"
 				],
-				"records": 0,
-				"routes": 0
+				"records": 200,
+				"routes": 40
 			}
 		},
-		"debt": {
-			"F8": {
-				"owner": "#4999",
-				"why": "ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back; Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs 35872640708 and 35896826914, with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data.",
-				"fail": 1
+		"debt": {},
+		"behaviourLedger": [
+			{
+				"route": "/[org]",
+				"predicate": "B1",
+				"lifts": "#6118",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
+			},
+			{
+				"route": "/[org]",
+				"predicate": "B2",
+				"lifts": "#6118",
+				"detail": "the skeleton sets 3 blocks side by side and the page 2"
+			},
+			{
+				"route": "/[org]",
+				"predicate": "B4",
+				"lifts": "#6118",
+				"detail": "cold load: endless skeleton, empty copy, content vanished with no error surface; stale refetch: endless skeleton, empty copy, content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/[project]/clusters",
+				"predicate": "B2",
+				"lifts": "#6122",
+				"detail": "the skeleton sets 2 blocks side by side and the page 0"
+			},
+			{
+				"route": "/[org]/[project]/environments",
+				"predicate": "B1",
+				"lifts": "#6120",
+				"detail": "with every read held, the region differs from its answered render in: content"
+			},
+			{
+				"route": "/[org]/[project]/environments",
+				"predicate": "B4",
+				"lifts": "#6120",
+				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/[project]/jobs",
+				"predicate": "B1",
+				"lifts": "#6121",
+				"detail": "with every read held, the region differs from its answered render in: empty copy, rows, content"
+			},
+			{
+				"route": "/[org]/[project]/jobs",
+				"predicate": "B3",
+				"lifts": "#6121",
+				"detail": "1 empty-copy region while every read was held, against 0 once answered"
+			},
+			{
+				"route": "/[org]/[project]/jobs",
+				"predicate": "B5",
+				"lifts": "#6121",
+				"detail": "one read failing alone blanked every region — the `jobs/page` read"
+			},
+			{
+				"route": "/[org]/[project]/settings/activity",
+				"predicate": "B1",
+				"lifts": "#6129",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			},
+			{
+				"route": "/[org]/[project]/usage",
+				"predicate": "B1",
+				"lifts": "#6127",
+				"detail": "with every read held, the region differs from its answered render in: skeleton"
+			},
+			{
+				"route": "/[org]/[project]/usage",
+				"predicate": "B4",
+				"lifts": "#6127",
+				"detail": "cold load: empty copy; stale refetch: empty copy"
+			},
+			{
+				"route": "/[org]/~/alerts",
+				"predicate": "B2",
+				"lifts": "#6125",
+				"detail": "the skeleton sets 2 blocks side by side and the page 1"
+			},
+			{
+				"route": "/[org]/~/clusters",
+				"predicate": "B2",
+				"lifts": "#6122",
+				"detail": "the skeleton sets 2 blocks side by side and the page 0"
+			},
+			{
+				"route": "/[org]/~/connectors",
+				"predicate": "B2",
+				"lifts": "#6124",
+				"detail": "the skeleton sets 2 blocks side by side and the page 3"
+			},
+			{
+				"route": "/[org]/~/jobs/[id]",
+				"predicate": "B1",
+				"lifts": "#6121",
+				"detail": "with every read held, the region differs from its answered render in: empty copy, content"
+			},
+			{
+				"route": "/[org]/~/jobs/[id]",
+				"predicate": "B2",
+				"lifts": "#6121",
+				"detail": "the skeleton's outline moves 0.024 against the page's (budget 0.02)"
+			},
+			{
+				"route": "/[org]/~/jobs/[id]",
+				"predicate": "B4",
+				"lifts": "#6121",
+				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/~/new",
+				"predicate": "B2",
+				"lifts": "#6131",
+				"detail": "the skeleton sets 0 blocks side by side and the page 3"
+			},
+			{
+				"route": "/[org]/~/runners",
+				"predicate": "B1",
+				"lifts": "#6123",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
+			},
+			{
+				"route": "/[org]/~/settings/activity",
+				"predicate": "B1",
+				"lifts": "#6129",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			},
+			{
+				"route": "/[org]/~/settings/billing",
+				"predicate": "B1",
+				"lifts": "#6127",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+			},
+			{
+				"route": "/[org]/~/settings/billing",
+				"predicate": "B4",
+				"lifts": "#6127",
+				"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/~/settings/billing/invoices",
+				"predicate": "B1",
+				"lifts": "#6127",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			},
+			{
+				"route": "/[org]/~/settings/classification",
+				"predicate": "B2",
+				"lifts": "#6129",
+				"detail": "the skeleton sets 1 block side by side and the page 2"
+			},
+			{
+				"route": "/[org]/~/settings/general",
+				"predicate": "B1",
+				"lifts": "#6128",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+			},
+			{
+				"route": "/[org]/~/settings/general",
+				"predicate": "B2",
+				"lifts": "#6128",
+				"detail": "the skeleton sets 0 blocks side by side and the page 2"
+			},
+			{
+				"route": "/[org]/~/settings/general",
+				"predicate": "B4",
+				"lifts": "#6128",
+				"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/~/settings/roles",
+				"predicate": "B2",
+				"lifts": "#6129",
+				"detail": "the skeleton sets 1 block side by side and the page 2"
+			},
+			{
+				"route": "/[org]/~/settings/teams",
+				"predicate": "B1",
+				"lifts": "#6129",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			},
+			{
+				"route": "/[org]/~/settings/teams",
+				"predicate": "B4",
+				"lifts": "#6129",
+				"detail": "cold load: empty copy, content vanished with no error surface; stale refetch: empty copy, content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/~/support/submit",
+				"predicate": "B2",
+				"lifts": "#6130",
+				"detail": "the skeleton sets 0 blocks side by side and the page 2"
+			},
+			{
+				"route": "/[org]/~/usage",
+				"predicate": "B1",
+				"lifts": "#6127",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+			},
+			{
+				"route": "/[org]/~/usage",
+				"predicate": "B4",
+				"lifts": "#6127",
+				"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+			},
+			{
+				"route": "/[org]/~/usage",
+				"predicate": "B5",
+				"lifts": "#6127",
+				"detail": "one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action"
 			}
-		},
-		"behaviourLedger": []
+		]
 	},
 	"predicates": {
 		"S1": {
@@ -477,36 +682,29 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4999",
-			"pass": 13,
-			"fail": 1,
+			"pass": 16,
+			"fail": 0,
 			"na": 24,
-			"notMeasured": 2,
+			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
-			"notMeasuredReasons": {
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1
-			},
-			"score": 0.9286
+			"notMeasuredReasons": {},
+			"score": 1
 		},
 		"F9": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 14,
+			"pass": 16,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 2,
+			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
-			"notMeasuredReasons": {
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1
-			},
+			"notMeasuredReasons": {},
 			"score": 1
 		},
 		"F10": {
@@ -516,14 +714,13 @@
 			"owner": null,
 			"pass": 15,
 			"fail": 0,
-			"na": 24,
-			"notMeasured": 1,
+			"na": 25,
+			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 24
+				"not-a-list-page": 24,
+				"no-search-field": 1
 			},
-			"notMeasuredReasons": {
-				"the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach": 1
-			},
+			"notMeasuredReasons": {},
 			"score": 1
 		},
 		"R1": {
@@ -646,75 +843,81 @@
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet": 40
+			"pass": 11,
+			"fail": 13,
+			"na": 4,
+			"notMeasured": 12,
+			"naReasons": {
+				"redirect-only": 4
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 12
+			},
+			"score": 0.4583
 		},
 		"B2": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet": 40
+			"pass": 25,
+			"fail": 11,
+			"na": 4,
+			"notMeasured": 0,
+			"naReasons": {
+				"redirect-only": 4
 			},
-			"score": null
+			"notMeasuredReasons": {},
+			"score": 0.6944
 		},
 		"B3": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet": 40
+			"pass": 22,
+			"fail": 1,
+			"na": 4,
+			"notMeasured": 13,
+			"naReasons": {
+				"redirect-only": 4
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 13
+			},
+			"score": 0.9565
 		},
 		"B4": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet": 40
+			"pass": 21,
+			"fail": 8,
+			"na": 4,
+			"notMeasured": 7,
+			"naReasons": {
+				"redirect-only": 4
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 7
+			},
+			"score": 0.7241
 		},
 		"B5": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet": 40
+			"pass": 34,
+			"fail": 2,
+			"na": 4,
+			"notMeasured": 0,
+			"naReasons": {
+				"redirect-only": 4
 			},
-			"score": null
+			"notMeasuredReasons": {},
+			"score": 0.9444
 		},
 		"B6": {
 			"family": "B",
@@ -775,19 +978,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 1,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 1,
+					"score": 0.25
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 0,
+				"pass": 27,
+				"fail": 3,
 				"na": 12,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9
 			}
 		},
 		{
@@ -844,16 +1047,16 @@
 					"of": 6,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 5,
+					"na": 5,
+					"notMeasured": 0,
 					"score": null
 				}
 			},
 			"overall": {
 				"pass": 15,
 				"fail": 0,
-				"na": 22,
-				"notMeasured": 6,
+				"na": 27,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -909,18 +1112,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 31,
 				"fail": 0,
 				"na": 11,
-				"notMeasured": 6,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -976,19 +1179,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 0,
+				"pass": 29,
+				"fail": 1,
 				"na": 10,
-				"notMeasured": 6,
-				"score": 1
+				"notMeasured": 3,
+				"score": 0.9667
 			}
 		},
 		{
@@ -1043,19 +1246,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 3,
+					"fail": 2,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.6
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 0,
+				"pass": 29,
+				"fail": 2,
 				"na": 11,
-				"notMeasured": 6,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9355
 			}
 		},
 		{
@@ -1110,19 +1313,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.4
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 38,
+				"fail": 3,
 				"na": 1,
-				"notMeasured": 6,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9268
 			}
 		},
 		{
@@ -1179,16 +1382,16 @@
 					"of": 6,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 5,
+					"na": 5,
+					"notMeasured": 0,
 					"score": null
 				}
 			},
 			"overall": {
 				"pass": 15,
 				"fail": 0,
-				"na": 22,
-				"notMeasured": 6,
+				"na": 27,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1244,18 +1447,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 2,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 37,
+				"pass": 39,
 				"fail": 0,
 				"na": 0,
-				"notMeasured": 6,
+				"notMeasured": 4,
 				"score": 1
 			}
 		},
@@ -1293,10 +1496,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -1311,19 +1514,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 0,
+				"pass": 41,
+				"fail": 1,
 				"na": 0,
-				"notMeasured": 8,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9762
 			}
 		},
 		{
@@ -1378,18 +1581,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 31,
 				"fail": 0,
 				"na": 11,
-				"notMeasured": 6,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1445,18 +1648,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 3,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 29,
 				"fail": 0,
 				"na": 11,
-				"notMeasured": 6,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1512,19 +1715,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 3,
+					"fail": 2,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.6
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 0,
+				"pass": 29,
+				"fail": 2,
 				"na": 11,
-				"notMeasured": 6,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9355
 			}
 		},
 		{
@@ -1579,19 +1782,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 1,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 0.5
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 2,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 3,
+				"score": 0.9737
 			}
 		},
 		{
@@ -1646,19 +1849,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 0,
+				"pass": 28,
+				"fail": 1,
 				"na": 12,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 2,
+				"score": 0.9655
 			}
 		},
 		{
@@ -1713,19 +1916,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 0,
+				"pass": 38,
+				"fail": 1,
 				"na": 3,
-				"notMeasured": 6,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9744
 			}
 		},
 		{
@@ -1762,11 +1965,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 1,
-					"score": 0.8889
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1780,19 +1983,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 3,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 1,
+				"pass": 38,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 6,
-				"score": 0.9714
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
@@ -1847,18 +2050,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 36,
+				"pass": 41,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -1914,19 +2117,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.4
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 1,
+				"pass": 28,
+				"fail": 4,
 				"na": 10,
-				"notMeasured": 6,
-				"score": 0.963
+				"notMeasured": 1,
+				"score": 0.875
 			}
 		},
 		{
@@ -1981,19 +2184,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 27,
+				"fail": 1,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 2,
+				"score": 0.9643
 			}
 		},
 		{
@@ -2048,19 +2251,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 2,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9756
 			}
 		},
 		{
@@ -2117,16 +2320,16 @@
 					"of": 6,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 5,
+					"na": 5,
+					"notMeasured": 0,
 					"score": null
 				}
 			},
 			"overall": {
 				"pass": 15,
 				"fail": 0,
-				"na": 23,
-				"notMeasured": 5,
+				"na": 28,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2182,18 +2385,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 2,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 36,
+				"pass": 38,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -2231,10 +2434,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2249,19 +2452,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 0,
+				"pass": 39,
+				"fail": 1,
 				"na": 3,
-				"notMeasured": 7,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.975
 			}
 		},
 		{
@@ -2316,19 +2519,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 3,
+					"fail": 2,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.6
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 28,
+				"fail": 2,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9333
 			}
 		},
 		{
@@ -2367,8 +2570,8 @@
 					"of": 10,
 					"pass": 9,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2383,19 +2586,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 0,
-				"na": 3,
-				"notMeasured": 6,
-				"score": 1
+				"pass": 38,
+				"fail": 1,
+				"na": 4,
+				"notMeasured": 0,
+				"score": 0.9744
 			}
 		},
 		{
@@ -2450,19 +2653,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 29,
+				"fail": 1,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9667
 			}
 		},
 		{
@@ -2517,19 +2720,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.4
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 27,
+				"fail": 3,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9
 			}
 		},
 		{
@@ -2584,18 +2787,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 2,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 35,
+				"pass": 37,
 				"fail": 0,
 				"na": 3,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -2651,19 +2854,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 1,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 0.5
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 2,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 3,
+				"score": 0.9737
 			}
 		},
 		{
@@ -2718,18 +2921,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 2,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 37,
+				"pass": 39,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -2785,19 +2988,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 3,
+					"fail": 2,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.6
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 39,
+				"fail": 2,
 				"na": 2,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9512
 			}
 		},
 		{
@@ -2852,18 +3055,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 30,
 				"fail": 0,
 				"na": 13,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2919,18 +3122,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 30,
 				"fail": 0,
 				"na": 13,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2986,18 +3189,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 30,
 				"fail": 0,
 				"na": 13,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -3053,18 +3256,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 2,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 28,
 				"fail": 0,
 				"na": 11,
-				"notMeasured": 6,
+				"notMeasured": 4,
 				"score": 1
 			}
 		},
@@ -3120,18 +3323,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 36,
+				"pass": 41,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -3187,19 +3390,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 4,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 29,
+				"fail": 1,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9667
 			}
 		},
 		{
@@ -3254,19 +3457,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 0,
+					"pass": 2,
+					"fail": 3,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 0.4
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 0,
+				"pass": 27,
+				"fail": 3,
 				"na": 13,
-				"notMeasured": 5,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9
 			}
 		},
 		{
@@ -3321,18 +3524,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
+					"pass": 5,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 5,
-					"score": null
+					"notMeasured": 0,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 28,
 				"fail": 0,
 				"na": 15,
-				"notMeasured": 5,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -3390,16 +3593,16 @@
 					"of": 6,
 					"pass": 0,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 5,
+					"na": 5,
+					"notMeasured": 0,
 					"score": null
 				}
 			},
 			"overall": {
 				"pass": 16,
 				"fail": 0,
-				"na": 22,
-				"notMeasured": 5,
+				"na": 27,
+				"notMeasured": 0,
 				"score": 1
 			}
 		}
@@ -3408,32 +3611,31 @@
 		{
 			"route": "/[org]",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
 		},
 		{
 			"route": "/[org]",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 3 blocks side by side and the page 2"
 		},
 		{
 			"route": "/[org]",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: endless skeleton, empty copy, content vanished with no error surface; stale refetch: endless skeleton, empty copy, content vanished with no error surface"
 		},
 		{
 			"route": "/[org]",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]",
@@ -3641,32 +3843,32 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3885,32 +4087,27 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4119,31 +4316,29 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 2 blocks side by side and the page 0"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4350,32 +4545,29 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: content"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4583,32 +4775,30 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: empty copy, rows, content"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "1 empty-copy region while every read was held, against 0 once answered"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "one read failing alone blanked every region — the `jobs/page` read"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4807,32 +4997,32 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -5052,31 +5242,29 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5274,32 +5462,28 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5345,14 +5529,12 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5499,32 +5681,27 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5733,31 +5910,28 @@
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5965,32 +6139,29 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton"
 		},
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: empty copy; stale refetch: empty copy"
 		},
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -6199,31 +6370,30 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 2 blocks side by side and the page 1"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6423,31 +6593,29 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 2 blocks side by side and the page 0"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6655,32 +6823,28 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 2 blocks side by side and the page 3"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6881,31 +7045,28 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6951,8 +7112,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "Reset left a filter param in the URL — 1 later step not reached"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7105,32 +7265,27 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7329,32 +7484,30 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: empty copy, content"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton's outline moves 0.024 against the page's (budget 0.02)"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -7563,31 +7716,29 @@
 			"route": "/[org]/~/new",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 0 blocks side by side and the page 3"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -7796,32 +7947,28 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8020,32 +8167,32 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -8265,31 +8412,29 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -8488,32 +8633,28 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8559,14 +8700,12 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8715,32 +8854,29 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -8949,32 +9085,28 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -8984,8 +9116,8 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach"
+			"verdict": "N/A",
+			"reason": "no-search-field"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -9175,32 +9307,28 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 1 block side by side and the page 2"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -9409,32 +9537,30 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 0 blocks side by side and the page 2"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -9644,31 +9770,29 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -9869,31 +9993,30 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 1 block side by side and the page 2"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10093,31 +10216,29 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10315,32 +10436,29 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: empty copy, content vanished with no error surface; stale refetch: empty copy, content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -10539,32 +10657,27 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -10773,32 +10886,27 @@
 		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/abuse",
@@ -11007,32 +11115,27 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -11242,31 +11345,29 @@
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -11474,32 +11575,27 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -11698,32 +11794,28 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "the skeleton sets 0 blocks side by side and the page 2"
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -11932,32 +12024,30 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 		},
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
 		},
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "FAIL",
+			"detail": "one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -12166,32 +12256,27 @@
 		{
 			"route": "/cli/login",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/cli/login",
@@ -12402,32 +12487,32 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` section has never been imported (#6116): family B's instrument landed with #6116; its leg has not been imported yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
