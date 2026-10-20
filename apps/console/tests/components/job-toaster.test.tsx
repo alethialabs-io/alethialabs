@@ -9,7 +9,7 @@ import { makeJob } from "../fixtures/jobs";
 
 // --- mocks ------------------------------------------------------------------
 
-const { toast, pushMock, router, useJobsQuery } = vi.hoisted(() => {
+const { toast, pushMock, router, useRecentJobsQuery } = vi.hoisted(() => {
 	const toast = Object.assign(vi.fn(), {
 		loading: vi.fn(),
 		success: vi.fn(),
@@ -18,7 +18,7 @@ const { toast, pushMock, router, useJobsQuery } = vi.hoisted(() => {
 		dismiss: vi.fn(),
 	});
 	const pushMock = vi.fn();
-	return { toast, pushMock, router: { push: pushMock }, useJobsQuery: vi.fn() };
+	return { toast, pushMock, router: { push: pushMock }, useRecentJobsQuery: vi.fn() };
 });
 vi.mock("sonner", () => ({ toast }));
 vi.mock("next/navigation", () => ({
@@ -26,19 +26,19 @@ vi.mock("next/navigation", () => ({
 	useRouter: () => router,
 }));
 vi.mock("@/lib/query/use-jobs-query", () => ({
-	useJobsQuery: () => useJobsQuery(),
+	useRecentJobsQuery: () => useRecentJobsQuery(),
 }));
 
 // --- helpers ----------------------------------------------------------------
 
 /** Renders the driver against an initial snapshot; returns a `rerender` keyed to the toaster. */
 function mount(initial: JobWithMeta[] | undefined) {
-	useJobsQuery.mockReturnValue({ data: initial });
+	useRecentJobsQuery.mockReturnValue({ data: initial });
 	const utils = render(<JobToaster />);
 	return {
 		/** Feeds the next jobs snapshot and re-runs the driver effect. */
 		snapshot(next: JobWithMeta[] | undefined) {
-			useJobsQuery.mockReturnValue({ data: next });
+			useRecentJobsQuery.mockReturnValue({ data: next });
 			utils.rerender(<JobToaster />);
 		},
 	};

@@ -11,18 +11,18 @@ import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
-import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { ShellJob } from "@/lib/rpc/procedures/workspace";
 import { formatDuration, formatRelative } from "@repo/format";
 import { CARD_EMPTY } from "@/components/overview/card-empty";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { globalHref } from "@/lib/routing";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 
 const MAX_ROWS = 5;
 
 /** Renders a job's duration: elapsed for live jobs, total for finished, "—" otherwise. */
-function jobDuration(job: JobWithMeta): string {
+function jobDuration(job: ShellJob): string {
 	if (!job.created_at) return "—";
 	const start = new Date(job.created_at).getTime();
 	if (!job.completed_at) {
@@ -36,7 +36,7 @@ function jobDuration(job: JobWithMeta): string {
 
 /** Latest provisioning jobs (last few) for the org. */
 export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
-	const { data: jobs = [], isPending, isError, refetch } = useJobsQuery();
+	const { data: jobs = [], isPending, isError, refetch } = useRecentJobsQuery();
 	// The shell reads the same jobs query and may have fetched it by the time this card hydrates;
 	// render what the server rendered until hydration is over (see `useHydrated`, #5786).
 	const hydrated = useHydrated();
@@ -49,7 +49,7 @@ export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
 			<div className="flex min-h-[50px] items-center gap-2 border-b px-4 py-2.5">
 				<span className="font-display text-sm font-semibold">Recent jobs</span>
 				{/* Describes what the card SHOWS. It said "last 24h", but there is no time window
-				    anywhere in this component or in useJobsQuery — it renders the newest MAX_ROWS
+				    anywhere in this component or in useRecentJobsQuery — it renders the newest MAX_ROWS
 				    jobs whatever their age, so an org whose last deploy was a month ago read as
 				    having failed five jobs today. A window would be worse than the label: it would
 				    empty the card for exactly the orgs with the least to look at. */}

@@ -10,8 +10,8 @@
 // rendered on the client, never hydrated, so no mismatch inside them could be reported. Once they
 // hydrated, three read a cache the shell fills after ITS hydration:
 //
-//   · the overview's Recent jobs card — `useJobsQuery`, also read by the app shell;
-//   · the My cases list — `qk.supportCases("all")`, also read by the notifications bell;
+//   · the overview's Recent jobs card — `useRecentJobsQuery`, also read by the app shell;
+//   · the My cases list — `qk.supportCases("all")`, read by the notifications bell until #6114;
 //   · the project Activity caption — `useProjectsQuery`, also read by the project switcher.
 //
 // On the server none of those had data, so each rendered its pending state. In the browser the
@@ -35,6 +35,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaseListItem } from "@/lib/queries/support";
 import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
 import { makeJob } from "../fixtures/jobs";
 
 vi.mock("next/navigation", () => ({
@@ -133,7 +134,7 @@ afterEach(() => {
 describe("a page reading a query the shell also reads hydrates cleanly (#5786)", () => {
 	it("the overview's Recent jobs card", async () => {
 		const browser = client((qc) =>
-			qc.setQueryData(qk.jobs("acme"), [makeJob({ id: "j1", project_name: "payments", status: "SUCCESS" })]),
+			qc.setQueryData(orpc.workspace.recentJobs.queryKey(), [makeJob({ id: "j1", project_name: "payments", status: "SUCCESS" })]),
 		);
 		const { serverHtml, recoverable } = await serverThenHydrate(<RecentJobsCard orgSlug="acme" />, browser);
 

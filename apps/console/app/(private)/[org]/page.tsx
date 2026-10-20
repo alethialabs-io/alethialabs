@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
-import {
-	getProjects,
-	queryProjects,
-	type ProjectListQuery,
-} from "@/app/server/actions/projects";
+import { queryProjects, type ProjectListQuery } from "@/app/server/actions/projects";
 import { getConnectedCloudProviders } from "@/app/server/actions/connectors";
 import { getQueryClient } from "@/lib/query/client";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
-import { qk } from "@/lib/query/keys";
 import type { ViewMode } from "@repo/ui/view-toggle";
 import { OverviewClient, type OverviewState } from "./overview-client";
 
@@ -39,8 +34,11 @@ function toList(value: string | undefined): string[] {
 /**
  * Org root overview. Reads the grid's search/filter/sort state from the URL, resolves the matching
  * projects (searched/filtered/sorted server-side) plus the full facet universe, and passes them to
- * the client. Also keeps the shared unfiltered projects cache (`qk.projects`) warm for the project
- * switcher / command palette / breadcrumbs, and seeds classification chips for the visible rows.
+ * the client.
+ *
+ * The unfiltered project list (for the total count) is the SAME `workspace.projects` read the
+ * `[org]` layout prefetches for the shell, asked of the same per-request QueryClient, so it is one
+ * read, not two; the layout already hands it to the client, so this page hydrates nothing itself.
  */
 export default async function OrgOverviewRoute({
 	params,
@@ -65,22 +63,18 @@ export default async function OrgOverviewRoute({
 	const queryClient = getQueryClient();
 	const [{ projects, facets }, allProjects, connectedProviders] = await Promise.all([
 		queryProjects({ q: state.q, clouds: state.clouds, repos: state.repos, sort }),
-		getProjects(),
+		queryClient.fetchQuery(serverOrpc().workspace.projects.queryOptions()),
 		getConnectedCloudProviders(),
 	]);
-	// Keep the shared (unfiltered) projects cache warm for the switcher / palette / breadcrumbs.
-	queryClient.setQueryData(qk.projects(org), allProjects);
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
-			<OverviewClient
-				orgSlug={org}
-				projects={projects}
-				facets={facets}
-				state={state}
-				totalCount={allProjects.length}
-				connectedProviders={connectedProviders}
-			/>
-		</HydrationBoundary>
+		<OverviewClient
+			orgSlug={org}
+			projects={projects}
+			facets={facets}
+			state={state}
+			totalCount={allProjects.length}
+			connectedProviders={connectedProviders}
+		/>
 	);
 }
