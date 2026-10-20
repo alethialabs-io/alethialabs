@@ -752,7 +752,7 @@ export const useCanvasStore = create<CanvasStore>()(
 			reseed: (graph, seed) => {
 				const cur = get();
 				const sameScope = cur.seed?.scope === seed.scope;
-				// The common case — a server re-render (revalidate, a sibling mutation, an env poll)
+				// The common case — a server re-render (revalidate, a sibling mutation, a status refetch)
 				// handed us the design we were already seeded from. Before this existed the effect
 				// re-ran `setGraph` on every prop identity change, which closed the open card and
 				// discarded every unsaved edit; the maintainer's words were "they don't hold their
@@ -902,9 +902,9 @@ export const useCanvasStore = create<CanvasStore>()(
 			setIacNodes: (groups) => {
 				const prev = get().nodes;
 				// Where each external card already sits. This is fed by the environment-status query,
-				// which POLLS (every 30s, every 4s mid-deploy) — so without remembering positions, a
-				// card the user dragged somewhere sensible would snap back to the default grid on the
-				// next poll, over and over. The card's CONTENT still refreshes; only its place is kept.
+				// which refetches on every environment, job or add-on hint (it used to poll) — so without
+				// remembering positions, a card the user dragged somewhere sensible would snap back to the
+				// default grid on the next refetch, over and over. The card's CONTENT still refreshes; only its place is kept.
 				const placed = new Map(
 					prev
 						.filter((n) => n.data.kind === "external")

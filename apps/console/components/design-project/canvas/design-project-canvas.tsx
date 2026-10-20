@@ -70,9 +70,7 @@ import { NodePalette } from "./node-palette";
 import { BoardGuide, useDesignIsEmpty } from "./board-guide";
 import { CanvasSkeleton } from "./canvas-skeleton";
 import { EnvironmentStatusNotice } from "./environment-status-notice";
-import {
-	EnvironmentStatusScope,
-} from "./environment-status-scope";
+import { EnvironmentStatusScope } from "./environment-status-scope";
 
 interface DesignProjectCanvasProps {
 	cloudIdentities: CloudIdentityOption[];
@@ -186,8 +184,8 @@ function CanvasInner({
 	// skeleton over itself rather than an empty canvas (F009).
 	const seeded = seed?.scope === draftScope(projectId, environmentId);
 	const designEmpty = useDesignIsEmpty();
-	// The environment's server truth (provided by the project shell) — it now also carries the BYO
-	// IaC module and the architecture derived from it.
+	// The environment's server truth (read once by `EnvironmentStatusScope`, above) — it also carries
+	// the BYO IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
 	// A deep link can name the card to open (`?card=activity|env-settings|node:<id>|addon:<id>`)
 	// — the Jobs page and the assistant link here. Both ordering hazards it has to survive are

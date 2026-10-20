@@ -98,19 +98,19 @@ export default async function ProjectArchitecturePage({
 	return (
 		// The project shell (layout) owns the full-bleed height + the docked panel; the board fills it.
 		<HydrationBoundary state={dehydrate(queryClient)}>
-		<div className="h-full overflow-hidden">
-			<DesignProjectWorkbench
-				cloudIdentities={identities}
-				connectors={connectors}
-				sourceProject={sourceProject}
-				projectId={projectId}
-				environmentId={environmentId ?? undefined}
-				dockInShell
-				byoHelmEnabled={byoHelmEnabled}
-				byoDescribeEnabled={byoDescribeEnabled}
-				byoIacEnabled={byoIacEnabled}
-			/>
-		</div>
+			<div className="h-full overflow-hidden">
+				<DesignProjectWorkbench
+					cloudIdentities={identities}
+					connectors={connectors}
+					sourceProject={sourceProject}
+					projectId={projectId}
+					environmentId={environmentId ?? undefined}
+					dockInShell
+					byoHelmEnabled={byoHelmEnabled}
+					byoDescribeEnabled={byoDescribeEnabled}
+					byoIacEnabled={byoIacEnabled}
+				/>
+			</div>
 		</HydrationBoundary>
 	);
 }
