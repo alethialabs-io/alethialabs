@@ -539,6 +539,11 @@ fails nothing. So:
 - with **two or more**, a failure must also leave text outside an error surface: its siblings were fed
   by reads that answered.
 
+"The route's `ErrorState`" is read from its class signature, which is unambiguous because
+`tests/components/errors/error-state-placement.test.tsx` holds `ErrorState` to route boundaries — with
+one recorded exception, `~/jobs/jobs-client.tsx` (#6121), whose in-region `ErrorState` B5 would read as
+the route's. That page has no read of its own for B5 to fail today, so the exception costs no verdict.
+
 The first cut PASSED any route with at most one read of its own — 25 of 34 PASSes, 17 of them on
 routes nothing was failed on (#6180's review). A page with more than eight reads of its own is NOT
 MEASURED with the count. The shell's own containment is NOT measured by B5 — a stated gap, owned by #6114.
@@ -551,8 +556,11 @@ that vanishes with no error; a skeleton that never resolves; a failure that brin
 page, and one that blanks both regions; a skeleton with the wrong columns, one whose frame moves, and
 one whose height alone is wrong. A shorter open-ended list, a `RegionError` with no `role`, and a page
 with no reads (NOT MEASURED, never PASS) are its other known answers. A predicate the control names is
-withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS all five,
-and every predicate must have produced a PASS or a FAIL on at least ten routes.
+withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS B1, B3, B4
+and B5, and must be MEASURED on B2, which it FAILS: its skeleton has no PageToolbar row and a one-row
+filter bar, so the table frame paints about 100px above where the page puts it. That is debt (#6121),
+not a calibration gap — the first, outline-only B2 could not see it. Every predicate must also have
+produced a PASS or a FAIL on at least ten routes.
 
 **A scored cell may not quietly stop being scored.** That floor of ten cannot see a single cell going
 from PASS to NOT MEASURED, so `--import-live` compares the new records with the committed ones cell by
