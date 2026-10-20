@@ -147,8 +147,8 @@ export function useActiveWorkspaceOrg(): WorkspaceOrg | null {
  * Mounted once, by the app shell. Before #6114 the shell AND the org switcher each called
  * `fetchWorkspace()` on mount: two server-action POSTs for data the layout could have sent.
  *
- * A FAILED query is a failed load (#5895): when the layout's prefetch failed and the client's own
- * query errors too, the store says `failed`, so a surface waiting on it shows an error and a Retry
+ * A FAILED query with no data is a failed load (#5895): when the layout's prefetch failed and the
+ * client's own query errors too, the store says `failed`, so a surface waiting on it shows an error and a Retry
  * (`fetchWorkspace()`, which refetches this query) instead of a skeleton that never ends.
  */
 export function useWorkspaceStoreSync(): void {
@@ -156,9 +156,11 @@ export function useWorkspaceStoreSync(): void {
 	useEffect(() => {
 		if (data) useWorkspaceStore.getState().applyWorkspace(data);
 	}, [data]);
+	// Only a query with NOTHING to show is a failed load. A background refetch that fails keeps its
+	// last good data, and the store keeps serving it as loaded.
 	useEffect(() => {
-		if (isError) useWorkspaceStore.getState().markFailed();
-	}, [isError]);
+		if (isError && !data) useWorkspaceStore.getState().markFailed();
+	}, [isError, data]);
 }
 
 /** Where the workspace load stands — `failed` is the one state a surface must not wait out. */

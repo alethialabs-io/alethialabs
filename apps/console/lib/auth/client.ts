@@ -40,6 +40,12 @@ export interface LiveSessionRead {
 	data: { user: SessionUserLike } | null;
 	isPending: boolean;
 	error: unknown;
+	/**
+	 * True once the live session has answered successfully at least once in this page. From then on
+	 * `data` is that answer — better-auth keeps the last good data through a later failed or
+	 * in-flight fetch — so it stays the viewer even while `error` or `isPending` is set.
+	 */
+	settled: boolean;
 }
 
 /** A nanostores atom, as far as this module uses one. */
@@ -64,6 +70,16 @@ function isAtomLike(value: unknown): value is AtomLike {
 const INERT_ATOM: AtomLike = { get: () => null, listen: () => () => {} };
 
 /**
+ * Whether better-auth's store still has the two atoms this module follows, as atoms. If a
+ * better-auth upgrade renamed them, `atom()` would answer the inert stand-in and the viewer would
+ * silently stop following session changes — `tests/lib/auth/live-session-atoms.test.ts` asserts
+ * this against the real client so that cannot happen quietly.
+ */
+export function sessionAtomsReachable(): boolean {
+	return atom("session") !== INERT_ATOM && atom("$sessionSignal") !== INERT_ATOM;
+}
+
+/**
  * THE TYPE BOUNDARY. better-auth types its store's atoms as `WritableAtom<any>`, so nothing about
  * them is checked at compile time. They enter this module as `unknown`, are narrowed to `AtomLike`
  * here, and every VALUE they hold is parsed by `readLiveSession` below — no `any` leaves this file.
@@ -86,7 +102,10 @@ function readUser(value: unknown): SessionUserLike | null {
 }
 
 /** The pending answer: before the first fetch, and for a value that is not a session state. */
-const PENDING: LiveSessionRead = { data: null, isPending: true, error: null };
+const PENDING: LiveSessionRead = { data: null, isPending: true, error: null, settled: false };
+
+/** Whether the live session has answered successfully at least once (see `LiveSessionRead`). */
+let settledOnce = false;
 
 /** better-auth's session-atom value, parsed into what `useViewer()` reads. */
 function readLiveSession(value: unknown): LiveSessionRead {
@@ -95,7 +114,8 @@ function readLiveSession(value: unknown): LiveSessionRead {
 	const error = "error" in value ? value.error : null;
 	const data = "data" in value ? value.data : null;
 	const user = typeof data === "object" && data !== null && "user" in data ? readUser(data.user) : null;
-	return { data: user ? { user } : null, isPending, error: error ?? null };
+	if (!isPending && (error ?? null) === null) settledOnce = true;
+	return { data: user ? { user } : null, isPending, error: error ?? null, settled: settledOnce };
 }
 
 const sessionAtom = atom("session");

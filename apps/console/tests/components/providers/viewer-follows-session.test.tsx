@@ -95,6 +95,16 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
+/** Another person, as better-auth's live session carries them. */
+const GRACE = { id: "u-grace", name: "Grace Hopper", email: "grace@acme.test", createdAt: new Date(0) };
+
+/** Wakes a seeded viewer the way another tab's session change does. */
+function broadcast(): void {
+	act(() => {
+		window.dispatchEvent(new StorageEvent("storage", { key: "better-auth.message" }));
+	});
+}
+
 describe("a seeded viewer follows session changes (#6114)", () => {
 	it("renders the seed without mounting the session atom (no request on load)", async () => {
 		const { session } = await load();
@@ -123,6 +133,35 @@ describe("a seeded viewer follows session changes (#6114)", () => {
 		expect(session.listeners()).toBeGreaterThan(0);
 		act(() => session.set(NO_SESSION));
 		expect(screen.getByText("signed out")).toBeInTheDocument();
+	});
+
+	it("keeps the LIVE answer through a later failed refetch — never the seed again", async () => {
+		const { session } = await load();
+		broadcast();
+		act(() => session.set({ data: { user: GRACE }, isPending: false, error: null }));
+		expect(screen.getByText("Grace Hopper")).toBeInTheDocument();
+		// better-auth keeps the last good data and sets `error` when a refetch fails (a 5xx, a drop).
+		act(() =>
+			session.set({ data: { user: GRACE }, isPending: false, error: { status: 502, message: "Bad Gateway" } }),
+		);
+		expect(screen.getByText("Grace Hopper")).toBeInTheDocument();
+		expect(screen.queryByText("Ada Lovelace")).toBeNull();
+	});
+
+	it("keeps a settled signed-out answer through a later failed refetch", async () => {
+		const { session } = await load();
+		broadcast();
+		act(() => session.set(NO_SESSION));
+		expect(screen.getByText("signed out")).toBeInTheDocument();
+		act(() => session.set({ data: null, isPending: false, error: new Error("network down") }));
+		expect(screen.getByText("signed out")).toBeInTheDocument();
+	});
+
+	it("before the live session has ever answered, a failed fetch keeps the seed", async () => {
+		const { session } = await load();
+		broadcast();
+		act(() => session.set({ data: null, isPending: false, error: new Error("network down") }));
+		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
 	});
 
 	it("an unrelated storage key does not wake it", async () => {

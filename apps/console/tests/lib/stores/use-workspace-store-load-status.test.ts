@@ -10,7 +10,9 @@
 // a second call is the retry, and the entitlement gates still fail closed. Real store, real hook;
 // only the workspace read (`rpcClient.workspace.context`) is mocked.
 
-import { renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceContext } from "@/lib/rpc/procedures/workspace";
 
@@ -28,7 +30,12 @@ vi.mock("@/app/server/actions/workspace", () => ({ setActiveOrganization: vi.fn(
 
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { orpc } from "@/lib/rpc/client";
+import {
+	useWorkspaceContextQuery,
+	useWorkspaceStore,
+	useWorkspaceStoreSync,
+} from "@/lib/stores/use-workspace-store";
 
 /** A workspace context as the read router answers it, with the BYO-runners entitlement held. */
 function context(): WorkspaceContext {
@@ -126,5 +133,49 @@ describe("useWorkspaceStore load status (#5895)", () => {
 		first.reject(new Error("timed out"));
 		await a;
 		expect(useWorkspaceStore.getState().loadStatus).toBe("loaded");
+	});
+});
+
+describe("useWorkspaceStoreSync — the shell's store sync (#6114)", () => {
+	/** Mounts the sync hook under `client`; `result` is the query the hook reads, as it renders. */
+	function mountSync(client: QueryClient) {
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client }, children);
+		return renderHook(
+			() => {
+				useWorkspaceStoreSync();
+				return useWorkspaceContextQuery();
+			},
+			{ wrapper },
+		);
+	}
+
+	it("a background refetch that fails keeps a loaded store loaded, and a later success keeps it so", async () => {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+		});
+		const key = orpc.workspace.context.queryKey();
+		client.setQueryData(key, context()); // what the layout hydrated
+		const { result } = mountSync(client);
+		await waitFor(() => expect(useWorkspaceStore.getState().loadStatus).toBe("loaded"));
+
+		readContext.mockRejectedValueOnce(new Error("network down"));
+		await act(() => client.refetchQueries({ queryKey: key }));
+		// The hook has RENDERED the failed refetch (with its last good data) — and the store held.
+		await waitFor(() => expect(result.current.isError).toBe(true));
+		expect(result.current.data).toBeDefined();
+		expect(useWorkspaceStore.getState().loadStatus).toBe("loaded");
+
+		readContext.mockResolvedValueOnce(context());
+		await act(() => client.refetchQueries({ queryKey: key }));
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(useWorkspaceStore.getState().loadStatus).toBe("loaded");
+	});
+
+	it("a query with nothing to show that fails is a failed load", async () => {
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		readContext.mockRejectedValueOnce(new Error("network down"));
+		mountSync(client);
+		await waitFor(() => expect(useWorkspaceStore.getState().loadStatus).toBe("failed"));
 	});
 });

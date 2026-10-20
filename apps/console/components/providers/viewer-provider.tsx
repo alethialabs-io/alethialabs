@@ -77,7 +77,7 @@ function useHydrated(): boolean {
 }
 
 /** The live session's answer while it is not being followed — the same as before its first fetch. */
-const NOT_FOLLOWED: LiveSessionRead = { data: null, isPending: true, error: null };
+const NOT_FOLLOWED: LiveSessionRead = { data: null, isPending: true, error: null, settled: false };
 
 /** Unsubscribing from nothing. */
 function noop(): void {}
@@ -116,8 +116,9 @@ function getSessionChanged(): boolean {
  * on each load for an answer the server had just sent. It starts following the live session as
  * soon as the session MAY have changed: a client auth call in this tab, a session change in
  * another tab, or this tab coming back into view (`liveSession.onPossibleChange`). Once following
- * it stays following. Until the live answer settles it keeps showing the seed, so the
- * UI does not blink to "signed out"; a settled answer with no session, or a 401, is signed out.
+ * it stays following. Until the live session first answers it keeps showing the seed, so the UI
+ * does not blink to "signed out"; after that the last live answer is the viewer, through any later
+ * failed refetch. A live answer with no session, or a 401, is signed out.
  *
  * UNSEEDED (no `ViewerProvider` above: a public route, a test): follows the live session, and the
  * pre-hydration answer is `{ viewer: null, isPending: true }` on both sides, which is equally
@@ -149,10 +150,16 @@ export function useViewer(): ViewerState {
 		"status" in live.error &&
 		live.error.status === 401;
 	if (hydrated && unauthorized) return { viewer: null, isPending: false };
-	const liveUnsettled = live.isPending || live.error != null;
-	if (!hydrated || liveUnsettled) {
+	if (!hydrated) {
 		if (seed) return { viewer: seed.viewer, isPending: false };
-		return { viewer: null, isPending: !hydrated || live.isPending };
+		return { viewer: null, isPending: true };
 	}
+	// Once the live session has answered, its last answer IS the viewer — a later failed or
+	// in-flight fetch (a 5xx, a dropped connection) keeps it, including a settled "nobody". The seed
+	// is only the answer BEFORE the first live answer; falling back to it later would show an
+	// identity the live session has already moved away from.
+	if (live.settled) return { viewer: liveViewer, isPending: false };
+	if (seed) return { viewer: seed.viewer, isPending: false };
+	if (live.isPending || live.error != null) return { viewer: null, isPending: live.isPending };
 	return { viewer: liveViewer, isPending: false };
 }

@@ -18,7 +18,7 @@ import type { Viewer } from "@/lib/auth/viewer";
 /** The spies behind `liveSession`, and the session-changed listener the provider registered. */
 const h = vi.hoisted(() => ({
 	subscribe: vi.fn(() => () => {}),
-	get: vi.fn((): LiveSessionRead => ({ data: null, isPending: true, error: null })),
+	get: vi.fn((): LiveSessionRead => ({ data: null, isPending: true, error: null, settled: false })),
 	changed: new Array<() => void>(),
 }));
 vi.mock("@/lib/auth/client", () => ({
@@ -84,7 +84,7 @@ describe("useViewer and the live session (F003)", () => {
 				<Name />
 			</ViewerProvider>,
 		);
-		h.get.mockReturnValue({ data: { user: { ...LIVE_USER, name: "Ada King" } }, isPending: false, error: null });
+		h.get.mockReturnValue({ data: { user: { ...LIVE_USER, name: "Ada King" } }, isPending: false, error: null, settled: true });
 		act(() => {
 			for (const notify of h.changed) notify();
 		});
@@ -94,7 +94,7 @@ describe("useViewer and the live session (F003)", () => {
 
 	it("UNSEEDED: follows the live session from the start", async () => {
 		const { useViewer } = await load();
-		h.get.mockReturnValue({ data: { user: LIVE_USER }, isPending: false, error: null });
+		h.get.mockReturnValue({ data: { user: LIVE_USER }, isPending: false, error: null, settled: true });
 		/** Prints the viewer's name. */
 		function Name() {
 			return <span>{useViewer().viewer?.name ?? "nobody"}</span>;
