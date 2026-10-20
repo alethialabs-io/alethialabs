@@ -169,10 +169,16 @@ export interface RegionSnapshot {
 	skeletons: number;
 	/** `main`, or anything in it, says `aria-busy="true"`. */
 	busy: boolean;
-	/** `@repo/ui/empty` regions plus hand-written empty copy ("No results.", "No jobs yet"). */
+	/**
+	 * Empty states, recognised by their MARKUP, never by their wording: `@repo/ui/empty`
+	 * (`data-slot="empty"`) and `DataTable`'s empty row — the one body row whose single cell spans
+	 * the table. A phrase matcher read labels such as "No limit" as empty copy.
+	 */
 	empty: number;
-	/** Outermost error surfaces: `role="alert"`, or the shared `ErrorState`. */
+	/** Outermost error surfaces: `role="alert"`, `RegionError`, or the shared `ErrorState`. */
 	errors: number;
+	/** The ROUTE boundary's `ErrorState` is showing — the whole page failed, not a region of it. */
+	routeError: boolean;
 	/** Table body rows, `role="row"` rows that are not header rows, and list items. */
 	rows: number;
 	/** Visible elements carrying text of their own, outside any skeleton. */
@@ -190,17 +196,14 @@ export interface RegionSnapshot {
 	texts: string[];
 }
 
-/** Copy that says a list or region is empty, matched against an element's OWN text. */
-const EMPTY_COPY = String.raw`^(?:no results|no [a-z][a-z0-9 '’,/-]{0,48}|nothing (?:here|to show)(?: yet)?)\.?$`;
-
 /** Relative times — "3 minutes ago" on one load is "4 minutes ago" on the next, and is not data. */
 const RELATIVE_TIME = String.raw`\b(?:about |almost |over |less than )?(?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?(?: ago)?\b|\bjust now\b|\bin (?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?\b`;
 
 /** Read `main` once. Never waits — the caller decides when the page has had its chance. */
 export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 	return page.evaluate(
-		({ arms, emptyCopy, relativeTime }) => {
-			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
+		({ arms, relativeTime }) => {
+			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, routeError: false, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
 			const main = document.querySelector("main");
 			if (main === null) return zero;
 			const shown = (el: Element): boolean => {
@@ -229,16 +232,16 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 					.join(" ")
 					.replace(/\s+/g, " ")
 					.trim();
-			const emptyRe = new RegExp(emptyCopy, "i");
 			const timeRe = new RegExp(relativeTime, "gi");
 			// `RegionError` is built on the empty-state primitives; inside an error surface nothing is empty copy.
 			const emptySlots = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el)).length;
-			const emptyText = all.filter(
-				(el) => el.closest('[data-slot="empty"]') === null && !inError(el) && emptyRe.test(ownText(el)),
-			).length;
+			// `DataTable`'s empty row: a body row with ONE cell spanning the table (`colSpan` ≥ 2).
+			const isEmptyRow = (el: Element): boolean =>
+				el instanceof HTMLTableRowElement && el.closest("tbody") !== null && el.cells.length === 1 && el.cells[0].colSpan >= 2;
+			const emptyRows = all.filter((el) => isEmptyRow(el) && !inError(el)).length;
 			const rows = all.filter((el) => {
 				if (inSkeleton(el)) return false;
-				if (el.tagName === "TR") return el.closest("tbody") !== null;
+				if (el.tagName === "TR") return el.closest("tbody") !== null && !isEmptyRow(el);
 				if (el.getAttribute("role") === "row") return el.querySelector('[role="columnheader"]') === null;
 				return el.tagName === "LI" || el.getAttribute("role") === "listitem";
 			}).length;
@@ -248,8 +251,9 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				hasMain: true,
 				skeletons: all.filter((el) => el.getAttribute("data-slot") === "skeleton").length,
 				busy: main.getAttribute("aria-busy") === "true" || main.querySelector('[aria-busy="true"]') !== null,
-				empty: emptySlots + emptyText,
+				empty: emptySlots + emptyRows,
 				errors: errorRoots.length,
+				routeError: all.some((el) => arms.some((tokens) => tokens.every((t) => el.classList.contains(t)))),
 				rows,
 				leaves: leafEls.length,
 				contentLeaves: leafEls.filter((el) => {
@@ -260,7 +264,7 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				texts: leafEls.slice(0, 400).map((el) => mask(ownText(el))),
 			};
 		},
-		{ arms: errorStateSignature(), emptyCopy: EMPTY_COPY, relativeTime: RELATIVE_TIME },
+		{ arms: errorStateSignature(), relativeTime: RELATIVE_TIME },
 	);
 }
 
@@ -338,8 +342,18 @@ export interface HeldLoad {
 	held: string[];
 }
 
-/** Load `url` with every read held open, and read the region once it holds still. */
-export async function loadHeld(context: BrowserContext, url: string): Promise<HeldLoad> {
+/**
+ * Load `url` with reads held open, and read the region once it holds still.
+ *
+ * `pass` answers the reads it names normally. B1 passes none — its subject is the server render,
+ * and the first held server action stalls hydration (measured on the jobs slice). B3 passes the
+ * SHELL's reads (`structurallyShell`), so the page hydrates and every read of the PAGE's own is held:
+ * an empty state a client component renders after hydration while its read is pending is only
+ * visible that way. One limit the browser imposes and this cannot lift: Next sends server actions
+ * one at a time, so the first held page action keeps every later one from being SENT — held or
+ * never sent, none of them answers, which is the condition B3 asks about.
+ */
+export async function loadHeld(context: BrowserContext, url: string, pass: (key: string) => boolean = () => false): Promise<HeldLoad> {
 	const { page } = await openTracked(context);
 	const held: Route[] = [];
 	const keys = new Set<string>();
@@ -347,7 +361,7 @@ export async function loadHeld(context: BrowserContext, url: string): Promise<He
 		const pathname = new URL(url, "http://placeholder.invalid").pathname;
 		await page.route(readCarrier(pathname), async (route) => {
 			const key = readKey(route.request());
-			if (key === null) return route.fallback();
+			if (key === null || pass(key)) return route.fallback();
 			keys.add(key);
 			held.push(route);
 		});
@@ -430,19 +444,24 @@ export async function loadFailed(newContext: ContextFactory, url: string): Promi
 	}
 }
 
-/** Load `url` with ONE read answered 500 and every other read answered normally (B5). */
-export async function loadWithOneFailure(context: BrowserContext, url: string, key: string): Promise<RegionSnapshot> {
+/** Load `url` with ONE read answered 500 and every other read answered normally (B5), counting the 500s. */
+export async function loadWithOneFailure(context: BrowserContext, url: string, key: string): Promise<{ snapshot: RegionSnapshot; intercepted: number }> {
 	const { page } = await openTracked(context);
+	let intercepted = 0;
 	try {
 		const pathname = new URL(url, "http://placeholder.invalid").pathname;
 		await page.route(readCarrier(pathname), async (route) => {
 			if (readKey(route.request()) !== key) return route.fallback();
+			intercepted += 1;
 			await failRead(route);
 		});
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 		await page.waitForLoadState("load").catch(() => {});
 		await waitStill(page, { minMs: 2_000, quietMs: 2_500, capMs: 10_000 });
-		return await snapshotRegion(page);
+		// The count is the proof the failure was INJECTED. A read the run saw once and this load never
+		// made (a poll that did not fire, a read keyed on state this load lacks) fails nothing, and a
+		// region that "survived" it proves nothing.
+		return { snapshot: await snapshotRegion(page), intercepted };
 	} finally {
 		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
 		await page.close();
@@ -518,7 +537,7 @@ export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
 	return { verdict: "PASS", evidence };
 }
 
-/** B3: with every read held, no empty copy the answered render does not show. */
+/** B3: with every PAGE read held (the shell's answered), no empty state the answered render does not show. */
 export function judgeB3(answered: AnsweredLoad, held: HeldLoad): BVerdict {
 	const evidence = { heldEmpty: held.snapshot.empty, answeredEmpty: answered.snapshot.empty, held: held.held };
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
@@ -546,31 +565,62 @@ export function judgeB4(answered: AnsweredLoad, phases: readonly FailedPhase[]):
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
 	if (results.some((r) => r.problems.length > 0)) return { verdict: "FAIL", evidence };
 	const failedAny = phases.some((p) => p.failed > 0);
+	// Nothing was failed, so nothing was measured: a route that made no read has no failure to render.
+	if (!failedAny) return { verdict: "NOT MEASURED", reason: "no-reads-failed — the route made no data read, so forcing reads to fail reached nothing", evidence };
 	const errorShown = phases.some((p) => p.snapshot.errors > answered.snapshot.errors);
 	if (answered.snapshot.empty > 0 && failedAny && !errorShown) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
 	return { verdict: "PASS", evidence };
 }
 
-/** B5's per-read observation: what the region kept when this one read failed. */
+/** B5's per-read observation: what the region kept when this one read failed, and whether it was. */
 export interface OneFailure {
 	key: string;
 	snapshot: RegionSnapshot;
+	/** How many requests for this read were answered 500 — 0 means the failure never happened. */
+	intercepted: number;
 }
 
 /**
- * B5: no single page read's failure blanks every region. A page with at most one read of its own
- * has no sibling region for one failure to take down, and passes on that structure — the evidence
- * says so rather than leaving a bare PASS.
+ * Whether ONE failed read took more than its own region down.
+ *
+ * It did when the ROUTE boundary answered (`ErrorState`: the whole page replaced by an error), or
+ * when nothing outside an error surface is left and no error surface took its place (a skeleton that
+ * never resolves, a blank — `~/settings/general`, F050/F051). When the page has two or more reads of
+ * its own, ANY failure that leaves no text outside an error surface took its siblings down, because
+ * those siblings were fed by reads that answered.
+ */
+export function tookPageDown(snapshot: RegionSnapshot, pageReadCount: number): boolean {
+	if (snapshot.routeError) return true;
+	if (snapshot.leavesOutsideErrors === 0 && snapshot.errors === 0) return true;
+	return pageReadCount >= 2 && snapshot.leavesOutsideErrors === 0;
+}
+
+/**
+ * B5: one failed read of the page's own takes down only its own region — measured on EVERY route
+ * that has a read of its own, including a route with exactly one (whose failure must render a leaf
+ * error, not the route's error page). A route with NO read of its own, or one on which no failure
+ * was actually injected, is NOT MEASURED: the first PASS-by-structure shortcut produced 25 of 34
+ * PASSes, 17 of them on routes nothing was failed on (#6180's review).
  */
 export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], shellReads: readonly string[], failures: readonly OneFailure[]): BVerdict {
-	const blanked = failures.filter((f) => answered.snapshot.leaves > 0 && f.snapshot.leavesOutsideErrors === 0).map((f) => readLabel(f.key));
+	const injected = failures.filter((f) => f.intercepted > 0);
+	const blanked = injected.filter((f) => tookPageDown(f.snapshot, pageReads.length)).map((f) => readLabel(f.key));
 	const evidence = {
 		pageReads,
 		shellReads,
 		blanked,
-		kept: failures.map((f) => ({ read: f.key, leavesOutsideErrors: f.snapshot.leavesOutsideErrors, errors: f.snapshot.errors })),
+		injected: injected.length,
+		notReached: failures.filter((f) => f.intercepted === 0).map((f) => f.key),
+		kept: failures.map((f) => ({ read: f.key, intercepted: f.intercepted, leavesOutsideErrors: f.snapshot.leavesOutsideErrors, errors: f.snapshot.errors, routeError: f.snapshot.routeError })),
 	};
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
+	if (pageReads.length === 0) {
+		return {
+			verdict: "NOT MEASURED",
+			reason: "no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser",
+			evidence,
+		};
+	}
 	if (pageReads.length > B5_READ_CAP) {
 		return {
 			verdict: "NOT MEASURED",
@@ -578,11 +628,22 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 			evidence,
 		};
 	}
-	if (pageReads.length <= 1) return { verdict: "PASS", evidence: { ...evidence, single: true } };
+	if (injected.length === 0) {
+		return { verdict: "NOT MEASURED", reason: "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed", evidence };
+	}
 	return { verdict: blanked.length > 0 ? "FAIL" : "PASS", evidence };
 }
 
 /** The reads every route under the same shells makes — the shell's, not the page's. */
+/**
+ * Whether the build says a server action belongs to the shells: every page entry under the route's
+ * shells references it. Answerable before any run, so B3 can let the shell's reads through.
+ */
+export function structurallyShell(key: string, chainEntries: readonly string[], workers: (key: string) => ReadonlySet<string> | null = workersOf): boolean {
+	const w = workers(key);
+	return w !== null && chainEntries.length > 0 && chainEntries.every((e) => w.has(e));
+}
+
 export function shellReadsFor(
 	route: string,
 	chains: ReadonlyMap<string, string>,
@@ -638,8 +699,12 @@ export interface Box {
 export interface Captured {
 	i: number;
 	box: Box;
-	/** A large bordered or filled block — what B2's column count reads. */
+	/** A large bordered or filled block — what B2's column count and per-block score read. */
 	block: boolean;
+	/** The element holds table body rows, `role="row"` rows or list items — an OPEN-ENDED list. */
+	list: boolean;
+	/** The element has no element children: a leaf of the frame. */
+	leaf: boolean;
 }
 
 /** The union of boxes, or `null` for none. */
@@ -697,6 +762,75 @@ export type SwapOutcome =
 	| { kind: "measured"; skeleton: Captured[]; final: Captured[]; prefetched: boolean }
 	| { kind: "not-measured"; reason: string; prefetched: boolean };
 
+/** The area of the intersection over the area of the union — 0 when two boxes do not meet. */
+function iou(a: Box, b: Box): number {
+	const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+	const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+	if (w <= 0 || h <= 0) return 0;
+	const inter = w * h;
+	return inter / (a.w * a.h + b.w * b.h - inter);
+}
+
+/** One skeleton block's score against the region of the page that replaced it. */
+export interface BlockScore {
+	skeleton: Box;
+	/** The final block (or the final leaves) it was matched to — `null` when nothing replaced it. */
+	region: Box | null;
+	/** The region is an open-ended list, so its bottom edge is not a shift (see `blockShift`). */
+	list: boolean;
+	score: number;
+}
+
+/**
+ * The CLS formula for ONE skeleton block moving to the region of the page that replaced it — every
+ * edge counts, the bottom included, unless the region is an open-ended list.
+ *
+ * The outline alone (`outlineShift`) is pinned at top, left and right by the shell on almost every
+ * route, so it scored exactly 0 on 33 of 36 routes in the first run, and a 494px skeleton panel that
+ * became a 96px card PASSED (#6180's review). A block whose height is wrong IS a shift — whatever sat
+ * below it moves — so its bottom edge is measured. A LIST's bottom is not: no skeleton can know how
+ * many rows the answer has, and a table that answers two rows under an eight-row skeleton moves
+ * nothing above it. A skeleton block nothing replaced scores as vanishing: its whole height.
+ */
+export function blockShift(skeleton: Box, region: Box | null, list: boolean, viewport: { width: number; height: number }): number {
+	const max = Math.max(viewport.width, viewport.height);
+	const area = viewport.width * viewport.height;
+	if (region === null) return ((skeleton.w * skeleton.h) / area) * (skeleton.h / max);
+	const u = outline([skeleton, region]);
+	if (u === null) return 0;
+	const moved = Math.max(
+		Math.abs(skeleton.x - region.x),
+		Math.abs(skeleton.y - region.y),
+		Math.abs(skeleton.x + skeleton.w - (region.x + region.w)),
+		list ? 0 : Math.abs(skeleton.y + skeleton.h - (region.y + region.h)),
+	);
+	return ((u.w * u.h) / area) * (moved / max);
+}
+
+/** Score every skeleton block against what replaced it. */
+export function blockScores(skeleton: readonly Captured[], final: readonly Captured[], viewport: { width: number; height: number }): BlockScore[] {
+	const finalBlocks = final.filter((c) => c.block);
+	const finalLeaves = final.filter((c) => c.leaf);
+	return skeleton
+		.filter((c) => c.block)
+		.map((sb) => {
+			let best: Captured | null = null;
+			let bestIou = 0;
+			for (const fb of finalBlocks) {
+				const v = iou(sb.box, fb.box);
+				if (v > bestIou) {
+					bestIou = v;
+					best = fb;
+				}
+			}
+			// No final block overlaps it: the page drew that area without a frame (plain text, a
+			// canvas). What replaced the skeleton block is then the leaves the page put inside it.
+			const region = best ? best.box : outline(finalLeaves.filter((l) => iou(sb.box, l.box) > 0).map((l) => l.box));
+			const list = best ? best.list : false;
+			return { skeleton: sb.box, region, list, score: blockShift(sb.box, region, list, viewport) };
+		});
+}
+
 /** B2's verdict over a swap. */
 export function judgeB2(outcome: SwapOutcome): BVerdict {
 	if (outcome.kind === "not-measured") return { verdict: "NOT MEASURED", reason: outcome.reason, evidence: { prefetched: outcome.prefetched } };
@@ -709,15 +843,42 @@ export function judgeB2(outcome: SwapOutcome): BVerdict {
 			evidence: { prefetched: outcome.prefetched },
 		};
 	}
-	const score = outlineShift(s, f, B_VIEWPORT);
+	const outlineScore = outlineShift(s, f, B_VIEWPORT);
+	const blocks = blockScores(outcome.skeleton, outcome.final, B_VIEWPORT);
+	const worst = blocks.reduce<BlockScore | null>((w, b) => (w === null || b.score > w.score ? b : w), null);
+	const score = Math.max(outlineScore, worst?.score ?? 0);
 	const columns = { skeleton: columnCount(outcome.skeleton.filter((c) => c.block).map((c) => c.box)), final: columnCount(outcome.final.filter((c) => c.block).map((c) => c.box)) };
-	const evidence = { score: Number(score.toFixed(4)), budget: B2_BUDGET, columns, outline: { skeleton: s, final: f }, prefetched: outcome.prefetched };
+	const evidence = {
+		score: Number(score.toFixed(4)),
+		outlineScore: Number(outlineScore.toFixed(4)),
+		worstBlock: worst === null ? null : { ...worst, score: Number(worst.score.toFixed(4)) },
+		blocks: blocks.length,
+		budget: B2_BUDGET,
+		columns,
+		outline: { skeleton: s, final: f },
+		prefetched: outcome.prefetched,
+	};
 	// A column mismatch is a question about SIDE-BY-SIDE blocks, so it is asked only when one frame has
 	// two or more. One filled skeleton box over a page with no bordered block (a canvas, plain text)
 	// is not a column count disagreeing — measured on the first run, it failed the canvas and the CLI
 	// hand-off for a frame whose outline matched.
 	const columnsDisagree = Math.max(columns.skeleton, columns.final) >= 2 && columns.skeleton !== columns.final;
 	return { verdict: score > B2_BUDGET || columnsDisagree ? "FAIL" : "PASS", evidence };
+}
+
+/**
+ * B2 over SEVERAL swaps, keeping the WORST. One capture is one frame of a loading state that can
+ * still be settling (a nested boundary resolving, a font swap), and `~/settings/general` flipped
+ * between FAIL and PASS across runs on unchanged code. The worst of the measured swaps is the
+ * verdict; a swap that could not be measured counts only when none could.
+ */
+export function judgeB2Worst(outcomes: readonly SwapOutcome[]): BVerdict {
+	const verdicts = outcomes.map(judgeB2);
+	const measured = verdicts.filter((v) => v.verdict !== "NOT MEASURED");
+	if (measured.length === 0) return verdicts[0] ?? { verdict: "NOT MEASURED", reason: "no-swap — B2 drove no navigation", evidence: null };
+	const fail = measured.find((v) => v.verdict === "FAIL");
+	const chosen = fail ?? measured[0];
+	return { ...chosen, evidence: { worst: chosen.evidence, swaps: verdicts.map((v) => v.verdict) } };
 }
 
 /** Read a property of `window.next.router` in the page, without trusting its type. */
@@ -775,9 +936,14 @@ async function captureFrame(page: Page, mode: "tag" | "fresh"): Promise<{ captur
 				(side) => parseFloat(style.getPropertyValue(`border-${side.toLowerCase()}-width`)) > 0 && style.getPropertyValue(`border-${side.toLowerCase()}-style`) !== "none",
 			);
 			const filled = style.backgroundImage !== "none" || !/rgba\([^)]*,\s*0\)|transparent/.test(style.backgroundColor);
-			return { box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, block: (bordered || filled) && r.height >= 64 && r.width >= width * 0.2 };
+			return {
+				box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
+				block: (bordered || filled) && r.height >= 64 && r.width >= width * 0.2,
+				list: el.querySelector('tbody tr, [role="row"], li, [role="listitem"]') !== null,
+				leaf: el.children.length === 0,
+			};
 		};
-		const captured: { i: number; box: { x: number; y: number; w: number; h: number }; block: boolean }[] = [];
+		const captured: { i: number; box: { x: number; y: number; w: number; h: number }; block: boolean; list: boolean; leaf: boolean }[] = [];
 		const present: number[] = [];
 		let i = 0;
 		for (const el of Array.from(main.querySelectorAll("*"))) {
@@ -857,8 +1023,10 @@ export async function measureSkeletonSwap(page: Page, origin: string, target: st
 		if (held.length === 0) {
 			return { kind: "not-measured", reason: "no-held-response — the route rendered without a data response to hold, so no loading state was shown", prefetched };
 		}
-		// Two frames, so the fallback has painted rather than merely mounted.
-		await page.waitForTimeout(400);
+		// A DEFINED loading frame: the fallback has to hold still — the same element count and text
+		// length for 600ms — before it is captured, so a capture never lands on a
+		// nested boundary half-way through resolving (the `~/settings/general` flip).
+		await waitStill(page, { minMs: 400, quietMs: 600, capMs: 4_000 });
 		const skeleton = await captureFrame(page, "tag");
 		holding = false;
 		for (const route of held.splice(0)) await route.fallback().catch(() => {});
@@ -889,46 +1057,71 @@ export async function measureSkeletonSwap(page: Page, origin: string, target: st
 /** The origin the fixtures are served from. Never resolved by DNS — `context.route()` answers it. */
 export const B_CONTROL_ORIGIN = "http://behaviour-control.invalid";
 
-/** The fixture modes, each named for the defect it carries (or `prefetched`, which carries none). */
-export type BControlMode =
-	| "prefetched"
-	| "client-fetch"
-	| "empty-while-pending"
-	| "empty-on-error"
-	| "endless-skeleton"
-	| "region-error"
-	| "two-regions-contained"
-	| "two-regions-blanked"
-	| "swap-matching"
-	| "swap-columns"
-	| "swap-shifted";
+/** The fixture modes, each named for the defect it carries (or `prefetched`/`static`, which carry none). */
+export const B_CONTROL_MODES = [
+	"prefetched",
+	"static",
+	"client-fetch",
+	"empty-while-pending",
+	"empty-after-hydration",
+	"empty-on-error",
+	"vanish-on-error",
+	"endless-skeleton",
+	"region-error",
+	"one-read-contained",
+	"one-read-route-error",
+	"two-regions-contained",
+	"two-regions-blanked",
+	"swap-matching",
+	"swap-columns",
+	"swap-shifted",
+	"swap-height",
+	"swap-list",
+] as const;
+
+/** One fixture mode. */
+export type BControlMode = (typeof B_CONTROL_MODES)[number];
 
 /**
  * One fixture page, every mode. Plain DOM in the slots the console renders — `data-slot="skeleton"`,
- * `aria-busy`, `role="alert"`, table rows — and reads over the read router's own URL shape, so the
- * loaders intercept them exactly as they intercept a console page's. `window.next.router` is a
+ * `aria-busy`, `role="alert"`, `data-slot="empty"`, a `DataTable`-shaped empty row, table rows, the
+ * route boundary's `ErrorState` classes — and reads over the read router's own URL shape, so the
+ * loaders intercept them exactly as they intercept a console page's. A read whose name ends in
+ * `shell` stands for a shell read: B3's load answers it (see `loadHeld`). `window.next.router` is a
  * stand-in with the two methods B2 calls; its push paints a skeleton, then fetches the route's data
  * the way the App Router does (`RSC: 1`), so the hold-and-release in `measureSkeletonSwap` is
  * exercised for real.
  */
 export const B_CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>behaviour control</title>
-<style>body{margin:0;font:14px sans-serif}main{display:block;padding:16px}.sk{height:16px;width:240px;background:#ddd;margin:8px 0}.frame{border:1px solid #999;height:400px}</style></head>
-<body><main><div id="region">__SSR__</div><div id="region-b">__SSR_B__</div></main>
+<style>body{margin:0;font:14px sans-serif}main{display:block;padding:16px}.sk{height:16px;width:240px;background:#ddd;margin:8px 0}.frame{border:1px solid #999;height:400px}.listframe{border:1px solid #999;padding:16px}</style></head>
+<body><main>__STATIC__<div id="region">__SSR__</div><div id="region-b">__SSR_B__</div></main>
 <script>
 var MODE = "__MODE__";
 var SKELETON = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
-var EMPTY = '<p>No results.</p>';
+var EMPTY = '<div data-slot="empty">No results.</div>';
 var ERROR = '<div role="alert">Couldn\\'t load these rows</div>';
+var REGION_ERROR = '<div data-slot="region-error" data-state="error"><p>Couldn\\'t load these rows</p></div>';
+var ROUTE_ERROR = '<div class="__ROUTE_ERROR__"><p>Something went wrong loading this page</p></div>';
 function rows(names) { return '<table><tbody>' + names.map(function (n) { return '<tr><td>' + n + '</td></tr>'; }).join('') + '</tbody></table>'; }
 function read(name) { return fetch('/acme/~/rpc/fixture/' + name).then(function (r) { if (!r.ok) throw new Error('read failed'); return r.json(); }); }
-function set(id, html, busy) { var el = document.getElementById(id); el.innerHTML = html; if (busy) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); }
-var REGION_ERROR = '<div data-slot="region-error" data-state="error"><p>Couldn\\'t load these rows</p></div>';
+function set(id, html, busy) { var el = document.getElementById(id); if (!el) return; el.innerHTML = html; if (busy) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); }
 if (MODE === "client-fetch" || MODE === "empty-while-pending" || MODE === "endless-skeleton" || MODE === "region-error") {
 	read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { if (MODE !== "endless-skeleton") set('region', MODE === "region-error" ? REGION_ERROR : ERROR, false); });
 }
-if (MODE === "prefetched" || MODE === "empty-on-error") {
+if (MODE === "empty-after-hydration") {
+	read('shell').then(function () {
+		set('region', EMPTY, false);
+		read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { set('region', ERROR, false); });
+	}, function () {});
+}
+if (MODE === "prefetched" || MODE === "empty-on-error" || MODE === "vanish-on-error") {
 	read('aux').then(function () {}, function () {});
-	setTimeout(function () { read('rows').then(function () {}, function () { set('region', MODE === "empty-on-error" ? EMPTY : ERROR, false); }); }, 30000);
+	setTimeout(function () { read('rows').then(function () {}, function () { set('region', MODE === "empty-on-error" ? EMPTY : MODE === "vanish-on-error" ? '' : ERROR, false); }); }, 30000);
+}
+if (MODE === "one-read-contained" || MODE === "one-read-route-error") {
+	read('a').then(function (b) { set('region', rows(b.json), false); }, function () {
+		if (MODE === "one-read-route-error") document.querySelector('main').innerHTML = ROUTE_ERROR; else set('region', REGION_ERROR.replace('<div data-slot', '<div role="alert" data-slot'), false);
+	});
 }
 if (MODE === "two-regions-contained" || MODE === "two-regions-blanked") {
 	['a', 'b'].forEach(function (name) {
@@ -939,12 +1132,18 @@ if (MODE === "two-regions-contained" || MODE === "two-regions-blanked") {
 	});
 }
 if (MODE.indexOf("swap-") === 0) {
-	var FRAME = '<div class="frame"><div data-slot="skeleton" class="sk" style="margin:16px"></div></div>';
+	var FRAME = MODE === "swap-list"
+		? '<div class="frame">' + SKELETON + SKELETON + SKELETON + '</div>'
+		: '<div class="frame"><div data-slot="skeleton" class="sk" style="margin:16px"></div></div>';
 	var FINAL = MODE === "swap-columns"
 		? '<div style="display:flex;gap:16px"><div class="frame" style="flex:1"><p>alpha</p></div><div class="frame" style="flex:1"><p>beta</p></div></div>'
 		: MODE === "swap-shifted"
 			? '<div class="frame" style="margin-top:160px"><p style="margin:16px">alpha</p></div>'
-			: '<div class="frame"><p style="margin:16px">alpha</p></div>';
+			: MODE === "swap-height"
+				? '<div class="frame" style="height:200px"><p style="margin:16px">alpha</p></div>'
+				: MODE === "swap-list"
+					? '<div class="listframe">' + rows(['alpha', 'beta']) + '</div>'
+					: '<div class="frame"><p style="margin:16px">alpha</p></div>';
 	window.next = { router: {
 		prefetch: function (href) { fetch(href, { headers: { 'RSC': '1', 'Next-Router-Prefetch': '1' } }); },
 		push: function (href) {
@@ -957,41 +1156,47 @@ if (MODE.indexOf("swap-") === 0) {
 </script></body></html>`;
 
 /** What each mode renders on the server, before any script runs. */
-function ssrFor(mode: BControlMode): { a: string; b: string } {
+function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string } {
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
-	if (mode === "prefetched" || mode === "empty-on-error") return { a: rows, b: "" };
-	if (mode === "empty-while-pending") return { a: "<p>No results.</p>", b: "" };
-	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error") return { a: `<div aria-busy="true">${skeleton}</div>`, b: "" };
-	if (mode === "two-regions-contained" || mode === "two-regions-blanked") return { a: skeleton, b: skeleton };
-	return { a: "<p>origin page</p>", b: "" };
+	const none = "";
+	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static") return { a: rows, b: none, staticCopy: none };
+	// `DataTable`'s empty row: one body row whose single cell spans the table.
+	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
+	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error" || mode === "empty-after-hydration") {
+		return { a: `<div aria-busy="true">${skeleton}</div>`, b: none, staticCopy: none };
+	}
+	if (mode === "one-read-contained" || mode === "one-read-route-error") return { a: skeleton, b: none, staticCopy: "<p>Static settings copy that reads no data</p>" };
+	if (mode === "two-regions-contained" || mode === "two-regions-blanked") return { a: skeleton, b: skeleton, staticCopy: none };
+	return { a: "<p>origin page</p>", b: none, staticCopy: none };
 }
 
 /** Serve every fixture mode, and its reads, on one context. */
 export async function serveBehaviourControl(context: BrowserContext): Promise<void> {
+	const routeError = (errorStateSignature()[0] ?? []).join(" ");
 	await context.route(`${B_CONTROL_ORIGIN}/**`, (route) => {
 		const { pathname } = new URL(route.request().url());
 		if (pathname.includes(RPC_MARKER)) {
 			return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ json: ["alpha", "beta"], meta: [] }) });
 		}
 		const mode = pathname.split("/")[4] ?? "prefetched";
-		const known: readonly string[] = [
-			"prefetched", "client-fetch", "empty-while-pending", "empty-on-error", "endless-skeleton", "region-error",
-			"two-regions-contained", "two-regions-blanked", "swap-matching", "swap-columns", "swap-shifted",
-		];
-		const m: BControlMode = isControlMode(mode, known) ? mode : "prefetched";
+		const m: BControlMode = isControlMode(mode) ? mode : "prefetched";
 		const ssr = ssrFor(m);
 		return route.fulfill({
 			status: 200,
 			contentType: "text/html; charset=utf-8",
-			body: B_CONTROL_FIXTURE.replace("__MODE__", m).replace("__SSR__", ssr.a).replace("__SSR_B__", ssr.b),
+			body: B_CONTROL_FIXTURE.replace("__MODE__", m)
+				.replace("__SSR__", ssr.a)
+				.replace("__SSR_B__", ssr.b)
+				.replace("__STATIC__", ssr.staticCopy)
+				.replace("__ROUTE_ERROR__", routeError),
 		});
 	});
 }
 
 /** Narrow a path segment to a fixture mode. */
-function isControlMode(value: string, known: readonly string[]): value is BControlMode {
-	return known.includes(value);
+function isControlMode(value: string): value is BControlMode {
+	return B_CONTROL_MODES.some((m) => m === value);
 }
 
 /** The fixture URL for a mode. */
@@ -1019,19 +1224,21 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		return c;
 	};
 	const context = await newContext();
-	const expectVerdict = (id: BControlResult["broken"][number], mode: BControlMode, got: BVerdict, want: "PASS" | "FAIL") => {
+	const expectVerdict = (id: BControlResult["broken"][number], mode: BControlMode, got: BVerdict, want: BVerdict["verdict"]) => {
 		if (got.verdict !== want) {
 			broken.add(id);
 			lines.push(`${id} on the \`${mode}\` fixture: expected ${want}, got ${got.verdict}${got.verdict === "NOT MEASURED" ? ` (${got.reason})` : ""}`);
 		}
 	};
 	try {
+		const shellRead = (key: string) => key.endsWith("shell");
 		const measure = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
 			const held = await loadHeld(context, url);
+			const pageHeld = await loadHeld(context, url, shellRead);
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, held), b4: judgeB4(answered, failed) };
+			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed) };
 		};
 		const good = await measure("prefetched");
 		expectVerdict("B1", "prefetched", good.b1, "PASS");
@@ -1042,22 +1249,42 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		expectVerdict("B3", "client-fetch", client.b3, "PASS");
 		expectVerdict("B4", "client-fetch", client.b4, "PASS");
 		expectVerdict("B3", "empty-while-pending", (await measure("empty-while-pending")).b3, "FAIL");
+		// The empty state appears only AFTER the shell's read answers, so a load that holds every read
+		// (B1's) never shows it — B3 must hold the PAGE's reads and answer the shell's to see it.
+		expectVerdict("B3", "empty-after-hydration", (await measure("empty-after-hydration")).b3, "FAIL");
 		expectVerdict("B4", "empty-on-error", (await measure("empty-on-error")).b4, "FAIL");
+		// No skeleton, no empty state, no error: the rows just go. Only the "content vanished" clause
+		// can fail this one, so it pins that clause on its own.
+		expectVerdict("B4", "vanish-on-error", (await measure("vanish-on-error")).b4, "FAIL");
 		expectVerdict("B4", "endless-skeleton", (await measure("endless-skeleton")).b4, "FAIL");
 		// The region-level error render (#6117) WITHOUT `role="alert"`, so only its `data-slot` can
 		// make it read as an error: a recogniser that forgot `RegionError` reads this as content
 		// that vanished silently, and fails B4 on a page that did the right thing.
 		expectVerdict("B4", "region-error", (await measure("region-error")).b4, "PASS");
+		// A page that made no read has nothing to fail, which is not a pass.
+		expectVerdict("B4", "static", (await measure("static")).b4, "NOT MEASURED");
 
-		for (const [mode, want] of [["two-regions-contained", "PASS"], ["two-regions-blanked", "FAIL"]] as const) {
+		const b5 = async (mode: BControlMode) => {
 			const url = controlUrl(mode);
 			const answered = await loadAnswered(context, url);
 			const failures: OneFailure[] = [];
-			for (const key of answered.reads) failures.push({ key, snapshot: await loadWithOneFailure(context, url, key) });
-			expectVerdict("B5", mode, judgeB5(answered, answered.reads, [], failures), want);
-		}
+			for (const key of answered.reads) failures.push({ key, ...(await loadWithOneFailure(context, url, key)) });
+			return judgeB5(answered, answered.reads, [], failures);
+		};
+		expectVerdict("B5", "two-regions-contained", await b5("two-regions-contained"), "PASS");
+		expectVerdict("B5", "two-regions-blanked", await b5("two-regions-blanked"), "FAIL");
+		expectVerdict("B5", "one-read-contained", await b5("one-read-contained"), "PASS");
+		expectVerdict("B5", "one-read-route-error", await b5("one-read-route-error"), "FAIL");
+		expectVerdict("B5", "static", await b5("static"), "NOT MEASURED");
 
-		for (const [mode, want] of [["swap-matching", "PASS"], ["swap-columns", "FAIL"], ["swap-shifted", "FAIL"]] as const) {
+		const swaps: [BControlMode, BVerdict["verdict"]][] = [
+			["swap-matching", "PASS"],
+			["swap-columns", "FAIL"],
+			["swap-shifted", "FAIL"],
+			["swap-height", "FAIL"],
+			["swap-list", "PASS"],
+		];
+		for (const [mode, want] of swaps) {
 			const page = await context.newPage();
 			try {
 				expectVerdict("B2", mode, judgeB2(await measureSkeletonSwap(page, controlUrl(mode), `${controlUrl(mode)}/next`)), want);
