@@ -2,9 +2,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, count, eq, inArray, sum } from "drizzle-orm";
+import { type SQL, and, count, eq, inArray, sql, sum } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { jobs, projectCluster, projects } from "@/lib/db/schema";
+import { jobs, projectCluster, projectEnvironments, projects } from "@/lib/db/schema";
+
+/**
+ * WHAT "A CLUSTER UNDER MANAGEMENT" MEANS — the one definition the clusters list, the Usage page's
+ * cluster count and the project Usage view's count all read (#6122, finding F005). Before it, the
+ * count took every `project_cluster` row in the org (a draft's never-deployed row, a torn-down
+ * environment's row, any environment) while the list took one row per project, from its DEFAULT
+ * environment, and only when that environment was ACTIVE — so the Usage page said "1 cluster under
+ * management" over a Clusters page that said "No clusters provisioned".
+ *
+ * A cluster is under management when its row's OWNING environment (`project_cluster.environment_id`)
+ * has been sent to provision and has not been torn down:
+ *
+ *   · the environment is not DESTROYED, and the row is not DESTROYED;
+ *   · and it is not a DRAFT that never deployed — a DRAFT environment whose cluster row is still the
+ *     PENDING it was created with. (A plan re-computes an environment back to DRAFT without touching
+ *     live infrastructure — lib/db/env-status.ts `planSuccess` — so a DRAFT environment whose cluster
+ *     a deploy already moved past PENDING is still under management.)
+ *
+ * Every environment counts, not only the default one: a project with a dedicated staging and
+ * production cluster runs two. A pending cluster (a deploy queued or in flight) and a failed one are
+ * under management too; the list renders them as pending and failed rather than hiding them.
+ *
+ * The predicate reads `project_environments` joined on the CLUSTER's own environment — every caller
+ * joins it with {@link managedClusterEnvJoin}. A row with no environment has no lifecycle to read and
+ * is not counted.
+ */
+export function managedClusterPredicate(): SQL {
+	return sql`(${projectCluster.status} <> 'DESTROYED'
+		and ${projectEnvironments.status} <> 'DESTROYED'
+		and (${projectEnvironments.status} <> 'DRAFT' or ${projectCluster.status} <> 'PENDING'))`;
+}
+
+/** The join condition every reader of {@link managedClusterPredicate} uses: the cluster's OWN environment. */
+export function managedClusterEnvJoin(): SQL {
+	return eq(projectEnvironments.id, projectCluster.environment_id);
+}
 
 /**
  * Point-in-time resource counts for one org — the "scale of what you run" row on the
@@ -15,13 +51,13 @@ import { jobs, projectCluster, projects } from "@/lib/db/schema";
  */
 export interface ResourceCounts {
 	projects: number;
-	/** Provisioned cluster components across the org's projects. */
+	/** Clusters under management across the org's projects ({@link managedClusterPredicate}). */
 	clusters: number;
 	/** Σ estimated monthly cloud cost across the org's projects (USD). */
 	spendUnderManagement: number;
 }
 
-/** Counts projects (projects)/clusters and sums estimated spend for `orgId`. */
+/** Counts projects and clusters under management, and sums estimated spend, for `orgId`. */
 export async function queryResourceCounts(orgId: string): Promise<ResourceCounts> {
 	const db = getServiceDb();
 	const [projectRow, clusterRow] = await Promise.all([
@@ -29,12 +65,14 @@ export async function queryResourceCounts(orgId: string): Promise<ResourceCounts
 			.select({ n: count(), spend: sum(projects.estimated_monthly_cost) })
 			.from(projects)
 			.where(eq(projects.org_id, orgId)),
-		// Clusters live under projects (project_id), not org-scoped directly — join to scope.
+		// The tenancy boundary is the cluster row's own `org_id`, which the database keeps equal to its
+		// project's (programmables.sql derive_component_org_id); the same column the CLI's cluster list
+		// scopes on. What is counted is the shared definition.
 		db
 			.select({ n: count() })
 			.from(projectCluster)
-			.innerJoin(projects, eq(projectCluster.project_id, projects.id))
-			.where(eq(projects.org_id, orgId)),
+			.innerJoin(projectEnvironments, managedClusterEnvJoin())
+			.where(and(eq(projectCluster.org_id, orgId), managedClusterPredicate())),
 	]);
 
 	return {
@@ -46,14 +84,14 @@ export async function queryResourceCounts(orgId: string): Promise<ResourceCounts
 
 /** Point-in-time resource counts for one project — the project-scoped Usage view. */
 export interface ProjectResourceCounts {
-	/** Provisioned cluster components in this project. */
+	/** Clusters under management in this project ({@link managedClusterPredicate}). */
 	clusters: number;
 	/** This project's estimated monthly cloud cost (USD). */
 	estimatedMonthlyCost: number;
 }
 
 /**
- * Counts clusters and reads the estimated monthly cost for a single project — the
+ * Counts clusters under management and reads the estimated monthly cost for a single project — the
  * project analogue of {@link queryResourceCounts}. Clusters are scoped by
  * `project_cluster.project_id`; the cost is the project's own rolled-up estimate.
  * Service path with an explicit `project_id` filter (the caller verifies the project
@@ -67,7 +105,8 @@ export async function queryProjectResourceCounts(
 		db
 			.select({ n: count() })
 			.from(projectCluster)
-			.where(eq(projectCluster.project_id, projectId)),
+			.innerJoin(projectEnvironments, managedClusterEnvJoin())
+			.where(and(eq(projectCluster.project_id, projectId), managedClusterPredicate())),
 		db
 			.select({ cost: projects.estimated_monthly_cost })
 			.from(projects)

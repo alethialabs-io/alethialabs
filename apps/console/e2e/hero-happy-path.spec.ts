@@ -122,6 +122,6 @@ test.describe("Hero happy-path", () => {
 		//    longer render a page-title heading since #762's "no list-page headers" pass, so assert the
 		//    empty state itself, not a "Clusters" heading.)
 		await page.goto(`/${orgSlug}/~/clusters`);
-		await expect(page.getByText(/no clusters provisioned/i)).toBeVisible();
+		await expect(page.getByText(/no clusters under management/i)).toBeVisible();
 	});
 });
