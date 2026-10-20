@@ -1214,6 +1214,19 @@ jobs:
       - name: ...and that ratchet is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-read-transport.mjs --self-test
+      # Live by default (ADR 0005 §7 Q3 + §10 R7, #6115): a change the viewer did not make arrives as
+      # a topic on the org's change stream, not a poll. Every `refetchInterval` / `setInterval` is in
+      # the ledger — a timer with its reason, a poll with the lane that lifts it, and ONE sanctioned
+      # fallback poll — and polls only shrink against dev's ledger. The guards job is a shallow
+      # checkout, so dev is fetched first; an unreadable base fails rather than skipping the rule.
+      - name: The console does not poll for data (ADR 0005 live-by-default ratchet)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm -C apps/console run check:no-polling
+      - name: ...and that ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-no-polling.mjs --self-test
       # The filter bar's other half, in the e2e suite (#5800). React leaves the server's copy of a
       # streamed Suspense section in a hidden `<div hidden id="S:n">`, and `getByLabel` /
       # `getByPlaceholder` match inside it while `getByRole` does not — so a spec that asks for a

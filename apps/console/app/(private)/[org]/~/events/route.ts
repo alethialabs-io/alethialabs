@@ -45,7 +45,9 @@ const RETRY_AFTER_S = 30;
 
 /**
  * How many bytes a stream may have queued and unread before it stops being sent hints and is told
- * to resync instead. Bounds the memory a stalled client can pin to ~64 KB (ADR 0005 §5).
+ * to resync instead. Keeps the unread bytes a stalled client can pin to about 64 KB, on top of the
+ * ~100 KB an idle stream costs (measured, ADR 0005 §5). Heartbeats and the one owed `resync` are
+ * still queued past it, so it is a ceiling on hints, not a hard cap on the queue.
  */
 const STREAM_HIGH_WATER_BYTES = 64 * 1024;
 
