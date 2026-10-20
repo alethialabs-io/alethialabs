@@ -7,6 +7,7 @@ import { os } from "@orpc/server";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { UnauthorizedError } from "@/lib/auth/errors";
+import { runWithActor } from "@/lib/authz/actor-context";
 import { ForbiddenError } from "@/lib/authz/types";
 import { errorDigest } from "@/lib/errors";
 import type { RpcContext } from "@/lib/rpc/context";
@@ -41,13 +42,20 @@ const refusals = {
  * The middleware turns the codebase's own refusal signals — a PDP `ForbiddenError`, a missing
  * session, Next's `notFound()`, a deliberate `ActionRefusal` — into the typed refusals above, so an
  * existing reader called in-process needs no change to refuse correctly over the wire.
+ *
+ * It also BINDS `context.actor` for the procedure (`runWithActor`), so a reader's own
+ * `authorize()` / `currentActor()` answers with the actor the entry point resolved instead of
+ * resolving a second time. The route handler already bound it; the in-process server caller
+ * (`lib/rpc/server.ts`) bound nothing, so its context was computed and then unused — a context
+ * built from the SESSION would have gone unnoticed (#6113 review, mutation 3). Both entry points now
+ * serve from the actor they resolved, and `tests/integration/rpc-tenancy.*.test.ts` measures it.
  */
 export const query = os
 	.$context<RpcContext>()
 	.errors(refusals)
-	.use(async ({ next, errors }) => {
+	.use(async ({ next, errors, context }) => {
 		try {
-			return await next();
+			return await runWithActor(context.actor, async () => next());
 		} catch (error) {
 			if (error instanceof ForbiddenError) throw errors.FORBIDDEN();
 			if (error instanceof UnauthorizedError) throw errors.UNAUTHORIZED();
