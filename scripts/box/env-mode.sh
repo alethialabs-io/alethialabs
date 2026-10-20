@@ -137,10 +137,17 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
 
   # The edition is read straight out of a .env with `cut -d= -f2-`, so it arrives exactly as
   # written: `ALETHIA_EDITION="community"` yields `"community"`, a CRLF file yields
-  # `community` with a trailing \r, and a stray space survives. Every dotenv loader — and
-  # `set -a && . .env`, which is how the console's session actually gets it — strips all
-  # three, so the console really IS community while an un-normalised compare reads "unset,
-  # therefore auto" and refuses to boot the one env the design says must stay runnable.
+  # `community` with a trailing \r, and a stray space survives. `set -a && . .env` — how the
+  # console's session gets it — strips the quotes and the padding, so for those the console
+  # really IS community while an un-normalised compare reads "unset, therefore auto" and refuses
+  # to boot the one env the design says must stay runnable.
+  #
+  # A \r is different, and it is NOT stripped by the console: dot-sourcing keeps a \r wherever
+  # it is, and parseAlethiaEdition does not trim, so a CR-bearing pin is rejected there (the
+  # invalid-pin class of #6171). It is stripped HERE — every \r, not only a trailing one — to
+  # agree with env.sh's dotenv_edition (`tr -d '\r'`), so the scope row and the edition row of
+  # env:status read one line the same way. That parity is the contract (env-suite-reap-test.sh
+  # C9 holds it, an inner-CR value included); no writer in this repo emits a CR anyway.
   edition="${edition//$'\r'/}"
   edition="${edition#"${edition%%[![:space:]]*}"}"
   edition="${edition%"${edition##*[![:space:]]}"}"
@@ -159,9 +166,10 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     # auth plugins are built through getEnterprise(), so this probe's route answers 5xx and keeps
     # answering it however long anyone waits. Every branch env pins enterprise since #6158, so a
     # missing ee/dist reaches the probe as exactly this, where under `auto` it reached it as the
-    # 404 above. (A dist that exists but throws fails this way under EITHER pin; only the pinned
-    # case is named here, because only there is the pin itself evidence of what was expected.) Reading it as `unknown` let env:up
-    # exit green with "scope: UNKNOWN" on an env that cannot sign anyone in.
+    # 404 above. (A dist that exists but throws fails this way under EITHER pin; only the
+    # pinned case is named here, because only there is the pin itself evidence of what was
+    # expected.) Reading it as `unknown` let env:up exit green with "scope: UNKNOWN" on an env
+    # that cannot sign anyone in.
     #
     # The verdict is DEFECT, not a fifth word, on purpose: env:up (boot_rc), env:test and
     # env:status in scripts/env.sh already refuse or flag DEFECT, and a word they have never seen
@@ -169,10 +177,12 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     # The why is what tells it apart from the community DEFECT; the boot below keys on the status.
     #
     # What it does NOT claim: that ee/dist is missing. A dist that exists but throws on import
-    # fails the same way, and so would any other 5xx on this route under that pin, which is why
-    # the why ends in a question mark and the boot prints whether ee/dist/index.js is there.
+    # fails the same way — and at boot that is the LIKELIER cause, because this script builds
+    # @alethia/ee and refuses to start without ee/dist — and so would any other 5xx on this route
+    # under that pin. So the why names both causes as a question, and the boot prints whether
+    # ee/dist/index.js is there and sends the operator to the log first.
     if [ "$edition" = "enterprise" ]; then
-      echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
+      echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing, or present and throwing on load?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
     else
       echo "unknown the console did not answer the probe (status $code)"
     fi
@@ -326,12 +336,13 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "404 with enterprise is worse, not ok" 404 "enterprise" "DEFECT"
   # …unless community was asked for, which is how the community build gets exercised.
   scope "404 pinned community is deliberate"   404 "community" "community"
-  # A pin is read out of a .env verbatim, and all three of these ARE `community` to the
-  # console: `set -a && . .env` strips the quotes, and a CRLF file leaves the \r behind.
-  # Reading them as "unset, therefore auto" makes env:up refuse a deliberately pinned env.
+  # A pin is read out of a .env verbatim. The quoted and padded ones ARE `community` to the
+  # console (`set -a && . .env` strips them); reading them as "unset, therefore auto" makes
+  # env:up refuse a deliberately pinned env. The CRLF one is NOT stripped by the console — it
+  # keeps the \r — and is read as the pin here only to agree with env.sh's dotenv_edition.
   scope "a double-quoted pin is a pin"         404 '"community"'   "community"
   scope "a single-quoted pin is a pin"         404 "'community'"   "community"
-  scope "a CRLF pin is a pin"                  404 "community$(printf '\r')" "community"
+  scope "a CRLF pin reads as dotenv_edition does" 404 "community$(printf '\r')" "community"
   scope "a padded pin is a pin"                404 "  community  " "community"
   # A console that cannot answer must not be reported either way. `000` is curl's
   # "no response", and an empty string is what a failed capture actually yields — the two
@@ -364,12 +375,13 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "no answer under enterprise is unknown" 000 "enterprise" "unknown"
 
   # The why is prose, but for THIS cell the words are the deliverable: the community DEFECT and
-  # this one share a verdict, and the why is the only thing env:test's refusal prints to tell them
-  # apart. Assert it names the pin and ee/dist, and does not say COMMUNITY.
+  # this one share a verdict, and every refusal in scripts/env.sh prints the why under its
+  # headline. Assert it names the pin and BOTH causes of a failed ee load — a missing dist, and
+  # one that is present and throws, which at boot is the likelier — and does not say COMMUNITY.
   why="$(scope_verdict 500 enterprise)"
   why="${why#* }"
   case "$why" in
-  *"ALETHIA_EDITION=enterprise"*"ee/dist"*)
+  *"ALETHIA_EDITION=enterprise"*"ee/dist missing"*"throwing on load"*)
     case "$why" in
     *COMMUNITY*)
       fail=$((fail + 1))
@@ -380,7 +392,7 @@ if [ "${1:-}" = "--self-test" ]; then
     ;;
   *)
     fail=$((fail + 1))
-    echo "  ✗ the pinned-enterprise 5xx does not name the pin and ee/dist: $why"
+    echo "  ✗ the pinned-enterprise 5xx does not name the pin and both ee/dist causes: $why"
     ;;
   esac
 
@@ -892,10 +904,14 @@ for _ in $(seq 1 150); do
       echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
       case "$SCOPE_CODE" in
       5[0-9][0-9])
-        # MISSING is the case #6161 was filed for; `present` means the dist exists and threw on
-        # load; loadEnterprise rethrows that error, so the console log is where it surfaces.
-        echo "  Build it (pnpm env:push rebuilds ee/dist), or pnpm env:up again. If ee/dist is" >&2
-        echo "  present, it loaded and threw: look for the error in pnpm env:logs." >&2
+        # The LOG FIRST. This boot built @alethia/ee above and exits before starting the console
+        # if ee/dist/index.js is absent, so here the dist is almost always present and threw on
+        # load (or the 5xx is not ee's at all); loadEnterprise rethrows that error on every call,
+        # so the console log is where it surfaces. env:up, not env:push, is the second step: the
+        # failure is memoised for the life of the process, and only env:up restarts it.
+        echo "  Read the error first: pnpm env:logs (a dist that loaded and threw, or any other" >&2
+        echo "  5xx, shows there). Then pnpm env:up: it rebuilds ee/dist AND restarts the console," >&2
+        echo "  which a failed load needs — loadEnterprise keeps the failure for the process's life." >&2
         ;;
       *)
         # This boot ALREADY scrubbed the tmux server's global environment and started the
