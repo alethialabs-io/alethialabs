@@ -60,7 +60,7 @@ func TestWriteBindingExternalSecrets(t *testing.T) {
 	}
 	outputs := map[string]string{"rds_master_credentials_secret_name": "alethia/proj/rds-maindb"}
 
-	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, false, nil, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, outputs, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestWriteBindingExternalSecrets_BYOIaC(t *testing.T) {
 	}
 	// Customer-named output — NOT rds_master_credentials_secret_name.
 	dir := t.TempDir()
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{"db_master_secret": "acme/db/master"}, false, nil, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{"db_master_secret": "acme/db/master"}, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestWriteBindingExternalSecrets_BYOIaC(t *testing.T) {
 	byoNoCred := byo
 	byoNoCred.OutputKeys = &types.ServiceBindingOutputKeys{Endpoint: "db_endpoint"}
 	vc.Services[0].Bindings[0].Target = byoNoCred
-	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{"db_endpoint": "x"}, false, nil, io.Discard)
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{"db_endpoint": "x"}, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 		t.Fatalf("secretStoreRefs wrong: %+v", stores)
 	}
 	dir := t.TempDir()
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, stores, io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, stores, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestWriteBindingExternalSecrets_Secret(t *testing.T) {
 
 	// A native-provider secret has no readable store → fail-closed (nothing written, reported).
 	vc.Secrets[0].Provider = ""
-	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, saasFacts("vault")), io.Discard)
+	skips2, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, secretStoreRefs(vc, saasFacts("vault")), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,10 +262,10 @@ func TestSecretStoreRefs_NonDominantSaaSAbsent(t *testing.T) {
 	}
 }
 
-// TestWriteBindingExternalSecrets_KeylessSkips locks the keyless skip (#722): when the flag is on and
-// the bound database has iam_auth, NO ExternalSecret is written (the renderer wired an auth-proxy
-// sidecar instead) — in lock-step with FromServices. Flag off → the password ExternalSecret is
-// written as before (no regression).
+// TestWriteBindingExternalSecrets_KeylessSkips locks the keyless skip (#722): when the bound database
+// has iam_auth, NO ExternalSecret is written (the renderer wired an auth-proxy sidecar instead) — in
+// lock-step with FromServices. Unconditional since #1513. A password-auth database (iam_auth=false)
+// still takes the ExternalSecret path (no regression).
 func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
 	vc := &types.ProjectConfig{
 		Provider:  "gcp",
@@ -279,8 +279,8 @@ func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
 		}},
 	}
 
-	// Flag ON + iam_auth db → skipped (no ExternalSecret).
-	_, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, true, nil, io.Discard)
+	// iam_auth db → skipped (no ExternalSecret).
+	_, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,14 +288,17 @@ func TestWriteBindingExternalSecrets_KeylessSkips(t *testing.T) {
 		t.Errorf("keyless binding must write no ExternalSecret, got %d", n)
 	}
 
-	// Flag OFF → the password path still runs (here fail-closed: no master-secret output on GCP, so it
-	// reports a skip rather than writing — but crucially it does NOT skip via the keyless branch).
-	skips, n2, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, nil, io.Discard)
+	// iam_auth=false → the password path still runs (here fail-closed: no master-secret output on
+	// GCP, so it reports a skip rather than writing — but crucially it does NOT skip via the keyless
+	// branch).
+	pw := *vc
+	pw.Databases = []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(false)}}
+	skips, n2, err := writeBindingExternalSecrets(t.TempDir(), &pw, map[string]string{}, nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n2 != 0 || len(skips) == 0 {
-		t.Errorf("flag off → password path (fail-closed skip reported), got n=%d skips=%v", n2, skips)
+		t.Errorf("password-auth db → password path (fail-closed skip reported), got n=%d skips=%v", n2, skips)
 	}
 }
 
@@ -342,7 +345,7 @@ func TestWriteBindingExternalSecrets_Unsatisfiable(t *testing.T) {
 		}},
 	}
 	var log strings.Builder
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, nil, &log)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, nil, &log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +481,7 @@ func TestWriteBindingExternalSecrets_Xacct(t *testing.T) {
 		}},
 	}
 	dir := t.TempDir()
-	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, false, secretStoreRefs(vc, xacctFacts()), io.Discard)
+	skips, n, err := writeBindingExternalSecrets(dir, vc, map[string]string{}, secretStoreRefs(vc, xacctFacts()), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +517,7 @@ func TestWriteBindingExternalSecrets_XacctSkipReasonCarriesNoValue(t *testing.T)
 	}
 	f := xacctFacts()
 	f.IRSAExternalSecretsArn = "" // gate closed
-	skips, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, false, secretStoreRefs(vc, f), io.Discard)
+	skips, n, err := writeBindingExternalSecrets(t.TempDir(), vc, map[string]string{}, secretStoreRefs(vc, f), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
