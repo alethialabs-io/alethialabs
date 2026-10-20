@@ -96,6 +96,12 @@ describe("POST /api/cli/runners/deploy", () => {
 			cloud_provider: "aws",
 			region: "us-east-1",
 		});
+		// The job carries no runner token: the claim mints it (lib/runners/lifecycle-token.ts). The
+		// runner row holds a well-formed hash whose plaintext nobody was given.
+		expect(jobValues.config_snapshot).not.toHaveProperty("runner_token");
+		const runnerValues = mock.valuesSpy.mock.calls[0][0];
+		expect(runnerValues.token_hash).toMatch(/^[0-9a-f]{64}$/);
+		expect(await res.text()).not.toMatch(/[0-9a-f]{64}/);
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 

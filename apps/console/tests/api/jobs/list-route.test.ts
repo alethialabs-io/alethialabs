@@ -220,6 +220,28 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		vi.mocked(getServiceDb).mockReturnValue(fakeDb() as never);
 	});
 
+	it("returns each row's snapshot through the read-side redaction", async () => {
+		const SENTINEL = "SENTINEL-cli-list-7e30";
+		rowsResult = [
+			listRow({
+				job: makeJob({
+					id: JOB_ID,
+					org_id: ORG,
+					user_id: USER,
+					project_id: null,
+					job_type: "DEPLOY_RUNNER",
+					config_snapshot: { runner_id: "r-1", runner_token: SENTINEL },
+				}),
+			}),
+		];
+		countResult = 1;
+		const res = await GET(new Request("http://console.test/api/jobs"));
+		expect(res.status).toBe(200);
+		const text = await res.text();
+		expect(text).toContain('"runner_id":"r-1"');
+		expect(text).not.toContain(SENTINEL);
+	});
+
 	it("authorizes as a CLI job VIEW rather than resolving a bare user id", async () => {
 		await drive("");
 		expect(vi.mocked(authorizeCli).mock.calls[0][1]).toBe("view");

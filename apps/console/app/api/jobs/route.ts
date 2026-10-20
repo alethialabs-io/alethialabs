@@ -37,6 +37,7 @@ import { type CliCaller, credentialOf } from "@/lib/cli/providers";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { EnvStateConflictError } from "@/lib/db/env-status";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { FabricHasLiveTenantsError } from "@/lib/queries/destroy-tree";
 import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
@@ -432,7 +433,7 @@ export async function POST(req: Request) {
 					{ status: 500 },
 				);
 			}
-			return cliJson(cliJobResponse, { job }, { status: 201 });
+			return cliJson(cliJobResponse, { job: redactJobRow(job) }, { status: 201 });
 		}
 
 		// PLAN / DEPLOY / DESTROY: run the console's own server actions under the CLI
@@ -557,7 +558,9 @@ export async function POST(req: Request) {
 
 		return cliJson(
 			cliJobResponse,
-			cascadeJobs ? { job, cascade_jobs: cascadeJobs } : { job },
+			cascadeJobs
+				? { job: redactJobRow(job), cascade_jobs: cascadeJobs }
+				: { job: redactJobRow(job) },
 			{ status: 201 },
 		);
 	} catch (err: unknown) {
@@ -852,7 +855,7 @@ export async function GET(req: Request) {
 	});
 
 	const result = items.map((r) => ({
-		...r.job,
+		...redactJobRow(r.job),
 		project_name: r.project_name ?? null,
 		runner_name: r.runner_name ?? null,
 	}));

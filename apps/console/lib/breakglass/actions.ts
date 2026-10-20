@@ -38,7 +38,9 @@ import {
 import { handleStripeEvent } from "@/lib/billing/webhook-handler";
 import { markRunnerDraining } from "@/lib/fleet/queue";
 import { wakeFleetScaler } from "@/lib/fleet/scaler";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
+import { snapshotWithoutRunnerToken } from "@/lib/runners/lifecycle-token";
 import { forceReleaseStateLock } from "@/lib/runners/state-lock";
 import { newTraceparent } from "@/lib/observability/trace";
 import { log } from "@/lib/observability/log";
@@ -225,7 +227,11 @@ async function runHandler(
 async function inspectJob(jobId: string): Promise<BreakglassResult> {
 	const [job] = await getServiceDb().select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
 	if (!job) return refuse(404, "Job not found.");
-	return { ok: true, detail: `inspected job ${jobId} (status ${job.status})`, data: job };
+	return {
+		ok: true,
+		detail: `inspected job ${jobId} (status ${job.status})`,
+		data: redactJobRow(job),
+	};
 }
 
 /**
@@ -257,7 +263,7 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 			org_id: orig.org_id,
 			job_type: orig.job_type,
 			initiated_by: "operator",
-			config_snapshot: orig.config_snapshot,
+			config_snapshot: snapshotWithoutRunnerToken(orig.config_snapshot),
 			cloud_identity_id: orig.cloud_identity_id,
 			project_id: orig.project_id,
 			environment_id: orig.environment_id,
