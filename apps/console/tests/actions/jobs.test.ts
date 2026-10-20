@@ -186,8 +186,11 @@ describe("rerunJob", () => {
 					config_snapshot: { foo: "bar" },
 					cloud_identity_id: "ci-1",
 					project_id: "proj-1",
+					org_id: "org-1",
 				},
 			],
+			// The project read: the project belongs to the active org.
+			[{ org_id: "org-1" }],
 			[{ id: "new-job" }],
 		]);
 		const result = await rerunJob("job-1");
@@ -197,8 +200,8 @@ describe("rerunJob", () => {
 		expect(valuesSpy).toHaveBeenCalledWith(
 			expect.objectContaining({
 				user_id: "user-1",
-				// Stamped to the active org (not left to the set_org_id trigger's user_id default),
-				// so the job carries the org that its logs route + scheduler authorize against.
+				// Stamped with the project's org — which the action has checked is the active org — so
+				// the job carries the org that its logs route + scheduler authorize against.
 				org_id: "org-1",
 				job_type: "PLAN",
 				config_snapshot: { foo: "bar" },
@@ -216,6 +219,38 @@ describe("rerunJob", () => {
 		await expect(rerunJob("job-x")).rejects.toThrow(/Original job not found/);
 		expect(valuesSpy).not.toHaveBeenCalled();
 		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("refuses a job of another organization (no insert, no notify)", async () => {
+		const { valuesSpy } = mockDb([
+			[{ job_type: "PLAN", project_id: null, org_id: "user-1" }],
+		]);
+		await expect(rerunJob("job-1")).rejects.toThrow(
+			"This job belongs to your personal workspace — switch to it to run this.",
+		);
+		expect(valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("refuses when the job's project is not in the active org (no insert, no notify)", async () => {
+		const { valuesSpy } = mockDb([
+			[{ job_type: "PLAN", project_id: "proj-b", org_id: "org-1" }],
+			[{ org_id: "org-b" }],
+		]);
+		await expect(rerunJob("job-1")).rejects.toThrow(
+			"This project belongs to another organization — switch to it to run this.",
+		);
+		expect(valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("refuses when the job's project is not visible in this scope", async () => {
+		const { valuesSpy } = mockDb([
+			[{ job_type: "PLAN", project_id: "proj-b", org_id: "org-1" }],
+			[],
+		]);
+		await expect(rerunJob("job-1")).rejects.toThrow("Project not found.");
+		expect(valuesSpy).not.toHaveBeenCalled();
 	});
 
 	it("propagates a usage-guard rejection before touching the db", async () => {

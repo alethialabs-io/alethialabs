@@ -22,9 +22,11 @@ import {
 	environmentProtectionRules,
 	member,
 	projectEnvironments,
+	projects,
 	promotionApprovals,
 	user,
 } from "@/lib/db/schema";
+import { projectOrgRefusal } from "@/lib/projects/project-org";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import type { Actor } from "@/lib/authz/types";
 import {
@@ -95,7 +97,12 @@ export async function promoteEnvironment(
 		return { ok: false, error: "Source and target environments must differ." };
 
 	// Validate both environments belong to the project + check stage order and target state.
-	const { source, target } = await withActorScope(actor, async (tx) => {
+	const { source, target, projectOrgId } = await withActorScope(actor, async (tx) => {
+		const [project] = await tx
+			.select({ org_id: projects.org_id })
+			.from(projects)
+			.where(eq(projects.id, projectId))
+			.limit(1);
 		const rows = await tx
 			.select()
 			.from(projectEnvironments)
@@ -108,8 +115,12 @@ export async function promoteEnvironment(
 		return {
 			source: rows.find((r) => r.id === sourceEnvId),
 			target: rows.find((r) => r.id === targetEnvId),
+			projectOrgId: project?.org_id ?? null,
 		};
 	});
+	// The promotion and its jobs belong to the project's org; refuse before anything is written.
+	const orgRefusal = projectOrgRefusal(projectOrgId, actor);
+	if (source && target && orgRefusal) return { ok: false, error: orgRefusal };
 	if (!source || !target)
 		throw new Error("Environment not found for this project");
 	if (STAGE_ORDER[target.stage] < STAGE_ORDER[source.stage])

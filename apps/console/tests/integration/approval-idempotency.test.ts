@@ -20,7 +20,7 @@
 // the shape of the defect: while a job is in flight the env CAS already refuses a second enqueue,
 // and the double queue happens once the first job has settled and the stale card is clicked again.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { describeIfDb } from "./db";
@@ -55,8 +55,6 @@ import {
 } from "@/lib/db/schema";
 
 const ORG = randomUUID();
-/** Another org the same person acts in. */
-const OTHER_ORG = randomUUID();
 /** The person who approves. */
 const USER = randomUUID();
 /** A second member of the same org, approving with the SAME key on the SAME project. */
@@ -272,18 +270,37 @@ describeIfDb("approval idempotency — one approval, one job (#5797)", () => {
 		expect(row?.user_id).toBe(OTHER_USER);
 	});
 
-	it("a key is scoped to the actor's ORG: the same person's job under another org is never returned", async () => {
-		// RLS does not hide this row: `owner_all` is `user_id = current_owner OR org_id = current_org`,
-		// and the row is the caller's own. Only the lookup's org predicate keeps it out.
+	it("a key is scoped to the actor's ORG: the same person's approval from another org returns nothing", async () => {
 		const key = `thread-1:toolu_${randomUUID()}`;
-		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: OTHER_ORG });
-		const elsewhere = jobIdOf(await tryPlanProject(projectId, undefined, envId, key));
+		actAs(USER);
+		const here = jobIdOf(await tryPlanProject(projectId, undefined, envId, key));
 		await settleAll();
 
-		actAs(USER);
+		// The same person, the same key and project, scoped to their personal org: the job above is
+		// outside that org, so the lookup returns nothing.
+		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: USER });
 		await expect(getApprovedJob(projectId, "plan_project", key)).resolves.toBeNull();
-		const here = jobIdOf(await tryPlanProject(projectId, undefined, envId, key));
-		expect(here).not.toBe(elsewhere);
+
+		// And a job of this project cannot be filed under any other org to be found there: a
+		// project-bearing job carries its project's org, and a disagreeing org_id is refused.
+		await expect(
+			getServiceDb()
+				.insert(jobs)
+				.values({
+					user_id: USER,
+					org_id: USER,
+					project_id: projectId,
+					environment_id: envId,
+					job_type: "PLAN",
+					status: "SUCCESS",
+					initiated_by: "user",
+					config_snapshot: {},
+					idempotency_key: createHash("sha256").update(`plan\n${key}`).digest("hex"),
+				}),
+		).rejects.toMatchObject({ cause: { code: "23514" } });
+
+		actAs(USER);
+		await expect(getApprovedJob(projectId, "plan_project", key)).resolves.toEqual({ jobId: here });
 	});
 
 	it("a key is scoped to its project: the same key on another project queues that project's job", async () => {
