@@ -1119,7 +1119,13 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 				parts.push(`the skeleton moves ${score.toFixed(3)} against the page (budget ${budget})${blockClause}`);
 			}
 			if (columns.skeleton !== columns.final) {
-				parts.push(`the skeleton sets ${plural(Number(columns.skeleton), "block")} side by side and the page ${Number(columns.final)}`);
+				const sk = Number(columns.skeleton);
+				const fin = Number(columns.final);
+				// "0 blocks side by side" read as a layout that sets blocks in a row and has none; it is a
+				// skeleton of bars, which draws no block-sized frame at all (#6180 re-review).
+				const skeletonSide = sk === 0 ? "the skeleton draws no block-sized frame" : `the skeleton sets ${plural(sk, "block")} side by side`;
+				const pageSide = fin === 0 ? "the page draws none" : `the page ${fin}`;
+				parts.push(`${skeletonSide} and ${pageSide}`);
 			}
 			nonEmpty(parts.length, "shift over budget or column mismatch");
 			return parts.join("; ");
@@ -4497,6 +4503,10 @@ function selfTest() {
 		"...and says how far it MOVED when the block kept its height but not its place",
 		summariseLiveEvidence("B2", { score: 0.047, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.047, skeleton: { y: 149, h: 630 }, region: { y: 250, h: 632 } } }) ===
 			"the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower",
+	);
+	ok(
+		"...and a bars-only skeleton is named as drawing no frame, never as \"0 blocks side by side\"",
+		summariseLiveEvidence("B2", { score: 0, budget: 0.02, columns: { skeleton: 0, final: 3 } }) === "the skeleton draws no block-sized frame and the page 3",
 	);
 	ok("B3 counts the empty copy against the answered render", summariseLiveEvidence("B3", { heldEmpty: 2, answeredEmpty: 0 }) === "2 empty-copy regions while every read was held, against 0 once answered");
 	raises("a B3 FAIL with no extra empty copy RAISES", () => summariseLiveEvidence("B3", { heldEmpty: 1, answeredEmpty: 1 }), "no empty copy beyond");
