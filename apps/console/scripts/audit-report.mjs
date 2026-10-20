@@ -612,6 +612,12 @@ export const LIVE_DEBT = /** @type {const} */ ({});
  * a row whose cell no longer FAILS — a debt ledger nobody is forced to shrink stops being true. An
  * entry naming a cell that is NOT MEASURED is stale too: the ledger records findings, not gaps.
  *
+ * WHAT THE CHECK DOES NOT DO, stated: it does not ask GitHub whether a `lifts:` issue is still OPEN.
+ * This generator runs offline by contract — the bare check gates every console PR and the only inputs
+ * are committed files (see the header) — so a network read here would make a report a function of the
+ * day it ran. A row whose issue has CLOSED with the cell still failing therefore reads as owned until
+ * the next import; `scripts/claim-work.sh` and the board are where a closed-but-unfixed lane surfaces.
+ *
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {

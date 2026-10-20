@@ -476,6 +476,16 @@ digit, no relative time — and fails only when the held render has FEWER of the
 stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`). The first calibration run failed
 the jobs slice on exactly those two, which is how they were found.
 
+**One classifier tells the page's reads from the shell's, for B3, B4 and B5 alike** (`shellReadsFor`). A
+read is the shell's when the build's server-reference manifest places it in every page under the
+route's shells AND another route was seen making it — or when every route under those shells made it.
+Reference is not use: `app-shell.tsx` imports `useJobsQuery` → `getJob`, so `getJob` is in every AppShell
+bundle while only `~/jobs/[id]` calls it, and the reference-only rule called it "shell" and turned that
+route's B4 FAIL into NOT MEASURED (#6180's third review). The classifier needs every route's reads, so the
+spec loads every route ANSWERED first (phase 1), checks the manifest against what it observed — an
+action a route made that the manifest does not place on that route's page fails the run closed, which
+is what a manifest from another build or with renamed worker keys does — and only then measures.
+
 **B3 and B4 count only the PAGE's reads.** A route on which no read of its own was held (B3) or failed
 (B4) is **NOT MEASURED `no-page-reads`**, as for B5 — the first cut PASSed routes that exercised nothing
 but their shell. The classification is the build's server-reference manifest, the same for all three
@@ -523,11 +533,12 @@ whose rows are the wrong shape, and a missing row above a matching block only th
 
 **Hosted-only pages are not measured by B2 here.** The release gate boots a SELF-MANAGED console. It
 never renders the hosted product's upsell on the plan-gated routes (`~/alerts`, `~/runners`,
-`~/settings/teams`, `~/settings/sso` — F021), and on `~/settings/billing`, `~/usage` and
-`[project]/usage` it renders a "Self-managed deployment" notice in place of the panels their skeletons
-were drawn for. On all seven B2 is **NOT MEASURED `hosted-only`**, never scored against a page the hosted
+`~/settings/teams`, `~/settings/sso` — F021), and on `~/settings/billing` and `[project]/usage` it renders
+a "Self-managed deployment" notice in place of the panels their skeletons were drawn for. On those six
+B2 is **NOT MEASURED `hosted-only`**, never scored against a page the hosted
 product would not show. B1, B4 and B5 on billing and usage stay scored: they measure the self-managed
-render that ships, not the hosted panels. Measuring it needs a release-gate leg that boots the console as the
+render that ships, not the hosted panels. `~/usage`'s B2 is scored too, by decision: its skeleton over
+the self-managed notice is what every self-managed user sees on that route. Measuring it needs a release-gate leg that boots the console as the
 hosted edition; no such leg exists today, and the plan-gating design (#6132) is its owner.
 
 **B4 has two phases because a prefetched region makes no read on its cold load.** Failing its reads
@@ -571,7 +582,10 @@ page, and one that blanks both regions; a skeleton with the wrong columns, one w
 one whose height alone is wrong, and a bars-only skeleton over a taller page. A shorter open-ended list,
 a `RegionError` with no `role`, a page with no reads and a page whose only read is its shell's (both NOT
 MEASURED, never PASS — the shell read classified through a fixture build manifest, by the same parser)
-are its other known answers. A predicate the control names is
+are its other known answers — and a page read made over a server ACTION that every page entry
+references but only this page calls, which must be MEASURED (B4 FAIL), never classified away. Every
+NOT MEASURED the control expects is asserted with its REASON, so an instrument that cannot intercept
+server actions — and reads `no-reads-failed` where `no-page-reads` was meant — goes red. A predicate the control names is
 withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS B1, B3, B4
 and B5, and must be MEASURED on B2, which it FAILS: its skeleton has no PageToolbar row and a one-row
 filter bar, so the table frame paints about 100px above where the page puts it. That is debt (#6121),

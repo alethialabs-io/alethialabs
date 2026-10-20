@@ -16,7 +16,7 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { readKey } from "./behaviour";
+import { manifestConsistencyProblems, readKey, shellReadsFor, workersFromManifest } from "./behaviour";
 import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
@@ -816,4 +816,28 @@ test("family B's read classifier: actions and rpc in, the change stream and its 
 	expect(readKey(req("http://x.test/acme/~/events", "GET", { accept: "text/event-stream" })), "the change stream").toBeNull();
 	expect(readKey(req("http://x.test/acme/~/events?probe=1", "GET", {})), "the stream's probe").toBeNull();
 	expect(readKey(req("http://x.test/acme/~/jobs", "GET", { rsc: "1" })), "a navigation's RSC payload").toBeNull();
+});
+
+// The build manifest is the shell classifier's input, so a manifest that does not describe the run
+// must refuse rather than classify: renamed worker keys (a Next upgrade, a manifest from another build)
+// name no observed route, and every shell read would silently become a page read.
+test("a build manifest that does not describe the observed run fails closed", () => {
+	const reads = new Map([["/a", ["action s1", "rpc x"]], ["/b", ["action s1"]]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const good = workersFromManifest({ node: { s1: { workers: { "app/a/page": {}, "app/b/page": {} } } } });
+	const renamed = workersFromManifest({ node: { s1: { workers: { "app/(renamed)/a/page": {}, "app/(renamed)/b/page": {} } } } });
+	expect(manifestConsistencyProblems(reads, entries, good)).toEqual([]);
+	expect(manifestConsistencyProblems(reads, entries, renamed).length, "renamed worker keys").toBe(2);
+	expect(manifestConsistencyProblems(reads, entries, workersFromManifest({ node: {} })).length, "an action the manifest omits").toBe(2);
+});
+
+// A read the build references from every page is the SHELL's only when another route was seen making
+// it: `getJob` is in every AppShell bundle and only `~/jobs/[id]` calls it.
+test("the shell classifier needs a referenced-everywhere read to be OBSERVED elsewhere", () => {
+	const chains = new Map([["/a", "S"], ["/b", "S"]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const everywhere = { workers: { "app/a/page": {}, "app/b/page": {} } };
+	const workers = workersFromManifest({ node: { poll: everywhere, getJob: everywhere } });
+	const reads = new Map([["/a", ["action poll", "action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellReadsFor("/a", chains, reads, entries, workers)).toEqual(["action poll"]);
 });

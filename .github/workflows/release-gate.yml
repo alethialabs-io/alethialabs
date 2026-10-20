@@ -449,7 +449,20 @@ jobs:
             // was the contrast with its sibling. Renaming both moved two entries in
             // apps/console/e2e/gate-baseline.json (ratchet rule 4); their statuses did not.
             { project: "qa",        args: "--project=qa",        workers: 3, retries: 1, capabilities: "stripe,encryption",  manifest: false, floor: 300 },
-            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 1 },
+            // `floor: 225` is MEASURED with `--list` on #6180's tree (#6116), the way the row below derives its own:
+            //
+            //   behaviour.spec.ts         124   (control + 40 answered + manifest check + 40 B1-B4 + 40 B5 + 2)
+            //   predicate-selftest.spec    53
+            //   routes.spec.ts             44
+            //   permissions.spec.ts        31
+            //   fixtures/auth.setup         1
+            //   ─────────────────────────
+            //   Total:                    253
+            //
+            // It sits above 253 minus the SMALLEST file (222), so any one file that stops matching turns the
+            // leg red, and 28 below the total, so retiring a handful of routes (about four tests each) does not.
+            // `floor: 1` asked nothing: the leg stayed green with every audit file but one gone.
+            { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 225 },
             // `floor: 70` is MEASURED, not a round number, and the measurement is `--list` — the
             // same number the guard below greps out of `Total:`, taken on this tree:
             //
