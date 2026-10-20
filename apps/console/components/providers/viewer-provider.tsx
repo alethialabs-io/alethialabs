@@ -82,15 +82,18 @@ const NOT_FOLLOWED: LiveSessionRead = { data: null, isPending: true, error: null
 /** Unsubscribing from nothing. */
 function noop(): void {}
 
-/** Whether a client auth call has changed the session since this page loaded (module-wide). */
+/**
+ * Whether the session may have changed since this page loaded (module-wide): a client auth call,
+ * another tab's session change, or the tab returning to view — see `liveSession.onPossibleChange`.
+ */
 let sessionChanged = false;
 const changeListeners = new Set<() => void>();
 let detachChange: (() => void) | null = null;
 
-/** Subscribes to "the session changed on this client"; attaches to better-auth on first use. */
+/** Subscribes to "the session may have changed"; attaches on first use. */
 function subscribeSessionChanged(listener: () => void): () => void {
 	changeListeners.add(listener);
-	detachChange ??= liveSession.onChange(() => {
+	detachChange ??= liveSession.onPossibleChange(() => {
 		sessionChanged = true;
 		for (const notify of changeListeners) notify();
 	});
@@ -99,7 +102,7 @@ function subscribeSessionChanged(listener: () => void): () => void {
 	};
 }
 
-/** The current answer to "has the session changed on this client". */
+/** The current answer to "may the session have changed". */
 function getSessionChanged(): boolean {
 	return sessionChanged;
 }
@@ -110,10 +113,12 @@ function getSessionChanged(): boolean {
  * SEEDED (every private route — the layout read the session for this request): renders the seed,
  * and asks the browser for nothing (#6114). It used to subscribe to the live better-auth session
  * on every page, and a subscription is what makes better-auth fetch `/get-session` — a request
- * on each load for an answer the server had just sent. It follows the live session only once a
- * client call has CHANGED the session (a profile edit, a sign-out — better-auth's session signal),
- * which is the one way the seed can go stale without a navigation; until that live answer
- * settles it keeps showing the seed, so the UI does not blink to "signed out".
+ * on each load for an answer the server had just sent. It starts following the live session as
+ * soon as the session MAY have changed: a client auth call in this tab, a session change in
+ * another tab, or this tab coming back into view (`liveSession.onPossibleChange`) — the ways the
+ * seed goes stale without a navigation, since a soft navigation never re-runs the layout. Once
+ * following it stays following. Until the live answer settles it keeps showing the seed, so the
+ * UI does not blink to "signed out"; a settled answer with no session, or a 401, is signed out.
  *
  * UNSEEDED (no `ViewerProvider` above: a public route, a test): follows the live session, and the
  * pre-hydration answer is `{ viewer: null, isPending: true }` on both sides, which is equally
@@ -138,6 +143,13 @@ export function useViewer(): ViewerState {
 	const liveUser = live.data?.user;
 	const liveViewer = useMemo(() => (liveUser ? toViewer(liveUser) : null), [liveUser]);
 
+	// A 401 is an answer — signed out — not a failed fetch to ride out on the seed.
+	const unauthorized =
+		typeof live.error === "object" &&
+		live.error !== null &&
+		"status" in live.error &&
+		live.error.status === 401;
+	if (hydrated && unauthorized) return { viewer: null, isPending: false };
 	const liveUnsettled = live.isPending || live.error != null;
 	if (!hydrated || liveUnsettled) {
 		if (seed) return { viewer: seed.viewer, isPending: false };

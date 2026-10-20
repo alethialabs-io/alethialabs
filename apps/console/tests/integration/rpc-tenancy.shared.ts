@@ -192,6 +192,11 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasElement(out, "id", s.jobX), y: hasElement(out, "id", s.jobY) }),
 	},
+	"workspace.recentJobs": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasElement(out, "id", s.jobX), y: hasElement(out, "id", s.jobY) }),
+	},
 	"workspace.supportCases": {
 		kind: "org-scoped",
 		input: undefined,

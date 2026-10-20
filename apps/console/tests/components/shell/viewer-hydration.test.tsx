@@ -59,7 +59,7 @@ vi.mock("@/lib/auth/client", () => ({
 	},
 	// The live session `useViewer()` follows when it has no seed. `live` is reassigned only between
 	// renderers, so within one it is the same object — as better-auth's atom snapshot is.
-	liveSession: { subscribe: () => () => {}, get: () => live, onChange: () => () => {} },
+	liveSession: { subscribe: () => () => {}, get: () => live, onPossibleChange: () => () => {} },
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),

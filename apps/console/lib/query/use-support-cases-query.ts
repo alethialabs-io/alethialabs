@@ -12,9 +12,13 @@ import { orpc } from "@/lib/rpc/client";
  * it. The read is scoped to the ADDRESS's org (the actor the read router resolves), and the browser
  * keeps one cache per org (`lib/query/client.ts`), so org A's cases are never rendered under B.
  *
- * Live through the real-time bus (ADR 0005 §7 Q3): the `support` topic invalidates this key
- * (`lib/query/topics.ts`), so a staff/AI reply surfaces in the bell and fires a toast with no poll.
+ * STILL POLLS every 30 s, so a staff/AI reply reaches the bell and fires a toast. The `support` topic
+ * maps this key (`lib/query/topics.ts`), but nothing PRODUCES that topic yet: the server routes no
+ * change to it until #6130 adds the support trigger. Delete the `refetchInterval` with that PR.
  */
 export function useSupportCasesQuery(): UseQueryResult<CaseListItem[]> {
-	return useQuery(orpc.workspace.supportCases.queryOptions());
+	return useQuery({
+		...orpc.workspace.supportCases.queryOptions(),
+		refetchInterval: 30_000,
+	});
 }

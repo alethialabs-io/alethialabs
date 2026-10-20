@@ -6,17 +6,24 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 import { getJob, type JobWithMeta } from "@/app/server/actions/jobs";
 import type { Job } from "@/lib/db/schema";
-import { rpcClient } from "@/lib/rpc/client";
+import { orpc, rpcClient } from "@/lib/rpc/client";
+import type { ShellJob } from "@/lib/rpc/procedures/workspace";
 import { qk } from "./keys";
 
 /**
- * The shell's job feed, read over the read router's `workspace.jobs` (GET). Every consumer (the job
- * toasts, the bell, breadcrumbs, command palette, overview card, runners page) shares this one
- * cache entry; the `[org]` layout prefetches it, so first paint issues no request.
- *
- * Live through the real-time bus, not a poll (ADR 0005 §7 Q3): the `jobs` topic invalidates every
- * `qk.jobs*` key by its `["jobs"]` prefix (`lib/query/topics.ts`), so a job changing anywhere in the
- * org refetches this feed. The key stays `qk.jobs(org)` because the jobs pages share its entry.
+ * The shell's job feed: the org's newest jobs, capped and slim (`workspace.recentJobs`). The bell,
+ * the job toasts, the breadcrumbs, the command palette and the overview's recent-jobs card read it;
+ * the `[org]` layout prefetches it, so first paint issues no request. Live through the `jobs` topic
+ * (`lib/query/topics.ts`), with no poll.
+ */
+export function useRecentJobsQuery(): UseQueryResult<ShellJob[]> {
+	return useQuery(orpc.workspace.recentJobs.queryOptions());
+}
+
+/**
+ * The org's FULL job list (`workspace.jobs`), for the pages that need all of it — runners (active
+ * jobs with their config) and the plan flow. Not prefetched by the layout: it grows with the org's
+ * history. Live through the `jobs` topic, whose `["jobs"]` prefix reaches this `qk.jobs(org)` key.
  */
 export function useJobsQuery(): UseQueryResult<JobWithMeta[]> {
 	const { org } = useParams<{ org: string }>();

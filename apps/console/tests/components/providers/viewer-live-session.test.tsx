@@ -26,7 +26,7 @@ vi.mock("@/lib/auth/client", () => ({
 	liveSession: {
 		subscribe: h.subscribe,
 		get: h.get,
-		onChange: (listener: () => void) => {
+		onPossibleChange: (listener: () => void) => {
 			h.changed.push(listener);
 			return () => {};
 		},

@@ -136,6 +136,10 @@
 			"count": 1,
 			"lifts": "#6123"
 		},
+		"lib/query/use-support-cases-query.ts :: refetchInterval": {
+			"count": 1,
+			"lifts": "#6130"
+		},
 		"lib/stores/elench-drafts/store.ts :: setInterval": {
 			"count": 1,
 			"lifts": "unassigned"

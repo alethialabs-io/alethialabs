@@ -3,19 +3,29 @@
 
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getGettingStartedState } from "@/app/server/actions/onboarding";
 import { getProjects } from "@/app/server/actions/projects";
 import { getEnvironmentsForSlug } from "@/app/server/actions/resolve";
 import { listMyCases } from "@/app/server/actions/support";
-import { getJobs } from "@/app/server/actions/jobs";
+import { getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
+import { authorize } from "@/lib/authz/guard";
+import { withScope } from "@/lib/db";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { deploymentMode } from "@/lib/billing/config";
 import { isBillingActive } from "@/lib/billing/plan";
 import { getServiceDb } from "@/lib/db";
-import { member, organization, organizationBilling } from "@/lib/db/schema";
+import {
+	cloudIdentities,
+	jobs,
+	member,
+	organization,
+	organizationBilling,
+	projectEnvironments,
+	projects,
+} from "@/lib/db/schema";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { query } from "@/lib/rpc/base";
 import { PERSONAL_ORG_SLUG } from "@/lib/routing";
@@ -116,11 +126,82 @@ export async function readWorkspaceContext(actor: Actor): Promise<WorkspaceConte
 	};
 }
 
+/** How many jobs the shell's feed carries: the bell lists 20, and toasts only follow new jobs. */
+export const SHELL_JOB_FEED_LIMIT = 20;
+
+/**
+ * A job as the shell shows it — the bell, the toasts, the breadcrumbs, the palette, the overview's
+ * recent-jobs card. A slim projection: none of the JSONB columns (`config_snapshot`,
+ * `execution_metadata`), which the shell never renders and which made up most of a job's bytes.
+ */
+export type ShellJob = Pick<
+	JobWithMeta,
+	| "id"
+	| "job_type"
+	| "status"
+	| "created_at"
+	| "completed_at"
+	| "error_message"
+	| "project_id"
+	| "project_name"
+	| "project_slug"
+	| "environment_name"
+	| "environment_stage"
+	| "cloud_provider"
+	| "runner_id"
+>;
+
+/**
+ * The org's newest jobs, capped at {@link SHELL_JOB_FEED_LIMIT}, in the slim {@link ShellJob} shape.
+ * Same authorization and row scope as the full feed (`getJobs`): the PDP's `view job`, then the
+ * caller's owner/org scope under RLS. Bounded by the LIMIT on `created_at DESC`, so its cost does
+ * not grow with the org's history — which is what lets the `[org]` layout await it.
+ */
+export async function readRecentJobs(): Promise<ShellJob[]> {
+	const actor = await authorize("view", { type: "job" });
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+		const rows = await tx
+			.select({
+				id: jobs.id,
+				job_type: jobs.job_type,
+				status: jobs.status,
+				created_at: jobs.created_at,
+				completed_at: jobs.completed_at,
+				error_message: jobs.error_message,
+				project_id: jobs.project_id,
+				runner_id: jobs.runner_id,
+				project_name: projects.project_name,
+				project_slug: projects.slug,
+				environment_name: projectEnvironments.name,
+				environment_stage: projectEnvironments.stage,
+				cloud_provider: cloudIdentities.provider,
+			})
+			.from(jobs)
+			.leftJoin(projects, eq(jobs.project_id, projects.id))
+			.leftJoin(cloudIdentities, eq(jobs.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
+			.orderBy(desc(jobs.created_at))
+			.limit(SHELL_JOB_FEED_LIMIT);
+		return rows.map((r) => ({
+			...r,
+			project_name: r.project_name ?? null,
+			project_slug: r.project_slug ?? null,
+			environment_name: r.environment_name ?? null,
+			environment_stage: r.environment_stage ?? null,
+			cloud_provider: r.cloud_provider ?? null,
+		}));
+	});
+}
+
 /**
  * The app shell's reads (ADR 0005 D1, #6114): everything the chrome around every `/{org}` page
  * shows — the org and plan, the project list, the job and support-case feeds behind the bell and
  * the toasts, the setup guide, the project's environments — served over GET and prefetched by the
  * `[org]` layout, so the shell paints with data and issues no request of its own on first load.
+ *
+ * `recentJobs` is the shell's job feed (capped, slim) and is what the layout prefetches. `jobs` is
+ * the org's FULL job list for the few pages that need all of it (runners, the plan flow); it is
+ * never prefetched by the layout — its size grows with the org's history.
  *
  * `context` owns its body (moved here from the workspace server action). The others call their
  * domain's existing reader IN-PROCESS — a plain function call, not a server-action POST — exactly as
@@ -130,6 +211,7 @@ export const workspaceRouter = {
 	context: query.handler(({ context }) => readWorkspaceContext(context.actor)),
 	projects: query.handler(() => getProjects()),
 	jobs: query.handler(() => getJobs()),
+	recentJobs: query.handler(() => readRecentJobs()),
 	supportCases: query.handler(() => listMyCases({})),
 	setupGuide: query.handler(() => getGettingStartedState()),
 	environments: query

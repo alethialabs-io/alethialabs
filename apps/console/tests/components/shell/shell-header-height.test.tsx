@@ -41,7 +41,7 @@ vi.mock("@/lib/auth/client", () => ({
 		signOut: vi.fn(),
 		listAccounts: vi.fn(async () => ({ data: [] })),
 	},
-	liveSession: { subscribe: () => () => {}, get: () => LIVE, onChange: () => () => {} },
+	liveSession: { subscribe: () => () => {}, get: () => LIVE, onPossibleChange: () => () => {} },
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),
@@ -51,7 +51,7 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
-vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
+vi.mock("@/lib/query/use-jobs-query", () => ({ useRecentJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/hooks/use-support-notifications", () => ({
 	useSupportNotifications: () => ({
 		notifications: [],

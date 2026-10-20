@@ -46,6 +46,8 @@ interface WorkspaceStore {
 	fetchWorkspace: () => Promise<void>;
 	/** Settle the store from a context the caller already holds (the layout's hydrated prefetch). */
 	applyWorkspace: (ctx: WorkspaceContext) => void;
+	/** Say the load failed (the hydrated query errored), keeping whatever an earlier load set. */
+	markFailed: () => void;
 	/** Persist the active org server-side, then update local state. */
 	switchOrg: (orgId: string) => Promise<void>;
 }
@@ -78,9 +80,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 			// A later call (a retry, or a refresh after a billing change) owns the outcome.
 			if (generation !== loadGeneration) return;
 			set(loaded(ctx));
-			// Keep the query the switchers render from in step with the store, so a refresh after a
-			// billing change moves the plan badge as well as the gates. Same tenant partition as
-			// `app/providers.tsx`, so the answer lands in the cache of the org it was asked of.
+			// Write the answer into the QUERY too: that is what the switchers render from, and setting
+			// its data also clears a failed query's error, so the shell's sync
+			// (`useWorkspaceStoreSync`) does not mark the store failed again after a successful retry.
+			// Same tenant partition as `app/providers.tsx`, so the answer lands in the cache of the org
+			// it was asked of. (Called directly rather than through `fetchQuery`, which would hand a
+			// second call the first call's in-flight promise and break "the latest call wins".)
 			getQueryClient(tenantSegment(window.location.pathname)).setQueryData(
 				orpc.workspace.context.queryKey(),
 				ctx,
@@ -93,6 +98,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 		}
 	},
 	applyWorkspace: (ctx) => set(loaded(ctx)),
+	markFailed: () => set({ loadStatus: "failed", isLoading: false }),
 	switchOrg: async (orgId) => {
 		await setActiveOrganization(orgId);
 		set({ activeOrgId: orgId });
@@ -107,7 +113,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
  * this query, never from a second fetch.
  */
 export function useWorkspaceContextQuery(): UseQueryResult<WorkspaceContext> {
-	return useQuery(orpc.workspace.context.queryOptions());
+	return useQuery(workspaceContextQuery());
+}
+
+/** The workspace-context query: the key the layout prefetches, read through the GET procedure. */
+function workspaceContextQuery() {
+	return {
+		queryKey: orpc.workspace.context.queryKey(),
+		queryFn: () => rpcClient.workspace.context(),
+	};
 }
 
 /**
@@ -132,12 +146,19 @@ export function useActiveWorkspaceOrg(): WorkspaceOrg | null {
  * Settles the store from the hydrated workspace query — the store's only load on a page view.
  * Mounted once, by the app shell. Before #6114 the shell AND the org switcher each called
  * `fetchWorkspace()` on mount: two server-action POSTs for data the layout could have sent.
+ *
+ * A FAILED query is a failed load (#5895): when the layout's prefetch failed and the client's own
+ * query errors too, the store says `failed`, so a surface waiting on it shows an error and a Retry
+ * (`fetchWorkspace()`, which refetches this query) instead of a skeleton that never ends.
  */
 export function useWorkspaceStoreSync(): void {
-	const { data } = useWorkspaceContextQuery();
+	const { data, isError } = useWorkspaceContextQuery();
 	useEffect(() => {
 		if (data) useWorkspaceStore.getState().applyWorkspace(data);
 	}, [data]);
+	useEffect(() => {
+		if (isError) useWorkspaceStore.getState().markFailed();
+	}, [isError]);
 }
 
 /** Where the workspace load stands — `failed` is the one state a surface must not wait out. */

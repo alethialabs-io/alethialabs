@@ -33,7 +33,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("next-runtime-env", () => ({ env: () => undefined }));
 vi.mock("@/lib/auth/client", () => ({
 	authClient: { signOut: vi.fn(), listAccounts: vi.fn(async () => ({ data: [] })) },
-	liveSession: { subscribe: () => () => {}, get: () => LIVE, onChange: () => () => {} },
+	liveSession: { subscribe: () => () => {}, get: () => LIVE, onPossibleChange: () => () => {} },
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),
@@ -51,7 +51,6 @@ import { ViewerProvider } from "@/components/providers/viewer-provider";
 import { AppSidebar } from "@/components/shell/app-sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
-import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 
@@ -71,15 +70,21 @@ function seeded(): QueryClient {
 		isHosted: true,
 	});
 	c.setQueryData(orpc.workspace.projects.queryKey(), []);
-	c.setQueryData(qk.jobs("acme"), [
+	c.setQueryData(orpc.workspace.recentJobs.queryKey(), [
 		{
 			id: "job-1",
 			job_type: "DEPLOY",
 			status: "SUCCESS",
 			created_at: NOW,
 			completed_at: NOW,
+			error_message: null,
+			project_id: "p-shop",
 			project_name: "shop",
+			project_slug: "shop",
 			environment_name: "prod",
+			environment_stage: "production",
+			cloud_provider: null,
+			runner_id: null,
 		},
 	]);
 	c.setQueryData(orpc.workspace.supportCases.queryKey(), [

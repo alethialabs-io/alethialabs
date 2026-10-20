@@ -10,7 +10,6 @@ import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
 import { getQueryClient } from "@/lib/query/client";
-import { qk } from "@/lib/query/keys";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
 import { serverOrpc } from "@/lib/rpc/server";
 import { AppShell } from "@/components/shell/app-shell";
@@ -23,10 +22,7 @@ import { UpgradeSheetProvider } from "@/components/org/upgrade-sheet-provider";
  */
 function isShellRead(query: Query): boolean {
 	const [path] = query.queryKey;
-	if (query.state.status !== "success") return false;
-	// The job feed's `qk.jobs(org)` — exactly two segments, so the jobs PAGE's keys under it are not.
-	if (path === "jobs" && query.queryKey.length === 2) return true;
-	return Array.isArray(path) && path[0] === "workspace";
+	return query.state.status === "success" && Array.isArray(path) && path[0] === "workspace";
 }
 
 /**
@@ -78,9 +74,9 @@ export default async function OrgLayout({
 	// its own runners (managed warm pools are internal/support-admin). Resolved server-side.
 	//
 	// The shell's own reads are prefetched HERE, in parallel, and handed to the client hydrated
-	// (#6114, ADR 0005 D1): the org, its plan and the user's org list; the project list; the job and
-	// support-case feeds behind the bell and the toasts; the setup guide. The chrome therefore paints
-	// with data on the server render and on the first client paint — no "Personal" / "All projects"
+	// (#6114, ADR 0005 D1): the org, its plan and the user's org list; the project list; the (capped)
+	// job feed and the support-case feed behind the bell and the toasts; the setup guide. The chrome
+	// therefore paints with data on the server render and on the first client paint — no "Personal" / "All projects"
 	// placeholder that flips when a client fetch lands (F002), and no request of its own on load
 	// (F003). Each goes through the read router in-process, so it is served from the actor the
 	// ADDRESS resolves, exactly as the browser's GET would be. A prefetch that fails is simply not
@@ -91,8 +87,11 @@ export default async function OrgLayout({
 		orgHasSelfRunners(orgId),
 		queryClient.prefetchQuery(rpc.workspace.context.queryOptions()),
 		queryClient.prefetchQuery(rpc.workspace.projects.queryOptions()),
-		// The job feed keeps its legacy key (see `useJobsQuery`): the jobs pages follow its poll.
-		queryClient.prefetchQuery({ queryKey: qk.jobs(org), queryFn: () => rpc.workspace.jobs.call() }),
+		// The shell's job feed is CAPPED and slim (`workspace.recentJobs`: the newest 20, no JSONB
+		// columns), so awaiting it costs one indexed LIMIT query whatever the org's history — and it
+		// keeps the bell and the toast baseline on first paint. The org's full job list is never
+		// prefetched here.
+		queryClient.prefetchQuery(rpc.workspace.recentJobs.queryOptions()),
 		queryClient.prefetchQuery(rpc.workspace.supportCases.queryOptions()),
 		queryClient.prefetchQuery(rpc.workspace.setupGuide.queryOptions()),
 	]);

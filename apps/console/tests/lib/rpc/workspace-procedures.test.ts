@@ -17,12 +17,44 @@ vi.mock("@/lib/auth/owner", () => ({
 		throw new Error("the workspace read must not consult the session");
 	}),
 }));
-vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+const { recentJobsQuery, serviceDb } = vi.hoisted(() => {
+	// What `getServiceDb()` answers; the mock factory reads it, so no cast is needed to install one.
+	const serviceDb: { current: unknown } = { current: undefined };
+	return { recentJobsQuery: { selected: new Array<string>(), limit: -1 }, serviceDb };
+});
+vi.mock("@/lib/db", () => ({
+	getServiceDb: () => serviceDb.current,
+	// The recent-jobs read's transaction: records the projection and the LIMIT it was given.
+	withScope: async (_scope: unknown, fn: (tx: unknown) => unknown) => {
+		const tx: Record<string, unknown> = {};
+		Object.assign(tx, {
+			select: (fields: Record<string, unknown>) => {
+				recentJobsQuery.selected = Object.keys(fields);
+				return tx;
+			},
+			from: () => tx,
+			leftJoin: () => tx,
+			orderBy: () => tx,
+			limit: (n: number) => {
+				recentJobsQuery.limit = n;
+				return Promise.resolve([]);
+			},
+		});
+		return fn(tx);
+	},
+}));
+vi.mock("@/lib/authz/guard", () => ({
+	authorize: vi.fn(async () => ({ userId: "user-1", orgId: "org-1" })),
+}));
 
-import { getServiceDb } from "@/lib/db";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import type { Actor } from "@/lib/authz/types";
-import { readWorkspaceContext, workspaceRouter } from "@/lib/rpc/procedures/workspace";
+import {
+	readRecentJobs,
+	readWorkspaceContext,
+	SHELL_JOB_FEED_LIMIT,
+	workspaceRouter,
+} from "@/lib/rpc/procedures/workspace";
 
 /** A drizzle-ish chain that awaits to `rows`. */
 function mockDb(rows: unknown[]): void {
@@ -35,7 +67,7 @@ function mockDb(rows: unknown[]): void {
 		where: () => db,
 		then: (resolve: (v: unknown) => void) => resolve(rows),
 	});
-	vi.mocked(getServiceDb).mockReturnValue(db as never);
+	serviceDb.current = db;
 }
 
 /** An actor for user-1 on `orgId`, holding `entitlements` when given. */
@@ -88,5 +120,22 @@ describe("workspace.context over the read router", () => {
 		});
 		const ctx = await client.context();
 		expect(ctx.activeOrgId).toBe("org-from-the-address");
+	});
+});
+
+describe("readRecentJobs — the shell's job feed", () => {
+	it("is capped, so its cost does not grow with the org's history", async () => {
+		await readRecentJobs();
+		expect(SHELL_JOB_FEED_LIMIT).toBe(20);
+		expect(recentJobsQuery.limit).toBe(SHELL_JOB_FEED_LIMIT);
+	});
+
+	it("selects no JSONB column: the slim projection the shell renders", async () => {
+		await readRecentJobs();
+		expect(recentJobsQuery.selected).not.toContain("config_snapshot");
+		expect(recentJobsQuery.selected).not.toContain("execution_metadata");
+		expect(recentJobsQuery.selected).toEqual(
+			expect.arrayContaining(["id", "job_type", "status", "created_at", "project_name"]),
+		);
 	});
 });

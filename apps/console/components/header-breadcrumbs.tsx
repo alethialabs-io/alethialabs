@@ -12,7 +12,7 @@ import {
 } from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { buildCrumbs } from "@/components/shell/breadcrumb-trail";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useCallback, useMemo } from "react";
@@ -26,7 +26,7 @@ import { Fragment, useCallback, useMemo } from "react";
  */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { data: jobs = [] } = useJobsQuery();
+	const { data: jobs = [] } = useRecentJobsQuery();
 
 	const jobLabel = useCallback(
 		(id: string) => {

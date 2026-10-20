@@ -50,7 +50,7 @@ vi.mock("@/lib/auth/client", () => ({
 	liveSession: {
 		subscribe: () => () => {},
 		get: () => LIVE,
-		onChange: () => () => {},
+		onPossibleChange: () => () => {},
 	},
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
@@ -66,7 +66,7 @@ vi.mock("@/lib/query/use-projects-query", () => ({
 		isSuccess: true,
 	}),
 }));
-vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
+vi.mock("@/lib/query/use-jobs-query", () => ({ useRecentJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/hooks/use-support-notifications", () => ({
 	useSupportNotifications: () => ({
 		notifications: [],

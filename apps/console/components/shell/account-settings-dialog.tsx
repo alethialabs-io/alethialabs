@@ -55,11 +55,14 @@ async function linkedProviders(): Promise<string[]> {
 }
 
 /**
- * The cache key for {@link linkedProviders}. Not an oRPC key: this is better-auth's own endpoint.
- * One entry for the whole session, however many copies of the dialog are mounted (the sidebar, the
- * mobile drawer and the icon rail each mount one).
+ * The cache key for {@link linkedProviders}, per signed-in user. Not an oRPC key: this is
+ * better-auth's own endpoint. One entry per person, however many copies of the dialog are mounted
+ * (the sidebar, the mobile drawer and the icon rail each mount one) — and a different person signed
+ * in to the same tab never reads the previous one's providers.
  */
-const LINKED_PROVIDERS_KEY = ["auth", "linked-providers"] as const;
+function linkedProvidersKey(userId: string) {
+	return ["auth", "linked-providers", userId] as const;
+}
 
 interface AccountSettingsDialogProps {
 	open: boolean;
@@ -84,7 +87,7 @@ export function AccountSettingsDialog({
 	// page load for badges nobody had opened. The linked providers do not change while a page is
 	// open, so the answer is kept for the session.
 	const { data: providers = [] } = useQuery({
-		queryKey: LINKED_PROVIDERS_KEY,
+		queryKey: linkedProvidersKey(user?.id ?? ""),
 		queryFn: linkedProviders,
 		enabled: open && !!user,
 		staleTime: Number.POSITIVE_INFINITY,

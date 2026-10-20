@@ -17,7 +17,7 @@ import type { Viewer } from "@/lib/auth/viewer";
 const { listAccounts } = vi.hoisted(() => ({ listAccounts: vi.fn() }));
 vi.mock("@/lib/auth/client", () => ({
 	authClient: { listAccounts, updateUser: vi.fn() },
-	liveSession: { subscribe: () => () => {}, get: () => ({ data: null, isPending: true, error: null }), onChange: () => () => {} },
+	liveSession: { subscribe: () => () => {}, get: () => ({ data: null, isPending: true, error: null }), onPossibleChange: () => () => {} },
 }));
 vi.mock("@/app/server/actions/privacy/self-serve", () => ({ requestMyErasure: vi.fn() }));
 
@@ -33,10 +33,18 @@ const ADA: Viewer = {
 };
 
 /** Three closed dialogs, as the shell mounts them, plus whichever one is `open`. */
-function Shell({ client, open }: { client: QueryClient; open: boolean }): ReactNode {
+function Shell({
+	client,
+	open,
+	viewer = ADA,
+}: {
+	client: QueryClient;
+	open: boolean;
+	viewer?: Viewer;
+}): ReactNode {
 	return (
 		<QueryClientProvider client={client}>
-			<ViewerProvider viewer={ADA}>
+			<ViewerProvider viewer={viewer}>
 				<AccountSettingsDialog open={open} onOpenChange={() => {}} />
 				<AccountSettingsDialog open={false} onOpenChange={() => {}} />
 				<AccountSettingsDialog open={false} onOpenChange={() => {}} />
@@ -66,5 +74,13 @@ describe("the account dialog's linked providers (F003)", () => {
 		await act(async () => rerender(<Shell client={client} open={false} />));
 		await act(async () => rerender(<Shell client={client} open />));
 		expect(listAccounts).toHaveBeenCalledTimes(1);
+	});
+
+	it("is kept per person: someone else signed in to the tab gets their own answer", async () => {
+		const client = new QueryClient();
+		const { rerender } = render(<Shell client={client} open />);
+		await screen.findByText("GitHub");
+		await act(async () => rerender(<Shell client={client} open viewer={{ ...ADA, id: "u-grace" }} />));
+		expect(listAccounts).toHaveBeenCalledTimes(2);
 	});
 });

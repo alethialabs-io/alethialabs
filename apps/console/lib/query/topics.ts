@@ -22,9 +22,16 @@ import { orpc } from "@/lib/rpc/client";
  * from reaching another org's cache.
  */
 export const TOPIC_KEYS = {
-	// The shell's job feed (bell, toasts, breadcrumbs — on `qk.jobs(org)`, reached by the `["jobs"]`
-	// prefix) and the setup guide's "provisioned" step change with every job (#6114).
-	jobs: (): QueryKey[] => [orpc.jobs.key(), ["jobs"], orpc.workspace.setupGuide.key()],
+	// The shell's capped job feed (bell, toasts, breadcrumbs, palette), the full list (runners, plan
+	// flow — on `qk.jobs(org)`, reached by the `["jobs"]` prefix) and the setup guide's "provisioned"
+	// step change with every job (#6114).
+	jobs: (): QueryKey[] => [
+		orpc.jobs.key(),
+		["jobs"],
+		orpc.workspace.recentJobs.key(),
+		orpc.workspace.jobs.key(),
+		orpc.workspace.setupGuide.key(),
+	],
 	environments: (): QueryKey[] => [orpc.workspace.environments.key()],
 	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
 	clusters: (): QueryKey[] => [],
