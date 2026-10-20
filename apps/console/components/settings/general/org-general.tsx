@@ -81,8 +81,8 @@ const REGIONS = [
 ];
 const ENVS = ["staging", "development", "production"];
 
-/** Why Save is disabled for a role better-auth will refuse (it updates the org for owner and admin). */
-const EDIT_REFUSED = "Only an owner or admin can change these settings";
+/** Why Save is disabled for anyone but the owner (the plugin updates the org for the owner only). */
+const EDIT_REFUSED = "Only the organization's owner can change these settings";
 /** Why Delete is disabled for anyone but the owner (better-auth deletes the org for the owner only). */
 const DELETE_REFUSED = "Only the organization's owner can delete it";
 
@@ -201,13 +201,14 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   const orgKeys = [orpc.settings.org.key(), orpc.workspace.context.key()];
 
   // What the caller may do here, from the workspace context the layout already hydrated — read from
-  // the cache, never fetched for this. better-auth lets an owner or admin update the org and only
-  // the owner delete it; the server still decides (this only saves a refused round trip). An
+  // the cache, never fetched for this. The organization plugin grants `organization: ["update",
+  // "delete"]` to the OWNER only (lib/authz/org-access-control.ts — an admin manages members and
+  // invitations, not the org itself); the server still decides (this only saves a refused round trip). An
   // unknown role (no context cached) leaves the controls enabled for the server to rule on.
   const context = useQuery(orpc.workspace.context.queryOptions({ enabled: false }));
   const role =
     context.data?.organizations.find((o) => o.id === context.data?.activeOrgId)?.role ?? null;
-  const canEdit = role === null || role === "owner" || role === "admin";
+  const canEdit = role === null || role === "owner";
   const canDelete = role === null || role === "owner";
 
   const save = useActionMutation(saveOrgGeneral, {

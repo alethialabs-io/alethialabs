@@ -47,6 +47,7 @@ import {
 	saveOrgGeneral,
 	updateOrgPrimaryAddress,
 } from "@/app/server/actions/org-settings";
+import { emitActionEvent } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { currentActor } from "@/lib/authz/guard";
@@ -270,6 +271,15 @@ describe("saveOrgGeneral — better-auth's refusals in the contract's kinds", ()
 		});
 	});
 
+	it("a 500 while NO other org holds the slug stays unexpected — the race mapping does not swallow real failures", async () => {
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		mockDb([{ metadata: null }]); // the slug check finds no other org
+		authAnswers(500, { message: "connection reset" });
+		const result = await saveOrgGeneral(VALID);
+		expect(result).toMatchObject({ ok: false, error: { kind: "unexpected" } });
+		spy.mockRestore();
+	});
+
 	it("the plugin's role refusal → forbidden", async () => {
 		authAnswers(403, { code: "YOU_ARE_NOT_ALLOWED_TO_UPDATE_THIS_ORGANIZATION", message: "nope" });
 		expect(await saveOrgGeneral(VALID)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
@@ -291,8 +301,14 @@ describe("saveOrgGeneral — better-auth's refusals in the contract's kinds", ()
 });
 
 describe("deleteOrganization", () => {
-	it("records the delete as a DESTROY of the org, after it succeeded", async () => {
+	it("records the delete as a DESTROY of the org, after it succeeded — and keeps it alertable", async () => {
 		await deleteOrganization({});
+		expect(emitActionEvent).toHaveBeenCalledWith(
+			{ orgId: "org-1", userId: "user-1" },
+			"destroy",
+			{ type: "org" },
+			true,
+		);
 		expect(recordActivity).toHaveBeenCalledTimes(1);
 		expect(recordActivity).toHaveBeenCalledWith(
 			{ orgId: "org-1", userId: "user-1" },
@@ -305,6 +321,7 @@ describe("deleteOrganization", () => {
 		authAnswers(403, { code: "YOU_ARE_NOT_ALLOWED_TO_DELETE_THIS_ORGANIZATION" });
 		await deleteOrganization({});
 		expect(recordActivity).not.toHaveBeenCalled();
+		expect(emitActionEvent).not.toHaveBeenCalled();
 	});
 
 	it("asks the PDP first, then deletes the ADDRESSED org", async () => {

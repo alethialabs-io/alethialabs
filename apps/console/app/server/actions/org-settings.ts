@@ -247,6 +247,8 @@ async function removeOrganization(): Promise<{ deleted: true }> {
 	// Named for what happened, and only once it has: the Activity log reads "destroy org", not the
 	// "edit org" the permission check is spelled as.
 	recordActivity(actor, "destroy", { type: "org", id: actor.orgId });
+	// Alertable like every PDP-gated action, under the name of what happened.
+	emitActionEvent(actor, "destroy", ORG_RESOURCE, true);
 	return { deleted: true };
 }
 
