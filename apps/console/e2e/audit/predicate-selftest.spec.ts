@@ -16,7 +16,7 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { errorStateSignature, rendersSharedErrorState } from "./error-state";
+import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
@@ -788,4 +788,19 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			record({ route: "/x", url: "/x", predicate: "R5", verdict: "N/A", reason: "redirect-only" }),
 		).toThrow(/never N\/A/);
 	});
+});
+
+// T7 and B4 read a failed or refused DATA REGION through `RegionError` (#6117), which renders no
+// `ErrorState`. Both directions, so a recogniser that stopped finding it is red here rather than a
+// column of T7 blanks and B4 "vanished" findings on pages that did the right thing.
+test("the region-level error render is recognised, and nothing else is", async ({ page }) => {
+	const fixture = (body: string) => `<!doctype html><html><body>${body}</body></html>`;
+	await page.setContent(fixture('<main><div data-slot="region-error" data-state="error">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "RegionError by its data-slot, with no role").toBe(true);
+	await page.setContent(fixture('<main><div role="alert">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "a role=alert inside main").toBe(true);
+	await page.setContent(fixture('<div role="alert">toast</div><main><table><tr><td>row</td></tr></table></main>'));
+	expect(await rendersRegionError(page), "an alert OUTSIDE main is not a region's error").toBe(false);
+	await page.setContent(fixture('<main><div data-slot="empty">No runners yet</div></main>'));
+	expect(await rendersRegionError(page), "an empty state is not an error").toBe(false);
 });

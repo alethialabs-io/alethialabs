@@ -89,7 +89,7 @@ import path from "node:path";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
 import { consoleRoutes, repoRoot } from "./manifest";
-import { rendersSharedErrorState, visibleText } from "./error-state";
+import { rendersRegionError, rendersSharedErrorState, visibleText } from "./error-state";
 import { createReport } from "./report";
 import { signUpWithRetry } from "./signup";
 
@@ -302,12 +302,15 @@ interface Observation {
 	text: string;
 	length: number;
 	sharedErrorState: boolean;
+	/** `RegionError` (or a `role="alert"`) in `main` — the region-level error render since #6117. */
+	regionError: boolean;
 	sharedEmpty: boolean;
 	denialCopy: boolean;
 }
 
 async function observe(page: Page): Promise<Observation> {
 	const sharedErrorState = await rendersSharedErrorState(page);
+	const regionError = await rendersRegionError(page);
 	// `visibleText` (innerText), NOT textContent: the document carries tens of kilobytes of inline
 	// script source, so a textContent-based "is this blank?" answers "no" for a genuinely blank
 	// page — which is the entire question T7 asks. Measured, see e2e/audit/error-state.ts.
@@ -321,6 +324,7 @@ async function observe(page: Page): Promise<Observation> {
 		length: text.length,
 		sharedEmpty,
 		sharedErrorState,
+		regionError,
 		denialCopy:
 			// NOT a bare /permission/: `~/settings/roles` is a page ABOUT permissions and says the
 			// word all over its ordinary content, so the loose form would read a page the persona is
@@ -458,6 +462,7 @@ test.describe(`T7 · what the ${PERSONA_ROLE} persona gets on each route`, () =>
 			const redirectedAway = personaRedirected && !ownerRedirectedSameWay;
 			const deniedWhereOwnerIsNot =
 				(seen.sharedErrorState && !(byOwner?.sharedErrorState ?? false)) ||
+				(seen.regionError && !(byOwner?.regionError ?? false)) ||
 				(seen.denialCopy && !(byOwner?.denialCopy ?? false));
 			const restricted = redirectedAway || deniedWhereOwnerIsNot;
 			const evidence = { persona: seen, owner: byOwner, redirectedAway, deniedWhereOwnerIsNot };
@@ -495,7 +500,9 @@ test.describe(`T7 · what the ${PERSONA_ROLE} persona gets on each route`, () =>
 				return;
 			}
 			// A blank is never a deliberate state — that is the whole of T7.
-			const deliberate = redirectedAway || seen.sharedErrorState || seen.sharedEmpty || seen.length >= 20;
+			// BOTH error renders count: `ErrorState` for a route boundary, `RegionError` for a data region
+			// (#6117). Knowing only the first would read a refused region's deliberate error as a blank.
+			const deliberate = redirectedAway || seen.sharedErrorState || seen.regionError || seen.sharedEmpty || seen.length >= 20;
 			record({
 				route: route.route,
 				url,
