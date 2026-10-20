@@ -615,11 +615,11 @@ export const LIVE_DEBT = /** @type {const} */ ({});
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {
-	// SECOND IMPORT — run 39470371473 @ `f7d0c0985`, on the instrument #6180's review corrected
-	// (per-block B2, interception-proven B5, B3 on a hydrated page, markup-only empty states). Every
-	// row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\` globs hold the route —
-	// `[project]/settings/**` is #6128's, the org-level people & access pages #6129's. No row is a
-	// \`reason:\` yet: nothing here was found to be built this way on purpose.
+	// THIRD IMPORT — run 39485270886 @ `9b3278240`, on the instrument #6180's re-review corrected
+	// (a bars-only skeleton scored as one block; B3/B4 count only the page's own reads; billing and
+	// usage B2 hosted-only). Every row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\`
+	// globs hold the route — `[project]/settings/**` is #6128's, the org-level people & access pages
+	// #6129's. No row is a \`reason:\` yet: nothing here was found to be built this way on purpose.
 	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" }, B4: { lifts: "#6118" } },
 	"/[org]/[project]/architecture": { B2: { lifts: "#6119" } },
 	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
@@ -632,7 +632,7 @@ export const BEHAVIOUR_LEDGER = {
 	"/[org]/~/connectors": { B2: { lifts: "#6124" } },
 	"/[org]/~/evidence": { B2: { lifts: "#6126" } },
 	"/[org]/~/jobs": { B2: { lifts: "#6121" } },
-	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B4: { lifts: "#6121" } },
+	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" } },
 	"/[org]/~/new": { B2: { lifts: "#6131" } },
 	"/[org]/~/runners": { B1: { lifts: "#6123" } },
 	"/[org]/~/settings/activity": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" } },
@@ -642,10 +642,11 @@ export const BEHAVIOUR_LEDGER = {
 	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" }, B5: { lifts: "#6128" } },
 	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
 	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
+	"/[org]/~/support/abuse": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/my-cases": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
-	"/[org]/~/usage": { B1: { lifts: "#6127" }, B2: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+	"/[org]/~/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
 };
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */
