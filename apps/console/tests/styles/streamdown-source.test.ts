@@ -5,8 +5,8 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import tailwindcss from "@tailwindcss/postcss";
 import { describe, expect, it } from "vitest";
+import postcssConfig from "../../postcss.config.mjs";
 
 /**
  * postcss, taken from @tailwindcss/postcss's own dependency rather than declared by the console:
@@ -29,13 +29,20 @@ const postcss: PostcssModule = fromTailwindPostcss("postcss");
 
 const consoleDir = path.resolve(__dirname, "../..");
 const globalsPath = path.join(consoleDir, "app/globals.css");
+const fromConsole = createRequire(path.join(consoleDir, "package.json"));
 
-/** Compiles the console's real globals.css the way `next build` does: @tailwindcss/postcss, rooted at apps/console. */
+/**
+ * Compiles the console's real globals.css the way `next build` does: through the plugins the
+ * console's own postcss.config.mjs names, resolved from apps/console and rooted there (Next runs
+ * them with apps/console as the working directory, which is Tailwind's default `base`).
+ */
 async function compileGlobals(): Promise<string> {
   const source = await readFile(globalsPath, "utf8");
-  const result = await postcss([tailwindcss({ base: consoleDir })]).process(source, {
-    from: globalsPath,
+  const plugins = postcssConfig.plugins.map((name) => {
+    const createPlugin: (options: { base: string }) => unknown = fromConsole(name);
+    return createPlugin({ base: consoleDir });
   });
+  const result = await postcss(plugins).process(source, { from: globalsPath });
   return result.css;
 }
 
