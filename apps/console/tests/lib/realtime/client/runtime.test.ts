@@ -18,7 +18,7 @@ vi.mock("@/lib/rpc/client", () => ({
 
 import { createConnectionStore } from "@/lib/realtime/client/connection-state";
 import type { ChannelLike, LockManagerLike } from "@/lib/realtime/client/leader";
-import { electionName, readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
+import { electionName, newDocumentScope, readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
 import { helloFrame, hintFrame, revokedFrame } from "@/lib/realtime/sse";
 
 /** Exclusive locks by name, each with a FIFO queue — the Web Locks semantics the election relies on. */
@@ -95,7 +95,7 @@ describe("startRealtime", () => {
 			const spies = clients.map((c) => vi.spyOn(c, "invalidateQueries"));
 			const stores = [createConnectionStore(), createConnectionStore()];
 			const stops = clients.map((queryClient, i) =>
-				startRealtime({
+				startRealtime({ scope: newDocumentScope(),
 					userId: "u1",
 				tenant: "acme",
 					queryClient,
@@ -133,7 +133,7 @@ describe("startRealtime", () => {
 			const acmeSpy = vi.spyOn(acme, "invalidateQueries");
 			const otherSpy = vi.spyOn(other, "invalidateQueries");
 			const store = createConnectionStore();
-			const stop = startRealtime({
+			const stop = startRealtime({ scope: newDocumentScope(),
 				userId: "u1",
 				tenant: "acme",
 				queryClient: acme,
@@ -149,7 +149,7 @@ describe("startRealtime", () => {
 			await vi.waitFor(() => expect(store.get().state).toBe("live"));
 			// The address moves to another org while acme's hint is still inside its window.
 			stop();
-			const stopOther = startRealtime({
+			const stopOther = startRealtime({ scope: newDocumentScope(),
 				userId: "u1",
 				tenant: "other",
 				queryClient: other,
@@ -175,7 +175,7 @@ describe("startRealtime", () => {
 		const server = eventsServer();
 		const removed = [vi.fn(), vi.fn()];
 		const stops = removed.map((onRemoved) =>
-			startRealtime({
+			startRealtime({ scope: newDocumentScope(),
 				userId: "u1",
 				tenant: "acme",
 				queryClient: new QueryClient(),
@@ -200,7 +200,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 		const locks = memoryLocks();
 		const server = eventsServer([401]);
 		const storeA = createConnectionStore();
-		const stopA = startRealtime({
+		const stopA = startRealtime({ scope: newDocumentScope(),
 			userId: "u1",
 			tenant: "acme",
 			queryClient: new QueryClient(),
@@ -214,7 +214,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 		await vi.waitFor(() => expect(storeA.get().state).toBe("signed-out"));
 		// After a fresh sign-in, a new tab of the same person and org:
 		const storeB = createConnectionStore();
-		const stopB = startRealtime({
+		const stopB = startRealtime({ scope: newDocumentScope(),
 			userId: "u1",
 			tenant: "acme",
 			queryClient: new QueryClient(),
@@ -239,7 +239,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 		const locks = memoryLocks();
 		const server = eventsServer();
 		const stops = ["u1", "u2"].map((userId) =>
-			startRealtime({
+			startRealtime({ scope: newDocumentScope(),
 				userId,
 				tenant: "acme",
 				queryClient: new QueryClient(),
@@ -278,7 +278,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 			const store = createConnectionStore();
 			let stop: (() => void) | undefined;
 			expect(() => {
-				stop = startRealtime({
+				stop = startRealtime({ scope: newDocumentScope(),
 					userId: "u1",
 					tenant: "acme",
 					queryClient: client,
@@ -306,7 +306,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 		store.set("live");
 		store.set("removed");
 		expect(store.get().hasBeenLive).toBe(true);
-		const stop = startRealtime({
+		const stop = startRealtime({ scope: newDocumentScope(),
 			userId: "u1",
 			tenant: "acme",
 			queryClient: new QueryClient(),
@@ -329,7 +329,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 			const page = new EventTarget();
 			const client = new QueryClient();
 			const spy = vi.spyOn(client, "invalidateQueries");
-			const stop = startRealtime({
+			const stop = startRealtime({ scope: newDocumentScope(),
 				userId: "u1",
 				tenant: "acme",
 				queryClient: client,
@@ -350,6 +350,43 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 			await vi.advanceTimersByTimeAsync(3000);
 			expect(spy).toHaveBeenCalledWith({ refetchType: "active" });
 			stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe("startRealtime — one runtime per document", () => {
+	it("a second start in the same document (its stop lost) replaces the first: one relay listener, one invalidation per key", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const locks = memoryLocks();
+			const server = eventsServer();
+			const base = {
+				userId: "u1",
+				tenant: "acme",
+				onRemoved: () => {},
+				locks,
+				openChannel,
+				fetch: server.fetchImpl,
+				isVisible: () => true,
+				pageEvents: null,
+			};
+			const stopA = startRealtime({ ...base, scope: newDocumentScope(), queryClient: new QueryClient(), store: createConnectionStore() });
+			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			const docB = newDocumentScope();
+			const clientB = new QueryClient();
+			const spyB = vi.spyOn(clientB, "invalidateQueries");
+			startRealtime({ ...base, scope: docB, queryClient: clientB, store: createConnectionStore() }); // never stopped
+			const stopB = startRealtime({ ...base, scope: docB, queryClient: clientB, store: createConnectionStore() });
+			server.streams[0]!.write(helloFrame("b1", "s.0") + hintFrame({ t: "jobs", id: "j1" }, "s.1"));
+			await vi.waitFor(() => expect(spyB).toHaveBeenCalled());
+			await vi.advanceTimersByTimeAsync(2000);
+			const jobsKeyCalls = spyB.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === JSON.stringify(["jobs"]));
+			expect(jobsKeyCalls).toHaveLength(1);
+			expect(server.streams).toHaveLength(1); // and B never opened a second stream
+			stopA();
+			stopB();
 		} finally {
 			vi.useRealTimers();
 		}

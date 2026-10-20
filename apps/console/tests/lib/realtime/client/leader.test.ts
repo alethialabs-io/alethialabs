@@ -15,6 +15,7 @@ import {
 	LEASE_MISSED_BEATS,
 	type LockManagerLike,
 } from "@/lib/realtime/client/leader";
+import { FakeWebLocks } from "./fake-web-locks";
 
 /** An in-memory Web Locks manager: exclusive, FIFO, and `signal` leaves the queue. */
 function memoryLocks(): LockManagerLike {
@@ -77,7 +78,7 @@ describe("Web Locks election (secure context)", () => {
 		const locks = memoryLocks();
 		const open = () => null;
 		const tabs = [0, 1, 2].map(() =>
-			tab((onLead) => electLeader({ name: "alethia-events:acme", locks, openChannel: open, onLead })),
+			tab((onLead) => electLeader({ registry: new Map(), name: "alethia-events:acme", locks, openChannel: open, onLead })),
 		);
 		await flush();
 		expect(tabs.map((t) => t.record.leading)).toEqual([true, false, false]);
@@ -95,8 +96,8 @@ describe("Web Locks election (secure context)", () => {
 
 	it("orgs do not share a lock", async () => {
 		const locks = memoryLocks();
-		const a = tab((onLead) => electLeader({ name: "alethia-events:acme", locks, openChannel: () => null, onLead }));
-		const b = tab((onLead) => electLeader({ name: "alethia-events:~", locks, openChannel: () => null, onLead }));
+		const a = tab((onLead) => electLeader({ registry: new Map(), name: "alethia-events:acme", locks, openChannel: () => null, onLead }));
+		const b = tab((onLead) => electLeader({ registry: new Map(), name: "alethia-events:~", locks, openChannel: () => null, onLead }));
 		await flush();
 		expect([a.record.leading, b.record.leading]).toEqual([true, true]);
 		a.election.stop();
@@ -136,7 +137,7 @@ describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => 
 
 	const leaseTab = (id: string, visible: () => boolean = () => true, name = "alethia-events:u1:acme") =>
 		tab((onLead) =>
-			electLeader({ name, locks: null, openChannel, onLead, tabId: id, random: () => 0, isVisible: visible }),
+			electLeader({ registry: new Map(), name, locks: null, openChannel, onLead, tabId: id, random: () => 0, isVisible: visible }),
 		);
 
 	it("a lone tab claims after about one beat", async () => {
@@ -210,7 +211,7 @@ describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => 
 		try {
 			let election: Election | undefined;
 			const a = tab((onLead) => {
-				election = electLeader({ name: "alethia-events:u1:acme", locks: null, openChannel, onLead });
+				election = electLeader({ registry: new Map(), name: "alethia-events:u1:acme", locks: null, openChannel, onLead });
 				return election;
 			});
 			await advance(LEASE_BEAT_MS + 500);
@@ -275,10 +276,68 @@ describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => 
 		b.election.stop();
 	});
 
+	it("a lease election started twice in one document leaves ONE voter: the superseded one never leads", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+		const docB = new Map();
+		const a = leaseTab("a");
+		await advance(2 * LEASE_BEAT_MS);
+		const leaked = tab((onLead) =>
+			electLeader({ registry: docB, name: "alethia-events:u1:acme", locks: null, openChannel, onLead, tabId: "b1", random: () => 0 }),
+		);
+		const live = tab((onLead) =>
+			electLeader({ registry: docB, name: "alethia-events:u1:acme", locks: null, openChannel, onLead, tabId: "b2", random: () => 0 }),
+		);
+		a.election.stop();
+		await advance(5 * LEASE_BEAT_MS);
+		expect([leaked.record.leads, live.record.leads]).toEqual([0, 1]);
+		live.election.stop();
+	});
+
 	it("with no BroadcastChannel at all, a tab streams for itself", () => {
-		const a = tab((onLead) => electLeader({ name: "x", locks: null, openChannel: () => null, onLead }));
+		const a = tab((onLead) => electLeader({ registry: new Map(), name: "x", locks: null, openChannel: () => null, onLead }));
 		expect(a.record.leading).toBe(true);
 		a.election.stop();
 		expect(a.record.leading).toBe(false);
+	});
+});
+
+describe("one request per document, whatever the caller does (found live: StrictMode double mounts)", () => {
+	const NAME = "alethia-events:u1:acme";
+
+	it("Web Locks: a second election in the same document supersedes the first — one request left", async () => {
+		const locks = new FakeWebLocks();
+		const docA = new Map();
+		const docB = new Map();
+		const a = tab((onLead) => electLeader({ registry: docA, name: NAME, locks: locks.client("A"), openChannel: () => null, onLead }));
+		await flush();
+		const leaked = tab((onLead) => electLeader({ registry: docB, name: NAME, locks: locks.client("B"), openChannel: () => null, onLead }));
+		const live = tab((onLead) => electLeader({ registry: docB, name: NAME, locks: locks.client("B"), openChannel: () => null, onLead }));
+		await flush();
+		expect(locks.requestsOf("B", NAME)).toBe(1);
+		a.election.stop();
+		await flush();
+		expect([leaked.record.leads, live.record.leads]).toEqual([0, 1]);
+		expect(locks.query().held).toEqual([{ name: NAME, clientId: "B" }]);
+		live.election.stop();
+	});
+
+	it("Web Locks: a stale request granted AFTER its stop (the abort lost the race) releases at once; the live one leads", async () => {
+		const locks = new FakeWebLocks();
+		locks.abortsLost = true;
+		const docB = new Map();
+		const a = tab((onLead) => electLeader({ registry: new Map(), name: NAME, locks: locks.client("A"), openChannel: () => null, onLead }));
+		await flush();
+		const stale = tab((onLead) => electLeader({ registry: docB, name: NAME, locks: locks.client("B"), openChannel: () => null, onLead }));
+		const live = tab((onLead) => electLeader({ registry: docB, name: NAME, locks: locks.client("B"), openChannel: () => null, onLead }));
+		await flush();
+		expect(locks.requestsOf("B", NAME)).toBe(2); // the stale one is still queued: its abort was lost
+		a.election.stop();
+		await flush();
+		expect(stale.record.leads).toBe(0); // granted, released at once, never led
+		expect(live.record.leads).toBe(1);
+		expect(locks.requestsOf("B", NAME)).toBe(1);
+		live.election.stop();
+		await flush();
+		expect(locks.query()).toEqual({ held: [], pending: [] });
 	});
 });

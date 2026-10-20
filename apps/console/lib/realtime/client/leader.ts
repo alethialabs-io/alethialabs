@@ -62,6 +62,8 @@ export interface LeaderOptions {
 	now?: () => number;
 	/** Whether this tab is being looked at (the lease prefers a visible leader). */
 	isVisible?: () => boolean;
+	/** This document's elections (default: the module's, i.e. this page's). */
+	registry?: ElectionRegistry;
 }
 
 /** A running election. */
@@ -87,9 +89,33 @@ function outranks(a: { tab: string; visible: boolean }, b: { tab: string; visibl
 	return a.tab < b.tab;
 }
 
+/**
+ * The elections this DOCUMENT is in, by name. A document is one voter: it must never hold two
+ * requests for one election. A second request queued behind the first would, once granted, hold the
+ * lock with no stream behind it. Starting an election therefore supersedes any this document still
+ * has under that name (a remount, React StrictMode's mount → unmount → mount, a start whose stop was
+ * lost), whatever the caller did.
+ */
+const documentElections = new Map<string, Election>();
+
+/** One document's registry of elections by name. Tests that model several tabs in one process give
+ * each "tab" its own; the browser uses the module's. */
+export type ElectionRegistry = Map<string, Election>;
+
 /** Elects this tab's org leader with Web Locks when it can, the lease when it cannot. */
 export function electLeader(options: LeaderOptions): Election {
-	return options.locks ? lockElection(options, options.locks) : leaseElection(options);
+	const registry = options.registry ?? documentElections;
+	registry.get(options.name)?.stop();
+	const inner = options.locks ? lockElection(options, options.locks) : leaseElection(options);
+	const election: Election = {
+		isLeader: () => inner.isLeader(),
+		stop() {
+			inner.stop();
+			if (registry.get(options.name) === election) registry.delete(options.name);
+		},
+	};
+	registry.set(options.name, election);
+	return election;
 }
 
 /** The Web Locks election: hold the lock until stopped; the next queued tab inherits it. */
@@ -99,6 +125,8 @@ function lockElection(options: LeaderOptions, locks: LockManagerLike): Election 
 	let leading = false;
 	locks
 		.request(options.name, { signal: queue.signal }, () => {
+			// Granted after this election was stopped (the abort lost the race): release at once, so
+			// the next document in the queue gets the lock instead of a holder with no stream.
 			if (lead.signal.aborted) return Promise.resolve();
 			leading = true;
 			options.onLead(lead.signal);

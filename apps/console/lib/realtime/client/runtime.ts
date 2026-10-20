@@ -17,7 +17,13 @@ import {
 	isTerminal,
 } from "./connection-state";
 import { startFallbackPoll } from "./fallback-poll";
-import { type ChannelLike, type Election, electLeader, type LockManagerLike } from "./leader";
+import {
+	type ChannelLike,
+	type Election,
+	type ElectionRegistry,
+	electLeader,
+	type LockManagerLike,
+} from "./leader";
 import { runStream, type StreamPosition } from "./stream";
 
 /** What the leader tab tells the others. */
@@ -105,6 +111,8 @@ export interface RealtimeOptions {
 	isVisible?: () => boolean;
 	/** Where `pageshow` fires (the window); a bfcache restore rejoins the election and resyncs. */
 	pageEvents?: EventTarget | null;
+	/** This document's scope (default: this page's). */
+	scope?: DocumentScope;
 }
 
 /** The name of one person's election and relay for one org. */
@@ -117,8 +125,24 @@ function restoredFromCache(event: Event): boolean {
 	return "persisted" in event && event.persisted === true;
 }
 
+/** One document's state: its running runtimes and its elections, by name. Starting a runtime stops
+ * any previous one under the same name first, so a remount whose stop was lost cannot leave a second
+ * relay listener (duplicate invalidations) or a second election request behind. */
+export interface DocumentScope {
+	runtimes: Map<string, () => void>;
+	elections: ElectionRegistry;
+}
+
+/** A fresh document scope — for tests that model several tabs in one process. */
+export function newDocumentScope(): DocumentScope {
+	return { runtimes: new Map(), elections: new Map() };
+}
+
+/** This page's scope. */
+const pageScope: DocumentScope = newDocumentScope();
+
 /**
- * Starts the org's real-time client; returns the stop function. It never throws: if any part of it
+ * Starts the org's real-time client; returns the stop function (idempotent). It never throws: if any part of it
  * cannot start (a browser without a primitive it expects, a channel that will not open), what was
  * opened is closed again and the tab falls back to the sanctioned poll with the indicator showing.
  */
@@ -130,6 +154,8 @@ export function startRealtime(options: RealtimeOptions): () => void {
 		options.pageEvents === undefined ? (typeof window === "undefined" ? null : window) : options.pageEvents;
 	const name = electionName(options.userId, options.tenant);
 	const url = `/${encodeURIComponent(options.tenant)}/~/events`;
+	const scope = options.scope ?? pageScope;
+	scope.runtimes.get(name)?.();
 
 	store.reset(); // a new runtime starts from a first connect: a previous `removed` does not carry over
 	const coalescer = createCoalescer({ queryClient: options.queryClient, topicKeys: TOPIC_KEYS, isVisible });
@@ -199,6 +225,7 @@ export function startRealtime(options: RealtimeOptions): () => void {
 				locks: options.locks === undefined ? browserLocks() : options.locks,
 				openChannel,
 				isVisible,
+				registry: scope.elections,
 				onLead(signal) {
 					void runStream({
 						url,
@@ -252,9 +279,15 @@ export function startRealtime(options: RealtimeOptions): () => void {
 		store.set("degraded");
 	}
 
-	return () => {
+	let stopped = false;
+	const stop = () => {
+		if (stopped) return;
+		stopped = true;
 		stopPoll();
 		teardown();
 		coalescer.dispose();
+		if (scope.runtimes.get(name) === stop) scope.runtimes.delete(name);
 	};
+	scope.runtimes.set(name, stop);
+	return stop;
 }
