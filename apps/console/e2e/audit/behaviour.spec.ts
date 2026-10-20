@@ -61,6 +61,7 @@ import {
 	loadHeld,
 	loadWithOneFailure,
 	measureSkeletonSwap,
+	pageEntry,
 	shellReadsFor,
 	B5_READ_CAP,
 	type BControlResult,
@@ -342,7 +343,8 @@ test.describe("phase 2 · B5, each of a page's own reads failed alone", () => {
 			}
 			const chains = new Map(manifest.routes.map((r) => [r.route, r.shellChain.join(" > ")]));
 			const readsByRoute = new Map(Object.entries(s.routes).map(([r, v]) => [r, v.reads]));
-			const shell = shellReadsFor(route.route, chains, readsByRoute);
+			const entries = new Map(manifest.routes.map((r) => [r.route, pageEntry(r.file)]));
+			const shell = shellReadsFor(route.route, chains, readsByRoute, entries);
 			const pageReads = mine.reads.filter((k) => !shell.includes(k));
 			const failures: OneFailure[] = [];
 			await measured(route, url, ["B5"], async () => {
