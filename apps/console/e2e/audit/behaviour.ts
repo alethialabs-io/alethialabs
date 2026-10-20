@@ -202,8 +202,12 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				return style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) >= 0.05 && r.width > 0 && r.height > 0;
 			};
 			const all = Array.from(main.querySelectorAll("*")).filter(shown);
+			// Both error renders: `RegionError` (a data region's, #6117 — `data-slot="region-error"`,
+			// `role="alert"`) and the route boundary's `ErrorState` (its class signature).
 			const isErrorSurface = (el: Element): boolean =>
-				el.getAttribute("role") === "alert" || arms.some((tokens) => tokens.every((t) => el.classList.contains(t)));
+				el.getAttribute("role") === "alert" ||
+				el.getAttribute("data-slot") === "region-error" ||
+				arms.some((tokens) => tokens.every((t) => el.classList.contains(t)));
 			const errorRoots = all.filter((el) => {
 				if (!isErrorSurface(el)) return false;
 				for (let p = el.parentElement; p !== null && p !== main; p = p.parentElement) if (isErrorSurface(p)) return false;
@@ -220,7 +224,8 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 					.trim();
 			const emptyRe = new RegExp(emptyCopy, "i");
 			const timeRe = new RegExp(relativeTime, "gi");
-			const emptySlots = all.filter((el) => el.getAttribute("data-slot") === "empty").length;
+			// `RegionError` is built on the empty-state primitives; inside an error surface nothing is empty copy.
+			const emptySlots = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el)).length;
 			const emptyText = all.filter(
 				(el) => el.closest('[data-slot="empty"]') === null && !inError(el) && emptyRe.test(ownText(el)),
 			).length;
@@ -884,6 +889,7 @@ export type BControlMode =
 	| "empty-while-pending"
 	| "empty-on-error"
 	| "endless-skeleton"
+	| "region-error"
 	| "two-regions-contained"
 	| "two-regions-blanked"
 	| "swap-matching"
@@ -909,8 +915,9 @@ var ERROR = '<div role="alert">Couldn\\'t load these rows</div>';
 function rows(names) { return '<table><tbody>' + names.map(function (n) { return '<tr><td>' + n + '</td></tr>'; }).join('') + '</tbody></table>'; }
 function read(name) { return fetch('/acme/~/rpc/fixture/' + name).then(function (r) { if (!r.ok) throw new Error('read failed'); return r.json(); }); }
 function set(id, html, busy) { var el = document.getElementById(id); el.innerHTML = html; if (busy) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); }
-if (MODE === "client-fetch" || MODE === "empty-while-pending" || MODE === "endless-skeleton") {
-	read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { if (MODE !== "endless-skeleton") set('region', ERROR, false); });
+var REGION_ERROR = '<div data-slot="region-error" data-state="error"><p>Couldn\\'t load these rows</p></div>';
+if (MODE === "client-fetch" || MODE === "empty-while-pending" || MODE === "endless-skeleton" || MODE === "region-error") {
+	read('rows').then(function (b) { set('region', rows(b.json), false); }, function () { if (MODE !== "endless-skeleton") set('region', MODE === "region-error" ? REGION_ERROR : ERROR, false); });
 }
 if (MODE === "prefetched" || MODE === "empty-on-error") {
 	read('aux').then(function () {}, function () {});
@@ -948,7 +955,7 @@ function ssrFor(mode: BControlMode): { a: string; b: string } {
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	if (mode === "prefetched" || mode === "empty-on-error") return { a: rows, b: "" };
 	if (mode === "empty-while-pending") return { a: "<p>No results.</p>", b: "" };
-	if (mode === "client-fetch" || mode === "endless-skeleton") return { a: `<div aria-busy="true">${skeleton}</div>`, b: "" };
+	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error") return { a: `<div aria-busy="true">${skeleton}</div>`, b: "" };
 	if (mode === "two-regions-contained" || mode === "two-regions-blanked") return { a: skeleton, b: skeleton };
 	return { a: "<p>origin page</p>", b: "" };
 }
@@ -962,7 +969,7 @@ export async function serveBehaviourControl(context: BrowserContext): Promise<vo
 		}
 		const mode = pathname.split("/")[4] ?? "prefetched";
 		const known: readonly string[] = [
-			"prefetched", "client-fetch", "empty-while-pending", "empty-on-error", "endless-skeleton",
+			"prefetched", "client-fetch", "empty-while-pending", "empty-on-error", "endless-skeleton", "region-error",
 			"two-regions-contained", "two-regions-blanked", "swap-matching", "swap-columns", "swap-shifted",
 		];
 		const m: BControlMode = isControlMode(mode, known) ? mode : "prefetched";
@@ -1030,6 +1037,10 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		expectVerdict("B3", "empty-while-pending", (await measure("empty-while-pending")).b3, "FAIL");
 		expectVerdict("B4", "empty-on-error", (await measure("empty-on-error")).b4, "FAIL");
 		expectVerdict("B4", "endless-skeleton", (await measure("endless-skeleton")).b4, "FAIL");
+		// The region-level error render (#6117) WITHOUT `role="alert"`, so only its `data-slot` can
+		// make it read as an error: a recogniser that forgot `RegionError` reads this as content
+		// that vanished silently, and fails B4 on a page that did the right thing.
+		expectVerdict("B4", "region-error", (await measure("region-error")).b4, "PASS");
 
 		for (const [mode, want] of [["two-regions-contained", "PASS"], ["two-regions-blanked", "FAIL"]] as const) {
 			const url = controlUrl(mode);
