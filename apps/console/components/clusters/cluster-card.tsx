@@ -2,11 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ClusterData } from "@/app/server/actions/clusters";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
-import type { AssignedValue } from "@/lib/queries/classification";
 import { getProvider } from "@/lib/cloud-providers";
+import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
@@ -50,13 +49,14 @@ interface ComponentHealth {
 }
 
 /**
- * Rolls the cluster's own status plus every database/cache status into a single posture.
- * The badge is DERIVED, never hardcoded — a failed data service reads as degraded, an
- * in-flight reconcile reads as reconciling, and a project still provisioning (no cluster
- * row yet) reads from its environment status.
+ * Rolls the cluster's environment, its own status and every database/cache status into a single
+ * posture. The badge is DERIVED, never hardcoded. The ENVIRONMENT speaks first, because it carries
+ * the lifecycle the component rows do not: a deploy that failed reads as failed even while the
+ * cluster row still says PENDING, and a deploy or teardown in flight reads as in flight. Otherwise a
+ * failed data service reads as degraded and an in-flight reconcile as reconciling.
  */
-function deriveHealth(
-	clusterStatus: string | null,
+export function deriveHealth(
+	clusterStatus: string,
 	envStatus: string,
 	componentStatuses: string[],
 ): {
@@ -69,44 +69,45 @@ function deriveHealth(
 	detail: string;
 	health: ComponentHealth;
 } {
-	const statuses = [
-		...(clusterStatus ? [clusterStatus] : []),
-		...componentStatuses,
-	];
+	const statuses = [clusterStatus, ...componentStatuses];
 	const total = statuses.length;
 	const healthy = statuses.filter((s) => statusTier(s) === "active").length;
 	const failed = statuses.filter((s) => statusTier(s) === "failed").length;
 	const pending = statuses.filter((s) => statusTier(s) === "pending").length;
 	const health: ComponentHealth = { total, healthy, failed, pending };
+	const detail = `${healthy} / ${total} healthy`;
 
-	// No reconciled components yet — the project is provisioning; read the env status.
-	if (total === 0) {
-		const s = clusterStatus ?? envStatus;
+	const envTier = statusTier(envStatus);
+	if (envTier === "failed") {
+		return { tier: "failed", name: "Failed", rollup: "Last run failed", detail, health };
+	}
+	if (envTier === "pending") {
 		return {
-			tier: statusTier(s),
-			name: humanize(s),
-			rollup: "Provisioning",
-			detail: "no endpoint yet",
+			tier: "pending",
+			name: humanize(envStatus),
+			rollup: envStatus === "DESTROYING" ? "Tearing down" : "Provisioning",
+			detail,
 			health,
 		};
 	}
-	const detail = `${healthy} / ${total} healthy`;
 	if (failed > 0) {
 		return { tier: "failed", name: "Degraded", rollup: `${failed} failed`, detail, health };
 	}
 	if (pending > 0) {
 		// Surface the control plane's own in-flight verb when it's the one moving.
-		const name =
-			clusterStatus && statusTier(clusterStatus) === "pending"
-				? humanize(clusterStatus)
-				: "Reconciling";
+		const name = statusTier(clusterStatus) === "pending" ? humanize(clusterStatus) : "Reconciling";
 		return { tier: "pending", name, rollup: "Reconciling", detail, health };
 	}
 	if (healthy === total) {
 		return { tier: "active", name: "Active", rollup: "Healthy", detail, health };
 	}
-	const s = clusterStatus ?? envStatus;
-	return { tier: statusTier(s), name: humanize(s), rollup: humanize(s), detail, health };
+	return {
+		tier: statusTier(clusterStatus),
+		name: humanize(clusterStatus),
+		rollup: humanize(clusterStatus),
+		detail,
+		health,
+	};
 }
 
 /**
@@ -179,27 +180,21 @@ function ComponentRow({
 }
 
 /**
- * A provisioned cluster and its data services. Status is derived from the real read model:
- * `project_cluster.status` plus each database/cache `status` roll up into one posture, and
- * every row carries its own `StatusBadge` — nothing is hardcoded to "Active".
+ * One cluster under management and its data services. Status is derived from the real read model:
+ * the owning environment's lifecycle, `project_cluster.status` and each database/cache `status` roll
+ * up into one posture, and every row carries its own `StatusBadge` — nothing is hardcoded to
+ * "Active". Everything the card shows arrives with the clusters read: its chips and whether the
+ * viewer may download a kubeconfig included, so it paints complete and asks nothing on mount.
  */
-export function ClusterCard({
-	data,
-	initialAssignments,
-}: {
-	data: ClusterData;
-	initialAssignments?: AssignedValue[];
-}) {
+export function ClusterCard({ data }: { data: ClusterListItem }) {
 	const provider = data.cloud_identities?.provider ?? "aws";
 	const meta = getProvider(provider);
-	const cluster = Array.isArray(data.project_cluster)
-		? data.project_cluster[0]
-		: data.project_cluster;
-	const databases = data.project_databases ?? [];
-	const caches = data.project_caches ?? [];
+	const cluster = data.project_cluster;
+	const databases = data.project_databases;
+	const caches = data.project_caches;
 	const dns = data.project_dns;
 
-	const health = deriveHealth(cluster?.status ?? null, data.status, [
+	const health = deriveHealth(cluster.status, data.status, [
 		...databases.map((d) => d.status),
 		...caches.map((c) => c.status),
 	]);
@@ -208,9 +203,9 @@ export function ClusterCard({
 	// cloud's own CLI command as the alternative on aws/gcp/azure — built on the server by the same
 	// module `alethia cluster get` prints from (lib/clusters/kubeconfig-access.ts), so the card never
 	// composes a command of its own. A note replaces the command where there is none.
-	const kubeconfigCmd = cluster?.kubeconfig.command ?? null;
-	const kubeconfigAlt = cluster?.kubeconfig.alternative ?? null;
-	const kubeconfigNote = cluster?.kubeconfig.note ?? null;
+	const kubeconfigCmd = cluster.kubeconfig.command;
+	const kubeconfigAlt = cluster.kubeconfig.alternative;
+	const kubeconfigNote = cluster.kubeconfig.note;
 
 	// The ArgoCD admin password is never stored (it would be plaintext in our DB); it is
 	// retrieved on demand from the cluster's argocd-initial-admin-secret. Show the command.
@@ -243,18 +238,16 @@ export function ClusterCard({
 						</div>
 						<p className="mt-0.5 font-mono text-ui-xs text-text-tertiary">
 							{meta.shortName} · {data.region} · {data.environment_stage}
-							{cluster?.k8s_version ? ` · K8s ${cluster.k8s_version}` : ""}
+							{cluster.k8s_version ? ` · K8s ${cluster.k8s_version}` : ""}
 						</p>
-						{cluster?.id && (
-							<ClassificationControl
-								kind="project_cluster"
-								id={cluster.id}
-								canEdit
-								initialAssignments={initialAssignments}
-								className="mt-1.5"
-								compact
-							/>
-						)}
+						<ClassificationControl
+							kind="project_cluster"
+							id={cluster.id}
+							canEdit
+							initialAssignments={data.classification}
+							className="mt-1.5"
+							compact
+						/>
 					</div>
 				</div>
 				<div className="shrink-0 text-right">
@@ -276,7 +269,7 @@ export function ClusterCard({
 					icon={Boxes}
 					name="Control plane"
 					engine={K8S_KIND[provider] ?? "k8s"}
-					status={cluster?.status ?? data.status}
+					status={cluster.status}
 				/>
 				{databases.map((db) => (
 					<ComponentRow
@@ -310,7 +303,7 @@ export function ClusterCard({
 			</div>
 
 			{/* Cluster access. */}
-			{cluster?.cluster_endpoint && (
+			{cluster.cluster_endpoint && (
 				<div className="flex flex-col gap-1.5 border-t pt-3">
 					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Terminal className="h-3.5 w-3.5" />
@@ -360,12 +353,13 @@ export function ClusterCard({
 						clusterId={cluster.id}
 						projectName={data.project_name}
 						environment={data.environment_stage}
+						allowed={data.can_download_kubeconfig}
 					/>
 				</div>
 			)}
 
 			{/* ArgoCD. */}
-			{cluster?.argocd_url && (
+			{cluster.argocd_url && (
 				<div className="flex flex-col gap-1.5 border-t pt-3">
 					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Server className="h-3.5 w-3.5" />

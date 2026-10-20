@@ -40,6 +40,8 @@ vi.mock("@/lib/rpc/client", () => ({
 				(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
 			),
 		),
+		// The clusters grid rides the clusters and environments topics (#6122).
+		clusters: { key: () => ["clusters-orpc"] },
 	},
 }));
 
