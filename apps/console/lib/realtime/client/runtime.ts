@@ -115,6 +115,8 @@ export interface RealtimeOptions {
 	pageEvents?: EventTarget | null;
 	/** This document's scope (default: this page's). */
 	scope?: DocumentScope;
+	/** The coalescer's jitter source (tests pin it). */
+	random?: () => number;
 }
 
 /** The name of one person's election and relay for one org. */
@@ -184,7 +186,12 @@ export function startRealtime(options: RealtimeOptions): () => void {
 	}
 
 	store.reset(); // a new runtime starts from a first connect: a previous `removed` does not carry over
-	const coalescer = createCoalescer({ queryClient: options.queryClient, topicKeys: TOPIC_KEYS, isVisible });
+	const coalescer = createCoalescer({
+		queryClient: options.queryClient,
+		topicKeys: TOPIC_KEYS,
+		isVisible,
+		random: options.random,
+	});
 	const stopPoll = startFallbackPoll({ store, isVisible, refresh: () => coalescer.refreshAll() });
 
 	// Everything opened below registers its undo here, so every exit path closes all of it.

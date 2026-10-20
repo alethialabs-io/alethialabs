@@ -10,6 +10,7 @@ import { render } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeWebLocks } from "./fake-web-locks";
+import { settle, until } from "./harness";
 
 const h = vi.hoisted(() => ({ pathname: "/acme/~/jobs", viewerId: "u1" }));
 
@@ -59,11 +60,11 @@ describe("RealtimeMount under StrictMode — one lock request per document", () 
 				<RealtimeMount />
 			</StrictMode>,
 		);
-		await vi.waitFor(() => expect(locks.query().held).toHaveLength(1));
-		await new Promise((r) => setTimeout(r, 10));
+		await until(() => locks.query().held.length === 1, "the document takes the free lock");
+		await settle();
 		expect(locks.requestsOf("doc-1", NAME)).toBe(1);
 		view.unmount();
-		await vi.waitFor(() => expect(locks.requestsOf("doc-1")).toBe(0));
+		await until(() => locks.requestsOf("doc-1") === 0, "the unmounted document gives its request up");
 	});
 
 	it("a FOLLOWER (another document holds the lock): mount → unmount → mount leaves exactly one PENDING request", async () => {
@@ -75,20 +76,21 @@ describe("RealtimeMount under StrictMode — one lock request per document", () 
 			openChannel: () => null,
 			onLead: () => {},
 		});
-		await vi.waitFor(() => expect(locks.query().held).toEqual([{ name: NAME, clientId: "doc-0" }]));
+		await until(() => locks.query().held.some((l) => l.clientId === "doc-0"), "doc-0 holds the lock");
 		const view = render(
 			<StrictMode>
 				<RealtimeMount />
 			</StrictMode>,
 		);
-		await new Promise((r) => setTimeout(r, 10));
+		await settle();
 		expect(locks.requestsOf("doc-1", NAME)).toBe(1);
 		// The leader closes: this document's ONE request is granted, and leads.
 		other.stop();
-		await vi.waitFor(() => expect(locks.query().held).toEqual([{ name: NAME, clientId: "doc-1" }]));
+		await until(() => locks.query().held.some((l) => l.clientId === "doc-1"), "doc-1 takes the lock over");
+		expect(locks.query().held).toEqual([{ name: NAME, clientId: "doc-1" }]);
 		expect(locks.query().pending).toEqual([]);
 		view.unmount();
-		await vi.waitFor(() => expect(locks.requestsOf("doc-1")).toBe(0));
+		await until(() => locks.requestsOf("doc-1") === 0, "the unmounted document gives its request up");
 	});
 
 	it("a remount (an org switch and back) never leaves a stale request behind", async () => {
@@ -105,10 +107,10 @@ describe("RealtimeMount under StrictMode — one lock request per document", () 
 				</StrictMode>,
 			);
 		}
-		await new Promise((r) => setTimeout(r, 20));
+		await settle();
 		expect(locks.requestsOf("doc-1")).toBe(1);
 		expect(locks.requestsOf("doc-1", NAME)).toBe(1);
 		view.unmount();
-		await vi.waitFor(() => expect(locks.requestsOf("doc-1")).toBe(0));
+		await until(() => locks.requestsOf("doc-1") === 0, "the unmounted document gives its request up");
 	});
 });
