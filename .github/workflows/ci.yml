@@ -1085,6 +1085,15 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-shared-surface.mjs --self-test
+      # crypto.randomUUID, navigator.clipboard and crypto.subtle are undefined when a self-hosted
+      # console is served over plain HTTP, and every test and preview runs in a secure context, so
+      # nothing else sees a regression (#6182).
+      - name: Browser code uses no SecureContext-only API without a fallback
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-secure-context-apis.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-secure-context-apis.mjs --self-test
       # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
       # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
       # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then

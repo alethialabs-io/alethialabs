@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { AgentMode } from "@/lib/ai/tools";
 import { track } from "@/lib/analytics/track";
 import { AI_MODELS } from "@/lib/config/ai";
+import { randomUuid } from "@/lib/random-id";
 
 /**
  * Where Elench is anchored. Determines the streaming route, tool-set, thread
@@ -222,7 +223,7 @@ interface ElenchState {
  * analytics event before its first send commits (ADR 0001 Q1's security note).
  */
 function mintConversationId(): string {
-	return crypto.randomUUID();
+	return randomUuid();
 }
 
 /**

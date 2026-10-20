@@ -59,6 +59,7 @@ export default defineConfig({
 				"src/view-toggle.tsx",
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
+				"src/copy-text.ts",
 				"src/status-badge.tsx",
 				"src/filter-bar.tsx",
 				"src/filter-chip.tsx",
