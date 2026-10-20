@@ -809,7 +809,8 @@ SH
 	for line in 'ALETHIA_EDITION=community' 'ALETHIA_EDITION="community"' "ALETHIA_EDITION='community'" \
 		'ALETHIA_EDITION=  community  ' 'ALETHIA_EDITION=comm unity' 'ALETHIA_EDITION=enterprise' \
 		'export ALETHIA_EDITION=community' 'ALETHIA_EDITION=' 'ALETHIA_EDITION="\x27community\x27"' \
-		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community'; do
+		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community' \
+		'ALETHIA_EDITION=comm\runity'; do
 		i=$((i + 1))
 		printf 'X=1\n%b\r\n' "$line" >"$pv/$i.env"
 		pin="$(sh -c "$(bash -c '. "$1"; declare -f dotenv_edition' _ "$TMP/dotenv.sh"); dotenv_edition \"\$1\"" sh "$pv/$i.env")"
@@ -960,6 +961,27 @@ SH
 	*"the console is back, but it cannot load the enterprise edition"*"pnpm env:logs"*"=== restore"*"s1 is back, but it cannot load the enterprise edition"*"must run: pnpm env:logs"*) ;;
 	*) bad "restart/restore do not name the enterprise load failure for a 5xx DEFECT: $r500" ;;
 	esac
+	# D4. The restore restarts EVERY env, not the first. ssh forwards its stdin to the remote command,
+	# so an ssh_box inside the slug loop that inherits the loop's stdin swallows the rest of the list.
+	# The stub READS stdin on every call, the way ssh does.
+	cat >"$TMP/drive-restore-all.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia
+ssh_box() {
+	cat >/dev/null
+	case "$1" in
+	*env-registry.sh*) echo '{"a":{"consolePort":3101,"storagePort":8400,"database":"db_a"},"b":{"consolePort":3102,"storagePort":8401,"database":"db_b"},"c":{"consolePort":3103,"storagePort":8402,"database":"db_c"}}' ;;
+	*has-session*) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+restore_live_envs </dev/null
+SH
+	ra="$(bash "$TMP/drive-restore-all.sh" "$TMP/defect.sh" 2>&1)"
+	for e in a b c; do
+		printf '%s\n' "$ra" | grep -q "^    $e — restarting" || bad "restore_live_envs never reached env '$e' — an ssh in its loop swallowed the slug list: $ra"
+	done
+
 	[ "$fails" = "$d_before" ] &&
 		ok "a 404 DEFECT reads COMMUNITY and a pinned-enterprise 5xx DEFECT reads EE-NOT-LOADED in env:test, env:status, the restart and the restore — and both are still refused"
 
@@ -1217,6 +1239,10 @@ AWK
 mutate_fn edition-row-calls-ee-not-loaded-unmeasured <<'AWK'
 /^  EE-NOT-LOADED\) echo "⚠ pinned/ { next }
 { print }
+AWK
+# The restore loop fed by a pipe on stdin again, so the first ssh in it eats the remaining slugs.
+mutate_fn restore-loop-reads-stdin-again <<'AWK'
+{ sub(/^  while read -r sl <&3; do$/, "  printf '%s\\n' \"$slugs\" | while read -r sl; do"); sub(/^  done 3< <\(printf '%s\\n' "\$slugs"\) <\/dev\/null$/, "  done"); print }
 AWK
 mutate_fn remedy-drops-the-log <<'AWK'
 /^  DEFECT:EE-NOT-LOADED\) echo "pnpm env:logs/ { next }

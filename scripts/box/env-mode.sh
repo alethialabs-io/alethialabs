@@ -137,13 +137,18 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
 
   # The edition is read straight out of a .env with `cut -d= -f2-`, so it arrives exactly as
   # written: `ALETHIA_EDITION="community"` yields `"community"`, a CRLF file yields
-  # `community` with a trailing \r, and a stray space survives. Every dotenv loader — and
-  # `set -a && . .env`, which is how the console's session actually gets it — strips all
-  # three, so the console really IS community while an un-normalised compare reads "unset,
-  # therefore auto" and refuses to boot the one env the design says must stay runnable.
-  # The \r needs no strip of its own: it is in [:space:], so the trailing trim below removes it
-  # (the self-test's CRLF cells hold that, and go red without the trim). An INNER \r is no
-  # longer removed: the console's `set -a && . .env` keeps one too, so it is not a pin there.
+  # `community` with a trailing \r, and a stray space survives. `set -a && . .env` — how the
+  # console's session gets it — strips the quotes and the padding, so for those the console
+  # really IS community while an un-normalised compare reads "unset, therefore auto" and refuses
+  # to boot the one env the design says must stay runnable.
+  #
+  # A \r is different, and it is NOT stripped by the console: dot-sourcing keeps a \r wherever
+  # it is, and parseAlethiaEdition does not trim, so a CR-bearing pin is rejected there (the
+  # invalid-pin class of #6171). It is stripped HERE — every \r, not only a trailing one — to
+  # agree with env.sh's dotenv_edition (`tr -d '\r'`), so the scope row and the edition row of
+  # env:status read one line the same way. That parity is the contract (env-suite-reap-test.sh
+  # C9 holds it, an inner-CR value included); no writer in this repo emits a CR anyway.
+  edition="${edition//$'\r'/}"
   edition="${edition#"${edition%%[![:space:]]*}"}"
   edition="${edition%"${edition##*[![:space:]]}"}"
   case "$edition" in
@@ -331,12 +336,13 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "404 with enterprise is worse, not ok" 404 "enterprise" "DEFECT"
   # …unless community was asked for, which is how the community build gets exercised.
   scope "404 pinned community is deliberate"   404 "community" "community"
-  # A pin is read out of a .env verbatim, and all three of these ARE `community` to the
-  # console: `set -a && . .env` strips the quotes, and a CRLF file leaves the \r behind.
-  # Reading them as "unset, therefore auto" makes env:up refuse a deliberately pinned env.
+  # A pin is read out of a .env verbatim. The quoted and padded ones ARE `community` to the
+  # console (`set -a && . .env` strips them); reading them as "unset, therefore auto" makes
+  # env:up refuse a deliberately pinned env. The CRLF one is NOT stripped by the console — it
+  # keeps the \r — and is read as the pin here only to agree with env.sh's dotenv_edition.
   scope "a double-quoted pin is a pin"         404 '"community"'   "community"
   scope "a single-quoted pin is a pin"         404 "'community'"   "community"
-  scope "a CRLF pin is a pin"                  404 "community$(printf '\r')" "community"
+  scope "a CRLF pin reads as dotenv_edition does" 404 "community$(printf '\r')" "community"
   scope "a padded pin is a pin"                404 "  community  " "community"
   # A console that cannot answer must not be reported either way. `000` is curl's
   # "no response", and an empty string is what a failed capture actually yields — the two
@@ -901,9 +907,11 @@ for _ in $(seq 1 150); do
         # The LOG FIRST. This boot built @alethia/ee above and exits before starting the console
         # if ee/dist/index.js is absent, so here the dist is almost always present and threw on
         # load (or the 5xx is not ee's at all); loadEnterprise rethrows that error on every call,
-        # so the console log is where it surfaces. A rebuild is the remedy for the rarer case.
+        # so the console log is where it surfaces. env:up, not env:push, is the second step: the
+        # failure is memoised for the life of the process, and only env:up restarts it.
         echo "  Read the error first: pnpm env:logs (a dist that loaded and threw, or any other" >&2
-        echo "  5xx, shows there). Then rebuild: pnpm env:push rebuilds ee/dist, or pnpm env:up." >&2
+        echo "  5xx, shows there). Then pnpm env:up: it rebuilds ee/dist AND restarts the console," >&2
+        echo "  which a failed load needs — loadEnterprise keeps the failure for the process's life." >&2
         ;;
       *)
         # This boot ALREADY scrubbed the tmux server's global environment and started the

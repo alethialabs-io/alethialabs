@@ -1019,7 +1019,11 @@ restore_live_envs() {
   [ -n "$slugs" ] || return 0
 
   echo "→ restarting environments the box was running: $(printf '%s' "$slugs" | tr '\n' ' ')"
-  printf '%s\n' "$slugs" | while read -r sl; do
+  # The slugs arrive on fd 3 and the loop body's stdin is /dev/null. Every ssh_box below would
+  # otherwise read the loop's stdin — ssh forwards it to the remote command — so the first
+  # `tmux has-session` swallowed the rest of the list and only the FIRST env was ever restored.
+  # Redirecting the whole body, not each call, is what keeps a future call in it from doing so.
+  while read -r sl <&3; do
     [ -n "$sl" ] || continue
     # Already up? tmux session present means the console survived; leave it alone.
     if ssh_box "tmux has-session -t 'alethia-$sl' 2>/dev/null"; then
@@ -1041,9 +1045,10 @@ restore_live_envs() {
     # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
     # was fine. A restore restarts; it never writes data.
     # Exit 3 is env-mode.sh's "it is UP, and it is in the wrong scope" (boot_rc there).
-    # It is not a failure to come back, and calling it one would name the wrong fault on an env this restore does not own; it is also not a success, and folding it into the
-    # `||` success path would leave the diagnostic that just printed above with nothing
-    # saying it was a verdict.
+    # It is not a failure to come back, and calling it one would name the wrong fault on an
+    # env this restore does not own; it is also not a success, and folding it into the `||`
+    # success path would leave the diagnostic that just printed above with nothing saying it
+    # was a verdict.
     local restore_rc=0
     ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" || restore_rc=$?
     case "$restore_rc" in
@@ -1057,7 +1062,7 @@ restore_live_envs() {
       ;;
     *) echo "      ✗ $sl did not come back — pnpm env:up from its worktree" ;;
     esac
-  done
+  done 3< <(printf '%s\n' "$slugs") </dev/null
 }
 
 # Push the box-side scripts, the pinned shared compose file and the tunnel
@@ -1813,18 +1818,20 @@ scope_headline() { # <probe line "<verdict> <status> <why>"> → predicate
 
 # The remedy for that headline. The 5xx one leads with the LOG: env-mode.sh builds @alethia/ee
 # before it boots and refuses to start without ee/dist, so at boot the likelier cause is a dist
-# that is present and threw on load, and only the console log says what it threw.
+# that is present and threw on load, and only the console log says what it threw. Then env:up,
+# NOT env:push: loadEnterprise memoises a failed load for the life of the process, and env:push
+# rebuilds ee/dist without restarting it. env:up restarts the console.
 scope_remedy() { # <probe line> → the command(s) its owner runs
   local rest="${1#* }"
   case "${1%% *}:$(scope_defect_label "${rest%% *}")" in
-  DEFECT:EE-NOT-LOADED) echo "pnpm env:logs (the load error is there), then pnpm env:push to rebuild ee/dist, or pnpm env:up" ;;
+  DEFECT:EE-NOT-LOADED) echo "pnpm env:logs (the load error is there), then pnpm env:up to rebuild ee/dist and restart the console" ;;
   *) echo "pnpm env:up" ;;
   esac
 }
 
 # The probe, asked once, the way env:test asks it. Exits 0 with whatever came back (empty when the
-# box did not answer) — the callers decide what an answer means. </dev/null because two callers
-# sit inside a `while read` loop and ssh would otherwise swallow the rest of its input.
+# box did not answer) — the callers decide what an answer means. </dev/null because one caller,
+# restore_live_envs, sits inside a `while read` loop, and ssh would swallow the rest of its input.
 measure_scope() { # <slug> <console port> <attempts> <seconds per attempt>
   ssh_box "$REMOTE/bin/env-mode.sh --scope '$2' '$REMOTE/envs/$1/.env' $3 $4" </dev/null 2>/dev/null || true
 }
@@ -2046,7 +2053,7 @@ cmd_status() {
   vacuous. Fix it with `pnpm env:up`; `community-pinned` means that env's .env asked for it.
   `EE-NOT-LOADED` is a different fault: the .env pins enterprise, @alethia/ee did not load,
   and the console answers 5xx to every auth call, sign-in included — it is serving no edition
-  at all. Read `pnpm env:logs` for the load error, then `pnpm env:push` or `pnpm env:up`.
+  at all. Read `pnpm env:logs` for the load error, then `pnpm env:up` (which restarts it).
   A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
   actually measured: `?-no-answer` (the console did not respond, but its tmux session is there
   — it is up and busy, or wedged), `?-not-running` (there is NO session behind this
