@@ -15,10 +15,45 @@ import {
 } from "@/lib/query/use-runners-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
+
+/** Fetches the markdown renderer's chunk (streamdown and its unified pipeline). */
+function loadReleaseNotesMarkdown() {
+  return import("./release-notes-markdown").then((m) => m.ReleaseNotesMarkdown);
+}
+
+/** The notes skeleton: the popover's loading state for both the fetch and the renderer chunk. */
+function ReleaseNotesSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-4 w-3/4" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
+  );
+}
+
+/**
+ * Loaded on demand, never statically. This popover is imported by the jobs table's version
+ * column, the runner card, runner actions and the versions panel, so a static import would put
+ * streamdown in the first hydration of `/~/jobs`, `/~/jobs/[id]` and `/~/runners` — the cost
+ * #5849 removed from the shell — while the notes render only once someone opens a popover.
+ */
+const ReleaseNotesMarkdown = dynamic(loadReleaseNotesMarkdown, {
+  ssr: false,
+  loading: ReleaseNotesSkeleton,
+});
+
+/**
+ * Starts loading the renderer before the popover opens — on the trigger's hover and focus — so
+ * the first open does not wait for the chunk. Safe to call repeatedly: the import is cached.
+ */
+function preloadReleaseNotesMarkdown(): void {
+  void loadReleaseNotesMarkdown();
+}
 
 interface ReleaseNotesPopoverProps {
   /** The version whose notes to show; null disables the popover. */
@@ -80,7 +115,11 @@ export function ReleaseNotesPopover({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={children} />
+      <PopoverTrigger
+        render={children}
+        onPointerEnter={preloadReleaseNotesMarkdown}
+        onFocus={preloadReleaseNotesMarkdown}
+      />
       <PopoverContent align="start" className="w-96 p-0">
         <div className="flex flex-col gap-1 border-b border-border p-3">
           <div className="flex items-center gap-2">
@@ -110,15 +149,9 @@ export function ReleaseNotesPopover({
         <ScrollArea className="max-h-[50vh]">
           <div className="p-3">
             {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-4 w-5/6" />
-              </div>
+              <ReleaseNotesSkeleton />
             ) : release?.release_notes ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-sm [&_h3]:text-sm [&_li]:my-0.5 [&_ul]:my-1">
-                <ReactMarkdown>{release.release_notes}</ReactMarkdown>
-              </div>
+              <ReleaseNotesMarkdown markdown={release.release_notes} />
             ) : (
               <p className="text-sm text-muted-foreground">
                 No release notes available for this version.
