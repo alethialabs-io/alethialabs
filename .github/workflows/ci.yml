@@ -1135,7 +1135,7 @@ jobs:
       # ledger fails in both directions — new action-backed reads, and entries whose read has moved.
       - name: Console reads do not travel as server actions (ADR 0005 D1 ratchet)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm -F console check:read-transport
+        run: pnpm -C apps/console run check:read-transport
       - name: ...and that ratchet is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-read-transport.mjs --self-test
