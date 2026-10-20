@@ -8,6 +8,8 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { orpc } from "@/lib/rpc/client";
 import { TOPIC_KEYS } from "@/lib/query/topics";
+import { qk } from "@/lib/query/keys";
+import { TOPICS } from "@/lib/realtime/topics";
 
 describe("TOPIC_KEYS", () => {
 	it("invalidates every jobs.page read, whatever its input", async () => {
@@ -30,9 +32,22 @@ describe("TOPIC_KEYS", () => {
 		expect(client.getQueryState(["projects", "acme"])?.isInvalidated).toBe(false);
 	});
 
-	it("lists every topic the bus may deliver, empty until its lane moves its reads", () => {
-		expect(Object.keys(TOPIC_KEYS).sort()).toEqual(
-			["addons", "alerts", "clusters", "environments", "jobs", "projects", "runners", "support", "usage"].sort(),
-		);
+	it("lists exactly the topics the wire can carry (lib/realtime/topics.ts), empty until a lane moves its reads", () => {
+		expect(Object.keys(TOPIC_KEYS).sort()).toEqual([...TOPICS].sort());
+	});
+
+	it("#6115: jobs also invalidates the legacy qk.jobs / qk.jobsPage / qk.job reads (still polled by #6114's hooks)", async () => {
+		const client = new QueryClient();
+		const legacy: unknown[][] = [
+			[...qk.jobs("acme")],
+			[...qk.jobsPage("acme", { status: "FAILED" })],
+			[...qk.job("acme", "j1")],
+			[...qk.jobStatus("acme", "j1")],
+		];
+		for (const key of legacy) client.setQueryData(key, {});
+		client.setQueryData([...qk.runners("acme")], {});
+		for (const queryKey of TOPIC_KEYS.jobs()) await client.invalidateQueries({ queryKey });
+		for (const key of legacy) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+		expect(client.getQueryState([...qk.runners("acme")])?.isInvalidated).toBe(false);
 	});
 });

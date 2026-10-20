@@ -10,6 +10,7 @@
     "check-types": "tsc --noEmit",
     "check:no-supabase": "node scripts/check-no-supabase-data.mjs",
     "check:read-transport": "node ../../scripts/check-read-transport.mjs",
+    "check:no-polling": "node ../../scripts/check-no-polling.mjs",
     "check:ee-boundary": "node scripts/check-ee-boundary.mjs",
     "check:authz-scope": "node scripts/check-authz-scope.mjs",
     "check:revalidate-paths": "node scripts/check-revalidate-paths.mjs",

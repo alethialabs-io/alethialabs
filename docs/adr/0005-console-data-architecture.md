@@ -390,13 +390,23 @@ codec rather than run two URL mechanisms.
 
 ## 5. Cost model for real-time
 
-### 5.1 Assumptions (all stated, the per-connection figure is the one to measure first)
+### 5.1 Assumptions (all stated; the per-connection figure is now measured)
 
 - **S** = concurrent open console tabs. Steady-state business usage: 10 h/day × 22 days = **220 h/month**
   per tab; worst case 24/7 = **730 h/month**.
 - Memory per idle SSE stream in Node (socket buffers + `ReadableStream` + closures + a `Set` entry):
-  **assume 64 KB** — **UNVERIFIED**; measure with 1 000 synthetic streams against a standalone build
-  before relying on any row below.
+  **~100 KB, measured** (#6115, posted on the issue). Two runs of 1 000 synthetic streams against a
+  standalone `next build` behind `caddy:2` configured like the production Caddyfile gave ΔRSS / N =
+  91.6 KB and 106.3 KB. The 64 KB this section used to assume was low. After the streams were
+  aborted, the bus's stream counter went back to 0 and RSS returned to within 10 % of the baseline.
+- Hint latency, commit → every one of the 1 000 streams: **p50 50 ms, p99 78 ms** (both runs; slowest
+  stream per update p50 ≈ 62 ms, p99 ≈ 85 ms), with 0 of 500 updates undelivered.
+- Commit cost of the trigger: the gate was "an outbox only if p99 regresses by more than
+  max(25 %, 5 ms)". The measurement passed it with a LISTENer attached (production always has one:
+  every console process LISTENs), so the triggers NOTIFY directly — **no outbox, no migration**.
+  Each phase ran once, and the phase-to-phase noise was about as large as the differences.
+- **Not measured yet:** the same run through `deploy/prod/Caddyfile.tunnel` and the Cloudflare
+  tunnel. It is owed on #6115.
 - Heartbeat: 1 write / 20 s / stream (existing cadence). Server-action poll cost today: session read +
   membership + RLS tx + query ≈ **10 ms CPU** — **UNVERIFIED**, derived from nothing better than the
   ~190 ms/POST wall time implied by the 14 POSTs / 2.7 s measurement (most of which is network + queue).
@@ -405,11 +415,14 @@ codec rather than run two URL mechanisms.
 
 ### 5.2 Polling today vs D3, on the existing container
 
-| S (concurrent tabs) | Polling: clusters alone (1 POST / 5 s / focused tab) | ≈ CPU @10 ms | D3 idle memory (S × 64 KB) | D3 heartbeat writes/s | D3 cost per change |
+| S (concurrent streams) | Polling: clusters alone (1 POST / 5 s / focused tab) | ≈ CPU @10 ms | D3 idle memory (S × ~100 KB, measured) | D3 heartbeat writes/s | D3 cost per change |
 |---|---|---|---|---|---|
-| 100 | 20 req/s | 0.2 core | 6.4 MB | 5 | ≤ 100 GETs per org-wide change, coalesced |
-| 1 000 | 200 req/s | 2 cores — **half the cx33** | 64 MB | 50 | per org, so ≈ tabs-in-that-org |
-| 10 000 | 2 000 req/s | 20 cores — **impossible on one box** | 640 MB | 500 | same |
+| 100 | 20 req/s | 0.2 core | ≈ 10 MB | 5 | ≤ 100 GETs per org-wide change, coalesced |
+| 1 000 | 200 req/s | 2 cores — **half the cx33** | ≈ 100 MB | 50 | per org, so ≈ tabs-in-that-org |
+| 10 000 | 2 000 req/s | 20 cores — **impossible on one box** | ≈ 1 GB | 500 | same |
+
+S counts **streams**, and the client holds one stream per browser per org, not one per tab: the tabs of
+an org elect a leader that holds the stream and relays its hints (§10 R8, `lib/realtime/client/`).
 
 Polling scales with **time × tabs**; D3 scales with **changes × watchers**. On a flat-priced container
 D3's marginal cost is memory headroom and file descriptors, i.e. ~€0 until ~10k streams, then one more
