@@ -14,13 +14,17 @@
 // `role="button" | "link" | "menuitem"` shapes axe covers under `aria-command-name` — must have an
 // accessible name, and the sweep is what carries that forward.
 
-import { render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as renderBare, screen, within } from "@testing-library/react";
+import type { ReactElement } from "react";
+import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NAME_REQUIRED, unnamedControls } from "../support/accessible-names";
 
-const { pathname, environments } = vi.hoisted(() => ({
+const { pathname, environments, LIVE } = vi.hoisted(() => ({
+	LIVE: { data: { user: { name: "User", email: "user@example.com" } }, isPending: false, error: null },
 	pathname: { current: "/acme/~/support/my-cases" },
-	environments: { current: [] as { id: string; name: string; is_default: boolean }[] },
+	environments: { current: new Array<SwitcherEnv>() },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -41,6 +45,13 @@ vi.mock("@/lib/auth/client", () => ({
 		signOut: vi.fn(),
 		listAccounts: vi.fn(async () => ({ data: [] })),
 	},
+	// `get` must answer the SAME object each time, as better-auth's atom does — it is a
+	// `useSyncExternalStore` snapshot.
+	liveSession: {
+		subscribe: () => () => {},
+		get: () => LIVE,
+		onPossibleChange: () => () => {},
+	},
 }));
 vi.mock("@repo/privacy/consent-provider", () => ({
 	useConsent: () => ({ openPreferences: vi.fn() }),
@@ -49,8 +60,13 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
-vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
-vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
+vi.mock("@/lib/query/use-projects-query", () => ({
+	useProjectsQuery: () => ({
+		data: [{ id: "p_atlas", slug: "atlas", project_name: "Atlas", cloud_provider: null }],
+		isSuccess: true,
+	}),
+}));
+vi.mock("@/lib/query/use-jobs-query", () => ({ useRecentJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/hooks/use-support-notifications", () => ({
 	useSupportNotifications: () => ({
 		notifications: [],
@@ -61,6 +77,10 @@ vi.mock("@/hooks/use-support-notifications", () => ({
 }));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useActiveOrgSlug: () => "acme",
+	useActiveWorkspaceOrg: () => ({ id: "org_1", name: "Acme", slug: "acme", plan: "hobby", logo: null }),
+	useWorkspaceContextQuery: () => ({
+		data: { activeOrgId: "org_1", organizations: [{ id: "org_1", name: "Acme", slug: "acme", plan: "hobby" }] },
+	}),
 	useWorkspaceStore: Object.assign(
 		() => ({
 			activeOrgId: "org_1",
@@ -74,6 +94,19 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 
 const { AppSidebar } = await import("@/components/shell/app-sidebar");
 const { Topbar } = await import("@/components/shell/topbar");
+const { orpc } = await import("@/lib/rpc/client");
+
+/**
+ * Renders `ui` under a QueryClient holding what the layouts prefetch for this route (#6114): the
+ * project's environments, from `environments.current`. Never stale, so nothing refetches.
+ */
+function render(ui: ReactElement) {
+	const client = new QueryClient({
+		defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY, retry: false } },
+	});
+	client.setQueryData(orpc.workspace.environments.queryKey({ input: { project: "atlas" } }), environments.current);
+	return renderBare(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 // The denominator moved to tests/support/accessible-names.ts in #3756 so a second sweep — over the
 // page-owned components that carry the same name-from-author-only idiom — measures the same thing
@@ -95,10 +128,12 @@ describe("shell chrome — accessible names", () => {
 
 	it("names every button in the topbar inside a project, with the env switcher mounted", async () => {
 		pathname.current = "/acme/atlas/environments";
-		environments.current = [{ id: "env_1", name: "production", is_default: true }];
+		environments.current = [
+			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
+		];
 		const { container } = render(<Topbar onOpenSidebar={() => {}} />);
-		// The env switcher only mounts once its list resolves — wait for it, or this asserts
-		// against a topbar that never rendered the control the audit flagged.
+		// The env switcher mounts only with its list — wait for it, or this asserts against a
+		// topbar that never rendered the control the audit flagged.
 		await screen.findByRole("button", { name: /Switch environment/i });
 		expect(unnamedControls(container)).toEqual([]);
 	});
@@ -122,14 +157,16 @@ describe("shell chrome — accessible names", () => {
 
 	it("puts the switcher's purpose ahead of the current selection", async () => {
 		pathname.current = "/acme/atlas/environments";
-		environments.current = [{ id: "env_1", name: "production", is_default: true }];
+		environments.current = [
+			{ id: "env_1", project_id: "p_atlas", name: "production", stage: "production", is_default: true },
+		];
 		render(<Topbar onOpenSidebar={() => {}} />);
 
 		// The name is context + selection, not one or the other: "Switch project" alone never says
-		// which project is active, and "All projects" alone never says it is a switcher. The visible
-		// text stays part of the name (WCAG 2.5.3, label in name).
-		const project = screen.getByRole("button", { name: "Switch project: All projects" });
-		expect(within(project).getByText("All projects")).toBeInTheDocument();
+		// which project is active, and "Atlas" alone never says it is a switcher. The visible text
+		// stays part of the name (WCAG 2.5.3, label in name).
+		const project = screen.getByRole("button", { name: "Switch project: Atlas" });
+		expect(within(project).getByText("Atlas")).toBeInTheDocument();
 		expect(
 			await screen.findByRole("button", { name: "Switch environment: production" }),
 		).toBeInTheDocument();

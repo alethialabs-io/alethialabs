@@ -30,7 +30,7 @@
 // delete it when the redirect page goes, not a reason to change behaviour a guard cannot see.
 //
 // Deliberately free of React and of every `@/` import: `jobLabel` is injected rather than reaching
-// for `JOB_TYPES` and `useJobsQuery`, so the module a guard imports is the module the console
+// for `JOB_TYPES` and `useRecentJobsQuery`, so the module a guard imports is the module the console
 // renders, with nothing mocked in between.
 
 /** One entry in the header trail. `href` absent means it is not a link. */

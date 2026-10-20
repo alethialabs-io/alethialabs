@@ -3,22 +3,15 @@
 "use client";
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import {
-	getProjects,
-	type ProjectWithProvider,
-} from "@/app/server/actions/projects";
-import { qk } from "./keys";
+import type { ProjectWithProvider } from "@/app/server/actions/projects";
+import { orpc } from "@/lib/rpc/client";
 
 /**
- * The org's projects (flat under the org). Server-prefetched and hydrated, then shared
- * across the overview grid, project switcher, breadcrumbs, command palette, and activity
- * log — TanStack Query dedupes them to a single request keyed by org.
+ * The org's projects (flat under the org), over the read router's `workspace.projects` (GET).
+ * The `[org]` layout prefetches it, so the project switcher, breadcrumbs, command palette and
+ * activity log render it on first paint and share one cache entry. The org is the browser cache's
+ * partition (`lib/query/client.ts`), so the key needs none of its own.
  */
 export function useProjectsQuery(): UseQueryResult<ProjectWithProvider[]> {
-	const { org } = useParams<{ org: string }>();
-	return useQuery({
-		queryKey: qk.projects(org),
-		queryFn: () => getProjects(),
-	});
+	return useQuery(orpc.workspace.projects.queryOptions());
 }

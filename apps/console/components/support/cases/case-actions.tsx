@@ -24,6 +24,7 @@ import {
 } from "@/app/server/actions/support";
 import type { SupportCaseStatus } from "@/lib/db/schema/enums";
 import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
 
 /** The lifecycle actions available on a case, resolved from its current status. */
 type CaseAction = "resolve" | "reopen" | "close";
@@ -71,6 +72,8 @@ export function CaseActions({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: qk.supportCase(caseId) }),
         queryClient.invalidateQueries({ queryKey: ["support", "cases"] }),
+        // The bell's case feed lives under its own key (#6114) — refresh it too.
+        queryClient.invalidateQueries({ queryKey: orpc.workspace.supportCases.key() }),
       ]);
     },
   });

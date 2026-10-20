@@ -7,12 +7,14 @@
 // because neither the page nor the upsell may render before the store has answered (#5864). A
 // failed load used to leave the store in the never-fetched shape, so the skeleton stayed for good —
 // no error, no retry. The page now says the workspace could not be loaded and offers Retry, which
-// re-runs `fetchWorkspace()`; and it still renders neither the runners nor the upsell. Real hook,
-// real store; the server action and the page's data hooks are mocked.
+// re-runs `fetchWorkspace()` (which refetches the workspace query); and it still renders neither
+// the runners nor the upsell. Since #6114 the store reaches `failed` through the shell's query sync. Real hook,
+// real store; the workspace read and the page's data hooks are mocked.
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceContext } from "@/app/server/actions/workspace";
+import type { WorkspaceContext } from "@/lib/rpc/procedures/workspace";
 
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
@@ -21,13 +23,23 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(""),
 }));
 
-const { getWorkspaceContext } = vi.hoisted(() => ({
-	getWorkspaceContext: vi.fn<() => Promise<WorkspaceContext>>(),
+const { readContext } = vi.hoisted(() => ({
+	readContext: vi.fn<() => Promise<WorkspaceContext>>(),
 }));
-vi.mock("@/app/server/actions/workspace", () => ({
-	getWorkspaceContext,
-	setActiveOrganization: vi.fn(),
+// The store reads the workspace over the read router's GET procedure (#6114); only that call is
+// stubbed — the query helpers and the tenant partition stay real.
+vi.mock("@/lib/rpc/client", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/rpc/client")>()),
+	rpcClient: { workspace: { context: readContext } },
 }));
+vi.mock("@/app/server/actions/workspace", () => ({ setActiveOrganization: vi.fn() }));
+// The app's per-tenant client, replaced by one without retries so a failure settles at once. The
+// store's Retry refetches through `getQueryClient(...)`, so it must be the provider's client too.
+const q = vi.hoisted(() => {
+	const holder: { client: unknown } = { client: undefined };
+	return holder;
+});
+vi.mock("@/lib/query/client", () => ({ getQueryClient: () => q.client }));
 
 vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => ({ data: [] }) }));
 vi.mock("@/lib/query/use-fleet-query", () => ({
@@ -59,7 +71,8 @@ vi.mock("@/components/settings/upgrade/feature-upsell", () => ({
 
 import { RunnersClient } from "@/app/(private)/[org]/~/runners/runners-client";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { orpc } from "@/lib/rpc/client";
+import { useWorkspaceStore, useWorkspaceStoreSync } from "@/lib/stores/use-workspace-store";
 
 const ERROR_TITLE = /couldn't load your workspace/i;
 const UPSELL = "BYO runners are a paid feature";
@@ -74,15 +87,36 @@ function context(byoRunners: boolean): WorkspaceContext {
 	};
 }
 
-/** Runs the store's real load against a failing server action. */
-async function failLoad(): Promise<void> {
-	getWorkspaceContext.mockRejectedValueOnce(new Error("network down"));
-	await act(() => useWorkspaceStore.getState().fetchWorkspace());
+/** The shell's half: settles the store from the workspace-context query (`useWorkspaceStoreSync`). */
+function ShellSync(): null {
+	useWorkspaceStoreSync();
+	return null;
+}
+
+/**
+ * Renders the Runners page under the shell's store sync with a workspace query that FAILS — the
+ * path a failed layout prefetch takes on the client. Nothing calls `fetchWorkspace()` here: the
+ * store must reach `failed` through the hook, as it does in the app.
+ */
+let client: QueryClient;
+
+async function renderWithFailedLoad() {
+	readContext.mockRejectedValueOnce(new Error("network down"));
+	client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	q.client = client;
+	const view = render(
+		<QueryClientProvider client={client}>
+			<ShellSync />
+			<RunnersClient />
+		</QueryClientProvider>,
+	);
+	await waitFor(() => expect(useWorkspaceStore.getState().loadStatus).toBe("failed"));
+	return view;
 }
 
 beforeEach(() => {
 	sessionStorage.clear();
-	getWorkspaceContext.mockReset();
+	readContext.mockReset();
 	useWorkspaceStore.setState({
 		activeOrgId: null,
 		organizations: [],
@@ -100,29 +134,29 @@ describe("Runners when the workspace load failed (#5895)", () => {
 	});
 
 	it("replaces the skeleton with an error and a Retry button once the load fails", async () => {
-		const { container } = render(<RunnersClient />);
-		await failLoad();
+		const { container } = await renderWithFailedLoad();
 		expect(screen.getByRole("alert").textContent).toMatch(ERROR_TITLE);
 		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 		expect(container.querySelector("[aria-busy]")).toBeNull();
 	});
 
 	it("fails closed: neither the runners page nor the upsell renders on a failed load", async () => {
-		render(<RunnersClient />);
-		await failLoad();
+		await renderWithFailedLoad();
 		expect(screen.queryByText(UPSELL)).toBeNull();
 		expect(screen.queryByText("Pools")).toBeNull();
 		expect(screen.queryByText(/no runners/i)).toBeNull();
 	});
 
 	it("Retry re-runs the workspace load, and a successful one shows the page", async () => {
-		render(<RunnersClient />);
-		await failLoad();
-		getWorkspaceContext.mockResolvedValueOnce(context(true));
+		await renderWithFailedLoad();
+		readContext.mockResolvedValueOnce(context(true));
 		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-		expect(getWorkspaceContext).toHaveBeenCalledTimes(2);
+		expect(readContext).toHaveBeenCalledTimes(2);
 		await waitFor(() => expect(screen.queryByText(ERROR_TITLE)).toBeNull());
 		expect(useWorkspaceStore.getState().loadStatus).toBe("loaded");
 		expect(screen.queryByText(UPSELL)).toBeNull();
+		// The retry's answer is the QUERY's answer too: the switchers render from it, and its error
+		// is gone, so the shell's sync cannot mark the store failed again.
+		expect(client.getQueryState(orpc.workspace.context.queryKey())?.status).toBe("success");
 	});
 });

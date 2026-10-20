@@ -15,7 +15,7 @@ const { q } = vi.hoisted(() => ({
 		refetch: vi.fn(),
 	},
 }));
-vi.mock("@/lib/query/use-jobs-query", () => ({ useJobsQuery: () => q }));
+vi.mock("@/lib/query/use-jobs-query", () => ({ useRecentJobsQuery: () => q }));
 
 import { RecentJobsCard } from "@/components/overview/recent-jobs-card";
 
@@ -50,7 +50,7 @@ describe("RecentJobsCard fetch-error state", () => {
 	});
 });
 
-// The header said "last 24h" while neither this component nor useJobsQuery applies any time
+// The header said "last 24h" while neither this component nor useRecentJobsQuery applies any time
 // window — it renders the newest MAX_ROWS jobs whatever their age. On the production overview that
 // read as five drift jobs failing today when the newest was a week old and the oldest a month.
 describe("RecentJobsCard header label", () => {
