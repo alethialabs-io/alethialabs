@@ -48,4 +48,4 @@ afterAll(() => {
 	else process.env.ALETHIA_EDITION = h.previous;
 });
 
-runRpcTenancySuite({ edition: "enterprise", h });
+await runRpcTenancySuite({ edition: "enterprise", h });

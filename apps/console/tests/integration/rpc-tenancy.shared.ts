@@ -34,15 +34,12 @@
 //      what invariant 1's equality measures; a stronger "never read" property does not hold and is
 //      not asserted.
 //
-// ⚠ WHAT THE SERVER-CALLER HALF CAN AND CANNOT SEE. The route handler binds its resolved actor
-// (`runWithActor`), so a reader's own `authorize()` reuses it. The server caller does NOT bind: it
-// passes `context.actor`, and `jobs.page` — today's only procedure — never reads it; its reader
-// calls `authorize()` → `currentActor()` and resolves the address again. So a server caller whose
-// context came from the SESSION (`getActiveScope(userId, activeOrgId)`) still passes here while no
-// procedure reads `context.actor`. Measured on #6113: that mutation alone stayed green; the same
-// mutation with `jobs.page` binding `context.actor` turned four server-caller cases red (all three
-// enterprise ones, and community's 404). The first procedure that consumes its context is covered
-// the moment it enters FIXTURES.
+// THE SERVER-CALLER HALF MEASURES ITS OWN CONTEXT. The `query` base (`lib/rpc/base.ts`) binds
+// `context.actor` around every procedure, so a reader's `authorize()` answers with the actor the
+// entry point resolved. Before that binding, `serverOrpc()` computed `context.actor` and nothing
+// read it — `jobs.page`'s reader re-resolved from the address — so a server caller whose context
+// came from the SESSION (`getActiveScope(userId, activeOrgId)`) passed this suite (#6113 review,
+// mutation 3). With the binding, that mutation is red.
 //
 // `serverOrpc()` IS CALLED AS SHIPPED. `react`'s `cache()` outside a server render is a pass-through
 // (a fresh client per call), so no stand-in for `lib/rpc/server.ts` was needed.
@@ -71,6 +68,7 @@ import { getServiceDb } from "@/lib/db";
 import { authzActivityLog, grants, jobs, member, organization, user } from "@/lib/db/schema";
 import { editionState } from "@/lib/enterprise";
 import { errorDigest } from "@/lib/errors";
+import { procedurePaths } from "@/lib/rpc/procedure-paths";
 import { router } from "@/lib/rpc/router";
 import { serverOrpc } from "@/lib/rpc/server";
 import { describeIfDb, purgeAuthzActivityLog, seedJob } from "./db";
@@ -88,11 +86,26 @@ export interface Seeded {
 	jobY: string;
 }
 
-/** One procedure's tenancy fixture: an input it accepts, and how to find each org's marker in its output. */
-export interface Fixture {
-	input: unknown;
-	markers(out: unknown, seeded: Seeded): { x: boolean; y: boolean };
-}
+/**
+ * One procedure's tenancy fixture. Two kinds, because not every read is org-scoped, and a read that
+ * is not cannot honestly report X/Y markers — a lane forced to write some would write ones that do
+ * not inspect the output.
+ *
+ * - `org-scoped`: an input that reaches the reader, and how to find each org's marker row in its
+ *   output. Enterprise must answer `{ x: false, y: true }` for an address on Y.
+ * - `not-org-scoped` (the caller's own profile, the list of the caller's orgs, …): `reason` says
+ *   why the answer does not depend on the org. Its assertion is that it does NOT: the output for an
+ *   address on X deep-equals the output for an address on Y, in both editions. A non-member is
+ *   STILL a 404 at Y — the handler refuses the address before any procedure runs, so a read's kind
+ *   cannot change that, and asserting otherwise would assert a property the code does not have.
+ */
+export type Fixture =
+	| {
+			kind: "org-scoped";
+			input: unknown;
+			markers(out: unknown, seeded: Seeded): { x: boolean; y: boolean };
+	  }
+	| { kind: "not-org-scoped"; reason: string; input: unknown };
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -111,20 +124,11 @@ function hasRow(out: unknown, id: string): boolean {
  */
 export const FIXTURES: Record<string, Fixture> = {
 	"jobs.page": {
+		kind: "org-scoped",
 		input: { range: { preset: "12mo" } },
 		markers: (out, s) => ({ x: hasRow(out, s.jobX), y: hasRow(out, s.jobY) }),
 	},
 };
-
-/** Every procedure in a router, depth-first, as dotted paths (the shape `route.test.ts` walks). */
-export function procedurePaths(node: object, path: string[] = []): string[] {
-	const out: string[] = [];
-	for (const [key, value] of Object.entries(node)) {
-		if (value && typeof value === "object" && "~orpc" in value) out.push([...path, key].join("."));
-		else if (value && typeof value === "object") out.push(...procedurePaths(value, [...path, key]));
-	}
-	return out;
-}
 
 /** Walks a proxy-shaped client (oRPC's) down a dotted path, without a cast. */
 function walk(root: unknown, path: string): unknown {
@@ -165,10 +169,10 @@ function isNotFound(error: unknown): boolean {
  * Registers the tenancy suite for one edition. `h` is the hoisted request state the calling file's
  * mocks read; `edition` decides what U's answer for an address on Y must contain.
  */
-export function runRpcTenancySuite(opts: {
+export async function runRpcTenancySuite(opts: {
 	edition: "enterprise" | "community";
 	h: RpcTenancyRequest;
-}): void {
+}): Promise<void> {
 	const { edition, h } = opts;
 	const ORG_X = randomUUID();
 	const ORG_Y = randomUUID();
@@ -218,6 +222,10 @@ export function runRpcTenancySuite(opts: {
 
 	/** The address of procedure `path` under org `slug` (what a page under `/{slug}/~/jobs` publishes). */
 	const rpcPath = (slug: string, path: string) => `/${slug}/~/rpc/${path.replaceAll(".", "/")}`;
+
+	// Enumerated ONCE, before any test is declared: `it.each` needs the list at collection time, and
+	// the walker resolves lazy routers asynchronously (it throws rather than skip one).
+	const PATHS = await procedurePaths(router);
 
 	describeIfDb(`#6113 the read router's tenancy — ${edition} edition`, () => {
 		beforeAll(async () => {
@@ -291,19 +299,16 @@ export function runRpcTenancySuite(opts: {
 
 		describe("the fixture map covers the router exactly", () => {
 			it("every procedure in the router has a tenancy fixture", () => {
-				const missing = procedurePaths(router)
-					.filter((path) => !(path in FIXTURES))
+				const missing = PATHS.filter((path) => !(path in FIXTURES))
 					.map((path) => `${path}: a new read procedure must prove its tenancy here (FIXTURES in rpc-tenancy.shared.ts)`);
 				expect(missing).toEqual([]);
 			});
 
 			it("every fixture names a procedure that is in the router", () => {
-				const paths = new Set(procedurePaths(router));
+				const paths = new Set(PATHS);
 				expect(Object.keys(FIXTURES).filter((path) => !paths.has(path))).toEqual([]);
 			});
 		});
-
-		const PATHS = procedurePaths(router);
 
 		describe.each(ENTRY_POINTS)("through %s", (_label, call) => {
 			it.each(PATHS)("%s — the address beats the session (session X, address Y ≡ session Y, address Y)", async (path) => {
@@ -317,6 +322,13 @@ export function runRpcTenancySuite(opts: {
 
 				const fixture = FIXTURES[path];
 				if (!fixture) throw new Error(`${path} has no fixture`);
+				if (fixture.kind === "not-org-scoped") {
+					// Its honest claim: the org in the address does not change the answer either.
+					const elsewhere = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y });
+					expect(elsewhere.ok).toBe(true);
+					if (elsewhere.ok) expect(elsewhere.value, `${path} (${fixture.reason}) differs between X and Y`).toEqual(mismatched.value);
+					return;
+				}
 				const markers = fixture.markers(mismatched.value, seeded);
 				if (edition === "enterprise") {
 					// The multi-tenant answer: Y's rows, and nothing of X's.
@@ -337,6 +349,7 @@ export function runRpcTenancySuite(opts: {
 				expect(mismatched.value).toEqual(matched.value);
 				const fixture = FIXTURES[path];
 				if (!fixture) throw new Error(`${path} has no fixture`);
+				if (fixture.kind === "not-org-scoped") return; // equality above is its whole claim here
 				expect(fixture.markers(mismatched.value, seeded)).toEqual(
 					edition === "enterprise" ? { x: true, y: false } : { x: false, y: false },
 				);
