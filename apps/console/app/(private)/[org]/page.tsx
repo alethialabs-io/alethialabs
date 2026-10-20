@@ -4,6 +4,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { queryProjects, type ProjectListQuery } from "@/app/server/actions/projects";
 import { getConnectedCloudProviders } from "@/app/server/actions/connectors";
+import { isOverviewRead } from "@/components/overview/overview-reads";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
@@ -43,8 +44,9 @@ function toList(value: string | undefined): string[] {
  *
  * The overview cards' reads are prefetched here (#6118, ADR 0005 D1) — `overview.usage` and
  * `overview.alerts` — in-process through the read router, with exactly the keys the cards ask for,
- * and hydrated by this page's own boundary: the layout dehydrates when IT renders, which does not
- * wait for this page's prefetches. The Recent-jobs card reads the shell's `workspace.recentJobs`,
+ * and hydrated by this page's own boundary, filtered to those reads (`isOverviewRead`): the layout
+ * dehydrates when IT renders, which does not wait for this page's prefetches, and it already hands
+ * down the shell's reads — this boundary does not serialize them a second time. The Recent-jobs card reads the shell's `workspace.recentJobs`,
  * which the layout prefetches. A prefetch that fails is not dehydrated: that card alone renders its
  * error (or retries its read in the browser), and the rest of the page is unaffected (RUBRIC B5).
  */
@@ -81,7 +83,7 @@ export default async function OrgOverviewRoute({
 	]);
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isOverviewRead })}>
 			<OverviewClient
 				orgSlug={org}
 				projects={projects}

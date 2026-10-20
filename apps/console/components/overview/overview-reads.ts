@@ -5,6 +5,19 @@
 // failure. No "use client" and no server imports.
 
 import { ORPCError } from "@orpc/client";
+import type { Query } from "@tanstack/react-query";
+
+/**
+ * Whether a cached query is one of the overview page's own reads (`overview.*`), and settled — the
+ * page's `dehydrate` filter. The server QueryClient is one per request (`cache()`), shared with the
+ * `[org]` layout, which already hands its shell reads (`workspace.*`) to the client through its own
+ * boundary (`isShellRead`, app/(private)/[org]/layout.tsx); without this filter the page would
+ * serialize those reads into its HTML a second time.
+ */
+export function isOverviewRead(query: Pick<Query, "queryKey" | "state">): boolean {
+	const [path] = query.queryKey;
+	return query.state.status === "success" && Array.isArray(path) && path[0] === "overview";
+}
 
 /**
  * The cards' `retry`: one retry for a failure, none for an expected refusal. A typed refusal

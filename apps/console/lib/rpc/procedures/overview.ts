@@ -153,8 +153,8 @@ export async function readOverviewAlerts(): Promise<OverviewAlerts> {
 /**
  * The overview domain's reads (ADR 0005 D1, #6118). The page prefetches each through
  * `serverOrpc()` and each card reads its own, so one failing read takes down one card (RUBRIC B5).
- * The Recent-jobs card reads `jobs.page` — the jobs domain's procedure — rather than a third read
- * here, so the project-view rule that procedure applies is the one the card shows.
+ * There is no recent-jobs read here: the Recent-jobs card reads the shell's job feed
+ * (`workspace.recentJobs`, #6114), which the `[org]` layout already prefetches.
  */
 export const overviewRouter = {
 	usage: query.handler(({ context }) => readOverviewUsage(context.actor)),
