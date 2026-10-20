@@ -65,7 +65,7 @@ const targetRunnerId = z.uuid();
  *
  * Refused — the caller fails the job — when the snapshot names no target, when the claiming runner
  * IS the target (rotating its own token would cut it off mid-job), or when the target is not a
- * self-operated runner of the job's own organization. The last check is one guarded UPDATE, so the
+ * self-operated, console-deployed runner of the job's own organization. The last check is one guarded UPDATE, so the
  * row that receives the new hash is exactly the row that passed it.
  *
  * "The job's own organization" admits one legacy shape, the one `claim_next_job` admits for the
@@ -98,6 +98,8 @@ export async function issueLifecycleRunnerToken(
 			and(
 				eq(runners.id, target.data),
 				eq(runners.operator, "self"),
+				// Only a runner the console deploys is ever the target of a lifecycle job.
+				eq(runners.provisioning, "deployed"),
 				or(
 					eq(runners.org_id, job.org_id),
 					and(eq(runners.org_id, runners.user_id), eq(runners.user_id, job.user_id)),

@@ -6,7 +6,9 @@
 // decision, and it has to show up in this file's diff.
 
 import { describe, expect, it } from "vitest";
+import { TEMPLATE_KNOBS, isCredentialKnob } from "@/lib/cloud-providers/template-knobs";
 import {
+	DESIGN_CREDENTIAL_KNOB_KEYS,
 	JOB_SNAPSHOT_SECRET_KEYS,
 	redactJobRow,
 	redactJobSnapshot,
@@ -36,7 +38,45 @@ describe("JOB_SNAPSHOT_SECRET_KEYS", () => {
 	});
 });
 
+describe("DESIGN_CREDENTIAL_KNOB_KEYS", () => {
+	it("is the write-time classifier's credential knobs, without the secret's bare `value`", () => {
+		const classified = new Set(TEMPLATE_KNOBS.knobs.filter(isCredentialKnob).map((k) => k.name));
+		classified.delete("value");
+		expect([...DESIGN_CREDENTIAL_KNOB_KEYS].sort()).toEqual([...classified].sort());
+	});
+
+	it("covers the cloud-token knobs the templates declare today", () => {
+		expect(DESIGN_CREDENTIAL_KNOB_KEYS).toEqual(
+			expect.arrayContaining(["hcloud_token", "hetzner_s3_access_key", "hetzner_s3_secret_key"]),
+		);
+		expect(DESIGN_CREDENTIAL_KNOB_KEYS).not.toContain("value");
+	});
+
+	it.each(["hcloud_token", "hetzner_s3_access_key", "hetzner_s3_secret_key"])(
+		"drops the design knob %s from an embedded provider_config",
+		(key) => {
+			const snapshot = { cluster: { provider_config: { [key]: SENTINEL, node_count: 3 } } };
+			expect(redactJobSnapshot(snapshot)).toEqual({ cluster: { provider_config: { node_count: 3 } } });
+		},
+	);
+});
+
 describe("redactJobSnapshot", () => {
+	it("drops a secret's `value` under provider_config, and keeps `value` anywhere else", () => {
+		const snapshot = {
+			secrets: [{ name: "db", provider_config: { value: SENTINEL, rotation: 30 } }],
+			tags: [{ key: "team", value: "infra" }],
+			annotation: { value: "kept" },
+			value: "top-level",
+		};
+		expect(redactJobSnapshot(snapshot)).toEqual({
+			secrets: [{ name: "db", provider_config: { rotation: 30 } }],
+			tags: [{ key: "team", value: "infra" }],
+			annotation: { value: "kept" },
+			value: "top-level",
+		});
+	});
+
 	it.each(EXPECTED_KEYS)("drops %s at the top level, nested, and inside arrays", (key) => {
 		const snapshot = {
 			runner_id: "r-1",

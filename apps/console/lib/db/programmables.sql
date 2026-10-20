@@ -222,11 +222,13 @@ WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
 -- snapshot as enqueued, and a later migrate reaches it once it settles. A scrubbed row's signature no
 -- longer describes its snapshot, so it is cleared — a NULL signature reads as unsigned
 -- (lib/runners/snapshot-sig.ts), and a settled job is never claimed again. Idempotent: matches
--- nothing once no settled row carries the key.
+-- nothing once no settled row carries the key. Only the runner-lifecycle job types ever carried it, so
+-- the scan is narrowed to them.
 UPDATE public.jobs
    SET config_snapshot = config_snapshot - 'runner_token',
        config_snapshot_sig = NULL
- WHERE config_snapshot ? 'runner_token'
+ WHERE job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+   AND config_snapshot ? 'runner_token'
    AND status NOT IN ('QUEUED', 'CLAIMED', 'PROCESSING');
 
 -- TRUE iff another job currently holds the tofu state lock for this (project, environment) — i.e. a

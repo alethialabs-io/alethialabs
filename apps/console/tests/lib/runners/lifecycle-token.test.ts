@@ -89,7 +89,7 @@ describe("issueLifecycleRunnerToken", () => {
 		},
 	);
 
-	it("guards the UPDATE on the target id, a self-operated runner and the job's org", async () => {
+	it("guards the UPDATE on the target id, a self-operated deployed runner and the job's org", async () => {
 		const { db, updates } = fakeDb([{ id: TARGET }]);
 		await issueLifecycleRunnerToken(db, job(), EXECUTOR);
 
@@ -98,6 +98,8 @@ describe("issueLifecycleRunnerToken", () => {
 		expect(params).toContain("self");
 		expect(params).toContain("org-1");
 		expect(sql).toContain('"runners"."operator"');
+		expect(params).toContain("deployed");
+		expect(sql).toContain('"runners"."provisioning"');
 		expect(sql).toContain('"runners"."org_id"');
 		// The legacy personal-org arm binds the runner's owner to the job's creator.
 		expect(params).toContain("user-1");

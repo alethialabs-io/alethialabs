@@ -9,6 +9,10 @@
 //   2. THE CLAIM HANDS IT OFF. The executing runner's claim answers a snapshot carrying the token; the
 //      target row's `token_hash` is its hash, so the deployed container authenticates with it — and
 //      the stored snapshot still does not carry it.
+//   2b. THE ISSUE IS GUARDED. A target that is another org's runner, a managed runner, a registered
+//      (not console-deployed) runner, or the job creator's runner in a DIFFERENT org that is not the
+//      pre-#3874 personal-org shape is refused: the job fails, and the target's hash is untouched.
+//      The personal-org shape itself is admitted.
 //   3. EVERY READ PATH REDACTS. A row that does carry secret keys (written by an earlier build) is
 //      returned without them by getJob, getJobs, getJobsPage, GET /api/cli/jobs/:id and GET /api/jobs.
 //   4. THE SCRUB. The statement programmables.sql runs on every migrate, taken from the file itself,
@@ -54,6 +58,9 @@ import { hashRunnerToken, verifyRunnerToken } from "@/lib/runners/auth";
 
 const USER = randomUUID();
 const ORG = randomUUID();
+/** Another tenant: neither the job's org nor anyone's personal org. */
+const ORG_B = randomUUID();
+const OTHER_USER = randomUUID();
 const EXECUTOR_TOKEN = `it-handoff-exec-${randomUUID()}`;
 /** A value unlikely to occur by accident: a surviving occurrence is a missed key. */
 const SENTINEL = `SENTINEL-${randomUUID()}`;
@@ -61,6 +68,8 @@ const SENTINEL = `SENTINEL-${randomUUID()}`;
 let identityId = "";
 let executorId = "";
 let legacyJobId = "";
+/** Runner rows this file created without USER as owner, for cleanup. */
+const extraRunnerIds: string[] = [];
 
 const deployedSchema = z.object({
 	runner: z.object({ id: z.uuid() }),
@@ -171,6 +180,7 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		const db = getServiceDb();
 		await db.delete(jobs).where(eq(jobs.user_id, USER));
 		await db.delete(runners).where(eq(runners.user_id, USER));
+		if (extraRunnerIds.length > 0) await db.delete(runners).where(inArray(runners.id, extraRunnerIds));
 		await db.delete(cloudIdentities).where(eq(cloudIdentities.id, identityId));
 	});
 
@@ -217,6 +227,96 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		const after = await storedJob(jobId);
 		expect(after.config_snapshot).not.toHaveProperty("runner_token");
 		expect(JSON.stringify(after.config_snapshot)).not.toContain(token);
+	});
+
+	// ── 2b. The issue is guarded ──────────────────────────────────────────────────────────────
+	/** Seeds a target runner row; `orgId` omitted lets the trigger stamp `org_id = user_id`. */
+	async function seedTarget(values: {
+		userId: string | null;
+		orgId?: string;
+		operator: "self" | "managed";
+		provisioning: "deployed" | "registered" | null;
+	}): Promise<{ id: string; org_id: string | null; token_hash: string }> {
+		const [row] = await getServiceDb()
+			.insert(runners)
+			.values({
+				user_id: values.userId,
+				...(values.orgId ? { org_id: values.orgId } : {}),
+				name: `it-handoff-target-${randomUUID().slice(0, 12)}`,
+				operator: values.operator,
+				provisioning: values.provisioning,
+				token_hash: hashRunnerToken(`unheld-${randomUUID()}`),
+				status: "OFFLINE",
+			})
+			.returning({ id: runners.id, org_id: runners.org_id, token_hash: runners.token_hash });
+		if (values.userId !== USER) extraRunnerIds.push(row.id);
+		return row;
+	}
+
+	/** Queues a DEPLOY_RUNNER for `targetId` in ORG, assigned to the executor, and claims it. */
+	async function claimFor(targetId: string) {
+		const [job] = await getServiceDb()
+			.insert(jobs)
+			.values({
+				user_id: USER,
+				org_id: ORG,
+				job_type: "DEPLOY_RUNNER",
+				status: "QUEUED",
+				assigned_runner_id: executorId,
+				config_snapshot: { runner_id: targetId, runner_name: "t", region: "us-east-1" },
+			})
+			.returning({ id: jobs.id });
+		const res = await claimPost(
+			new Request("https://console.local/api/jobs/claim", {
+				method: "POST",
+				headers: { "X-Runner-ID": executorId, "X-Runner-Token": EXECUTOR_TOKEN },
+			}),
+		);
+		const [after] = await getServiceDb()
+			.select({ status: jobs.status, error: jobs.error_message })
+			.from(jobs)
+			.where(eq(jobs.id, job.id))
+			.limit(1);
+		return { status: res.status, text: await res.text(), job: after };
+	}
+
+	it.each([
+		[
+			"another org's runner",
+			{ userId: OTHER_USER, orgId: ORG_B, operator: "self", provisioning: "deployed" },
+		],
+		["a managed runner", { userId: null, operator: "managed", provisioning: null }],
+		[
+			"a registered (not console-deployed) runner of the job's org",
+			{ userId: USER, orgId: ORG, operator: "self", provisioning: "registered" },
+		],
+		[
+			"the creator's runner in a different org that is not their personal org",
+			{ userId: USER, orgId: ORG_B, operator: "self", provisioning: "deployed" },
+		],
+	] as const)("refuses to issue a token for %s", async (_label, values) => {
+		const target = await seedTarget(values);
+		const { status, text, job } = await claimFor(target.id);
+
+		expect(status).toBe(409);
+		expect(text).not.toMatch(/[0-9a-f]{64}/);
+		expect(job.status).toBe("FAILED");
+		expect(job.error).toMatch(/Runner token handoff refused/);
+		expect(await storedHash(target.id)).toBe(target.token_hash);
+	});
+
+	it("issues a token for the creator's pre-#3874 personal-org runner", async () => {
+		const target = await seedTarget({ userId: USER, operator: "self", provisioning: "deployed" });
+		// The fixture's premise: the trigger stamped the personal-org shape.
+		expect(target.org_id).toBe(USER);
+
+		const { status, text } = await claimFor(target.id);
+		expect(status).toBe(200);
+		const token = z
+			.string()
+			.regex(/^[0-9a-f]{64}$/)
+			.parse(claimSchema.parse(JSON.parse(text)).job.config_snapshot.runner_token);
+		expect(await storedHash(target.id)).toBe(hashRunnerToken(token));
 	});
 
 	// ── 3. Every read path redacts ──────────────────────────────────────────────────────────────
@@ -295,9 +395,18 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 					config_snapshot: { runner_id: randomUUID() },
 					config_snapshot_sig: "sig-untouched",
 				},
+				{
+					// Outside the runner-lifecycle types the statement is narrowed to.
+					user_id: USER,
+					org_id: ORG,
+					job_type: "PLAN",
+					status: "SUCCESS",
+					config_snapshot: { runner_token: "not-a-lifecycle-row" },
+					config_snapshot_sig: "sig-other-type",
+				},
 			])
 			.returning({ id: jobs.id });
-		const [settled, inFlight, clean] = seeded.map((r) => r.id);
+		const [settled, inFlight, clean, otherType] = seeded.map((r) => r.id);
 
 		await db.execute(sql.raw(scrub));
 
@@ -310,6 +419,8 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		expect(q.sig).toBe("sig-in-flight");
 		const c = await storedJob(clean);
 		expect(c.sig).toBe("sig-untouched");
+		const o = await storedJob(otherType);
+		expect(o.sig).toBe("sig-other-type");
 
 		// Idempotent: a second run over this user's rows changes nothing.
 		const before = await db

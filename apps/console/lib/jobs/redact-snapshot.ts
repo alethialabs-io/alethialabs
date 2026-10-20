@@ -17,11 +17,19 @@
  * data whose key names merely contain a credential word (`password_encryption` in a map of database
  * flags is a setting), and a substring match would silently delete those from the detail view.
  *
+ * The deny-list has two halves. A fixed list names credential material by its wire name. Design
+ * knobs a template declares as credentials are DERIVED from the same classifier the project write
+ * actions use (`isCredentialKnob` over `TEMPLATE_KNOBS`, #5565), so the read filter and the
+ * write-time refusal share one definition. A secret component's own material is the knob named
+ * `value`, a name that appears all over a snapshot, so it is matched only as `provider_config.value`.
+ *
  * Runner-facing reads (the claim route, the runner's own `GET /api/jobs/:id`) do not use it: the
  * runner is the party the snapshot is for.
  */
 
-/** The snapshot keys that name credential material and are never returned to a job viewer. */
+import { TEMPLATE_KNOBS, isCredentialKnob } from "@/lib/cloud-providers/template-knobs";
+
+/** The fixed snapshot keys that name credential material and are never returned to a job viewer. */
 export const JOB_SNAPSHOT_SECRET_KEYS = [
 	// A runner-lifecycle job's bearer token (DEPLOY_RUNNER / UPDATE_RUNNER).
 	"runner_token",
@@ -40,21 +48,41 @@ export const JOB_SNAPSHOT_SECRET_KEYS = [
 	"password",
 ] as const;
 
-const SECRET_KEYS: ReadonlySet<string> = new Set(JOB_SNAPSHOT_SECRET_KEYS);
+/** The knob a secret component carries its own material in; matched only under `provider_config`. */
+const SECRET_VALUE_KNOB = "value";
+
+/** The design knobs the write-time classifier calls credentials, except the secret's `value`. */
+export const DESIGN_CREDENTIAL_KNOB_KEYS: readonly string[] = [
+	...new Set(
+		TEMPLATE_KNOBS.knobs
+			.filter(isCredentialKnob)
+			.map((knob) => knob.name)
+			.filter((name) => name !== SECRET_VALUE_KNOB),
+	),
+].sort();
+
+const SECRET_KEYS: ReadonlySet<string> = new Set([
+	...JOB_SNAPSHOT_SECRET_KEYS,
+	...DESIGN_CREDENTIAL_KNOB_KEYS,
+]);
 
 /** Narrows an unknown to a plain JSON object (not an array, not null). */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Copies one JSON value with every deny-listed key removed, at any depth. */
-function redactValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(redactValue);
+/**
+ * Copies one JSON value with every deny-listed key removed, at any depth. `inProviderConfig` is true
+ * for the object directly under a `provider_config` key, where `value` is a secret's material.
+ */
+function redactValue(value: unknown, inProviderConfig = false): unknown {
+	if (Array.isArray(value)) return value.map((item) => redactValue(item));
 	if (!isPlainObject(value)) return value;
 	const out: Record<string, unknown> = {};
 	for (const [key, inner] of Object.entries(value)) {
 		if (SECRET_KEYS.has(key)) continue;
-		out[key] = redactValue(inner);
+		if (inProviderConfig && key === SECRET_VALUE_KNOB) continue;
+		out[key] = redactValue(inner, key === "provider_config");
 	}
 	return out;
 }
