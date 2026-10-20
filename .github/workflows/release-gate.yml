@@ -459,8 +459,10 @@ jobs:
             //   ─────────────────────────
             //   Total:                    253
             //
-            // It sits above 253 minus the SMALLEST file (222), so any one file that stops matching turns the
-            // leg red, and 28 below the total, so retiring a handful of routes (about four tests each) does not.
+            // The smallest file is auth.setup (1), and losing it fails every test that depends on it, so the
+            // floor is set against the smallest SPEC: 253 minus permissions.spec's 31 is 222, and 225 sits above
+            // it — any one spec file that stops matching turns the leg red — while staying 28 below the total, so
+            // retiring a handful of routes (about four tests each) does not.
             // `floor: 1` asked nothing: the leg stayed green with every audit file but one gone.
             { project: "audit",     args: "--project=audit",     workers: 1, retries: 1, capabilities: "",                   manifest: true,  floor: 225 },
             // `floor: 70` is MEASURED, not a round number, and the measurement is `--list` — the
