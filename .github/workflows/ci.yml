@@ -340,6 +340,18 @@ jobs:
       # is an accident of sequence, not a check, and it would vanish the moment those steps were made
       # independent. This makes the requirement explicit and order-free.
       ALETHIA_INTEGRATION_REQUIRE_DB: "1"
+      # THE EDITION IS A DECISION HERE, NOT `auto` (#6113). The job builds ee/dist below, and with it
+      # present `auto` would resolve to enterprise anyway — but `auto` cannot tell "enterprise" from
+      # "the module failed to resolve, so community", and says so itself (`lib/enterprise.ts`).
+      # `enterprise` makes a broken ee load FAIL the files that depend on it instead.
+      # Measured before choosing, on a fresh database (local Postgres): with ee/dist present under
+      # `auto` all 107 files pass; under explicit `enterprise` every file passes except two that
+      # also fail with ee ABSENT on the same laptop — cli-paging's at-scale cleanup hook timing
+      # out, and reconcile-b2c's database-wide GC then counting the rows it left. No file assumed
+      # community. This job's own run is the CI confirmation.
+      # `rpc-tenancy.community.test.ts` pins `community` for itself and restores the value after.
+      # No coverage fingerprint moves: this job records no coverage (vitest.integration.config.ts).
+      ALETHIA_EDITION: enterprise
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -364,6 +376,23 @@ jobs:
           done
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -C apps/console run db:migrate
+      # Build @alethia/ee so the ENTERPRISE edition is loadable (#6113). Its dist is gitignored, and
+      # `test:integration` calls vitest directly — no turbo `^build` — so without this step the
+      # enterprise module never exists here, and the read router's multi-tenant tenancy proof
+      # (`tests/integration/rpc-tenancy.enterprise.test.ts`, ALETHIA_EDITION=enterprise) has nothing
+      # to load. That file asserts the edition registered and FAILS rather than skips, so the guard
+      # below only names the cause earlier; it is the same guard the hero job carries.
+      #
+      # The edition of every OTHER file is `ALETHIA_EDITION` in this job's env (`enterprise`, above).
+      - name: Build @alethia/ee (the enterprise tenancy proof loads it)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the enterprise tenancy proof cannot run
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — rpc-tenancy.enterprise.test.ts cannot load the"
+            echo "::error::enterprise edition, so the read router's multi-tenant answer is unproven."
+            exit 1
+          }
       - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
         run: pnpm -C apps/console run test:integration
 
