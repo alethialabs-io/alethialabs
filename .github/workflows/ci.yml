@@ -1862,6 +1862,18 @@ jobs:
       - name: ...and every go.work module is in the gomod directories
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-dependabot-gomod.mjs
+      # One react, and one react-dom peered on it. `react-dom@A(react@B)` with A ≠ B makes
+      # react-dom/server throw on every email render (#2151). It landed green three times, last by a
+      # Dependabot react bump (#4885) that raised the manifests and left `pnpm.overrides` behind.
+      # Also fails when the zod resolution is not `pnpm.overrides.zod`, or when an override does not
+      # satisfy a manifest range, which is how a bump without the override goes red here (#6137).
+      # Hermetic: reads package.json, pnpm-lock.yaml and the importers' manifests.
+      - name: Lockfile holds one react / react-dom pair and the overridden zod (self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-react-pair.mjs --self-test
+      - name: ...and the lockfile holds one react / react-dom pair and the overridden zod
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-react-pair.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external

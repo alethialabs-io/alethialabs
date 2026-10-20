@@ -63,15 +63,23 @@ updates:
         patterns: ["postgres"]
         update-types: [minor, patch]
       # React and zod are forced to ONE copy each by root package.json `pnpm.overrides`, and
-      # Dependabot does not edit those overrides (see `ai-sdk` above). Left in `npm-minor-patch`, a
-      # bump moved every manifest to `^19.3.1` / `^4.6.7` while the overrides held 19.2.8 / 4.5.4, so
-      # the installed tree satisfied no manifest (#6137). Worse, react-dom reaches packages/brand and
-      # packages/support only as an unfulfilled peer, which an override does not reach: the lock
-      # resolved `react-dom@19.3.1(react@19.2.8)`, the mismatched pair whose
+      # Dependabot does not edit those overrides (see `ai-sdk` above). #4885, an `npm-minor-patch`
+      # bump, raised the react manifests, left the overrides at 19.2.8, and wrote
+      # `react-dom@19.3.0(react@19.2.8)` into the lock. That is the mismatched pair whose
       # `ensureCorrectIsomorphicReactVersion` throws on every transactional email render (#2151).
-      # A PR from this group therefore needs the five overrides moved by hand to the versions the
-      # manifests now name, react and react-dom to the SAME version, and the lock checked for exactly
-      # one `react-dom@X(react@X)` pair. Must stay ABOVE `npm-minor-patch`.
+      # It went green, Mergify auto-merged it, and dev carried the split for a month (#6137).
+      #
+      # This group only ISOLATES such a bump in its own PR; it does not hold the PR back. What does is
+      # `scripts/ci/check-react-pair.mjs`, in the `Authz / open-core guards` job. It goes red unless
+      # the lock holds one react and one `react-dom@X(react@X)`, X equal to `pnpm.overrides.react`,
+      # zod equal to `pnpm.overrides.zod`, and every manifest range satisfied by its override. A PR
+      # from this group is therefore RED until someone moves the five overrides by hand, in the same
+      # PR, to the versions the manifests now name (react and react-dom to the SAME version), and
+      # re-locks with `pnpm install`.
+      #
+      # Groups here cover VERSION updates only. A SECURITY update to one of these five packages
+      # arrives as its own PR outside this group, and it fails the same check the same way.
+      # Must stay ABOVE `npm-minor-patch`.
       react-zod-overrides:
         patterns: ["react", "react-dom", "@types/react", "@types/react-dom", "zod"]
         update-types: [minor, patch]
