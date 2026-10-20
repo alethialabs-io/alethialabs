@@ -10,7 +10,7 @@ import { z } from "zod";
 vi.mock("server-only", () => ({}));
 
 import { defineAction } from "@/lib/actions/define-action";
-import { ActionRefusal } from "@/lib/actions/result";
+import { ActionRefusal, FieldRefusal } from "@/lib/actions/result";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { ForbiddenError } from "@/lib/authz/types";
 
@@ -37,6 +37,20 @@ describe("defineAction", () => {
 			throw new ActionRefusal("conflict", "A project with that name already exists.");
 		})({ name: "Acme" });
 		expect(result).toEqual({ ok: false, error: { kind: "conflict", message: "A project with that name already exists." } });
+	});
+
+	it("#6128: maps a server-decided field refusal to field errors, like a schema failure", async () => {
+		const result = await rename(async () => {
+			throw new FieldRefusal({ slug: ["That slug is taken — try another."] }, "That slug is taken — try another.");
+		})({ name: "Acme" });
+		expect(result).toEqual({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "That slug is taken — try another.",
+				fields: { slug: ["That slug is taken — try another."] },
+			},
+		});
 	});
 
 	it("maps a PDP refusal and a missing session", async () => {
