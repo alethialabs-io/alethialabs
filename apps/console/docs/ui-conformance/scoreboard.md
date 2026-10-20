@@ -114,7 +114,7 @@ The un-instrumented one, with the issue that owns it:
 ## The live half — 4 artifacts, 4 questions, never pooled
 
 T5–T7, R1–R8, F8–F10 and B1–B5 are measured in a browser, not read off the tree. The records below were
-imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/39470371473** at commit `f7d0c0985b449a5ceab7814a9ca55c3a50d2f8a6` and committed to
+imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/39485270886** at commit `9b32782401ee3bf7a50792b6b0a1e2355df49624` and committed to
 `apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **4 files, joined and never
 pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
 each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
@@ -135,11 +135,14 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 | withheld | routes | why the instrument did not answer |
 |---|---:|---|
 | **B1** | 8 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
-| **B2** | 4 | hosted-only — the hosted product renders an upsell on this route for a plan without the feature, and the release gate's self-managed console never does; the skeleton-against-upsell question (F021) needs a leg booted as the hosted edition |
+| **B2** | 7 | hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition |
 | **B3** | 4 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
-| **B4** | 5 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
+| **B3** | 13 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
+| **B4** | 2 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
+| **B4** | 9 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
 | **B4** | 1 | no-reads-failed — the route made no data read, so forcing reads to fail reached nothing |
-| **B5** | 20 | no-page-reads — every read this route made is its shell's (or it made none), so no failure of its own can be injected from the browser |
+| **B5** | 9 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
+| **B5** | 4 | not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed |
 | **T7** | 13 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
 
 **Nothing is suppressed.** R5, R6 and R7 declare no N/A reason at all, so an N/A on one of them
@@ -161,8 +164,8 @@ directions, like the table above:
 | `/[org]` | **B1** | lifts #6118 | with every read held, the region differs from its answered render in: skeleton, empty copy, content |
 | `/[org]` | **B2** | lifts #6118 | the skeleton sets 3 blocks side by side and the page 2 |
 | `/[org]` | **B4** | lifts #6118 | cold load: endless skeleton, empty copy, content vanished with no error surface; stale refetch: endless skeleton, empty copy, content vanished with no error surface |
-| `/[org]/[project]/architecture` | **B2** | lifts #6119 | the skeleton moves 0.042 against the page (budget 0.02) — a 788px skeleton block became 847px; the skeleton sets 1 block side by side and the page 0 |
-| `/[org]/[project]/clusters` | **B2** | lifts #6122 | the skeleton sets 2 blocks side by side and the page 0 |
+| `/[org]/[project]/architecture` | **B2** | lifts #6119 | the skeleton moves 0.042 against the page (budget 0.02) — a 788px skeleton block became 847px; the skeleton sets 1 block side by side and the page draws none |
+| `/[org]/[project]/clusters` | **B2** | lifts #6122 | the skeleton sets 2 blocks side by side and the page draws none |
 | `/[org]/[project]/environments` | **B1** | lifts #6120 | with every read held, the region differs from its answered render in: content |
 | `/[org]/[project]/environments` | **B4** | lifts #6120 | cold load: content vanished with no error surface; stale refetch: content vanished with no error surface |
 | `/[org]/[project]/jobs` | **B1** | lifts #6121 | with every read held, the region differs from its answered render in: empty copy, rows, content |
@@ -173,17 +176,16 @@ directions, like the table above:
 | `/[org]/[project]/settings/activity` | **B1** | lifts #6128 | with every read held, the region differs from its answered render in: skeleton, rows, content |
 | `/[org]/[project]/usage` | **B1** | lifts #6127 | with every read held, the region differs from its answered render in: skeleton |
 | `/[org]/[project]/usage` | **B4** | lifts #6127 | cold load: empty copy; stale refetch: empty copy |
-| `/[org]/~/clusters` | **B2** | lifts #6122 | the skeleton sets 2 blocks side by side and the page 0 |
+| `/[org]/~/clusters` | **B2** | lifts #6122 | the skeleton sets 2 blocks side by side and the page draws none |
 | `/[org]/~/connectors` | **B2** | lifts #6124 | the skeleton sets 2 blocks side by side and the page 3 |
 | `/[org]/~/evidence` | **B2** | lifts #6126 | the skeleton moves 0.032 against the page (budget 0.02) — a 160px skeleton block became 192px, 156px higher |
 | `/[org]/~/jobs` | **B2** | lifts #6121 | the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower |
 | `/[org]/~/jobs/[id]` | **B1** | lifts #6121 | with every read held, the region differs from its answered render in: empty copy, content |
 | `/[org]/~/jobs/[id]` | **B2** | lifts #6121 | the skeleton moves 0.038 against the page (budget 0.02) — a 630px skeleton block became 707px, 1px lower |
-| `/[org]/~/jobs/[id]` | **B4** | lifts #6121 | cold load: content vanished with no error surface; stale refetch: content vanished with no error surface |
-| `/[org]/~/new` | **B2** | lifts #6131 | the skeleton sets 0 blocks side by side and the page 3 |
+| `/[org]/~/new` | **B2** | lifts #6131 | the skeleton moves 0.190 against the page (budget 0.02) — a 426px skeleton block became 797px; the skeleton draws no block-sized frame and the page 3 |
 | `/[org]/~/runners` | **B1** | lifts #6123 | with every read held, the region differs from its answered render in: skeleton, empty copy, content |
 | `/[org]/~/settings/activity` | **B1** | lifts #6129 | with every read held, the region differs from its answered render in: skeleton, rows, content |
-| `/[org]/~/settings/activity` | **B2** | lifts #6129 | the skeleton moves 0.026 against the page (budget 0.02) — a 402px skeleton block became 301px; the skeleton sets 1 block side by side and the page 0 |
+| `/[org]/~/settings/activity` | **B2** | lifts #6129 | the skeleton moves 0.026 against the page (budget 0.02) — a 402px skeleton block became 301px; the skeleton sets 1 block side by side and the page draws none |
 | `/[org]/~/settings/billing` | **B1** | lifts #6127 | with every read held, the region differs from its answered render in: skeleton, content |
 | `/[org]/~/settings/billing` | **B4** | lifts #6127 | cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface |
 | `/[org]/~/settings/billing` | **B5** | lifts #6127 | one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action |
@@ -196,11 +198,11 @@ directions, like the table above:
 | `/[org]/~/settings/roles` | **B2** | lifts #6129 | the skeleton moves 0.036 against the page (budget 0.02) — a 203px skeleton block became 80px, 53px lower; the skeleton sets 1 block side by side and the page 2 |
 | `/[org]/~/settings/teams` | **B1** | lifts #6129 | with every read held, the region differs from its answered render in: skeleton, rows, content |
 | `/[org]/~/settings/teams` | **B4** | lifts #6129 | cold load: empty copy, content vanished with no error surface; stale refetch: empty copy, content vanished with no error surface |
+| `/[org]/~/support/abuse` | **B2** | lifts #6130 | the skeleton moves 0.081 against the page (budget 0.02) — a 494px skeleton block became 735px; the skeleton draws no block-sized frame and the page 1 |
 | `/[org]/~/support/cases/[id]` | **B2** | lifts #6130 | the skeleton moves 0.038 against the page (budget 0.02) — a 350px skeleton block became 142px, 39px lower |
 | `/[org]/~/support/my-cases` | **B2** | lifts #6130 | the skeleton moves 0.041 against the page (budget 0.02) — a 367px skeleton block became 139px, 55px lower |
-| `/[org]/~/support/submit` | **B2** | lifts #6130 | the skeleton sets 0 blocks side by side and the page 2 |
+| `/[org]/~/support/submit` | **B2** | lifts #6130 | the skeleton draws no block-sized frame and the page 2 |
 | `/[org]/~/usage` | **B1** | lifts #6127 | with every read held, the region differs from its answered render in: skeleton, content |
-| `/[org]/~/usage` | **B2** | lifts #6127 | the skeleton moves 0.034 against the page (budget 0.02) — a 231px skeleton block became nothing |
 | `/[org]/~/usage` | **B4** | lifts #6127 | cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface |
 | `/[org]/~/usage` | **B5** | lifts #6127 | one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action |
 
@@ -222,7 +224,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **T4** | T | `check-route-states` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **T5** | T | live — `routes` | 15 | 0 | 25 | 0 | 1.00 | `no-empty-state` 25 |
 | **T6** | T | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T7** | T | live — `permissions` | 2 | 0 | 25 | 13 | 1.00 | `no-restricted-surface` 25 |
+| **T7** | T | live — `permissions` | 3 | 0 | 24 | 13 | 1.00 | `no-restricted-surface` 24 |
 | **H1** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H2** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **H3** | H | `check-shared-surface` | 40 | 0 | 0 | 0 | 1.00 | — |
@@ -251,10 +253,10 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R8** | R | live — `interaction` | 35 | 0 | 5 | 0 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
 | **B1** | B | live — `behaviour` | 15 | 13 | 4 | 8 | 0.54 | `redirect-only` 4 |
-| **B2** | B | live — `behaviour` | 13 | 19 | 4 | 4 | 0.41 | `redirect-only` 4 |
-| **B3** | B | live — `behaviour` | 31 | 1 | 4 | 4 | 0.97 | `redirect-only` 4 |
-| **B4** | B | live — `behaviour` | 22 | 8 | 4 | 6 | 0.73 | `redirect-only` 4 |
-| **B5** | B | live — `behaviour` | 12 | 4 | 4 | 20 | 0.75 | `redirect-only` 4 |
+| **B2** | B | live — `behaviour` | 10 | 19 | 4 | 7 | 0.34 | `redirect-only` 4 |
+| **B3** | B | live — `behaviour` | 18 | 1 | 4 | 17 | 0.95 | `redirect-only` 4 |
+| **B4** | B | live — `behaviour` | 17 | 7 | 4 | 12 | 0.71 | `redirect-only` 4 |
+| **B5** | B | live — `behaviour` | 19 | 4 | 4 | 13 | 0.83 | `redirect-only` 4 |
 | **B6** | B | **none** — #6115 | — | — | — | — | — | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
@@ -286,44 +288,44 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | route | S | T | H | F | R | B | overall |
 |---|---|---|---|---|---|---|---|
 | `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/5 · 0.20 | **0.87** · 0 withheld of 44 |
-| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/5 · 0.20 | **0.87** · 0 withheld of 44 |
-| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/4 · 0.25 · 1 withheld | **0.87** · 2 withheld of 44 |
-| `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/5 · 0.40 | **0.90** · 0 withheld of 44 |
+| `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/4 · 0.25 · 1 withheld | **0.90** · 1 withheld of 44 |
+| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/4 · 0.25 · 1 withheld | **0.90** · 1 withheld of 44 |
+| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/3 · 0.33 · 2 withheld | **0.90** · 3 withheld of 44 |
 | `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/5 · 0.20 | **0.90** · 1 withheld of 44 |
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/5 · 0.40 | **0.90** · 0 withheld of 44 |
+| `/[org]/[project]/usage` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/4 · 0.50 · 1 withheld | **0.93** · 2 withheld of 44 |
 | `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/5 · 0.60 | **0.94** · 1 withheld of 44 |
-| `/[org]/[project]/usage` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/5 · 0.60 | **0.94** · 1 withheld of 44 |
 | `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/5 · 0.60 | **0.95** · 0 withheld of 44 |
 | `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/4 · 0.50 · 1 withheld | **0.95** · 1 withheld of 44 |
-| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 0/1 · 0.00 · 4 withheld | **0.96** · 5 withheld of 44 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 1 withheld of 44 |
-| `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 1 withheld of 44 |
-| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 1 withheld of 44 |
-| `/[org]/[project]/architecture` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.97** · 4 withheld of 44 |
+| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 3 withheld of 44 |
+| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 3 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 3 withheld of 44 |
+| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 4 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.97** · 4 withheld of 44 |
+| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 0 withheld of 44 |
+| `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 0 withheld of 44 |
+| `/[org]/[project]/architecture` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 1 withheld of 44 |
+| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 3 withheld of 44 |
+| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.97** · 4 withheld of 44 |
+| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 0/1 · 0.00 · 4 withheld | **0.97** · 5 withheld of 44 |
+| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.97** · 3 withheld of 44 |
 | `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 0 withheld of 44 |
-| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 1 withheld of 44 |
-| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/4 · 0.75 · 1 withheld | **0.97** · 1 withheld of 44 |
+| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 0 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.98** · 0 withheld of 44 |
+| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.98** · 0 withheld of 44 |
 | `/[org]/[project]/settings/activity` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.98** · 1 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
-| `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/4 · 1.00 · 1 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
-| `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
 | `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
-| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
-| `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
-| `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/4 · 1.00 · 1 withheld | **1.00** · 1 withheld of 44 |
-| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/4 · 1.00 · 1 withheld | **1.00** · 1 withheld of 44 |
-| `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/4 · 1.00 · 1 withheld | **1.00** · 1 withheld of 44 |
-| `/cli/login` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/cli/login` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/dashboard/[[...rest]]` · | all N/A | 3/3 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
 
 `·` marks a redirect-only route: no JSX, a `redirect()` call. It is N/A for six of the eight
