@@ -41,6 +41,7 @@ vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { orpc } from "@/lib/rpc/client";
 import type { OrgGeneralRead } from "@/lib/rpc/procedures/settings";
+import type { WorkspaceContext } from "@/lib/rpc/procedures/workspace";
 import { ORG_NAME_MAX_LENGTH } from "@/lib/validations/org-general";
 import {
 	ACME,
@@ -49,6 +50,18 @@ import {
 	renderOrgGeneral,
 	seededClient,
 } from "../../support/general-settings";
+
+/** The hydrated workspace context, with the caller holding `role` in the addressed org. */
+function CONTEXT(role: string): WorkspaceContext {
+	return {
+		activeOrgId: "org-1",
+		organizations: [
+			{ id: "org-1", name: "Acme", slug: "acme", logo: null, role, plan: "team", status: "active" },
+		],
+		entitlements: COMMUNITY_ENTITLEMENTS,
+		isHosted: true,
+	};
+}
 
 /** Both Save buttons (Organization profile, Defaults). */
 function saveButtons() {
@@ -209,14 +222,21 @@ describe("F040 — a save refreshes every place that shows the org", () => {
 		for (const button of saveButtons()) expect(button).toBeDisabled();
 	});
 
-	it("goes to the org's new address after a slug rename, and stays put otherwise", async () => {
+	it("goes to the org's new address after a slug rename — without refetching under the OLD one", async () => {
+		// Review on #6216: the invalidation used to refetch through the old address, which names no
+		// org any more, so the page painted a refusal before the navigation landed. The new address
+		// is a new tenant cache filled by its own server render; the old one is left alone.
+		const client = seededClient();
+		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("owner"));
 		const user = userEvent.setup();
-		renderOrgGeneral();
+		renderOrgGeneral(undefined, client);
 		const slug = screen.getByDisplayValue("acme");
 		await user.clear(slug);
 		await user.type(slug, "acme-corp");
 		await user.click(saveButtons()[0]);
 		await waitFor(() => expect(replace).toHaveBeenCalledWith("/acme-corp/~/settings/general"));
+		expect(client.getQueryState(orpc.settings.org.queryKey())?.isInvalidated).toBe(false);
+		expect(client.getQueryState(orpc.workspace.context.queryKey())?.isInvalidated).toBe(false);
 	});
 
 	it("does not navigate when the slug did not change", async () => {
@@ -304,6 +324,19 @@ describe("delete organization", () => {
 		expect(deleteOrganization).toHaveBeenCalledWith({});
 	});
 
+	it("does not refetch anything under the deleted org's address on its way out", async () => {
+		const client = seededClient();
+		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("owner"));
+		const user = userEvent.setup();
+		renderOrgGeneral(undefined, client);
+		await user.click(screen.getByRole("button", { name: "Delete organization" }));
+		const dialog = await screen.findByRole("alertdialog");
+		await user.click(within(dialog).getByRole("button", { name: "Delete organization" }));
+		await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+		expect(client.getQueryState(orpc.workspace.context.queryKey())?.isInvalidated).toBe(false);
+		expect(client.getQueryState(orpc.settings.org.queryKey())?.isInvalidated).toBe(false);
+	});
+
 	it("stays on the page and says why when the server refuses", async () => {
 		deleteOrganization.mockResolvedValue({
 			ok: false,
@@ -317,5 +350,36 @@ describe("delete organization", () => {
 
 		await waitFor(() => expect(toastError).toHaveBeenCalledWith("You don't have permission to do that."));
 		expect(push).not.toHaveBeenCalled();
+	});
+});
+
+describe("controls a role cannot use are disabled, with the reason (review advisory on #6216)", () => {
+	it("a viewer sees every field read-only and Save disabled, saying why", () => {
+		const client = seededClient();
+		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("viewer"));
+		renderOrgGeneral(undefined, client);
+		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeDisabled();
+		for (const button of screen.getAllByRole("button", { name: "Save changes" })) {
+			expect(button).toBeDisabled();
+			expect(button).toHaveAccessibleDescription("Only an owner or admin can change these settings");
+		}
+	});
+
+	it("an admin may edit but not delete — Delete says only the owner can", () => {
+		const client = seededClient();
+		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("admin"));
+		renderOrgGeneral(undefined, client);
+		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeEnabled();
+		const del = screen.getByRole("button", { name: "Delete organization" });
+		expect(del).toBeDisabled();
+		expect(del).toHaveAccessibleDescription("Only the organization's owner can delete it");
+	});
+
+	it("the owner may do both", () => {
+		const client = seededClient();
+		client.setQueryData(orpc.workspace.context.queryKey(), CONTEXT("owner"));
+		renderOrgGeneral(undefined, client);
+		expect(screen.getByRole("textbox", { name: "Organization name" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Delete organization" })).toBeEnabled();
 	});
 });
