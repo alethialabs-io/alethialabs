@@ -16,6 +16,7 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
+import { readKey } from "./behaviour";
 import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
@@ -803,4 +804,16 @@ test("the region-level error render is recognised, and nothing else is", async (
 	expect(await rendersRegionError(page), "an alert OUTSIDE main is not a region's error").toBe(false);
 	await page.setContent(fixture('<main><div data-slot="empty">No runners yet</div></main>'));
 	expect(await rendersRegionError(page), "an empty state is not an error").toBe(false);
+});
+
+// Family B's "read" (#6116): what B1 holds, B4 fails and B5 fails alone. The change stream and its
+// probe (#6115/#6178) are never reads — a stream open for the life of the page would make every
+// route "fetch on mount" — and a server action and a read-router call always are.
+test("family B's read classifier: actions and rpc in, the change stream and its probe out", () => {
+	const req = (url: string, method: string, headers: Record<string, string>) => ({ url: () => url, method: () => method, headers: () => headers });
+	expect(readKey(req("http://x.test/acme/~/jobs", "POST", { "next-action": "7f00" }))).toBe("action 7f00");
+	expect(readKey(req("http://x.test/acme/~/rpc/jobs/page?input=1", "GET", {}))).toBe("rpc jobs/page");
+	expect(readKey(req("http://x.test/acme/~/events", "GET", { accept: "text/event-stream" })), "the change stream").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/events?probe=1", "GET", {})), "the stream's probe").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/jobs", "GET", { rsc: "1" })), "a navigation's RSC payload").toBeNull();
 });

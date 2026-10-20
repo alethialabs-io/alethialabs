@@ -79,6 +79,13 @@ const RPC_MARKER = "/~/rpc/";
  */
 export function readKey(request: Pick<Request, "url" | "method" | "headers">): string | null {
 	const { pathname } = new URL(request.url());
+	// The change stream (`/{org}/~/events`, #6115) and its `?probe=1` are NOT data reads. The stream
+	// stays open for the life of the page, so holding it proves nothing and counting it would make
+	// every page "fetch on mount" the day the bus client lands; the probe only asks why the stream
+	// closed. Told apart by the header the stream sends (`Accept: text/event-stream`, the rule
+	// `destructive.spec.ts`'s `trackInFlight` uses since #6178) AND by the path, so the probe —
+	// which does not ask for a stream — is excluded too.
+	if ((request.headers()["accept"] ?? "").includes("text/event-stream") || /\/~\/events\/?$/.test(pathname)) return null;
 	const at = pathname.indexOf(RPC_MARKER);
 	if (at >= 0) return `rpc ${pathname.slice(at + RPC_MARKER.length)}`;
 	const action = request.headers()["next-action"];
