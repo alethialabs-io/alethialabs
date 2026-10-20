@@ -39,14 +39,19 @@ const upsertSchema = z.object({
 
 export type AgentContextInput = z.infer<typeof upsertSchema>;
 
-/** The pinned context for a scope (null when nothing has been saved yet). */
+/**
+ * The pinned context for a scope (null when nothing has been saved yet). A project row is read
+ * only after the PDP allows `view` on that project, the same permission every project read asks;
+ * the org-level row (no project) needs only a resolved actor. Either way RLS then bounds the read:
+ * flag-off, readAgentContext uses actor.userId under withOwnerScope; flag-on, the actor's org.
+ */
 export async function getAgentContext(
 	projectId?: string | null,
 ): Promise<AgentContext | null> {
 	const scope = scopeSchema.parse(projectId) ?? null;
-	// currentActor works for both flag paths: flag-off, readAgentContext uses actor.userId (==
-	// requireOwner) under withOwnerScope; flag-on, it scopes to the actor's org. RLS is the wall.
-	const actor = await currentActor();
+	const actor = scope
+		? await authorize("view", { type: "project", id: scope })
+		: await currentActor();
 	return readAgentContext(actor, scope);
 }
 

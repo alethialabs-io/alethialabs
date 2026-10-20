@@ -17,6 +17,7 @@ vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn(), withActorScope: vi.fn() })
 
 import {
 	canEditAgentContext,
+	getAgentContext,
 	getProjectKnowledgePreview,
 	upsertAgentContext,
 } from "@/app/server/actions/agent-context";
@@ -252,5 +253,72 @@ describe("getProjectKnowledgePreview — the Knowledge panel's derived block", (
 		await expect(getProjectKnowledgePreview(PROJECT)).rejects.toThrow(/Forbidden/);
 		expect(withActorScope).not.toHaveBeenCalled();
 		expect(read).not.toContain(jobs);
+	});
+});
+
+describe("getAgentContext — a project row is read only with project view", () => {
+	/** A read tx that records each table read and answers with one stored context row. */
+	function makeContextTx() {
+		const read: unknown[] = [];
+		const row = { id: "ctx-1", project_id: PROJECT, instructions: "pinned" };
+		const tx = {
+			select: () => ({
+				from: (table: unknown) => {
+					read.push(table);
+					const chain = {
+						where: () => chain,
+						orderBy: () => chain,
+						limit: () => chain,
+						then: (ok: (rows: unknown[]) => unknown) => ok([row]),
+					};
+					return chain;
+				},
+			}),
+		};
+		return { tx, read };
+	}
+
+	beforeEach(() => {
+		vi.mocked(orgAgentContextEnabled).mockReturnValue(true);
+	});
+
+	it("flag ON, project scope, view allowed → asks the PDP for view on that project, then reads", async () => {
+		const { tx, read } = makeContextTx();
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never,
+		);
+		vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+
+		const ctx = await getAgentContext(PROJECT);
+
+		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: PROJECT });
+		expect(ctx).toMatchObject({ instructions: "pinned" });
+		expect(read).toHaveLength(1);
+	});
+
+	it("flag ON, project scope, view denied → rejects before any read", async () => {
+		const { tx, read } = makeContextTx();
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never,
+		);
+		vi.mocked(authorize).mockRejectedValueOnce(new Error("Forbidden"));
+
+		await expect(getAgentContext(PROJECT)).rejects.toThrow(/Forbidden/);
+		expect(withActorScope).not.toHaveBeenCalled();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+		expect(read).toHaveLength(0);
+	});
+
+	it("org-level scope (no project) → no project check; the actor's org row is read", async () => {
+		const { tx } = makeContextTx();
+		vi.mocked(withActorScope).mockImplementation(
+			((_actor: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never,
+		);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+
+		await getAgentContext(null);
+
+		expect(authorize).not.toHaveBeenCalled();
+		expect(withActorScope).toHaveBeenCalledTimes(1);
 	});
 });
