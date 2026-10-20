@@ -1779,22 +1779,29 @@ cmd_verify() {
 
 # ── WHAT A DEFECT SCOPE MEANS (#6166) ────────────────────────────────────────────
 #
-# env-mode.sh's scope_verdict gives ONE verdict word, DEFECT, to two different faults, so that
+# env-mode.sh's scope_verdict gives ONE verdict word, DEFECT, to three different faults, so that
 # every caller below refuses or flags both without learning a new word. They are not the same
 # fault, and naming the second in the first one's words sent the operator after the wrong cause:
 #   404 — the organization plugin is absent: the console is SERVING community entitlements.
 #   5xx — only under a pinned ALETHIA_EDITION=enterprise (#6161): @alethia/ee did not load, and
 #         lib/enterprise.ts refuses every call rather than fall back, sign-in included. It is
 #         serving nothing that touches auth — calling it "COMMUNITY" was simply false.
+#   5xx — under a pin the console REJECTS (#6171): ALETHIA_EDITION is not exactly community,
+#         enterprise or auto, so parseAlethiaEdition throws on every call. No edition is loaded or
+#         even attempted, and the cause is one line of the .env — not ee/dist, not the log.
 # The probe already prints "<verdict> <status> <why>", and these key on the STATUS — the same
-# thing scope_verdict and the boot's diagnostic key on. The why is prose; the status is the
-# contract. They change WORDS only: which cases are refused is still decided by the verdict.
+# thing scope_verdict and the boot's diagnostic key on — plus, for the two 5xx faults, the one
+# phrase of the why that scope_verdict writes for an invalid pin and nowhere else: "is not a valid
+# edition". The rest of the why is prose. They change WORDS only: which cases are refused is still
+# decided by the verdict.
 
 # The label env:status prints for a DEFECT. Shipped to the box as text (env_scopes), so it stays
 # plain sh.
-scope_defect_label() { # <probe status> → COMMUNITY | EE-NOT-LOADED
-  case "$1" in
-  5[0-9][0-9]) echo EE-NOT-LOADED ;;
+scope_defect_label() { # <probe line "<verdict> <status> <why>"> → COMMUNITY | EE-NOT-LOADED | INVALID-PIN
+  _l="${1#* }"
+  case "${_l%% *}:$_l" in
+  5[0-9][0-9]:*"is not a valid edition"*) echo INVALID-PIN ;;
+  5[0-9][0-9]:*) echo EE-NOT-LOADED ;;
   *) echo COMMUNITY ;;
   esac
 }
@@ -1810,20 +1817,23 @@ scope_headline() { # <probe line "<verdict> <status> <why>"> → predicate
     echo "came up in the wrong scope (a re-probe now reads: ${1:-no answer})"
     return
   fi
-  case "$(scope_defect_label "$status")" in
+  case "$(scope_defect_label "$1")" in
   EE-NOT-LOADED) echo "cannot load the enterprise edition its .env pins — every auth call answers $status, sign-in included" ;;
+  INVALID-PIN) echo "has an ALETHIA_EDITION pin the console rejects, so it runs no edition at all — every auth call answers $status, sign-in included" ;;
   *) echo "is serving COMMUNITY entitlements" ;;
   esac
 }
 
-# The remedy for that headline. The 5xx one leads with the LOG: env-mode.sh builds @alethia/ee
+# The remedy for that headline. The invalid pin's is the .env line itself: env:up appends a MISSING
+# key and never rewrites a present one, so re-running it before the line is fixed changes nothing.
+# The ee-load 5xx one leads with the LOG: env-mode.sh builds @alethia/ee
 # before it boots and refuses to start without ee/dist, so at boot the likelier cause is a dist
 # that is present and threw on load, and only the console log says what it threw. Then env:up,
 # NOT env:push: loadEnterprise memoises a failed load for the life of the process, and env:push
 # rebuilds ee/dist without restarting it. env:up restarts the console.
 scope_remedy() { # <probe line> → the command(s) its owner runs
-  local rest="${1#* }"
-  case "${1%% *}:$(scope_defect_label "${rest%% *}")" in
+  case "${1%% *}:$(scope_defect_label "$1")" in
+  DEFECT:INVALID-PIN) echo "fix the pin in that env's .env (community, enterprise or auto — exactly), then pnpm env:up" ;;
   DEFECT:EE-NOT-LOADED) echo "pnpm env:logs (the load error is there), then pnpm env:up to rebuild ee/dist and restart the console" ;;
   *) echo "pnpm env:up" ;;
   esac
@@ -1910,7 +1920,7 @@ probe() {
   case "${1:-}" in
     enterprise) echo "$s enterprise" ;;
     community)  echo "$s community-pinned" ;;
-    DEFECT)     echo "$s $(scope_defect_label "${2:-}")" ;;
+    DEFECT)     echo "$s $(scope_defect_label "$v")" ;;
     unknown)
       case "${2:-000}" in
         000|"")
@@ -2054,6 +2064,9 @@ cmd_status() {
   `EE-NOT-LOADED` is a different fault: the .env pins enterprise, @alethia/ee did not load,
   and the console answers 5xx to every auth call, sign-in included — it is serving no edition
   at all. Read `pnpm env:logs` for the load error, then `pnpm env:up` (which restarts it).
+  `INVALID-PIN` is the same outage with a simpler cause: the .env's ALETHIA_EDITION is not
+  exactly community, enterprise or auto, so the console rejects it on every call. Fix the pin
+  in that env's .env, then `pnpm env:up` (which never rewrites a line that is already there).
   A leading `?` is the absence of an answer, never a verdict, and each one names the cause it
   actually measured: `?-no-answer` (the console did not respond, but its tmux session is there
   — it is up and busy, or wedged), `?-not-running` (there is NO session behind this
@@ -2251,7 +2264,12 @@ cmd_test() {
     # The headline and the remedy name the actual fault (#6166): a 404 is a console serving
     # community entitlements, a 5xx under the enterprise pin is one that cannot sign anyone in.
     # Both are refused — the verdict decides that, not the words.
-    case "$(scope_defect_label "$(printf '%s' "$scope_" | cut -d' ' -f2)")" in
+    case "$(scope_defect_label "$scope_")" in
+    INVALID-PIN)
+      die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
+  Every spec that signs in would fail on authentication rather than on what it tests. Fix the
+  env first:  $(scope_remedy "$scope_")"
+      ;;
     EE-NOT-LOADED)
       die "'$slug_' $(scope_headline "$scope_") — ${scope_#* * }
   Every spec that signs in would fail on authentication rather than on what it tests. Fix the
