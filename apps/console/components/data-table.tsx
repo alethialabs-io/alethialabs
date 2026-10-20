@@ -25,6 +25,12 @@ import {
 } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 
+import { RegionError } from "@/components/errors/region-error";
+import {
+	DATA_TABLE_FRAME,
+	DEFAULT_SKELETON_ROWS,
+	DataTableSkeletonRows,
+} from "@/components/skeletons/data-table-skeleton";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
@@ -74,8 +80,28 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	onPageIndexChange?: (index: number) => void;
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
-	/** Message shown in the empty-state row when `data` is empty (default "No results."). */
+	/**
+	 * Message shown in the empty-state row when `data` is empty (default "No results."). It is
+	 * NEVER shown while `isPending` or `error` is set: an empty table and a table still loading
+	 * are different answers, and showing the first for the second is a lie about the data (F004).
+	 */
 	emptyMessage?: string;
+	/**
+	 * The first load has not answered yet — pass the query's `isPending` (no data at all), NOT
+	 * `isFetching`, which is also true while a refetch runs behind rows already on screen. The
+	 * real header stays and the body is drawn as placeholder rows.
+	 */
+	isPending?: boolean;
+	/** Placeholder rows to draw while `isPending` (default 6). Match the page's usual row count. */
+	skeletonRows?: number;
+	/**
+	 * The read failed. Any non-null value replaces the body with an error state — never the empty
+	 * row — and takes precedence over `isPending` and over `data`. Pass the query's `error`. The
+	 * error's own message is not shown: it can carry server detail.
+	 */
+	error?: unknown;
+	/** Re-run the failed read; renders a "Try again" button in the error state. */
+	onRetry?: () => void;
 	/**
 	 * Opt into a "Show more" footer (like the Activity log) instead of page-number controls. The
 	 * caller grows the visible window itself — pass `pageSize` as the current visible count and
@@ -104,6 +130,11 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
  *   express: interleaved group header rows, or server-side filtering that must not be re-run
  *   client-side. `components/evidence/evidence-table.tsx` is the worked example and says why.
  * - **A `<div className="grid">` is not a table.** There is no third option.
+ *
+ * It renders four distinct bodies, and a page should reach every one of them through props rather
+ * than by swapping the table out: rows; the empty row (`emptyMessage`); placeholder rows under the
+ * real header (`isPending`); and an error state with a retry (`error`, `onRetry`). Before
+ * `isPending` existed, a table that had not loaded yet said "No results." (#6117, F004).
  */
 export function DataTable<TData extends { id?: string }, TValue>({
 	columns,
@@ -117,8 +148,16 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	onPageIndexChange,
 	scrollHeight,
 	emptyMessage = "No results.",
+	isPending = false,
+	skeletonRows = DEFAULT_SKELETON_ROWS,
+	error,
+	onRetry,
 	loadMore,
 }: DataTableProps<TData, TValue>) {
+	// One status for the body, decided once. Error first: a failed read with stale rows still
+	// has to say it failed. Then pending, so the empty row can never stand in for a load.
+	const hasError = error !== undefined && error !== null && error !== false;
+	const bodyState = hasError ? "error" : isPending ? "pending" : "ready";
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
 		externalFilters ?? [],
@@ -239,8 +278,16 @@ export function DataTable<TData extends { id?: string }, TValue>({
 					</TableRow>
 				))}
 			</TableHeader>
-			<TableBody>
-				{table.getRowModel().rows?.length ? (
+			<TableBody aria-busy={bodyState === "pending" || undefined}>
+				{bodyState === "error" ? (
+					<TableRow className="hover:bg-transparent">
+						<TableCell colSpan={columns.length} className="whitespace-normal p-0">
+							<RegionError onRetry={onRetry} />
+						</TableCell>
+					</TableRow>
+				) : bodyState === "pending" ? (
+					<DataTableSkeletonRows columns={columns.length} rows={skeletonRows} />
+				) : table.getRowModel().rows?.length ? (
 					table.getRowModel().rows.map((row) => (
 						<TableRow
 							key={row.id}
@@ -275,7 +322,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 
 	return (
 		<div className={cn("space-y-3", className)}>
-			<div className="rounded-md border overflow-hidden">
+			<div className={DATA_TABLE_FRAME} data-state={bodyState}>
 				{scrollHeight ? (
 					<ScrollArea className={scrollHeight}>{tableEl}</ScrollArea>
 				) : (
@@ -283,7 +330,9 @@ export function DataTable<TData extends { id?: string }, TValue>({
 				)}
 			</div>
 
-			{loadMore
+			{bodyState !== "ready"
+				? null
+				: loadMore
 				? (table.getFilteredRowModel().rows.length > 0 && (
 						<div className="flex flex-col items-center gap-2 px-1">
 							<p className="text-xs text-muted-foreground tabular-nums">

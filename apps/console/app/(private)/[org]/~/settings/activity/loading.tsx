@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { HeaderSkeleton, TableSkeleton } from "@/components/skeletons/page-skeletons";
+import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 
-/** Instant skeleton for the settings/activity route. */
+/** Instant skeleton for the settings/activity route: the activity table, with no title above it. */
 export default function ActivityLoading() {
-	return (
-		<div className="space-y-6">
-			<HeaderSkeleton />
-			<TableSkeleton rows={8} />
-		</div>
-	);
+	return <DataTableSkeleton columns={4} rows={8} />;
 }
