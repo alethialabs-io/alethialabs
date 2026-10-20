@@ -25,10 +25,14 @@
 // Each is matched with `?.` and `globalThis.`/`window.`/`self.` prefixes too (`\bcrypto\b` and
 // `\bnavigator\b` are words in all of those).
 //
-// WHAT IS READ. Tracked `.ts/.tsx/.js/.jsx/.mjs` files under apps/console and packages/ui/src, minus
-// tests (`tests/`, `e2e/`, `*.test.*`, `*.spec.*`), build scripts (`apps/console/scripts/`) and
-// files that are SERVER code by a structural marker: `import "server-only"`, a `"use server"`
-// directive, or a route handler (`route.ts` / `apps/console/app/api/`). The client import graph is
+// WHAT IS READ. Tracked `.ts/.tsx/.js/.jsx/.mjs` files under apps/console and every
+// `packages/<name>/src/` (the shared packages the console bundles; a package with no `src/`, such as
+// the Go module in packages/core, has no browser code), minus tests (`tests/`, `e2e/`, `*.test.*`,
+// `*.spec.*`), build scripts (`apps/console/scripts/`) and files that are SERVER code by a structural
+// marker: `import "server-only"`, a `"use server"` directive in the file's directive prologue (its
+// first statements; a `"use server"` inside a function marks only that function), or a route
+// handler file (`route.ts` under `apps/console/app/`; a helper module next to one is read). The
+// client import graph is
 // deliberately NOT computed: any file without a server marker might be bundled for the browser, so
 // it is held to the browser rule (fail closed). Server code that needs a UUID imports `randomUUID`
 // from `node:crypto`, which this does not match.
@@ -101,19 +105,29 @@ const EXTS = /\.(ts|tsx|js|jsx|mjs)$/;
 /** Is this tracked path one the guard reads (by location alone)? */
 export function inScope(path) {
 	if (!EXTS.test(path)) return false;
-	if (!(path.startsWith("apps/console/") || path.startsWith("packages/ui/src/"))) return false;
+	if (!(path.startsWith("apps/console/") || /^packages\/[^/]+\/src\//.test(path))) return false;
 	if (/(^|\/)(tests|e2e|__tests__|node_modules)\//.test(path)) return false;
 	if (path.startsWith("apps/console/scripts/")) return false;
 	if (/\.(test|spec)\.[a-z]+$/.test(path)) return false;
 	if (/\.d\.ts$/.test(path)) return false;
-	if (path.startsWith("apps/console/app/api/") || /(^|\/)route\.(ts|js)$/.test(path)) return false;
+	if (/^apps\/console\/app\/(.+\/)?route\.(ts|js)$/.test(path)) return false;
 	return true;
 }
 
-/** Does this source declare itself server code, by `import "server-only"` or `"use server"`? */
+/**
+ * Does this source declare itself server code — `import "server-only"` at the top level, or
+ * `"use server"` in the directive prologue (the string statements before any other code)?
+ */
 export function isServerModule(code) {
-	if (/^\s*import\s+["']server-only["'];?\s*$/m.test(code)) return true;
-	return /^\s*["']use server["'];?\s*$/m.test(code);
+	if (/^import\s+["']server-only["'];?\s*$/m.test(code)) return true;
+	for (const raw of stripComments(code).split("\n")) {
+		const line = raw.trim();
+		if (line === "") continue;
+		const directive = /^(["'])([^"']*)\1;?$/.exec(line);
+		if (!directive) return false;
+		if (directive[2] === "use server") return true;
+	}
+	return false;
 }
 
 /**
@@ -205,7 +219,7 @@ export function evaluate(files, allowed = ALLOWED) {
 
 /** The tracked files this guard reads, with their contents. */
 function trackedSources(root) {
-	const listed = execFileSync("git", ["ls-files", "-z", "apps/console", "packages/ui/src"], {
+	const listed = execFileSync("git", ["ls-files", "-z", "apps/console", "packages"], {
 		cwd: root,
 		maxBuffer: 64 * 1024 * 1024,
 	})
@@ -252,6 +266,13 @@ function selfTest() {
 		["a server-only module is exempt", [[C, 'import "server-only";\ncrypto.randomUUID();']], [], 0],
 		["a use-server module is exempt", [[C, '"use server";\ncrypto.randomUUID();']], [], 0],
 		["a route handler is exempt", [["apps/console/app/x/route.ts", "crypto.randomUUID();"]], [], 0],
+		["an app/api route handler is exempt", [["apps/console/app/api/x/route.ts", "crypto.randomUUID();"]], [], 0],
+		["a helper beside an app/api route is read", [["apps/console/app/api/x/helper.ts", "crypto.randomUUID();"]], ["randomUUID"], 0],
+		["a use-server directive after a comment header is exempt", [[C, '// SPDX\n"use strict";\n"use server";\ncrypto.randomUUID();']], [], 0],
+		["a use-server inside a function is not a module marker", [[C, 'export function f() {\n\t"use server";\n}\ncrypto.randomUUID();']], ["randomUUID"], 0],
+		["a use-server after code is not a directive", [[C, 'const a = 1;\n"use server";\ncrypto.randomUUID();']], ["randomUUID"], 0],
+		["another package's src is read", [["packages/format/src/x.ts", "crypto.randomUUID();"]], ["randomUUID"], 0],
+		["a package file outside src is not", [["packages/format/x.ts", "crypto.randomUUID();"]], [], 0],
 		["a test is out of scope", [["apps/console/tests/x.test.ts", "crypto.randomUUID();"]], [], 0],
 		["packages/ui is read", [["packages/ui/src/x.tsx", "navigator.clipboard.writeText(t);"]], ["clipboard"], 0],
 		["crypto.subtle is caught", [[C, "await crypto.subtle.digest(a, b);"]], ["subtle"], 0],

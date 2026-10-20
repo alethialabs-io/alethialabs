@@ -112,7 +112,7 @@ describe("CopyButton", () => {
 		expect(isCopiedState()).toBe(true);
 	});
 
-	it("does not enter the copied state when no copy is possible, and does not throw", async () => {
+	it("says it could not copy, instead of confirming, when no copy is possible", async () => {
 		stubClipboard(undefined);
 		Object.defineProperty(document, "execCommand", {
 			value: vi.fn().mockReturnValue(false),
@@ -126,5 +126,7 @@ describe("CopyButton", () => {
 		});
 
 		expect(isCopiedState()).toBe(false);
+		expect(screen.getByRole("button", { name: /couldn't copy — select and copy manually/i })).toBeInTheDocument();
+		expect(screen.getByRole("status")).toHaveTextContent(/select and copy manually/);
 	});
 });

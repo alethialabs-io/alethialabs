@@ -49,6 +49,7 @@ import {
 	agentStepDataSchema,
 } from "@/lib/ai/agent-steps";
 import { hasAcceptedApproval } from "@/lib/agent/turn-key";
+import { COPY_FAILED_MESSAGE } from "@repo/ui/copy-button";
 import { copyText } from "@repo/ui/copy-text";
 import { cn } from "@repo/ui/utils";
 
@@ -160,6 +161,7 @@ export function AgentChat({
 	const pending = status === "submitted" || status === "streaming";
 	const lastMessageId = messages.at(-1)?.id;
 	const [copiedId, setCopiedId] = useState<string | null>(null);
+	const [copyFailedId, setCopyFailedId] = useState<string | null>(null);
 	const [feedback, setFeedback] =
 		useState<Record<string, "up" | "down">>(initialFeedback ?? {});
 	// Re-seed when the hydrated map arrives / the active thread changes (the consumer passes a
@@ -170,7 +172,12 @@ export function AgentChat({
 
 	const copyMessage = (message: UIMessage) => {
 		void copyText(messageText(message)).then((copied) => {
-			if (!copied) return;
+			if (!copied) {
+				setCopyFailedId(message.id);
+				setTimeout(() => setCopyFailedId((id) => (id === message.id ? null : id)), 4000);
+				return;
+			}
+			setCopyFailedId(null);
 			setCopiedId(message.id);
 			setTimeout(() => setCopiedId((id) => (id === message.id ? null : id)), 1500);
 		});
@@ -368,7 +375,13 @@ export function AgentChat({
 																	</>
 																)}
 																<Action
-																	tooltip={copiedId === m.id ? "Copied" : "Copy"}
+																	tooltip={
+																		copiedId === m.id
+																			? "Copied"
+																			: copyFailedId === m.id
+																				? COPY_FAILED_MESSAGE
+																				: "Copy"
+																	}
 																	label="Copy message"
 																	onClick={() => copyMessage(m)}
 																>

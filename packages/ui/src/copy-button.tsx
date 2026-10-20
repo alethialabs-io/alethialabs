@@ -3,12 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { copyText } from "./copy-text";
 import { cn } from "./utils";
 
-/** An icon button that copies `text`, showing a check once the copy succeeded. */
+/** What a copy control says when the copy did not happen (no clipboard access, or a refusal). */
+export const COPY_FAILED_MESSAGE = "Couldn't copy — select and copy manually";
+
+/**
+ * An icon button that copies `text`. It shows a check only once the copy really happened, and
+ * says so when it did not, so the person knows to select the value and copy it by hand.
+ */
 export function CopyButton({
 	text,
 	className,
@@ -16,16 +22,16 @@ export function CopyButton({
 	text: string;
 	className?: string;
 }) {
-	const [copied, setCopied] = useState(false);
+	const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 
 	const handleCopy = useCallback(async () => {
-		// `copyText` falls back to a selection copy where the Clipboard API is absent (plain HTTP),
-		// and the check only shows when the text really was copied.
-		if (!(await copyText(text))) return;
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
+		// `copyText` falls back to a selection copy where the Clipboard API is absent (plain HTTP).
+		const next = (await copyText(text)) ? "copied" : "failed";
+		setState(next);
+		setTimeout(() => setState("idle"), next === "copied" ? 2000 : 4000);
 	}, [text]);
 
+	const label = state === "failed" ? COPY_FAILED_MESSAGE : "Copy to clipboard";
 	return (
 		<button
 			type="button"
@@ -34,12 +40,20 @@ export function CopyButton({
 				"text-muted-foreground transition-colors hover:text-foreground",
 				className,
 			)}
-			aria-label="Copy to clipboard"
+			aria-label={label}
+			title={state === "failed" ? COPY_FAILED_MESSAGE : undefined}
 		>
-			{copied ? (
+			{state === "copied" ? (
 				<Check className="h-4 w-4 text-foreground" />
+			) : state === "failed" ? (
+				<X className="h-4 w-4 text-destructive" />
 			) : (
 				<Copy className="h-4 w-4" />
+			)}
+			{state === "failed" && (
+				<span role="status" className="sr-only">
+					{COPY_FAILED_MESSAGE}
+				</span>
 			)}
 		</button>
 	);

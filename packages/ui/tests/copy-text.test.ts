@@ -75,4 +75,62 @@ describe("copyText", () => {
 		expect(document.activeElement).toBe(button);
 		button.remove();
 	});
+
+	describe("inside a modal's focus trap", () => {
+		/**
+		 * Builds an open dialog holding a focused button, and a trap that does what Radix FocusScope
+		 * does: focus landing outside the dialog is pulled back to the button. `strict` also pulls
+		 * focus back from anything inside the dialog other than the button.
+		 */
+		function trappedDialog(strict = false) {
+			const dialog = document.createElement("div");
+			dialog.setAttribute("role", "dialog");
+			const button = document.createElement("button");
+			dialog.appendChild(button);
+			document.body.appendChild(dialog);
+			button.focus();
+			const trap = (e: FocusEvent) => {
+				const target = e.target;
+				if (!(target instanceof Node)) return;
+				if (target === button) return;
+				if (strict || !dialog.contains(target)) button.focus();
+			};
+			document.addEventListener("focusin", trap);
+			return {
+				button,
+				dialog,
+				done: () => {
+					document.removeEventListener("focusin", trap);
+					dialog.remove();
+				},
+			};
+		}
+
+		it("copies from inside the dialog, where the trap lets the helper keep focus", async () => {
+			stubClipboard(undefined);
+			const { selected } = stubExecCommand(true);
+			const t = trappedDialog();
+			try {
+				expect(await copyText("runner-token")).toBe(true);
+				expect(selected).toEqual(["runner-token"]);
+				expect(document.activeElement).toBe(t.button);
+				expect(t.dialog.querySelector("textarea")).toBeNull();
+			} finally {
+				t.done();
+			}
+		});
+
+		it("reports false, and never runs the command, when the trap takes focus from the helper", async () => {
+			stubClipboard(undefined);
+			// A command that would claim success over an empty selection — the case the check exists for.
+			const { exec } = stubExecCommand(true);
+			const t = trappedDialog(true);
+			try {
+				expect(await copyText("runner-token")).toBe(false);
+				expect(exec).not.toHaveBeenCalled();
+			} finally {
+				t.done();
+			}
+		});
+	});
 });

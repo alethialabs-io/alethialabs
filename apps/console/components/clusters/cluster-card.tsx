@@ -10,6 +10,7 @@ import { getProvider } from "@/lib/cloud-providers";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { Button } from "@repo/ui/button";
+import { COPY_FAILED_MESSAGE } from "@repo/ui/copy-button";
 import { copyText } from "@repo/ui/copy-text";
 import { StatusBadge, statusTier, type StatusTier } from "@repo/ui/status-badge";
 import {
@@ -22,6 +23,7 @@ import {
 	HardDrive,
 	Server,
 	Terminal,
+	X,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -107,23 +109,29 @@ function deriveHealth(
 	return { tier: statusTier(s), name: humanize(s), rollup: humanize(s), detail, health };
 }
 
-/** Copy-to-clipboard button used for endpoints and CLI commands. */
+/**
+ * Copy-to-clipboard button used for endpoints and CLI commands. It confirms only a copy that
+ * happened, and says so when it did not (the value beside it stays selectable).
+ */
 function CopyButton({ value, label }: { value: string; label: string }) {
-	const [copied, setCopied] = useState(false);
+	const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 	return (
 		<Button
 			variant="ghost"
 			size="icon"
 			className="h-6 w-6 shrink-0 text-text-tertiary"
-			aria-label={label}
+			aria-label={state === "failed" ? COPY_FAILED_MESSAGE : label}
+			title={state === "failed" ? COPY_FAILED_MESSAGE : undefined}
 			onClick={async () => {
-				if (!(await copyText(value))) return;
-				setCopied(true);
-				setTimeout(() => setCopied(false), 2000);
+				const next = (await copyText(value)) ? "copied" : "failed";
+				setState(next);
+				setTimeout(() => setState("idle"), next === "copied" ? 2000 : 4000);
 			}}
 		>
-			{copied ? (
+			{state === "copied" ? (
 				<Check className="h-3 w-3 text-text-primary" />
+			) : state === "failed" ? (
+				<X className="h-3 w-3 text-destructive" />
 			) : (
 				<Copy className="h-3 w-3" />
 			)}

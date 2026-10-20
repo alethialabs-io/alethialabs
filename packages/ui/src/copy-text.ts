@@ -27,7 +27,21 @@ export async function copyText(text: string): Promise<boolean> {
 	return selectionCopy(text);
 }
 
-/** The selection-based copy, for a page with no Clipboard API. Restores focus afterwards. */
+/**
+ * Where the helper textarea goes: inside the open modal that holds focus, when there is one, else
+ * the body. A modal's focus trap (Radix `FocusScope`) pulls focus back from anything outside it,
+ * so a textarea on the body would be copied from with nothing selected.
+ */
+function helperContainer(focused: Element | null): HTMLElement {
+	const dialog = focused?.closest('[role="dialog"], [role="alertdialog"]');
+	return dialog instanceof HTMLElement ? dialog : document.body;
+}
+
+/**
+ * The selection-based copy, for a page with no Clipboard API. Trusts `execCommand` only when the
+ * helper really holds focus and the whole text is selected: a command run over an empty selection
+ * can report success while the clipboard is unchanged. Restores focus afterwards.
+ */
 function selectionCopy(text: string): boolean {
 	if (typeof document === "undefined" || !document.body) return false;
 	const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -40,10 +54,15 @@ function selectionCopy(text: string): boolean {
 	area.style.left = "0";
 	area.style.opacity = "0";
 	area.style.pointerEvents = "none";
-	document.body.appendChild(area);
+	helperContainer(focused).appendChild(area);
 	try {
 		area.focus({ preventScroll: true });
 		area.select();
+		// `select()` alone selects nothing on iOS Safari.
+		area.setSelectionRange(0, text.length);
+		const ready =
+			document.activeElement === area && area.selectionStart === 0 && area.selectionEnd === text.length;
+		if (!ready) return false;
 		return document.execCommand("copy");
 	} catch {
 		return false;
