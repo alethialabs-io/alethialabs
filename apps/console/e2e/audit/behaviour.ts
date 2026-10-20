@@ -56,7 +56,7 @@ export const B_VIEWPORT = { width: 1280, height: 900 } as const;
 export const B2_BUDGET = 0.02;
 
 /** A page read beyond this many is not failed one at a time; B5 is NOT MEASURED with the count. */
-export const B5_READ_CAP = 6;
+export const B5_READ_CAP = 8;
 
 /**
  * How far B4's second phase moves the page's clock before it asks the page to refetch. TanStack's
@@ -97,6 +97,7 @@ function readCarrier(pathname: string): (url: URL) => boolean {
 }
 
 let actionNames: Map<string, string> | null = null;
+let actionWorkers: Map<string, Set<string>> | null = null;
 
 /**
  * Server-action ids → `exportedName (file)`, read from the build's server-reference manifest.
@@ -109,6 +110,7 @@ let actionNames: Map<string, string> | null = null;
 function namesFromManifest(): Map<string, string> {
 	if (actionNames) return actionNames;
 	actionNames = new Map();
+	actionWorkers = new Map();
 	const file = path.join(process.cwd(), ".next", "server", "server-reference-manifest.json");
 	if (!existsSync(file)) return actionNames;
 	try {
@@ -120,11 +122,28 @@ function namesFromManifest(): Map<string, string> {
 			const name = "exportedName" in entry && typeof entry.exportedName === "string" ? entry.exportedName : null;
 			const fileName = "filename" in entry && typeof entry.filename === "string" ? entry.filename : null;
 			if (name) actionNames.set(id, fileName ? `${name} (${fileName})` : name);
+			const workers = "workers" in entry && typeof entry.workers === "object" && entry.workers !== null ? Object.keys(entry.workers) : [];
+			if (workers.length > 0) actionWorkers.set(id, new Set(workers));
 		}
 	} catch {
 		// A manifest that does not parse names nothing; the labels fall back as documented above.
 	}
 	return actionNames;
+}
+
+/**
+ * The build entries (`app/(private)/[org]/~/jobs/page`) whose client graph references a server
+ * action, from the same manifest — or `null` when the build does not say. Read by `shellReadsFor`.
+ */
+export function workersOf(key: string): ReadonlySet<string> | null {
+	if (!key.startsWith("action ")) return null;
+	namesFromManifest();
+	return actionWorkers?.get(key.slice("action ".length)) ?? null;
+}
+
+/** The build entry a route's page compiles to: `apps/console/app/x/page.tsx` → `app/x/page`. */
+export function pageEntry(file: string): string {
+	return file.replace(/^apps\/console\//, "").replace(/\.[jt]sx?$/, "");
 }
 
 /** A read key, as a person reads it — and as a committed detail can carry it. */
@@ -151,6 +170,13 @@ export interface RegionSnapshot {
 	rows: number;
 	/** Visible elements carrying text of their own, outside any skeleton. */
 	leaves: number;
+	/**
+	 * The leaves that read as CONTENT — at least four letters, no digit, no relative time. What it
+	 * leaves out is exactly the text a correct page renders only after hydration: a clock or a date
+	 * (`ClockSlot` waits for `useHydrated()`), "3 minutes ago", an avatar's initials. B1 compares
+	 * this, never `leaves`, because its subject is the server render (see `judgeB1`).
+	 */
+	contentLeaves: number;
 	/** The same, outside every error surface — what is left of the page when something failed. */
 	leavesOutsideErrors: number;
 	/** The leaves' own text, lower-cased with digits and relative times masked. Evidence, not verdict. */
@@ -167,7 +193,7 @@ const RELATIVE_TIME = String.raw`\b(?:about |almost |over |less than )?(?:a|an|\
 export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 	return page.evaluate(
 		({ arms, emptyCopy, relativeTime }) => {
-			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, rows: 0, leaves: 0, leavesOutsideErrors: 0, texts: [] };
+			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
 			const main = document.querySelector("main");
 			if (main === null) return zero;
 			const shown = (el: Element): boolean => {
@@ -214,6 +240,10 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				errors: errorRoots.length,
 				rows,
 				leaves: leafEls.length,
+				contentLeaves: leafEls.filter((el) => {
+					const m = mask(ownText(el));
+					return !/[#]|<t>/.test(m) && (m.match(/[a-z]/g) ?? []).length >= 4;
+				}).length,
 				leavesOutsideErrors: leafEls.filter((el) => !inError(el)).length,
 				texts: leafEls.slice(0, 400).map((el) => mask(ownText(el))),
 			};
@@ -415,17 +445,16 @@ export type BVerdict =
 	| { verdict: "NOT MEASURED"; reason: string; evidence: unknown };
 
 /** The signals B1 compares, named the way a FAIL's detail names them. */
-export type Signal = "skeleton" | "busy" | "empty copy" | "rows" | "error surface" | "text";
+export type Signal = "skeleton" | "empty copy" | "rows" | "error surface" | "content";
 
 /** Which signals separate a disturbed render from the answered one. */
 export function differences(answered: RegionSnapshot, other: RegionSnapshot): Signal[] {
 	const out: Signal[] = [];
 	if (other.skeletons > 0 && answered.skeletons === 0) out.push("skeleton");
-	if (other.busy && !answered.busy) out.push("busy");
 	if (other.empty !== answered.empty) out.push("empty copy");
 	if (other.rows !== answered.rows) out.push("rows");
 	if (other.errors !== answered.errors) out.push("error surface");
-	if (other.leaves !== answered.leaves) out.push("text");
+	if (other.contentLeaves < answered.contentLeaves) out.push("content");
 	return out;
 }
 
@@ -451,10 +480,15 @@ export const ANSWERED_EMPTY =
 	"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same";
 
 /**
- * B1: with every read held, the region is already what it is once answered. The text comparison is
- * a COUNT of text-bearing elements, not their content: a fallback label (an avatar's initials before
- * the members read answers) changes the text and not the count, and is reported as evidence rather
- * than failed — the predicate is whether the region's DATA was in the first paint.
+ * B1: with every read held, the region already carries its DATA — the rows, the empty-or-not answer,
+ * no skeleton, no error, and no fewer content-bearing text elements than once answered.
+ *
+ * THE HELD RENDER MAY NEVER HYDRATE, and that was measured, not assumed: on the jobs slice the first
+ * held server action stalls hydration, so the held render IS the server render. Two things a correct
+ * page renders differently there are therefore not compared. `aria-busy` is true on every filtered
+ * list's server render by design (`useFilterUrlSync` reports the URL unread until mount, #4980), and
+ * clock, date and initials text waits for hydration by design (`ClockSlot`). Neither is data. Both
+ * stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`), so a reader still sees them.
  */
 export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
 	const differs = differences(answered.snapshot, held.snapshot);
@@ -487,7 +521,7 @@ export function failureProblems(answered: RegionSnapshot, failed: RegionSnapshot
 	if (failed.skeletons > 0 || failed.busy) out.push("endless skeleton");
 	if (failed.empty > answered.empty) out.push("empty copy");
 	const errorAppeared = failed.errors > answered.errors;
-	if (!errorAppeared && (failed.rows < answered.rows || failed.leaves < answered.leaves)) {
+	if (!errorAppeared && (failed.rows < answered.rows || failed.contentLeaves < answered.contentLeaves)) {
 		out.push("content vanished with no error surface");
 	}
 	return out;
@@ -537,9 +571,28 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 }
 
 /** The reads every route under the same shells makes — the shell's, not the page's. */
-export function shellReadsFor(route: string, chains: ReadonlyMap<string, string>, readsByRoute: ReadonlyMap<string, readonly string[]>): string[] {
+export function shellReadsFor(
+	route: string,
+	chains: ReadonlyMap<string, string>,
+	readsByRoute: ReadonlyMap<string, readonly string[]>,
+	entries: ReadonlyMap<string, string> = new Map(),
+	workers: (key: string) => ReadonlySet<string> | null = workersOf,
+): string[] {
 	const chain = chains.get(route);
 	const peers = [...readsByRoute.keys()].filter((r) => chains.get(r) === chain);
+	// STRUCTURAL FIRST. The build's server-reference manifest says which page entries reference each
+	// action; one that EVERY page under the same shells references lives in those shells (a layout's
+	// client graph is bundled into every page beneath it). That needs no run to have caught the read —
+	// the intersection below misses a shell poll that happened not to fire on one route, and then
+	// calls it the page's. Measured on the first run: seven "page reads" on the jobs slice, all shell.
+	const chainEntries = [...chains].filter(([, c]) => c === chain).map(([r]) => entries.get(r)).filter((e): e is string => e !== undefined);
+	const structural = new Set<string>();
+	if (chainEntries.length > 0) {
+		for (const key of readsByRoute.get(route) ?? []) {
+			const w = workers(key);
+			if (w !== null && chainEntries.every((e) => w.has(e))) structural.add(key);
+		}
+	}
 	// Fewer than three routes under one chain cannot separate a page read from a shell read, so the
 	// intersection widens to every measured route: whatever EVERY route reads is the outer shell's.
 	const pool = peers.length >= 3 ? peers : [...readsByRoute.keys()];
@@ -550,7 +603,7 @@ export function shellReadsFor(route: string, chains: ReadonlyMap<string, string>
 		const reads = new Set(readsByRoute.get(r) ?? []);
 		for (const k of [...common]) if (!reads.has(k)) common.delete(k);
 	}
-	return [...common].sort();
+	return [...new Set([...common, ...structural])].sort();
 }
 
 /** The snapshot without its texts — what a record's evidence carries. */
@@ -647,7 +700,12 @@ export function judgeB2(outcome: SwapOutcome): BVerdict {
 	const score = outlineShift(s, f, B_VIEWPORT);
 	const columns = { skeleton: columnCount(outcome.skeleton.filter((c) => c.block).map((c) => c.box)), final: columnCount(outcome.final.filter((c) => c.block).map((c) => c.box)) };
 	const evidence = { score: Number(score.toFixed(4)), budget: B2_BUDGET, columns, outline: { skeleton: s, final: f }, prefetched: outcome.prefetched };
-	return { verdict: score > B2_BUDGET || columns.skeleton !== columns.final ? "FAIL" : "PASS", evidence };
+	// A column mismatch is a question about SIDE-BY-SIDE blocks, so it is asked only when one frame has
+	// two or more. One filled skeleton box over a page with no bordered block (a canvas, plain text)
+	// is not a column count disagreeing — measured on the first run, it failed the canvas and the CLI
+	// hand-off for a frame whose outline matched.
+	const columnsDisagree = Math.max(columns.skeleton, columns.final) >= 2 && columns.skeleton !== columns.final;
+	return { verdict: score > B2_BUDGET || columnsDisagree ? "FAIL" : "PASS", evidence };
 }
 
 /** Read a property of `window.next.router` in the page, without trusting its type. */

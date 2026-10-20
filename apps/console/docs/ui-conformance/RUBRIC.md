@@ -440,8 +440,8 @@ B scores what the user experiences. B1–B5 are measured by `e2e/audit/behaviour
 
 | id | predicate | PASS when | N/A when |
 |---|---|---|---|
-| **B1** | no client data fetch before first paint | with EVERY data read held (never answered), `main` renders what it renders once the reads answer: no skeleton, no `aria-busy`, the same rows, empty states, error surfaces and number of text-bearing elements | `redirect-only` |
-| **B2** | the skeleton has the final layout's shape | the route's own loading state, painted by a soft navigation whose data response is held, and the page it becomes occupy the same frame — a CLS-style outline score ≤ **0.02** — with the same number of blocks side by side | `redirect-only`; `no-loading-boundary` — no `loading.tsx` anywhere in the chain (T1 reports that absence) |
+| **B1** | no client data fetch before first paint | with EVERY data read held (never answered), `main` already carries its data: no skeleton, the same rows, empty states and error surfaces, and no fewer content-bearing text elements than once answered | `redirect-only` |
+| **B2** | the skeleton has the final layout's shape | the route's own loading state, painted by a soft navigation whose data response is held, and the page it becomes occupy the same frame — a CLS-style outline score ≤ **0.02** — and, where either sets two or more blocks side by side, the same number | `redirect-only`; `no-loading-boundary` — no `loading.tsx` anywhere in the chain (T1 reports that absence) |
 | **B3** | no empty state while pending | with every read held, `main` shows no empty copy (`@repo/ui/empty`, "No results.", "No … yet") beyond what the answered render shows | `redirect-only` |
 | **B4** | error ≠ empty ≠ endless skeleton | with every read answered **500** — on the cold load AND on the stale refetch a prefetched region makes later — `main` never keeps a skeleton or `aria-busy`, never shows empty copy the answered render does not, and never drops content without an error surface in its place | `redirect-only` |
 | **B5** | one failing read takes down one region | each of the page's OWN reads, failed alone, leaves text outside an error surface — no single read blanks every region | `redirect-only` |
@@ -461,10 +461,15 @@ that has not answered. B1, B3 and B4 report it **NOT MEASURED `answered-empty`**
 spec runs in an organisation of its own **seeded with two rows in every list** so that as few routes as
 possible answer empty. The persona's organisation cannot be used: `routes.spec.ts` keeps it empty for T5.
 
-**B1 compares structure, not wording.** The text check is the COUNT of text-bearing elements, not their
-content: a fallback label — an avatar's initials before the members read answers — changes the text
-and not the count, and is reported in the evidence (`onlyAnswered` / `onlyHeld`) rather than failed.
-B1's question is whether the region's data was in the first paint, not whether every label was.
+**B1's subject is the server render, because the held page may never hydrate.** Measured on the jobs
+slice: the first server action the shell sends is held, hydration stalls behind it, and what the user
+sees is the server HTML. Two things a CORRECT page renders differently there are not compared:
+`aria-busy` (every filtered list's server render is busy by design — `useFilterUrlSync` reports the URL
+unread until mount, #4980) and clock, date and initials text (it waits for hydration by design,
+`ClockSlot`). The text check therefore counts only CONTENT-bearing elements — four letters or more, no
+digit, no relative time — and fails only when the held render has FEWER of them. Both excluded signals
+stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`). The first calibration run failed
+the jobs slice on exactly those two, which is how they were found.
 
 **B2 is not the browser's CLS, because the browser's CLS cannot see a skeleton swap.** Layout
 Instability scores elements that exist in both frames and MOVE; a loading fallback replaced by the page
@@ -477,7 +482,9 @@ a skeleton cannot know how many rows the answer has, and a list that answers wit
 eight-row skeleton moves nothing on screen. Layout that survives the swap (a shell inside `main`) is in
 neither frame. The outline cannot see a one-column skeleton over a two-column page (F007), so B2 also
 counts the bordered or filled blocks, at least 64px tall and a fifth of the region wide, that sit side
-by side; the two counts must agree. **What B2 does not see**, stated: an inner arrangement that keeps
+by side; when either frame sets two or more side by side, the two counts must agree. (One filled
+skeleton box over a page with no bordered block — a canvas, plain text — is not a column question;
+the first run failed two such routes whose outlines matched.) **What B2 does not see**, stated: an inner arrangement that keeps
 the outline and the column count — a missing toolbar row above an otherwise matching table, for one —
 passes. The origin of the navigation is chosen so that the fallback painted is the route's OWN loading
 boundary: it shares every segment with the route above that boundary and differs at it. When the
@@ -489,11 +496,15 @@ interval. So the page's clock is moved six minutes — past every `staleTime` th
 page is told it is visible again, and whatever the refetch fails into is the second phase. Without it,
 "render the empty state on error" on the jobs slice would PASS forever.
 
-**B5 fails the page's reads, not the shell's.** A read that every route under the same shells makes is
-the shell's (the intersection over those routes, or over every route when fewer than three share the
-chain), and failing it on forty routes would measure the sidebar forty times. A page with at most one
+**B5 fails the page's reads, not the shell's.** A server action the build's server-reference manifest
+lists under EVERY page entry beneath the same shells is the shell's — a layout's client graph is
+bundled into every page under it — and so is any read every route under those shells made in the run
+(the intersection; over every route when fewer than three share the chain). Failing a shell read on
+forty routes would measure the sidebar forty times. The structural half came first from evidence: the
+intersection alone left seven shell polls on the jobs slice, because a poll that did not fire on one
+route fell out of it. A page with at most one
 read of its own has no sibling region for one failure to take down and PASSES on that structure, with
-the evidence saying so. A page with more than six reads of its own is NOT MEASURED with the count. The
+the evidence saying so. A page with more than eight reads of its own is NOT MEASURED with the count. The
 shell's own containment is NOT measured by B5 — that is a stated gap, owned by #6114.
 
 **The instrument before the tree.** `behaviourControl()` drives every predicate, through the same
