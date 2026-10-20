@@ -41,6 +41,10 @@
 //     `navigator.locks` arrives with #6115's real-time client, which already falls back when it is
 //     absent. A rule for them belongs with their first use, where its allow-entry can name the file;
 //   · `ee/` and every other app — the self-hosted surface is the console.
+// The comment stripper is a tokenizer, not a parser: an apostrophe in JSX text or a regex literal
+// can be misread as a quote. A misread that opens a string keeps text, so it can only add a
+// finding; one that leaves a real string's `//` (a URL in JSX text) looking like code drops the rest
+// of that one line. A quote string is closed at its line's end, so no misread outlives the line.
 //
 // ALLOWED is checked in BOTH directions: an entry whose file no longer matches its rule fails as
 // stale, so an exception cannot outlive the code it excuses.
@@ -241,6 +245,8 @@ function selfTest() {
 		["optional chaining and globalThis are caught", [[C, "globalThis.crypto?.randomUUID();"]], ["randomUUID"], 0],
 		["a URL in a string does not hide the call after it", [[C, 'const u = "http://x"; crypto.randomUUID();']], ["randomUUID"], 0],
 		["a line comment is not code", [[C, "// crypto.randomUUID() is undefined over HTTP"]], [], 0],
+		["a comment inside a template expression is not code", [[C, "const s = `a${/* crypto.randomUUID() */ b}`;"]], [], 0],
+		["a nested template does not end the outer one", [[C, "const s = `a${`b`}c`; // crypto.randomUUID()"]], [], 0],
 		["a block comment is not code", [[C, "/**\n * crypto.randomUUID()\n */\nconst a = 1;"]], [], 0],
 		["node:crypto's randomUUID is not matched", [[C, 'import { randomUUID } from "node:crypto";\nrandomUUID();']], [], 0],
 		["a server-only module is exempt", [[C, 'import "server-only";\ncrypto.randomUUID();']], [], 0],
