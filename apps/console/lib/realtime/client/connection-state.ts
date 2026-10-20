@@ -29,16 +29,20 @@ export function isTerminal(state: ConnectionState): boolean {
 	return state === "signed-out" || state === "removed";
 }
 
-/** A state and the moment it was entered (ms since the epoch, from the store's clock). */
+/** A state, the moment it was entered (ms since the epoch, from the store's clock), and whether this
+ * runtime has been live at all yet (a slow FIRST connect is "connecting", not "paused"). */
 export interface ConnectionSnapshot {
 	state: ConnectionState;
 	since: number;
+	hasBeenLive: boolean;
 }
 
 /** A minimal external store over {@link ConnectionSnapshot}, shaped for `useSyncExternalStore`. */
 export interface ConnectionStore {
 	get(): ConnectionSnapshot;
 	set(state: ConnectionState): void;
+	/** Back to a first connect: `connecting`, never live. Called when a runtime starts. */
+	reset(): void;
 	subscribe(listener: () => void): () => void;
 }
 
@@ -47,14 +51,21 @@ export interface ConnectionStore {
  * state was ENTERED, which is what "non-live for longer than N seconds" is measured from.
  */
 export function createConnectionStore(now: () => number = () => Date.now()): ConnectionStore {
-	let snapshot: ConnectionSnapshot = { state: "connecting", since: now() };
+	let snapshot: ConnectionSnapshot = { state: "connecting", since: now(), hasBeenLive: false };
 	const listeners = new Set<() => void>();
+	const notify = () => {
+		for (const listener of listeners) listener();
+	};
 	return {
 		get: () => snapshot,
 		set(state) {
 			if (state === snapshot.state) return;
-			snapshot = { state, since: now() };
-			for (const listener of listeners) listener();
+			snapshot = { state, since: now(), hasBeenLive: snapshot.hasBeenLive || state === "live" };
+			notify();
+		},
+		reset() {
+			snapshot = { state: "connecting", since: now(), hasBeenLive: false };
+			notify();
 		},
 		subscribe(listener) {
 			listeners.add(listener);

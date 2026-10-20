@@ -134,8 +134,10 @@ describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => 
 		}
 	}
 
-	const leaseTab = (id: string, name = "alethia-events:acme") =>
-		tab((onLead) => electLeader({ name, locks: null, openChannel, onLead, tabId: id, random: () => 0 }));
+	const leaseTab = (id: string, visible: () => boolean = () => true, name = "alethia-events:u1:acme") =>
+		tab((onLead) =>
+			electLeader({ name, locks: null, openChannel, onLead, tabId: id, random: () => 0, isVisible: visible }),
+		);
 
 	it("a lone tab claims after about one beat", async () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
@@ -196,6 +198,79 @@ describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => 
 		await advance((LEASE_MISSED_BEATS - 1) * LEASE_BEAT_MS);
 		expect(b.record.leading).toBe(false);
 		await advance(2 * LEASE_BEAT_MS + 500);
+		expect(b.record.leading).toBe(true);
+		b.election.stop();
+	});
+
+	it("works where crypto.randomUUID does not exist (an insecure context), with no injected tab id", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+		const real = globalThis.crypto;
+		// What a plain-HTTP page has: getRandomValues, and no randomUUID.
+		vi.stubGlobal("crypto", { getRandomValues: (a: Uint8Array) => real.getRandomValues(a) });
+		try {
+			let election: Election | undefined;
+			const a = tab((onLead) => {
+				election = electLeader({ name: "alethia-events:u1:acme", locks: null, openChannel, onLead });
+				return election;
+			});
+			await advance(LEASE_BEAT_MS + 500);
+			expect(a.record.leading).toBe(true);
+			election?.stop();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("two leaders that meet: the visible one keeps it over a hidden one with a LOWER id", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+		let aVisible = true;
+		const a = leaseTab("a", () => aVisible);
+		const z = leaseTab("z");
+		// A partition: both claim without hearing each other.
+		opened[0]!.muted = true;
+		opened[1]!.muted = true;
+		await advance(2 * LEASE_BEAT_MS);
+		expect([a.record.leading, z.record.leading]).toEqual([true, true]);
+		aVisible = false; // a goes to the background, still inside its grace
+		opened[0]!.muted = false;
+		opened[1]!.muted = false;
+		await advance(2 * LEASE_BEAT_MS);
+		expect([a.record.leading, z.record.leading]).toEqual([false, true]);
+		a.election.stop();
+		z.election.stop();
+	});
+
+	it("a hidden leader yields after the grace, a visible follower takes over, and the hidden one does not reclaim", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+		let aVisible = true;
+		const a = leaseTab("a", () => aVisible);
+		await advance(2 * LEASE_BEAT_MS);
+		const b = leaseTab("b");
+		await advance(3 * LEASE_BEAT_MS);
+		expect([a.record.leading, b.record.leading]).toEqual([true, false]);
+		aVisible = false;
+		await advance(8000);
+		expect(a.record.leading).toBe(true); // inside the 10 s grace: still leading
+		await advance(4 * LEASE_BEAT_MS);
+		expect([a.record.leading, b.record.leading]).toEqual([false, true]);
+		await advance(10 * LEASE_BEAT_MS);
+		expect([a.record.leads, b.record.leads]).toEqual([1, 1]); // no flapping
+		a.election.stop();
+		b.election.stop();
+	});
+
+	it("a hidden follower never claims, even when the leader is gone; it claims once it is looked at", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval", "Date"] });
+		let bVisible = false;
+		const a = leaseTab("a");
+		await advance(2 * LEASE_BEAT_MS);
+		const b = leaseTab("b", () => bVisible);
+		await advance(2 * LEASE_BEAT_MS);
+		a.election.stop();
+		await advance(10 * LEASE_BEAT_MS);
+		expect(b.record.leads).toBe(0); // never, not "not at the end" (a hidden leader would yield)
+		bVisible = true;
+		await advance(2 * LEASE_BEAT_MS);
 		expect(b.record.leading).toBe(true);
 		b.election.stop();
 	});

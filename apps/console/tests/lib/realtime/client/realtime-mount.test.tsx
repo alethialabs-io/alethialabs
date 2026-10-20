@@ -8,10 +8,20 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({
+/** The hoisted state the mocks read. */
+interface Hoisted {
+	pathname: string;
+	viewerId: string | null;
+	refresh: ReturnType<typeof vi.fn>;
+	starts: Array<{ userId: string; tenant: string; queryClient: unknown; onRemoved: () => void }>;
+	stops: ReturnType<typeof vi.fn>;
+}
+
+const h = vi.hoisted((): Hoisted => ({
 	pathname: "/acme/~/jobs",
+	viewerId: "u1",
 	refresh: vi.fn(),
-	starts: new Array<{ tenant: string; queryClient: unknown; onRemoved: () => void }>(),
+	starts: [],
 	stops: vi.fn(),
 }));
 
@@ -19,11 +29,14 @@ vi.mock("next/navigation", () => {
 	const router = { refresh: h.refresh };
 	return { usePathname: () => h.pathname, useRouter: () => router };
 });
+vi.mock("@/components/providers/viewer-provider", () => ({
+	useViewer: () => ({ viewer: h.viewerId === null ? null : { id: h.viewerId }, isPending: false }),
+}));
 vi.mock("@/lib/rpc/client", () => ({
 	tenantSegment: (p: string) => p.split("/")[1] || "~",
 }));
 vi.mock("@/lib/realtime/client/runtime", () => ({
-	startRealtime: (o: { tenant: string; queryClient: unknown; onRemoved: () => void }) => {
+	startRealtime: (o: { userId: string; tenant: string; queryClient: unknown; onRemoved: () => void }) => {
 		h.starts.push(o);
 		return h.stops;
 	},
@@ -39,6 +52,8 @@ describe("RealtimeMount", () => {
 		h.stops.mockClear();
 		h.refresh.mockClear();
 		h.pathname = "/acme/~/jobs";
+		h.viewerId = "u1";
+		connectionStore.reset();
 		connectionStore.set("live");
 	});
 	afterEach(() => {
@@ -60,6 +75,28 @@ describe("RealtimeMount", () => {
 		expect(h.starts.map((s) => s.tenant)).toEqual(["acme", "globex"]);
 		expect(h.starts[1]!.queryClient).toBe(getQueryClient("globex"));
 		expect(h.starts[1]!.queryClient).not.toBe(h.starts[0]!.queryClient);
+	});
+
+	it("is keyed on the person too: another account restarts it, nobody signed in starts nothing", () => {
+		const { rerender } = render(<RealtimeMount />);
+		h.viewerId = "u2";
+		rerender(<RealtimeMount />);
+		expect(h.starts.map((s) => `${s.userId}:${s.tenant}`)).toEqual(["u1:acme", "u2:acme"]);
+		expect(h.stops).toHaveBeenCalledTimes(1);
+		h.viewerId = null;
+		rerender(<RealtimeMount />);
+		expect(h.starts).toHaveLength(2);
+		expect(h.stops).toHaveBeenCalledTimes(2);
+	});
+
+	it("a slow FIRST connect says \"Connecting…\", never \"paused\"", () => {
+		vi.useFakeTimers();
+		connectionStore.reset(); // a runtime that has not been live yet
+		render(<RealtimeMount />);
+		const region = screen.getByRole("status");
+		act(() => vi.advanceTimersByTime(3000));
+		expect(region).toHaveTextContent("Connecting…");
+		expect(region).not.toHaveTextContent("paused");
 	});
 
 	it("`removed` refreshes the route", () => {

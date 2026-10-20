@@ -13,6 +13,8 @@
 // on lines that are not comment-only lines:
 //   · `refetchInterval:` with any value but the literal `false` — TanStack's poll, number or
 //     function form;
+//   · the shorthand property `{ queryKey, refetchInterval }` (and `refetchInterval,` inside any
+//     object literal or destructuring — a destructured option is counted too, conservatively);
 //   · `setInterval(` — including `window.setInterval(` and `globalThis.x = setInterval(`.
 //     `clearInterval(` is not a match.
 // Counts are per file and per kind (`<file> :: refetchInterval`, `<file> :: setInterval`).
@@ -21,7 +23,10 @@
 //   · a recursive `setTimeout` that reschedules itself (a poll with no interval call in it);
 //   · a `useEffect` + `setTimeout` loop, and `router.refresh()` driven by anything but an interval;
 //   · a timer created in one file through a helper defined in another — it is counted in the file
-//     that calls `setInterval(`, which is where the ledger asks for its reason.
+//     that calls `setInterval(`, which is where the ledger asks for its reason;
+//   · an options object SPREAD into a query (`useQuery({ ...pollOptions })`) whose `refetchInterval`
+//     is set elsewhere — it is counted where the property is written, if that file is scanned, and
+//     not at all if it is built from a computed key (`{ [k]: 5000 }`).
 // The ledger cannot tell a data poll from a real timer by reading code: a `setInterval` is filed
 // under `timers` with a stated `reason` (a heartbeat, a sweeper, a clock tick) or under `polls` with
 // the lane that `lifts` it. That classification is a REVIEW question; what this script enforces is
@@ -76,7 +81,9 @@ function codeLines(source) {
 export function countPolls(source) {
 	const code = codeLines(source);
 	return {
-		refetchInterval: [...code.matchAll(/\brefetchInterval\s*:(?!\s*false\b)/g)].length,
+		refetchInterval:
+			[...code.matchAll(/\brefetchInterval\s*:(?!\s*false\b)/g)].length +
+			[...code.matchAll(/[{,]\s*refetchInterval\s*(?=[,}])/g)].length,
 		setInterval: [...code.matchAll(/\bsetInterval\s*\(/g)].length,
 	};
 }
@@ -171,6 +178,25 @@ export function verify(found, ledger, base) {
 	return errors;
 }
 
+/**
+ * Reads a base ledger's text: null (no ledger at the base yet) stays null; anything else must be a
+ * JSON object, and a ledger that EXISTS but does not parse throws — it must never quietly switch the
+ * shrink-only rule off.
+ */
+export function parseBaseLedger(text) {
+	if (text === null) return null;
+	let value;
+	try {
+		value = JSON.parse(text);
+	} catch (error) {
+		throw new Error(`the base branch's ${LEDGER_REL} exists but does not parse (${error.message})`);
+	}
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error(`the base branch's ${LEDGER_REL} is not a ledger object`);
+	}
+	return value;
+}
+
 /** The base branch's ledger; null when the ref exists but has no ledger yet. Throws when the ref is unreadable. */
 function readBase(ref) {
 	try {
@@ -181,11 +207,14 @@ function readBase(ref) {
 				"In a shallow checkout run `git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev` first.",
 		);
 	}
+	let exists = true;
 	try {
-		return JSON.parse(execFileSync("git", ["show", `${ref}:${LEDGER_REL}`], { cwd: ROOT, stdio: "pipe" }).toString());
+		execFileSync("git", ["cat-file", "-e", `${ref}:${LEDGER_REL}`], { cwd: ROOT, stdio: "pipe" });
 	} catch {
-		return null;
+		exists = false; // the base has no ledger yet: the change that introduces it
 	}
+	if (!exists) return parseBaseLedger(null);
+	return parseBaseLedger(execFileSync("git", ["show", `${ref}:${LEDGER_REL}`], { cwd: ROOT, stdio: "pipe" }).toString());
 }
 
 /** Fixtures for the matcher and the rules: each must be classified as stated, or the instrument is blind. */
@@ -198,6 +227,9 @@ function selfTest() {
 		["window.setInterval(f, 10); globalThis.__x = setInterval (g, 5);", { refetchInterval: 0, setInterval: 2 }],
 		["clearInterval(handle);", { refetchInterval: 0, setInterval: 0 }],
 		["// a comment that says setInterval( and refetchInterval: 5\n * setInterval(x)", { refetchInterval: 0, setInterval: 0 }],
+		["const refetchInterval = 5000;\nuseQuery({ queryKey, refetchInterval })", { refetchInterval: 1, setInterval: 0 }],
+		["useQuery({\n\tqueryKey,\n\trefetchInterval,\n\tstaleTime: 0,\n})", { refetchInterval: 1, setInterval: 0 }],
+		["const opts = { refetchIntervalInBackground: true, refetchOnMount: false }", { refetchInterval: 0, setInterval: 0 }],
 	];
 	let failed = 0;
 	for (const [src, want] of matcher) {
@@ -231,6 +263,26 @@ function selfTest() {
 		["a timer without a reason fails", foundGood, (() => { const l = clone(good); l.timers["a.ts :: setInterval"].reason = "TODO"; return l; })(), null, 1],
 		["a poll without a lane fails", foundGood, (() => { const l = clone(good); delete l.polls["b.ts :: refetchInterval"].lifts; return l; })(), null, 1],
 	];
+	const baseCases = [
+		["no ledger at the base reads as none", null, "null"],
+		["a ledger that parses is returned", '{"polls":{}}', "object"],
+		["a ledger that exists but does not parse FAILS", "{ not json", "throws"],
+		["a base file that is not an object FAILS", "[]", "throws"],
+	];
+	for (const [name, text, want] of baseCases) {
+		let got;
+		try {
+			const value = parseBaseLedger(text);
+			got = value === null ? "null" : "object";
+		} catch {
+			got = "throws";
+		}
+		if (got !== want) {
+			failed++;
+			console.error(`✗ self-test (base): ${name} — expected ${want}, got ${got}`);
+		}
+	}
+
 	for (const [name, found, ledger, base, wantErrors] of rules) {
 		const errors = verify(found, ledger, base);
 		if (errors.length !== wantErrors) {
@@ -245,7 +297,9 @@ function selfTest() {
 		console.error("✗ self-test: the console scan found no intervals, or not the sanctioned fallback poll — the instrument is blind.");
 	}
 	if (failed) process.exit(1);
-	console.log(`✓ check-no-polling self-test: ${matcher.length} matcher fixtures and ${rules.length} rule fixtures classified correctly.`);
+	console.log(
+		`✓ check-no-polling self-test: ${matcher.length} matcher fixtures, ${baseCases.length} base-ledger fixtures and ${rules.length} rule fixtures classified correctly.`,
+	);
 }
 
 /** Seeds or refreshes the ledger from the tree, keeping every stated reason and lane. */

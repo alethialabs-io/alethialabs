@@ -18,25 +18,27 @@ vi.mock("@/lib/rpc/client", () => ({
 
 import { createConnectionStore } from "@/lib/realtime/client/connection-state";
 import type { ChannelLike, LockManagerLike } from "@/lib/realtime/client/leader";
-import { readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
+import { electionName, readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
 import { helloFrame, hintFrame, revokedFrame } from "@/lib/realtime/sse";
 
-/** One exclusive lock with a FIFO queue (enough for two tabs). */
+/** Exclusive locks by name, each with a FIFO queue — the Web Locks semantics the election relies on. */
 function memoryLocks(): LockManagerLike {
-	let held = false;
-	const queue: Array<() => void> = [];
+	const held = new Set<string>();
+	const queues = new Map<string, Array<() => void>>();
 	return {
-		request(_name, options, callback) {
+		request(name, options, callback) {
 			return new Promise((resolve, reject) => {
 				const grant = () => {
-					held = true;
+					held.add(name);
 					void callback().then(() => {
-						held = false;
-						queue.shift()?.();
+						held.delete(name);
+						queues.get(name)?.shift()?.();
 						resolve(undefined);
 					});
 				};
-				if (!held) return grant();
+				if (!held.has(name)) return grant();
+				const queue = queues.get(name) ?? [];
+				queues.set(name, queue);
 				queue.push(grant);
 				options.signal?.addEventListener("abort", () => {
 					const i = queue.indexOf(grant);
@@ -61,13 +63,16 @@ afterEach(() => {
 	for (const c of channels.splice(0)) c.close();
 });
 
-/** A fake events route: each stream request gets a body the test writes to. */
-function eventsServer() {
+/** A fake events route: each stream request gets a body the test writes to; `refusals` answers the
+ * first stream requests with those statuses instead. */
+function eventsServer(refusals: number[] = []) {
 	const enc = new TextEncoder();
 	const streams: Array<{ url: string; write: (t: string) => void }> = [];
 	const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
 		const url = String(input);
 		if (url.includes("probe=1")) return new Response(null, { status: 204 });
+		const refused = refusals.shift();
+		if (refused !== undefined) return new Response(null, { status: refused });
 		let controller!: ReadableStreamDefaultController<Uint8Array>;
 		const body = new ReadableStream<Uint8Array>({
 			start(c) {
@@ -91,7 +96,8 @@ describe("startRealtime", () => {
 			const stores = [createConnectionStore(), createConnectionStore()];
 			const stops = clients.map((queryClient, i) =>
 				startRealtime({
-					tenant: "acme",
+					userId: "u1",
+				tenant: "acme",
 					queryClient,
 					onRemoved: () => {},
 					store: stores[i],
@@ -128,6 +134,7 @@ describe("startRealtime", () => {
 			const otherSpy = vi.spyOn(other, "invalidateQueries");
 			const store = createConnectionStore();
 			const stop = startRealtime({
+				userId: "u1",
 				tenant: "acme",
 				queryClient: acme,
 				onRemoved: () => {},
@@ -143,6 +150,7 @@ describe("startRealtime", () => {
 			// The address moves to another org while acme's hint is still inside its window.
 			stop();
 			const stopOther = startRealtime({
+				userId: "u1",
 				tenant: "other",
 				queryClient: other,
 				onRemoved: () => {},
@@ -168,6 +176,7 @@ describe("startRealtime", () => {
 		const removed = [vi.fn(), vi.fn()];
 		const stops = removed.map((onRemoved) =>
 			startRealtime({
+				userId: "u1",
 				tenant: "acme",
 				queryClient: new QueryClient(),
 				onRemoved,
@@ -183,6 +192,167 @@ describe("startRealtime", () => {
 		await vi.waitFor(() => expect(removed[1]).toHaveBeenCalledTimes(1));
 		expect(removed[0]).toHaveBeenCalledTimes(1);
 		for (const stop of stops) stop();
+	});
+});
+
+describe("startRealtime — terminal states, identity, failure and bfcache", () => {
+	it("a leader that goes signed-out LEAVES the election: a tab opened later leads and goes live", async () => {
+		const locks = memoryLocks();
+		const server = eventsServer([401]);
+		const storeA = createConnectionStore();
+		const stopA = startRealtime({
+			userId: "u1",
+			tenant: "acme",
+			queryClient: new QueryClient(),
+			onRemoved: () => {},
+			store: storeA,
+			locks,
+			openChannel,
+			fetch: server.fetchImpl,
+			isVisible: () => true,
+		});
+		await vi.waitFor(() => expect(storeA.get().state).toBe("signed-out"));
+		// After a fresh sign-in, a new tab of the same person and org:
+		const storeB = createConnectionStore();
+		const stopB = startRealtime({
+			userId: "u1",
+			tenant: "acme",
+			queryClient: new QueryClient(),
+			onRemoved: () => {},
+			store: storeB,
+			locks,
+			openChannel,
+			fetch: server.fetchImpl,
+			isVisible: () => true,
+		});
+		await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+		server.streams[0]!.write(helloFrame("b1", "s.0"));
+		await vi.waitFor(() => expect(storeB.get().state).toBe("live"));
+		// ...and A, no longer a leader, never answered B's `sync` with its terminal state.
+		await new Promise((r) => setTimeout(r, 20));
+		expect(storeB.get().state).toBe("live");
+		stopA();
+		stopB();
+	});
+
+	it("two people signed in to one browser, one org: two elections, two streams", async () => {
+		const locks = memoryLocks();
+		const server = eventsServer();
+		const stops = ["u1", "u2"].map((userId) =>
+			startRealtime({
+				userId,
+				tenant: "acme",
+				queryClient: new QueryClient(),
+				onRemoved: () => {},
+				store: createConnectionStore(),
+				locks,
+				openChannel,
+				fetch: server.fetchImpl,
+				isVisible: () => true,
+			}),
+		);
+		await vi.waitFor(() => expect(server.streams).toHaveLength(2));
+		expect(electionName("u1", "acme")).not.toBe(electionName("u2", "acme"));
+		for (const stop of stops) stop();
+	});
+
+	it("never throws: a primitive that fails degrades to the fallback poll and closes what it opened", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+		try {
+			const opened: Array<{ name: string; closed: boolean }> = [];
+			const flakyChannel = (name: string): ChannelLike => {
+				if (name.endsWith(":lease")) throw new Error("no channel for you");
+				const entry = { name, closed: false };
+				opened.push(entry);
+				return {
+					postMessage: () => {},
+					addEventListener: () => {},
+					removeEventListener: () => {},
+					close: () => {
+						entry.closed = true;
+					},
+				};
+			};
+			const client = new QueryClient();
+			const spy = vi.spyOn(client, "invalidateQueries");
+			const store = createConnectionStore();
+			let stop: (() => void) | undefined;
+			expect(() => {
+				stop = startRealtime({
+					userId: "u1",
+					tenant: "acme",
+					queryClient: client,
+					onRemoved: () => {},
+					store,
+					locks: null, // the insecure-context path, whose channel will not open
+					openChannel: flakyChannel,
+					fetch: eventsServer().fetchImpl,
+					isVisible: () => true,
+					pageEvents: null,
+				});
+			}).not.toThrow();
+			expect(store.get().state).toBe("degraded");
+			expect(opened).toEqual([{ name: electionName("u1", "acme"), closed: true }]);
+			await vi.advanceTimersByTimeAsync(15_000);
+			expect(spy).toHaveBeenCalledWith({ queryKey: ["jobs-orpc"], refetchType: "active" });
+			stop?.();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("a restart clears a `removed` left by the previous runtime", () => {
+		const store = createConnectionStore();
+		store.set("live");
+		store.set("removed");
+		expect(store.get().hasBeenLive).toBe(true);
+		const stop = startRealtime({
+			userId: "u1",
+			tenant: "acme",
+			queryClient: new QueryClient(),
+			onRemoved: () => {},
+			store,
+			locks: memoryLocks(),
+			openChannel,
+			fetch: eventsServer().fetchImpl,
+			isVisible: () => true,
+			pageEvents: null,
+		});
+		expect(store.get()).toMatchObject({ state: "connecting", hasBeenLive: false });
+		stop();
+	});
+
+	it("a bfcache restore (`pageshow` persisted) rejoins the election and resyncs", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const server = eventsServer();
+			const page = new EventTarget();
+			const client = new QueryClient();
+			const spy = vi.spyOn(client, "invalidateQueries");
+			const stop = startRealtime({
+				userId: "u1",
+				tenant: "acme",
+				queryClient: client,
+				onRemoved: () => {},
+				store: createConnectionStore(),
+				locks: memoryLocks(),
+				openChannel,
+				fetch: server.fetchImpl,
+				isVisible: () => true,
+				pageEvents: page,
+			});
+			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			page.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: false }));
+			await vi.advanceTimersByTimeAsync(3000);
+			expect(server.streams).toHaveLength(1); // an ordinary load is not a restore
+			page.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
+			await vi.waitFor(() => expect(server.streams).toHaveLength(2));
+			await vi.advanceTimersByTimeAsync(3000);
+			expect(spy).toHaveBeenCalledWith({ refetchType: "active" });
+			stop();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

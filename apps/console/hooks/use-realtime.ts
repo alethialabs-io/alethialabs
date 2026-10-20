@@ -16,12 +16,14 @@ const INDICATOR_DELAY_MS = 3000;
 /** What the shell shows about live updates. */
 export interface RealtimeConnection {
 	state: ConnectionState;
+	/** Whether this org's stream has said hello at least once since the shell started it. */
+	hasBeenLive: boolean;
 	/** True once the stream has been non-live for longer than {@link INDICATOR_DELAY_MS}. */
 	noticeable: boolean;
 }
 
 /** The server render and hydration always read "connecting since 0", so they agree. */
-const SERVER_SNAPSHOT: ConnectionSnapshot = { state: "connecting", since: 0 };
+const SERVER_SNAPSHOT: ConnectionSnapshot = { state: "connecting", since: 0, hasBeenLive: false };
 
 /**
  * The org stream's connection state for the shell's indicator (#6115, ADR 0005 §10 R7). A blip
@@ -41,5 +43,5 @@ export function useRealtimeConnection(store: ConnectionStore = connectionStore):
 	const waited = elapsed.done && elapsed.since === snapshot.since;
 	const noticeable =
 		snapshot.state === "signed-out" || (snapshot.state !== "live" && snapshot.state !== "removed" && waited);
-	return { state: snapshot.state, noticeable };
+	return { state: snapshot.state, hasBeenLive: snapshot.hasBeenLive, noticeable };
 }

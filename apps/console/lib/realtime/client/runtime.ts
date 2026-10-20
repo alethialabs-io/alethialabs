@@ -17,7 +17,7 @@ import {
 	isTerminal,
 } from "./connection-state";
 import { startFallbackPoll } from "./fallback-poll";
-import { type ChannelLike, electLeader, type LockManagerLike } from "./leader";
+import { type ChannelLike, type Election, electLeader, type LockManagerLike } from "./leader";
 import { runStream, type StreamPosition } from "./stream";
 
 /** What the leader tab tells the others. */
@@ -89,6 +89,9 @@ function tabVisible(): boolean {
 
 /** What {@link startRealtime} needs. */
 export interface RealtimeOptions {
+	/** The signed-in person: the election and the relay are theirs alone, never shared with
+	 * another account signed in to the same browser. */
+	userId: string;
 	/** The org segment of the address (`acme`, or `~` for the personal scope). */
 	tenant: string;
 	/** That org's QueryClient, captured once: a late hint for org A must never reach org B's cache. */
@@ -100,97 +103,158 @@ export interface RealtimeOptions {
 	openChannel?: (name: string) => ChannelLike | null;
 	fetch?: typeof fetch;
 	isVisible?: () => boolean;
+	/** Where `pageshow` fires (the window); a bfcache restore rejoins the election and resyncs. */
+	pageEvents?: EventTarget | null;
 }
 
-/** Starts the org's real-time client; returns the stop function. */
+/** The name of one person's election and relay for one org. */
+export function electionName(userId: string, tenant: string): string {
+	return `alethia-events:${encodeURIComponent(userId)}:${tenant}`;
+}
+
+/** Whether a `pageshow` event is a restore from the back/forward cache. */
+function restoredFromCache(event: Event): boolean {
+	return "persisted" in event && event.persisted === true;
+}
+
+/**
+ * Starts the org's real-time client; returns the stop function. It never throws: if any part of it
+ * cannot start (a browser without a primitive it expects, a channel that will not open), what was
+ * opened is closed again and the tab falls back to the sanctioned poll with the indicator showing.
+ */
 export function startRealtime(options: RealtimeOptions): () => void {
 	const store = options.store ?? connectionStore;
 	const isVisible = options.isVisible ?? tabVisible;
 	const openChannel = options.openChannel ?? browserChannel;
-	const name = `alethia-events:${options.tenant}`;
+	const pageEvents =
+		options.pageEvents === undefined ? (typeof window === "undefined" ? null : window) : options.pageEvents;
+	const name = electionName(options.userId, options.tenant);
 	const url = `/${encodeURIComponent(options.tenant)}/~/events`;
 
-	store.set("connecting");
+	store.reset(); // a new runtime starts from a first connect: a previous `removed` does not carry over
 	const coalescer = createCoalescer({ queryClient: options.queryClient, topicKeys: TOPIC_KEYS, isVisible });
-	const relay = openChannel(name);
-	let position: StreamPosition | undefined;
-	let removedNoted = false;
+	const stopPoll = startFallbackPoll({ store, isVisible, refresh: () => coalescer.refreshAll() });
 
-	const applyState = (state: ConnectionState) => {
-		store.set(state);
-		if (state === "removed" && !removedNoted) {
-			removedNoted = true;
-			options.onRemoved();
+	// Everything opened below registers its undo here, so every exit path closes all of it.
+	const undo: Array<() => void> = [];
+	const teardown = () => {
+		for (const step of undo.splice(0).reverse()) {
+			try {
+				step();
+			} catch {
+				/* closing is best effort */
+			}
 		}
 	};
 
-	const onRelay = (event: MessageEvent) => {
-		const message = readRelayMessage(event.data);
-		if (!message) return;
-		switch (message.type) {
-			case "hint":
-				coalescer.hint(message.hint);
-				return;
-			case "resync":
-				coalescer.resync();
-				return;
-			case "state":
-				applyState(message.state);
-				return;
-			case "position":
-				position = message.position;
-				return;
-			case "sync":
-				// A tab that just joined asks the leader where things stand.
-				if (election.isLeader()) {
-					relay?.postMessage({ type: "state", state: store.get().state });
-					if (position) relay?.postMessage({ type: "position", position });
-				}
-				return;
-		}
-	};
-	relay?.addEventListener("message", onRelay);
+	try {
+		const relay = openChannel(name);
+		if (relay) undo.push(() => relay.close());
+		let position: StreamPosition | undefined;
+		let removedNoted = false;
+		let election: Election | null = null;
 
-	const election = electLeader({
-		name,
-		locks: options.locks === undefined ? browserLocks() : options.locks,
-		openChannel,
-		onLead(signal) {
-			void runStream({
-				url,
-				signal,
-				initial: position,
-				fetch: options.fetch,
-				onState(state) {
-					if (signal.aborted) return;
-					applyState(state);
-					relay?.postMessage({ type: "state", state });
-				},
-				onHint(hint) {
-					coalescer.hint(hint);
-					relay?.postMessage({ type: "hint", hint });
-				},
-				onResync() {
+		const applyState = (state: ConnectionState) => {
+			store.set(state);
+			if (state === "removed" && !removedNoted) {
+				removedNoted = true;
+				options.onRemoved();
+			}
+		};
+
+		const onRelay = (event: MessageEvent) => {
+			const message = readRelayMessage(event.data);
+			if (!message) return;
+			switch (message.type) {
+				case "hint":
+					coalescer.hint(message.hint);
+					return;
+				case "resync":
 					coalescer.resync();
-					relay?.postMessage({ type: "resync" });
-				},
-				onPosition(next) {
-					position = next;
-					relay?.postMessage({ type: "position", position: next });
+					return;
+				case "state":
+					applyState(message.state);
+					return;
+				case "position":
+					position = message.position;
+					return;
+				case "sync":
+					// A tab that just joined asks the leader where things stand. Only a LEADER answers,
+					// and a leader that reached a terminal state has already left the election.
+					if (election?.isLeader()) {
+						relay?.postMessage({ type: "state", state: store.get().state });
+						if (position) relay?.postMessage({ type: "position", position });
+					}
+					return;
+			}
+		};
+		if (relay) {
+			relay.addEventListener("message", onRelay);
+			undo.push(() => relay.removeEventListener("message", onRelay));
+		}
+
+		const join = (): Election =>
+			electLeader({
+				name,
+				locks: options.locks === undefined ? browserLocks() : options.locks,
+				openChannel,
+				isVisible,
+				onLead(signal) {
+					void runStream({
+						url,
+						signal,
+						initial: position,
+						fetch: options.fetch,
+						onState(state) {
+							if (signal.aborted) return;
+							applyState(state);
+							relay?.postMessage({ type: "state", state });
+							// Terminal: nothing this tab can do brings the stream back, so it gives up
+							// leadership. A tab opened later (a fresh sign-in, say) must be able to lead.
+							if (isTerminal(state)) election?.stop();
+						},
+						onHint(hint) {
+							coalescer.hint(hint);
+							relay?.postMessage({ type: "hint", hint });
+						},
+						onResync() {
+							coalescer.resync();
+							relay?.postMessage({ type: "resync" });
+						},
+						onPosition(next) {
+							position = next;
+							relay?.postMessage({ type: "position", position: next });
+						},
+					});
 				},
 			});
-		},
-	});
-	relay?.postMessage({ type: "sync" });
+		election = join();
+		undo.push(() => election?.stop());
+		relay?.postMessage({ type: "sync" });
 
-	const stopPoll = startFallbackPoll({ store, isVisible, refresh: () => coalescer.refreshAll() });
+		// A page restored from the back/forward cache missed everything relayed while it was frozen,
+		// and its place in the election may be stale: rejoin, ask where things stand, and resync.
+		if (pageEvents) {
+			const onPageShow = (event: Event) => {
+				if (!restoredFromCache(event)) return;
+				election?.stop();
+				store.reset();
+				election = join();
+				relay?.postMessage({ type: "sync" });
+				coalescer.resync();
+			};
+			pageEvents.addEventListener("pageshow", onPageShow);
+			undo.push(() => pageEvents.removeEventListener("pageshow", onPageShow));
+		}
+	} catch {
+		// Never into the shell's error boundary: degrade to the fallback poll, with the indicator up.
+		teardown();
+		store.set("degraded");
+	}
 
 	return () => {
 		stopPoll();
-		election.stop();
+		teardown();
 		coalescer.dispose();
-		relay?.removeEventListener("message", onRelay);
-		relay?.close();
-		if (!isTerminal(store.get().state)) store.set("connecting");
 	};
 }

@@ -11,7 +11,10 @@
 //   away (closed, crashed, discarded) the browser hands the lock to the next tab in the queue.
 // - A BroadcastChannel LEASE for an insecure context (a self-host served over plain HTTP — the very
 //   case R8 is about): the leader beats every 2 s; a tab that hears no beat for 3 beats claims after
-//   a random 0–500 ms; two leaders that hear each other resolve to the lowest tab id.
+//   a random 0–500 ms; two leaders that hear each other resolve to the VISIBLE one, then to the
+//   lowest tab id. A hidden tab never claims, and a hidden leader yields after a short grace: a
+//   browser throttles a hidden tab's timers (to once a minute after a while), and a leader whose beat
+//   slows to that would otherwise be presumed gone and re-elected over and over.
 
 /** The slice of `navigator.locks` the election uses. */
 export interface LockManagerLike {
@@ -31,10 +34,22 @@ export const LEASE_BEAT_MS = 2000;
 export const LEASE_MISSED_BEATS = 3;
 /** The random spread before a claim, so tabs that noticed together do not all claim together. */
 const LEASE_CLAIM_JITTER_MS = 500;
+/** How long a lease leader may stay hidden before it yields to a visible tab. */
+const LEASE_HIDDEN_GRACE_MS = 10_000;
+
+/**
+ * A random tab id. Built from `crypto.getRandomValues`, which every context has, and NOT from
+ * `crypto.randomUUID`, which exists only in a secure context — the lease exists for the insecure one.
+ */
+function randomTabId(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** What {@link electLeader} needs. */
 export interface LeaderOptions {
-	/** The election's name — one per org (`alethia-events:<tenant>`). */
+	/** The election's name — one per person per org (`alethia-events:<userId>:<tenant>`). */
 	name: string;
 	/** Called when this tab becomes the leader. `signal` aborts when it stops leading. */
 	onLead(signal: AbortSignal): void;
@@ -45,6 +60,8 @@ export interface LeaderOptions {
 	tabId?: string;
 	random?: () => number;
 	now?: () => number;
+	/** Whether this tab is being looked at (the lease prefers a visible leader). */
+	isVisible?: () => boolean;
 }
 
 /** A running election. */
@@ -55,12 +72,19 @@ export interface Election {
 }
 
 /** Narrows a lease message. */
-function leaseMessage(data: unknown): { type: "beat" | "release"; tab: string } | null {
+function leaseMessage(data: unknown): { type: "beat" | "release"; tab: string; visible: boolean } | null {
 	if (typeof data !== "object" || data === null) return null;
 	const type = "type" in data ? data.type : undefined;
 	const tab = "tab" in data ? data.tab : undefined;
+	const visible = "visible" in data ? data.visible === true : false;
 	if ((type !== "beat" && type !== "release") || typeof tab !== "string") return null;
-	return { type, tab };
+	return { type, tab, visible };
+}
+
+/** Whether leader `a` keeps the lease over leader `b`: a visible tab wins, then the lower id. */
+function outranks(a: { tab: string; visible: boolean }, b: { tab: string; visible: boolean }): boolean {
+	if (a.visible !== b.visible) return a.visible;
+	return a.tab < b.tab;
 }
 
 /** Elects this tab's org leader with Web Locks when it can, the lease when it cannot. */
@@ -102,7 +126,8 @@ function lockElection(options: LeaderOptions, locks: LockManagerLike): Election 
 function leaseElection(options: LeaderOptions): Election {
 	const random = options.random ?? Math.random;
 	const now = options.now ?? Date.now;
-	const me = options.tabId ?? crypto.randomUUID();
+	const isVisible = options.isVisible ?? (() => true);
+	const me = options.tabId ?? randomTabId();
 	const channel = options.openChannel(`${options.name}:lease`);
 
 	let lead: AbortController | null = null;
@@ -111,8 +136,9 @@ function leaseElection(options: LeaderOptions): Election {
 	// a tab alone claims after about one beat rather than three.
 	let lastBeatAt = now() - (LEASE_MISSED_BEATS - 1) * LEASE_BEAT_MS;
 	let claimTimer: ReturnType<typeof setTimeout> | null = null;
+	let hiddenSince: number | null = null;
 
-	const beat = () => channel?.postMessage({ type: "beat", tab: me });
+	const beat = () => channel?.postMessage({ type: "beat", tab: me, visible: isVisible() });
 
 	const becomeLeader = () => {
 		if (stopped || lead) return;
@@ -148,8 +174,8 @@ function leaseElection(options: LeaderOptions): Election {
 			return;
 		}
 		if (lead) {
-			// Two leaders hear each other: the lower tab id keeps it, the other steps down.
-			if (message.tab < me) {
+			// Two leaders hear each other: the visible one keeps it, then the lower tab id.
+			if (outranks(message, { tab: me, visible: isVisible() })) {
 				stepDown();
 				lastBeatAt = now();
 			}
@@ -167,10 +193,20 @@ function leaseElection(options: LeaderOptions): Election {
 	const tick = setInterval(() => {
 		if (stopped) return;
 		if (lead) {
+			if (isVisible()) hiddenSince = null;
+			else hiddenSince ??= now();
+			if (hiddenSince !== null && now() - hiddenSince >= LEASE_HIDDEN_GRACE_MS) {
+				// Hidden too long: yield, so a visible tab with unthrottled timers leads instead.
+				channel.postMessage({ type: "release", tab: me });
+				stepDown();
+				hiddenSince = null;
+				lastBeatAt = now();
+				return;
+			}
 			beat();
 			return;
 		}
-		if (claimTimer !== null) return;
+		if (claimTimer !== null || !isVisible()) return; // a hidden tab never claims
 		if (now() - lastBeatAt < LEASE_MISSED_BEATS * LEASE_BEAT_MS) return;
 		claimTimer = setTimeout(() => {
 			claimTimer = null;
