@@ -46,34 +46,62 @@ async function compileGlobals(): Promise<string> {
   return result.css;
 }
 
-/** True when the compiled CSS carries a rule for exactly this utility class (not a variant of it). */
-function hasUtility(css: string, className: string): boolean {
-  return new RegExp(`(^|[\\s,}])\\.${className}\\s*\\{`, "m").test(css);
+/** Every selector in the compiled CSS, with its CSS escapes removed, so an arbitrary value reads as written. */
+function selectorsOf(css: string): Set<string> {
+  const selectors = new Set<string>();
+  postcss.parse(css).walkRules((rule) => {
+    selectors.add(rule.selector.replace(/\\(.)/g, "$1"));
+  });
+  return selectors;
 }
 
 /**
- * The classes under test, assembled from parts so that this file does not name them. Tailwind scans
+ * Class names under test, assembled from parts so that this file does not name them. Tailwind scans
  * every source file under apps/console, tests included: written out whole here, they would be
  * generated BECAUSE this test names them, and the test would pass with the @source line deleted.
  */
-const STREAMDOWN_ONLY = [
-  ["list", "disc"],
-  ["list", "inside"],
-  ["wrap", "anywhere"],
-].map((parts) => parts.join("-"));
+const assemble = (parts: string[]) => parts.join("");
 
 /**
- * #6194. These classes appear nowhere in console source (a decimal list does, in the canvas, so it
- * is not a witness); streamdown puts them on the lists and text it renders. They exist in the
- * console's CSS only if globals.css points Tailwind at streamdown's dist. Without them, preflight's
- * `list-style: none` wins and a chat list renders with no markers, and a long unbroken token
- * overflows the transcript.
+ * The witnesses that the @source line is what generates streamdown's classes. They come from
+ * streamdown's own namespace: its code-block and table colours read the `--sdm-*` properties that
+ * only streamdown sets, so no console file has a reason to write them. Generic utilities make poor
+ * witnesses: the two list classes asserted below are also generated from the release-notes
+ * renderer's own wrapper classes (#6187), with or without this line.
  */
+const STREAMDOWN_WITNESSES = [
+  ["bg-[var(--", "sdm-tbg)]"],
+  ["text-[var(--", "sdm-c,inherit)]"],
+].map(assemble);
+
+/**
+ * What streamdown's markdown needs from the console's CSS: list markers, which preflight's
+ * `list-style: none` otherwise removes, and wrapping for a long unbroken token. Whichever file
+ * generates them, the chat must get them.
+ */
+const STREAMDOWN_NEEDS = [
+  ["list-", "disc"],
+  ["list-", "inside"],
+  ["wrap-", "anywhere"],
+].map(assemble);
+
+/** #6194: streamdown's classes exist in the console's CSS only if globals.css scans its dist. */
 describe("globals.css scans streamdown's dist", () => {
+  it("generates the classes only streamdown's dist names", async () => {
+    const selectors = selectorsOf(await compileGlobals());
+    for (const witness of STREAMDOWN_WITNESSES) {
+      expect.soft(selectors.has(`.${witness}`), `.${witness} is missing from the compiled CSS`).toBe(
+        true,
+      );
+    }
+  }, 60_000);
+
   it("generates the list and wrapping classes streamdown applies to rendered markdown", async () => {
-    const css = await compileGlobals();
-    for (const utility of STREAMDOWN_ONLY) {
-      expect.soft(hasUtility(css, utility), `.${utility} is missing from the compiled CSS`).toBe(true);
+    const selectors = selectorsOf(await compileGlobals());
+    for (const utility of STREAMDOWN_NEEDS) {
+      expect.soft(selectors.has(`.${utility}`), `.${utility} is missing from the compiled CSS`).toBe(
+        true,
+      );
     }
   }, 60_000);
 
