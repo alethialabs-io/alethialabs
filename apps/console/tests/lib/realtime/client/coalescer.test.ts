@@ -8,6 +8,7 @@
 
 import { QueryClient, type QueryKey, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { until } from "./harness";
 import {
 	createCoalescer,
 	HINT_JITTER_MS,
@@ -70,7 +71,7 @@ describe("createCoalescer", () => {
 
 	it("50 hints on one topic → ONE invalidation, inside the jittered window", async () => {
 		const c = observedClient();
-		await vi.waitFor(() => expect(c.count(JOBS_KEY)).toBe(1)); // the observer's initial fetch
+		await until(() => c.count(JOBS_KEY) === 1, "the observer's initial fetch");
 		const spy = vi.spyOn(c.client, "invalidateQueries");
 		const co = createCoalescer({ queryClient: c.client, topicKeys, isVisible: () => true, random: () => 0 });
 		for (let i = 0; i < 50; i++) co.hint({ t: "jobs", id: `job-${i}` });
@@ -79,7 +80,7 @@ describe("createCoalescer", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(spy).toHaveBeenCalledTimes(1);
 		expect(spy).toHaveBeenCalledWith({ queryKey: JOBS_KEY, refetchType: "active" });
-		await vi.waitFor(() => expect(c.count(JOBS_KEY)).toBe(2));
+		await until(() => c.count(JOBS_KEY) === 2, "the one refetch");
 		expect(c.count(PROJECTS_KEY)).toBe(1); // another topic's query is untouched
 		co.dispose();
 		c.dispose();
@@ -87,7 +88,7 @@ describe("createCoalescer", () => {
 
 	it("a hidden tab marks stale and refetches NOTHING", async () => {
 		const c = observedClient();
-		await vi.waitFor(() => expect(c.count(JOBS_KEY)).toBe(1));
+		await until(() => c.count(JOBS_KEY) === 1, "the observer's initial fetch");
 		const co = createCoalescer({ queryClient: c.client, topicKeys, isVisible: () => false, random: () => 0 });
 		co.hint({ t: "jobs" });
 		await vi.advanceTimersByTimeAsync(HINT_WINDOW_MS + HINT_JITTER_MS);
@@ -100,7 +101,7 @@ describe("createCoalescer", () => {
 
 	it("visibility is read at FLUSH time: a tab hidden after the hint does not refetch", async () => {
 		const c = observedClient();
-		await vi.waitFor(() => expect(c.count(JOBS_KEY)).toBe(1));
+		await until(() => c.count(JOBS_KEY) === 1, "the observer's initial fetch");
 		let visible = true;
 		const co = createCoalescer({ queryClient: c.client, topicKeys, isVisible: () => visible, random: () => 0 });
 		co.hint({ t: "jobs" });

@@ -8,6 +8,7 @@
 // real ReadableStreams.
 
 import { describe, expect, it, vi } from "vitest";
+import { settle, until } from "./harness";
 
 vi.mock("server-only", () => ({}));
 
@@ -204,7 +205,8 @@ describe("runStream", () => {
 		const h = harness([() => s.response], () => new Response(null, { status: 204 }));
 		const run = runStream(h.options);
 		s.write(retryFrame(3000) + helloFrame("b1", "a.0") + hintFrame({ t: "jobs", id: JOB }, "a.1"));
-		await vi.waitFor(() => expect(h.hints).toEqual([{ t: "jobs", id: JOB }]));
+		await until(() => h.hints.length === 1, "the hint is delivered");
+		expect(h.hints).toEqual([{ t: "jobs", id: JOB }]);
 		expect(h.states).toEqual(["connecting", "live"]);
 		expect(h.resyncs()).toBe(0);
 		h.abort.abort();
@@ -219,7 +221,7 @@ describe("runStream", () => {
 		first.write(retryFrame(4000) + helloFrame("b1", "a.0"));
 		first.close();
 		second.write(helloFrame("b1", "b.0"));
-		await vi.waitFor(() => expect(h.resyncs()).toBe(1));
+		await until(() => h.resyncs() === 1, "the second stream's hello resyncs");
 		expect(h.calls).toEqual(["/acme/~/events", "/acme/~/events?probe=1", "/acme/~/events"]);
 		expect(h.sleeps).toEqual([4000]);
 		expect(h.states).toEqual(["connecting", "live", "reconnecting", "live"]);
@@ -294,21 +296,32 @@ describe("runStream", () => {
 	});
 
 	it("heartbeats keep a stream alive; silence past the stall window drops and reopens it", async () => {
-		const first = openBody();
-		const second = openBody();
-		const h = harness([() => first.response, () => second.response], () => new Response(null, { status: 204 }));
-		const run = runStream({ ...h.options, stallMs: 300 });
-		first.write(helloFrame("b1", "a.0"));
-		// 400 ms of heartbeats every 50 ms (window 300 ms): each re-arms it, so the stream is NOT dropped.
-		for (let i = 0; i < 8; i++) {
-			await new Promise((r) => setTimeout(r, 50));
-			first.write(HEARTBEAT_FRAME);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const first = openBody();
+			const second = openBody();
+			const h = harness([() => first.response, () => second.response], () => new Response(null, { status: 204 }));
+			const run = runStream({ ...h.options, stallMs: 300 });
+			first.write(helloFrame("b1", "a.0"));
+			await until(() => h.states.includes("live"), "the first stream is live");
+			// 400 ms of heartbeats every 50 ms (window 300 ms): each re-arms it, so the stream is NOT dropped.
+			for (let i = 0; i < 8; i++) {
+				await vi.advanceTimersByTimeAsync(50);
+				first.write(HEARTBEAT_FRAME);
+				await settle(); // the chunk is read and re-arms the window
+			}
+			expect(h.calls).toEqual(["/acme/~/events"]);
+			// Then silence: dropped at exactly 300 ms after the last heartbeat, not before.
+			second.write(helloFrame("b1", "b.0"));
+			await vi.advanceTimersByTimeAsync(299);
+			await settle();
+			expect(h.calls).toEqual(["/acme/~/events"]);
+			await vi.advanceTimersByTimeAsync(1);
+			await until(() => h.resyncs() === 1, "the stalled stream is reopened and resyncs");
+			h.abort.abort();
+			await run;
+		} finally {
+			vi.useRealTimers();
 		}
-		expect(h.calls).toEqual(["/acme/~/events"]);
-		// Then silence: within 1.5 s (5 windows) the stream is taken for dead and reopened.
-		second.write(helloFrame("b1", "b.0"));
-		await vi.waitFor(() => expect(h.resyncs()).toBe(1), { timeout: 1500 });
-		h.abort.abort();
-		await run;
 	});
 });

@@ -3,13 +3,13 @@
 // @vitest-environment node
 
 // #6115 PR B: the runtime end to end in one process — two "tabs" of one org over an in-memory
-// lock and a real BroadcastChannel, a fake `fetch` serving the events route's real frames. Pins
+// lock and an in-memory BroadcastChannel, a fake `fetch` serving the events route's real frames. Pins
 // that only the leader opens a stream, that a follower's OWN QueryClient is invalidated from the
 // relay, that the client captured at start is the only one ever touched, and that `removed` asks
 // every tab to refresh.
 
 import { QueryClient } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/rpc/client", () => ({
@@ -21,6 +21,7 @@ import type { ChannelLike, LockManagerLike } from "@/lib/realtime/client/leader"
 import { electLeader, newElectionRegistry } from "@/lib/realtime/client/leader";
 import { electionName, newDocumentScope, readRelayMessage, startRealtime } from "@/lib/realtime/client/runtime";
 import { FakeWebLocks } from "./fake-web-locks";
+import { memoryChannels, settle, until } from "./harness";
 import { helloFrame, hintFrame, revokedFrame } from "@/lib/realtime/sse";
 
 /** Exclusive locks by name, each with a FIFO queue — the Web Locks semantics the election relies on. */
@@ -54,15 +55,15 @@ function memoryLocks(): LockManagerLike {
 	};
 }
 
-const channels: BroadcastChannel[] = [];
-const openChannel = (name: string): ChannelLike => {
-	const c = new BroadcastChannel(name);
-	channels.push(c);
-	return c;
-};
+// The cross-tab channel is in memory and delivers on a microtask: no real I/O, nothing timed.
+let hub = memoryChannels();
+const openChannel = (name: string): ChannelLike => hub.open(name);
 
+beforeEach(() => {
+	hub = memoryChannels();
+});
 afterEach(() => {
-	for (const c of channels.splice(0)) c.close();
+	vi.useRealTimers(); // also when a test fails before its own reset
 });
 
 /** A fake events route: each stream request gets a body the test writes to; `refusals` answers the
@@ -109,10 +110,10 @@ describe("startRealtime", () => {
 					isVisible: () => true,
 				}),
 			);
-			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 			expect(server.streams[0]!.url).toBe("/acme/~/events");
 			server.streams[0]!.write(helloFrame("b1", "s.0") + hintFrame({ t: "jobs", id: "j1" }, "s.1"));
-			await vi.waitFor(() => expect(stores[1]!.get().state).toBe("live"));
+			await until(() => stores[1]!.get().state === "live", 'expect(stores[1]!.get().state).toBe("live")');
 			expect(stores[0]!.get().state).toBe("live");
 			await vi.advanceTimersByTimeAsync(2000);
 			for (const spy of spies) {
@@ -146,9 +147,9 @@ describe("startRealtime", () => {
 				fetch: server.fetchImpl,
 				isVisible: () => true,
 			});
-			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 			server.streams[0]!.write(helloFrame("b1", "s.0") + hintFrame({ t: "jobs" }, "s.1"));
-			await vi.waitFor(() => expect(store.get().state).toBe("live"));
+			await until(() => store.get().state === "live", 'expect(store.get().state).toBe("live")');
 			// The address moves to another org while acme's hint is still inside its window.
 			stop();
 			const stopOther = startRealtime({ scope: newDocumentScope(),
@@ -189,9 +190,9 @@ describe("startRealtime", () => {
 				isVisible: () => true,
 			}),
 		);
-		await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+		await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 		server.streams[0]!.write(helloFrame("b1", "s.0") + revokedFrame("not-member"));
-		await vi.waitFor(() => expect(removed[1]).toHaveBeenCalledTimes(1));
+		await until(() => removed[1]!.mock.calls.length === 1, "expect(removed[1]).toHaveBeenCalledTimes(1)");
 		expect(removed[0]).toHaveBeenCalledTimes(1);
 		for (const stop of stops) stop();
 	});
@@ -213,7 +214,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 			fetch: server.fetchImpl,
 			isVisible: () => true,
 		});
-		await vi.waitFor(() => expect(storeA.get().state).toBe("signed-out"));
+		await until(() => storeA.get().state === "signed-out", 'expect(storeA.get().state).toBe("signed-out")');
 		// After a fresh sign-in, a new tab of the same person and org:
 		const storeB = createConnectionStore();
 		const stopB = startRealtime({ scope: newDocumentScope(),
@@ -227,11 +228,11 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 			fetch: server.fetchImpl,
 			isVisible: () => true,
 		});
-		await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+		await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 		server.streams[0]!.write(helloFrame("b1", "s.0"));
-		await vi.waitFor(() => expect(storeB.get().state).toBe("live"));
+		await until(() => storeB.get().state === "live", 'expect(storeB.get().state).toBe("live")');
 		// ...and A, no longer a leader, never answered B's `sync` with its terminal state.
-		await new Promise((r) => setTimeout(r, 20));
+		await settle();
 		expect(storeB.get().state).toBe("live");
 		stopA();
 		stopB();
@@ -253,7 +254,7 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 				isVisible: () => true,
 			}),
 		);
-		await vi.waitFor(() => expect(server.streams).toHaveLength(2));
+		await until(() => server.streams.length === 2, "expect(server.streams).toHaveLength(2)");
 		expect(electionName("u1", "acme")).not.toBe(electionName("u2", "acme"));
 		for (const stop of stops) stop();
 	});
@@ -343,12 +344,12 @@ describe("startRealtime — terminal states, identity, failure and bfcache", () 
 				isVisible: () => true,
 				pageEvents: page,
 			});
-			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 			page.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: false }));
 			await vi.advanceTimersByTimeAsync(3000);
 			expect(server.streams).toHaveLength(1); // an ordinary load is not a restore
 			page.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
-			await vi.waitFor(() => expect(server.streams).toHaveLength(2));
+			await until(() => server.streams.length === 2, "expect(server.streams).toHaveLength(2)");
 			await vi.advanceTimersByTimeAsync(3000);
 			expect(spy).toHaveBeenCalledWith({ refetchType: "active" });
 			stop();
@@ -373,22 +374,28 @@ describe("startRealtime — one runtime per document", () => {
 				fetch: server.fetchImpl,
 				isVisible: () => true,
 				pageEvents: null,
+				random: () => 0, // every hint window closes at exactly 300 ms
 			};
 			const stopA = startRealtime({ ...base, scope: newDocumentScope(), queryClient: new QueryClient(), store: createConnectionStore() });
-			await vi.waitFor(() => expect(server.streams).toHaveLength(1));
+			await until(() => server.streams.length === 1, "expect(server.streams).toHaveLength(1)");
 			const docB = newDocumentScope();
 			const clientB = new QueryClient();
 			const spyB = vi.spyOn(clientB, "invalidateQueries");
 			startRealtime({ ...base, scope: docB, queryClient: clientB, store: createConnectionStore() }); // never stopped
-			const stopB = startRealtime({ ...base, scope: docB, queryClient: clientB, store: createConnectionStore() });
+			startRealtime({ ...base, scope: docB, queryClient: clientB, store: createConnectionStore() }); // and again
+			const storeB = createConnectionStore();
+			startRealtime({ ...base, scope: docB, queryClient: clientB, store: storeB }); // a third start, the live one
 			server.streams[0]!.write(helloFrame("b1", "s.0") + hintFrame({ t: "jobs", id: "j1" }, "s.1"));
-			await vi.waitFor(() => expect(spyB).toHaveBeenCalled());
-			await vi.advanceTimersByTimeAsync(2000);
+			// The relayed state reaches B; the hint arrived with it, its window opens.
+			await until(() => storeB.get().state === "live", "B hears the leader's stream is live");
+			await settle();
+			expect(spyB).not.toHaveBeenCalled(); // nothing before the window closes
+			await vi.advanceTimersByTimeAsync(300);
 			const jobsKeyCalls = spyB.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === JSON.stringify(["jobs"]));
 			expect(jobsKeyCalls).toHaveLength(1);
 			expect(server.streams).toHaveLength(1); // and B never opened a second stream
 			stopA();
-			stopB();
+			docB.runtimes.get(electionName("u1", "acme"))?.();
 		} finally {
 			vi.useRealTimers();
 		}
@@ -397,11 +404,12 @@ describe("startRealtime — one runtime per document", () => {
 
 describe("startRealtime — two copies of the module in one document (the bundler case, seen live)", () => {
 	it("share one page scope: one lock request, one runtime", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const keys = [Symbol.for("alethia.realtime.elections"), Symbol.for("alethia.realtime.runtimes")];
 		for (const k of keys) Reflect.deleteProperty(globalThis, k);
 		const fake = new FakeWebLocks();
 		const holder = electLeader({ registry: newElectionRegistry(), name: electionName("u1", "acme"), locks: fake.client("A"), openChannel: () => null, onLead: () => {} });
-		await new Promise((r) => setTimeout(r, 0));
+		await settle();
 		vi.resetModules();
 		const copy1 = await import("@/lib/realtime/client/runtime");
 		vi.resetModules();
@@ -416,25 +424,28 @@ describe("startRealtime — two copies of the module in one document (the bundle
 			fetch: eventsServer().fetchImpl,
 			isVisible: () => true,
 			pageEvents: null,
+			random: () => 0,
 		};
 		const client = new QueryClient();
 		const spy = vi.spyOn(client, "invalidateQueries");
 		const stop1 = copy1.startRealtime({ ...base, queryClient: client, store: createConnectionStore() });
 		const stop2 = copy2.startRealtime({ ...base, queryClient: client, store: createConnectionStore() });
 		expect(fake.requestsOf("B")).toBe(1); // at once, not only after the first copy's give-up has run
-		await new Promise((r) => setTimeout(r, 0));
+		await settle();
 		expect(fake.requestsOf("B")).toBe(1);
 		// A hint relayed from the leader's tab reaches ONE relay listener in this document, not two.
-		const leaderRelay = new BroadcastChannel(electionName("u1", "acme"));
+		const leaderRelay = hub.open(electionName("u1", "acme"));
 		leaderRelay.postMessage({ type: "hint", hint: { t: "jobs" } });
-		await vi.waitFor(() => expect(spy).toHaveBeenCalled(), { timeout: 3000 });
-		await new Promise((r) => setTimeout(r, 1200));
+		await settle(); // delivered (a microtask), and the 300 ms window opened
+		expect(spy).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(300);
 		expect(spy.mock.calls.filter(([f]) => JSON.stringify(f?.queryKey) === '["jobs"]')).toHaveLength(1);
 		leaderRelay.close();
 		stop1();
 		stop2();
 		holder.stop();
 		for (const k of keys) Reflect.deleteProperty(globalThis, k);
+		vi.useRealTimers();
 	});
 });
 
