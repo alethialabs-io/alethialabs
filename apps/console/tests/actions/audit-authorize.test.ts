@@ -30,15 +30,22 @@ const PROJECT = "11111111-2222-4333-8444-555555555555";
 
 /** Captures the row handed to `.values()` so the project stamp can be asserted. */
 let inserted: Record<string, unknown> | undefined;
+/** What the attached path's project read answers: the project's org, or no row. */
+let projectRows: { org_id: string | null }[] = [];
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	inserted = undefined;
+	projectRows = [{ org_id: ACTOR.orgId }];
 	vi.mocked(currentActor).mockResolvedValue(ACTOR as never);
 	vi.mocked(authorize).mockResolvedValue(ACTOR as never);
 	vi.mocked(withActorScope).mockImplementation(async (_actor: unknown, fn: unknown) => {
 		const tx: Record<string, unknown> = {};
 		Object.assign(tx, {
+			select: () => tx,
+			from: () => tx,
+			where: () => tx,
+			limit: async () => projectRows,
 			insert: () => tx,
 			values: (v: Record<string, unknown>) => {
 				inserted = v;
@@ -95,6 +102,21 @@ describe("queueAudit authorization", () => {
 	it("an attached audit stamps the project it authorized", async () => {
 		await queueAudit("{}", "manifests", PROJECT);
 		expect(inserted?.project_id).toBe(PROJECT);
+	});
+
+	it("an attached audit runs where its project lives: a personal-workspace project from a team org is refused", async () => {
+		projectRows = [{ org_id: ACTOR.userId }];
+		await expect(queueAudit("{}", "plan", PROJECT)).rejects.toThrow(
+			"This project belongs to your personal workspace — switch to it to run this.",
+		);
+		expect(inserted).toBeUndefined();
+		expect(assertJobQuotaAllowed).not.toHaveBeenCalled();
+	});
+
+	it("an attached audit of a project not visible in this scope writes no job", async () => {
+		projectRows = [];
+		await expect(queueAudit("{}", "plan", PROJECT)).rejects.toThrow("Project not found.");
+		expect(inserted).toBeUndefined();
 	});
 
 	// Pre-existing contract, kept: empty input is refused, and AFTER the gate — so an unauthorized

@@ -73,8 +73,9 @@ async function withDeadlockRetry<T>(fn: () => Promise<T>): Promise<T> {
  * bring-your-own shape and renders the Remove control; "deployed" needs a cloud identity AND a
  * deploy_config to render Destroy — use {@link seedDeployedRunner} rather than assembling it here.
  *
- * `is_default` defaults to false on purpose: `idx_runners_one_default_per_user` is a partial UNIQUE
- * index, so two seeded defaults for one persona collide and take both specs down.
+ * `is_default` defaults to false on purpose: `idx_runners_one_default_per_user_org` is a partial
+ * UNIQUE index (one default per user per org), so two seeded defaults for one persona in one org
+ * collide and take both specs down.
  */
 export async function seedRunner(
 	owner: Owner,

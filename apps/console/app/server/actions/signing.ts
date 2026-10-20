@@ -66,7 +66,7 @@ export async function registerOrgSigningKey(
 /** All of the caller-org's signing keys (active + pending + rotation history). Org-gated (`view`). */
 export async function getOrgSigningKeys(): Promise<OrgSigningKeyView[]> {
 	const actor = await authorize("view", { type: "org" });
-	return withActorScope(actor, (tx) => readOrgSigningKeys(tx));
+	return withActorScope(actor, (tx) => readOrgSigningKeys(tx, actor.orgId));
 }
 
 /**
@@ -81,7 +81,7 @@ export async function revokeOrgSigningKey(
 		tx
 			.update(orgSigningKey)
 			.set({ active: false, status: "invalid", updated_at: new Date() })
-			.where(and(eq(orgSigningKey.id, id))),
+			.where(and(eq(orgSigningKey.id, id), eq(orgSigningKey.org_id, actor.orgId))),
 	);
 	return { ok: true };
 }

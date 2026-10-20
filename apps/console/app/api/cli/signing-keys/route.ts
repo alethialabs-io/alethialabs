@@ -30,7 +30,8 @@ type SigningKeyWire = z.infer<typeof signingKeyWire>;
  * on the wire — custody detail is not a verifier's business, and `key_ref` names a resource in the
  * customer's cloud.
  *
- * Org-gated (`view` on `org`) and RLS-scoped, so a caller sees only their own org's keys. The
+ * Org-gated (`view` on `org`) and read with an explicit `org_id = actor.orgId` predicate inside the
+ * actor-scoped transaction, so a caller sees only the addressed org's keys. The
  * platform entry is the same for everyone and is not org-specific.
  */
 export async function GET(req: Request) {
@@ -39,7 +40,7 @@ export async function GET(req: Request) {
 	const { actor } = auth;
 
 	try {
-		const orgKeys = await withActorScope(actor, (tx) => getOrgSigningKeys(tx));
+		const orgKeys = await withActorScope(actor, (tx) => getOrgSigningKeys(tx, actor.orgId));
 
 		const signing_keys: SigningKeyWire[] = orgKeys.map((k) => ({
 			key_id: k.keyId,

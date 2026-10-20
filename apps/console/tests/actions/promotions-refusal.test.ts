@@ -58,6 +58,7 @@ import {
 	tryPlanProject,
 } from "@/app/server/actions/projects";
 import { withActorScope } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
 import { diffIsEmpty } from "@/lib/promotions/diff";
 
 interface EnvRow {
@@ -75,11 +76,17 @@ let updates: Record<string, unknown>[] = [];
 /** What the promotion insert does: answer with a row, or fail as the unique index would. */
 let insertFails: Error | null = null;
 
-/** An actor-scoped tx: a select that answers `envs`, the promotion insert, and recorded updates. */
-function mockScope(envs: EnvRow[]) {
+/**
+ * An actor-scoped tx: the project read answers `projectOrg`, the environments select answers `envs`,
+ * then the promotion insert and recorded updates.
+ */
+function mockScope(envs: EnvRow[], projectOrg: string | null = "org-1") {
 	const tx = {
 		select: () => ({
-			from: () => ({ where: async () => envs }),
+			from: (table: unknown) =>
+				table === projects
+					? { where: () => ({ limit: async () => [{ org_id: projectOrg }] }) }
+					: { where: async () => envs },
 		}),
 		insert: () => ({
 			values: () => ({
@@ -111,6 +118,16 @@ beforeEach(() => {
 });
 
 describe("promoteEnvironment — a refusal is a value", () => {
+	it("refuses a project of the personal workspace from a team org, before anything is written", async () => {
+		mockScope([DEV, PROD], "u1");
+		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
+			ok: false,
+			error: "This project belongs to your personal workspace — switch to it to run this.",
+		});
+		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
+		expect(tryPlanProject).not.toHaveBeenCalled();
+	});
+
 	it("refuses a promotion to a lower stage", async () => {
 		await expect(promoteEnvironment("p1", "env-prod", "env-dev")).resolves.toEqual({
 			ok: false,

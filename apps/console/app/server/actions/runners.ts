@@ -56,7 +56,12 @@ function toReleaseInfo(r: {
 
 /** The org's self/BYO runners, joined with their pinned release, default first. Managed
  *  (platform-fleet) runners are excluded by RLS — they are read separately via
- *  {@link getManagedRunnersWithReleases} on self-managed deployments. */
+ *  {@link getManagedRunnersWithReleases} on self-managed deployments.
+ *
+ *  A default is chosen per org, so `is_default` reads as "the default of the addressed org": a
+ *  personal-workspace runner listed from a team org carries `is_default: false` here even when it is
+ *  the personal workspace's default, and `personal_elsewhere: true` so the list can say where its
+ *  default is chosen. */
 export async function getRunnersWithReleases() {
 	const actor = await authorize("view", { type: "runner" });
 	return withActorScope(actor, async (tx) => {
@@ -65,15 +70,30 @@ export async function getRunnersWithReleases() {
 			.from(runners)
 			.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
 			.orderBy(
-				desc(runners.is_default),
+				desc(defaultInOrg(actor.orgId)),
 				asc(runners.operator),
 				asc(runners.created_at),
 			);
 		return rows.map((r) => ({
 			...r.runner,
+			is_default: r.runner.is_default && r.runner.org_id === actor.orgId,
+			personal_elsewhere: isPersonalElsewhere(r.runner.org_id, actor),
 			runner_releases: r.release ? toReleaseInfo(r.release) : null,
 		}));
 	});
+}
+
+/** True when a runner sits in the caller's personal workspace while the request addresses a team org. */
+function isPersonalElsewhere(
+	runnerOrgId: string | null,
+	actor: { userId: string; orgId: string },
+): boolean {
+	return actor.orgId !== actor.userId && runnerOrgId === actor.userId; // authz-scope-ok
+}
+
+/** `is_default`, read as "the default of the addressed org" (a default is chosen per org). */
+function defaultInOrg(orgId: string) {
+	return sql<boolean>`(${runners.is_default} and ${runners.org_id} = ${orgId})`;
 }
 
 /**
@@ -94,6 +114,7 @@ export async function getManagedRunnersWithReleases() {
 		.orderBy(asc(runners.created_at));
 	return rows.map((r) => ({
 		...r.runner,
+		personal_elsewhere: false,
 		runner_releases: r.release ? toReleaseInfo(r.release) : null,
 	}));
 }
@@ -244,7 +265,7 @@ export async function registerRunner(name: string) {
 	return { runner, runner_token: runnerToken };
 }
 
-/** Sets (or clears) the default runner for the current user. */
+/** Sets (or clears) the current user's default runner within the addressed org (or personal workspace). */
 export async function setDefaultRunner(runnerId: string | null) {
 	const actor = await authorize("edit", {
 		type: "runner",
@@ -252,7 +273,7 @@ export async function setDefaultRunner(runnerId: string | null) {
 	});
 	const owner = actor.userId;
 	await getServiceDb().execute(
-		sql`select set_default_runner(${owner}::uuid, ${runnerId ?? null}::uuid)`,
+		sql`select set_default_runner(${owner}::uuid, ${actor.orgId}::uuid, ${runnerId ?? null}::uuid)`,
 	);
 }
 
@@ -267,10 +288,10 @@ export async function getAvailableRunners() {
 				operator: runners.operator,
 				provisioning: runners.provisioning,
 				status: runners.status,
-				is_default: runners.is_default,
+				is_default: defaultInOrg(actor.orgId),
 			})
 			.from(runners)
-			.orderBy(desc(runners.is_default), asc(runners.name)),
+			.orderBy(desc(defaultInOrg(actor.orgId)), asc(runners.name)),
 	);
 }
 

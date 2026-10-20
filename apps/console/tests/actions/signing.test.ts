@@ -18,6 +18,8 @@ import {
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { orgSigningKey } from "@/lib/db/schema";
+import { type SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 const ZERO_PUB = Buffer.alloc(32).toString("base64");
 const KEY_ID = "66687aadf862bd77"; // hex(sha256(zero32)[:8]) — matches Go verify.KeyID.
@@ -28,12 +30,13 @@ type Rows = unknown[];
 function setupDb(cfg: { select?: Map<unknown, Rows> }) {
 	const valuesSpy = vi.fn<(t: unknown, p: unknown) => void>();
 	const setSpy = vi.fn<(t: unknown, p: unknown) => void>();
+	const whereSpy = vi.fn<(w: SQL) => void>();
 	function chain(op: "select" | "insert" | "update", table?: unknown) {
 		let from = table;
 		const c: Record<string, unknown> = {};
 		Object.assign(c, {
 			from: (t: unknown) => ((from = t), c),
-			where: () => c,
+			where: (w: SQL) => (whereSpy(w), c),
 			limit: () => c,
 			orderBy: () => c,
 			returning: () => c,
@@ -52,7 +55,16 @@ function setupDb(cfg: { select?: Map<unknown, Rows> }) {
 	vi.mocked(withActorScope).mockImplementation(
 		((_a: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	return { valuesSpy, setSpy };
+	return { valuesSpy, setSpy, whereSpy };
+}
+
+const dialect = new PgDialect();
+
+/** Renders the first recorded WHERE clause to SQL text + params. */
+function renderedWhere(spy: ReturnType<typeof vi.fn<(w: SQL) => void>>) {
+	const w = spy.mock.calls[0]?.[0];
+	if (!w) throw new Error("no where() recorded");
+	return dialect.sqlToQuery(w);
 }
 
 function valuesFor(spy: ReturnType<typeof vi.fn>, table: unknown): Record<string, unknown> {
@@ -105,7 +117,7 @@ describe("registerOrgSigningKey", () => {
 
 describe("getOrgSigningKeys", () => {
 	it("org-gates on view and returns the mapped rows", async () => {
-		setupDb({
+		const { whereSpy } = setupDb({
 			select: new Map([
 				[
 					orgSigningKey,
@@ -132,13 +144,21 @@ describe("getOrgSigningKeys", () => {
 		expect(authorize).toHaveBeenCalledWith("view", { type: "org" });
 		expect(r).toHaveLength(1);
 		expect(r[0]).toMatchObject({ keyId: KEY_ID, status: "pending_verification", active: false });
+		// The listing names the addressed org explicitly, not only through RLS.
+		const q = renderedWhere(whereSpy);
+		expect(q.sql).toContain('"org_id" = $');
+		expect(q.params).toContain("org-1");
 	});
 });
 
 describe("revokeOrgSigningKey", () => {
 	it("org-gates and soft-revokes (active=false, status=invalid) — keeps the history row", async () => {
-		const { setSpy } = setupDb({});
+		const { setSpy, whereSpy } = setupDb({});
 		await expect(revokeOrgSigningKey("key-1")).resolves.toEqual({ ok: true });
+		// Revocation is scoped to the addressed org explicitly, by id AND org.
+		const q = renderedWhere(whereSpy);
+		expect(q.sql).toContain('"org_id" = $');
+		expect(q.params).toEqual(expect.arrayContaining(["key-1", "org-1"]));
 		expect(authorize).toHaveBeenCalledWith("edit", { type: "org" });
 		expect(valuesFor(setSpy, orgSigningKey)).toMatchObject({ active: false, status: "invalid" });
 	});
