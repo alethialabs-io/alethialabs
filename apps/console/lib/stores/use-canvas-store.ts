@@ -38,6 +38,7 @@ import type {
 import { kindFromCollectionId, type CollectionPositions } from "@/lib/canvas/collections";
 import type { ContainerBox, ContainerGeometry } from "@/lib/canvas/zones";
 import { applyLayout, layoutZoned } from "@/lib/canvas/layout";
+import { randomUuid } from "@/lib/random-id";
 
 const PROJECT_NODE_ID = "project-root";
 const HISTORY_CAP = 50;
@@ -46,7 +47,7 @@ const DRAFT_STORAGE_PREFIX = "design-project-canvas-draft";
 
 /** A browser-only stable id for new nodes (canvas is client-side). */
 function newId(kind: NodeKind): string {
-	return `${kind}-${crypto.randomUUID().slice(0, 8)}`;
+	return `${kind}-${randomUuid().slice(0, 8)}`;
 }
 
 /** The project root node's chosen identity = the stack's CORE; null until picked. */

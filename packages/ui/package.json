@@ -6,6 +6,7 @@
     "./utils": "./src/utils.ts",
     "./countries": "./src/countries.ts",
     "./range": "./src/range.ts",
+    "./copy-text": "./src/copy-text.ts",
     "./*": "./src/*.tsx"
   },
   "scripts": {

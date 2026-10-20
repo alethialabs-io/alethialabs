@@ -44,14 +44,13 @@ import {
 } from "@repo/ui/sheet";
 import { CloudIdentitySelector } from "@/components/design-project/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
+import { CopyField } from "@/components/runners/copy-field";
 import { FieldHelp, FieldLabel, RequiredMark } from "@/components/runners/field-help";
 import {
 	AlertTriangle,
 	ArrowLeft,
-	Check,
 	ChevronRight,
 	Cloud,
-	Copy,
 	Layers,
 	Loader2,
 	Rocket,
@@ -439,36 +438,6 @@ interface RegisterCredentials {
 	runnerId: string;
 	runnerToken: string;
 	runnerName: string;
-}
-
-function CopyField({ label, value }: { label: string; value: string }) {
-	const [copied, setCopied] = useState(false);
-
-	const copy = async () => {
-		await navigator.clipboard.writeText(value);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
-	};
-
-	return (
-		<div className="space-y-1.5">
-			<Label className="text-xs text-muted-foreground">{label}</Label>
-			<div className="flex items-center gap-2">
-				<code className="flex-1 break-all rounded-md border border-border/50 bg-muted px-3 py-2 font-mono text-xs">
-					{value}
-				</code>
-				<Button
-					variant="outline"
-					size="icon"
-					className="h-9 w-9 shrink-0"
-					onClick={copy}
-					aria-label={copied ? `${label} copied` : `Copy ${label}`}
-				>
-					{copied ? <Check className="h-3.5 w-3.5 text-foreground" /> : <Copy className="h-3.5 w-3.5" />}
-				</Button>
-			</div>
-		</div>
-	);
 }
 
 function RegisterForm({
