@@ -34,7 +34,10 @@ import { describeIfDb } from "./db";
 
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	// Real: the runner-deploy route asks it which identity arm the credential gets.
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
 	authorize: vi.fn(),
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
