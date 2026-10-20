@@ -68,12 +68,15 @@ import { getServiceDb } from "@/lib/db";
 import {
 	alertDeliveries,
 	authzActivityLog,
+	cloudIdentities,
+	cloudRegions,
 	grants,
 	jobs,
 	member,
 	organization,
 	organizationBilling,
 	projectEnvironments,
+	projectFabrics,
 	projects,
 	supportCases,
 	user,
@@ -107,6 +110,20 @@ export interface Seeded {
 	/** One alert delivery in each org's ledger (#6118). */
 	deliveryX: string;
 	deliveryY: string;
+	/** Each project's default environment (#6119's board reads name the environment they answer for). */
+	envX: string;
+	envY: string;
+	/** One ORG-scoped cloud identity per org, W-authored, each with one inventory region (#6119). */
+	identityX: string;
+	identityY: string;
+}
+
+/** One of the two seeded orgs. */
+export type Org = "x" | "y";
+
+/** The inventory region seeded on `org`'s cloud identity — unique per org, so it marks which one answered. */
+function regionOf(org: Org): string {
+	return `it-6119-region-${org}`;
 }
 
 /** The project slug seeded in BOTH orgs, so one fixture input can address either org's project. */
@@ -124,6 +141,10 @@ const PROJECT_SLUG = "it-6114-shared-slug";
  *   address on X deep-equals the output for an address on Y, in both editions. A non-member is
  *   STILL a 404 at Y — the handler refuses the address before any procedure runs, so a read's kind
  *   cannot change that, and asserting otherwise would assert a property the code does not have.
+ * - `by-id` (#6119 — the board's reads, each addressed by a project or an identity id): its input
+ *   names a row, so there is no org-wide output to look for markers in. Its claim is about the row:
+ *   at an address on Y, Y's row is revealed and X's is not (enterprise), neither is revealed
+ *   (community), and the session never changes the outcome — a refusal included, by its code.
  */
 export type Fixture =
 	| {
@@ -131,7 +152,14 @@ export type Fixture =
 			input: unknown;
 			markers(out: unknown, seeded: Seeded): { x: boolean; y: boolean };
 	  }
-	| { kind: "not-org-scoped"; reason: string; input: unknown };
+	| { kind: "not-org-scoped"; reason: string; input: unknown }
+	| {
+			kind: "by-id";
+			/** The input that addresses `org`'s seeded row (a project, an environment, an identity). */
+			input(seeded: Seeded, org: Org): unknown;
+			/** Whether the output IS that row's answer — a refusal or an empty answer reveals nothing. */
+			reveals(out: unknown, seeded: Seeded, org: Org): boolean;
+	  };
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -169,6 +197,20 @@ function stringField(out: unknown, field: string): string | undefined {
 	if (typeof out !== "object" || out === null || !(field in out)) return undefined;
 	const value: unknown = Reflect.get(out, field);
 	return typeof value === "string" ? value : undefined;
+}
+
+/** The seeded project of `org`. */
+const projectOf = (s: Seeded, org: Org) => (org === "x" ? s.projectX : s.projectY);
+/** The seeded default environment of `org`'s project. */
+const envOf = (s: Seeded, org: Org) => (org === "x" ? s.envX : s.envY);
+/** The seeded cloud identity of `org`. */
+const identityOf = (s: Seeded, org: Org) => (org === "x" ? s.identityX : s.identityY);
+/** The board's environment-scoped input for `org`'s project, on its default environment. */
+const boardInput = (s: Seeded, org: Org) => ({ projectId: projectOf(s, org), environmentId: null });
+
+/** A string field of an object output (`out.<field>`), or undefined. */
+function field(out: unknown, name: string): unknown {
+	return typeof out === "object" && out !== null && name in out ? Reflect.get(out, name) : undefined;
 }
 
 /**
@@ -240,7 +282,68 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
 	},
+	// The Architecture board's reads (#6119). Each answers for ONE environment and names it, so the
+	// reveal is "the answer names that org's environment" — an empty status or a refusal names none.
+	"canvas.environmentStatus": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(field(out, "environment"), "id") === envOf(s, org),
+	},
+	"canvas.addons": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
+	"canvas.byoCharts": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
+	"canvas.chartWorkloads": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
+	"canvas.iacSource": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
+	"canvas.environmentJobs": {
+		// The seeded environments have no jobs, so the reveal is that the read ANSWERED (a page) —
+		// another org's environment is refused before any row is read.
+		kind: "by-id",
+		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
+		reveals: (out) => Array.isArray(field(out, "jobs")),
+	},
+	"canvas.capabilities": {
+		kind: "by-id",
+		input: (s, org) => ({ identityId: identityOf(s, org), region: null }),
+		reveals: (out, s, org) => field(out, "identityId") === identityOf(s, org),
+	},
+	"canvas.cloudInventory": {
+		kind: "by-id",
+		input: (s, org) => ({ identityId: identityOf(s, org) }),
+		reveals: (out, _s, org) => {
+			const regions = field(out, "regions");
+			return Array.isArray(regions) && regions.includes(regionOf(org));
+		},
+	},
 };
+
+/** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
+function inputFor(fixture: Fixture | undefined, seeded: Seeded, org: Org): unknown {
+	if (!fixture) return undefined;
+	return fixture.kind === "by-id" ? fixture.input(seeded, org) : fixture.input;
+}
+
+/** An outcome reduced to what a caller can tell apart: the value, or the refusal's code. */
+function summary(outcome: Outcome): unknown {
+	if (outcome.ok) return { ok: true, value: outcome.value };
+	const code =
+		outcome.error instanceof ORPCError ? outcome.error.code : isNotFound(outcome.error) ? "NOT_FOUND" : String(outcome.error);
+	return { ok: false, code };
+}
 
 /** Walks a proxy-shaped client (oRPC's) down a dotted path, without a cast. */
 function walk(root: unknown, path: string): unknown {
@@ -305,10 +408,14 @@ export async function runRpcTenancySuite(opts: {
 		caseY: "",
 		deliveryX: "",
 		deliveryY: "",
+		envX: "",
+		envY: "",
+		identityX: "",
+		identityY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
-	async function viaRoute(path: string, req: RpcTenancyRequest): Promise<Outcome> {
+	async function viaRoute(path: string, req: RpcTenancyRequest, input: unknown): Promise<Outcome> {
 		let status: number | undefined;
 		const client = createORPCClient(
 			new RPCLink({
@@ -324,16 +431,16 @@ export async function runRpcTenancySuite(opts: {
 				},
 			}),
 		);
-		return settle(() => invoke(walk(client, path), FIXTURES[path]?.input, `route client ${path}`), () => status);
+		return settle(() => invoke(walk(client, path), input, `route client ${path}`), () => status);
 	}
 
 	/** One call through the IN-PROCESS SERVER CALLER (`serverOrpc()`), under the given request. */
-	async function viaServer(path: string, req: RpcTenancyRequest): Promise<Outcome> {
+	async function viaServer(path: string, req: RpcTenancyRequest, input: unknown): Promise<Outcome> {
 		h.path = req.path;
 		h.user = req.user;
 		h.sessionOrg = req.sessionOrg;
 		return settle(
-			() => invoke(walk(serverOrpc(), `${path}.call`), FIXTURES[path]?.input, `serverOrpc() ${path}.call`),
+			() => invoke(walk(serverOrpc(), `${path}.call`), input, `serverOrpc() ${path}.call`),
 			() => undefined,
 		);
 	}
@@ -415,7 +522,7 @@ export async function runRpcTenancySuite(opts: {
 			expect(seeded.deliveryX && seeded.deliveryY).toBeTruthy();
 
 			// One project per org under the same slug, each with its default environment (W authors).
-			const seedProject = async (orgId: string): Promise<string> => {
+			const seedProject = async (orgId: string): Promise<{ project: string; env: string }> => {
 				const [p] = await db
 					.insert(projects)
 					.values({
@@ -427,13 +534,39 @@ export async function runRpcTenancySuite(opts: {
 						iac_version: "1.0.0",
 					})
 					.returning({ id: projects.id });
-				await db
+				// Placed on a Fabric, as every environment the app creates is (the BYO-IaC read resolves it).
+				const [f] = await db
+					.insert(projectFabrics)
+					.values({ project_id: p.id, user_id: W, org_id: orgId, name: "prod", status: "DRAFT" })
+					.returning({ id: projectFabrics.id });
+				const [e] = await db
 					.insert(projectEnvironments)
-					.values({ project_id: p.id, user_id: W, name: "prod", status: "DRAFT", is_default: true });
-				return p.id;
+					.values({
+						project_id: p.id,
+						user_id: W,
+						name: "prod",
+						status: "DRAFT",
+						is_default: true,
+						fabric_id: f.id,
+					})
+					.returning({ id: projectEnvironments.id });
+				return { project: p.id, env: e.id };
 			};
-			seeded.projectX = await seedProject(ORG_X);
-			seeded.projectY = await seedProject(ORG_Y);
+			({ project: seeded.projectX, env: seeded.envX } = await seedProject(ORG_X));
+			({ project: seeded.projectY, env: seeded.envY } = await seedProject(ORG_Y));
+
+			// One ORG-scoped cloud identity per org (W authors; visible to the org, #6119), each with one
+			// inventory region whose name marks which org's identity answered.
+			const seedIdentity = async (orgId: string, org: Org): Promise<string> => {
+				const [ci] = await db
+					.insert(cloudIdentities)
+					.values({ user_id: W, org_id: orgId, scope: "org", provider: "aws", name: `it-6119-${org}` })
+					.returning({ id: cloudIdentities.id });
+				await db.insert(cloudRegions).values({ cloud_identity_id: ci.id, provider: "aws", native_id: regionOf(org) });
+				return ci.id;
+			};
+			seeded.identityX = await seedIdentity(ORG_X, "x");
+			seeded.identityY = await seedIdentity(ORG_Y, "y");
 
 			// Support cases are the one marker U authors. A viewer sees only cases they opened (the
 			// requester arm) — so a W-authored case would be invisible to U at BOTH addresses and prove
@@ -479,8 +612,11 @@ export async function runRpcTenancySuite(opts: {
 			const seededProjects = [seeded.projectX, seeded.projectY].filter((id) => id !== "");
 			if (seededProjects.length > 0) {
 				await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, seededProjects));
+				await db.delete(projectFabrics).where(inArray(projectFabrics.project_id, seededProjects));
 				await db.delete(projects).where(inArray(projects.id, seededProjects));
 			}
+			// Inventory rows cascade with their identity.
+			await db.delete(cloudIdentities).where(inArray(cloudIdentities.org_id, [ORG_X, ORG_Y]));
 			await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(grants).where(inArray(grants.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));
@@ -502,21 +638,50 @@ export async function runRpcTenancySuite(opts: {
 			});
 		});
 
+		/**
+		 * A `by-id` read's claim at an address on `address`: whatever the session, the outcome for each
+		 * org's row is the same, and only the addressed org's own row is revealed (enterprise) — none in
+		 * community, where every org address is the caller's personal scope.
+		 */
+		async function expectByIdBounded(
+			call: (path: string, req: RpcTenancyRequest, input: unknown) => Promise<Outcome>,
+			path: string,
+			fixture: Extract<Fixture, { kind: "by-id" }>,
+			address: Org,
+		): Promise<void> {
+			const slug = address === "x" ? SLUG_X : SLUG_Y;
+			const here = address === "x" ? ORG_X : ORG_Y;
+			const elsewhere = address === "x" ? ORG_Y : ORG_X;
+			const other: Org = address === "x" ? "y" : "x";
+			const revealed: Record<Org, boolean> = { x: false, y: false };
+			for (const org of [address, other]) {
+				const input = fixture.input(seeded, org);
+				const mismatched = await call(path, { path: rpcPath(slug, path), user: U, sessionOrg: elsewhere }, input);
+				const matched = await call(path, { path: rpcPath(slug, path), user: U, sessionOrg: here }, input);
+				expect(summary(mismatched), `${path} for ${org}'s row: the session changed the outcome`).toEqual(summary(matched));
+				revealed[org] = mismatched.ok && fixture.reveals(mismatched.value, seeded, org);
+			}
+			expect(revealed).toEqual(
+				edition === "enterprise" ? { [address]: true, [other]: false } : { x: false, y: false },
+			);
+		}
+
 		describe.each(ENTRY_POINTS)("through %s", (_label, call) => {
 			it.each(PATHS)("%s — the address beats the session (session X, address Y ≡ session Y, address Y)", async (path) => {
-				const mismatched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_X });
-				const matched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_Y });
+				const fixture = FIXTURES[path];
+				if (!fixture) throw new Error(`${path} has no fixture`);
+				if (fixture.kind === "by-id") return expectByIdBounded(call, path, fixture, "y");
+				const mismatched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_X }, fixture.input);
+				const matched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_Y }, fixture.input);
 				expect(mismatched.ok, `session X / address Y failed: ${String(mismatched.ok ? "" : mismatched.error)}`).toBe(true);
 				expect(matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
 				if (mismatched.status !== undefined) expect(mismatched.status).toBe(200);
 				expect(mismatched.value).toEqual(matched.value);
 
-				const fixture = FIXTURES[path];
-				if (!fixture) throw new Error(`${path} has no fixture`);
 				if (fixture.kind === "not-org-scoped") {
 					// Its honest claim: the org in the address does not change the answer either.
-					const elsewhere = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y });
+					const elsewhere = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y }, fixture.input);
 					expect(elsewhere.ok).toBe(true);
 					if (elsewhere.ok) expect(elsewhere.value, `${path} (${fixture.reason}) differs between X and Y`).toEqual(mismatched.value);
 					return;
@@ -534,13 +699,14 @@ export async function runRpcTenancySuite(opts: {
 			});
 
 			it.each(PATHS)("%s — the address beats the session the other way round (session Y, address X)", async (path) => {
-				const mismatched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y });
-				const matched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_X });
+				const fixture = FIXTURES[path];
+				if (!fixture) throw new Error(`${path} has no fixture`);
+				if (fixture.kind === "by-id") return expectByIdBounded(call, path, fixture, "x");
+				const mismatched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y }, fixture.input);
+				const matched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_X }, fixture.input);
 				expect(mismatched.ok && matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
 				expect(mismatched.value).toEqual(matched.value);
-				const fixture = FIXTURES[path];
-				if (!fixture) throw new Error(`${path} has no fixture`);
 				if (fixture.kind === "not-org-scoped") return; // equality above is its whole claim here
 				expect(fixture.markers(mismatched.value, seeded)).toEqual(
 					edition === "enterprise" ? { x: true, y: false } : { x: false, y: false },
@@ -548,7 +714,11 @@ export async function runRpcTenancySuite(opts: {
 			});
 
 			it.each(PATHS)("%s — a non-member addressing Y gets a 404, never Y's rows nor X's", async (path) => {
-				const outcome = await call(path, { path: rpcPath(SLUG_Y, path), user: V, sessionOrg: ORG_X });
+				const outcome = await call(
+					path,
+					{ path: rpcPath(SLUG_Y, path), user: V, sessionOrg: ORG_X },
+					inputFor(FIXTURES[path], seeded, "y"),
+				);
 				expect(outcome.ok, "a non-member was SERVED").toBe(false);
 				if (outcome.ok) return;
 				if (call === viaRoute) expect(outcome.status).toBe(404);

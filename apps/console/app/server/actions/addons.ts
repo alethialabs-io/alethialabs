@@ -5,26 +5,24 @@
 // Marketplace add-on server actions — enable / configure / disable free OSS Helm charts on a
 // project environment, and read the catalog + install state for the Add-ons page. Add-ons are
 // applied by the runner on the next DEPLOY (managed mode renders an ArgoCD Application); this
-// layer only persists intent + the tuned knobs into project_addons.
+// layer only persists intent + the tuned knobs into project_addons. The READ (the catalog joined
+// with an environment's install state) is `canvas.addons` in lib/rpc/procedures/canvas.ts (#6119).
 
 import { asRecord } from "@/lib/records";
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withActorScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import {
 	type AddonMode,
 	type ComponentStatus,
 	projectAddons,
-	projectRepositories,
-	projects,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
 import { chartVersionIntent } from "@/lib/addons/chart-version";
 import {
 	generateAddonSecrets,
 	mergeAddonSecrets,
-	redactAddonSecrets,
 } from "@/lib/addons/secrets";
 import type {
 	AddOnCategory,
@@ -71,100 +69,6 @@ export interface ProjectAddonsView {
 	items: AddonMarketItem[];
 	/** Whether the environment has a GitOps apps repo configured — gates GitOps mode. */
 	hasAppsRepo: boolean;
-}
-
-/**
- * The catalog joined with an environment's install state — the Add-ons page payload. Resolves
- * the active environment (the given one, else the project default) since add-ons are
- * environment-scoped.
- */
-export async function getProjectAddons(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<ProjectAddonsView> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-
-	// `project_addons` / `project_repositories` are RLS-less project-child tables, so the
-	// org boundary is enforced HERE, not by a policy: join to the parent project and filter
-	// on the caller's org (mirrors lib/queries/evidence.ts queryOrgEvidence and drift.ts).
-	// The service db bypasses RLS, so the explicit `projects.org_id = actor.orgId` predicate
-	// is the tenancy wall — a foreign project UUID yields no rows even though the org-blind
-	// PDP grant let authorize() through. Using actor.orgId (not withActorScope on
-	// actor.userId) keeps it correct for Teams orgs (project owned by another member).
-	const db = getServiceDb();
-	const rows = await db
-		.select({
-			addon_id: projectAddons.addon_id,
-			enabled: projectAddons.enabled,
-			mode: projectAddons.mode,
-			values: projectAddons.values,
-			values_yaml: projectAddons.values_yaml,
-			version: projectAddons.version,
-			status: projectAddons.status,
-			health: projectAddons.health,
-			sync_status: projectAddons.sync_status,
-			last_synced_at: projectAddons.last_synced_at,
-		})
-		.from(projectAddons)
-		.innerJoin(projects, eq(projectAddons.project_id, projects.id))
-		.where(
-			and(
-				eq(projectAddons.project_id, projectId),
-				eq(projectAddons.environment_id, envId),
-				eq(projects.org_id, actor.orgId),
-			),
-		);
-	// GitOps mode needs a destination apps repo on this environment.
-	const [repo] = await db
-		.select({ repo: projectRepositories.apps_destination_repo })
-		.from(projectRepositories)
-		.innerJoin(projects, eq(projectRepositories.project_id, projects.id))
-		.where(
-			and(
-				eq(projectRepositories.project_id, projectId),
-				eq(projectRepositories.environment_id, envId),
-				eq(projects.org_id, actor.orgId),
-			),
-		)
-		.limit(1);
-	const hasAppsRepo = Boolean(repo?.repo);
-	const byId = new Map(rows.map((r) => [r.addon_id, r]));
-
-	const items: AddonMarketItem[] = ADDON_CATALOG.map((def) => {
-		const row = byId.get(def.id);
-		const install: AddonInstallState | null = row
-			? {
-					enabled: row.enabled,
-					mode: row.mode,
-					// Secrets redacted for the client — a set/unset marker, never the stored ciphertext.
-					values: redactAddonSecrets(def, row.values ?? {}),
-					valuesYaml: row.values_yaml,
-					version: row.version,
-					status: row.status,
-					health: row.health,
-					sync: row.sync_status,
-					lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
-				}
-			: null;
-		return {
-			id: def.id,
-			name: def.name,
-			category: def.category,
-			icon: def.icon,
-			summary: def.summary,
-			docsUrl: def.docsUrl,
-			license: def.license,
-			chart: def.chart,
-			version: def.version,
-			namespace: def.namespace,
-			requires: def.requires ?? [],
-			fields: def.fields,
-			install,
-		};
-	});
-
-	return { environmentId: envId, items, hasAppsRepo };
 }
 
 /**

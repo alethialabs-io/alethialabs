@@ -105,10 +105,27 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 		expect(keysFor(jobs({ o: null, u: null }))).toEqual([]);
 	});
 
-	it("every topic other than jobs routes nowhere until its lane writes its arms", () => {
-		for (const t of TOPICS.filter((x) => x !== "jobs")) {
+	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
+		const routed = new Set(["jobs", "environments", "addons"]);
+		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
+	});
+});
+
+describe("keysFor — the board's topics (#6119): the project's RLS, so the org arm only", () => {
+	it.each(["environments", "addons"] as const)(
+		"%s routes to the org arm, PDP-filtered on the row's project — never to the owner arm",
+		(t) => {
+			// `u` on an environments notice is the environment's CREATOR, which is not an RLS arm of
+			// these tables (their owner arm is the PROJECT's owner): routing on it would tell the creator
+			// about a project they may since have lost access to.
+			expect(keysFor({ ...jobs(), t })).toEqual([{ key: `o:${ORG}`, filterProject: PROJECT }]);
+		},
+	);
+
+	it.each(["environments", "addons"] as const)("%s with no org routes nowhere", (t) => {
+		expect(keysFor({ ...jobs({ o: null }), t })).toEqual([]);
 	});
 });
 
