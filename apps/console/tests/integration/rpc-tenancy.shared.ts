@@ -66,11 +66,13 @@ import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getServiceDb } from "@/lib/db";
 import {
+	alertDeliveries,
 	authzActivityLog,
 	grants,
 	jobs,
 	member,
 	organization,
+	organizationBilling,
 	projectEnvironments,
 	projects,
 	supportCases,
@@ -102,6 +104,9 @@ export interface Seeded {
 	/** One support case per org, opened by the CALLER U (see `caseX` in the seeding below). */
 	caseX: string;
 	caseY: string;
+	/** One alert delivery in each org's ledger (#6118). */
+	deliveryX: string;
+	deliveryY: string;
 }
 
 /** The project slug seeded in BOTH orgs, so one fixture input can address either org's project. */
@@ -151,6 +156,12 @@ function numberField(out: unknown, field: string): number | undefined {
 	if (typeof out !== "object" || out === null || !(field in out)) return undefined;
 	const value: unknown = Reflect.get(out, field);
 	return typeof value === "number" ? value : undefined;
+}
+
+/** Whether an object output's `field` array carries an item with this id. */
+function hasItem(out: unknown, field: string, id: string): boolean {
+	if (typeof out !== "object" || out === null || !(field in out)) return false;
+	return hasElement(Reflect.get(out, field), "id", id);
 }
 
 /** A string field of an object output, or undefined. */
@@ -217,6 +228,18 @@ export const FIXTURES: Record<string, Fixture> = {
 			y: hasElement(out, "project_id", s.projectY),
 		}),
 	},
+	// #6118. The seat count IS the org's marker: X has three members (U, V, W), Y has two (U, W).
+	// The personal scope (community) has none, so it answers 0 — neither marker.
+	"overview.usage": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({ x: numberField(out, "memberCount") === 3, y: numberField(out, "memberCount") === 2 }),
+	},
+	"overview.alerts": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
+	},
 };
 
 /** Walks a proxy-shaped client (oRPC's) down a dotted path, without a cast. */
@@ -280,6 +303,8 @@ export async function runRpcTenancySuite(opts: {
 		projectY: "",
 		caseX: "",
 		caseY: "",
+		deliveryX: "",
+		deliveryY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -372,6 +397,23 @@ export async function runRpcTenancySuite(opts: {
 			seeded.jobX = await seedJob(W, ORG_X);
 			seeded.jobY = await seedJob(W, ORG_Y);
 
+			// #6118: both orgs on a live Team plan, so `overview.alerts` (which answers no rows to a
+			// plan without alerting) has rows to mark, and one delivery in each org's ledger.
+			await db.insert(organizationBilling).values([
+				{ organizationId: ORG_X, plan: "team", status: "active" },
+				{ organizationId: ORG_Y, plan: "team", status: "active" },
+			]);
+			const deliveries = await db
+				.insert(alertDeliveries)
+				.values([
+					{ org_id: ORG_X, event_key: "job.failed", context: { title: "it-6118 X" }, status: "sent" },
+					{ org_id: ORG_Y, event_key: "job.failed", context: { title: "it-6118 Y" }, status: "sent" },
+				])
+				.returning({ id: alertDeliveries.id, org: alertDeliveries.org_id });
+			seeded.deliveryX = deliveries.find((d) => d.org === ORG_X)?.id ?? "";
+			seeded.deliveryY = deliveries.find((d) => d.org === ORG_Y)?.id ?? "";
+			expect(seeded.deliveryX && seeded.deliveryY).toBeTruthy();
+
 			// One project per org under the same slug, each with its default environment (W authors).
 			const seedProject = async (orgId: string): Promise<string> => {
 				const [p] = await db
@@ -431,6 +473,8 @@ export async function runRpcTenancySuite(opts: {
 		afterAll(async () => {
 			const db = getServiceDb();
 			await db.delete(jobs).where(inArray(jobs.org_id, [ORG_X, ORG_Y]));
+			await db.delete(alertDeliveries).where(inArray(alertDeliveries.org_id, [ORG_X, ORG_Y]));
+			await db.delete(organizationBilling).where(inArray(organizationBilling.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(supportCases).where(inArray(supportCases.org_id, [ORG_X, ORG_Y]));
 			const seededProjects = [seeded.projectX, seeded.projectY].filter((id) => id !== "");
 			if (seededProjects.length > 0) {
