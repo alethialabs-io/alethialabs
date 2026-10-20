@@ -24,13 +24,15 @@ import { orpc } from "@/lib/rpc/client";
 export const TOPIC_KEYS = {
 	// The shell's capped job feed (bell, toasts, breadcrumbs, palette), the full list (runners, plan
 	// flow — on `qk.jobs(org)`, reached by the `["jobs"]` prefix) and the setup guide's "provisioned"
-	// step change with every job (#6114).
+	// step change with every job (#6114). So does the overview's usage read, which counts runner
+	// minutes and jobs in flight (#6118).
 	jobs: (): QueryKey[] => [
 		orpc.jobs.key(),
 		["jobs"],
 		orpc.workspace.recentJobs.key(),
 		orpc.workspace.jobs.key(),
 		orpc.workspace.setupGuide.key(),
+		orpc.overview.usage.key(),
 	],
 	environments: (): QueryKey[] => [orpc.workspace.environments.key()],
 	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
@@ -38,7 +40,7 @@ export const TOPIC_KEYS = {
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
 	addons: (): QueryKey[] => [],
-	alerts: (): QueryKey[] => [],
+	alerts: (): QueryKey[] => [orpc.overview.alerts.key()],
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key()],
-	usage: (): QueryKey[] => [],
+	usage: (): QueryKey[] => [orpc.overview.usage.key()],
 } satisfies Record<Topic, () => QueryKey[]>;
