@@ -4,22 +4,13 @@
 // Runner release notes are read from `runner_releases` and rendered as markdown inside the
 // version popover. They moved from react-markdown to streamdown (#6140) so the console has one
 // markdown renderer. These pin that the move kept the structure readable (heading, list, code,
-// link) and kept the notes UNTRUSTED: a `javascript:` link is neutralised and raw HTML never
-// becomes an element.
+// link, image) and kept the notes UNTRUSTED: a `javascript:` link and `data:`/`javascript:` images
+// are neutralised to plain text, and raw HTML never becomes an element.
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("@/app/server/actions/runners", () => ({ getReleaseNotes: vi.fn() }));
-vi.mock("@/lib/query/use-runners-query", () => ({
-	useUpdateRunner: () => ({ mutateAsync: vi.fn() }),
-}));
-vi.mock("next/navigation", () => ({
-	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
-}));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-
-import { ReleaseNotesMarkdown } from "@/components/runners/release-notes-popover";
+import { ReleaseNotesMarkdown } from "@/components/runners/release-notes-markdown";
 
 const NOTES = [
 	"## What's changed",
@@ -34,6 +25,12 @@ const NOTES = [
 	"```",
 	"",
 	"[click me](javascript:alert(document.cookie))",
+	"",
+	"![release banner](https://example.com/banner.png)",
+	"",
+	"![data pixel](data:image/png;base64,iVBORw0KGgo=)",
+	"",
+	"![script image](javascript:alert(3))",
 	"",
 	'<b>bold</b> <img src="https://example.com/x.png" onerror="alert(1)"> <script>alert(2)</script>',
 	"",
@@ -57,8 +54,11 @@ describe("ReleaseNotesMarkdown", () => {
 		expect(root?.classList.contains("[&_h2]:text-ui-md")).toBe(true);
 	});
 
-	it("renders a list with its items", async () => {
-		await renderNotes();
+	it("renders a list with its items, with markers generated from console source", async () => {
+		const { container } = await renderNotes();
+		// streamdown's own `list-disc` is never generated (no `@source` for its dist), so the
+		// marker must come from the wrapper's descendant rule, which Tailwind does see.
+		expect(container.firstElementChild?.classList.contains("[&_ul]:list-disc")).toBe(true);
 		const items = screen.getAllByRole("listitem").map((li) => li.textContent);
 		expect(items).toEqual(["Faster plan uploads", "Retries on transient errors"]);
 	});
@@ -86,6 +86,28 @@ describe("ReleaseNotesMarkdown", () => {
 			expect(el.getAttribute("href")?.toLowerCase()).not.toContain("javascript:");
 		}
 		expect(screen.getAllByRole("link")).toHaveLength(1);
+		// Text-only block policy: the link text stands alone, with no indicator or tooltip.
+		expect(container.textContent).not.toContain("[blocked]");
+		expect(container.querySelector("[title*='Blocked']")).toBeNull();
+	});
+
+	it("keeps a remote https image as an image", async () => {
+		await renderNotes();
+		const img = screen.getByRole("img", { name: "release banner" });
+		expect(img).toHaveAttribute("src", "https://example.com/banner.png");
+	});
+
+	it("blocks data: and javascript: images, leaving their alt text", async () => {
+		const { container } = await renderNotes();
+		expect(screen.getAllByRole("img")).toHaveLength(1);
+		for (const el of container.querySelectorAll("[src]")) {
+			const src = el.getAttribute("src")?.toLowerCase() ?? "";
+			expect(src.startsWith("data:")).toBe(false);
+			expect(src.startsWith("javascript:")).toBe(false);
+		}
+		expect(screen.getByText("data pixel")).toBeInTheDocument();
+		expect(screen.getByText("script image")).toBeInTheDocument();
+		expect(container.textContent).not.toContain("[blocked]");
 	});
 
 	it("keeps raw HTML off: no element is created from it", async () => {
@@ -95,7 +117,7 @@ describe("ReleaseNotesMarkdown", () => {
 		expect(container.querySelector("b")).toBeNull();
 		expect(container.textContent).toContain("<b>bold</b>");
 		expect(container.querySelector("script")).toBeNull();
-		expect(container.querySelector("img")).toBeNull();
+		expect(container.querySelector("img[src='https://example.com/x.png']")).toBeNull();
 		expect(container.querySelector("[onerror]")).toBeNull();
 	});
 });

@@ -15,61 +15,44 @@ import {
 } from "@/lib/query/use-runners-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { defaultRehypePlugins, Streamdown } from "streamdown";
 
-/**
- * Release notes are read from `runner_releases`, which the release pipeline writes through
- * `/api/releases/runner`; the console does not author them, so they are rendered as untrusted
- * markdown:
- * - raw HTML is OFF: `rehype-raw` is left out of streamdown's default chain, so an HTML node never
- *   becomes an element and shows as literal text — what react-markdown, which this replaced, did;
- * - a `javascript:` link renders as inert text. Two layers each drop it on their own:
- *   `rehype-sanitize` (streamdown's schema keeps only http(s)/irc/mailto/xmpp/tel hrefs, plus
- *   its own internal `streamdown:`) and `rehype-harden`, which also stamps
- *   `rel="noopener noreferrer"` on the links it keeps;
- * - link safety is off: a link stays a plain `<a>`, as under react-markdown, rather than the
- *   chat's button-plus-confirm-modal. Unlike react-markdown, it now opens in a new tab.
- */
-const releaseNotesRehypePlugins = [
-  defaultRehypePlugins.sanitize,
-  defaultRehypePlugins.harden,
-];
+/** Fetches the markdown renderer's chunk (streamdown and its unified pipeline). */
+function loadReleaseNotesMarkdown() {
+  return import("./release-notes-markdown").then((m) => m.ReleaseNotesMarkdown);
+}
 
-/**
- * Streamdown's own heading and code sizes (`text-3xl` … `text-sm`) are chat-sized. These
- * descendant rules out-rank them (a class plus a descendant selector beats a lone class) and put
- * every element on the shared `--text-ui-*` rungs: headings at body size or one rung up, as the
- * popover typeset its `h2`/`h3` before, with tight list spacing.
- */
-const releaseNotesClassName = [
-  "min-w-0 space-y-2 break-words text-ui-md",
-  "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-  "[&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-ui-lg",
-  "[&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-ui-md",
-  "[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-ui-md",
-  "[&_h4]:mt-2 [&_h4]:mb-1 [&_h4]:text-ui-sm",
-  "[&_h5]:text-ui-sm [&_h6]:text-ui-sm [&_li]:py-0.5",
-  "[&_[data-streamdown=inline-code]]:text-ui-xs",
-  "[&_[data-streamdown=code-block]]:my-2 [&_[data-streamdown=code-block-body]]:text-ui-xs",
-].join(" ");
-
-/** Renders a release's markdown notes through streamdown — the console's one markdown renderer. */
-export function ReleaseNotesMarkdown({ markdown }: { markdown: string }) {
+/** The notes skeleton: the popover's loading state for both the fetch and the renderer chunk. */
+function ReleaseNotesSkeleton() {
   return (
-    <Streamdown
-      mode="static"
-      className={releaseNotesClassName}
-      rehypePlugins={releaseNotesRehypePlugins}
-      linkSafety={{ enabled: false }}
-      controls={false}
-      lineNumbers={false}
-    >
-      {markdown}
-    </Streamdown>
+    <div className="space-y-2">
+      <Skeleton className="h-4 w-3/4" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
   );
+}
+
+/**
+ * Loaded on demand, never statically. This popover is imported by the jobs table's version
+ * column, the runner card, runner actions and the versions panel, so a static import would put
+ * streamdown in the first hydration of `/~/jobs`, `/~/jobs/[id]` and `/~/runners` — the cost
+ * #5849 removed from the shell — while the notes render only once someone opens a popover.
+ */
+const ReleaseNotesMarkdown = dynamic(loadReleaseNotesMarkdown, {
+  ssr: false,
+  loading: ReleaseNotesSkeleton,
+});
+
+/**
+ * Starts loading the renderer before the popover opens — on the trigger's hover and focus — so
+ * the first open does not wait for the chunk. Safe to call repeatedly: the import is cached.
+ */
+function preloadReleaseNotesMarkdown(): void {
+  void loadReleaseNotesMarkdown();
 }
 
 interface ReleaseNotesPopoverProps {
@@ -132,7 +115,11 @@ export function ReleaseNotesPopover({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={children} />
+      <PopoverTrigger
+        render={children}
+        onPointerEnter={preloadReleaseNotesMarkdown}
+        onFocus={preloadReleaseNotesMarkdown}
+      />
       <PopoverContent align="start" className="w-96 p-0">
         <div className="flex flex-col gap-1 border-b border-border p-3">
           <div className="flex items-center gap-2">
@@ -162,11 +149,7 @@ export function ReleaseNotesPopover({
         <ScrollArea className="max-h-[50vh]">
           <div className="p-3">
             {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-4 w-5/6" />
-              </div>
+              <ReleaseNotesSkeleton />
             ) : release?.release_notes ? (
               <ReleaseNotesMarkdown markdown={release.release_notes} />
             ) : (
