@@ -8,8 +8,8 @@
 #
 #   env:up      ensure this branch has an environment, and that it is running
 #               a NEW env comes up seeded with demo data   [--empty | --seed | --fresh]
-#               pinned ALETHIA_EDITION=enterprise, as prod is; [--community] pins a NEW env
-#               to the community build instead (an existing env's pin is never rewritten)
+#               pinned ALETHIA_EDITION=enterprise, as prod is; [--community] pins a NEW or
+#               UNPINNED env to the community build instead (a present pin is never rewritten)
 #   env:push    rsync the working tree (the fast inner loop)   [--watch]
 #   env:down    release this branch's environment
 #   env:status  the box, every environment, capacity, cost
@@ -1463,10 +1463,12 @@ cmd_up() {
 # (apps/console/Dockerfile) and the community image both set it, and `auto` is the one mode in
 # which a failure to resolve @alethia/ee used to degrade silently to community — after #6153 it is
 # refused as EditionMisconfiguredError instead. A sandbox that runs a mode prod never runs is not
-# rehearsing prod. `enterprise` by default; `env:up --community` pins a NEW env to the community
-# build. The pin is an ordinary present key, so reconcile never rewrites it: an env pinned
-# community stays community across every later env:up, and asking an env already pinned the
-# other way for --community is refused rather than silently ignored.
+# rehearsing prod. `enterprise` by default; `env:up --community` pins the community build into
+# any env whose .env has no ALETHIA_EDITION line yet — a NEW env, or an existing UNPINNED one.
+# A present line is an ordinary present key, so reconcile never rewrites it: an env pinned
+# community stays community across every later env:up, and asking an env already carrying a
+# different value (`enterprise`, or a literal `auto`) for --community is refused rather than
+# silently ignored.
 mint_env() {
   local slug_="$1" cport="$2" sport="$3" db="$4" fresh="${5:-}" edition="${6:-enterprise}" fqdn url
   fqdn="$(env_fqdn "$slug_" "$cport")"
@@ -1545,6 +1547,9 @@ edition_pin_note() {
   fi
   case "$pinned" in
   community) echo "  .env: '$slug_' stays pinned ALETHIA_EDITION=community (set when it was minted)." ;;
+  # A PRESENT `auto`/empty line is a key env:up will never rewrite, so re-running it is no remedy.
+  auto) echo "⚠ .env: '$slug_' sets ALETHIA_EDITION to auto/empty, which env:up never rewrites — set it in
+  that env's .env, or: pnpm env:down && pnpm env:up" >&2 ;;
   *) echo "⚠ .env: '$slug_' has ALETHIA_EDITION=$pinned, not a pinned edition — prod pins enterprise." >&2 ;;
   esac
 }
@@ -1668,20 +1673,35 @@ dotenv_reconcile() {
 }
 
 # RUNS ON THE BOX, shipped as text. POSIX sh. Which edition a .env pins, as ONE word:
-# enterprise | community | auto | unset | other | no-file. The value is normalised the way
-# env-mode.sh's scope_verdict normalises it (quotes, CR, padding) because every dotenv loader
-# reads those as the bare word; a value outside the three the console accepts is `other`, so an
-# arbitrary string never crosses the wire. Last assignment wins, as it does when sourced.
+# enterprise | community | auto | unset | other | no-file. A value outside the three the console
+# accepts is `other`, so an arbitrary string never crosses the wire.
+#
+# It reads the pin EXACTLY as scripts/box/env-mode.sh's scope_probe + scope_verdict do — the last
+# `^ALETHIA_EDITION=` line, CRs dropped, outer whitespace trimmed, ONE pair of matching quotes
+# removed — and the self-test holds the two readers to the same answer on every fixture. Two
+# readers that normalise differently would print a `scope` and an `edition` row that disagree
+# about the same line, and the MISMATCH this feeds would be a disagreement between two parsers
+# rather than between the .env and the console. Where scope_probe is narrower than the console
+# (an `export ` prefix), this is narrower with it, and the fix belongs in both at once.
 dotenv_edition() {
   [ -f "$1" ] || {
     echo no-file
     return 0
   }
-  _e="$(sed -n 's/^\(export[[:space:]]\{1,\}\)\{0,1\}ALETHIA_EDITION=//p' "$1" | tail -n 1 | tr -d "\r\"' \t")"
+  grep -Eq '^ALETHIA_EDITION=' "$1" || {
+    echo unset
+    return 0
+  }
+  _e="$(grep -E '^ALETHIA_EDITION=' "$1" | tail -n 1 | cut -d= -f2- | tr -d '\r' |
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   case "$_e" in
-  "")
-    if grep -Eq '^(export[[:space:]]+)?ALETHIA_EDITION=' "$1"; then echo auto; else echo unset; fi
+  \"*\" | \'*\')
+    _e="${_e#?}"
+    _e="${_e%?}"
     ;;
+  esac
+  case "$_e" in
+  "") echo auto ;;
   enterprise | community | auto) echo "$_e" ;;
   *) echo other ;;
   esac
@@ -1890,7 +1910,10 @@ edition_row() {
   case "$pin" in
   "") echo "?-not-checked"; return ;;
   no-file) echo "?-no-.env"; return ;;
-  unset | auto) echo "⚠ UNPINNED ($pin) — prod pins enterprise; run pnpm env:up on that branch"; return ;;
+  # Two remedies, because only one of these is a MISSING key: env:up appends an absent line and
+  # never rewrites a present one, so for a literal `auto` (or empty) re-running it changes nothing.
+  unset) echo "⚠ UNPINNED (unset) — prod pins enterprise; run pnpm env:up on that branch"; return ;;
+  auto) echo "⚠ UNPINNED (auto) — env:up never rewrites a present line: set it in that env's .env, or pnpm env:down && pnpm env:up"; return ;;
   other) echo "⚠ ALETHIA_EDITION is not community, enterprise or auto — fix that env's .env"; return ;;
   esac
   case "$scope" in
@@ -1946,7 +1969,7 @@ cmd_status() {
       ($gaps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $gp |
       ($eds | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries) as $ed |
       to_entries[] |
-      "  \(.key)\n    url    https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports  console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope  \($sc[.key] // "?-not-probed")\n    edition \($ed[.key] // "?-not-checked")\n    .env   \(($gp[.key] // "?-not-checked") | if startswith("missing:") then "⚠ MISSING " + (.[8:] | gsub(","; " ")) + " — run pnpm env:up on that branch" elif . == "no-file" then "⚠ NO .env — run pnpm env:up on that branch" else . end)\n    owner  \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
+      "  \(.key)\n    url     https://\(if .key == "dev" then $d else "env" + (((.value.consolePort - 3000) / 100) | tostring) + "-" + $d end)\n    ports   console :\(.value.consolePort)  storage :\(.value.storagePort)\n    scope   \($sc[.key] // "?-not-probed")\n    edition \($ed[.key] // "?-not-checked")\n    .env    \(($gp[.key] // "?-not-checked") | if startswith("missing:") then "⚠ MISSING " + (.[8:] | gsub(","; " ")) + " — run pnpm env:up on that branch" elif . == "no-file" then "⚠ NO .env — run pnpm env:up on that branch" else . end)\n    owner   \(.value.owner)\(if .value.owner == $me then "   ← you" else "" end)   last seen \(.value.lastSeen)"'
   cat <<'NOTE'
 
   Scope: which EDITION that env's console is serving, measured against the running process
@@ -1974,9 +1997,11 @@ cmd_status() {
   the missing non-secret keys; a missing SECRET makes it refuse and name `--fresh`.
 
   Edition: the ALETHIA_EDITION that env's .env PINS, held against the scope above (#6158).
-  Prod pins `enterprise`; so does every env:up, and `env:up --community` pins a new env to the
-  community build. `UNPINNED` means the .env leaves it to `auto`, a mode no real deployment runs
-  — `pnpm env:up` on that branch adds the pin. `MISMATCH` means the console is serving a
+  Prod pins `enterprise`; so does every env:up, and `env:up --community` pins the community
+  build into a new env or an existing unpinned one. `UNPINNED` means the .env leaves it to
+  `auto`, a mode no real deployment runs: `(unset)` has no line, and `pnpm env:up` on that
+  branch adds one; `(auto)` HAS a line, which env:up never rewrites — edit that env's .env, or
+  `pnpm env:down && pnpm env:up`. `MISMATCH` means the console is serving a
   different edition than its .env asked for, so something other than the .env decided it (an
   ALETHIA_EDITION leaked through the tmux server's environment did, in #3732); restart it with
   `pnpm env:up`. When the scope carries a `?` the two are not compared, and the row says so.

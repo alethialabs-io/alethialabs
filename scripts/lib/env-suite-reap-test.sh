@@ -762,8 +762,12 @@ SH
 	erow community enterprise "MISMATCH pinned community, console serving enterprise"
 	erow enterprise COMMUNITY "MISMATCH pinned enterprise, console serving community"
 	erow enterprise community-pinned "MISMATCH pinned enterprise, console serving community"
-	erow unset enterprise "UNPINNED (unset)"
-	erow auto enterprise "UNPINNED (auto)"
+	erow unset enterprise "UNPINNED (unset) — prod pins enterprise; run pnpm env:up"
+	# A PRESENT auto line is never rewritten by env:up, so "run env:up" would be a remedy that does nothing.
+	erow auto enterprise "UNPINNED (auto) — env:up never rewrites a present line"
+	case "$(bash -c '. "$1"; edition_row auto enterprise' _ "$TMP/dotenv.sh")" in
+	*"run pnpm env:up on that branch"*) bad "edition_row tells an env with a literal auto line to re-run env:up, which never rewrites it" ;;
+	esac
 	erow other enterprise "is not community, enterprise or auto"
 	erow enterprise "?-no-answer" "not compared"
 	erow no-file enterprise "?-no-.env"
@@ -788,6 +792,80 @@ SH
 	rc=0
 	out="$(note enterprise enterprise 2>&1)" || rc=$?
 	[ "$rc" = 0 ] && [ -z "$out" ] || bad "a matching pin was not silent (rc $rc): $out"
+
+
+	# C9. ONE reading of the pin. env:status prints a `scope` row (env-mode.sh's scope_probe reads
+	# the .env) and an `edition` row (dotenv_edition reads it); if the two parsers normalise
+	# differently they disagree about the same line and MISMATCH reports the parsers, not the env.
+	# scope_probe is driven for real with curl stubbed to 404, where its verdict turns on the pin.
+	mode_sh="$ROOT/scripts/box/env-mode.sh"
+	for f in scope_verdict scope_probe; do
+		sed -n "/^$f() {/,/^}$/p" "$mode_sh" >>"$TMP/scope.sh"
+		grep -q "^$f() {" "$TMP/scope.sh" || bad "could not lift $f() out of $mode_sh"
+	done
+	pv="$TMP/parity"
+	mkdir -p "$pv"
+	i=0
+	for line in 'ALETHIA_EDITION=community' 'ALETHIA_EDITION="community"' "ALETHIA_EDITION='community'" \
+		'ALETHIA_EDITION=  community  ' 'ALETHIA_EDITION=comm unity' 'ALETHIA_EDITION=enterprise' \
+		'export ALETHIA_EDITION=community' 'ALETHIA_EDITION=' 'ALETHIA_EDITION="\x27community\x27"' \
+		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community'; do
+		i=$((i + 1))
+		printf 'X=1\n%b\r\n' "$line" >"$pv/$i.env"
+		pin="$(sh -c "$(bash -c '. "$1"; declare -f dotenv_edition' _ "$TMP/dotenv.sh"); dotenv_edition \"\$1\"" sh "$pv/$i.env")"
+		verdict="$(bash -c 'curl() { printf 404; }; sleep() { :; }; . "$1"; scope_probe 1 "$2" 1 1' _ "$TMP/scope.sh" "$pv/$i.env")"
+		verdict="${verdict%% *}"
+		case "$pin:$verdict" in
+		community:community | enterprise:DEFECT | unset:DEFECT | auto:DEFECT | other:DEFECT) ;;
+		*) bad "the two pin readers disagree on '$line': dotenv_edition=$pin, scope_probe=$verdict" ;;
+		esac
+	done
+
+	# C10. The CALL SITES, not just the parts: --community must reach the template, and the read-back
+	# must run. Each of these is one deleted word away from an env:up that pins enterprise while
+	# telling its caller it pinned community.
+	for f in up_flags usage_error mint_env; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/callsites.sh"
+		grep -q "^$f() {" "$TMP/callsites.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	flags() { bash -c '. "$1"; shift; up_flags "$@"; echo "$UP_EDITION"' _ "$TMP/callsites.sh" "$@"; }
+	[ "$(flags --community)" = community ] || bad "env:up --community does not set the community edition"
+	[ "$(flags --fresh --community --seed)" = community ] || bad "--community is lost among other flags"
+	[ "$(flags)" = enterprise ] || bad "a plain env:up does not default to enterprise"
+	cat >"$TMP/drive-mint.sh" <<'SH'
+set -euo pipefail
+. "$1"; . "$2"
+REMOTE=/opt/alethia
+# Upper-case on purpose: mint_env declares `local pinned`, which would shadow a stub's variable.
+MINT_LOG="$3"; REQUESTED="$4"; PIN_ANSWER="$5"
+die() { echo "DIED: $1" >>"$MINT_LOG"; exit 9; }
+openssl() { echo X; }
+ed25519_raw_b64() { echo X; }
+env_fqdn() { echo s1.example; }
+ssh_box() {
+	case "$1" in
+	*dotenv_reconcile*) cat >>"$MINT_LOG"; return 0 ;;
+	*dotenv_edition*) echo "$PIN_ANSWER"; return 0 ;;
+	esac
+}
+mint_env s1 3100 8400 db_s1 "" "$REQUESTED"
+echo DONE >>"$MINT_LOG"
+SH
+	ml="$TMP/mint.log"
+	: >"$ml"
+	bash "$TMP/drive-mint.sh" "$TMP/dotenv.sh" "$TMP/callsites.sh" "$ml" community community >/dev/null 2>&1 ||
+		bad "mint_env --community failed against a community pin"
+	grep -qx 'ALETHIA_EDITION=community' "$ml" || bad "mint_env did not hand --community to the template it ships"
+	: >"$ml"
+	rc=0
+	bash "$TMP/drive-mint.sh" "$TMP/dotenv.sh" "$TMP/callsites.sh" "$ml" community enterprise >/dev/null 2>&1 || rc=$?
+	[ "$rc" = 9 ] && grep -q '^DIED: .*already pinned' "$ml" ||
+		bad "mint_env did not refuse --community on an enterprise-pinned env — is edition_pin_note still called? (rc $rc)"
+	# cmd_up is not driven (it is all ssh); its two edition lines are pinned by text instead.
+	up_body="$(sed -n '/^cmd_up() {/,/^}$/p' "$env_sh")"
+	printf '%s\n' "$up_body" | grep -qx '  edition="\$UP_EDITION"' || bad "cmd_up does not read UP_EDITION"
+	printf '%s\n' "$up_body" | grep -qx '  mint_env "\$slug_" "\$cport" "\$sport" "\$db" "\$fresh" "\$edition"' ||
+		bad "cmd_up does not pass the edition to mint_env"
 
 	[ "$fails" = "$before" ] &&
 		ok "an existing .env gains the keys it predates, keeps every value it has, refuses a missing secret without --fresh, and env:status names the gap"
@@ -993,6 +1071,24 @@ mutate_fn edition-never-read-back <<'AWK'
 AWK
 mutate_fn edition-mismatch-never-reported <<'AWK'
 { sub(/^  if \[ "\$pin" = "\$served" \]; then$/, "  if :; then"); print }
+AWK
+# The call sites (A3 on #6160): --community parsed as enterprise; mint_env rendering without it;
+# the read-back dropped; cmd_up not passing it on.
+mutate_fn community-flag-parsed-as-enterprise <<'AWK'
+{ sub(/^    --community\) edition="community" ;;$/, "    --community) edition=\"enterprise\" ;;"); print }
+AWK
+mutate_fn mint-renders-without-the-edition <<'AWK'
+{ sub(/"\$snapshot_key" "\$bootstrap_token" "\$edition" \|$/, "\"$snapshot_key\" \"$bootstrap_token\" |"); print }
+AWK
+mutate_fn pin-note-never-called <<'AWK'
+/^  edition_pin_note "\$slug_" "\$edition" "\$pinned"$/ { next }
+{ print }
+AWK
+mutate_fn cmd-up-drops-the-edition <<'AWK'
+{ sub(/"\$db" "\$fresh" "\$edition"$/, "\"$db\" \"$fresh\""); print }
+AWK
+mutate_fn pin-reader-strips-inner-spaces <<'AWK'
+{ sub(/tr -d '\\r' \|$/, "tr -d '\\r ' |"); print }
 AWK
 mutate_fn community-request-silently-ignored <<'AWK'
 /^edition_pin_note\(\) \{/ { inside = 1 }
