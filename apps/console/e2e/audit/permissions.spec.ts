@@ -87,11 +87,11 @@ import {
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
-import { signUpWithOtp } from "../fixtures/auth";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
 import { consoleRoutes, repoRoot } from "./manifest";
 import { rendersSharedErrorState, visibleText } from "./error-state";
 import { createReport } from "./report";
+import { signUpWithRetry } from "./signup";
 
 const manifest = consoleRoutes();
 const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
@@ -159,74 +159,6 @@ let personaEmail = "";
 // and answering it needs the same route driven by somebody who is not the persona.
 let ownerContext: BrowserContext | null = null;
 let ownerPage: Page | null = null;
-
-/**
- * Signs an account up, retrying the whole walk — WITH A FRESH ADDRESS EACH TIME.
- *
- * `signUpWithOtp` waits 5s for the consent banner and 30s for the OTP, and on a contended runner
- * the first of those is genuinely tight; `e2e/global-setup.ts` wraps every persona in the same
- * shape for the same reason ("transient recompile 500s, slow OTP"). A T7 persona that fails to be
- * born takes the whole predicate with it.
- *
- * THE ADDRESS MUST CHANGE PER ATTEMPT, and this is not tidiness. `signUpWithOtp` creates the
- * account at OTP verification and then still has to walk onboarding, the clickwrap and the org
- * hand-off. A failure in any of those — precisely the transient case the retry exists for — leaves
- * a REAL account behind. Retried on the same address the flow is a SIGN-IN, `/onboarding` never
- * appears, and the fixture's `waitForURL(/\/onboarding/)` times out after 30s. Every later attempt
- * is then guaranteed to fail, and the run spends two 35s sleeps and two 30s timeouts proving it
- * inside a 180s test budget. So the caller gets back the address that actually worked.
- */
-async function signUpWithRetry(
-	page: Page,
-	emailFor: (attempt: number) => string,
-	attempts = 3,
-): Promise<{ email: string; orgSlug: string }> {
-	let last: unknown;
-	for (let i = 1; i <= attempts; i++) {
-		const email = emailFor(i);
-		try {
-			const { orgSlug } = await withTestEmail(email, () => signUpWithOtp(page));
-			return { email, orgSlug };
-		} catch (err) {
-			last = err;
-			const why = err instanceof Error ? err.message : String(err);
-			// WHERE it stopped, not just that it did. A bare "locator timed out" sends the reader to
-			// the locator; the URL and the first line of the page say whether the walk was on the
-			// signup form at all — which is how the "already signed in, so /signup redirected"
-			// case tells itself apart from "the consent button was renamed".
-			const where = await page
-				.evaluate(() => `${location.pathname} :: ${document.body.innerText.trim().slice(0, 160)}`)
-				.catch(() => "(page unreadable)");
-			console.warn(`[audit/T7] signup ${email} attempt ${i}/${attempts}: ${why}\n    at ${where}`);
-			await page.context().clearCookies();
-			// 35s, not 2s. Better Auth caps OTP issuance at 5 sends / 60s per IP
-			// (`lib/config/auth.ts`), and a retry inside that window gets "Too many requests" and
-			// burns an attempt without ever asking for a code. Measured: three attempts, 2s apart,
-			// all three refused by the rate limiter.
-			await page.waitForTimeout(35_000);
-		}
-	}
-	throw last;
-}
-
-/**
- * Runs `fn` with `signUpWithOtp` pointed at `email`.
- *
- * `fixtures/auth.ts` reads `TEST_USER_EMAIL` and otherwise invents an address. Setting it around
- * the call is how this spec reuses the whole vetted signup walk — consent, OTP, onboarding, the
- * clickwrap — for an address it has to choose, instead of writing a second copy of it that would
- * drift the first time the gate changes.
- */
-async function withTestEmail<T>(email: string, fn: () => Promise<T>): Promise<T> {
-	const prior = process.env.TEST_USER_EMAIL;
-	process.env.TEST_USER_EMAIL = email;
-	try {
-		return await fn();
-	} finally {
-		if (prior === undefined) delete process.env.TEST_USER_EMAIL;
-		else process.env.TEST_USER_EMAIL = prior;
-	}
-}
 
 /**
  * Calls a better-auth organization endpoint from inside the page, so the request carries the
