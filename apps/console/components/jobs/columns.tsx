@@ -22,6 +22,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Layers, Server } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useHydrated } from "@/hooks/use-hydrated";
 
 export { JOB_TYPES };
 
@@ -30,8 +31,16 @@ type JobRow = JobWithMeta;
 
 const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
-/** Ticks once a second so an in-flight job's elapsed time stays live. */
+/**
+ * Ticks once a second so an in-flight job's elapsed time stays live.
+ *
+ * The rows are server-rendered since the jobs page prefetches them (#6113), and "now" on the server
+ * is not "now" in the hydrating browser: printing the elapsed time during hydration is a text
+ * mismatch, React #418, and React throws the page's server HTML away. So the clock is read only
+ * once hydration is over (`useHydrated`, #5786) — the row itself still paints on first load.
+ */
 function LiveDuration({ createdAt }: { createdAt: Date | string }) {
+  const hydrated = useHydrated();
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
@@ -39,8 +48,24 @@ function LiveDuration({ createdAt }: { createdAt: Date | string }) {
   }, []);
   return (
     <span className="text-xs tabular-nums text-muted-foreground">
-      {formatDuration(Date.now() - new Date(createdAt).getTime())}
+      {hydrated ? formatDuration(Date.now() - new Date(createdAt).getTime()) : "\u00a0"}
     </span>
+  );
+}
+
+/**
+ * "3 minutes ago", read against the browser's clock only after hydration — for the same #418
+ * reason as `LiveDuration`. `<time>` carries the instant itself for assistive tech meanwhile.
+ */
+function RelativeTime({ at }: { at: Date | string }) {
+  const hydrated = useHydrated();
+  return (
+    <time
+      dateTime={new Date(at).toISOString()}
+      className="whitespace-nowrap text-xs text-muted-foreground"
+    >
+      {hydrated ? formatRelative(at) : "\u00a0"}
+    </time>
   );
 }
 
@@ -351,9 +376,7 @@ export function buildJobColumns({
         return (
           <div className="flex items-center justify-end gap-2">
             {created_at && (
-              <span className="whitespace-nowrap text-xs text-muted-foreground">
-                {formatRelative(created_at)}
-              </span>
+              <RelativeTime at={created_at} />
             )}
             <JobAuthor author={author} />
           </div>
