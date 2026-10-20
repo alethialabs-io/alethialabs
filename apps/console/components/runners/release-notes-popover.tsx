@@ -17,8 +17,60 @@ import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
+import { defaultRehypePlugins, Streamdown } from "streamdown";
+
+/**
+ * Release notes are read from `runner_releases`, which the release pipeline writes through
+ * `/api/releases/runner`; the console does not author them, so they are rendered as untrusted
+ * markdown:
+ * - raw HTML is OFF: `rehype-raw` is left out of streamdown's default chain, so an HTML node never
+ *   becomes an element and shows as literal text — what react-markdown, which this replaced, did;
+ * - a `javascript:` link renders as inert text. Two layers each drop it on their own:
+ *   `rehype-sanitize` (streamdown's schema keeps only http(s)/irc/mailto/xmpp/tel hrefs, plus
+ *   its own internal `streamdown:`) and `rehype-harden`, which also stamps
+ *   `rel="noopener noreferrer"` on the links it keeps;
+ * - link safety is off: a link stays a plain `<a>`, as under react-markdown, rather than the
+ *   chat's button-plus-confirm-modal. Unlike react-markdown, it now opens in a new tab.
+ */
+const releaseNotesRehypePlugins = [
+  defaultRehypePlugins.sanitize,
+  defaultRehypePlugins.harden,
+];
+
+/**
+ * Streamdown's own heading and code sizes (`text-3xl` … `text-sm`) are chat-sized. These
+ * descendant rules out-rank them (a class plus a descendant selector beats a lone class) and put
+ * every element on the shared `--text-ui-*` rungs: headings at body size or one rung up, as the
+ * popover typeset its `h2`/`h3` before, with tight list spacing.
+ */
+const releaseNotesClassName = [
+  "min-w-0 space-y-2 break-words text-ui-md",
+  "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+  "[&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-ui-lg",
+  "[&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-ui-md",
+  "[&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-ui-md",
+  "[&_h4]:mt-2 [&_h4]:mb-1 [&_h4]:text-ui-sm",
+  "[&_h5]:text-ui-sm [&_h6]:text-ui-sm [&_li]:py-0.5",
+  "[&_[data-streamdown=inline-code]]:text-ui-xs",
+  "[&_[data-streamdown=code-block]]:my-2 [&_[data-streamdown=code-block-body]]:text-ui-xs",
+].join(" ");
+
+/** Renders a release's markdown notes through streamdown — the console's one markdown renderer. */
+export function ReleaseNotesMarkdown({ markdown }: { markdown: string }) {
+  return (
+    <Streamdown
+      mode="static"
+      className={releaseNotesClassName}
+      rehypePlugins={releaseNotesRehypePlugins}
+      linkSafety={{ enabled: false }}
+      controls={false}
+      lineNumbers={false}
+    >
+      {markdown}
+    </Streamdown>
+  );
+}
 
 interface ReleaseNotesPopoverProps {
   /** The version whose notes to show; null disables the popover. */
@@ -116,9 +168,7 @@ export function ReleaseNotesPopover({
                 <Skeleton className="h-4 w-5/6" />
               </div>
             ) : release?.release_notes ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-sm [&_h3]:text-sm [&_li]:my-0.5 [&_ul]:my-1">
-                <ReactMarkdown>{release.release_notes}</ReactMarkdown>
-              </div>
+              <ReleaseNotesMarkdown markdown={release.release_notes} />
             ) : (
               <p className="text-sm text-muted-foreground">
                 No release notes available for this version.
