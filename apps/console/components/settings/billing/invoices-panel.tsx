@@ -18,13 +18,12 @@ import { CircleDot } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { type InvoiceInfo, listInvoices } from "@/app/server/actions/billing";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { qk } from "@/lib/query/keys";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
-import { Button } from "@repo/ui/button";
 import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { FacetFilter } from "@repo/ui/facet-filter";
@@ -154,14 +153,10 @@ export function InvoicesPanel() {
 				{invoices.isError ? (
 					// A fetch failure must not render as "no invoices yet" — that reads as a fact
 					// about the account rather than about the request.
-					<ErrorState
+					<RegionError
 						title="Couldn't load invoices"
 						description="Something went wrong fetching your invoice history. Check your connection and try again."
-						actions={
-							<Button variant="outline" size="sm" onClick={() => void invoices.refetch()}>
-								Retry
-							</Button>
-						}
+						onRetry={() => void invoices.refetch()}
 					/>
 				) : invoices.isPending ? (
 					<Skeleton className="h-56 w-full" />

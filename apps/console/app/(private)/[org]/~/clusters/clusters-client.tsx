@@ -12,7 +12,7 @@ import {
 	EmptyTitle,
 } from "@repo/ui/empty";
 import { ClusterCard } from "@/components/clusters/cluster-card";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -49,14 +49,10 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	if (isError) {
 		// A fetch failure must not render as "no clusters provisioned".
 		return (
-			<ErrorState
+			<RegionError
 				title="Couldn't load clusters"
 				description="Something went wrong fetching your clusters. Check your connection and try again."
-				actions={
-					<Button variant="outline" size="sm" onClick={() => refetch()}>
-						Retry
-					</Button>
-				}
+				onRetry={() => refetch()}
 			/>
 		);
 	}

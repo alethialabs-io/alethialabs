@@ -67,10 +67,16 @@ infrastructural:
 
 tier_separation:
   - path: src/count-pill.tsx
-    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx]
-    symbols: [CountFigure]
+    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx, tests/page-toolbar.test.tsx]
+    symbols: [CountFigure, CountPill]
     issue: "#2649"
-    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. It has no dedicated suite of its own, being a span with a class.
+    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. CountPill is rendered for real by the page-toolbar suite, which asserts it is content-sized, renders 0, and is the skeleton's count placeholder (#6117).
+
+  - path: src/skeleton.tsx
+    suite: [tests/page-toolbar.test.tsx]
+    symbols: [Skeleton]
+    issue: "#6117"
+    reason: PageToolbarSkeleton draws its action placeholders with a real Skeleton, and the page-toolbar suite counts them.
 
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
@@ -243,12 +249,6 @@ baseline:
     state: no-test
     reason: The checkbox primitive is named by no suite in this package.
 
-  - path: src/count-pill.tsx
-    symbols: [CountPill]
-    issue: "#2649"
-    state: untested-export
-    reason: The count pill is executed by the filter suites through `CountFigure`, but nothing value-imports `CountPill` itself — `PageToolbar` and `SectionHeading` are its only callers and neither is named by a suite in this package.
-
   - path: src/detail-sheet.tsx
     symbols: [DetailSheet]
     issue: "#2649"
@@ -316,12 +316,6 @@ baseline:
     state: no-test
     reason: The one-time-code input the sign-in flow depends on is named by no suite in this package.
 
-  - path: src/page-toolbar.tsx
-    symbols: [PageToolbar]
-    issue: "#2649"
-    state: no-test
-    reason: PageToolbar — the shared-surface row that carries every console page's count, description and actions — is named by no suite in this package.
-
   - path: src/scroll-area.tsx
     symbols: [ScrollArea, ScrollBar]
     issue: "#2649"
@@ -345,12 +339,6 @@ baseline:
     issue: "#2649"
     state: no-test
     reason: The separator is named by no suite in this package.
-
-  - path: src/skeleton.tsx
-    symbols: [Skeleton]
-    issue: "#2649"
-    state: no-test
-    reason: The loading skeleton is named by no suite in this package.
 
   - path: src/sonner.tsx
     symbols: [Toaster]
