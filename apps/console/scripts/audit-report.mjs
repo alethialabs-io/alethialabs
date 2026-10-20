@@ -477,10 +477,9 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		persona: "the owner of an organisation the spec signs up itself",
 		org: "a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches",
 		covers: "every route the manifest names",
-		awaitingFirstImport: {
-			since: "#6116",
-			why: "family B's instrument landed with #6116; its leg has not been imported yet",
-		},
+		// Imported in the same PR that built it (#6116): run 39438241593 @ `ce9a5fdaf`, the first run
+		// on which the jobs slice passed all five. The marker it carried until then is gone with the
+		// import, which `parseLive()` enforces.
 	},
 });
 
@@ -584,22 +583,15 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * with a reason, `Design with the agent` counts its sonner toast. R8 fails nowhere, so its row is
  * gone. F8 on `~/settings/members` FAILED again, on the reload half only (#4999).
  *
+ * THE SIXTH IMPORT — run 39438241593 @ `ce9a5fdaf`, all four sections of ONE run, on #6116's branch
+ * (the first to carry family B). F8 on `~/settings/members` PASSED, so its row (#4999) is gone; that
+ * cell has reversed verdict between runs before on an unchanged table, so a later import may need
+ * the row back. Family B's debt is NOT here: it is per route, in `BEHAVIOUR_LEDGER` below.
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({
-	F8: {
-		owner: "#4999",
-		why:
-			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
-			"read from the count pill). The fresh tab kept the param but no narrowed count was read back; " +
-			"Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs " +
-			"35872640708 and 35896826914, with the " +
-			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
-			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
-			"the URL is unread or the rows are placeholder data.",
-	},
-});
+export const LIVE_DEBT = /** @type {const} */ ({});
 
 
 /**
@@ -622,7 +614,32 @@ export const LIVE_DEBT = /** @type {const} */ ({
  *
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
-export const BEHAVIOUR_LEDGER = {};
+export const BEHAVIOUR_LEDGER = {
+	// FIRST IMPORT — run 39438241593 @ `ce9a5fdaf`. Every row is MEASURED DEBT, owned by the epic
+	// #6112 lane whose scope holds the route (its issue title and \`scope:\` globs). No row is a
+	// \`reason:\` yet: nothing here was found to be built this way on purpose.
+	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" }, B4: { lifts: "#6118" } },
+	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
+	"/[org]/[project]/environments": { B1: { lifts: "#6120" }, B4: { lifts: "#6120" } },
+	"/[org]/[project]/jobs": { B1: { lifts: "#6121" }, B3: { lifts: "#6121" }, B5: { lifts: "#6121" } },
+	"/[org]/[project]/settings/activity": { B1: { lifts: "#6129" } },
+	"/[org]/[project]/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
+	"/[org]/~/alerts": { B2: { lifts: "#6125" } },
+	"/[org]/~/clusters": { B2: { lifts: "#6122" } },
+	"/[org]/~/connectors": { B2: { lifts: "#6124" } },
+	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B4: { lifts: "#6121" } },
+	"/[org]/~/new": { B2: { lifts: "#6131" } },
+	"/[org]/~/runners": { B1: { lifts: "#6123" } },
+	"/[org]/~/settings/activity": { B1: { lifts: "#6129" } },
+	"/[org]/~/settings/billing": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
+	"/[org]/~/settings/billing/invoices": { B1: { lifts: "#6127" } },
+	"/[org]/~/settings/classification": { B2: { lifts: "#6129" } },
+	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" } },
+	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
+	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
+	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
+	"/[org]/~/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+};
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */
 const LEDGERED = new Set(["B1", "B2", "B3", "B4", "B5"]);
@@ -3323,7 +3340,7 @@ function selfTest() {
 		R8: { owner: "#5", why: "one inert control" },
 	};
 
-	const view = buildView({
+	const view = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3374,7 +3391,7 @@ function selfTest() {
 	raises(
 		"an F cell with NO verdict RAISES rather than scoring a short denominator",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 				filterVerdicts: fixtureFilter.filter((v) => !(v.route === "/a" && v.predicate === "F5")),
@@ -3389,7 +3406,7 @@ function selfTest() {
 	raises(
 		"...and a DUPLICATE F cell raises rather than being counted twice",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 				filterVerdicts: [...fixtureFilter, { route: "/a", predicate: "F1", verdict: "PASS" }],
@@ -3483,7 +3500,7 @@ function selfTest() {
 	// is new drift, `check-shared-surface` is red on it, and `unlisted` is the column this report
 	// tells a reader to look at first. Reading the ledger per FILE hides it, and hides it in the
 	// direction that reports a clean board.
-	const overflowed = buildView({
+	const overflowed = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3503,7 +3520,7 @@ function selfTest() {
 	raises(
 		"a rule id that maps to nothing and is not declared unmapped RAISES",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3518,7 +3535,7 @@ function selfTest() {
 	raises(
 		"...including one that only appears in the allowlist",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -4155,7 +4172,7 @@ function selfTest() {
 	);
 	ok("...and it leaves the denominator, exactly as an N/A does: T7 is 1 PASS / 1 FAIL / 1 withheld = 0.50", view.predicates.T7.score === 0.5);
 	ok("...so a predicate withheld everywhere scores null, never 1", scoreOf(0, 0) === null);
-	const allWithheld = buildView({
+	const allWithheld = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -4195,22 +4212,22 @@ function selfTest() {
 	// ── the live debt ledger, both directions ─────────────────────────────────────────────────
 	raises(
 		"a live predicate that FAILS with no owning issue RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"T7 FAILS on 1 route(s) and no LIVE_DEBT row owns it",
 	);
 	raises(
 		"...and a debt row for a predicate that no longer fails RAISES too — the direction that keeps it true",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"R1 has a LIVE_DEBT row (#9) and now FAILS nowhere",
 	);
 	raises(
 		"a debt row naming something that is not a live predicate RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"LIVE_DEBT names H1, which is not a live predicate",
 	);
 	raises(
 		"an EMPTY live artifact refuses to build a view at all",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"the live audit records did not measure the console",
 	);
 
@@ -4493,7 +4510,7 @@ function selfTest() {
 	// verdict. Neither checked-in file may move when that happens, or every such landing makes
 	// every other open console PR stale again. The summary is where the size goes, so it MUST move.
 	{
-		const grown = buildView({
+		const grown = buildView({ behaviourLedger: {},
 			run: fixtureRun,
 			rubricPredicates: fixtureRubric,
 			filterVerdicts: fixtureFilter,
