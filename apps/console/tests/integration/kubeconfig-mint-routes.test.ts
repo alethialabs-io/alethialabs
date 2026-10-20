@@ -219,7 +219,9 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		await db.insert(profiles).values([{ id: USER_A }, { id: TEAMMATE_A }, { id: USER_B }]);
 		const [identityA] = await db
 			.insert(cloudIdentities)
-			.values({ user_id: USER_A, org_id: ORG_A, provider: "aws", name: `it-mint-${ORG_A.slice(0, 8)}` })
+			// `org` scope: the org's shared identity, which every member and the org's service tokens
+			// may use. A `personal` one would be refused to a token (identityScopeWhere).
+			.values({ user_id: USER_A, org_id: ORG_A, scope: "org", provider: "aws", name: `it-mint-${ORG_A.slice(0, 8)}` })
 			.returning({ id: cloudIdentities.id });
 		for (const [proj, org, user] of [
 			[PROJ_A, ORG_A, USER_A],

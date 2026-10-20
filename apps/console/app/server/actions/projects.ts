@@ -15,6 +15,10 @@ import {
 } from "@/lib/cloud-providers/credential-knobs";
 import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
 import {
+	assertDesignIdentitiesUsable,
+	CloudIdentityRefusedError,
+} from "@/lib/cloud-providers/design-identities";
+import {
 	PROJECT_NAME_MAX_LENGTH,
 	helmRegistryProviderConfigSchema,
 	pickFreeProjectName,
@@ -22,6 +26,9 @@ import {
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import type { Actor } from "@/lib/authz/types";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
@@ -780,6 +787,12 @@ export async function createProject(data: CreateProjectInput) {
 	const project_name = data.project.project_name.trim();
 
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
+		// Before any row is written: every cloud identity the design names must be one this caller
+		// may use (an org identity, or a person's own personal one).
+		await assertDesignIdentitiesUsable(tx, data, {
+			orgId,
+			personalAuthorId: personalIdentityAuthor(actor),
+		});
 		// M1: environment_stage is no longer a project column — it seeds the default env.
 		const { environment_stage, ...projectFields } = data.project;
 
@@ -865,6 +878,11 @@ export async function tryCreateProject(
 		if (err instanceof CredentialKnobRefusedError) {
 			return { ok: false, error: err.message };
 		}
+		// A cloud account the caller may not use. The message names where in the design, never
+		// whether the id exists.
+		if (err instanceof CloudIdentityRefusedError) {
+			return { ok: false, error: err.message };
+		}
 		if (isProjectNameTaken(err)) {
 			return {
 				ok: false,
@@ -904,6 +922,14 @@ export async function updateProjectDesign(
 		// recognised against: a credential in provider_config is refused unless it is already stored,
 		// unchanged, in this project (#5565). This action is also the CLI design route's write path.
 		await assertDesignStoresNoNewCredentials(tx, projectId, data);
+		// Same position, same reason: every cloud identity the design names must be one this caller
+		// may use, unless the project already stores it (so an existing binding stays editable).
+		// Under a CLI service token `personalIdentityAuthor` is undefined, so only org identities pass.
+		await assertDesignIdentitiesUsable(tx, data, {
+			orgId: actor.orgId,
+			personalAuthorId: personalIdentityAuthor(actor),
+			existing: { projectId, environmentId },
+		});
 		await tx
 			.update(projects)
 			.set(projectFields)
@@ -1143,8 +1169,7 @@ export async function reconcileEnvironmentComponents(
 // ============================================================
 
 async function buildConfigSnapshot(
-	owner: string,
-	orgId: string,
+	actor: Actor,
 	projectId: string,
 	environmentId?: string | null,
 	jobKind: "plan" | "deploy" | "destroy" | "drift" = "deploy",
@@ -1153,6 +1178,8 @@ async function buildConfigSnapshot(
 	// (community assumption), so under a real multi-member org an ORG-scoped cloud_identity
 	// (`scope='org'`, `org_id = actor.orgId ≠ userId`) is invisible → the identity lookup below
 	// throws the misleading "Cloud account is not verified". Same fix as createProject.
+	const owner = actor.userId;
+	const orgId = actor.orgId;
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		const [project] = await tx
 			.select()
@@ -1182,13 +1209,34 @@ async function buildConfigSnapshot(
 			);
 		}
 
+		// The identity this job will carry, and the claim route will hand the runner, must be one the
+		// ACTOR may use: an org identity, or a person's own personal one. Explicit rather than left to
+		// RLS, because under a CLI service token the scope's owner is the token's MINTER and RLS
+		// would admit the minter's personal identities. This also covers a project bound before the
+		// design write checked identities.
+		const personalAuthorId = personalIdentityAuthor(actor);
 		const [identity] = await tx
 			.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
 			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, project.cloud_identity_id))
+			.where(actorIdentityWhere(project.cloud_identity_id, orgId, personalAuthorId))
 			.limit(1);
 
 		if (!identity) {
+			// A service token whose minter could use this identity is told why; anyone else gets the
+			// sentence a missing identity always got. The second read is RLS-scoped, so it names
+			// nothing the scope could not already see.
+			if (personalAuthorId === undefined) {
+				const [personal] = await tx
+					.select({ id: cloudIdentities.id })
+					.from(cloudIdentities)
+					.where(eq(cloudIdentities.id, project.cloud_identity_id))
+					.limit(1);
+				if (personal) {
+					throw new JobRefusalError(
+						"This project uses a personal cloud account, and a service token can use only the organization's shared cloud accounts. Run it as a signed-in member, or link an organization cloud account to the project.",
+					);
+				}
+			}
 			throw new JobRefusalError(
 				"Cloud account is not verified. Go to Connectors to verify.",
 			);
@@ -2418,8 +2466,7 @@ export async function planProject(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			environmentId,
 			"plan",
@@ -2493,8 +2540,7 @@ export async function buildProject(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 		"deploy",
@@ -2601,8 +2647,7 @@ export async function provisionProject(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			environmentId,
 			"deploy",
@@ -2736,8 +2781,7 @@ export async function queueDriftDetection(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 	);
@@ -2824,8 +2868,7 @@ export async function destroyProject(
 	const owner = actor.userId;
 	const scope = { ownerId: owner, orgId: actor.orgId };
 	const target = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 		"destroy",
@@ -2870,8 +2913,7 @@ export async function destroyProject(
 	for (const t of tenants) {
 		if (tenantDestroysInFlight.has(t.id)) continue;
 		const snap = await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			t.id,
 			"destroy",

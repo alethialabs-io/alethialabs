@@ -9,7 +9,12 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	authorizeCli: vi.fn(),
+	// REAL: the route asks it which identity arm a credential gets.
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
+}));
 // `assertRunnerInOrg` is stubbed (its predicate is tested with its own file), but
 // `personalRunnerArm` is kept REAL via importOriginal — it is the decision #4298 added, and a stub
 // here would re-implement its switch and then verify the copy rather than the route.
@@ -27,6 +32,13 @@ import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
 import { notifyScaler } from "@/lib/scaler";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
+
+/** Renders a captured WHERE clause to its SQL text and bound parameters. */
+function renderWhere(where: SQL): { sql: string; params: unknown[] } {
+	return new PgDialect().sqlToQuery(where);
+}
 
 /**
  * A drizzle-ish chain whose builders return the chain and whose every `await` resolves to the
@@ -35,11 +47,15 @@ import { notifyScaler } from "@/lib/scaler";
 function makeDb() {
 	const queue: unknown[][] = [];
 	const valuesSpy = vi.fn();
+	const whereSpy = vi.fn();
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
 		from: () => db,
-		where: () => db,
+		where: (w: unknown) => {
+			whereSpy(w);
+			return db;
+		},
 		orderBy: () => db,
 		limit: () => db,
 		insert: () => db,
@@ -51,7 +67,7 @@ function makeDb() {
 		then: (resolve: (v: unknown) => void) =>
 			resolve(queue.length ? queue.shift() : []),
 	});
-	return { db, queue, valuesSpy };
+	return { db, queue, valuesSpy, whereSpy };
 }
 
 let mock: ReturnType<typeof makeDb>;
@@ -65,7 +81,8 @@ function req(body: Record<string, unknown>): Request {
 	});
 }
 
-const DEPLOY = { name: "Cloud", cloud_identity_id: "ci-1", region: "us-east-1" };
+const IDENTITY_ID = "0b8f4a52-6c1e-4d2a-9f3b-1a2b3c4d5e6f";
+const DEPLOY = { name: "Cloud", cloud_identity_id: IDENTITY_ID, region: "us-east-1" };
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -191,6 +208,47 @@ describe("POST /api/cli/runners/deploy", () => {
 			"org-1",
 			"user-1",
 		);
+	});
+
+	// The identity a DEPLOY_RUNNER job carries is handed to the runner at claim, so the route binds
+	// it through `actorIdentityWhere`: an `org` identity of the org, or a PERSON's own `personal`
+	// one. The rendered predicate is read rather than a status, because the stubbed db answers
+	// whatever is queued; what this pins is the question the route asks.
+	it("asks for an org identity or the session user's own personal one", async () => {
+		mock.queue.push(
+			[{ id: "ci-1", provider: "aws" }],
+			[{ version: "1.4.0" }],
+			[{ id: "r-dep", name: "Cloud" }],
+			[{ id: "job-1", status: "QUEUED", created_at: new Date() }],
+		);
+		expect((await POST(req(DEPLOY))).status).toBe(201);
+		const { sql, params } = renderWhere(mock.whereSpy.mock.calls[0][0]);
+		expect(sql).toMatch(/"scope" = \$\d+/);
+		expect(params).toEqual(
+			expect.arrayContaining([IDENTITY_ID, "org-1", "org", "user-1", "personal"]),
+		);
+	});
+
+	it("gives a service token the org's identities only — never the minter's personal one", async () => {
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: "user-1", orgId: "org-1" },
+			credential: "service_token",
+		} as never);
+		mock.queue.push([]);
+		const res = await POST(req(DEPLOY));
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toMatch(/service token can use only/i);
+		const { params } = renderWhere(mock.whereSpy.mock.calls[0][0]);
+		expect(params).toEqual(expect.arrayContaining([IDENTITY_ID, "org-1", "org"]));
+		expect(params).not.toContain("user-1");
+		expect(params).not.toContain("personal");
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+	});
+
+	it("400s an identity id that is not a UUID, before any read", async () => {
+		const res = await POST(req({ ...DEPLOY, cloud_identity_id: { not: "an id" } }));
+		expect(res.status).toBe(400);
+		expect(mock.whereSpy).not.toHaveBeenCalled();
 	});
 
 	it("400s a cloud with no runner template, before inserting anything", async () => {
