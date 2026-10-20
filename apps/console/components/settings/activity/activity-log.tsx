@@ -23,7 +23,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
@@ -402,18 +402,10 @@ export function ActivityLog({
 
 			{activity.isError ? (
 				// A fetch failure must not render as an empty activity feed.
-				<ErrorState
+				<RegionError
 					title="Couldn't load activity"
 					description="Something went wrong fetching the activity log. Check your connection and try again."
-					actions={
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => activity.refetch()}
-						>
-							Retry
-						</Button>
-					}
+					onRetry={() => activity.refetch()}
 				/>
 			) : loading && rows.length === 0 ? (
 				<div className="space-y-3">
