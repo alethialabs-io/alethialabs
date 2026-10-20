@@ -2638,18 +2638,31 @@ BEGIN
 END;
 $$;
 
--- Every family table but project_addons (its own topic, below) notifies `environments`. The family
--- is read from project_component_tables(), never restated, so a new component table is covered the
--- day it joins the family. The UPDATE trigger's column list is DERIVED per table: the lifecycle and
--- health columns the board renders, intersected with the columns that table actually has. A table
--- with none of them gets the INSERT/DELETE trigger only.
+-- Every family table notifies `environments`, except:
+--   · project_addons — its own topic, below;
+--   · the four tables the board never renders: project_changes (the staging rows a CLI or a save
+--     writes K at a time — K hints, each refetching the heaviest read, for rows nobody draws),
+--     project_git_credentials, project_source_repos and project_repositories.
+-- The family is read from project_component_tables(), never restated, so a new component table is
+-- covered the day it joins the family. The UPDATE trigger's column list is DERIVED per table: the
+-- lifecycle and health columns the board renders, intersected with the columns that table actually
+-- has. A table with none of them gets the INSERT/DELETE trigger only. An excluded table has any
+-- trigger an earlier version of this block created DROPPED, so the exclusion holds on a database
+-- that already ran it.
 DO $$
 DECLARE
   tbl TEXT;
   cols TEXT[];
 BEGIN
   FOREACH tbl IN ARRAY public.project_component_tables() LOOP
-    CONTINUE WHEN tbl = 'project_addons';
+    IF tbl IN ('project_addons', 'project_changes', 'project_git_credentials',
+               'project_source_repos', 'project_repositories') THEN
+      IF tbl <> 'project_addons' THEN
+        EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_upd ON public.%1$I', tbl);
+        EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_insdel ON public.%1$I', tbl);
+      END IF;
+      CONTINUE;
+    END IF;
     SELECT array_agg(c.column_name::text ORDER BY c.column_name)
       INTO cols
       FROM information_schema.columns c

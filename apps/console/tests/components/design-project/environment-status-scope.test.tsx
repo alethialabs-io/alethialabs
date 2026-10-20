@@ -18,10 +18,11 @@ import { EMPTY_ENVIRONMENT_STATUS, type EnvironmentStatus } from "@/lib/canvas/c
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
-const h = vi.hoisted(() => ({
-	handlers: {} as Record<string, FakeHandler>,
-	calls: [] as FakeCall[],
-}));
+const h = vi.hoisted(() => {
+	const handlers: Record<string, FakeHandler> = {};
+	const calls: FakeCall[] = [];
+	return { handlers, calls };
+});
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc(h.handlers, h.calls).orpc };
@@ -76,6 +77,7 @@ describe("EnvironmentStatusScope", () => {
 		h.handlers["canvas.environmentStatus"] = async () => LIVE;
 		renderScope();
 		expect(await screen.findByText("production")).toBeInTheDocument();
+		expect(document.querySelector('[data-slot="environment-status"]')?.getAttribute("data-state")).toBe("success");
 		expect(h.calls).toEqual([
 			{ path: "canvas.environmentStatus", input: { projectId: "proj-1", environmentId: "env-1" } },
 		]);
@@ -111,6 +113,9 @@ describe("EnvironmentStatusNotice", () => {
 		renderScope();
 		const alert = await screen.findByRole("alert");
 		expect(alert).toHaveTextContent(/couldn't load this environment's live status/i);
+		// The settle marker the release gate waits on says `error`, so a status read that throws on the
+		// server turns the gate's project-route check red rather than passing on an empty board.
+		expect(document.querySelector('[data-slot="environment-status"]')?.getAttribute("data-state")).toBe("error");
 		expect(alert).not.toHaveTextContent("boom");
 
 		fail = false;
@@ -133,5 +138,6 @@ describe("EnvironmentStatusNotice", () => {
 		h.handlers["canvas.environmentStatus"] = () => new Promise(() => {});
 		renderScope();
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(document.querySelector('[data-slot="environment-status"]')?.getAttribute("data-state")).toBe("pending");
 	});
 });

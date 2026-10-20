@@ -13,10 +13,11 @@ import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
-const h = vi.hoisted(() => ({
-	handlers: {} as Record<string, FakeHandler>,
-	calls: [] as FakeCall[],
-}));
+const h = vi.hoisted(() => {
+	const handlers: Record<string, FakeHandler> = {};
+	const calls: FakeCall[] = [];
+	return { handlers, calls };
+});
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc(h.handlers, h.calls).orpc };

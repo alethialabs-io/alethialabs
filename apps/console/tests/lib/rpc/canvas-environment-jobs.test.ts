@@ -119,16 +119,12 @@ describe("readEnvironmentJobs (canvas.environmentJobs)", () => {
 	});
 
 	it("refuses an environment outside the actor's org as NOT_FOUND — a typed refusal, not an empty history", async () => {
-		const chain: Record<string, unknown> = {};
-		Object.assign(chain, {
-			from: () => chain,
-			innerJoin: () => chain,
-			where: () => chain,
-			orderBy: () => chain,
-			limit: () => chain,
-			then: (resolve: (v: unknown) => void) => resolve([]), // the env guard finds nothing
-		});
-		vi.mocked(getServiceDb).mockReturnValue({ select: () => chain } as never);
+		// The env guard finds nothing: every select resolves to no rows.
+		mockDb([]);
+		vi.mocked(getServiceDb).mockReturnValue(
+			// @ts-expect-error a chain stub with only the methods the guard calls, not a full drizzle db
+			{ select: () => ({ from: () => ({ innerJoin: () => ({ where: () => ({ limit: async () => [] }) }) }) }) },
+		);
 		await expect(getEnvironmentJobs("p1", "e-foreign")).rejects.toMatchObject({
 			name: "ActionRefusal",
 			kind: "not-found",

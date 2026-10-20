@@ -22,7 +22,7 @@ export function EnvironmentStatusNotice() {
 		<div
 			data-slot="environment-status-notice"
 			role="alert"
-			className="absolute left-1/2 top-14 z-10 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 border border-border bg-card px-2.5 py-1.5 text-ui-sm"
+			className="absolute left-1/2 top-14 z-[var(--z-raised)] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 border border-border bg-card px-2.5 py-1.5 text-ui-sm"
 		>
 			{load.forbidden ? (
 				<>

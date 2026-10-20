@@ -10,7 +10,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDestroyHold } from "@/components/design-project/canvas/cards/destroy-hold";
-import { DESTROY_HOLD_KEY } from "@/components/design-project/canvas/cards/destroy-hold-key";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import type { DestroyTreeNode } from "@/components/design-project/canvas/cards/destroy-tree-view";
 import { EMPTY_ENVIRONMENT_STATUS, type EnvironmentStatus } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";

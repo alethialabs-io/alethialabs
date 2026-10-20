@@ -12,6 +12,20 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const refresh = vi.fn();
+const h = vi.hoisted(() => {
+	const graph: { throws: boolean } = { throws: false };
+	return { graph };
+});
+vi.mock("@/components/design-project/canvas/graph/form-to-graph", async (importOriginal) => {
+	const real = await importOriginal<typeof import("@/components/design-project/canvas/graph/form-to-graph")>();
+	return {
+		...real,
+		formToGraph: (...args: Parameters<typeof real.formToGraph>) => {
+			if (h.graph.throws) throw new Error("unreadable design");
+			return real.formToGraph(...args);
+		},
+	};
+});
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("@/components/design-project/canvas/design-project-canvas", () => ({
 	DesignProjectCanvas: () => <div data-testid="canvas" />,
@@ -21,11 +35,15 @@ vi.mock("@/components/design-project/repository-context", () => ({
 	useRepositoryContext: () => null,
 }));
 
+const { buildDefaultFormValues } = await import("@/components/design-project/source-project");
 const { DesignProjectWorkbench } = await import(
 	"@/components/design-project/design-project-workbench"
 );
 
-beforeEach(() => refresh.mockReset());
+beforeEach(() => {
+	refresh.mockReset();
+	h.graph.throws = false;
+});
 
 describe("DesignProjectWorkbench — the design read failed", () => {
 	it("renders a region error with a retry that re-renders the route, and no board", async () => {
@@ -42,5 +60,19 @@ describe("DesignProjectWorkbench — the design read failed", () => {
 		render(<DesignProjectWorkbench cloudIdentities={[]} />);
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 		expect(await screen.findByTestId("canvas")).toBeInTheDocument();
+	});
+
+	it("a seed that THROWS is a failed design load too — never a skeleton left up forever", async () => {
+		h.graph.throws = true;
+		render(
+			<DesignProjectWorkbench
+				cloudIdentities={[]}
+				projectId="proj-1"
+				environmentId="env-1"
+				sourceProject={{ formData: buildDefaultFormValues(), provider: "aws" }}
+			/>,
+		);
+		expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load this environment's design/i);
+		expect(screen.queryByTestId("canvas")).not.toBeInTheDocument();
 	});
 });

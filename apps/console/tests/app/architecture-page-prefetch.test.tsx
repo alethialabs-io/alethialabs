@@ -11,13 +11,25 @@ import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
-const h = vi.hoisted(() => ({
-	handlers: {} as Record<string, FakeHandler>,
-	calls: [] as FakeCall[],
-	client: null as QueryClient | null,
-	flags: { helm: false, describe: false, iac: false },
-	environmentId: "env-1" as string | null,
-}));
+/** The test's mutable world, shared with the hoisted mocks. */
+interface World {
+	handlers: Record<string, FakeHandler>;
+	calls: FakeCall[];
+	client: QueryClient | null;
+	flags: { helm: boolean; describe: boolean; iac: boolean };
+	environmentId: string | null;
+}
+
+const h = vi.hoisted(() => {
+	const world: World = {
+		handlers: {},
+		calls: [],
+		client: null,
+		flags: { helm: false, describe: false, iac: false },
+		environmentId: "env-1",
+	};
+	return world;
+});
 
 // The server caller, as a fake whose keys have the browser client's shape (`[path, {input, type}]`).
 vi.mock("@/lib/rpc/server", async () => {

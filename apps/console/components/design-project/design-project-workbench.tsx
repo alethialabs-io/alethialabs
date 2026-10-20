@@ -5,7 +5,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
@@ -104,6 +104,10 @@ export function DesignProjectWorkbench({
 		mode: "onChange",
 	});
 
+	// The revision whose seed THREW, if any (see the seed effect). A board that cannot be seeded is a
+	// failed design load, not a board still loading.
+	const [seedFailedFor, setSeedFailedFor] = useState<string | null>(null);
+
 	// Identities are server data the store looks up for labels; refresh them whenever the server
 	// sends a new list.
 	useEffect(() => {
@@ -169,13 +173,18 @@ export function DesignProjectWorkbench({
 				{ scope, revision },
 			);
 		};
-		void seed();
+		// A seed that throws (`formToGraph` on a design it cannot read, a rehydrate that rejects) would
+		// leave the store unseeded — and the board's skeleton up forever (RUBRIC B4). It is the design
+		// load failing, so it renders as one. Keyed by revision, so a later good design clears it.
+		seed().catch(() => {
+			if (!cancelled) setSeedFailedFor(revision);
+		});
 		return () => {
 			cancelled = true;
 		};
 	}, [projectId, environmentId, revision]);
 
-	if (projectId && !sourceProject) return <DesignLoadError />;
+	if ((projectId && !sourceProject) || seedFailedFor === revision) return <DesignLoadError />;
 
 	return (
 		<ConnectorsProvider connectors={connectors}>

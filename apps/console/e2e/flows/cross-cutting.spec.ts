@@ -256,13 +256,18 @@ test.describe("Cross-cutting — project page resilience sweep", () => {
 			await loadAndAssertShell(owner.page, `/${owner.orgSlug}/${proj.slug}${route.sub}`);
 			// The board's environment-status read (#5865) is part of this verdict on the routes that
 			// show the board. Since #6119 it is no longer a server action the project shell posts on
-			// every project route after hydration: the Architecture page prefetches it on the server
-			// (`canvas.environmentStatus`) and only the board reads it. So the test holds the page until
-			// the board has mounted with its design (its skeleton is gone), and a failed status read is
-			// a visible notice on the board — never silence.
+			// every project route: the Architecture page prefetches it (`canvas.environmentStatus`) and
+			// only the board reads it, retrying in the browser if the prefetch failed. The board
+			// publishes how that read stands (`data-slot="environment-status"`), so the test holds the
+			// page until it has SETTLED — success or error, never "the skeleton happened to go" — and a
+			// read that failed (on the server, then again in the browser) is red here.
 			if (route.sub === "" || route.sub === "/architecture") {
-				await expect(owner.page.locator('[data-slot="canvas-skeleton"]')).toHaveCount(0, { timeout: 60_000 });
-				await expect(owner.page.locator('[data-slot="environment-status-notice"]')).toHaveCount(0);
+				const status = owner.page.locator('[data-slot="environment-status"]');
+				await expect(status).toHaveAttribute("data-state", /^(success|error)$/, { timeout: 60_000 });
+				await expect(status, `the board's environment-status read failed on project ${route.label}`).toHaveAttribute(
+					"data-state",
+					"success",
+				);
 				// …and the design read did not fail either (that renders a region error, not the board).
 				await expect(owner.page.locator('[data-slot="region-error"]')).toHaveCount(0);
 			}

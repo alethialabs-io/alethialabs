@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { DESTROY_HOLD_KEY } from "./destroy-hold-key";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import {
 	type DestroyTreeNode,
 	environmentSettingsHref,

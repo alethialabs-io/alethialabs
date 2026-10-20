@@ -18,6 +18,7 @@ import { getServiceDb } from "@/lib/db";
 import {
 	organization,
 	projectAddons,
+	projectChanges,
 	projectDatabases,
 	projectEnvironments,
 	projects,
@@ -162,5 +163,24 @@ describeIfDb("the board's change triggers (#6119) — what reaches alethia_chang
 				db().update(projectAddons).set({ last_synced_at: new Date() }).where(eq(projectAddons.id, addonRow)),
 			),
 		).toEqual([]);
+	});
+
+	it("staging changes (what a CLI stage or a save writes, K rows at a time) emits nothing — the board never draws them", async () => {
+		expect(
+			await emitted(() =>
+				db()
+					.insert(projectChanges)
+					.values([
+						{ project_id: projectId, environment_id: envId, user_id: USER, component_type: "database", op: "CREATE" },
+						{ project_id: projectId, environment_id: envId, user_id: USER, component_type: "cache", op: "CREATE" },
+					]),
+			),
+		).toEqual([]);
+		// The control: a component row in the SAME environment still emits, so the zero above is real.
+		expect(
+			await emitted(() =>
+				db().insert(projectDatabases).values({ project_id: projectId, environment_id: envId, name: "ledger" }),
+			),
+		).toHaveLength(1);
 	});
 });

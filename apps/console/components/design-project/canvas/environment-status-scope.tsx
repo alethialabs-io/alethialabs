@@ -62,6 +62,9 @@ export function EnvironmentStatusScope({
 }) {
 	const query = useEnvironmentStatusQuery(projectId, environmentId ?? null);
 	const { data, error, refetch } = query;
+	// How the read stands, for anything that must wait for it to SETTLE — the release gate's
+	// project-route check holds the page until this is `success` or `error`. `idle` outside a project.
+	const state = !projectId ? "idle" : data !== undefined ? "success" : error !== null ? "error" : "pending";
 	const load = useMemo<EnvironmentStatusLoad>(() => {
 		if (data !== undefined || error === null) return NOT_FAILED;
 		return {
@@ -73,6 +76,7 @@ export function EnvironmentStatusScope({
 
 	return (
 		<EnvironmentStatusLoadContext.Provider value={load}>
+			<span hidden data-slot="environment-status" data-state={state} />
 			<EnvironmentStatusProvider value={data ?? EMPTY_ENVIRONMENT_STATUS}>
 				{children}
 			</EnvironmentStatusProvider>

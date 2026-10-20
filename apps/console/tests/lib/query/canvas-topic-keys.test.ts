@@ -7,7 +7,7 @@
 
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { DESTROY_HOLD_KEY } from "@/components/design-project/canvas/cards/destroy-hold-key";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import { TOPIC_KEYS } from "@/lib/query/topics";
 import { orpc } from "@/lib/rpc/client";
 import type { Topic } from "@/lib/realtime/topics";

@@ -99,6 +99,28 @@ import {
 import { query } from "@/lib/rpc/base";
 import type { DriftDetail } from "@/types/jsonb.types";
 
+/** What `resolveActiveEnvironmentId` throws when the project has no environment the actor can see. */
+const NO_DEFAULT_ENVIRONMENT = "Project has no default environment";
+
+/**
+ * The active environment of a project, as `resolveActiveEnvironmentId` resolves it — but a project
+ * whose environment does not resolve for this actor (another org's project, a deleted environment)
+ * is a typed NOT_FOUND (`lib/rpc/base.ts`), not an internal error. Any other failure is rethrown.
+ */
+export async function resolveEnvironment(
+	projectId: string,
+	environmentId: string | null | undefined,
+): Promise<string> {
+	try {
+		return await resolveActiveEnvironmentId(projectId, environmentId);
+	} catch (error) {
+		if (error instanceof Error && error.message === NO_DEFAULT_ENVIRONMENT) {
+			throw new ActionRefusal("not-found", "Environment not found.");
+		}
+		throw error;
+	}
+}
+
 // ── Environment status: the board's one round-trip of server truth ─────────────────────────────
 //
 // The server half of canvas node status (W3). Every state below already existed in the database:
@@ -645,7 +667,7 @@ export async function readProjectAddons(
 	environmentId?: string | null,
 ): Promise<ProjectAddonsView> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
+	const envId = await resolveEnvironment(projectId, environmentId);
 
 	// `project_addons` / `project_repositories` are RLS-less project-child tables, so the
 	// org boundary is enforced HERE, not by a policy: join to the parent project and filter
@@ -737,7 +759,7 @@ export async function readProjectByoCharts(
 	environmentId?: string | null,
 ): Promise<{ environmentId: string; charts: ByoChartState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
+	const envId = await resolveEnvironment(projectId, environmentId);
 	const rows = await withActorScope(actor, async (tx) =>
 		tx
 			.select()
@@ -779,7 +801,7 @@ export async function readProjectChartWorkloads(
 	environmentId?: string | null,
 ): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
+	const envId = await resolveEnvironment(projectId, environmentId);
 	const { rows, bindingsByWorkload } = await withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select({
@@ -1209,7 +1231,9 @@ export const canvasRouter = {
 	 * resolved — so an answer always names whose environment it is, even when there is no source.
 	 */
 	iacSource: query.input(environmentInput).handler(async ({ input }) => {
-		const environmentId = await resolveActiveEnvironmentId(input.projectId, input.environmentId);
+		// Authorize BEFORE resolving: the resolution reads the project's environments.
+		await authorize("view", { type: "project", id: input.projectId });
+		const environmentId = await resolveEnvironment(input.projectId, input.environmentId);
 		return { environmentId, source: await getIacSource(input.projectId, environmentId) };
 	}),
 	/** One page of the environment's jobs, newest first (the Activity card). */

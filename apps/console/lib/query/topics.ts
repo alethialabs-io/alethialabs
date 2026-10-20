@@ -5,7 +5,6 @@
 
 import type { QueryKey } from "@tanstack/react-query";
 import type { Topic } from "@/lib/realtime/topics";
-import { DESTROY_HOLD_KEY } from "@/components/design-project/canvas/cards/destroy-hold-key";
 import { orpc } from "@/lib/rpc/client";
 
 /**
@@ -22,6 +21,14 @@ import { orpc } from "@/lib/rpc/client";
  * because other pages share its cache entry. The per-org QueryClient is what keeps the prefix
  * from reaching another org's cache.
  */
+/**
+ * The query-key prefix of the board's held-destroy read (`components/design-project/canvas/cards/
+ * destroy-hold.tsx`). The tenants a held destroy waits on are OTHER environments, so a change to any
+ * environment or job in the org re-asks it: the `environments` and `jobs` topics below map onto it.
+ * Declared here, not with the card, so this map imports no component (#6119).
+ */
+export const DESTROY_HOLD_KEY = ["canvas-destroy-hold"] as const;
+
 export const TOPIC_KEYS = {
 	// The shell's capped job feed (bell, toasts, breadcrumbs, palette), the full list (runners, plan
 	// flow — on `qk.jobs(org)`, reached by the `["jobs"]` prefix) and the setup guide's "provisioned"
