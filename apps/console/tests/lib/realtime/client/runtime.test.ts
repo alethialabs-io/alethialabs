@@ -18,6 +18,8 @@ vi.mock("@/lib/rpc/client", () => ({
 		// The shell's reads the topic map also reaches (#6114).
 		workspace: {
 			setupGuide: { key: () => ["ws-setup-guide"] },
+			recentJobs: { key: () => ["ws-recent-jobs"] },
+			jobs: { key: () => ["ws-jobs"] },
 			environments: { key: () => ["ws-environments"] },
 			projects: { key: () => ["ws-projects"] },
 			supportCases: { key: () => ["ws-support-cases"] },
