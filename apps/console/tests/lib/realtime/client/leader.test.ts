@@ -4,9 +4,9 @@
 
 // #6115 PR B, R8: one stream per browser per org. Both elections are exercised — Web Locks over an
 // in-memory lock manager with the browser's queueing semantics, and the BroadcastChannel lease (the
-// insecure-context path) over Node 22's real BroadcastChannel under fake timers.
+// insecure-context path) over an in-memory channel under fake timers — nothing here reads a clock.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type ChannelLike,
 	electLeader,
@@ -17,6 +17,7 @@ import {
 	newElectionRegistry,
 } from "@/lib/realtime/client/leader";
 import { FakeWebLocks } from "./fake-web-locks";
+import { memoryChannels, settle, type TestChannel } from "./harness";
 
 /** An in-memory Web Locks manager: exclusive, FIFO, and `signal` leaves the queue. */
 function memoryLocks(): LockManagerLike {
@@ -72,7 +73,8 @@ function tab(build: (onLead: (signal: AbortSignal) => void) => Election) {
 	return { record, election };
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
+/** Lets queued lock grants and their callbacks run (event-loop turns, not time). */
+const flush = () => settle(5);
 
 describe("Web Locks election (secure context)", () => {
 	it("exactly one tab leads; stopping it hands over to the next queued tab", async () => {
@@ -107,33 +109,22 @@ describe("Web Locks election (secure context)", () => {
 });
 
 describe("BroadcastChannel lease (insecure context: no navigator.locks)", () => {
-	// Real channels, wrapped so a test can silence one (a crashed tab sends nothing, not even a release).
-	const opened: Array<{ channel: BroadcastChannel; muted: boolean }> = [];
-	const openChannel = (name: string): ChannelLike => {
-		const entry = { channel: new BroadcastChannel(name), muted: false };
-		opened.push(entry);
-		return {
-			postMessage: (m) => {
-				if (!entry.muted) entry.channel.postMessage(m);
-			},
-			addEventListener: (t, l) => entry.channel.addEventListener(t, l),
-			removeEventListener: (t, l) => entry.channel.removeEventListener(t, l),
-			close: () => entry.channel.close(),
-		};
-	};
+	// In-memory channels (delivery on a microtask, no real I/O), each one mutable to model a crashed tab.
+	let hub = memoryChannels();
+	let opened: TestChannel[] = hub.opened;
+	const openChannel = (name: string): ChannelLike => hub.open(name);
+	beforeEach(() => {
+		hub = memoryChannels();
+		opened = hub.opened;
+	});
 	afterEach(() => {
 		vi.useRealTimers();
-		for (const e of opened.splice(0)) e.channel.close();
 	});
 
-	/** Advances fake time while letting BroadcastChannel messages (real I/O) get delivered. */
+	/** Advances fake time in beat-sized steps; channel deliveries (microtasks) settle within each step. */
 	async function advance(ms: number) {
 		const step = 250;
-		for (let t = 0; t < ms; t += step) {
-			await vi.advanceTimersByTimeAsync(step);
-			await new Promise((r) => setImmediate(r));
-			await new Promise((r) => setImmediate(r));
-		}
+		for (let t = 0; t < ms; t += step) await vi.advanceTimersByTimeAsync(step);
 	}
 
 	const leaseTab = (id: string, visible: () => boolean = () => true, name = "alethia-events:u1:acme") =>
