@@ -945,6 +945,20 @@ export function keysOnQuery(file, text) {
 		const roots = [...m[1].matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
 		if (roots.some((r) => normalized.has(r))) return true;
 	}
+	// THE READ ROUTER'S KEY (ADR 0005 D1, #6113). A read through `orpc.<domain>.<proc>` is keyed
+	// `[path, { input, type }]` BY CONSTRUCTION, so the question is the same one asked of `qk`:
+	// does the `input` it is handed carry the normalized query? In the hop module the input is the
+	// caller's normalized object arriving as a parameter (the README's division of labour); outside
+	// it, provenance is read exactly as above — the input's roots must include a binding from this
+	// module's own `normalize*Query(`. `{ input }` shorthand is the identifier `input`.
+	for (const m of text.matchAll(/\.queryOptions\(\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)) {
+		const field = /\binput\b\s*(?::\s*([^,}]+))?/.exec(m[1]);
+		if (!field) continue;
+		if (hop) return true;
+		const expr = field[1] ?? "input";
+		const roots = [...expr.matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
+		if (roots.some((r) => normalized.has(r))) return true;
+	}
 	return false;
 }
 
@@ -1509,6 +1523,16 @@ export function positiveControl() {
 		"F3 fires when the normalized query is not in the key",
 		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "qk.widgets(org)") },
 		(v) => v.F3.verdict === "FAIL" && v.F2.verdict === "PASS",
+	);
+	drive(
+		"F3 accepts a read-router key that carries the normalized query (ADR 0005, #6113)",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "orpc.widgets.page.queryOptions({ input: q })") },
+		(v) => v.F3.verdict === "PASS",
+	);
+	drive(
+		"...and still fires when the read-router input is NOT the normalized query",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "orpc.widgets.page.queryOptions({ input: {} })") },
+		(v) => v.F3.verdict === "FAIL",
 	);
 	drive(
 		"F3 fires when a free-text surface never debounces",

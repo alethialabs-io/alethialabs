@@ -71,6 +71,11 @@ export async function proxy(request: NextRequest) {
 export const config = {
 	matcher: [
 		// All paths except static assets, image optimizer, favicon, docs, media.
-		"/((?!_next/static|_next/image|favicon.ico|docs|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+		//
+		// `docs` is the exact first SEGMENT (`docs/…` or `docs` alone), not a prefix (#6113, ADR
+		// 0005 stress test R13): as a prefix it also skipped `/docsy/…` and `/docs-team/…` — valid
+		// org slugs — so those requests got no `x-alethia-path`, fell back to the session's org,
+		// and kept whatever `x-alethia-path` the client sent.
+		"/((?!_next/static|_next/image|favicon.ico|docs/|docs$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
 	],
 };

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { StatusBadge } from "@repo/ui/status-badge";
+import { cn } from "@repo/ui/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import {
   HoverCard,
@@ -21,7 +22,8 @@ import { projectHref } from "@/lib/routing";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Layers, Server } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { useHydrated } from "@/hooks/use-hydrated";
 
 export { JOB_TYPES };
 
@@ -30,16 +32,71 @@ type JobRow = JobWithMeta;
 
 const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
 
-/** Ticks once a second so an in-flight job's elapsed time stays live. */
+/**
+ * Ticks once a second so an in-flight job's elapsed time stays live.
+ *
+ * The rows are server-rendered since the jobs page prefetches them (#6113), and "now" on the server
+ * is not "now" in the hydrating browser: printing the elapsed time during hydration is a text
+ * mismatch, React #418, and React throws the page's server HTML away. So the clock is read only
+ * once hydration is over (`useHydrated`, #5786) — the row itself still paints on first load.
+ */
 function LiveDuration({ createdAt }: { createdAt: Date | string }) {
+  const hydrated = useHydrated();
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, []);
   return (
-    <span className="text-xs tabular-nums text-muted-foreground">
-      {formatDuration(Date.now() - new Date(createdAt).getTime())}
+    <ClockSlot sizer={DURATION_SIZER} className="text-xs tabular-nums text-muted-foreground">
+      {hydrated ? formatDuration(Date.now() - new Date(createdAt).getTime()) : null}
+    </ClockSlot>
+  );
+}
+
+/**
+ * "3 minutes ago", read against the browser's clock only after hydration — for the same #418
+ * reason as `LiveDuration`. `<time>` carries the instant itself for assistive tech meanwhile.
+ */
+function RelativeTime({ at }: { at: Date | string }) {
+  const hydrated = useHydrated();
+  const instant = new Date(at);
+  // A value that is not a date (a malformed string, Postgres `infinity`) must not take the whole
+  // table down: `toISOString()` throws on it, and `formatRelative` already answers "—".
+  if (Number.isNaN(instant.getTime())) {
+    return <span className="text-xs text-muted-foreground">{formatRelative(null)}</span>;
+  }
+  return (
+    <time dateTime={instant.toISOString()} className="text-xs text-muted-foreground">
+      <ClockSlot sizer={RELATIVE_SIZER}>{hydrated ? formatRelative(instant) : null}</ClockSlot>
+    </time>
+  );
+}
+
+/** Widest strings each clock cell prints, so the slot is that wide before the clock is read. */
+const RELATIVE_SIZER = "less than a minute ago";
+const DURATION_SIZER = "00h 00m";
+
+/**
+ * Reserves the clock text's width while it is blank during hydration, so the table does not
+ * reflow when the text arrives a commit later (the invisible-sizer pattern of #5849). The sizer
+ * and the text share one grid cell; the wider of the two sets the width.
+ */
+function ClockSlot({
+  sizer,
+  className,
+  children,
+}: {
+  sizer: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className={cn("inline-grid whitespace-nowrap", className)}>
+      <span aria-hidden className="invisible col-start-1 row-start-1">
+        {sizer}
+      </span>
+      <span className="col-start-1 row-start-1">{children}</span>
     </span>
   );
 }
@@ -351,9 +408,7 @@ export function buildJobColumns({
         return (
           <div className="flex items-center justify-end gap-2">
             {created_at && (
-              <span className="whitespace-nowrap text-xs text-muted-foreground">
-                {formatRelative(created_at)}
-              </span>
+              <RelativeTime at={created_at} />
             )}
             <JobAuthor author={author} />
           </div>
