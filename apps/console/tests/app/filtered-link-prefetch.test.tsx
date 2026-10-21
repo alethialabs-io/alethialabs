@@ -44,6 +44,7 @@ vi.mock("@/lib/rpc/server", async () => {
 			page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => runnersPage(input)),
 			list: os.handler(async () => ({ runners: [], latestRelease: null, releases: [] })),
 			fleet: os.handler(async () => ({ pools: [] })),
+			fleetEconomics: os.handler(async () => null),
 		},
 	};
 	const utils = createTanstackQueryUtils(createRouterClient(router));

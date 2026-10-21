@@ -56,7 +56,8 @@ export default async function RunnersRoute({ searchParams }: { searchParams: Sea
  *   twice for a pristine link, which TanStack dedupes;
  * - `runners.list`, the unfiltered universe the Versions panel, the default flags and the pickers
  *   read — a different question from a filtered page, not a leftover;
- * - `runners.fleet`, only where the Pools column renders (self-managed).
+ * - `runners.fleet` and `runners.fleetEconomics`, only where the Pools column renders (self-managed);
+ *   the economics read answers null, without a recorded refusal, to anyone who does not manage it.
  * A read that fails is not dehydrated; its region renders its own error after a client retry.
  */
 async function PrefetchedRunners({ searchParams, hosted }: { searchParams: SearchParams; hosted: boolean }) {
@@ -68,6 +69,7 @@ async function PrefetchedRunners({ searchParams, hosted }: { searchParams: Searc
 		queryClient.prefetchQuery(rpc.runners.page.queryOptions({ input: filtered })),
 		queryClient.prefetchQuery(rpc.runners.list.queryOptions()),
 		hosted ? undefined : queryClient.prefetchQuery(rpc.runners.fleet.queryOptions()),
+		hosted ? undefined : queryClient.prefetchQuery(rpc.runners.fleetEconomics.queryOptions()),
 	]);
 
 	return (

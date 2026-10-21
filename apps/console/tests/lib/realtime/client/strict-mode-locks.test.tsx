@@ -45,6 +45,7 @@ vi.mock("@/lib/rpc/client", () => ({
 			list: { key: () => ["runners-list-orpc"] },
 			page: { key: () => ["runners-page-orpc"] },
 			fleet: { key: () => ["runners-fleet-orpc"] },
+			fleetEconomics: { key: () => ["runners-fleet-economics-orpc"] },
 		},
 	},
 }));

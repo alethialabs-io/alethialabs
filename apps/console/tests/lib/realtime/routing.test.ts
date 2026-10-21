@@ -96,7 +96,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 		const inB = keysFor(jobs({ o: OTHER, p: null })).map((r) => r.key);
 		const streamA = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ platformView: true, manageSupport: true },
 		);
 		expect(inB.filter((k) => streamA.includes(k))).toEqual([]);
 	});
@@ -139,7 +139,7 @@ describe("keysFor — support cases follow their tiered policy, not owner_all (#
 	const OTHER = "55555555-5555-4555-8555-555555555555";
 	/** Whether a stream with this identity and these capabilities would receive the notice. */
 	const hears = (notice: ChangeNotice, userId: string, orgId: string, manageSupport: boolean) => {
-		const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport });
+		const held = subscriptionKeys({ userId, orgId }, { platformView: false, manageSupport });
 		return keysFor(notice).some((r) => held.includes(r.key));
 	};
 
@@ -184,8 +184,8 @@ describe("keysFor — the arms of the runners policy (org_id = current_org OR or
 
 	it("a runner of a personal scope routes to own:<user>, which every stream of that person holds", () => {
 		expect(keysFor(runner({ o: USER }))).toEqual([{ key: `own:${USER}`, filterProject: null }]);
-		const inOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
-		const inPersonal = subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false });
+		const inOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false });
+		const inPersonal = subscriptionKeys({ userId: USER, orgId: USER }, { platformView: false, manageSupport: false });
 		expect(inOrg).toContain(`own:${USER}`);
 		expect(inPersonal).toContain(`own:${USER}`);
 	});
@@ -194,7 +194,7 @@ describe("keysFor — the arms of the runners policy (org_id = current_org OR or
 		const OTHER = "55555555-5555-4555-8555-555555555555";
 		const keys = keysFor(runner({ o: OTHER, u: OTHER })).map((r) => r.key);
 		for (const orgId of [ORG, USER]) {
-			const held = subscriptionKeys({ userId: USER, orgId }, { fleetView: true, manageSupport: true });
+			const held = subscriptionKeys({ userId: USER, orgId }, { platformView: true, manageSupport: true });
 			expect(keys.filter((k) => held.includes(k))).toEqual([]);
 		}
 	});
@@ -213,8 +213,8 @@ describe("keysFor — the arms of the runners policy (org_id = current_org OR or
 		]);
 	});
 
-	it("platform reaches only a stream with fleet:view", () => {
-		const without = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
+	it("platform reaches only a stream with platformView", () => {
+		const without = subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false });
 		expect(without).not.toContain(PLATFORM_KEY);
 	});
 });
@@ -222,14 +222,14 @@ describe("keysFor — the arms of the runners policy (org_id = current_org OR or
 describe("subscriptionKeys — what a stream holds", () => {
 	it("a member holds the org key and their own key in that org, and nothing platform-wide", () => {
 		expect(
-			subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false }),
+			subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false }),
 		).toEqual([`o:${ORG}`, `ou:${ORG}:${USER}`, `own:${USER}`]);
 	});
 
-	it("fleet:view adds the platform key; manage_support adds the org's support key", () => {
+	it("platformView adds the platform key; manage_support adds the org's support key", () => {
 		const keys = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ platformView: true, manageSupport: true },
 		);
 		expect(keys).toContain(PLATFORM_KEY);
 		expect(keys).toContain(`osupport:${ORG}`);
@@ -237,14 +237,14 @@ describe("subscriptionKeys — what a stream holds", () => {
 
 	it("only the personal scope (orgId === userId) also holds u:", () => {
 		expect(
-			subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false }),
+			subscriptionKeys({ userId: USER, orgId: USER }, { platformView: false, manageSupport: false }),
 		).toEqual([`o:${USER}`, `ou:${USER}:${USER}`, `own:${USER}`, `u:${USER}`]);
 	});
 
 	it("an org member never holds another org's key", () => {
 		const keys = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ platformView: true, manageSupport: true },
 		);
 		const other = "55555555-5555-4555-8555-555555555555";
 		expect(keys.some((k) => k.includes(other))).toBe(false);

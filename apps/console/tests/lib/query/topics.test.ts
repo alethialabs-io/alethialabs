@@ -65,6 +65,7 @@ describe("TOPIC_KEYS — the runners page (#6123)", () => {
 			filtered: [...orpc.runners.page.queryKey({ input: { statuses: ["OFFLINE"] } })],
 			list: [...orpc.runners.list.queryKey()],
 			fleet: [...orpc.runners.fleet.queryKey()],
+			economics: [...orpc.runners.fleetEconomics.queryKey()],
 			notes: [...orpc.runners.releaseNotes.queryKey({ input: { version: "1.0.0" } })],
 			jobs: [...orpc.jobs.page.queryKey({ input: { range: { preset: "7d" } } })],
 		};
@@ -84,14 +85,14 @@ describe("TOPIC_KEYS — the runners page (#6123)", () => {
 	}
 
 	it("a runner change refreshes every grid input, the universe and the pools — not release notes or jobs", async () => {
-		expect(await invalidatedBy("runners")).toEqual(["filtered", "fleet", "list", "pristine"]);
+		expect(await invalidatedBy("runners")).toEqual(["economics", "filtered", "fleet", "list", "pristine"]);
 	});
 
-	it("a pool change refreshes the pools only", async () => {
-		expect(await invalidatedBy("fleet")).toEqual(["fleet"]);
+	it("a pool change refreshes the pools and their economics only", async () => {
+		expect(await invalidatedBy("fleet")).toEqual(["economics", "fleet"]);
 	});
 
-	it("a job change refreshes the runner cards' job overlay and the pools' busy counts", async () => {
+	it("a job change refreshes the runner cards' job overlay and the pools' busy counts — not the economics", async () => {
 		expect(await invalidatedBy("jobs")).toEqual(["filtered", "fleet", "jobs", "list", "pristine"]);
 	});
 

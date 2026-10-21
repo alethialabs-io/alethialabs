@@ -181,7 +181,7 @@ CREATE TRIGGER runners_notify_change_insdel
   FOR EACH ROW EXECUTE FUNCTION public.notify_runner_change();
 
 -- The `fleet` topic (#6123): a warm pool's configuration. fleet_pools has no org, so every notice is
--- a `platform` one, heard only by a stream whose actor may view the fleet on a self-managed
+-- a `platform` one, heard only by a stream whose actor may view runners on a self-managed
 -- deployment. updated_at is not listed (it moves with every listed column). Not triggered, on
 -- purpose: fleet_actions (the scaler appends a decision on every pass and no console surface reads
 -- it — the runner rows those decisions create or drain are `runners` notices) and fleet_leader (the

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), authorizeQuiet: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/fleet/queue", () => ({
 	latestReleaseVersion: vi.fn(),
@@ -27,12 +27,14 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
 	readFleetData,
+	readFleetEconomicsForManager,
 	readFleetEconomics as getFleetEconomics,
 	readFleetPoolConfigs as listFleetPoolConfigs,
 	readFleetPoolViews as getFleetPoolViews,
 } from "@/lib/rpc/procedures/runners";
 import { getPdp } from "@/lib/authz";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet } from "@/lib/authz/guard";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	latestReleaseVersion,
@@ -281,20 +283,43 @@ describe("getFleetEconomics", () => {
 });
 
 
-describe("readFleetData — the one read the Pools column makes", () => {
-	it("reads the manager-only configs and economics only for a fleet manager", async () => {
+describe("readFleetData — the pool cards and the editor's rows", () => {
+	it("reads the manager-only configs only for a fleet manager, and never the economics", async () => {
 		mockDb([]);
 		mockPdp(false);
 		const viewer = await readFleetData();
-		expect(viewer).toMatchObject({ pools: [], configs: [], economics: null, canManageFleet: false });
-		// Not even asked: a viewer's read never touches the manager gate.
+		expect(viewer).toEqual({ pools: [], configs: [], fleetProviderActive: false, canManageFleet: false });
 		expect(authorize).not.toHaveBeenCalledWith("create", { type: "fleet" });
 	});
 
 	it("is empty and locked down on a hosted deployment, without an auth probe", async () => {
 		process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
 		const data = await readFleetData();
-		expect(data).toEqual({ pools: [], fleetProviderActive: false, canManageFleet: false, configs: [], economics: null });
+		expect(data).toEqual({ pools: [], fleetProviderActive: false, canManageFleet: false, configs: [] });
 		expect(authorize).not.toHaveBeenCalled();
+	});
+});
+
+describe("readFleetEconomicsForManager — its own read, so job hints do not re-run it", () => {
+	it("answers null to a non-manager after a QUIET check (no refusal recorded on every page view)", async () => {
+		vi.mocked(authorizeQuiet).mockRejectedValueOnce(new ForbiddenError("create", { type: "fleet" }));
+		expect(await readFleetEconomicsForManager()).toBeNull();
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("answers null on hosted without asking anything", async () => {
+		process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+		expect(await readFleetEconomicsForManager()).toBeNull();
+		expect(authorizeQuiet).not.toHaveBeenCalled();
+	});
+
+	it("reads the economics for a manager", async () => {
+		mockDb([]);
+		vi.mocked(authorizeQuiet).mockResolvedValueOnce({ userId: "user-1", orgId: "org-1" } as never);
+		vi.mocked(provisionedHoursByProvider).mockResolvedValue([] as never);
+		vi.mocked(jobMinutesByProvider).mockResolvedValue([] as never);
+		const econ = await readFleetEconomicsForManager();
+		expect(econ?.pools).toEqual([]);
+		expect(authorize).toHaveBeenCalledWith("create", { type: "fleet" });
 	});
 });

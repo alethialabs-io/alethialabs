@@ -82,9 +82,16 @@ export const TOPIC_KEYS = {
 	clusters: (): QueryKey[] => [],
 	// A runner's row (status, version, default, …) shows on the grid, in the universe the Versions panel
 	// and the pickers read, and — for a managed runner — in its pool's counts (#6123).
-	runners: (): QueryKey[] => [orpc.runners.list.key(), orpc.runners.page.key(), orpc.runners.fleet.key()],
-	// A pool's configuration (#6123).
-	fleet: (): QueryKey[] => [orpc.runners.fleet.key()],
+	runners: (): QueryKey[] => [
+		orpc.runners.list.key(),
+		orpc.runners.page.key(),
+		orpc.runners.fleet.key(),
+		orpc.runners.fleetEconomics.key(),
+	],
+	// A pool's configuration, and the economics computed over it (#6123). The jobs topic refreshes the
+	// pools' busy counts but NOT the economics, whose month-to-date aggregates are not worth re-running
+	// on every job transition.
+	fleet: (): QueryKey[] => [orpc.runners.fleet.key(), orpc.runners.fleetEconomics.key()],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
 	// the board, so its health also shows through the environment status (#6119).
 	addons: (): QueryKey[] => [

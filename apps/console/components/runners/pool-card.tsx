@@ -4,7 +4,7 @@
 
 import { lookup } from "@/lib/typed-object";
 import type { FleetPoolView, PoolEconomics } from "@/lib/rpc/procedures/runners";
-import { formatMoney } from "@repo/format";
+import { formatMinutes, formatMoney } from "@repo/format";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import {
 	AlertDialog,
@@ -263,7 +263,7 @@ export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelet
 			{/* economics footer (manager-only; month-to-date) */}
 			{economics && (
 				<div className="flex items-center gap-3 border-t border-border bg-muted/40 px-4 py-2 font-mono text-ui-2xs text-muted-foreground">
-					<span>{economics.provisionedHours.toFixed(1)}h</span>
+					<span>{formatMinutes(economics.provisionedHours * 60)}</span>
 					<span aria-hidden>·</span>
 					{/* Month-to-date SPEND, not a monthly rate — an amount, so it takes formatMoney,
 					    which wants minor units and gets a major-unit estimate from the fleet query. */}

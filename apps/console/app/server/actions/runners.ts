@@ -446,13 +446,18 @@ export async function removeRunner(runnerId: string) {
 const runnerIdSchema = z.string().uuid();
 const runnerNameSchema = z.string().trim().min(1, "Runner name is required").max(60);
 
+/** The feature an upgradable job-cap refusal names, so the caller's upgrade surface knows what lifts it. */
+const JOB_QUOTA_FEATURE = "jobQuota";
+
 /** A plan's job cap is a refusal the user can act on (upgrade, or wait), not an unexpected failure. */
 async function refusingUsageLimit<T>(run: () => Promise<T>): Promise<T> {
 	try {
 		return await run();
 	} catch (error) {
 		if (error instanceof UsageLimitError) {
-			throw new ActionRefusal(error.upgradable ? "entitlement" : "conflict", error.message);
+			throw error.upgradable
+				? new ActionRefusal("entitlement", error.message, JOB_QUOTA_FEATURE)
+				: new ActionRefusal("conflict", error.message);
 		}
 		throw error;
 	}

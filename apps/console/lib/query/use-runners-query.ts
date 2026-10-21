@@ -8,6 +8,7 @@
 // policy, and invalidation of every key that shows what changed.
 
 import { useQuery } from "@tanstack/react-query";
+import { retryUnlessRefused } from "@/components/overview/overview-reads";
 import {
 	deployRunnerAction,
 	destroyRunnerAction,
@@ -18,32 +19,18 @@ import {
 } from "@/app/server/actions/runners";
 import { type ActionResult, type FieldErrors, ok } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import type {
-	ProvisionJobStatus as PublicProvisionJobStatus,
-	ProvisionJobType as PublicProvisionJobType,
-} from "@/lib/db/schema";
 import { TOPIC_KEYS } from "@/lib/query/topics";
 import { orpc } from "@/lib/rpc/client";
 import type { RunnerReleaseInfo, RunnersData, RunnerView } from "@/lib/rpc/procedures/runners";
 
 export type { RunnerReleaseInfo, RunnersData, RunnerView };
 
-export interface ActiveJob {
-	id: string;
-	job_type: PublicProvisionJobType;
-	status: PublicProvisionJobStatus;
-	config_snapshot: Record<string, unknown>;
-	runner_id: string | null;
-	project_id: string | null;
-	projects: { project_name: string } | null;
-}
-
 /**
  * Every runner the actor can see, the latest release and the changelog. Server-prefetched on the
  * runners route and hydrated; a heartbeat-driven ONLINE/OFFLINE flip arrives as a `runners` hint.
  */
 export function useRunnersQuery() {
-	return useQuery(orpc.runners.list.queryOptions());
+	return useQuery(orpc.runners.list.queryOptions({ retry: retryUnlessRefused }));
 }
 
 /** Every key showing runner rows — the grid, the universe, the pools (they count managed runners). */

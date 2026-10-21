@@ -8,6 +8,7 @@
 // (lib/query/topics.ts) — no poll. Writes go through `useActionMutation`.
 
 import { useQuery } from "@tanstack/react-query";
+import { retryUnlessRefused } from "@/components/overview/overview-reads";
 import {
 	createFleetPoolAction,
 	deleteFleetPoolAction,
@@ -21,9 +22,14 @@ import type { FleetData } from "@/lib/rpc/procedures/runners";
 
 export type { FleetData };
 
-/** Fleet cockpit data (warm pools + economics). Server-prefetched on the runners route. */
+/** The warm pools and, for a manager, their editable rows. Server-prefetched on the runners route. */
 export function useFleetQuery() {
-	return useQuery(orpc.runners.fleet.queryOptions());
+	return useQuery(orpc.runners.fleet.queryOptions({ retry: retryUnlessRefused }));
+}
+
+/** The pools' month-to-date economics; null unless the viewer manages the fleet. Prefetched too. */
+export function useFleetEconomicsQuery() {
+	return useQuery(orpc.runners.fleetEconomics.queryOptions());
 }
 
 /** The fleet read's key, for the optimistic patches below. */
