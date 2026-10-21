@@ -64,7 +64,7 @@ describe("getLivePlanPrices", () => {
 	});
 
 	it("returns the price map to a signed-in caller", async () => {
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "user-1" });
+		vi.mocked(currentActor).mockResolvedValue({ credential: "session", userId: "user-1", orgId: "user-1" });
 		vi.mocked(getAllPlanPrices).mockResolvedValue(PLAN_PRICES);
 		await expect(getLivePlanPrices()).resolves.toBe(PLAN_PRICES);
 	});
@@ -83,7 +83,7 @@ describe("getLiveAiPrices", () => {
 			ai_plus: price("$20 / mo"),
 			ai_max: price("$100 / mo"),
 		};
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "user-1" });
+		vi.mocked(currentActor).mockResolvedValue({ credential: "session", userId: "user-1", orgId: "user-1" });
 		vi.mocked(getAllAiPrices).mockResolvedValue(aiPrices);
 		await expect(getLiveAiPrices()).resolves.toBe(aiPrices);
 	});

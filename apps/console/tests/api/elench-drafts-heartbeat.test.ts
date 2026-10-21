@@ -51,7 +51,7 @@ beforeEach(() => {
 	vi.mocked(getOwner).mockResolvedValue(USER);
 	vi.mocked(checkRateLimit).mockResolvedValue({ ok: true, remaining: 19 });
 	vi.mocked(resolveTurnActor).mockImplementation(async (userId, orgId) =>
-		orgId === ORG_A ? { userId, orgId } : null,
+		orgId === ORG_A ? { credential: "session", userId, orgId } : null,
 	);
 	vi.mocked(touchClaim).mockResolvedValue({ outcome: "touched" });
 	// The transaction is a token object: only touchClaim (a spy) ever receives it.
@@ -66,14 +66,14 @@ describe("POST /api/elench/drafts/heartbeat", () => {
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ outcome: "touched" });
 		expect(resolveTurnActor).toHaveBeenCalledWith(USER, ORG_A);
-		expect(withActorScope).toHaveBeenCalledWith({ userId: USER, orgId: ORG_A }, expect.any(Function));
-		expect(touchClaim).toHaveBeenCalledWith(TX, { userId: USER, orgId: ORG_A }, CONV, TOKEN);
+		expect(withActorScope).toHaveBeenCalledWith({ userId: USER, orgId: ORG_A, credential: "session" }, expect.any(Function));
+		expect(touchClaim).toHaveBeenCalledWith(TX, { userId: USER, orgId: ORG_A, credential: "session" }, CONV, TOKEN);
 	});
 
 	it("takes the user from the session, never from the body", async () => {
 		await beat({ ...valid, userId: TEAMMATE });
 		expect(resolveTurnActor).toHaveBeenCalledWith(USER, ORG_A);
-		expect(vi.mocked(touchClaim).mock.calls[0]?.[1]).toEqual({ userId: USER, orgId: ORG_A });
+		expect(vi.mocked(touchClaim).mock.calls[0]?.[1]).toEqual({ userId: USER, orgId: ORG_A, credential: "session" });
 	});
 
 	it("is 401 without a session, and reads nothing else", async () => {

@@ -32,7 +32,10 @@ import { describeIfDb } from "./db";
 
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	// Real: the runner-deploy route asks it which identity arm the credential gets.
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
 	authorize: vi.fn(),
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
@@ -191,7 +194,7 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
 		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: ORG } as never);
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { userId: USER, orgId: ORG, credential: "session" },
 			credential: "session",
 			orgScope: [ORG, USER],
 		} as never);

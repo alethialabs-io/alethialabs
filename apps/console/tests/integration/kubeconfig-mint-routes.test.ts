@@ -108,7 +108,7 @@ function actingAs(userId: string, orgId: string): void {
 	// variant (#5670). Same caller, same answer.
 	for (const guard of [authorizeCli, authorizeCliQuiet]) {
 		vi.mocked(guard).mockResolvedValue({
-			actor: { userId, orgId },
+			actor: { credential: "session", userId, orgId },
 			credential: "session",
 			orgScope: [orgId, userId],
 		});
@@ -119,7 +119,7 @@ function actingAs(userId: string, orgId: string): void {
 function actingAsToken(tokenId: string): void {
 	for (const guard of [authorizeCli, authorizeCliQuiet]) {
 		vi.mocked(guard).mockResolvedValue({
-			actor: { userId: USER_A, orgId: ORG_A },
+			actor: { credential: "service_token", userId: USER_A, orgId: ORG_A },
 			credential: "service_token",
 			serviceTokenId: tokenId,
 			orgScope: [ORG_A],
@@ -219,7 +219,9 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		await db.insert(profiles).values([{ id: USER_A }, { id: TEAMMATE_A }, { id: USER_B }]);
 		const [identityA] = await db
 			.insert(cloudIdentities)
-			.values({ user_id: USER_A, org_id: ORG_A, provider: "aws", name: `it-mint-${ORG_A.slice(0, 8)}` })
+			// `org` scope: the org's shared identity, which every member and the org's service tokens
+			// may use. A `personal` one would be refused to a token (identityScopeWhere).
+			.values({ user_id: USER_A, org_id: ORG_A, scope: "org", provider: "aws", name: `it-mint-${ORG_A.slice(0, 8)}` })
 			.returning({ id: cloudIdentities.id });
 		for (const [proj, org, user] of [
 			[PROJ_A, ORG_A, USER_A],

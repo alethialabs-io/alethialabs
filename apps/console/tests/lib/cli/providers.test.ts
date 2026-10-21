@@ -155,6 +155,7 @@ describe("resolveCliProvider", () => {
 			userId: "user-123",
 			orgId: "user-123",
 			entitlements: {},
+			credential: "session",
 		});
 	});
 
@@ -485,7 +486,7 @@ describe("resolveCliProvider — a malformed pin", () => {
 
 describe("enforceProviderPermission", () => {
 	// `entitlements` is optional on Actor; the PDP decision under test reads only orgId.
-	const actor = { userId: "user-123", orgId: "org-B" };
+	const actor = { userId: "user-123", orgId: "org-B", credential: "session" as const };
 
 	it("returns null when the PDP allows the action", async () => {
 		expect(

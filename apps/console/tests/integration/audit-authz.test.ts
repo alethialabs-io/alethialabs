@@ -61,7 +61,7 @@ const ENTITLEMENTS: Entitlements = {
 	},
 };
 
-const actorFor = (userId: string): Actor => ({ userId, orgId: ORG, entitlements: ENTITLEMENTS });
+const actorFor = (userId: string): Actor => ({ credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS });
 
 async function seedRoleGrant(principalId: string, roleId: string): Promise<void> {
 	await getServiceDb().insert(grants).values({
