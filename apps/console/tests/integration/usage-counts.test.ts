@@ -11,7 +11,7 @@
 // the list name EXACTLY the same clusters.
 
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 // The list's PDP gate is the authz suite's subject; here every check is allowed, so what is compared
@@ -306,5 +306,85 @@ describeIfDb("a DESTROY success records the teardown the definition reads", () =
 			.where(eq(projectCluster.id, cluster));
 		expect(row.status).toBe("ACTIVE");
 		expect((await queryResourceCounts(TORN_ORG)).clusters).toBe(1);
+	});
+});
+
+describeIfDb("the deploy-stamp backfill migrate runs (programmables.sql backfill_env_deploy_stamps)", () => {
+	const OLD_ORG = randomUUID();
+	let projectId = "";
+
+	/** An environment with a running cluster and a NULL stamp, and its jobs; returns the env id. */
+	async function unstamped(name: string, status: ProjectStatus, jobsOf: { type: "DEPLOY" | "DESTROY"; at: string }[]): Promise<string> {
+		const db = getServiceDb();
+		const [env] = await db
+			.insert(projectEnvironments)
+			.values({ project_id: projectId, user_id: OLD_ORG, name, status, is_default: name === "pre-stamp" })
+			.returning({ id: projectEnvironments.id });
+		await db.insert(projectCluster).values({ project_id: projectId, environment_id: env.id, status: "ACTIVE", cluster_name: `it-${name}` });
+		for (const j of jobsOf) {
+			await db.insert(jobs).values({
+				user_id: OLD_ORG,
+				org_id: OLD_ORG,
+				project_id: projectId,
+				environment_id: env.id,
+				job_type: j.type,
+				status: "SUCCESS",
+				config_snapshot: {},
+				completed_at: new Date(j.at),
+			});
+		}
+		return env.id;
+	}
+
+	/** Runs the backfill exactly as migrate does, returning how many environments it stamped. */
+	async function backfill(): Promise<number> {
+		const rows = await getServiceDb().execute<{ n: string | number }>(sql`select public.backfill_env_deploy_stamps() as n`);
+		return Number(rows[0]?.n ?? 0);
+	}
+
+	/** The environment's stamp. */
+	async function stampOf(envId: string): Promise<Date | null> {
+		const [e] = await getServiceDb()
+			.select({ stamp: projectEnvironments.last_deployed_at })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.id, envId));
+		return e.stamp;
+	}
+
+	beforeAll(async () => {
+		const [p] = await getServiceDb()
+			.insert(projects)
+			.values({ user_id: OLD_ORG, org_id: OLD_ORG, project_name: "pre-stamp", region: "eu-west-1", iac_version: "1.0.0" })
+			.returning({ id: projects.id });
+		projectId = p.id;
+	});
+
+	afterAll(async () => {
+		await getServiceDb().delete(jobs).where(eq(jobs.org_id, OLD_ORG));
+		await getServiceDb().delete(projects).where(eq(projects.org_id, OLD_ORG));
+	});
+
+	it("stamps an environment deployed before the stamp existed, so its cluster counts — and only that one", async () => {
+		const live = await unstamped("pre-stamp", "ACTIVE", [
+			{ type: "DEPLOY", at: "2026-03-01T10:00:00Z" },
+			{ type: "DEPLOY", at: "2026-04-01T10:00:00Z" },
+		]);
+		// Deployed, then torn down (DESTROY newer than the DEPLOY), then re-planned to DRAFT.
+		const torn = await unstamped("torn", "DRAFT", [
+			{ type: "DEPLOY", at: "2026-03-01T10:00:00Z" },
+			{ type: "DESTROY", at: "2026-03-02T10:00:00Z" },
+		]);
+		const gone = await unstamped("gone", "DESTROYED", [{ type: "DEPLOY", at: "2026-03-01T10:00:00Z" }]);
+		expect((await queryResourceCounts(OLD_ORG)).clusters).toBe(0);
+
+		expect(await backfill()).toBeGreaterThanOrEqual(1);
+		expect((await stampOf(live))?.toISOString()).toBe("2026-04-01T10:00:00.000Z");
+		expect([await stampOf(torn), await stampOf(gone)]).toEqual([null, null]);
+		expect((await queryResourceCounts(OLD_ORG)).clusters).toBe(1);
+
+		// Idempotent: a second migrate stamps nothing here and changes nothing.
+		await backfill();
+		expect((await stampOf(live))?.toISOString()).toBe("2026-04-01T10:00:00.000Z");
+		expect((await queryResourceCounts(OLD_ORG)).clusters).toBe(1);
 	});
 });
