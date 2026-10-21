@@ -63,17 +63,28 @@ export const TOPIC_KEYS = {
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.environmentJobs.key(),
 		[...DESTROY_HOLD_KEY],
+		// Evidence (#6126): a PLAN/DEPLOY's verdict and signed receipt, and a recorded waiver, are
+		// jobs columns (execution_metadata, verify_override).
+		orpc.evidence.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
-	// board's node states), its described chart workloads and its BYO IaC source (#6119).
+	// board's node states), its described chart workloads and its BYO IaC source (#6119). Evidence
+	// lists every environment, with its drift and security posture — `environment_drift` and
+	// `environment_security` notify on this topic too (#6126).
 	environments: (): QueryKey[] => [
 		orpc.workspace.environments.key(),
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.chartWorkloads.key(),
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
+		orpc.evidence.key(),
 	],
-	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
+	// Evidence groups its rows under each project's name (#6126).
+	projects: (): QueryKey[] => [
+		orpc.workspace.projects.key(),
+		orpc.workspace.setupGuide.key(),
+		orpc.evidence.key(),
+	],
 	clusters: (): QueryKey[] => [],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
