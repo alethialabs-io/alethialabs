@@ -32,6 +32,7 @@ const topicKeys: Record<Topic, () => QueryKey[]> = {
 	alerts: () => [],
 	support: () => [],
 	usage: () => [],
+	organization: () => [],
 };
 
 /** A client with an OBSERVED query per key, counting fetches. */

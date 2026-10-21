@@ -32,6 +32,12 @@ vi.mock("@/lib/rpc/client", () => ({
 			environments: { key: () => ["ws-environments"] },
 			projects: { key: () => ["ws-projects"] },
 			supportCases: { key: () => ["ws-support-cases"] },
+			context: { key: () => ["ws-context"] },
+		},
+		// The General settings reads the `projects` and `organization` topics reach (#6128).
+		settings: {
+			org: { key: () => ["settings-org"] },
+			project: { key: () => ["settings-project"] },
 		},
 		// The overview's reads ride the jobs, usage and alerts topics (#6118).
 		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
