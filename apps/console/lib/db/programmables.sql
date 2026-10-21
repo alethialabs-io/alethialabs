@@ -251,6 +251,30 @@ CREATE TRIGGER runners_notify_change_insdel
   AFTER INSERT OR DELETE ON public.runners
   FOR EACH ROW EXECUTE FUNCTION public.notify_runner_change();
 
+-- BEGIN runner-metadata-credential-scrub
+-- Runner metadata keeps no deploy credential at rest (#6123). A deploy config records what a
+-- DEPLOY_RUNNER job was given (region, image, size); the runner's credential is minted at claim time
+-- and never belongs there (lib/runners/lifecycle-token.ts), and the metadata route strips it on write.
+-- This removes the key from any row that still carries it. Idempotent: a second run matches no row.
+-- It reports a COUNT only, never a value, and it must never fail a migrate — a failure is a NOTICE.
+-- tests/integration/runner-metadata-scrub.test.ts runs this exact block (between the BEGIN/END
+-- markers) against a seeded row, twice.
+DO $$
+DECLARE scrubbed integer;
+BEGIN
+  UPDATE public.runners
+     SET metadata = metadata #- '{deploy_config,runner_token}'
+   WHERE jsonb_typeof(metadata -> 'deploy_config') = 'object'
+     AND (metadata -> 'deploy_config') ? 'runner_token';
+  GET DIAGNOSTICS scrubbed = ROW_COUNT;
+  IF scrubbed > 0 THEN
+    RAISE NOTICE 'runner metadata: removed a stored deploy credential from % row(s)', scrubbed;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'runner metadata credential scrub skipped (%)', SQLSTATE;
+END $$;
+-- END runner-metadata-credential-scrub
+
 -- The `fleet` topic (#6123): a warm pool's configuration. fleet_pools has no org, so every notice is
 -- a `platform` one, heard only by a stream whose actor may view runners on a self-managed
 -- deployment. updated_at is not listed (it moves with every listed column). Not triggered, on
