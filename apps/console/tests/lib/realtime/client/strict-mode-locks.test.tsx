@@ -42,6 +42,12 @@ vi.mock("@/lib/rpc/client", () => ({
 		),
 		// The clusters grid rides the clusters and environments topics (#6122).
 		clusters: { key: () => ["clusters-orpc"] },
+		// The runners page's reads ride the runners, fleet and jobs topics (#6123).
+		runners: {
+			list: { key: () => ["runners-list-orpc"] },
+			page: { key: () => ["runners-page-orpc"] },
+			fleet: { key: () => ["runners-fleet-orpc"] },
+		},
 	},
 }));
 

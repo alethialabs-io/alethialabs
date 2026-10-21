@@ -2,20 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
-import { deploymentMode } from "@/lib/billing/config";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
-import { queryProvisionedHours } from "@/lib/queries/runner-usage";
-import {
-	type RunnersPage,
-	type RunnersQuery,
-	runnersPage,
-} from "@/lib/queries/runners";
-import type { RunnerWithRelease } from "@/lib/query/resource-fetchers";
+import { defaultInOrg, readOwnRunnerViews, type RunnerView } from "@/lib/rpc/procedures/runners";
 import { generateRunnerToken } from "@/lib/runners/auth";
 import { unheldRunnerTokenHash } from "@/lib/runners/lifecycle-token";
 import {
@@ -25,199 +22,13 @@ import {
 import { notifyScaler } from "@/lib/scaler";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
-const RELEASE_FIELDS = {
-	version: runnerReleases.version,
-	release_notes: runnerReleases.release_notes,
-	released_at: runnerReleases.released_at,
-	github_release_url: runnerReleases.github_release_url,
-	commit_sha: runnerReleases.commit_sha,
-	is_breaking: runnerReleases.is_breaking,
-} as const;
-
-type ReleaseInfo = {
-	version: string;
-	release_notes: string;
-	released_at: string;
-	github_release_url: string | null;
-	commit_sha: string | null;
-	is_breaking: boolean;
-};
-
-/** Normalizes a release row (Date → ISO string) for the client store. */
-function toReleaseInfo(r: {
-	version: string;
-	release_notes: string;
-	released_at: Date;
-	github_release_url: string | null;
-	commit_sha: string | null;
-	is_breaking: boolean;
-}): ReleaseInfo {
-	return { ...r, released_at: r.released_at.toISOString() };
-}
-
-/** The org's self/BYO runners, joined with their pinned release, default first. Managed
- *  (platform-fleet) runners are excluded by RLS — they are read separately via
- *  {@link getManagedRunnersWithReleases} on self-managed deployments.
- *
- *  A default is chosen per org, so `is_default` reads as "the default of the addressed org": a
- *  personal-workspace runner listed from a team org carries `is_default: false` here even when it is
- *  the personal workspace's default, and `personal_elsewhere: true` so the list can say where its
- *  default is chosen. */
-export async function getRunnersWithReleases() {
-	const actor = await authorize("view", { type: "runner" });
-	return withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select({ runner: runners, release: RELEASE_FIELDS })
-			.from(runners)
-			.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
-			.orderBy(
-				desc(defaultInOrg(actor.orgId)),
-				asc(runners.operator),
-				asc(runners.created_at),
-			);
-		return rows.map((r) => ({
-			...r.runner,
-			is_default: r.runner.is_default && r.runner.org_id === actor.orgId,
-			personal_elsewhere: isPersonalElsewhere(r.runner.org_id, actor),
-			runner_releases: r.release ? toReleaseInfo(r.release) : null,
-		}));
-	});
-}
-
-/** True when a runner sits in the caller's personal workspace while the request addresses a team org. */
-function isPersonalElsewhere(
-	runnerOrgId: string | null,
-	actor: { userId: string; orgId: string },
-): boolean {
-	return actor.orgId !== actor.userId && runnerOrgId === actor.userId; // authz-scope-ok
-}
-
-/** `is_default`, read as "the default of the addressed org" (a default is chosen per org). */
-function defaultInOrg(orgId: string) {
-	return sql<boolean>`(${runners.is_default} and ${runners.org_id} = ${orgId})`;
-}
-
 /**
- * The managed warm-fleet runners (operator='managed'), joined with their release. These have no
- * owner/org so RLS hides them from the tenant path; they are platform infrastructure. Returns
- * `[]` on the hosted SaaS (tenants must never see our fleet); on a self-managed deployment the
- * operator IS the customer, so we read them via the service path (RLS-bypassing) for the fleet
- * view. Shaped identically to {@link getRunnersWithReleases} so the store can merge them.
+ * The org's own runners (no managed fleet), as the browser-safe view the read router serves — for
+ * the mention picker and the agent's runner tool. The runners PAGE reads `runners.list` /
+ * `runners.page` (lib/rpc/procedures/runners.ts), where this body now lives.
  */
-export async function getManagedRunnersWithReleases() {
-	await authorize("view", { type: "runner" });
-	if (deploymentMode() === "hosted") return [];
-	const rows = await getServiceDb()
-		.select({ runner: runners, release: RELEASE_FIELDS })
-		.from(runners)
-		.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
-		.where(eq(runners.operator, "managed"))
-		.orderBy(asc(runners.created_at));
-	return rows.map((r) => ({
-		...r.runner,
-		personal_elsewhere: false,
-		runner_releases: r.release ? toReleaseInfo(r.release) : null,
-	}));
-}
-
-/**
- * Provisioned hours per managed runner for the current calendar month (UTC),
- * keyed by runner id. Reads the platform billing ledger via the service path
- * (RLS-denied to the app role); still-open sessions are billed up to now.
- */
-export async function getManagedRunnerUsage(): Promise<Record<string, number>> {
-	await authorize("view", { type: "runner" });
-	// Managed-runner billing is platform data — never surfaced to hosted tenants.
-	if (deploymentMode() === "hosted") return {};
-	const now = new Date();
-	const from = new Date(
-		Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-	);
-	const rows = await queryProvisionedHours(getServiceDb(), { from, to: now });
-	return Object.fromEntries(
-		rows.map((r) => [r.runner_id, r.provisioned_hours]),
-	);
-}
-
-/**
- * The runner grid's PAGE read (#4890): the org's runners narrowed by `query`, plus
- * cloud/region/version facet counts over every runner the actor can see — the console filter
- * standard's steps 5 + 6 (lib/query/README.md). Key it with `qk.runnersPage(org, q)`.
- *
- * The universe is composed from the same three reads `fetchRunnersData()` uses — the RLS path
- * for the org's own runners, the service path for the platform's managed fleet (`[]` on
- * hosted), and the managed-hours ledger — and the narrowing happens over that composition
- * (`lib/queries/runners.ts` says why it is not one SQL statement). It does NOT read the latest
- * release, which is that function's fourth call and belongs to the Versions changelog rather
- * than to a row. Being ONE round trip rather than the four `fetchRunnersData` makes from the
- * browser (it is bundled into a client hook, so each action it calls is an RPC) is a side
- * benefit.
- *
- * `getRunnersWithReleases()` / `getManagedRunnersWithReleases()` above are unchanged and keep
- * their callers: this is the `getJobs()` / `getJobsPage()` split, not a replacement.
- *
- * Authorization is theirs — each read authorizes `view` on `runner` for itself — so no actor
- * is resolved here that they do not resolve again.
- */
-export async function getRunnersPage(
-	query: RunnersQuery = {},
-): Promise<RunnersPage<RunnerWithRelease>> {
-	const [own, managed, usage] = await Promise.all([
-		getRunnersWithReleases(),
-		getManagedRunnersWithReleases(),
-		getManagedRunnerUsage(),
-	]);
-	const all: RunnerWithRelease[] = [...own, ...managed].map((r) => ({
-		...r,
-		provisioned_hours: r.operator === "managed" ? (usage[r.id] ?? 0) : null,
-	}));
-
-	// The narrowing and the facet pass are `runnersPage`'s, not this function's: composing the
-	// universe is what needs an actor, and resolving a query over it is what needs a test.
-	return runnersPage(all, query);
-}
-
-/** The most recent runner release, or null. */
-export async function getLatestRunnerRelease(): Promise<ReleaseInfo | null> {
-	const actor = await authorize("view", { type: "runner" });
-	return withActorScope(actor, async (tx) => {
-		const [r] = await tx
-			.select(RELEASE_FIELDS)
-			.from(runnerReleases)
-			.orderBy(desc(runnerReleases.released_at))
-			.limit(1);
-		return r ? toReleaseInfo(r) : null;
-	});
-}
-
-/** The most recent runner releases (newest first) for the Versions changelog. */
-export async function getRecentRunnerReleases(
-	limit = 10,
-): Promise<ReleaseInfo[]> {
-	const actor = await authorize("view", { type: "runner" });
-	return withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select(RELEASE_FIELDS)
-			.from(runnerReleases)
-			.orderBy(desc(runnerReleases.released_at))
-			.limit(limit);
-		return rows.map(toReleaseInfo);
-	});
-}
-
-/** A runner release by version, or null. */
-export async function getReleaseNotes(
-	version: string,
-): Promise<ReleaseInfo | null> {
-	const actor = await authorize("view", { type: "runner" });
-	return withActorScope(actor, async (tx) => {
-		const [r] = await tx
-			.select(RELEASE_FIELDS)
-			.from(runnerReleases)
-			.where(eq(runnerReleases.version, version))
-			.limit(1);
-		return r ? toReleaseInfo(r) : null;
-	});
+export async function getRunnersWithReleases(): Promise<RunnerView[]> {
+	return readOwnRunnerViews();
 }
 
 /** Count of runners currently ONLINE and visible to the user. */
@@ -326,9 +137,9 @@ export async function deployRunner(params: {
 			.where(eq(cloudIdentities.id, params.cloudIdentityId))
 			.limit(1);
 
-		if (!identity) throw new Error("Cloud identity not found");
+		if (!identity) throw new ActionRefusal("not-found", "Cloud identity not found");
 		if (!isRunnerDeployProvider(identity.provider))
-			throw new Error(runnerDeployUnsupportedMessage(identity.provider));
+			throw new ActionRefusal("conflict", runnerDeployUnsupportedMessage(identity.provider));
 
 		const [runner] = await tx
 			.insert(runners)
@@ -396,13 +207,14 @@ async function fetchDeployedRunner(
 
 		// Ownership: enforced by the caller's authorize() + the withActorScope RLS
 		// (a runner outside the actor's org is simply not returned above).
-		if (!runner) throw new Error("Runner not found");
+		if (!runner) throw new ActionRefusal("not-found", "Runner not found");
 		if (!runner.cloud_identity_id)
-			throw new Error("Runner has no cloud identity");
+			throw new ActionRefusal("conflict", "Runner has no cloud identity");
 
 		const deployConfig = runner.metadata?.deploy_config;
 		if (!deployConfig)
-			throw new Error(
+			throw new ActionRefusal(
+				"conflict",
 				"Runner has no deploy config — it may not have been deployed successfully",
 			);
 
@@ -441,7 +253,8 @@ function buildRunnerConfigSnapshot(
 ) {
 	const cloudProvider = provider ?? deployConfig.cloud_provider;
 	if (!cloudProvider)
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			`Runner ${runner.name} has no recorded cloud provider — its cloud identity is gone and deploy_config.cloud_provider is unset, so there is nothing safe to target.`,
 		);
 
@@ -487,7 +300,8 @@ async function assertNoActiveLifecycleJob(
 			),
 		);
 	if (active.some((j) => j.config_snapshot?.runner_id === runnerId)) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"A runner-lifecycle job is already in progress for this runner",
 		);
 	}
@@ -568,7 +382,7 @@ export async function updateRunner(runnerId: string) {
 			.orderBy(desc(runnerReleases.released_at))
 			.limit(1);
 
-		if (!latestRelease) throw new Error("No runner releases found");
+		if (!latestRelease) throw new ActionRefusal("conflict", "No runner releases found");
 
 		await tx
 			.update(runners)
@@ -614,8 +428,104 @@ export async function removeRunner(runnerId: string) {
 			.limit(1);
 
 		// Ownership enforced by authorize() above + withActorScope RLS.
-		if (!runner) throw new Error("Runner not found");
+		if (!runner) throw new ActionRefusal("not-found", "Runner not found");
 
 		await tx.delete(runners).where(eq(runners.id, runnerId));
 	});
+}
+
+// ── The console's mutation contract (ADR 0005 D4, #6123) ────────────────────────────────────────
+//
+// The runners page calls these, through `useActionMutation`, never the functions above directly:
+// each parses its input, runs the SAME function the API routes call (so every authorize/quota/
+// ownership check above is the one that runs), and answers an `ActionResult` whose refusals the page
+// renders by kind. The functions above stay exported for their in-process callers (the CLI and jobs
+// API routes, the tests); their own throws are unchanged except that a refusal the user caused is an
+// `ActionRefusal` (same message), so it is shown rather than reported as an unexpected failure.
+
+const runnerIdSchema = z.string().uuid();
+const runnerNameSchema = z.string().trim().min(1, "Runner name is required").max(60);
+
+/** A plan's job cap is a refusal the user can act on (upgrade, or wait), not an unexpected failure. */
+async function refusingUsageLimit<T>(run: () => Promise<T>): Promise<T> {
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof UsageLimitError) {
+			throw new ActionRefusal(error.upgradable ? "entitlement" : "conflict", error.message);
+		}
+		throw error;
+	}
+}
+
+// Each action below is a plain async function whose body builds its contract inline, so the
+// action-boundary guard (scripts/check-action-boundary.mjs) follows it to the function it runs and
+// from there to that function's `authorize` — a `defineAction(...)` value exported directly is not a
+// function that guard can follow.
+
+const setDefaultInput = z.object({ runnerId: runnerIdSchema.nullable() });
+
+/** Sets (or clears, with `runnerId: null`) the caller's default runner in the addressed org. */
+export async function setDefaultRunnerAction(raw: z.input<typeof setDefaultInput>) {
+	return defineAction({
+		input: setDefaultInput,
+		run: async ({ input }) => {
+			await setDefaultRunner(input.runnerId);
+			return { runnerId: input.runnerId };
+		},
+	})(raw);
+}
+
+const registerInput = z.object({ name: runnerNameSchema });
+
+/** Registers a self-operated runner; answers the one-time token the dialog shows once. */
+export async function registerRunnerAction(raw: z.input<typeof registerInput>) {
+	return defineAction({ input: registerInput, run: ({ input }) => registerRunner(input.name) })(raw);
+}
+
+const deployInput = z.object({
+	name: runnerNameSchema,
+	cloudIdentityId: z.string().uuid("Cloud account is required"),
+	region: z.string().min(1, "Region is required").max(100),
+	imageTag: z.string().max(200).optional(),
+	assignedRunnerId: runnerIdSchema.nullable().optional(),
+});
+
+/** Deploys a runner into a cloud account through an existing runner. */
+export async function deployRunnerAction(raw: z.input<typeof deployInput>) {
+	return defineAction({
+		input: deployInput,
+		run: ({ input }) => refusingUsageLimit(() => deployRunner(input)),
+	})(raw);
+}
+
+const runnerInput = z.object({ runnerId: runnerIdSchema });
+
+/** Queues an UPDATE_RUNNER job that rolls a deployed runner to the latest release. */
+export async function updateRunnerAction(raw: z.input<typeof runnerInput>) {
+	return defineAction({
+		input: runnerInput,
+		run: ({ input }) => refusingUsageLimit(() => updateRunner(input.runnerId)),
+	})(raw);
+}
+
+const destroyInput = z.object({ runnerId: runnerIdSchema, assignedRunnerId: runnerIdSchema.nullable().optional() });
+
+/** Queues a DESTROY_RUNNER job (optionally on a chosen runner). */
+export async function destroyRunnerAction(raw: z.input<typeof destroyInput>) {
+	return defineAction({
+		input: destroyInput,
+		run: ({ input }) => refusingUsageLimit(() => destroyRunner(input.runnerId, input.assignedRunnerId)),
+	})(raw);
+}
+
+/** Removes a runner record that has no cloud resources to tear down. */
+export async function removeRunnerAction(raw: z.input<typeof runnerInput>) {
+	return defineAction({
+		input: runnerInput,
+		run: async ({ input }) => {
+			await removeRunner(input.runnerId);
+			return { runnerId: input.runnerId };
+		},
+	})(raw);
 }

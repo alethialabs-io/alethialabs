@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { lookup } from "@/lib/typed-object";
-import type { FleetPoolView, PoolEconomics } from "@/app/server/actions/fleet";
+import type { FleetPoolView, PoolEconomics } from "@/lib/rpc/procedures/runners";
 import { formatMoney } from "@repo/format";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import {

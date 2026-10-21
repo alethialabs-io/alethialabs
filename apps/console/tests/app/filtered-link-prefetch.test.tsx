@@ -21,23 +21,38 @@ import { QueryClient, type DehydratedState } from "@tanstack/react-query";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getRunnersPage, getMembersPage } = vi.hoisted(() => {
+const { runnersPage, getMembersPage } = vi.hoisted(() => {
 	/** A server action that answers with the query it was asked, so the dehydrated data names it. */
 	const action = () => vi.fn(async (query: unknown) => ({ query, rows: [] }));
 	return {
-		getRunnersPage: action(),
+		runnersPage: action(),
 		getMembersPage: action(),
 	};
 });
 
-vi.mock("@/app/server/actions/runners", () => ({ getRunnersPage }));
-vi.mock("@/lib/query/resource-fetchers", () => ({
-	fetchRunnersData: async () => [],
-	fetchFleetData: async () => null,
-}));
+// The runners route reads over the read router in-process (#6123). The router here has the runners
+// procedures' SHAPE, with the page read answering the input it was given; keys come from the same
+// oRPC utilities the browser uses, so a key asserted below is the key the client looks up.
+vi.mock("@/lib/rpc/server", async () => {
+	const { os, createRouterClient } = await import("@orpc/server");
+	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
+	const { z } = await import("zod");
+	const router = {
+		runners: {
+			page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => runnersPage(input)),
+			list: os.handler(async () => ({ runners: [], latestRelease: null, releases: [] })),
+			fleet: os.handler(async () => ({ pools: [] })),
+		},
+	};
+	const utils = createTanstackQueryUtils(createRouterClient(router));
+	return { serverOrpc: () => utils };
+});
+vi.mock("@/lib/authz/guard", () => ({ currentActor: async () => ({ userId: "u1", orgId: "o1" }) }));
+vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: () => ({ byoRunners: true }) }));
 vi.mock("@/app/(private)/[org]/~/runners/runners-client", () => ({
 	RunnersClient: () => null,
 }));
+vi.mock("@/components/runners/runners-skeleton", () => ({ RunnersSkeleton: () => null }));
 
 vi.mock("@/app/server/actions/members", () => ({ getMembersPage }));
 vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: () => null }));
@@ -46,6 +61,7 @@ vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: ()
 vi.mock("@/lib/query/client", () => ({ getQueryClient: () => new QueryClient() }));
 
 import RunnersRoute from "@/app/(private)/[org]/~/runners/page";
+import { serverOrpc } from "@/lib/rpc/server";
 import MembersRoute from "@/app/(private)/[org]/~/settings/members/page";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -68,11 +84,24 @@ function dataAt(state: DehydratedState, key: readonly unknown[]): unknown {
 	return state.queries.find((q) => JSON.stringify(q.queryKey) === JSON.stringify(key))?.state.data;
 }
 
-/** Render the runners route for one link. */
+/**
+ * Render the runners route for one link. The route renders its prefetching part inside a
+ * `<Suspense>` (the plan gate is decided first, #6123), so the async child is rendered here too.
+ */
 async function runners(searchParams: SearchParams): Promise<DehydratedState> {
-	return dehydratedOf(
-		await RunnersRoute({ params: Promise.resolve({ org: "acme" }), searchParams: Promise.resolve(searchParams) }),
-	);
+	const node = await RunnersRoute({ searchParams: Promise.resolve(searchParams) });
+	if (!isValidElement<{ children?: ReactNode }>(node) || !isValidElement(node.props.children)) {
+		throw new Error("the runners route did not render its prefetching part");
+	}
+	const child = node.props.children;
+	if (typeof child.type !== "function") throw new Error("the prefetching part is not a component");
+	// An async server component: a plain function of its props.
+	return dehydratedOf(await Reflect.apply(child.type, undefined, [child.props]));
+}
+
+/** The browser's key for the runners grid's page read with `input`. */
+function runnersPageKey(input: Record<string, unknown>): readonly unknown[] {
+	return serverOrpc().runners.page.queryKey({ input });
 }
 
 /** Render the members route for one link. */
@@ -90,19 +119,19 @@ describe("~/runners prefetches the link's filtered grid", () => {
 	it("dehydrates the FILTERED key the client settles on, with the server's filtered answer", async () => {
 		const state = await runners({ versions: "1.4.0,1.10.0" });
 		// Sorted by the normalize step — the key the client builds, character for character.
-		const filtered = ["runners", "acme", "page", { versions: ["1.10.0", "1.4.0"] }];
+		const filtered = runnersPageKey({ versions: ["1.10.0", "1.4.0"] });
 		expect(dataAt(state, filtered)).toEqual({ query: { versions: ["1.10.0", "1.4.0"] }, rows: [] });
-		expect(getRunnersPage).toHaveBeenCalledWith({ versions: ["1.10.0", "1.4.0"] });
+		expect(runnersPage).toHaveBeenCalledWith({ versions: ["1.10.0", "1.4.0"] });
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await runners({ versions: "1.4.0" });
-		expect(dataAt(state, ["runners", "acme", "page", {}])).toEqual({ query: {}, rows: [] });
+		expect(dataAt(state, runnersPageKey({}))).toEqual({ query: {}, rows: [] });
 	});
 
 	it("fetches the pristine grid once for a pristine link", async () => {
 		await runners({});
-		expect(getRunnersPage).toHaveBeenCalledTimes(1);
+		expect(runnersPage).toHaveBeenCalledTimes(1);
 	});
 });
 

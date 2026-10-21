@@ -3,47 +3,30 @@
 "use client";
 
 // The runners grid, step 5 of the console filter standard (./README.md → "Server-side
-// filters"): the normalized query IS the key, the fetch is the SERVER's filtered read, and
+// filters"): the normalized query IS the input, the read is the SERVER's filtered page, and
 // previous rows are kept — and visibly dimmed by the caller — while the next answer loads.
 //
-// Runners was the one surface in the console with no server half AT ALL (#4890): the page
-// read the whole universe under `qk.runners(org)` and narrowed it in the component, with the
-// predicate living in the filter BAR and the facets tallied beside it. Both moved to
-// `lib/queries/runners.ts`, behind `getRunnersPage(query)`.
-//
-// `useRunnersQuery()` (the unfiltered universe) is NOT replaced — the add-runner dialog reads
-// it, and it is what `qk.runners(org)` keys. What moved is the GRID.
+// #6123 (ADR 0005 D1): the read is the `runners.page` GET procedure, no longer a server-action
+// POST, and the route prefetches the same key on the server. No poll: a runner that changes is a
+// `runners` hint on the org's change stream, which invalidates this key (lib/query/topics.ts);
+// while the stream is down the one fallback poll covers it (lib/realtime/client/fallback-poll.ts).
 
-import {
-	keepPreviousData,
-	useQuery,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import { getRunnersPage } from "@/app/server/actions/runners";
-import type { RunnersPage, RunnersQuery } from "@/lib/queries/runners";
-import type { RunnerWithRelease } from "./resource-fetchers";
-import { qk } from "./keys";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { RunnersQuery } from "@/lib/queries/runners";
+import { orpc } from "@/lib/rpc/client";
 
 /**
- * The org's runners for `query`, filtered SERVER-SIDE, with the cloud, region and version
- * facets counted over every runner the actor can see.
- *
- * Polled on the same 10s cadence `useRunnersQuery()` uses, and for the same reason: a
- * runner's ONLINE/OFFLINE state is heartbeat-driven and changes with nothing on this page
- * happening. `keepPreviousData` holds the grid across both a filter change and a poll; the
- * caller dims off `isPlaceholderData`, which is true for the first and false for the second.
+ * The org's runners for `query`, filtered SERVER-SIDE, with the cloud, region and version facets
+ * counted over every runner the actor can see. `keepPreviousData` holds the grid across a filter
+ * change; the caller dims off `isPlaceholderData`.
  *
  * @param query the `normalizeRunnersQuery()` output; `{}` is the pristine view
  */
-export function useRunnersPageQuery(
-	query: RunnersQuery = {},
-): UseQueryResult<RunnersPage<RunnerWithRelease>> {
-	const { org } = useParams<{ org: string }>();
-	return useQuery({
-		queryKey: qk.runnersPage(org, query),
-		queryFn: () => getRunnersPage(query),
-		placeholderData: keepPreviousData,
-		refetchInterval: 10_000,
-	});
+export function useRunnersPageQuery(query: RunnersQuery = {}) {
+	return useQuery(
+		orpc.runners.page.queryOptions({
+			input: query,
+			placeholderData: keepPreviousData,
+		}),
+	);
 }

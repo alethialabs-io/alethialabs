@@ -96,18 +96,6 @@
 			"count": 1,
 			"lifts": "unassigned"
 		},
-		"lib/query/use-fleet-query.ts :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6123"
-		},
-		"lib/query/use-runners-page-query.ts :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6123"
-		},
-		"lib/query/use-runners-query.ts :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6123"
-		},
 		"lib/stores/elench-drafts/store.ts :: setInterval": {
 			"count": 1,
 			"lifts": "unassigned"

@@ -13,7 +13,7 @@ export const qk = {
 	jobs: (org: string) => ["jobs", org] as const,
 	/** The jobs PAGE, parameterized by the normalized filter query (normalizeJobsQuery).
 	 * Distinct from the shared unfiltered `jobs` cache, which palette/breadcrumbs/
-	 * overview/runners/plan all consume. */
+	 * overview/plan all consume. */
 	jobsPage: (org: string, query: unknown) => ["jobs", org, "page", query] as const,
 	/** Evidence roll-up, parameterized by the normalized filter query
 	 * (normalizeEvidenceQuery — stable object, so equal filters hit the cache). */
@@ -22,19 +22,7 @@ export const qk = {
 	job: (org: string, id: string) => ["jobs", org, "detail", id] as const,
 	jobStatus: (org: string, id: string) =>
 		["jobs", org, "detail", id, "status"] as const,
-	/** The UNFILTERED runner universe (`fetchRunnersData`) — the add-runner dialog's read. */
-	runners: (org: string) => ["runners", org] as const,
-	/**
-	 * The runners GRID's filtered page, parameterized by the normalized filter query.
-	 *
-	 * A second name rather than an optional argument on `runners` above, because the two
-	 * carry different payloads — `RunnersData` (runners + the latest release) against a
-	 * `RunnersPage` (rows + counts + facets). `["runners", org]` still invalidates both.
-	 */
-	runnersPage: (org: string, query: unknown) =>
-		["runners", org, "page", query] as const,
 	clusters: (org: string) => ["clusters", org] as const,
-	fleet: (org: string) => ["fleet", org] as const,
 	addons: (projectId: string, environmentId?: string | null) =>
 		["addons", projectId, environmentId ?? "default"] as const,
 	environmentStatus: (projectId: string, environmentId?: string | null) =>

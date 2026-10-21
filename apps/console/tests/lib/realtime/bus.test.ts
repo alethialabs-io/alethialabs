@@ -266,7 +266,8 @@ describe("bookkeeping", () => {
 	it("returns streams and keys to zero when every stream closes", () => {
 		const a = open(member, memberKeys, recorder().sink);
 		const b = open({ credential: "session", userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], recorder().sink);
-		expect(bus.stats()).toMatchObject({ streams: 2, keys: 3, users: 2, maxPerUser: 1 });
+		// The member's three keys (o:, ou:, own:) and the other stream's one.
+		expect(bus.stats()).toMatchObject({ streams: 2, keys: 4, users: 2, maxPerUser: 1 });
 		a.close();
 		b.close();
 		b.close(); // idempotent

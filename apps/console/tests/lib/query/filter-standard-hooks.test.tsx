@@ -55,10 +55,18 @@ vi.mock("@/app/server/actions/grants", () => ({
 	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
 }));
 
+// The runners grid reads over the `runners.page` GET procedure (#6123): the seam is the read
+// router's page handler, reached through the same oRPC query utilities the browser uses.
 const getRunnersPage = vi.fn();
-vi.mock("@/app/server/actions/runners", () => ({
-	getRunnersPage: (...a: unknown[]) => getRunnersPage(...a),
-}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { os, createRouterClient } = await import("@orpc/server");
+	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
+	const { z } = await import("zod");
+	const router = {
+		runners: { page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => getRunnersPage(input)) },
+	};
+	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
+});
 
 const getTeamsPage = vi.fn();
 vi.mock("@/app/server/actions/teams", () => ({
@@ -154,7 +162,10 @@ const SUBJECTS: Record<string, Subject> = {
 	useRunnersPageQuery: {
 		usePage: (q) => useRunnersPageQuery(q),
 		action: getRunnersPage,
-		prefix: ["runners", "org-1", "page"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["runners", "page"]],
+		queryOf: orpcInput,
 	},
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
@@ -187,7 +198,7 @@ beforeEach(() => {
 	}
 });
 
-/** A fresh client per test — `refetchInterval: false` so the runners poll cannot race. */
+/** A fresh client per test, without retries. */
 function harness() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, refetchInterval: false } },
