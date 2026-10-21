@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { recordActivity } from "@/lib/authz/activity";
+import { classifiableResourceInOrg } from "@/lib/classification/resource-org";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -120,6 +121,10 @@ export async function POST(req: Request) {
 	const { kind, id, dimension_key, value_slug } = parsed.data;
 
 	try {
+		// The resource must be this organization's (see lib/classification/resource-org.ts).
+		if (!(await classifiableResourceInOrg(kind, id, actor))) {
+			return NextResponse.json({ error: `No ${kind} ${id}` }, { status: 404 });
+		}
 		const db = getServiceDb();
 		// Resolve the value → its dimension within the org.
 		const [value] = await db
@@ -154,6 +159,7 @@ export async function POST(req: Request) {
 					.delete(classificationAssignment)
 					.where(
 						and(
+							eq(classificationAssignment.org_id, actor.orgId),
 							eq(classificationAssignment.resource_kind, kind),
 							eq(classificationAssignment.resource_id, id),
 							eq(classificationAssignment.dimension_id, value.dimension_id),

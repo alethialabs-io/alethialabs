@@ -106,6 +106,7 @@ function mockDb(
 			return db;
 		},
 		returning: () => returningRows,
+		transaction: (fn: (tx: unknown) => unknown) => fn(db),
 		then: (resolve: (v: unknown) => void) => resolve(selectRows),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
@@ -447,11 +448,21 @@ describe("updatePolicy / togglePolicy / deletePolicy", () => {
 	};
 
 	it("updatePolicy rewrites the rule and replaces its bindings", async () => {
-		const { setSpy, valuesSpy } = mockDb({ selectRows: [{ id: UUID }] });
+		const { setSpy, valuesSpy } = mockDb({
+			selectRows: [{ id: UUID }],
+			returningRows: [{ id: "rule-1" }],
+		});
 		await updatePolicy("rule-1", base as never);
 		expect(setSpy.mock.calls[0][0]).toMatchObject({ name: "P", event_patterns: ["system.job.failed"] });
 		expect(valuesSpy.mock.calls[0][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID, min_severity: null }]);
 		expect(invalidateOrgRules).toHaveBeenCalledWith("org-1");
+	});
+
+	it("updatePolicy refuses a policy the org-bound update did not match, binding nothing", async () => {
+		const { valuesSpy } = mockDb({ selectRows: [{ id: UUID }], returningRows: [] });
+		await expect(updatePolicy("rule-1", base as never)).rejects.toThrow("Alert policy not found.");
+		expect(valuesSpy).not.toHaveBeenCalled();
+		expect(invalidateOrgRules).not.toHaveBeenCalled();
 	});
 
 	it("togglePolicy flips enabled and invalidates the cache", async () => {

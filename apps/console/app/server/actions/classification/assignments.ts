@@ -10,6 +10,7 @@
 import { and, eq } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import { classifiableResourceInOrg } from "@/lib/classification/resource-org";
 import { withScope } from "@/lib/db";
 import {
 	classificationAssignment,
@@ -112,6 +113,10 @@ export async function getAssignmentsForKind(
 export async function assignClassification(input: AssignInput): Promise<void> {
 	const actor = await authorize("edit", { type: "org" });
 	const data = assignInputSchema.parse(input);
+	// The resource must be this organization's: the assignment's RLS wall is its dimension's org,
+	// and the resource id is a bare uuid, so nothing else ties the two together.
+	if (!(await classifiableResourceInOrg(data.resource_kind, data.resource_id, actor)))
+		throw new Error("Resource not found");
 
 	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
 		// Resolve the value → its dimension (+ multi flag) in one join; RLS scopes this
