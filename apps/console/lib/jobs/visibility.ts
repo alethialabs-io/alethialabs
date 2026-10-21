@@ -18,6 +18,8 @@
 //     `get_job` and `get_plan_result` read through the procedures' readers;
 //   · the console's re-run, cancel and apply (app/server/actions/jobs.ts);
 //   · the per-job log stream (app/api/stream/jobs/[id]);
+//   · the runners page's job overlay — the job in flight on each runner card
+//     (`readActiveRunnerJobs`, lib/rpc/procedures/runners.ts, #6123);
 //   · the CLI: `GET /api/jobs`, `GET /api/cli/jobs/[id]`, `GET /api/cli/jobs/[id]/logs` and
 //     `POST /api/cli/jobs/[id]/cancel`.
 // The cancel both surfaces share (lib/jobs/cancel.ts) reads through the same predicate.

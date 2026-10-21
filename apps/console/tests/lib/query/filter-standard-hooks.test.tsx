@@ -43,10 +43,18 @@ vi.mock("@/app/server/actions/grants", () => ({
 	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
 }));
 
+// The runners grid reads over the `runners.page` GET procedure (#6123): the seam is the read
+// router's page handler, reached through the same oRPC query utilities the browser uses.
 const getRunnersPage = vi.fn();
-vi.mock("@/app/server/actions/runners", () => ({
-	getRunnersPage: (...a: unknown[]) => getRunnersPage(...a),
-}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { os, createRouterClient } = await import("@orpc/server");
+	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
+	const { z } = await import("zod");
+	const router = {
+		runners: { page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => getRunnersPage(input)) },
+	};
+	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
+});
 
 const getTeamsPage = vi.fn();
 vi.mock("@/app/server/actions/teams", () => ({
@@ -99,6 +107,14 @@ interface Subject {
 	action: ReturnType<typeof vi.fn>;
 	/** The key prefix `qk` gives this resource, ahead of the query object. */
 	prefix: readonly unknown[];
+	/** Where the query sits in a key: the last element (`qk`), or an oRPC key's `input`. */
+	queryOf?: (key: readonly unknown[]) => unknown;
+}
+
+/** The input of an oRPC query key (`[path, { input, type }]`). */
+function orpcInput(key: readonly unknown[]): unknown {
+	const last = key[key.length - 1];
+	return typeof last === "object" && last !== null && "input" in last ? last.input : undefined;
 }
 
 const SUBJECTS: Record<string, Subject> = {
@@ -125,7 +141,10 @@ const SUBJECTS: Record<string, Subject> = {
 	useRunnersPageQuery: {
 		usePage: (q) => useRunnersPageQuery(q),
 		action: getRunnersPage,
-		prefix: ["runners", "org-1", "page"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["runners", "page"]],
+		queryOf: orpcInput,
 	},
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
@@ -158,7 +177,7 @@ beforeEach(() => {
 	}
 });
 
-/** A fresh client per test — `refetchInterval: false` so the runners poll cannot race. */
+/** A fresh client per test, without retries. */
 function harness() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, refetchInterval: false } },
@@ -197,7 +216,8 @@ describe.each(Object.entries(SUBJECTS))("%s", (name, subject) => {
 		for (const key of keys) {
 			expect(key.slice(0, subject.prefix.length)).toEqual([...subject.prefix]);
 		}
-		expect(keys.map((k) => k[k.length - 1])).toEqual([PRISTINE, FILTERED]);
+		const queryOf = subject.queryOf ?? ((k: readonly unknown[]) => k[k.length - 1]);
+		expect(keys.map(queryOf)).toEqual([PRISTINE, FILTERED]);
 	});
 
 	it("keeps the previous rows across a filter change and marks them stale (F6)", async () => {

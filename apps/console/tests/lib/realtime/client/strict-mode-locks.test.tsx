@@ -40,6 +40,13 @@ vi.mock("@/lib/rpc/client", () => ({
 				(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
 			),
 		),
+		// The runners page's reads ride the runners, fleet and jobs topics (#6123).
+		runners: {
+			list: { key: () => ["runners-list-orpc"] },
+			page: { key: () => ["runners-page-orpc"] },
+			fleet: { key: () => ["runners-fleet-orpc"] },
+			fleetEconomics: { key: () => ["runners-fleet-economics-orpc"] },
+		},
 	},
 }));
 

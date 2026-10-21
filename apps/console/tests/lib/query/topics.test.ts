@@ -50,10 +50,50 @@ describe("TOPIC_KEYS", () => {
 			[...qk.jobStatus("acme", "j1")],
 		];
 		for (const key of legacy) client.setQueryData(key, {});
-		client.setQueryData([...qk.runners("acme")], {});
+		client.setQueryData([...qk.projects("acme")], {});
 		for (const queryKey of TOPIC_KEYS.jobs()) await client.invalidateQueries({ queryKey });
 		for (const key of legacy) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
-		expect(client.getQueryState([...qk.runners("acme")])?.isInvalidated).toBe(false);
+		expect(client.getQueryState([...qk.projects("acme")])?.isInvalidated).toBe(false);
+	});
+});
+
+describe("TOPIC_KEYS — the runners page (#6123)", () => {
+	/** Seeds one entry per runners read (two grid inputs) and returns their keys by name. */
+	function seed(client: QueryClient) {
+		const keys = {
+			pristine: [...orpc.runners.page.queryKey({ input: {} })],
+			filtered: [...orpc.runners.page.queryKey({ input: { statuses: ["OFFLINE"] } })],
+			list: [...orpc.runners.list.queryKey()],
+			fleet: [...orpc.runners.fleet.queryKey()],
+			economics: [...orpc.runners.fleetEconomics.queryKey()],
+			notes: [...orpc.runners.releaseNotes.queryKey({ input: { version: "1.0.0" } })],
+			jobs: [...orpc.jobs.page.queryKey({ input: { range: { preset: "7d" } } })],
+		};
+		for (const key of Object.values(keys)) client.setQueryData<unknown>(key, {});
+		return keys;
+	}
+
+	/** Which seeded entries a topic's keys invalidate. */
+	async function invalidatedBy(topic: keyof typeof TOPIC_KEYS): Promise<string[]> {
+		const client = new QueryClient();
+		const keys = seed(client);
+		for (const queryKey of TOPIC_KEYS[topic]()) await client.invalidateQueries({ queryKey });
+		return Object.entries(keys)
+			.filter(([, key]) => client.getQueryState(key)?.isInvalidated)
+			.map(([name]) => name)
+			.sort();
+	}
+
+	it("a runner change refreshes every grid input, the universe and the pools — not release notes or jobs", async () => {
+		expect(await invalidatedBy("runners")).toEqual(["economics", "filtered", "fleet", "list", "pristine"]);
+	});
+
+	it("a pool change refreshes the pools and their economics only", async () => {
+		expect(await invalidatedBy("fleet")).toEqual(["economics", "fleet"]);
+	});
+
+	it("a job change refreshes the runner cards' job overlay and the pools' busy counts — not the economics", async () => {
+		expect(await invalidatedBy("jobs")).toEqual(["filtered", "fleet", "jobs", "list", "pristine"]);
 	});
 
 	it("#6121: a jobs hint refreshes a job's detail but not its log head (the log streams on its own)", async () => {

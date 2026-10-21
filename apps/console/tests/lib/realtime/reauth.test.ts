@@ -44,6 +44,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { EditionMisconfiguredError } from "@/lib/auth/errors";
+import { BUILT_IN_ROLES } from "@/lib/authz/registry";
 import { capabilitiesOf, reauthorize } from "@/lib/realtime/reauth";
 
 const USER = "22222222-2222-4222-8222-222222222222";
@@ -67,7 +68,7 @@ describe("reauthorize", () => {
 		expect(result).toEqual({
 			ok: true,
 			actor: { userId: USER, orgId: ORG },
-			caps: { fleetView: false, manageSupport: false },
+			caps: { platformView: false, manageSupport: false },
 		});
 		// The session is read from the SNAPSHOTTED cookie, not from a request scope.
 		const headers: Headers = h.getSession.mock.calls[0][0].headers;
@@ -130,24 +131,51 @@ describe("reauthorize", () => {
 });
 
 describe("capabilitiesOf", () => {
-	it("asks the PDP with can() for fleet view and manage_support", async () => {
+	it("asks the PDP with can() for runner view (what the platform reads gate on) and manage_support", async () => {
 		h.can.mockImplementation(async (_a: unknown, action: string) => ({
 			allowed: action === "view",
 		}));
 		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
-			fleetView: true,
+			platformView: true,
 			manageSupport: false,
 		});
-		expect(h.can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "view", { type: "fleet" });
+		expect(h.can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "view", { type: "runner" });
 		expect(h.can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "manage_support", {
 			type: "support_case",
 		});
 	});
 
+	it("the built-in operator role hears platform rows on self-managed: it reads them (#6123)", async () => {
+		// The PDP answered from the REAL built-in grant list. The operator reads managed runners and pool
+		// cards (both read on `runner:view`) and holds no `fleet:view` — so a capability derived from
+		// `fleet` would leave its runners page stale with the poll gone.
+		const granted = new Set(BUILT_IN_ROLES.operator === "*" ? [] : BUILT_IN_ROLES.operator);
+		expect(granted.has("runner:view")).toBe(true);
+		expect(granted.has("fleet:view")).toBe(false);
+		h.can.mockImplementation(async (_a: unknown, action: string, resource: { type: string }) => ({
+			allowed: [...granted].some((key) => key === `${resource.type}:${action}`),
+		}));
+		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toMatchObject({ platformView: true });
+	});
+
+	it("never grants platform view on a hosted deployment, whatever the PDP says (#6123)", async () => {
+		vi.stubEnv("ALETHIA_DEPLOYMENT_MODE", "hosted");
+		try {
+			h.can.mockResolvedValue({ allowed: true });
+			await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
+				platformView: false,
+				manageSupport: true,
+			});
+			expect(h.can).not.toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "view", { type: "runner" });
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it("reads a PDP error as no capability", async () => {
 		h.can.mockRejectedValue(new Error("pdp down"));
 		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
-			fleetView: false,
+			platformView: false,
 			manageSupport: false,
 		});
 	});

@@ -2,132 +2,97 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
+// The runners domain's client half (#6123, ADR 0005). Reads go over the `runners.*` GET procedures
+// and are kept current by the change stream (`runners` / `jobs` topics, lib/query/topics.ts) — no
+// poll. Writes go through `useActionMutation`: pending state, a double-submit guard, one toast
+// policy, and invalidation of every key that shows what changed.
+
+import { useQuery } from "@tanstack/react-query";
+import { retryUnlessRefused } from "@/components/overview/overview-reads";
 import {
-	useMutation,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import {
-	deployRunner as deployRunnerAction,
-	destroyRunner as destroyRunnerAction,
-	removeRunner as removeRunnerAction,
-	setDefaultRunner as setDefaultRunnerAction,
-	updateRunner as updateRunnerAction,
+	deployRunnerAction,
+	destroyRunnerAction,
+	registerRunnerAction,
+	removeRunnerAction,
+	setDefaultRunnerAction,
+	updateRunnerAction,
 } from "@/app/server/actions/runners";
-import type {
-	ProvisionJobStatus as PublicProvisionJobStatus,
-	ProvisionJobType as PublicProvisionJobType,
-} from "@/lib/db/schema";
-import {
-	fetchRunnersData,
-	type RunnersData,
-	type RunnerReleaseInfo,
-	type RunnerWithRelease,
-} from "./resource-fetchers";
-import { qk } from "./keys";
+import { type ActionResult, type FieldErrors, ok } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { TOPIC_KEYS } from "@/lib/query/topics";
+import { orpc } from "@/lib/rpc/client";
+import type { RunnerReleaseInfo, RunnersData, RunnerView } from "@/lib/rpc/procedures/runners";
 
-export type { RunnersData, RunnerReleaseInfo, RunnerWithRelease };
-
-export interface ActiveJob {
-	id: string;
-	job_type: PublicProvisionJobType;
-	status: PublicProvisionJobStatus;
-	config_snapshot: Record<string, unknown>;
-	runner_id: string | null;
-	project_id: string | null;
-	projects: { project_name: string } | null;
-}
+export type { RunnerReleaseInfo, RunnersData, RunnerView };
 
 /**
- * Runners + latest release for the active org. Server-prefetched and hydrated, then
- * polled every 10s while the tab is focused for heartbeat-driven ONLINE/OFFLINE changes.
+ * Every runner the actor can see, the latest release and the changelog. Server-prefetched on the
+ * runners route and hydrated; a heartbeat-driven ONLINE/OFFLINE flip arrives as a `runners` hint.
  */
-export function useRunnersQuery(): UseQueryResult<RunnersData> {
-	const { org } = useParams<{ org: string }>();
-	return useQuery({
-		queryKey: qk.runners(org),
-		queryFn: fetchRunnersData,
-		refetchInterval: 10_000,
-	});
+export function useRunnersQuery() {
+	return useQuery(orpc.runners.list.queryOptions({ retry: retryUnlessRefused }));
 }
 
-/** Invalidates the runners cache so the list reflects a mutation's result on next reconcile. */
-function useInvalidateRunners() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return () => qc.invalidateQueries({ queryKey: qk.runners(org) });
+/** Every key showing runner rows — the grid, the universe, the pools (they count managed runners). */
+function runnerKeys() {
+	return TOPIC_KEYS.runners();
 }
 
-/** Sets (or clears) the default runner. */
+/** A lifecycle action also queues a job: the job feeds show it, and the card joins it. */
+function runnerAndJobKeys() {
+	return [...TOPIC_KEYS.runners(), ...TOPIC_KEYS.jobs()];
+}
+
+/** Sets (or clears, with `null`) the default runner. */
 export function useSetDefaultRunner() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: (runnerId: string | null) => setDefaultRunnerAction(runnerId),
-		onSuccess: () => invalidate(),
+	return useActionMutation((runnerId: string | null) => setDefaultRunnerAction({ runnerId }), {
+		invalidates: runnerKeys(),
 	});
 }
 
-/** Deploys a new runner into a cloud account. */
-export function useDeployRunner() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: (params: Parameters<typeof deployRunnerAction>[0]) =>
-			deployRunnerAction(params),
-		onSuccess: () => invalidate(),
-	});
+/** Deploys a new runner into a cloud account; a validation refusal goes to the form's fields. */
+export function useDeployRunner(onValidationError?: (fields: FieldErrors) => void) {
+	return useActionMutation(deployRunnerAction, { invalidates: runnerAndJobKeys(), onValidationError });
+}
+
+/** Registers a self-operated runner; a validation refusal goes to the form's fields. */
+export function useRegisterRunner(onValidationError?: (fields: FieldErrors) => void) {
+	return useActionMutation(registerRunnerAction, { invalidates: runnerKeys(), onValidationError });
 }
 
 /** Queues a version update for a single runner. */
 export function useUpdateRunner() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: (runnerId: string) => updateRunnerAction(runnerId),
-		onSuccess: () => invalidate(),
+	return useActionMutation((runnerId: string) => updateRunnerAction({ runnerId }), {
+		invalidates: runnerAndJobKeys(),
 	});
+}
+
+/**
+ * Queues an update for each outdated runner, and answers how many queued vs failed. One failed
+ * runner does not fail the batch: the caller reports the split.
+ */
+async function updateEach(runnerIds: string[]): Promise<ActionResult<{ queued: number; failed: number }>> {
+	const results = await Promise.allSettled(runnerIds.map((runnerId) => updateRunnerAction({ runnerId })));
+	const queued = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
+	return ok({ queued, failed: runnerIds.length - queued });
 }
 
 /** Queues updates for every outdated runner, reporting how many queued vs failed. */
 export function useUpdateAllOutdated() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: async (runnerIds: string[]) => {
-			const results = await Promise.allSettled(
-				runnerIds.map((id) => updateRunnerAction(id)),
-			);
-			let queued = 0;
-			let failed = 0;
-			for (const r of results) {
-				if (r.status === "fulfilled") queued++;
-				else failed++;
-			}
-			return { queued, failed };
-		},
-		onSuccess: () => invalidate(),
-	});
+	return useActionMutation(updateEach, { invalidates: runnerAndJobKeys() });
 }
 
-/** Destroys a runner's cloud resources (optionally reassigning its jobs). */
+/** Destroys a runner's cloud resources (optionally on a chosen runner). */
 export function useDestroyRunner() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: ({
-			runnerId,
-			assignedRunnerId,
-		}: {
-			runnerId: string;
-			assignedRunnerId?: string | null;
-		}) => destroyRunnerAction(runnerId, assignedRunnerId),
-		onSuccess: () => invalidate(),
-	});
+	return useActionMutation(
+		(v: { runnerId: string; assignedRunnerId?: string | null }) => destroyRunnerAction(v),
+		{ invalidates: runnerAndJobKeys() },
+	);
 }
 
 /** Removes a runner record (after its resources are gone). */
 export function useDeleteRunner() {
-	const invalidate = useInvalidateRunners();
-	return useMutation({
-		mutationFn: (runnerId: string) => removeRunnerAction(runnerId),
-		onSuccess: () => invalidate(),
+	return useActionMutation((runnerId: string) => removeRunnerAction({ runnerId }), {
+		invalidates: runnerKeys(),
 	});
 }

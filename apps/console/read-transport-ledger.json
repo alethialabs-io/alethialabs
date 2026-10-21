@@ -9,7 +9,6 @@
 		"app/(private)/[org]/~/alerts/page.tsx :: getAlertPoliciesPage",
 		"app/(private)/[org]/~/clusters/page.tsx :: getClusters",
 		"app/(private)/[org]/~/evidence/page.tsx :: getOrgEvidence",
-		"app/(private)/[org]/~/runners/page.tsx :: getRunnersPage",
 		"app/(private)/[org]/~/settings/classification/page.tsx :: listDimensions",
 		"app/(private)/[org]/~/settings/members/page.tsx :: getMembersPage",
 		"app/(private)/[org]/~/settings/roles/page.tsx :: listRoles",
@@ -39,7 +38,6 @@
 		"lib/query/use-evidence-query.ts :: getOrgEvidence",
 		"lib/query/use-members-query.ts :: getMembersPage",
 		"lib/query/use-roles-query.ts :: listRoles",
-		"lib/query/use-runners-page-query.ts :: getRunnersPage",
 		"lib/query/use-sso-query.ts :: listSsoProviders",
 		"lib/query/use-teams-query.ts :: getTeamsPage"
 	]

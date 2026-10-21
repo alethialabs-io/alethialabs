@@ -8,6 +8,7 @@ import { EditionMisconfiguredError } from "@/lib/auth/errors";
 import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Actor } from "@/lib/authz/types";
+import { deploymentMode } from "@/lib/billing/config";
 import { hasAcceptedCurrentDocuments } from "@/lib/billing/eligibility";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
@@ -66,11 +67,15 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 			return false;
 		}
 	};
-	const [fleetView, manageSupport] = await Promise.all([
-		ask(pdp.can(actor, "view", { type: "fleet" })),
+	const [platformView, manageSupport] = await Promise.all([
+		// `platform` carries managed runners and warm pools. The stream hears them exactly when the reads
+		// show them (lib/rpc/procedures/runners.ts): on a self-managed deployment, to an actor who may
+		// `view` runners — the pool cards and the managed rows are both read on that permission. On the
+		// hosted SaaS they are read for nobody, so they are heard by nobody (#6123).
+		deploymentMode() === "self-managed" ? ask(pdp.can(actor, "view", { type: "runner" })) : false,
 		ask(pdp.can(actor, "manage_support", { type: "support_case" })),
 	]);
-	return { fleetView, manageSupport };
+	return { platformView, manageSupport };
 }
 
 /** Is `userId` an ACTIVE member of `orgId`? */

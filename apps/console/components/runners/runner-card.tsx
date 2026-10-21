@@ -20,7 +20,8 @@ import {
 	runnerBusyKind,
 	type RunnerRow,
 } from "@/components/runners/runner-actions";
-import { formatRelative } from "@repo/format";
+import { formatMinutes, formatRelative } from "@repo/format";
+import { ClockSlot } from "@/components/overview/clock-slot";
 import { Cloud, Server, Star } from "lucide-react";
 import Link from "next/link";
 
@@ -39,6 +40,14 @@ function displayStatus(runner: RunnerRow): string {
 	if (busy === "UPDATE_RUNNER") return "UPDATING";
 	if (busy === "DESTROY_RUNNER") return "DESTROYING";
 	return runner.status ?? "OFFLINE";
+}
+
+/**
+ * "3 minutes ago", read against the browser's clock only after hydration: the card renders on the
+ * server now (#6123), and the server's clock is not the browser's (React #418).
+ */
+function LastSeen({ at }: { at: Date | string }) {
+	return <ClockSlot sizer="less than a minute ago" render={() => formatRelative(at)} />;
 }
 
 /** A single labelled fact in the card body. */
@@ -61,10 +70,10 @@ export function RunnerCard({
 	const isManaged = runner.operator === "managed";
 	const OperatorIcon = isManaged ? Cloud : Server;
 	const providers = runner.supported_providers ?? [];
-	const job = runner.activeJob;
+	const job = runner.active_job;
 	const jobInfo = job ? JOB_TYPES[job.job_type] : null;
 	const JobIcon = jobInfo?.icon;
-	const instanceId = isManaged ? runner.metadata?.cloud_instance_id : null;
+	const instanceId = runner.cloud_instance_id;
 
 	return (
 		<Card className="gap-0 overflow-hidden py-0">
@@ -117,9 +126,9 @@ export function RunnerCard({
 				<Fact label={isManaged ? "Provisioned" : "Last seen"}>
 					<span className="text-muted-foreground">
 						{isManaged
-							? `${(runner.provisioned_hours ?? 0).toFixed(1)} h`
+							? formatMinutes((runner.provisioned_hours ?? 0) * 60)
 							: runner.last_heartbeat
-								? formatRelative(runner.last_heartbeat)
+								? <LastSeen at={runner.last_heartbeat} />
 								: "Never"}
 					</span>
 				</Fact>
@@ -133,7 +142,7 @@ export function RunnerCard({
 				>
 					{JobIcon && <JobIcon className="h-3 w-3 shrink-0" />}
 					<span className="font-medium">{jobInfo.label}</span>
-					{job.projects?.project_name && <span className="truncate">· {job.projects.project_name}</span>}
+					{job.project_name && <span className="truncate">· {job.project_name}</span>}
 				</Link>
 			)}
 

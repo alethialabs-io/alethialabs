@@ -32,6 +32,7 @@ import {
 	setDefaultRunner,
 } from "@/app/server/actions/runners";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { readRunnersData, readRunnersPage } from "@/lib/rpc/procedures/runners";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor } from "@/lib/authz/types";
@@ -266,5 +267,47 @@ describeIfDb("runner reads and writes are bounded to the addressed organization"
 			sql`select id from claim_next_job(${runnerB}::uuid, ${hashToken(TOKEN_B)}, null::uuid)`,
 		);
 		expect(claimed.map((r) => r.id)).toEqual([job.id]);
+	});
+
+	it("the runners page's reads (#6123) are org-bounded and carry no runner credential", async () => {
+		const hashes = (
+			await getServiceDb()
+				.select({ hash: runners.token_hash })
+				.from(runners)
+				.where(inArray(runners.id, [runnerA, runnerB, runnerPersonal, runnerManaged]))
+		).map((r) => r.hash);
+		expect(hashes).toHaveLength(4);
+
+		// A legacy secret at rest in metadata, and a managed runner's VM id: the reads derive their two
+		// facts from metadata IN SQL, so the first never leaves the database and the second does.
+		const SECRET = `legacy-${randomUUID()}`;
+		// Raw SQL: the shape is a legacy one the typed column no longer allows.
+		const legacy = JSON.stringify({ deploy_config: { region: "eu-west-1", runner_token: SECRET } });
+		await getServiceDb().execute(sql`update runners set metadata = ${legacy}::jsonb where id = ${runnerA}::uuid`);
+		await getServiceDb()
+			.update(runners)
+			.set({ metadata: { cloud_instance_id: "vm-it-6123" } })
+			.where(eq(runners.id, runnerManaged));
+
+		const data = await as(inA, () => readRunnersData());
+		const page = await as(inA, () => readRunnersPage({}));
+		const a = data.runners.find((r) => r.id === runnerA);
+		// A deploy config but no cloud identity: not actionable in place.
+		expect(a?.in_place).toBe(false);
+		expect(a?.cloud_instance_id).toBeNull();
+		expect(data.runners.find((r) => r.id === runnerManaged)?.cloud_instance_id).toBe("vm-it-6123");
+		const ids = data.runners.map((r) => r.id);
+		expect(ids).toContain(runnerA);
+		expect(ids).toContain(runnerPersonal);
+		expect(ids).not.toContain(runnerB);
+		expect(page.rows.map((r) => r.id)).not.toContain(runnerB);
+
+		// Not one byte of any runner's stored credential hash — the org's own, another org's, the
+		// managed fleet's (listed on a self-managed deployment) — is in either answer.
+		const wire = JSON.stringify([data, page]);
+		for (const hash of hashes) expect(wire).not.toContain(hash);
+		expect(wire).not.toContain("token_hash");
+		expect(wire).not.toContain(SECRET);
+		expect(wire).not.toContain("deploy_config");
 	});
 });

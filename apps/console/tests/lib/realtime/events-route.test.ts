@@ -114,9 +114,9 @@ beforeEach(() => {
 	h.reauthorize.mockReset().mockResolvedValue({
 		ok: true,
 		actor: ACME,
-		caps: { fleetView: false, manageSupport: false },
+		caps: { platformView: false, manageSupport: false },
 	});
-	h.capabilitiesOf.mockReset().mockResolvedValue({ fleetView: false, manageSupport: false });
+	h.capabilitiesOf.mockReset().mockResolvedValue({ platformView: false, manageSupport: false });
 	h.startRealtimeBus.mockReset();
 	const transport = {
 		tap: (cb: (v: ChangeValue) => void) => {
@@ -239,7 +239,8 @@ describe("the stream", () => {
 	it("subscribes the org key and the caller's own key in the ADDRESS's org", async () => {
 		const ac = new AbortController();
 		await GET(request("/acme/~/events", ac.signal));
-		expect(bus.stats()).toMatchObject({ streams: 1, keys: 2 });
+		// o:<org>, ou:<org>:<user>, and own:<user> — the caller's personal-scope runners (#6123).
+		expect(bus.stats()).toMatchObject({ streams: 1, keys: 3 });
 		ac.abort();
 	});
 
@@ -423,7 +424,7 @@ describe("re-authorisation every 60 s", () => {
 		h.reauthorize.mockResolvedValue({
 			ok: true,
 			actor: ACME,
-			caps: { fleetView: true, manageSupport: false },
+			caps: { platformView: true, manageSupport: false },
 		});
 		const ac = new AbortController();
 		const res = await GET(request("/acme/~/events", ac.signal));
@@ -432,7 +433,7 @@ describe("re-authorisation every 60 s", () => {
 		vi.advanceTimersByTime(60_000);
 		const text = await readUntil(reader, /event: resync/);
 		expect(text).toContain('"reason":"keys-changed"');
-		expect(bus.stats().keys).toBe(3); // + platform
+		expect(bus.stats().keys).toBe(4); // + platform
 		ac.abort();
 	});
 
