@@ -19,8 +19,8 @@ import {
 	OTHER_PROVIDER,
 	providerKey,
 } from "@/components/evidence/evidence-query";
-import { getPdp } from "@/lib/authz";
 import { currentActor } from "@/lib/authz/guard";
+import { viewableProjectIds } from "@/lib/jobs/visibility";
 import {
 	type EvidenceSummary,
 	type EvidenceWaiver,
@@ -145,13 +145,15 @@ function buildEvidenceResult(ev: OrgEvidence, input: EvidenceQuery): EvidenceRes
 /**
  * The addressed org's evidence roll-up, filtered + grouped by `input`, over the projects the reader
  * may view. Evidence rows follow project visibility: a member denied `view` on a project sees none of
- * its environments, posture or waivers — the same rule the jobs reads apply. The personal scope is
+ * its environments, posture or waivers. The project set is the one job visibility follows
+ * (`viewableProjectIds`, lib/jobs/visibility.ts), memoized per render; the roll-up intersects it with
+ * the addressed org's own projects (lib/queries/evidence.ts). The personal scope is
  * an org like any other here: its projects carry `org_id = user_id`, so a person's own environments
  * show up rather than "No environments yet".
  */
 export async function readOrgEvidence(input: EvidenceQuery = {}): Promise<EvidenceResult> {
 	const actor = await currentActor();
-	const projectIds = await getPdp().listAccessible(actor, "view", "project");
+	const projectIds = await viewableProjectIds(actor);
 	return buildEvidenceResult(await queryOrgEvidence(actor.orgId, projectIds), input);
 }
 
