@@ -3,19 +3,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
+import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import {
-	Conversation,
-	ConversationContent,
-	ConversationEmptyState,
-} from "@/components/ai-elements/conversation";
+import { useEffect } from "react";
 import {
 	Message,
 	MessageContent,
 	MessageResponse,
 } from "@/components/ai-elements/message";
+import {
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerItem,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+	useMessageScroller,
+} from "@/components/ai-elements/message-scroller";
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import type { PublicMessage } from "@/lib/queries/support";
+import { OPTIMISTIC_ID_PREFIX } from "./case-composer";
 import { CaseTime } from "./case-time";
 
 /** The display name shown above each message, keyed by who authored it. */
@@ -71,24 +78,52 @@ function ThreadMessage({ message }: { message: PublicMessage }) {
 }
 
 /**
+ * Scrolls to the newest message when it is the viewer's own send. Everything else is the
+ * scroller's `autoScroll`: a reply that lands while the viewer is at the bottom is followed, and
+ * one that lands while they are reading history is not. Their own send is the exception — they
+ * just acted, so the thread shows the result wherever they had scrolled to.
+ */
+function FollowOwnSend({ lastMessageId }: { lastMessageId: string | undefined }) {
+	const { scrollToEnd } = useMessageScroller();
+	useEffect(() => {
+		if (lastMessageId?.startsWith(OPTIMISTIC_ID_PREFIX)) scrollToEnd({ behavior: "smooth" });
+	}, [lastMessageId, scrollToEnd]);
+	return null;
+}
+
+/**
  * The customer-visible case conversation: an ordered, oldest-first list of public messages
- * rendered as chat bubbles. Empty until the first message lands.
+ * rendered as chat bubbles, in a bounded scroller that opens at the newest message. Empty until
+ * the first message lands.
  */
 export function CaseThread({ messages }: { messages: PublicMessage[] }) {
 	return (
-		<Conversation className="min-h-0">
-			<ConversationContent>
-				{messages.length === 0 ? (
-					<ConversationEmptyState
-						title="No messages yet"
-						description="Replies on this case will appear here."
-					/>
-				) : (
-					messages.map((message) => (
-						<ThreadMessage key={message.id} message={message} />
-					))
-				)}
-			</ConversationContent>
-		</Conversation>
+		<MessageScrollerProvider autoScroll defaultScrollPosition="end">
+			<FollowOwnSend lastMessageId={messages.at(-1)?.id} />
+			<MessageScroller>
+				{/* Bounded, so a long thread scrolls inside the case rather than pushing the composer
+				    below the fold (a smaller cap on a phone keeps it reachable) — without a bound the viewport is
+				    as tall as its content and there is nothing to stick to the bottom of. `overscroll-auto`
+				    because the thread sits in a scrolling page: a swipe at its edge carries on to the page. */}
+				<MessageScrollerViewport aria-label="Case conversation" className="max-h-[60dvh] overscroll-auto scrollbar-thin sm:max-h-[70dvh]">
+					<MessageScrollerContent className="p-4">
+						{messages.length === 0 ? (
+							<EmptyState
+								level={3}
+								title="No messages yet"
+								description="Replies on this case will appear here."
+							/>
+						) : (
+							messages.map((message) => (
+								<MessageScrollerItem key={message.id} messageId={message.id}>
+									<ThreadMessage message={message} />
+								</MessageScrollerItem>
+							))
+						)}
+					</MessageScrollerContent>
+				</MessageScrollerViewport>
+				<MessageScrollerButton />
+			</MessageScroller>
+		</MessageScrollerProvider>
 	);
 }
