@@ -16,8 +16,7 @@ const rtlog = log.child({ component: "realtime" });
 // Realtime fan-out over Postgres LISTEN/NOTIFY. A Postgres trigger or RPC does
 // pg_notify('<channel>', json); each app instance holds ONE dedicated LISTEN connection
 // per channel and dispatches to its SSE subscribers — so it scales to multiple instances
-// with no Redis. Channels wired here: `job_logs` (insert_job_log() → {jobId, logId}),
-// `support_messages` (notify_support_message() → {caseId, messageId}), `runner_cancel`,
+// with no Redis. Channels wired here: `job_logs` (insert_job_log() → {jobId, logId}), `runner_cancel`,
 // `runner_wake`, and `alethia_change` — the console's change bus (#6115: emit_change() →
 // {t, id, o, u, p}, consumed by lib/realtime/bus.ts). The ee/ tier swaps a Redis-backed
 // impl in behind these interfaces (see dataroom/spec/mvp/07-auth-rbac-sso.md).
@@ -35,12 +34,6 @@ export interface ChannelTransport<TValue> {
 export interface JobLogPayload {
 	jobId: string;
 	logId: number;
-}
-
-/** The support_messages notify payload: a message uuid keyed by caseId. */
-export interface SupportMessagePayload {
-	caseId: string;
-	messageId: string;
 }
 
 /**
@@ -61,7 +54,7 @@ interface TransportOptions {
  * Generic single-LISTEN-connection transport: one dedicated `max:1` Postgres LISTEN
  * per channel per app instance, keyed fan-out to subscribers, and lazy start with a
  * retry-on-failed-LISTEN reset. Parameterised by channel + a payload router so each
- * channel (job_logs, support_messages, alethia_change, …) reuses the exact same plumbing.
+ * channel (job_logs, alethia_change, …) reuses the exact same plumbing.
  *
  * Two hooks exist for the change bus (lib/realtime/bus.ts), which needs to hear EVERY notice (its
  * cursor counts notices for keys nobody is subscribed to right now) and needs to know when it may
@@ -267,20 +260,6 @@ function routeRunnerCancel(payload: unknown): { key: string; value: string } | n
 }
 
 /**
- * Parses a `support_messages` notify into {key: caseId, value: messageId}. Returns
- * null (ignored) for a malformed payload or one missing the two uuid string fields.
- */
-function routeSupportMessage(payload: unknown): { key: string; value: string } | null {
-	if (typeof payload !== "object" || payload === null) return null;
-	if (!("caseId" in payload) || !("messageId" in payload)) return null;
-	const caseId = payload.caseId;
-	const messageId = payload.messageId;
-	if (typeof caseId !== "string" || caseId.length === 0) return null;
-	if (typeof messageId !== "string" || messageId.length === 0) return null;
-	return { key: caseId, value: messageId };
-}
-
-/**
  * The job-log realtime transport. `subscribe(jobId, cb)` delivers new numeric log ids
  * for a job. Kept as its own named interface for back-compat with existing callers.
  */
@@ -292,7 +271,6 @@ export interface RealtimeTransport {
 declare global {
 	var __alethiaRealtime: RealtimeTransport | undefined;
 	var __alethiaWake: WakeTransport | undefined;
-	var __alethiaSupport: ChannelTransport<string> | undefined;
 	var __alethiaCancel: ChannelTransport<string> | undefined;
 	var __alethiaChange: ChangeTransport | undefined;
 }
@@ -306,21 +284,6 @@ export function getRealtimeTransport(): RealtimeTransport {
 		);
 	}
 	return globalThis.__alethiaRealtime;
-}
-
-/**
- * The process-wide support-message realtime transport (HMR/instance-safe singleton).
- * `subscribe(caseId, cb)` delivers the messageId of each new row inserted on that case;
- * the SSE route then fetches the row (visible messages only) and emits it.
- */
-export function getSupportMessageTransport(): ChannelTransport<string> {
-	if (!globalThis.__alethiaSupport) {
-		globalThis.__alethiaSupport = new PgListenTransport<string>(
-			"support_messages",
-			routeSupportMessage,
-		);
-	}
-	return globalThis.__alethiaSupport;
 }
 
 /**

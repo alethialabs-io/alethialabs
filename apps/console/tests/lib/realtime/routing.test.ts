@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons"]);
+		const routed = new Set(["jobs", "environments", "addons", "support"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -126,6 +126,49 @@ describe("keysFor — the board's topics (#6119): the project's RLS, so the org 
 
 	it.each(["environments", "addons"] as const)("%s with no org routes nowhere", (t) => {
 		expect(keysFor({ ...jobs({ o: null }), t })).toEqual([]);
+	});
+});
+
+/** A support notice with the trigger's shape: the case id, its org and its requester, no project. */
+function support(over: Partial<ChangeNotice> = {}): ChangeNotice {
+	return { kind: "change", t: "support", id: JOB, o: ORG, u: USER, p: null, ...over };
+}
+
+describe("keysFor — support cases follow their tiered policy, not owner_all (#6130)", () => {
+	const MEMBER = "66666666-6666-4666-8666-666666666666";
+	const OTHER = "55555555-5555-4555-8555-555555555555";
+	/** Whether a stream with this identity and these capabilities would receive the notice. */
+	const hears = (notice: ChangeNotice, userId: string, orgId: string, manageSupport: boolean) => {
+		const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport });
+		return keysFor(notice).some((r) => held.includes(r.key));
+	};
+
+	it("routes to the requester inside the case's org and to the org's manage_support key, unfiltered", () => {
+		expect(keysFor(support())).toEqual([
+			{ key: `ou:${ORG}:${USER}`, filterProject: null },
+			{ key: `osupport:${ORG}`, filterProject: null },
+		]);
+	});
+
+	it("the requester hears it; an owner/admin (manage_support) hears it; a teammate who is neither does NOT", () => {
+		expect(hears(support(), USER, ORG, false)).toBe(true);
+		expect(hears(support(), MEMBER, ORG, true)).toBe(true);
+		// The org arm `o:` is NOT a support route: RLS shows a plain member none of a teammate's cases.
+		expect(hears(support(), MEMBER, ORG, false)).toBe(false);
+	});
+
+	it("nobody in another org hears it, whatever they may do there", () => {
+		expect(hears(support(), USER, OTHER, true)).toBe(false);
+		expect(hears(support(), MEMBER, OTHER, true)).toBe(false);
+	});
+
+	it("a personal-scope case (org == requester) reaches that person's personal stream", () => {
+		expect(hears(support({ o: USER, u: USER }), USER, USER, false)).toBe(true);
+	});
+
+	it("a case missing its org or its requester routes nowhere", () => {
+		expect(keysFor(support({ o: null }))).toEqual([]);
+		expect(keysFor(support({ u: null }))).toEqual([]);
 	});
 });
 

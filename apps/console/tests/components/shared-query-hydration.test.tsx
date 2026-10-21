@@ -11,7 +11,8 @@
 // hydrated, three read a cache the shell fills after ITS hydration:
 //
 //   · the overview's Recent jobs card — `useRecentJobsQuery`, also read by the app shell;
-//   · the My cases list — `qk.supportCases("all")`, read by the notifications bell until #6114;
+//   · the My cases list — `qk.supportCases("all")`, read by the notifications bell until #6114
+//     (since #6130 its own `support.cases` key, prefetched by its route — see its test below);
 //   · the project Activity caption — `useProjectsQuery`, also read by the project switcher.
 //
 // On the server none of those had data, so each rendered its pending state. In the browser the
@@ -34,7 +35,6 @@ import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaseListItem } from "@/lib/queries/support";
-import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
 import { makeJob } from "../fixtures/jobs";
 
@@ -51,9 +51,6 @@ vi.mock("@/app/server/actions/jobs", () => ({
 	getJob: () => new Promise(() => {}),
 	cancelJob: vi.fn(),
 	rerunJob: vi.fn(),
-}));
-vi.mock("@/app/server/actions/support", () => ({
-	listMyCases: () => new Promise(() => {}),
 }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: () => new Promise(() => {}) }));
 vi.mock("@/app/server/actions/activity", () => ({
@@ -100,9 +97,10 @@ async function serverThenHydrate(
 	ui: ReactNode,
 	browserCache: QueryClient,
 	beforeHydrate?: () => void,
+	serverCache: QueryClient = client(),
 ): Promise<{ serverHtml: string; recoverable: unknown[] }> {
 	const serverHtml = renderToString(
-		<QueryClientProvider client={client()}>{ui}</QueryClientProvider>,
+		<QueryClientProvider client={serverCache}>{ui}</QueryClientProvider>,
 	);
 	beforeHydrate?.();
 	container = document.createElement("div");
@@ -144,7 +142,11 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 		expect(container?.textContent).toContain("payments");
 	});
 
-	it("the My cases list", async () => {
+	it("the My cases list — prefetched by its route, so the rows are IN the server HTML (#6130)", async () => {
+		// The bell no longer shares this key (it reads `workspace.supportCases`), so the list stopped
+		// rendering pending through hydration: the route prefetches `support.cases`, the server HTML
+		// carries the rows (B1), and the hydrating render draws the same rows. What may NOT be in the
+		// server HTML is the clock: "N minutes ago" is filled in after hydration, into a reserved slot.
 		const item: CaseListItem = {
 			id: "c1",
 			case_number: 1042,
@@ -160,15 +162,22 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 			requester_name: null,
 			is_mine: true,
 		};
-		const browser = client((qc) => qc.setQueryData(qk.supportCases("all"), [item]));
+		const key = orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey;
+		const seed = (qc: QueryClient) => qc.setQueryData(key, [item]);
 		const { serverHtml, recoverable } = await serverThenHydrate(
 			<CaseList orgSlug="acme" seeAll={false} />,
-			browser,
+			client(seed),
+			undefined,
+			client(seed),
 		);
 
-		expect(serverHtml).not.toContain("Runner cannot reach the registry");
+		expect(serverHtml).toContain("Runner cannot reach the registry");
+		// The time element is empty on the server (only its invisible sizer is there) …
+		expect(serverHtml).toMatch(/<time[^>]*><\/time>/);
 		expect(recoverable).toEqual([]);
 		expect(container?.textContent).toContain("Runner cannot reach the registry");
+		// … and holds the relative time once hydration is over.
+		expect(container?.querySelector("time")?.textContent).toMatch(/ ago$/);
 	});
 
 	it("the project Activity caption", async () => {

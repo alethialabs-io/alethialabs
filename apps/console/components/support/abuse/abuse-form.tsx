@@ -4,13 +4,11 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
-import { Controller, useForm } from "react-hook-form";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { type FieldPath, Controller, useForm } from "react-hook-form";
 import type { z } from "zod";
-import { submitCase } from "@/app/server/actions/support";
+import { FieldMessage } from "@/components/support/field-message";
+import { useSubmitCase } from "@/components/support/use-submit-case";
 import { supportAbuseCategory } from "@/lib/db/schema/enums";
-import { globalHref } from "@/lib/routing";
 import {
 	SUPPORT_ABUSE_CATEGORY_LABELS,
 	type SubmitCaseInput,
@@ -43,6 +41,14 @@ interface AbuseFormProps {
  */
 type AbuseFormValues = z.input<typeof submitCaseSchema>;
 
+/** The fields a server validation refusal may name (its keys are react-hook-form paths). */
+const ABUSE_FIELDS: FieldPath<AbuseFormValues>[] = ["subject", "description", "contact.notifyEmail"];
+
+/** True when a refusal's field key is one this form renders a message for. */
+function isAbuseField(name: string): name is FieldPath<AbuseFormValues> {
+	return ABUSE_FIELDS.some((field) => field === name);
+}
+
 /** Who is filing the report, relative to the abusive resource. */
 const RELATIONSHIP_LABELS: Record<"third_party" | "affected_party", string> = {
 	affected_party: "I'm directly affected",
@@ -52,17 +58,18 @@ const RELATIONSHIP_LABELS: Record<"third_party" | "affected_party", string> = {
 /**
  * The focused abuse-report form. Presets the shared submit contract to `type: "abuse"`
  * (category `other`, high severity) and collects the abuse-specific fields plus a subject,
- * description, and notification email in a single page. Submits via `submitCase` and routes
- * to the created case thread.
+ * description, and notification email in a single page. Submits through `useSubmitCase` (the
+ * mutation contract) and routes to the created case thread. Every validation message has its line
+ * reserved (`FieldMessage`), so a message appearing never moves the submit button (F043).
  */
 export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
-	const router = useRouter();
 	const {
 		control,
 		register,
 		handleSubmit,
 		setValue,
-		formState: { errors, isSubmitting },
+		setError,
+		formState: { errors },
 	} = useForm<AbuseFormValues, unknown, SubmitCaseInput>({
 		resolver: zodResolver(submitCaseSchema),
 		defaultValues: {
@@ -75,6 +82,16 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 		},
 	});
 
+	const submit = useSubmitCase(orgSlug, {
+		// A server-side validation refusal lands on the field it names, like a client-side one.
+		onValidationError: (fields) => {
+			for (const [name, messages] of Object.entries(fields)) {
+				const message = messages?.[0];
+				if (message && isAbuseField(name)) setError(name, { message });
+			}
+		},
+	});
+
 	// Snapshot the browser context (deep link + UA) for triage.
 	useEffect(() => {
 		setValue("context.consoleUrl", window.location.href);
@@ -82,13 +99,9 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 	}, [setValue]);
 
 	/** Creates the abuse case, then routes to the thread. */
-	const onSubmit = handleSubmit(async (values) => {
-		try {
-			const { id } = await submitCase(values);
-			router.push(`${globalHref(orgSlug, "support")}/cases/${id}`);
-		} catch {
-			toast.error("Couldn't submit your report. Please try again.");
-		}
+	const onSubmit = handleSubmit((values) => {
+		if (submit.isPending) return;
+		submit.mutate({ values });
 	});
 
 	return (
@@ -168,9 +181,7 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						placeholder="Short summary of the report"
 						{...register("subject")}
 					/>
-					{errors.subject && (
-						<p className="text-xs text-destructive">{errors.subject.message}</p>
-					)}
+					<FieldMessage message={errors.subject?.message} />
 				</div>
 
 				<div className="space-y-2">
@@ -181,11 +192,7 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						placeholder="Describe the abuse, including any relevant details or evidence…"
 						{...register("description")}
 					/>
-					{errors.description && (
-						<p className="text-xs text-destructive">
-							{errors.description.message}
-						</p>
-					)}
+					<FieldMessage message={errors.description?.message} />
 				</div>
 			</section>
 
@@ -199,17 +206,15 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 						className="max-w-md"
 						{...register("contact.notifyEmail")}
 					/>
-					{errors.contact?.notifyEmail && (
-						<p className="text-xs text-destructive">
-							Enter a valid email address.
-						</p>
-					)}
+					<FieldMessage
+						message={errors.contact?.notifyEmail ? "Enter a valid email address." : undefined}
+					/>
 				</div>
 			</section>
 
 			<div className="flex justify-end border-t pt-6">
-				<Button type="submit" disabled={isSubmitting}>
-					{isSubmitting ? "Submitting…" : "Submit report"}
+				<Button type="submit" disabled={submit.isPending}>
+					{submit.isPending ? "Submitting…" : "Submit report"}
 				</Button>
 			</div>
 		</form>

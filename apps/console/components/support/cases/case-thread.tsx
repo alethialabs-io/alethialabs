@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { formatDate } from "@repo/format";
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
 import { cn } from "@repo/ui/utils";
 import {
@@ -17,6 +16,7 @@ import {
 } from "@/components/ai-elements/message";
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import type { PublicMessage } from "@/lib/queries/support";
+import { CaseTime } from "./case-time";
 
 /** The display name shown above each message, keyed by who authored it. */
 const ROLE_LABEL: Record<SupportAuthorType, string> = {
@@ -43,9 +43,6 @@ const ROLE_INITIALS: Record<SupportAuthorType, string> = {
 function ThreadMessage({ message }: { message: PublicMessage }) {
 	const isCustomer = message.author_type === "customer";
 	const label = message.author_name || ROLE_LABEL[message.author_type];
-	// `datetime` (not a raw date-fns pattern): this is a client component, and @repo/format's
-	// note on time zones applies — the style is the one meant for rendering after hydration.
-	const timestamp = formatDate(message.created_at, "datetime");
 
 	return (
 		<Message from={isCustomer ? "user" : "assistant"}>
@@ -63,7 +60,8 @@ function ThreadMessage({ message }: { message: PublicMessage }) {
 					</Avatar>
 				)}
 				<span className="text-xs font-medium text-foreground">{label}</span>
-				<span className="text-xs text-muted-foreground">{timestamp}</span>
+				{/* In the viewer's time zone, so only after hydration (the server's zone is not theirs). */}
+				<CaseTime value={message.created_at} style="datetime" className="text-xs text-muted-foreground" />
 			</div>
 			<MessageContent>
 				<MessageResponse>{message.body}</MessageResponse>

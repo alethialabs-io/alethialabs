@@ -40,6 +40,7 @@ vi.mock("@/lib/support/slack-notify", () => ({
 
 import {
 	closeCase,
+	markCaseRead,
 	postCaseMessage,
 	reopenCase,
 	resolveCase,
@@ -148,7 +149,7 @@ describe("submitCase", () => {
 		const result = await submitCase(submitInput);
 
 		expect(authorizeQuiet).toHaveBeenCalledWith("create", { type: "support_case" });
-		expect(result).toEqual({ id: "case-1", caseNumber: 42 });
+		expect(result).toEqual({ ok: true, data: { id: "case-1", caseNumber: 42 } });
 
 		// case row insert
 		expect(valuesSpy).toHaveBeenNthCalledWith(
@@ -251,16 +252,19 @@ describe("submitCase", () => {
 		vi.mocked(notifySupportInboxEmail).mockRejectedValueOnce(new Error("SES down"));
 
 		await expect(submitCase(submitInput)).resolves.toEqual({
-			id: "case-1",
-			caseNumber: 42,
+			ok: true,
+			data: { id: "case-1", caseNumber: 42 },
 		});
 	});
 
-	it("rejects an invalid payload before authorizing or writing", async () => {
+	it("refuses an invalid payload as a field-level validation result, before authorizing or writing", async () => {
 		mockDb([[]]);
-		await expect(
-			submitCase({ ...submitInput, subject: "ab" } as never),
-		).rejects.toThrow();
+		const result = await submitCase({ ...submitInput, subject: "ab" });
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.kind).toBe("validation");
+			if (result.error.kind === "validation") expect(Object.keys(result.error.fields)).toEqual(["subject"]);
+		}
 		expect(authorizeQuiet).not.toHaveBeenCalled();
 		expect(withSupportScope).not.toHaveBeenCalled();
 	});
@@ -332,7 +336,7 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 			[],
 		]);
 		const res = await postCaseMessage({ caseId, body: "Any update?" });
-		expect(res).toEqual({ id: "msg-1" });
+		expect(res).toEqual({ ok: true, data: { id: "msg-1" } });
 		expect(authorizeQuiet).toHaveBeenCalledWith("reply", {
 			type: "support_case",
 			id: caseId,
@@ -409,9 +413,12 @@ describe("postCaseMessage — customer reply reopens settled cases", () => {
 		);
 	});
 
-	it("throws when the case is not found (no insert)", async () => {
+	it("refuses as not-found when the case is not visible (no insert)", async () => {
 		const { valuesSpy } = mockDb([[]]);
-		await expect(postCaseMessage({ caseId, body: "hi" })).rejects.toThrow(/Case not found/);
+		await expect(postCaseMessage({ caseId, body: "hi" })).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "This case doesn't exist, or you don't have access to it." },
+		});
 		expect(valuesSpy).not.toHaveBeenCalled();
 	});
 });
@@ -428,7 +435,7 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 
 	it("resolveCase moves an open case to resolved (stamps resolved_at)", async () => {
 		const { setSpy } = mockDb([[row("open")], []]);
-		await resolveCase(id);
+		await resolveCase({ id });
 		expect(setSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "resolved", resolved_at: expect.any(Date) }),
 		);
@@ -436,7 +443,7 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 
 	it("closeCase moves a resolved case to closed (stamps closed_at)", async () => {
 		const { setSpy } = mockDb([[row("resolved")], []]);
-		await closeCase(id);
+		await closeCase({ id });
 		expect(setSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "closed", closed_at: expect.any(Date) }),
 		);
@@ -444,27 +451,29 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 
 	it("reopenCase moves a closed case back to open", async () => {
 		const { setSpy } = mockDb([[row("closed")], []]);
-		await reopenCase(id);
+		await reopenCase({ id });
 		expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: "open" }));
 	});
 
-	it("throws on an illegal transition (closed → resolved) and does not write", async () => {
+	it("refuses an illegal transition (closed → resolved) as a conflict and does not write", async () => {
 		const { setSpy } = mockDb([[row("closed")]]);
-		await expect(resolveCase(id)).rejects.toThrow(
-			/Illegal support-case transition: closed → resolved/,
-		);
+		const result = await resolveCase({ id });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.kind).toBe("conflict");
 		expect(setSpy).not.toHaveBeenCalled();
 	});
 
-	it("throws when the case is missing", async () => {
+	it("refuses as not-found when the case is missing", async () => {
 		const { setSpy } = mockDb([[]]);
-		await expect(resolveCase(id)).rejects.toThrow(/Case not found/);
+		const result = await resolveCase({ id });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.kind).toBe("not-found");
 		expect(setSpy).not.toHaveBeenCalled();
 	});
 
 	it("resolveCase emails the customer (with cc) + emits the resolved event", async () => {
 		mockDb([[row("open")], []]);
-		await resolveCase(id);
+		await resolveCase({ id });
 		expect(sendCaseResolvedEmail).toHaveBeenCalledWith(
 			"ada@acme.io",
 			expect.objectContaining({ caseNumber: 9, cc: ["cto@acme.io"] }),
@@ -478,7 +487,7 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 
 	it("reopenCase emails + emits the reopened event (warning severity)", async () => {
 		mockDb([[row("resolved")], []]);
-		await reopenCase(id);
+		await reopenCase({ id });
 		expect(sendCaseReopenedEmail).toHaveBeenCalledWith("ada@acme.io", expect.anything());
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
@@ -489,7 +498,7 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 
 	it("closeCase emails + emits the closed event", async () => {
 		mockDb([[row("resolved")], []]);
-		await closeCase(id);
+		await closeCase({ id });
 		expect(sendCaseClosedEmail).toHaveBeenCalledWith("ada@acme.io", expect.anything());
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
@@ -506,12 +515,41 @@ describe("transitionCase via resolve/reopen/close — assertTransition gate", ()
 			contact: { notifyEmail: "ada@acme.io", channel: "in_app" },
 		};
 		mockDb([[inApp], []]);
-		await resolveCase(id);
+		await resolveCase({ id });
 		expect(sendCaseResolvedEmail).not.toHaveBeenCalled();
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
 			"system.support.case.resolved",
 			expect.anything(),
 		);
+	});
+});
+
+describe("markCaseRead — the read watermark is a write, not a side effect of the read (#6130)", () => {
+	const id = "33333333-3333-4333-8333-333333333333";
+
+	it("upserts the caller's watermark on a visible case", async () => {
+		const { valuesSpy } = mockDb([[{ id }], []]);
+		await expect(markCaseRead({ id })).resolves.toEqual({ ok: true, data: { id } });
+		expect(authorizeQuiet).toHaveBeenCalledWith("view", { type: "support_case", id });
+		expect(valuesSpy).toHaveBeenCalledWith(
+			expect.objectContaining({ case_id: id, user_id: "user-1", last_read_at: expect.any(Date) }),
+		);
+	});
+
+	it("refuses as not-found and writes nothing when the case is not visible", async () => {
+		const { valuesSpy } = mockDb([[]]);
+		const result = await markCaseRead({ id });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.kind).toBe("not-found");
+		expect(valuesSpy).not.toHaveBeenCalled();
+	});
+
+	it("refuses a malformed id before authorizing", async () => {
+		mockDb([[]]);
+		const result = await markCaseRead({ id: "not-a-uuid" });
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.kind).toBe("validation");
+		expect(authorizeQuiet).not.toHaveBeenCalled();
 	});
 });

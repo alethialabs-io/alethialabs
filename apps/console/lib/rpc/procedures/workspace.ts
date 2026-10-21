@@ -8,7 +8,7 @@ import { z } from "zod";
 import { getGettingStartedState } from "@/app/server/actions/onboarding";
 import { getProjects } from "@/app/server/actions/projects";
 import { getEnvironmentsForSlug } from "@/app/server/actions/resolve";
-import { listMyCases } from "@/app/server/actions/support";
+import { listSupportCases } from "@/lib/rpc/procedures/support";
 import { getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
 import { authorize } from "@/lib/authz/guard";
 import { withScope } from "@/lib/db";
@@ -212,7 +212,7 @@ export const workspaceRouter = {
 	projects: query.handler(() => getProjects()),
 	jobs: query.handler(() => getJobs()),
 	recentJobs: query.handler(() => readRecentJobs()),
-	supportCases: query.handler(() => listMyCases({})),
+	supportCases: query.handler(() => listSupportCases()),
 	setupGuide: query.handler(() => getGettingStartedState()),
 	environments: query
 		.input(z.object({ project: z.string().min(1).max(200) }))

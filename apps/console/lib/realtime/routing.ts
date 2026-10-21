@@ -95,12 +95,26 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 }
 
 /**
- * The routing keys of one notice. `jobs`, `environments` and `addons` have producers; every other topic is declared
+ * The routing keys of one notice. `jobs`, `environments`, `addons` and `support` have producers; every other topic is declared
  * and routes NOWHERE until its lane adds both its trigger and its row here — a topic that routed
  * before its RLS arms were written down would be a guess about who may read it.
  */
 export function keysFor(notice: ChangeNotice): Route[] {
 	switch (notice.t) {
+		case "support": {
+			// support_cases' policy is NOT owner_all: it is org-scoped FIRST and then tiered —
+			//     org_id = current_org AND (support_all OR user_id = current_owner)
+			// so there is no org-wide arm. A case routes to its requester inside its own org, and to
+			// the org's `osupport:` key, which a stream holds only when its actor may
+			// `manage_support` (subscriptionKeys) — the same capability that sets `support_all`. A
+			// teammate who is neither hears nothing, exactly as RLS shows them nothing. A case with no
+			// org (none exist: org_id is stamped on insert) routes nowhere rather than to `u:`.
+			if (!notice.o || !notice.u) return [];
+			return [
+				{ key: orgUserKey(notice.o, notice.u), filterProject: null },
+				{ key: orgSupportKey(notice.o), filterProject: null },
+			];
+		}
 		case "jobs": {
 			const routes: Route[] = [];
 			// The org arm. A job with no project is visible to the whole org by RLS, so it is unfiltered;
@@ -131,8 +145,6 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "fleet":
 		// TODO(#6125): alert_deliveries — o: (no user_id); subscribed only with the alerting entitlement.
 		case "alerts":
-		// TODO(#6130/#6114): support_cases — ou:<org>:<user>, osupport:<org> (manage_support only).
-		case "support":
 		// TODO(#6127): no trigger — an app-layer emitUsageHint(orgId), at most once per 30s per org.
 		case "usage":
 			return [];

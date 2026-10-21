@@ -28,7 +28,7 @@ const state = vi.hoisted(() => {
 	const queries: string[] = [];
 	/** The SQL text of every `execute` call (runner presence). */
 	const executed: string[] = [];
-	return { realtime: transport(), support: transport(), wake: transport(), cancel: transport(), queries, executed };
+	return { realtime: transport(), wake: transport(), cancel: transport(), queries, executed };
 });
 
 /** Subscribe `fn` on `t` under `key`; the returned function records the unsubscribe. */
@@ -43,7 +43,6 @@ function subscribeOn(t: FakeTransport, key: string, fn: (payload: string) => voi
 vi.mock("@/lib/auth/owner", () => ({ getOwner: async () => "user-1" }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: async () => ({ userId: "user-1", orgId: "org-1" }) }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeUserId: async () => null }));
-vi.mock("@/lib/support/scope", () => ({ isSupportCaseVisible: async () => true }));
 // A plain async function, not a vi.fn: a mock records its arguments, and the argument is the request.
 vi.mock("@/lib/runners/auth", () => ({
 	verifyRunnerToken: async () => ({ runnerId: "runner-1", tokenHash: "", operator: "", error: null }),
@@ -51,9 +50,6 @@ vi.mock("@/lib/runners/auth", () => ({
 vi.mock("@/lib/realtime", () => ({
 	getRealtimeTransport: () => ({
 		subscribe: (key: string, fn: (p: string) => void) => subscribeOn(state.realtime, key, fn),
-	}),
-	getSupportMessageTransport: () => ({
-		subscribe: (key: string, fn: (p: string) => void) => subscribeOn(state.support, key, fn),
 	}),
 	getWakeTransport: () => ({
 		subscribe: (fn: () => void) => subscribeOn(state.wake, "all", () => fn()),
@@ -122,14 +118,6 @@ async function openJobStream(signal: AbortSignal): Promise<Response> {
 	});
 }
 
-/** GET /api/stream/support/cases/case-1 with `signal`; the request is never held by the caller. */
-async function openSupportStream(signal: AbortSignal): Promise<Response> {
-	const { GET } = await import("@/app/api/stream/support/cases/[id]/route");
-	return GET(new Request("https://console.local/api/stream/support/cases/case-1", { signal }), {
-		params: Promise.resolve({ id: "case-1" }),
-	});
-}
-
 /** GET /api/runners/wake with `signal`; the request is never held by the caller. */
 async function openWakeStream(signal: AbortSignal): Promise<Response> {
 	const { GET } = await import("@/app/api/runners/wake/route");
@@ -137,7 +125,7 @@ async function openWakeStream(signal: AbortSignal): Promise<Response> {
 }
 
 beforeEach(() => {
-	for (const t of [state.realtime, state.support, state.wake, state.cancel]) {
+	for (const t of [state.realtime, state.wake, state.cancel]) {
 		t.listeners.clear();
 		t.unsubscribed.length = 0;
 	}
@@ -163,20 +151,6 @@ describe("a client disconnect after a GC still stops the stream's work", () => {
 		notify?.("");
 		await nextTask();
 		expect(state.queries.length).toBe(before);
-	});
-
-	it("GET /api/stream/support/cases/[id]: the thread subscription ends and the stream closes", async () => {
-		const ctl = new AbortController();
-		const res = await openSupportStream(ctl.signal);
-		expect(res.status).toBe(200);
-		const reading = drain(res);
-		await vi.waitFor(() => expect(state.support.listeners.has("case-1")).toBe(true));
-		await nextTask();
-		collectGarbage();
-		ctl.abort();
-		await vi.waitFor(() => expect(state.support.unsubscribed).toEqual(["case-1"]));
-		await reading;
-		expect(state.support.listeners.size).toBe(0);
 	});
 
 	it("GET /api/runners/wake: the runner is marked lost at once, both fan-outs end, and the stream closes", async () => {
