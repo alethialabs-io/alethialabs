@@ -108,6 +108,18 @@ describe("the Pools column (self-managed only)", () => {
 		expect(screen.getByText("card edge")).toBeTruthy();
 	});
 
+	it("the page carries ONE count pill — the grid's — even with the Pools column beside it", () => {
+		// The filter audit (e2e/audit/filters.ts) reads the first count pill in the main region as the
+		// grid's result count; a pill on the Pools heading came first and read as "1 row".
+		h.fleet = {
+			isPending: false,
+			isError: false,
+			data: { pools: [], configs: [], canManageFleet: false, fleetProviderActive: false },
+		};
+		const { container } = render(<RunnersClient hosted={false} />);
+		expect(container.querySelectorAll('[data-slot="count-pill"]')).toHaveLength(1);
+	});
+
 	it("empty says no pools are configured; pending does not", () => {
 		render(<RunnersClient hosted={false} />);
 		expect(screen.getByText("No runner pools configured")).toBeTruthy();

@@ -49,10 +49,11 @@ export function PoolsSection() {
 	return (
 		<section className="space-y-3">
 			{/* The shared section heading, as the Runners column beside it uses: one look for a heading
-			    on this page. The count is the configured pools, once they are known. */}
+			    on this page. No count pill: the page's ONE count is the runner grid's result count, and a
+			    second pill earlier in the page would be read as the grid's (e2e/audit/filters.ts reads the
+			    first one in the main region). The pool cards themselves say how many there are. */}
 			<SectionHeading
 				title="Pools"
-				count={isPending || isError ? null : poolViews.length}
 				actions={
 					canManageFleet ? (
 						<Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={openCreate}>
