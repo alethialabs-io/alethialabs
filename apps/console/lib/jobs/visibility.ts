@@ -16,7 +16,7 @@
 //     (the bell, toasts, breadcrumbs, the command palette, the overview's recent jobs) and the full
 //     `workspace.jobs` (`getJobs`, also the assistant's `list_jobs` and mentions); the assistant's
 //     `get_job` and `get_plan_result` read through the procedures' readers;
-//   · the console's re-run, cancel and apply (app/server/actions/jobs.ts);
+//   · the console's re-run, cancel, apply and verification override (app/server/actions/jobs.ts);
 //   · the per-job log stream (app/api/stream/jobs/[id]);
 //   · the CLI: `GET /api/jobs`, `GET /api/cli/jobs/[id]`, `GET /api/cli/jobs/[id]/logs` and
 //     `POST /api/cli/jobs/[id]/cancel`.

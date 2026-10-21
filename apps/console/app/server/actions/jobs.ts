@@ -190,15 +190,18 @@ export async function rerunJob(raw: z.input<typeof jobInput>): Promise<ActionRes
 
 /**
  * Cancels a queued, claimed or processing job, through the one cancel both the console and the CLI
- * use (lib/jobs/cancel.ts): the job read as this actor (RLS and job visibility), the permission its
- * operation takes on its target, a conditional flip, and the runner signalled when the job it
- * flipped had been claimed — the runner SIGINTs the in-flight `tofu apply` so it finishes the current
+ * use (lib/jobs/cancel.ts): the job read as this actor (RLS, the addressed org and job visibility),
+ * the permission its operation takes on its target, a conditional flip, and the runner signalled
+ * when the job it flipped had been claimed — the runner SIGINTs the in-flight `tofu apply` so it finishes the current
  * resource, writes state and releases the state lock, then re-posts CANCELLED.
  */
 async function cancel(jobId: string): Promise<null> {
 	const actor = await authorize("edit", { type: "job", id: jobId });
-	const visible = await jobVisibleTo(actor);
-	const outcome = await cancelJobAs(actor, jobId, visible, (work) =>
+	// The job is bound to the addressed org explicitly: RLS also admits the caller's own personal
+	// org, and a decision taken under this org's grants must only ever write this org's rows.
+	const where = and(eq(jobs.org_id, actor.orgId), await jobVisibleTo(actor));
+	if (!where) throw new Error("no tenancy predicate");
+	const outcome = await cancelJobAs(actor, jobId, where, (work) =>
 		withScope({ ownerId: actor.userId, orgId: actor.orgId }, work),
 	);
 	switch (outcome.kind) {
@@ -256,7 +259,8 @@ async function apply(planJobId: string, runnerId: string | null): Promise<{ jobI
  * fail-closed gate so a deliberate, accountable waiver can let an apply proceed
  * despite a failing control — disabling the gate wholesale is never an option.
  * `by` is stamped server-side to the authorizing actor; the waiver expires after
- * `ttlHours` (default 24). Requires edit authority on the job.
+ * `ttlHours` (default 24). Requires edit authority on the job, and only a job of the addressed
+ * org that the actor can see is written.
  */
 export async function recordVerifyOverride(
 	jobId: string,
@@ -273,11 +277,15 @@ export async function recordVerifyOverride(
 	const actor = await authorize("edit", { type: "job", id: jobId });
 	const owner = actor.userId;
 	const expiry = new Date(Date.now() + ttlHours * 3_600_000).toISOString();
+	// Bound to the addressed org explicitly (RLS also admits the caller's own personal org) and to
+	// job visibility, as cancel and re-run are: a job outside either is "not found".
+	const target = and(eq(jobs.id, jobId), eq(jobs.org_id, actor.orgId), await jobVisibleTo(actor));
+	if (!target) throw new Error("no tenancy predicate");
 	return withScope({ ownerId: owner, orgId: actor.orgId }, async (tx) => {
 		const [job] = await tx
 			.select({ status: jobs.status })
 			.from(jobs)
-			.where(eq(jobs.id, jobId))
+			.where(target)
 			.limit(1);
 		if (!job) throw new Error("Job not found");
 		if (job.status !== "QUEUED") {
@@ -295,6 +303,6 @@ export async function recordVerifyOverride(
 					expiry,
 				},
 			})
-			.where(eq(jobs.id, jobId));
+			.where(and(target, eq(jobs.status, "QUEUED")));
 	});
 }

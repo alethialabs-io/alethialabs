@@ -20,7 +20,6 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	unique,
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
@@ -60,9 +59,18 @@ export const orgSigningKey = pgTable(
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		// key_id is the globally-unique handle a receipt records; the full row set is the retained
-		// key_id→public_key history that keeps old receipts verifiable across rotation (D4).
-		unique("org_signing_key_key_id_key").on(t.key_id),
+		// key_id is the handle a receipt records; the full row set is the retained key_id→public_key
+		// history that keeps old receipts verifiable across rotation (D4).
+		//
+		// It is unique among VERIFIED keys only. Registration is shape-only (no proof of possession)
+		// and a public key is public material, so an unverified registration claims nothing: only
+		// proof of possession (status → active) claims a key_id across orgs, and a revoked key
+		// (status → invalid) releases it. Within one org a key_id is registered once. A receipt
+		// resolves its key_id against the verified row.
+		uniqueIndex("org_signing_key_org_key_id_key").on(t.org_id, t.key_id),
+		uniqueIndex("org_signing_key_verified_key_id_key")
+			.on(t.key_id)
+			.where(sql`${t.status} = 'active'`),
 		// At most one ACTIVE signing key per org (D3 — single active per-org key).
 		uniqueIndex("org_signing_key_one_active")
 			.on(t.org_id)
