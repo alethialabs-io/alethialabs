@@ -89,4 +89,7 @@ export const TOPIC_KEYS = {
 	// open case's thread (#6130). Hints come from the `support_cases` trigger (programmables.sql).
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key(), orpc.support.key()],
 	usage: (): QueryKey[] => [orpc.overview.usage.key()],
+	// A cloud account or an api_key credential changed — a sweep moved its health, another member
+	// connected or removed one (#6124). The board, and the setup guide's "connect a cloud" step.
+	connectors: (): QueryKey[] => [orpc.connectors.key(), orpc.workspace.setupGuide.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

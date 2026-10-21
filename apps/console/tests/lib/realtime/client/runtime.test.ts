@@ -24,6 +24,8 @@ vi.mock("@/lib/rpc/client", () => ({
 		},
 		// The support pages' reads (#6130).
 		support: { key: () => ["support-orpc"] },
+		// The connectors board's read (#6124).
+		connectors: { key: () => ["connectors-orpc"] },
 		// The shell's reads the topic map also reaches (#6114).
 		workspace: {
 			setupGuide: { key: () => ["ws-setup-guide"] },

@@ -213,10 +213,8 @@ export const DEFAULT_CONNECTOR_FILTERS: ConnectorFilters = {
 };
 
 /**
- * The stable query object placed in the TanStack key (`qk.connectors(org, query)`). Only
- * non-empty fields are present and arrays are sorted + deduped, so two equivalent filter
- * states always produce an identical key — an unsorted array fragments the cache into keys
- * that never hit.
+ * The stable query object the board's selection runs on. Only non-empty fields are present and
+ * arrays are sorted + deduped, so two equivalent filter states select identically.
  */
 export interface NormalizedConnectorQuery {
 	search?: string;
@@ -245,11 +243,6 @@ export function normalizeConnectorQuery(
 	const vendors = normalizeList(filters.vendors);
 	if (vendors) query.vendors = vendors;
 	return query;
-}
-
-/** True when nothing is filtered — the key with no query object appended. */
-export function isPristineQuery(query: NormalizedConnectorQuery): boolean {
-	return Object.keys(query).length === 0;
 }
 
 /** One facet option and how many rows fall under it in the UNFILTERED universe. */
@@ -288,7 +281,7 @@ function matchesSearch(i: ConnectorWithConnection, term: string): boolean {
 
 /**
  * Apply a normalized query to the catalog. Pure, so the same predicate can run wherever the
- * rows come from — today the page's query hook, and unchanged if `getConnectorsWithStatus`
+ * rows come from — today the page's query hook, and unchanged if the board read
  * grows a query argument and filters in SQL.
  */
 export function selectConnectors(
@@ -368,34 +361,5 @@ export function buildConnectorsView(
 		rows: selectConnectors(rows, query, platformConfigured),
 		facets: buildConnectorFacets(rows, platformConfigured),
 		total: rows.length,
-	};
-}
-
-/** The `useQuery` seed for one query: the view built from the RSC's catalog, and how old it is. */
-export interface ConnectorsSeed {
-	initialData: () => ConnectorsView;
-	/** `undefined` = as fresh as the render; `0` = stale on arrival, so the fetch runs at once. */
-	initialDataUpdatedAt: number | undefined;
-}
-
-/**
- * Seed the board's query for ANY filter state from the catalog the page was rendered with.
- *
- * The selection over the catalog is pure, so the props answer a filtered query exactly as they
- * answer the pristine one. Seeding only the pristine key is what broke a pasted filtered link
- * (#4939, the audit's F8): the page renders pristine, hydrates the store from the URL in a mount
- * effect, and the filtered key then arrived with no data — `keepPreviousData` held the FULL list
- * up under a URL that said otherwise until a server action re-read the whole catalog. A filtered
- * seed is marked stale on arrival, so it is shown at once and refetched behind it; the pristine
- * seed keeps the query's own `staleTime`, as before.
- */
-export function seedConnectorsQuery(
-	catalog: ConnectorWithConnection[],
-	query: NormalizedConnectorQuery,
-	platformConfigured: Record<string, boolean> = {},
-): ConnectorsSeed {
-	return {
-		initialData: () => buildConnectorsView(catalog, query, platformConfigured),
-		initialDataUpdatedAt: isPristineQuery(query) ? undefined : 0,
 	};
 }

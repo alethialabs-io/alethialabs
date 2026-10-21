@@ -71,18 +71,17 @@ vi.mock("@/lib/query/use-sso-query", () => ({
 }));
 vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
 vi.mock("@/app/server/actions/connectors", () => ({
-	getConnectorsWithStatus: vi.fn(() => new Promise(() => {})),
 	deleteConnectorCredential: vi.fn(),
+	saveConnectorCredential: vi.fn(),
 }));
-vi.mock("@/app/(private)/dashboard/providers/actions", () => ({
-	disconnectAwsIdentity: vi.fn(),
-	renameCloudIdentity: vi.fn(),
-	reverifyCloudIdentity: vi.fn(),
+vi.mock("@/app/server/actions/identities", () => ({
+	deleteProviderToken: vi.fn(),
+	disconnectCloudAccount: vi.fn(),
+	renameCloudAccount: vi.fn(),
+	verifyCloudAccount: vi.fn(),
+	connectCloudAccount: vi.fn(),
+	startCloudConnect: vi.fn(),
 }));
-vi.mock("@/app/(private)/dashboard/providers/azure-actions", () => ({ disconnectAzureIdentity: vi.fn() }));
-vi.mock("@/app/(private)/dashboard/providers/gcp-actions", () => ({ disconnectGcpIdentity: vi.fn() }));
-vi.mock("@/app/(private)/dashboard/providers/extra-cloud-actions", () => ({ disconnectExtraCloud: vi.fn() }));
-vi.mock("@/app/server/actions/identities", () => ({ deleteProviderToken: vi.fn() }));
 vi.mock("@/lib/auth/client", () => ({ authClient: {} }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn(), captureException: vi.fn() }));
 
@@ -259,7 +258,7 @@ describe("SsoManager — ~/settings/sso?search=…", () => {
 });
 
 describe("ConnectorsPage — ~/connectors?search=…", () => {
-	/** One observability connector from the catalog the RSC hands the board. */
+	/** One observability connector from the catalog the board read returns. */
 	const connector = (slug: string, name: string, organization: string): ConnectorWithConnection => ({
 		id: `c-${slug}`,
 		slug,
@@ -283,15 +282,13 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 
 	it("shows only the matching connector before any debounce has elapsed", async () => {
 		currentSearch = "search=Datadog";
-		renderWithClient(
-			<ConnectorsPage
-				orgSlug="acme"
-				canManage={false}
-				integrations={[connector("datadog", "Datadog", "Datadog, Inc."), connector("grafana", "Grafana", "Grafana Labs")]}
-				awsSetup={null}
-				gcpSetup={null}
-				azureSetup={null}
-			/>,
+		// The route prefetches the board and hydrates it; the seed is that hydrated entry.
+		renderWithClient(<ConnectorsPage orgSlug="acme" />, (qc) =>
+			qc.setQueryData(orpc.connectors.board.queryOptions().queryKey, {
+				integrations: [connector("datadog", "Datadog", "Datadog, Inc."), connector("grafana", "Grafana", "Grafana Labs")],
+				canManage: false,
+				platformConfigured: {},
+			}),
 		);
 		await settleWithoutTime();
 

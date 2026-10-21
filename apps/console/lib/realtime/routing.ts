@@ -135,6 +135,21 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "environments":
 		case "addons":
 			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
+		case "connectors": {
+			// cloud_identities + connector_credentials (#6124). Their policy is `scoped_all`:
+			//     (scope = 'personal' AND user_id = current_owner) OR (scope = 'org' AND org_id = current_org)
+			// The trigger (notify_credential_change) sends `u` ONLY for a personal row, so a notice has
+			// exactly one arm:
+			//   · an org row (`u` null) → `o:<org_id>`, every member of that org, unfiltered: the board
+			//     shows every member the org's shared connections (who may CHANGE one is the PDP's);
+			//   · a personal row → its author alone, `ou:<org>:<user>` in the org it was created in
+			//     (`u:<user>` when it has none). Its author's boards in OTHER orgs pick the change up on
+			//     their next read (focus, a resync), not from a hint.
+			if (notice.u) {
+				return [{ key: notice.o ? orgUserKey(notice.o, notice.u) : userKey(notice.u), filterProject: null }];
+			}
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
+		}
 		// TODO(#6131): projects — o:, u:; project view filter on the row's own id.
 		case "projects":
 		// TODO(#6122): project_cluster — o: only; project view filter.

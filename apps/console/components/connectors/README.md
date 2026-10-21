@@ -49,10 +49,10 @@ short-lived minted assertion; the token clouds have no federation, so a scoped t
 |------|------|
 | `connection-ui.tsx` | **The shared scaffold.** Exports `ConnectSheetShell` (badge + intro + "How this works" popover + hairline sections), `MethodTabs` (segmented setup-method control), `Step`, `VerifySection` (+ `ConnectionTestStatus`/`StatusCallout`), and `StoredNote`. Change the look here → every sheet updates. Keep the exported props stable. |
 | `{aws,gcp,azure,hetzner,extra-cloud,api-key}-connection.tsx` | **Per-cloud sheets.** Each composes the scaffold, renders its own fields, and calls an injected `onComplete`/`onSave`/`onCompleteFromIds` handler. `extra-cloud-connection.tsx` exports both `AlibabaConnection` (RAM role ARN) and `TokenCloudConnection` (generic token cloud). |
-| `use-connection-test.ts` | The instant server-side verify hook. `useConnectionTest()` runs a save+verify round trip and exposes `state` (`idle`/`saving`/`success`/`failed`) → drives the shared status UI. Handlers return a `VerifyOutcome` (`verified`, `status`, `error`, `missingPermissions`). |
+| `use-connection-test.ts` | The instant server-side verify hook. `useConnectionTest()` runs a save+verify round trip through `useActionMutation` and exposes `state` (`idle`/`saving`/`success`/`failed`) → drives the shared status UI. Handlers return `connectCloudAccount`'s `ActionResult<VerifyOutcome>`. |
 | `provider-config-fields.tsx` | The generic `provider_config` field renderer (also used by the canvas inspector). |
 | `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/guides/connectors/*` page), and the pre-filled issuer/client-id env constants. |
-| `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, seeds/inits a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
+| `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, reuses a seeded or starts (`startCloudConnect`) a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
 | `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client sheet import the same builder. |
 
 ## One status ladder
@@ -73,17 +73,36 @@ The board follows the console filter standard (`apps/console/lib/query/README.md
 
 ```
 use-connector-filters (zustand)  →  useFilterUrlSync  →  useDebouncedValue (search)
-  →  normalizeConnectorQuery()  →  qk.connectors(org, query)  →  useQuery
+  →  normalizeConnectorQuery()  →  buildConnectorsView(board.integrations, query)
 ```
+
+The rows come from ONE read, `connectors.board` (`lib/rpc/procedures/connectors.ts`, a GET),
+prefetched by the route and hydrated, so the first paint is the board. The selection and the facet
+tally run over that cached read in the browser: the catalog is one short list, so a filter change
+fetches nothing. The board stays live through the `connectors` topic on the org's change stream
+(`lib/query/topics.ts`, triggers in `lib/db/programmables.sql`) — there is no poll and no
+`router.refresh()`.
 
 Facet counts are computed over the **unfiltered** catalog, so an option never disappears as you
 select it. The Radix `<Select>` that used to drive the group filter is gone — it is banned from
 filter bars.
 
-**Known gap:** `getConnectorsWithStatus()` takes no arguments, so `selectConnectors()` and
-`buildConnectorFacets()` run in the query function rather than in SQL. Both are pure and take the
-same normalized query object a server-side implementation would, so moving them is a signature
-change in `app/server/actions/connectors.ts` and nothing in this directory.
+## Writes
+
+Every write goes through `useActionMutation` (`lib/actions/`) over a `defineAction` server action,
+and invalidates `connectorKeys()` (`connectors-board.ts`) when it settles:
+
+| Write | Action |
+|---|---|
+| Start a cloud connect (the pending identity a sheet binds to) | `startCloudConnect` |
+| Save + verify a cloud account | `connectCloudAccount` (one discriminated input per connect method) |
+| Re-verify / rename / disconnect a cloud account | `verifyCloudAccount` / `renameCloudAccount` / `disconnectCloudAccount` |
+| Unlink a git provider | `deleteProviderToken` |
+| Save / remove an api_key credential | `saveConnectorCredential` / `deleteConnectorCredential` |
+
+The cloud-account actions live in `app/server/actions/identities.ts`. Each authorizes
+`manage_identities` and then loads the identity by id through the same scope rule the board reads
+with, bound to the addressed org, before the connection library runs.
 
 ## The GCP "assembled config" pattern
 

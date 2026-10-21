@@ -80,6 +80,7 @@ interface ConnectorDetailSheetProps {
 	/** Re-run verification for a specific cloud account against its stored credentials. */
 	onReverifyAccount: (identityId: string) => Promise<void>;
 	/** Rename a cloud account. */
+	/** Resolves when the rename landed; rejects (already reported) when it did not. */
 	onRenameAccount: (identityId: string, name: string) => Promise<void>;
 }
 
@@ -140,6 +141,8 @@ export function ConnectorDetailSheet({
 		try {
 			await onRenameAccount(id, name);
 			setEditingId(null);
+		} catch {
+			// The rename was refused or failed and already said so; keep the name being edited.
 		} finally {
 			setSavingId(null);
 		}

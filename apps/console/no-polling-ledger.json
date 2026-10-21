@@ -84,10 +84,6 @@
 			"count": 1,
 			"lifts": "unassigned"
 		},
-		"components/connectors/connectors-page.tsx :: setInterval": {
-			"count": 1,
-			"lifts": "#6124"
-		},
 		"components/create-project/configure-project.tsx :: setInterval": {
 			"count": 1,
 			"lifts": "#6131"
