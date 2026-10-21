@@ -8,10 +8,13 @@
 
 /**
  * Every topic the bus can carry. A topic names a family of rows the console renders; a hint on it
- * means "something in this family changed — refetch what you show of it". `jobs`, `environments` and
- * `addons` have producers (the triggers in lib/db/programmables.sql); the rest are declared so the
- * client and the routing table are exhaustive over one list, and each lane activates its own
- * (lib/realtime/routing.ts).
+ * means "something in this family changed — refetch what you show of it". `jobs`, `environments`,
+ * `addons` and `billing` have trigger producers (lib/db/programmables.sql) and `usage` an app-layer
+ * one (lib/realtime/usage-hint.ts); the rest are declared so the client and the routing table are
+ * exhaustive over one list, and each lane activates its own (lib/realtime/routing.ts). `usage` and
+ * `billing` are split by what a refetch COSTS: `usage` (AI spend, at most once per 30 s per org)
+ * refreshes database reads only; `billing` (the billing record and its invoices, rare) also
+ * refreshes the Stripe-backed plan card (#6127).
  */
 export const TOPICS = [
 	"jobs",
@@ -24,6 +27,7 @@ export const TOPICS = [
 	"alerts",
 	"support",
 	"usage",
+	"billing",
 ] as const;
 
 /** One topic of {@link TOPICS}. */

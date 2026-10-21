@@ -12,37 +12,60 @@ import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/rpc/client", () => ({
-	// The jobs topic names its procedures one by one (lib/query/topics.ts); `page` stands for them here.
-	orpc: {
-		jobs: {
-			page: { key: () => ["jobs-orpc"] },
-			detail: { key: () => ["jobs-orpc", "detail"] },
-			status: { key: () => ["jobs-orpc", "status"] },
-			planResult: { key: () => ["jobs-orpc", "planResult"] },
-			project: { key: () => ["jobs-orpc", "project"] },
-		},
-		// The support pages' reads (#6130).
-		support: { key: () => ["support-orpc"] },
-		// The shell's reads the topic map also reaches (#6114).
-		workspace: {
-			setupGuide: { key: () => ["ws-setup-guide"] },
-			recentJobs: { key: () => ["ws-recent-jobs"] },
-			jobs: { key: () => ["ws-jobs"] },
-			environments: { key: () => ["ws-environments"] },
-			projects: { key: () => ["ws-projects"] },
-			supportCases: { key: () => ["ws-support-cases"] },
-		},
-		// The overview's reads ride the jobs, usage and alerts topics (#6118).
-		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
-		// The board's reads (#6119), which the jobs, environments and addons topics also invalidate.
-		canvas: Object.fromEntries(
-			["environmentStatus", "environmentJobs", "chartWorkloads", "iacSource", "addons", "byoCharts"].map(
-				(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
+vi.mock("@/lib/rpc/client", () => {
+	/** A procedure stand-in whose prefix key names it. */
+	const proc = (name: string) => ({ key: () => [`${name}-orpc`] });
+	return {
+		orpc: {
+			// The jobs topic names its procedures one by one (lib/query/topics.ts); `page` stands for them here.
+			jobs: {
+				page: { key: () => ["jobs-orpc"] },
+				detail: { key: () => ["jobs-orpc", "detail"] },
+				status: { key: () => ["jobs-orpc", "status"] },
+				planResult: { key: () => ["jobs-orpc", "planResult"] },
+				project: { key: () => ["jobs-orpc", "project"] },
+			},
+			// The support pages' reads (#6130).
+			support: { key: () => ["support-orpc"] },
+			// The shell's reads the topic map also reaches (#6114).
+			workspace: {
+				setupGuide: { key: () => ["ws-setup-guide"] },
+				recentJobs: { key: () => ["ws-recent-jobs"] },
+				jobs: { key: () => ["ws-jobs"] },
+				environments: { key: () => ["ws-environments"] },
+				projects: { key: () => ["ws-projects"] },
+				supportCases: { key: () => ["ws-support-cases"] },
+			},
+			// The usage and billing pages' reads ride the jobs, usage, billing, projects and clusters
+			// topics (#6127).
+			usage: {
+				org: proc("usage.org"),
+				resources: proc("usage.resources"),
+				overTime: proc("usage.overTime"),
+				ai: proc("usage.ai"),
+				project: proc("usage.project"),
+				projectResources: proc("usage.projectResources"),
+				projectAi: proc("usage.projectAi"),
+				projectOverTime: proc("usage.projectOverTime"),
+			},
+			// The overview's reads ride the jobs, usage and alerts topics (#6118).
+			overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
+			// The board's reads (#6119), which the jobs, environments and addons topics also invalidate.
+			canvas: Object.fromEntries(
+				["environmentStatus", "environmentJobs", "chartWorkloads", "iacSource", "addons", "byoCharts"].map(
+					(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
+				),
 			),
-		),
-	},
-}));
+			billing: {
+				summary: proc("billing.summary"),
+				paymentMethods: proc("billing.paymentMethods"),
+				invoices: proc("billing.invoices"),
+				transactions: proc("billing.transactions"),
+				planHistory: proc("billing.planHistory"),
+			},
+		},
+	};
+});
 
 import { createConnectionStore } from "@/lib/realtime/client/connection-state";
 import type { ChannelLike, LockManagerLike } from "@/lib/realtime/client/leader";

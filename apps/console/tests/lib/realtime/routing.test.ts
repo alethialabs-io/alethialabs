@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "usage", "billing"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -169,6 +169,47 @@ describe("keysFor — support cases follow their tiered policy, not owner_all (#
 	it("a case missing its org or its requester routes nowhere", () => {
 		expect(keysFor(support({ o: null }))).toEqual([]);
 		expect(keysFor(support({ u: null }))).toEqual([]);
+	});
+});
+
+// #6127: the billing record + invoice mirror (`billing`) and the AI ledger (`usage`). Org-wide facts,
+// sent with no row id by their triggers (lib/db/programmables.sql).
+describe("keysFor — usage and billing", () => {
+	const orgWide = (t: "usage" | "billing", over: Partial<ChangeNotice> = {}): ChangeNotice => ({
+		kind: "change",
+		t,
+		id: null,
+		o: ORG,
+		u: null,
+		p: null,
+		...over,
+	});
+
+	it.each(["usage", "billing"] as const)("%s routes on the org arm, unfiltered", (t) => {
+		expect(keysFor(orgWide(t))).toEqual([{ key: `o:${ORG}`, filterProject: null }]);
+	});
+
+	it.each(["usage", "billing"] as const)("%s never reaches another org's stream", (t) => {
+		const OTHER = "55555555-5555-4555-8555-555555555555";
+		const stream = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: true, manageSupport: true });
+		const routed = keysFor(orgWide(t, { o: OTHER })).map((r) => r.key);
+		expect(routed.filter((k) => stream.includes(k))).toEqual([]);
+	});
+
+	it("a ledger row with no org routes to its owner's personal scope only", () => {
+		expect(keysFor(orgWide("usage", { o: null, u: USER }))).toEqual([
+			{ key: `u:${USER}`, filterProject: null },
+		]);
+		const inAnOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
+		expect(inAnOrg).not.toContain(`u:${USER}`);
+	});
+
+	it("a notice with neither org nor owner routes nowhere", () => {
+		expect(keysFor(orgWide("billing", { o: null, u: null }))).toEqual([]);
+	});
+
+	it("the hint carries the topic alone — no invoice or ledger id reaches a frame", () => {
+		expect(hintOf(orgWide("billing"))).toEqual({ t: "billing" });
 	});
 });
 

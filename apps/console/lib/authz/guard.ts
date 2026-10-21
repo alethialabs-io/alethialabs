@@ -6,6 +6,7 @@ import { getOwnerScope } from "@/lib/auth/owner";
 import { EditionMisconfiguredError } from "@/lib/auth/errors";
 import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
+import { enforceDecision } from "@/lib/authz/activity";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
@@ -131,6 +132,33 @@ export async function authorizeQuiet(
 	const ref: ResourceRef = { type: resource.type, id: resource.id };
 	const decision = await getPdp().can(actor, action, ref);
 	if (!decision.allowed) throw new ForbiddenError(action, ref, decision.reason);
+	return actor;
+}
+
+/**
+ * A READ's permission check: quiet when ALLOWED, on the record when DENIED.
+ *
+ * A read a page refetches on every live hint (#6127's billing-admin reads, the project-usage reads)
+ * must not write an activity row per allowed refetch — that is {@link authorizeQuiet}'s half. But a
+ * DENIED attempt is exactly what the activity log and an org's alert rules exist for, and
+ * {@link authorizeQuiet} drops it too. So this asks `can()` and, only on a deny, hands the decision
+ * to `enforceDecision` (lib/authz/activity.ts) — the same path `enforce()` takes, which records the
+ * denial, emits it as an action event, and throws `ForbiddenError`. Who is let in is decided by the
+ * same `can()` either way.
+ */
+export async function authorizeRead(
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<Actor> {
+	const actor = await currentActor();
+	const ref: ResourceRef = { type: resource.type, id: resource.id };
+	const decision = await getPdp().can(actor, action, ref);
+	if (!decision.allowed) {
+		// `enforceDecision` records the denial, emits it, and throws. The explicit throw keeps this
+		// fail-closed if that function ever stops throwing.
+		enforceDecision(actor, action, ref, decision);
+		throw new ForbiddenError(action, ref, decision.reason);
+	}
 	return actor;
 }
 

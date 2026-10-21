@@ -1,8 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Hook tests for `useLivePlanPrice` / `useLiveAiPrice` — the two client hooks that resolve a
-// module-cached price map and write it into state from inside `.then()`.
+// Hook tests for `useLivePlanPrice` — the client hook that resolves a module-cached price map and
+// writes it into state from inside `.then()` — and for `aiPriceView`, the pure function the AI
+// section prices its tier with since #6127 moved the AI price list onto the read router
+// (`billing.liveAiPrices`, prefetched with the page). The `useLiveAiPrice` hook and its module
+// cache were deleted with it; the tier-change race its last test pinned cannot recur, because the
+// view is computed from the WHOLE map (`map[tier]`) on every render, not a per-tier row in state.
 //
 // WHY THIS FILE EXISTS, beyond "the module had no test" (#3342).
 //
@@ -29,7 +33,7 @@
 // never measured, and #3587's five-run probe could not reproduce the flap. It is the one candidate
 // in the directory that could be removed rather than re-measured.
 //
-// The tests run in order on purpose. The module-level `pending` / `aiPending` caches are shared by
+// The tests run in order on purpose. The module-level `pending` cache is shared by
 // every test in this file (Vitest isolates modules per FILE, not per test), so the failure case has
 // to come first: it is the only state from which the retry-after-failure reset is observable, and
 // the cache-sharing assertions that follow it need a cache that is already warm.
@@ -42,17 +46,10 @@ import type { LiveAiPriceMap, LivePlanPriceMap } from "@/lib/billing/pricing";
 
 vi.mock("@/app/server/actions/billing", () => ({
 	getLivePlanPrices: vi.fn(),
-	getLiveAiPrices: vi.fn(),
 }));
 
-import {
-	getLiveAiPrices,
-	getLivePlanPrices,
-} from "@/app/server/actions/billing";
-import {
-	useLiveAiPrice,
-	useLivePlanPrice,
-} from "@/lib/billing/use-live-plan-price";
+import { getLivePlanPrices } from "@/app/server/actions/billing";
+import { aiPriceView, useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 
 // Deliberately NOT the catalog amounts — the hook must render what Stripe returned, and a fixture
 // that happened to match the fallback could not tell the two apart.
@@ -169,77 +166,27 @@ describe("useLivePlanPrice", () => {
 	});
 });
 
-describe("useLiveAiPrice", () => {
-	it("shows the AI catalog price while the live map has not arrived", async () => {
-		vi.mocked(getLiveAiPrices).mockRejectedValueOnce(new Error("stripe down"));
-
-		const { result } = renderHook(() => useLiveAiPrice("ai_plus"));
-		await waitFor(() => expect(getLiveAiPrices).toHaveBeenCalledTimes(1));
-
-		expect(result.current.loading).toBe(true);
-		expect(result.current.label).toBe(aiPlanMeta("ai_plus").priceLabel);
+describe("aiPriceView", () => {
+	it("shows the AI catalog price, and says it is not authoritative, while there is no live row", () => {
+		const view = aiPriceView("ai_plus", undefined);
+		expect(view.loading).toBe(true);
+		expect(view.label).toBe(aiPlanMeta("ai_plus").priceLabel);
 	});
 
-	it("writes the resolved AI price into state, and a failed fetch did not poison the cache", async () => {
-		vi.mocked(getLiveAiPrices).mockResolvedValue(aiPrices);
-
-		const before = vi.mocked(getLiveAiPrices).mock.calls.length;
-		const { result } = renderHook(() => useLiveAiPrice("ai_plus"));
-		await waitFor(() => expect(result.current.loading).toBe(false));
-
-		expect(result.current.label).toBe("$25 / mo");
-		expect(result.current.unitAmount).toEqual(money(2500, "usd"));
-		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before + 1);
+	it("renders the live amount when the row is there", () => {
+		const view = aiPriceView("ai_plus", aiPrices.ai_plus);
+		expect(view.loading).toBe(false);
+		expect(view.label).toBe("$25 / mo");
+		expect(view.unitAmount).toEqual(money(2500, "usd"));
 	});
 
-	it("serves every later consumer from one fetch, and keeps 'Free' free", async () => {
-		const before = vi.mocked(getLiveAiPrices).mock.calls.length;
-		const eur = renderHook(() => useLiveAiPrice("ai_max", "eur"));
-		await waitFor(() => expect(eur.result.current.loading).toBe(false));
-		expect(eur.result.current.label).toBe("€88 / mo");
-
-		// A live amount of 0 is the free tier: it keeps its catalog word, never "$0 / mo".
-		const free = renderHook(() => useLiveAiPrice("ai_free"));
-		await waitFor(() => expect(free.result.current.loading).toBe(false));
-		expect(free.result.current.unitAmount).toEqual(money(0, "usd"));
-		expect(free.result.current.label).toBe(aiPlanMeta("ai_free").priceLabel);
-
-		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before);
+	it("prices in the asked currency from Stripe's own amount, not the catalog's", () => {
+		expect(aiPriceView("ai_max", aiPrices.ai_max, "eur").label).toBe("€88 / mo");
 	});
 
-	// THE LIFECYCLE THIS WHOLE FILE IS ABOUT, and until now the one thing it did not exercise.
-	//
-	// Every test above mounts a fresh hook. The race in the header is not about mounting: it is
-	// `tier` CHANGING on a live component, which sets `active = false` on the first effect and is
-	// what decided whether `setData` ran. `ai-usage-section.tsx` does exactly that —
-	// `useLiveAiPrice(ai?.tier ?? "ai_free")` — so the transition happens on every visit as the
-	// summary resolves.
-	//
-	// Exercising it found a defect rather than only covering a statement: `data` was not cleared
-	// when `tier` changed, so the hook reported `loading: false` — its contract for "this is the
-	// authoritative price" — while still holding the PREVIOUS tier's row. A paid tier rendered as
-	// "Free" for at least one render, every time.
-	it("does not price a new tier with the old tier's row while the new one is in flight", async () => {
-		const { result, rerender } = renderHook(
-			({ t }: { t: "ai_free" | "ai_max" }) => useLiveAiPrice(t),
-			{ initialProps: { t: "ai_free" } },
-		);
-		await waitFor(() => expect(result.current.loading).toBe(false));
-		expect(result.current.label).toBe(aiPlanMeta("ai_free").priceLabel);
-
-		rerender({ t: "ai_max" });
-
-		// The moment the tier changes the hook must stop claiming to be authoritative. Asserted
-		// SYNCHRONOUSLY, before the new row can land: this is the render the console actually
-		// showed, and the assertion is meaningless once the promise has flushed.
-		expect(result.current.loading).toBe(true);
-		// And what it falls back to is ai_max's own catalog price, never ai_free's "Free".
-		expect(result.current.label).toBe(aiPlanMeta("ai_max").priceLabel);
-		expect(result.current.label).not.toBe(aiPlanMeta("ai_free").priceLabel);
-
-		// Then the live row arrives and replaces the catalog fallback — the `if (active)` guard's
-		// TRUE branch on the second effect.
-		await waitFor(() => expect(result.current.loading).toBe(false));
-		expect(result.current.unitAmount).toEqual(money(10000, "usd"));
+	it("keeps 'Free' free: a live amount of 0 keeps the catalog word, never '$0 / mo'", () => {
+		const view = aiPriceView("ai_free", aiPrices.ai_free);
+		expect(view.unitAmount).toEqual(money(0, "usd"));
+		expect(view.label).toBe(aiPlanMeta("ai_free").priceLabel);
 	});
 });
