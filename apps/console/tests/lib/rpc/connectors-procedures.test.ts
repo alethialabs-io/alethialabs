@@ -475,6 +475,17 @@ describe("readConnectorsBoard", () => {
 		});
 	});
 
+	it("answers the filter it is given: matching rows, facets over the UNFILTERED catalog", async () => {
+		const git: Partial<Connector> = { id: "g", slug: "github", name: "GitHub", category: "git", auth_method: "oauth", status: "active", sort_order: 1 };
+		dbh.setQueue([[cloudCatalogRow, git], [], [configuredAws], []]);
+		const board = await readConnectorsBoard(actor, { groups: ["clouds"] });
+		expect(board.view.rows.map((r) => r.slug)).toEqual(["aws"]);
+		expect(board.view.total).toBe(2);
+		// The facet still offers the group the filter excluded — an option never disappears as it is picked.
+		expect(board.view.facets.groups.map((g) => g.value).sort()).toEqual(["clouds", "source"]);
+		expect(board.integrations).toHaveLength(2);
+	});
+
 	it("reports canManage=false when the PDP grants neither manage action", async () => {
 		vi.mocked(getPdp).mockReturnValue({ can: vi.fn(async () => ({ allowed: false })) } as never);
 		dbh.setQueue([[cloudCatalogRow], [], [], []]);

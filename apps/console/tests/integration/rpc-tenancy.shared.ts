@@ -372,7 +372,7 @@ export const FIXTURES: Record<string, Fixture> = {
 	// caller's own personal ones). Each org's seeded identity is the marker.
 	"connectors.board": {
 		kind: "org-scoped",
-		input: undefined,
+		input: {},
 		markers: (out, s) => ({ x: boardListsIdentity(out, s.identityX), y: boardListsIdentity(out, s.identityY) }),
 	},
 	"canvas.capabilities": {
