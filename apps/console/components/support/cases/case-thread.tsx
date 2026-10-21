@@ -22,6 +22,7 @@ import {
 } from "@/components/ai-elements/message-scroller";
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import type { PublicMessage } from "@/lib/queries/support";
+import { OPTIMISTIC_ID_PREFIX } from "./case-composer";
 import { CaseTime } from "./case-time";
 
 /** The display name shown above each message, keyed by who authored it. */
@@ -39,14 +40,6 @@ const ROLE_INITIALS: Record<SupportAuthorType, string> = {
 	ai: "AI",
 	system: "SY",
 };
-
-/**
- * The id prefix `CaseComposer` gives the reply it patches into the case read before the server
- * answers. A last message carrying it is the viewer's own send — the one new message that must
- * scroll into view even when they had scrolled up to read history. Pinned by
- * `tests/components/support/case-thread-scroll.test.tsx`, which drives the real composer.
- */
-const OPTIMISTIC_ID_PREFIX = "optimistic-";
 
 /**
  * Renders a single support message through the AI-Elements message primitives — the same
@@ -109,9 +102,10 @@ export function CaseThread({ messages }: { messages: PublicMessage[] }) {
 			<FollowOwnSend lastMessageId={messages.at(-1)?.id} />
 			<MessageScroller>
 				{/* Bounded, so a long thread scrolls inside the case rather than pushing the composer
-				    below the fold — without a bound the viewport is as tall as its content and there
-				    is nothing to stick to the bottom of. */}
-				<MessageScrollerViewport aria-label="Case conversation" className="max-h-[70dvh] scrollbar-thin">
+				    below the fold (a smaller cap on a phone keeps it reachable) — without a bound the viewport is
+				    as tall as its content and there is nothing to stick to the bottom of. `overscroll-auto`
+				    because the thread sits in a scrolling page: a swipe at its edge carries on to the page. */}
+				<MessageScrollerViewport aria-label="Case conversation" className="max-h-[60dvh] overscroll-auto scrollbar-thin sm:max-h-[70dvh]">
 					<MessageScrollerContent className="p-4">
 						{messages.length === 0 ? (
 							<EmptyState
