@@ -2572,11 +2572,16 @@ END $$;
 -- DEFINER RIGHTS, `row_security = off` and a pinned search_path, for the reason
 -- set_org_id_from_project gives: the lookups must see the one row an id names whatever the
 -- writer's RLS scope, or "not visible" would read as "not owned". They return only an org id or a
--- reason code, and EXECUTE is revoked from PUBLIC; the service role owns them.
+-- reason code; the service role owns them.
 --
 -- EXISTING ROWS. A BEFORE trigger never re-reads stored rows, so creating it cannot fail migrate.
--- It fires on INSERT and on an UPDATE of a column it reads (not permission_key, which
--- lib/authz/seed.ts renames in place).
+-- It fires on INSERT and on an UPDATE of a column it reads, plus `effect` — a stored unbound DENY
+-- must not become an ALLOW by an update (not permission_key, which lib/authz/seed.ts renames in
+-- place).
+--
+-- EXECUTE is revoked from PUBLIC on the two lookup functions (they answer for any id); not on the
+-- trigger function, by this file's rule for trigger functions (the note after
+-- project_environments_require_one_default()).
 CREATE OR REPLACE FUNCTION public.authz_resource_org_id(p_type TEXT, p_id UUID)
 RETURNS UUID
 LANGUAGE sql
@@ -2651,11 +2656,14 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-REVOKE EXECUTE ON FUNCTION public.grants_enforce_org_binding() FROM PUBLIC;
+-- No REVOKE on this trigger function, for the reason stated after
+-- project_environments_require_one_default(): `RETURNS TRIGGER` cannot be called directly, and
+-- the EXECUTE check happens at CREATE TRIGGER, so the file relies on the default grant for every
+-- trigger function.
 
 DROP TRIGGER IF EXISTS grants_org_binding ON public.grants;
 CREATE TRIGGER grants_org_binding
-  BEFORE INSERT OR UPDATE OF org_id, principal_type, principal_id, role_id, resource_type, resource_id
+  BEFORE INSERT OR UPDATE OF org_id, principal_type, principal_id, effect, role_id, resource_type, resource_id
   ON public.grants
   FOR EACH ROW EXECUTE FUNCTION public.grants_enforce_org_binding();
 

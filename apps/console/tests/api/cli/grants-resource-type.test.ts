@@ -136,8 +136,32 @@ beforeEach(() => {
 });
 
 describe("POST /api/cli/grants — the accepted set", () => {
-	it("is the hierarchy table's scopable kinds plus the org wildcard, not a second list", () => {
-		expect([...GRANT_RESOURCE_TYPES]).toEqual(["org", ...INSTANCE_TYPES]);
+	it("is the hierarchy table's scopable kinds, minus connector, plus the org wildcard", () => {
+		expect([...GRANT_RESOURCE_TYPES]).toEqual([
+			"org",
+			...INSTANCE_TYPES.filter((k) => k !== "connector"),
+		]);
+	});
+
+	// No organization owns a connector (the catalog is global), so a grant cannot be scoped to one.
+	it("refuses the connector kind, with or without an id, and stores nothing", async () => {
+		for (const resource_id of ["22222222-2222-4222-8222-222222222222", undefined]) {
+			const res = await POST(
+				new Request("http://localhost/api/cli/grants", {
+					method: "POST",
+					body: JSON.stringify({
+						principal_type: "user",
+						principal_id: "11111111-1111-4111-8111-111111111111",
+						permission_key: "connector:view",
+						resource_type: "connector",
+						resource_id,
+					}),
+				}),
+			);
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({ error: UNKNOWN_RESOURCE_TYPE });
+		}
+		expect(mock.insertSpy).not.toHaveBeenCalled();
 	});
 });
 

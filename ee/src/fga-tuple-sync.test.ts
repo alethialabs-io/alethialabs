@@ -39,6 +39,7 @@ import {
 	grantScopeFromRow,
 } from "@/lib/authz/fga-tuples";
 import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
+import type { ScopedGrant } from "@/lib/authz/tuple-sync";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 import {
 	type TupleReader,
@@ -46,6 +47,11 @@ import {
 	grantObject,
 	grantTuplesAllowed,
 	isActiveTeamOrgMember,
+	planBackfillGrants,
+	planRoleResync,
+	planScopedGrantSync,
+	type ReconciledGrantRow,
+	staleTuples,
 	memberTuplesInOrg,
 	readAllTuples,
 } from "./fga-tuple-sync";
@@ -495,5 +501,115 @@ describe("grantBindingReason", () => {
 			"foreign_role",
 		);
 		expect(JSON.stringify(queries[0])).toContain("grant_org_binding_violation");
+	});
+
+	it("fails CLOSED on a result it cannot read — no row, no reason key, a non-text reason", async () => {
+		const grant: Parameters<typeof grantBindingReason>[1] = {
+			orgId: ORG,
+			principalType: "user",
+			principalId: USER,
+			roleId: null,
+			resourceType: "org",
+			resourceId: null,
+		};
+		const answering = (rows: unknown[]) => ({ execute: async (): Promise<unknown[]> => rows });
+		await expect(grantBindingReason(answering([]), grant)).rejects.toThrow(/no row/);
+		await expect(grantBindingReason(answering([{ other: 1 }]), grant)).rejects.toThrow(/no row/);
+		await expect(grantBindingReason(answering([{ reason: 7 }]), grant)).rejects.toThrow(/non-text/);
+	});
+});
+
+// The three writers that put grant tuples in the store — `syncScopedGrant`, `resyncRole` and
+// `backfill` — each decide through one of these planners, with the REAL core expanders. The class
+// itself is not instantiated here (see the note above `readAllTuples`' block).
+describe("the writers' plans skip a grant that is not bound to its org", () => {
+	const OTHER_ORG_ROLE = "66666666-6666-4666-8666-666666666666";
+	const fga = { grantScopeFromRow, expandGrant };
+
+	/** A stored row: an org-wide single-permission allow for USER in ORG, bound unless overridden. */
+	function row(over: Partial<ReconciledGrantRow> = {}): ReconciledGrantRow {
+		return {
+			org_id: ORG,
+			principal_type: "user",
+			principal_id: USER,
+			effect: "allow",
+			role_id: null,
+			permission_key: "project:view",
+			resource_type: "org",
+			resource_id: null,
+			binding_reason: null,
+			...over,
+		};
+	}
+	const keysOf = async (g: ReconciledGrantRow): Promise<string[]> =>
+		g.permission_key ? [g.permission_key] : VIEWER_KEYS;
+
+	it("staleTuples subtracts what a bound row also produces, and deduplicates", () => {
+		const a: FgaTuple = { user: `user:${USER}`, relation: "project_view", object: `org:${ORG}` };
+		const b: FgaTuple = { user: `user:${USER}`, relation: "perm_edit", object: `project:${PROJECT}` };
+		expect(staleTuples([a, b, b], [a])).toEqual([b]);
+	});
+
+	it("backfill: a bound row is written; an unbound allow row is not, and its tuples are deleted", async () => {
+		const bound = row();
+		const foreignRole = row({ role_id: OTHER_ORG_ROLE, permission_key: null, binding_reason: "foreign_role" });
+		const foreignProject = row({
+			permission_key: "project:edit",
+			resource_type: "project",
+			resource_id: PROJECT,
+			binding_reason: "foreign_resource",
+		});
+		const plan = await planBackfillGrants([bound, foreignRole, foreignProject], keysOf, fga);
+
+		const boundTuples = expandGrant(narrowed({ ...principal, resourceType: "org", resourceId: null }), ["project:view"]);
+		expect(plan.write).toEqual(boundTuples); // CONTROL: the bound row is written
+		const projectEdit: FgaTuple = { user: `user:${USER}`, relation: "perm_edit", object: `project:${PROJECT}` };
+		expect(plan.stale).toContainEqual(projectEdit);
+		// The foreign role expands to viewer keys on org:ORG — including project:view, which the
+		// BOUND row also produces, so that one tuple is kept and the rest are deleted.
+		expect(plan.stale).not.toContainEqual(boundTuples[0]);
+		expect(plan.stale.length).toBeGreaterThan(1);
+		for (const t of plan.stale) expect(plan.write).not.toContainEqual(t);
+	});
+
+	it("backfill: a foreign-resource DENY is deleted, a foreign-role DENY is still written", async () => {
+		const plan = await planBackfillGrants(
+			[
+				row({ effect: "deny", resource_type: "project", resource_id: PROJECT, binding_reason: "foreign_resource" }),
+				row({ effect: "deny", binding_reason: "foreign_role" }),
+			],
+			keysOf,
+			fga,
+		);
+		expect(plan.write).toEqual([{ user: `user:${USER}`, relation: "project_deny_view", object: `org:${ORG}` }]);
+		expect(plan.stale).toEqual([{ user: `user:${USER}`, relation: "perm_deny_view", object: `project:${PROJECT}` }]);
+	});
+
+	it("resyncRole: re-expands only the rows bound to their org", () => {
+		const scopes = planRoleResync(
+			[
+				row({ role_id: OTHER_ORG_ROLE, permission_key: null }), // CONTROL: bound
+				row({ org_id: PROJECT, role_id: OTHER_ORG_ROLE, permission_key: null, binding_reason: "foreign_role" }),
+			],
+			fga,
+		);
+		expect(scopes).toEqual([{ ...principal, resourceType: "org" }]);
+	});
+
+	it("syncScopedGrant: writes a bound grant; writes nothing, and reads no keys, for an unbound one", async () => {
+		const grant: ScopedGrant = { ...principal, resourceType: "org", roleId: null, permissionKey: "project:view" };
+		const db = (reason: string | null) => ({ execute: async (): Promise<unknown[]> => [{ reason }] });
+		let keyReads = 0;
+		const keys = async (): Promise<string[]> => {
+			keyReads += 1;
+			return ["project:view"];
+		};
+
+		expect(await planScopedGrantSync(db(null), grant, keys, expandGrant)).toEqual(
+			expandGrant(grant, ["project:view"]),
+		);
+		expect(keyReads).toBe(1);
+		expect(await planScopedGrantSync(db("foreign_role"), grant, keys, expandGrant)).toBeNull();
+		expect(keyReads).toBe(1);
 	});
 });

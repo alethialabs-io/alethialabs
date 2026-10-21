@@ -378,6 +378,18 @@ describeIfDb("a grant's role, team and resource belong to the grant's org", () =
 			).toContain("(foreign_role)");
 		});
 
+		it("refuses an UPDATE that turns a stored unbound DENY into an ALLOW", async () => {
+			await insertStoredGrants([{ ...base, effect: "deny", role_id: ROLE_B }]);
+			expect(
+				await refusalText(() =>
+					getServiceDb()
+						.update(grants)
+						.set({ effect: "allow" })
+						.where(and(eq(grants.org_id, ORG_A), eq(grants.role_id, ROLE_B))),
+				),
+			).toContain("(foreign_role)");
+		});
+
 		it("CONTROL: in-org rows, a built-in role and the org itself as a scope are accepted", async () => {
 			await getServiceDb()
 				.insert(grants)

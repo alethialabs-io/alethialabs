@@ -512,7 +512,11 @@ describe("assignGrant validation", () => {
 	it("accepts every kind the hierarchy table makes scopable, plus org", async () => {
 		// Derived from the same list the action validates against — which is itself derived from
 		// `INSTANCE_TYPES` — so a kind added to the hierarchy cannot leave this boundary untested.
-		expect([...GRANT_RESOURCE_TYPES]).toEqual(["org", ...INSTANCE_TYPES]);
+		// `connector` is the one exclusion: no organization owns a connector.
+		expect([...GRANT_RESOURCE_TYPES]).toEqual([
+			"org",
+			...INSTANCE_TYPES.filter((k) => k !== "connector"),
+		]);
 		for (const kind of GRANT_RESOURCE_TYPES) {
 			const { valuesSpy, insertSpy } = mockDb();
 			const scoped = kind !== "org";
