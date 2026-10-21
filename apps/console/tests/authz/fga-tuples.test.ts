@@ -197,14 +197,14 @@ describe("parseGrantResource (the write boundaries' one parse)", () => {
 		expect(parsed.ok && "resourceId" in parsed.resource).toBe(false);
 	});
 
-	it("parses a scopable kind with no id as org-wide, which is what both boundaries stored", () => {
-		for (const kind of ["project", "runner", "cloud_identity", "connector"]) {
+	it("parses a grantable kind with no id as org-wide, which is what both boundaries stored", () => {
+		for (const kind of ["project", "runner", "cloud_identity"]) {
 			expect(parseGrantResource(kind, null)).toEqual({ ok: true, resource: { resourceType: "org" } });
 		}
 	});
 
-	it("parses every scopable kind carrying its own id — connector included (PARENTS, not GRANT_SCOPES)", () => {
-		for (const kind of ["project", "runner", "cloud_identity", "connector"]) {
+	it("parses every grantable kind carrying its own id", () => {
+		for (const kind of ["project", "runner", "cloud_identity"]) {
 			const parsed = parseGrantResource(kind, "11111111-2222-3333-4444-555555555555");
 			expect(parsed).toEqual({
 				ok: true,
@@ -212,6 +212,14 @@ describe("parseGrantResource (the write boundaries' one parse)", () => {
 			});
 			// And it is stored with that id, not collapsed.
 			expect(parsed.ok && resourceIdOf(parsed.resource)).toBe("11111111-2222-3333-4444-555555555555");
+		}
+	});
+
+	// `connector` is in PARENTS (it has an OpenFGA object type) but no organization owns a connector —
+	// the catalog is global — so a grant may not name the kind, with or without an id.
+	it("refuses the connector kind, with or without an id", () => {
+		for (const id of [null, "11111111-2222-3333-4444-555555555555"]) {
+			expect(parseGrantResource("connector", id)).toEqual({ ok: false, error: UNKNOWN_RESOURCE_TYPE });
 		}
 	});
 });
