@@ -61,6 +61,8 @@ export interface StreamCapabilities {
 	fleetView: boolean;
 	/** `can(actor, 'manage_support', {type: 'support_case'})` — receives every case in the org. */
 	manageSupport: boolean;
+	/** `can(actor, 'view_alerts', {type: 'alert'})` — receives the org's alert changes. */
+	viewAlerts: boolean;
 }
 
 /** The subscriber side of {@link Route}: who the stream is. */
@@ -95,8 +97,8 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 }
 
 /**
- * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `usage`, `billing` and
- * `clusters` have producers; every other topic is declared and routes NOWHERE until its lane adds both its
+ * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `alerts`, `usage`, `billing`
+ * and `clusters` have producers; every other topic is declared and routes NOWHERE until its lane adds both its
  * trigger and its row here — a topic that routed before its RLS arms were written down would be a
  * guess about who may read it.
  */
@@ -141,14 +143,21 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "environments":
 		case "addons":
 			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
+		// alert_rules, alert_channels, alert_rule_channels and alert_deliveries (#6125). They are read
+		// on the service connection under an explicit `org_id` predicate behind the PDP's
+		// `view_alerts` — no RLS arm, and no owner: a delivery can describe a SECURITY event (an
+		// `authz.*` denial), so an alerts notice never goes to the org-wide `o:` key. It routes to the
+		// org's `oalerts:` key, which a stream holds only when its actor may `view_alerts`
+		// (subscriptionKeys) — the same decision every alerts read makes. No project: a policy or a
+		// delivery is org-level, so there is nothing to filter on.
+		case "alerts":
+			return notice.o ? [{ key: orgAlertsKey(notice.o), filterProject: null }] : [];
 		// TODO(#6131): projects — o:, u:; project view filter on the row's own id.
 		case "projects":
 		// TODO(#6123): runners — o:/u: for self runners; managed runners (org_id NULL) → platform.
 		case "runners":
 		// TODO(#6123): fleet_pools config columns + fleet_actions INSERT → platform. Never fleet_leader.
 		case "fleet":
-		// TODO(#6125): alert_deliveries — o: (no user_id); subscribed only with the alerting entitlement.
-		case "alerts":
 			return [];
 		// #6127: the billing record + invoice mirror (`billing`, triggers in lib/db/programmables.sql)
 		// and AI spend (`usage`, the app-layer `emitUsageHint` in lib/realtime/usage-hint.ts — at most
@@ -186,6 +195,11 @@ function orgSupportKey(orgId: string): string {
 	return `osupport:${orgId}`;
 }
 
+/** The routing key of every alert change in an org (view_alerts). */
+function orgAlertsKey(orgId: string): string {
+	return `oalerts:${orgId}`;
+}
+
 /** The routing key of platform-wide rows: managed runners and the fleet. */
 export const PLATFORM_KEY = "platform";
 
@@ -201,6 +215,7 @@ export function subscriptionKeys(
 	if (actor.orgId === actor.userId) keys.push(userKey(actor.userId));
 	if (caps.fleetView) keys.push(PLATFORM_KEY);
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
+	if (caps.viewAlerts) keys.push(orgAlertsKey(actor.orgId));
 	return keys;
 }
 

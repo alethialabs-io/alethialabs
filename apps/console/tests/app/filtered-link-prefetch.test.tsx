@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // A pasted FILTERED link must have its filtered list on the wire (#4980, the audit's F8 on
-// `~/runners?versions=…` and `~/alerts?policyStatus=…`; #4999 on `~/settings/members?statuses=…`).
+// `~/runners?versions=…`; #4999 on `~/settings/members?statuses=…`). `~/alerts?policyStatus=…`
+// prefetches over the read router since #6125: tests/app/alerts-route.test.tsx.
 //
 // Both routes used to prefetch only the pristine key. The client renders pristine, reads the URL
 // in a mount effect, and then asks for the filtered key — which arrived with no data, so
@@ -20,14 +21,11 @@ import { QueryClient, type DehydratedState } from "@tanstack/react-query";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getRunnersPage, getAlertPoliciesPage, getAlertChannelsPage, getAlertDeliveriesPage, getMembersPage } = vi.hoisted(() => {
+const { getRunnersPage, getMembersPage } = vi.hoisted(() => {
 	/** A server action that answers with the query it was asked, so the dehydrated data names it. */
 	const action = () => vi.fn(async (query: unknown) => ({ query, rows: [] }));
 	return {
 		getRunnersPage: action(),
-		getAlertPoliciesPage: action(),
-		getAlertChannelsPage: action(),
-		getAlertDeliveriesPage: action(),
 		getMembersPage: action(),
 	};
 });
@@ -41,21 +39,12 @@ vi.mock("@/app/(private)/[org]/~/runners/runners-client", () => ({
 	RunnersClient: () => null,
 }));
 
-vi.mock("@/app/server/actions/alerts", () => ({
-	getAlertsBootstrap: async () => ({ alerting: true }),
-	getAlertPoliciesPage,
-	getAlertChannelsPage,
-	getAlertDeliveriesPage,
-}));
-vi.mock("@/components/alerts/alerts-page", () => ({ AlertsPage: () => null }));
-
 vi.mock("@/app/server/actions/members", () => ({ getMembersPage }));
 vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: () => null }));
 
 // A fresh client per route call — the browser singleton would carry one test's keys into the next.
 vi.mock("@/lib/query/client", () => ({ getQueryClient: () => new QueryClient() }));
 
-import AlertsRoute from "@/app/(private)/[org]/~/alerts/page";
 import RunnersRoute from "@/app/(private)/[org]/~/runners/page";
 import MembersRoute from "@/app/(private)/[org]/~/settings/members/page";
 
@@ -83,13 +72,6 @@ function dataAt(state: DehydratedState, key: readonly unknown[]): unknown {
 async function runners(searchParams: SearchParams): Promise<DehydratedState> {
 	return dehydratedOf(
 		await RunnersRoute({ params: Promise.resolve({ org: "acme" }), searchParams: Promise.resolve(searchParams) }),
-	);
-}
-
-/** Render the alerts route for one link. */
-async function alerts(searchParams: SearchParams): Promise<DehydratedState> {
-	return dehydratedOf(
-		await AlertsRoute({ params: Promise.resolve({ org: "acme" }), searchParams: Promise.resolve(searchParams) }),
 	);
 }
 
@@ -121,25 +103,6 @@ describe("~/runners prefetches the link's filtered grid", () => {
 	it("fetches the pristine grid once for a pristine link", async () => {
 		await runners({});
 		expect(getRunnersPage).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe("~/alerts prefetches each panel's filtered list", () => {
-	it("dehydrates the policies key a `policyStatus` link settles on", async () => {
-		const state = await alerts({ policyStatus: "off" });
-		expect(dataAt(state, ["alerts", "policies", "acme", { status: ["off"] }])).toEqual({
-			query: { status: ["off"] },
-			rows: [],
-		});
-		// And the pristine lists beside it, for the hydration render.
-		expect(keysOf(state)).toContain(JSON.stringify(["alerts", "policies", "acme", {}]));
-	});
-
-	it("routes each prefixed param to ITS panel and no other", async () => {
-		const state = await alerts({ channelType: "slack", activityStatus: "failed" });
-		expect(dataAt(state, ["alerts", "channels", "acme", { types: ["slack"] }])).toBeDefined();
-		expect(dataAt(state, ["alerts", "deliveries", "acme", { status: ["failed"] }])).toBeDefined();
-		expect(getAlertPoliciesPage).not.toHaveBeenCalledWith(expect.objectContaining({ status: expect.anything() }));
 	});
 });
 
