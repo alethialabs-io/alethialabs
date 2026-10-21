@@ -7809,7 +7809,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",

@@ -11,11 +11,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({
-	currentActor: vi.fn(),
-	authorize: vi.fn(),
-	authorizeInOrg: vi.fn(),
-}));
+vi.mock("@/lib/authz/guard", () => {
+	// The billing page's reads enforce `manage_billing` with `authorizeRead` (no activity row per
+	// allowed live refetch, #6127); the writes with `authorize`. One mock answers both, so every test below
+	// states one permission outcome for the read and the write alike.
+	const authorize = vi.fn();
+	return { currentActor: vi.fn(), authorize, authorizeRead: authorize, authorizeQuiet: authorize, authorizeInOrg: vi.fn() };
+});
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/billing/invoices", () => ({
 	listOrgInvoices: vi.fn(),
@@ -257,16 +259,11 @@ import {
 	detachPaymentMethod,
 	getBillingDetails,
 	getCollaborationAccess,
-	getPlanHistory,
 	getProOffer,
 	findUnfinishedNewOrgSetup,
 	isOrgSlugAvailable,
 	linkSubscriptionToNewOrg,
 	resolveNewOrgSetup,
-	getInvoice,
-	listInvoices,
-	listPaymentMethods,
-	listTransactions,
 	resumeSubscription,
 	saveNewOrgSetupDetails,
 	saveTaxId,
@@ -275,10 +272,18 @@ import {
 	startProTrial,
 	updateBillingAddress,
 } from "@/app/server/actions/billing";
+// The billing page's READS moved to the read router's billing domain (#6127); their bodies are
+// the same functions, tested here against the same mocked boundary.
+import {
+	getPlanHistory,
+	listInvoices,
+	listPaymentMethods,
+	listTransactions,
+} from "@/lib/rpc/procedures/billing";
 import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
-import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
+import { listOrgInvoices } from "@/lib/billing/invoices";
 import { getPurchaseStripe, getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { openHold } from "@/lib/billing/payment-holds/store";
@@ -313,7 +318,6 @@ const authzInOrg = vi.mocked(authorizeInOrg);
 const actor = vi.mocked(currentActor);
 const orgBilling = vi.mocked(getOrgBilling);
 const orgInvoicesList = vi.mocked(listOrgInvoices);
-const orgInvoiceGet = vi.mocked(getOrgInvoice);
 
 /** A thenable drizzle-ish chain whose terminal `await` pops the next queued result set. */
 function makeDb() {
@@ -2921,23 +2925,6 @@ describe("listInvoices", () => {
 		await expect(listInvoices({})).resolves.toEqual([]);
 		expect(orgInvoicesList).toHaveBeenCalledWith("org-1", {});
 		expect(stripe.invoices.list).not.toHaveBeenCalled();
-	});
-});
-
-describe("getInvoice", () => {
-	it("maps a single mirrored invoice, or null when it isn't the org's", async () => {
-		orgInvoiceGet.mockResolvedValue(null);
-		expect(await getInvoice("nope")).toBeNull();
-		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "nope");
-	});
-
-	// The single-invoice sibling read, same defect (#3731). It has no production caller, so it was
-	// not one of the two 500s — but it carried the same guard over the same table.
-	it("still reads the mirrored table when Stripe is NOT configured", async () => {
-		vi.mocked(isStripeConfigured).mockReturnValue(false);
-		orgInvoiceGet.mockResolvedValue(null);
-		await expect(getInvoice("uuid-1")).resolves.toBeNull();
-		expect(orgInvoiceGet).toHaveBeenCalledWith("org-1", "uuid-1");
 	});
 });
 

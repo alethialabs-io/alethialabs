@@ -71,6 +71,7 @@ import {
 	cloudIdentities,
 	cloudRegions,
 	grants,
+	invoice,
 	jobs,
 	member,
 	organization,
@@ -163,6 +164,22 @@ export type Fixture =
 			input(seeded: Seeded, org: Org): unknown;
 			/** Whether the output IS that row's answer — a refusal or an empty answer reveals nothing. */
 			reveals(out: unknown, seeded: Seeded, org: Org): boolean;
+	  }
+	| {
+			kind: "gated";
+			/** Why the caller's answer may be a REFUSAL rather than rows (a permission, a plan, an edition). */
+			reason: string;
+			input: unknown;
+			/** When the read answers with data, how to find each org's marker in it (enterprise only). */
+			markers?(out: unknown, seeded: Seeded): { x: boolean; y: boolean };
+			/** The outcome at each address in the enterprise edition: "ok", or the refusal's code. */
+			enterprise?: { x: string; y: string };
+			/**
+			 * Run this read with U holding `manage_billing` in X (owner there) — granted for THIS read's
+			 * calls only and put back to viewer after, so no other fixture sees U as anything but a
+			 * viewer (#6209 review).
+			 */
+			billingAdminInX?: true;
 	  };
 
 /** The seeded support case of `org` (opened by the caller U). */
@@ -200,6 +217,49 @@ function hasStatus(out: unknown): boolean {
 
 /** The seeded job of `org`. */
 const jobOf = (s: Seeded, org: Org) => (org === "x" ? s.jobX : s.jobY);
+/**
+ * The `gated` kind (#6127). Some reads refuse THIS caller — U is a viewer, and the billing-admin
+ * reads need `manage_billing`; the usage reads refuse the personal scope (community's answer for
+ * every org address); the hosted-only reads refuse a deployment with no Stripe. A refusal is still
+ * an answer the ADDRESS decides, so the claim is the same one the other kinds make, about the whole
+ * outcome: the session never changes it — the value, or the refusal's code. Where the read does
+ * answer with data, `markers` names whose data it is.
+ */
+function outcomeOf(outcome: Outcome): unknown {
+	if (outcome.ok) return { ok: true, value: outcome.value };
+	const code =
+		outcome.error instanceof ORPCError
+			? outcome.error.code
+			: isNotFound(outcome.error)
+				? "NOT_FOUND"
+				: String(outcome.error);
+	return { ok: false, code, status: outcome.status };
+}
+
+
+/** A project of X the usage project reads address (seeded in `beforeAll`, authored by W). */
+const USAGE_PROJECT_X = randomUUID();
+
+/**
+ * Each org's seeded PAID period: distinct, both STARTED in the past and both still RUNNING — a paid
+ * period that has ended lapses the plan's entitlements (lib/billing/plan.ts), which would switch
+ * off #6118's alerting marker. The starts are what the usage reads must answer with.
+ */
+const X_PERIOD = { start: new Date("2020-01-15T00:00:00.000Z"), end: new Date("2099-01-15T00:00:00.000Z") };
+const Y_PERIOD = { start: new Date("2020-06-07T00:00:00.000Z"), end: new Date("2099-06-07T00:00:00.000Z") };
+
+/** A hosted-only read's outcome where U may make it: answered with Stripe wired, else plan-gated. */
+function hostedOr(code: string): string {
+	return process.env.STRIPE_SECRET_KEY ? "ok" : code;
+}
+
+/** "ok", or the refusal code an outcome carries (as {@link outcomeOf} reports it). */
+function codeOf(outcome: Outcome): string {
+	if (outcome.ok) return "ok";
+	if (outcome.error instanceof ORPCError) return outcome.error.code;
+	return isNotFound(outcome.error) ? "NOT_FOUND" : String(outcome.error);
+}
+
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -405,6 +465,115 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "by-id",
 		input: (s, org) => ({ projectId: org === "x" ? s.projectX : s.projectY }),
 		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
+	},
+	// ── #6127: billing and usage. The seeded world (see `beforeAll`):
+	//   · both orgs are on Team (#6118's seed); X has AI cap 1111 credits and a paid period from
+	//     2020-01-15, Y cap 2222 and one from 2020-06-07 — DISTINCT starts, both still running, so a
+	//     period read from the wrong org (or from the clock) shows in the output;
+	//   · for the billing-admin reads ONLY, U holds `manage_billing` in X (owner there, for those
+	//     calls; viewer in Y), so they ANSWER at X and refuse at Y — not refused in every cell;
+	//   · one invoice per org (IT-6127-X / IT-6127-Y); X has two projects (#6114's and #6127's), Y one.
+	// `enterprise` pins each gated read's outcome per address in the enterprise edition (the
+	// multi-tenant one), so a gated fixture cannot pass by refusing everywhere. The hosted-only reads
+	// answer ENTITLEMENT_REQUIRED where Stripe is not configured (CI) — past the permission check,
+	// which is the point — and FORBIDDEN at Y. ─────────────────────────────────────────────────────
+	"billing.summary": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({ x: field(out, "memberCount") === 3, y: field(out, "memberCount") === 2 }),
+	},
+	"billing.paymentMethods": {
+		kind: "gated",
+		billingAdminInX: true,
+		reason: "manage_billing (U holds it in X only), and hosted billing",
+		input: undefined,
+		enterprise: { x: hostedOr("ENTITLEMENT_REQUIRED"), y: "FORBIDDEN" },
+	},
+	"billing.invoices": {
+		kind: "gated",
+		billingAdminInX: true,
+		reason: "manage_billing (U holds it in X only)",
+		input: {},
+		enterprise: { x: "ok", y: "FORBIDDEN" },
+		markers: (out) => ({
+			x: hasElement(out, "number", "IT-6127-X"),
+			y: hasElement(out, "number", "IT-6127-Y"),
+		}),
+	},
+	"billing.transactions": {
+		kind: "gated",
+		billingAdminInX: true,
+		reason: "manage_billing (U holds it in X only), and hosted billing",
+		input: undefined,
+		enterprise: { x: hostedOr("ENTITLEMENT_REQUIRED"), y: "FORBIDDEN" },
+	},
+	"billing.planHistory": {
+		kind: "gated",
+		billingAdminInX: true,
+		reason: "manage_billing (U holds it in X only), and hosted billing",
+		input: undefined,
+		enterprise: { x: hostedOr("ENTITLEMENT_REQUIRED"), y: "FORBIDDEN" },
+	},
+	"billing.liveAiPrices": {
+		kind: "not-org-scoped",
+		reason: "the AI tiers' price list is the same for every org",
+		input: undefined,
+	},
+	"usage.org": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({
+			x: field(out, "periodStart") === X_PERIOD.start.toISOString(),
+			y: field(out, "periodStart") === Y_PERIOD.start.toISOString(),
+		}),
+	},
+	"usage.resources": {
+		kind: "gated",
+		reason: "refuses the personal scope, which is community's answer for every org address",
+		input: undefined,
+		enterprise: { x: "ok", y: "ok" },
+		markers: (out) => ({ x: field(out, "projects") === 2, y: field(out, "projects") === 1 }),
+	},
+	"usage.overTime": {
+		kind: "gated",
+		reason: "refuses the personal scope, which is community's answer for every org address",
+		input: { range: { preset: "12mo" } },
+		enterprise: { x: "ok", y: "ok" },
+	},
+	"usage.ai": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({
+			x: field(out, "orgWeeklyCapCredits") === 1111,
+			y: field(out, "orgWeeklyCapCredits") === 2222,
+		}),
+	},
+	"usage.project": {
+		kind: "gated",
+		reason: "addresses X's project: answered at X, NOT_FOUND at Y and in the personal scope",
+		input: { projectId: USAGE_PROJECT_X },
+		enterprise: { x: "ok", y: "NOT_FOUND" },
+		// Answered at X with X's PAID period — the project meter's window is its org's.
+		markers: (out) => ({ x: field(out, "periodStart") === X_PERIOD.start.toISOString(), y: false }),
+	},
+	"usage.projectResources": {
+		kind: "gated",
+		reason: "addresses X's project: answered at X, NOT_FOUND at Y and in the personal scope",
+		input: { projectId: USAGE_PROJECT_X },
+		enterprise: { x: "ok", y: "NOT_FOUND" },
+	},
+	"usage.projectAi": {
+		kind: "gated",
+		reason: "addresses X's project: answered at X, NOT_FOUND at Y and in the personal scope",
+		input: { projectId: USAGE_PROJECT_X },
+		enterprise: { x: "ok", y: "NOT_FOUND" },
+		markers: (out) => ({ x: field(out, "periodStart") === X_PERIOD.start.toISOString(), y: false }),
+	},
+	"usage.projectOverTime": {
+		kind: "gated",
+		reason: "addresses X's project: answered at X, NOT_FOUND at Y and in the personal scope",
+		input: { projectId: USAGE_PROJECT_X, range: { preset: "12mo" } },
+		enterprise: { x: "ok", y: "NOT_FOUND" },
 	},
 };
 
@@ -673,6 +842,29 @@ export async function runRpcTenancySuite(opts: {
 			// A job on each org's project: the addressed `jobs.project` read needs one (#6121).
 			seeded.projectJobX = await seedJob(W, ORG_X, { project_id: seeded.projectX });
 			seeded.projectJobY = await seedJob(W, ORG_Y, { project_id: seeded.projectY });
+			// #6127's markers, on the billing records #6118 seeded above (both on a live Team plan): an AI
+			// cap and a distinct paid period per org; then one invoice per org and one more project in X.
+			// U's `manage_billing` in X is granted per read (`billingAdminInX`), never suite-wide.
+			await db
+				.update(organizationBilling)
+				.set({ aiOrgWeeklyCapCredits: 1111, currentPeriodStart: X_PERIOD.start, currentPeriodEnd: X_PERIOD.end })
+				.where(eq(organizationBilling.organizationId, ORG_X));
+			await db
+				.update(organizationBilling)
+				.set({ aiOrgWeeklyCapCredits: 2222, currentPeriodStart: Y_PERIOD.start, currentPeriodEnd: Y_PERIOD.end })
+				.where(eq(organizationBilling.organizationId, ORG_Y));
+			await db.insert(invoice).values([
+				{ organizationId: ORG_X, stripeInvoiceId: `in_it6127_x_${ORG_X.slice(0, 8)}`, number: "IT-6127-X", status: "paid", amountTotal: 100, currency: "usd", paidAt: X_PERIOD.start },
+				{ organizationId: ORG_Y, stripeInvoiceId: `in_it6127_y_${ORG_Y.slice(0, 8)}`, number: "IT-6127-Y", status: "paid", amountTotal: 200, currency: "usd", paidAt: Y_PERIOD.start },
+			]);
+			await db.insert(projects).values({
+				id: USAGE_PROJECT_X,
+				user_id: W,
+				org_id: ORG_X,
+				project_name: `it-6127-${USAGE_PROJECT_X.slice(0, 8)}`,
+				region: "eu-west-1",
+				iac_version: "1.0.0",
+			});
 			// The stamp is the premise of the markers; read it back rather than trust the insert.
 			const stamped = await db
 				.select({ id: jobs.id, org: jobs.org_id })
@@ -700,6 +892,8 @@ export async function runRpcTenancySuite(opts: {
 			}
 			// Inventory rows cascade with their identity.
 			await db.delete(cloudIdentities).where(inArray(cloudIdentities.org_id, [ORG_X, ORG_Y]));
+			await db.delete(projects).where(eq(projects.id, USAGE_PROJECT_X));
+			await db.delete(invoice).where(inArray(invoice.organizationId, [ORG_X, ORG_Y]));
 			await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(grants).where(inArray(grants.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));
@@ -749,13 +943,41 @@ export async function runRpcTenancySuite(opts: {
 			);
 		}
 
+		/**
+		 * Runs a fixture's calls as its caller: U, or — for a billing-admin read (`billingAdminInX`) — U
+		 * as owner of X for THESE calls only, put back to viewer afterwards, so the grant cannot leak
+		 * into any other fixture's answer (#6209 review).
+		 */
+		async function asFixtureCaller<T>(fixture: Fixture, fn: () => Promise<T>): Promise<T> {
+			if (fixture.kind !== "gated" || !fixture.billingAdminInX) return fn();
+			await ensureMemberGrant(ORG_X, U, "owner");
+			try {
+				return await fn();
+			} finally {
+				await ensureMemberGrant(ORG_X, U, "viewer");
+			}
+		}
+
 		describe.each(ENTRY_POINTS)("through %s", (_label, call) => {
 			it.each(PATHS)("%s — the address beats the session (session X, address Y ≡ session Y, address Y)", async (path) => {
 				const fixture = FIXTURES[path];
 				if (!fixture) throw new Error(`${path} has no fixture`);
 				if (fixture.kind === "by-id") return expectByIdBounded(call, path, fixture, "y");
-				const mismatched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_X }, fixture.input);
-				const matched = await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_Y }, fixture.input);
+				const [mismatched, matched] = await asFixtureCaller(fixture, async (): Promise<[Outcome, Outcome]> => [
+					await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_X }, fixture.input),
+					await call(path, { path: rpcPath(SLUG_Y, path), user: U, sessionOrg: ORG_Y }, fixture.input),
+				]);
+				const gated = fixture;
+				if (gated.kind === "gated") {
+					expect(outcomeOf(mismatched), `${path} (${gated.reason})`).toEqual(outcomeOf(matched));
+					if (gated.enterprise && edition === "enterprise") {
+						expect(codeOf(mismatched), `${path} at Y`).toBe(gated.enterprise.y);
+					}
+					if (gated.markers && edition === "enterprise" && mismatched.ok) {
+						expect(gated.markers(mismatched.value, seeded)).toEqual({ x: false, y: gated.enterprise?.y === "ok" });
+					}
+					return;
+				}
 				expect(mismatched.ok, `session X / address Y failed: ${String(mismatched.ok ? "" : mismatched.error)}`).toBe(true);
 				expect(matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
@@ -769,6 +991,7 @@ export async function runRpcTenancySuite(opts: {
 					if (elsewhere.ok) expect(elsewhere.value, `${path} (${fixture.reason}) differs between X and Y`).toEqual(mismatched.value);
 					return;
 				}
+				if (fixture.kind === "gated") throw new Error(`${path}: a gated fixture is asserted above`);
 				const markers = fixture.markers(mismatched.value, seeded);
 				if (edition === "enterprise") {
 					// The multi-tenant answer: Y's rows, and nothing of X's.
@@ -785,12 +1008,26 @@ export async function runRpcTenancySuite(opts: {
 				const fixture = FIXTURES[path];
 				if (!fixture) throw new Error(`${path} has no fixture`);
 				if (fixture.kind === "by-id") return expectByIdBounded(call, path, fixture, "x");
-				const mismatched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y }, fixture.input);
-				const matched = await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_X }, fixture.input);
+				const [mismatched, matched] = await asFixtureCaller(fixture, async (): Promise<[Outcome, Outcome]> => [
+					await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_Y }, fixture.input),
+					await call(path, { path: rpcPath(SLUG_X, path), user: U, sessionOrg: ORG_X }, fixture.input),
+				]);
+				const gated = fixture;
+				if (gated.kind === "gated") {
+					expect(outcomeOf(mismatched), `${path} (${gated.reason})`).toEqual(outcomeOf(matched));
+					if (gated.enterprise && edition === "enterprise") {
+						expect(codeOf(mismatched), `${path} at X`).toBe(gated.enterprise.x);
+					}
+					if (gated.markers && edition === "enterprise" && mismatched.ok) {
+						expect(gated.markers(mismatched.value, seeded)).toEqual({ x: true, y: false });
+					}
+					return;
+				}
 				expect(mismatched.ok && matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
 				expect(mismatched.value).toEqual(matched.value);
 				if (fixture.kind === "not-org-scoped") return; // equality above is its whole claim here
+				if (fixture.kind === "gated") throw new Error(`${path}: a gated fixture is asserted above`);
 				expect(fixture.markers(mismatched.value, seeded)).toEqual(
 					edition === "enterprise" ? { x: true, y: false } : { x: false, y: false },
 				);

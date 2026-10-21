@@ -27,6 +27,7 @@ import { getServiceDb } from "@/lib/db";
 import { commerceOrder } from "@/lib/db/schema";
 import { deploymentMode, isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
 
 /** Guards that billing is actually wired before any Stripe call. Mirrors billing.ts's own guard —
  *  a withdrawal that cannot refund must fail loudly rather than record a refund that never moved. */
@@ -191,6 +192,7 @@ export async function withdrawFromContract(
 	// supplying under an agreement that no longer exists (and would keep metering usage).
 	if (order.stripeSubscriptionId) {
 		await stripe.subscriptions.cancel(order.stripeSubscriptionId);
+		forgetSubscription(order.stripeSubscriptionId); // the plan card's cached read of it is now stale (lib/billing/subscription-cache.ts)
 	}
 
 	await getServiceDb()

@@ -742,7 +742,8 @@ controls:
   - id: billing.card.remove
     route: /[org]/~/settings/billing
     surface: apps/console/components/settings/billing/payment-methods-card.tsx
-    mutation: detachPaymentMethod
+    # `removeCard` is `detachPaymentMethod` through the mutation contract (#6127).
+    mutation: removeCard
     control: { role: button, name: "Remove card" }
     confirm: alert-dialog
     confirm_action: "Remove card"
@@ -756,7 +757,8 @@ controls:
   - id: billing.subscription.cancel
     route: /[org]/~/settings/billing
     surface: apps/console/components/settings/billing/billing-panel.tsx
-    mutation: cancelSubscription
+    # `cancelPlan` is `cancelSubscription` through the mutation contract (#6127).
+    mutation: cancelPlan
     control: { role: button, name: "Cancel plan" }
     confirm: confirm-dialog
     confirm_action: "Confirm cancellation"

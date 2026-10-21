@@ -31,26 +31,31 @@
 //
 // Hobby orgs get an inline "Upgrade to Pro" (UpgradeOrgSheet); subscription/payment management
 // still lives on the Billing page.
+//
+// ── Data (#6127, ADR 0005) ───────────────────────────────────────────────────────────────────────
+// Every read is a GET procedure the route PREFETCHES on the server (`~/usage/page.tsx`), so the
+// first paint carries the numbers and the browser fetches nothing on mount. Each section owns its
+// read and its four renders (pending · refused · failed · data, `../billing/read-state.tsx`), so one
+// failing read takes down one section, never the page. Nothing here polls: usage moves through the
+// `jobs` and `usage` topics of the org's change stream (lib/query/topics.ts).
 
 import { formatMonthlyRate } from "@repo/format";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Building2, Info } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState, useTransition } from "react";
-import { toast } from "sonner";
-import {
-	type BillingSummary,
-	getBillingSummary,
-	getOrgUsage,
-	getResourceCounts,
-	getUsageOverTime,
-	type ResourceCountsReport,
-	setUsageHardCap,
-	type UsageOverTime,
-	type UsageReport,
-} from "@/app/server/actions/billing";
+import { useState } from "react";
+import { setUsageHardCap } from "@/app/server/actions/billing";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
+import { RegionError } from "@/components/errors/region-error";
+import {
+	RegionRefusal,
+	refusalOf,
+	retryUnlessRefused,
+} from "@/components/settings/billing/read-state";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
+import { ClockText } from "@/components/settings/usage/clock-text";
+import { useUsageRange } from "@/components/settings/usage/use-usage-range";
 import {
 	count,
 	countQuota,
@@ -61,6 +66,10 @@ import {
 	OverTimeCard,
 } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
+import type { BillingSummary } from "@/lib/rpc/procedures/billing";
+import type { UsageReport } from "@/lib/rpc/procedures/usage";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { formatDate, formatMinutes, formatMoney, formatQuota } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
@@ -69,89 +78,38 @@ import { Card } from "@repo/ui/card";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { SectionHeading } from "@repo/ui/section-heading";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
-import {
-	type DateRange,
-	DEFAULT_PRESET,
-	formatRangeLabel,
-	presetRange,
-	RANGE_PRESETS,
-} from "@repo/ui/range";
-import { Skeleton } from "@repo/ui/skeleton";
+import { SectionHeading } from "@repo/ui/section-heading";
+import { UsageSkeleton } from "./usage-skeleton";
 
 /** Renders the organization's Usage view. See the taxonomy note at the top of this file. */
 export function UsagePanel() {
-	const orgSlug = useActiveOrgSlug();
-	const [summary, setSummary] = useState<BillingSummary | null>(null);
-	const [usage, setUsage] = useState<UsageReport | null>(null);
-	const [counts, setCounts] = useState<ResourceCountsReport | null>(null);
-	const [overTime, setOverTime] = useState<UsageOverTime | null>(null);
-	// Distinct from `overTime === null`, which this panel also uses for "not asked yet".
-	// Without the second flag a failed window is indistinguishable from a pending one and
-	// `OverTimeCard` renders its skeleton forever. See the `error` prop's doc.
-	const [overTimeFailed, setOverTimeFailed] = useState(false);
+	const summary = useQuery(orpc.billing.summary.queryOptions({ retry: retryUnlessRefused }));
 
-	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
-	const [rangeLabel, setRangeLabel] = useState(
-		RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days",
-	);
-	const [metric, setMetric] = useState<Metric>("runnerMinutes");
-
-	const [pending, startTransition] = useTransition();
-	const [createOpen, setCreateOpen] = useState(false);
-	const [upgradeOpen, setUpgradeOpen] = useState(false);
-
-	// Period-fixed data (seats, runner-minutes this period, resource counts, AI standing).
-	const refresh = useCallback(() => {
-		getBillingSummary()
-			.then(setSummary)
-			.catch(() => toast.error("Couldn't load usage."));
-		getOrgUsage()
-			.then(setUsage)
-			.catch(() => {
-				/* best-effort; the meter just shows a dash */
-			});
-		getResourceCounts()
-			.then(setCounts)
-			.catch(() => {
-				/* best-effort */
-			});
-	}, []);
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
-
-	// Range-driven data (the over-time chart) re-queries whenever the window changes.
-	//
-	// BOTH pieces of state are reset before the request, and the clear is the half that used to be
-	// missing. `rangeLabel` updates synchronously with the picker, so leaving the previous window's
-	// series in place captioned the OLD bars with the NEW window — seven days of data labelled
-	// "last 30 days" for the length of the refetch. It also made the card's "has not answered yet"
-	// branch unreachable on this panel while the PROJECT panel hit it on every picker change, which
-	// is precisely the divergence the shared component exists to prevent.
-	useEffect(() => {
-		let active = true;
-		setOverTime(null);
-		setOverTimeFailed(false);
-		getUsageOverTime({ from: range.from.toISOString(), to: range.to.toISOString() })
-			.then((d) => active && setOverTime(d))
-			.catch(() => active && setOverTimeFailed(true));
-		return () => {
-			active = false;
-		};
-	}, [range]);
-
-	if (!summary) {
-		return (
-			<div className="space-y-4">
-				<Skeleton className="h-24 w-full" />
-				<Skeleton className="h-48 w-full" />
-			</div>
-		);
+	if (summary.data === undefined) {
+		if (summary.isError) {
+			const refusal = refusalOf(summary.error);
+			return refusal ? (
+				<RegionRefusal refusal={refusal} />
+			) : (
+				<RegionError
+					title="Couldn't load usage"
+					description="Something went wrong loading this organization's plan and usage."
+					onRetry={() => void summary.refetch()}
+				/>
+			);
+		}
+		return <UsageSkeleton />;
 	}
+	return <UsageForSummary summary={summary.data} />;
+}
 
-	// Self-managed / community: no Stripe metering — usage is a hosted-billing concept.
+/** The page once the plan is known: the two non-metered states, or the report itself. */
+function UsageForSummary({ summary }: { summary: BillingSummary }) {
+	const [createOpen, setCreateOpen] = useState(false);
+
+	// Self-managed / community: no Stripe metering — usage is a hosted-billing concept. This is the
+	// edition gate, unchanged by #6127: it is decided by the summary, not by a refused read.
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
@@ -184,21 +142,17 @@ export function UsagePanel() {
 		);
 	}
 
+	return <UsageReportView summary={summary} />;
+}
+
+/** The org's usage report: plan & limits, usage over time, resources, AI. */
+function UsageReportView({ summary }: { summary: BillingSummary }) {
+	const orgSlug = useActiveOrgSlug();
+	const queryClient = useQueryClient();
+	const [upgradeOpen, setUpgradeOpen] = useState(false);
+	const usage = useQuery(orpc.usage.org.queryOptions({ retry: retryUnlessRefused }));
 	const isCommunity = summary.plan === "community" || summary.status === "none";
-	// An ABSENT seat cap fills 0, not 100 — the same answer the concurrency meter below already
-	// gives for the identical "the plan sets no limit" case. Filling the gauge instead made a Hobby
-	// org render `3 / ∞` above a bar drawn solid to its end: "no cap" and "at the cap" stated in one
-	// cell. A gauge with no denominator has no fraction to draw, and 0 is the only reading of it
-	// that does not assert one.
-	const seatFill =
-		summary.seats != null && summary.seats > 0
-			? (summary.memberCount / summary.seats) * 100
-			: 0;
-	const concurrencyMax = usage?.maxConcurrentJobs ?? null;
-	// ONE percentage, read twice. The two `sub` branches below each used to compute
-	// `Math.round(usage.pct * 100)` for themselves — two expressions, two lines apart, that a
-	// later edit could change independently while both claim to be "% of included".
-	const pctUsed = usage ? Math.round(usage.pct * 100) : 0;
+	const periodEnd = usage.data?.periodEnd;
 
 	return (
 		<div className="space-y-2">
@@ -212,9 +166,11 @@ export function UsagePanel() {
 						{/* The plan name is its own element and the period is a quieter one beside
 						    it: they are a fact and a qualifier ON that fact, not one sentence. */}
 						<span>{planMeta(summary.plan).name} plan</span>
-						{usage ? (
+						{periodEnd ? (
 							<span className="text-text-tertiary">
-								{" · "}period to {formatDate(usage.periodEnd)}
+								{" · "}period to{" "}
+								{/* The period end is a date in the VIEWER's zone: after hydration only. */}
+								<ClockText sizer="30 Sept 2026" text={() => formatDate(periodEnd)} />
 							</span>
 						) : null}
 					</>
@@ -243,161 +199,9 @@ export function UsagePanel() {
 				}
 			/>
 
-			{/* 1 · Plan & limits — point-in-time gauges vs the plan, this billing period. First
-			    because it is the only section an operator can act on right now. */}
-			<SettingsSection title="Plan & limits">
-				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<div className="grid grid-cols-1 sm:grid-cols-3">
-						<Meter
-							label="Seats"
-							// `countQuota`, not a locally assembled pair: this cell printed a bare
-							// `3` when the plan set no seat cap while the concurrency cell two
-							// columns right printed `2 / ∞` for the same "no limit". An absent
-							// allowance is `∞` at both now.
-							value={countQuota(summary.memberCount, summary.seats)}
-							fill={seatFill}
-							sub={
-								summary.seats != null
-									? `${count(Math.max(0, summary.seats - summary.memberCount))} seats available`
-									: "members in this organization"
-							}
-						/>
-						<Meter
-							label="Runner minutes"
-							value={
-								// `formatQuota`, not a locally assembled pair. `usedMinutes` is a FLOAT
-								// — rendered raw it read `0.943` here and `0` after a local Math.round
-								// — and the pair around it is the second half of the same problem:
-								// this file printed `47 min / 200` while the helper written for
-								// exactly this readout prints `47 min / 200 min`. One function, one
-								// answer; the allowance still stays the plain integer the plan and
-								// the pricing page quote.
-								usage ? formatQuota(usage.usedMinutes, usage.includedMinutes) : "—"
-							}
-							fill={usage ? usage.pct * 100 : 0}
-							sub={
-								!usage
-									? "managed runner usage this period"
-									: usage.overLimit
-										// `overageCost` is a `Money` in MINOR units and carries its own currency
-										// (#4176 part b), so neither the `* 100` this line used to apply nor the
-										// `"USD"` literal it used to name is written here any more. The currency
-										// is decided once, where the rate is (`OVERAGE_RATE_PER_MIN`).
-										? `${formatMinutes(usage.overageMinutes)} over · ~${formatMoney(usage.overageCost)} overage`
-										: usage.approaching
-											? `${pctUsed}% used — approaching included`
-											: `${pctUsed}% of included · self-hosted is free`
-							}
-						/>
-						<Meter
-							label="Concurrency"
-							value={countQuota(usage?.runningJobs ?? 0, concurrencyMax)}
-							fill={
-								concurrencyMax && concurrencyMax > 0
-									? ((usage?.runningJobs ?? 0) / concurrencyMax) * 100
-									: 0
-							}
-							sub="jobs running right now"
-						/>
-					</div>
-
-					{/* Spend control: pause at the included allowance instead of overage. */}
-					{usage && usage.plan !== "community" && (
-						<label className="flex cursor-pointer items-center gap-2 border-t border-border px-6 py-3 text-ui-sm text-text-tertiary">
-							<input
-								type="checkbox"
-								className="accent-ink"
-								checked={usage.hardCap}
-								disabled={pending}
-								onChange={(e) => {
-									const next = e.target.checked;
-									setUsage((u) => (u ? { ...u, hardCap: next } : u));
-									startTransition(async () => {
-										try {
-											await setUsageHardCap(next);
-										} catch {
-											toast.error("Couldn't update the usage cap.");
-											setUsage((u) => (u ? { ...u, hardCap: !next } : u));
-										}
-									});
-								}}
-							/>
-							Pause new jobs at my included minutes instead of billing overage
-						</label>
-					)}
-				</div>
-			</SettingsSection>
-
-			{/* 2 · Usage over time — cumulative, and the ONLY home for a number the range picker
-			    can move. The picker is this section's action, so the control and everything it
-			    changes are on screen together. */}
-			<SettingsSection
-				title="Usage over time"
-				action={
-					<div className="flex flex-wrap items-center gap-2">
-						<QuickRangeFilter
-							label={rangeLabel}
-							value={range}
-							onChange={(r, l) => {
-								setRange(r);
-								setRangeLabel(l);
-							}}
-						/>
-						<DateRangeFilter
-							value={range}
-							onChange={(r) => {
-								setRange(r);
-								setRangeLabel(formatRangeLabel(r));
-							}}
-						/>
-					</div>
-				}
-			>
-				<OverTimeCard
-					metric={metric}
-					onMetricChange={setMetric}
-					series={overTime?.series}
-					totals={overTime?.totals}
-					error={overTimeFailed}
-					rangeLabel={rangeLabel}
-				/>
-			</SettingsSection>
-
-			{/* 3 · Resources — what the org runs right now, and what those things cost OUTSIDE the
-			    plan: Alethia meters the minutes, the cloud bills the clusters. Nothing here moves
-			    when the range picker moves; the job count that did now lives in the section above,
-			    which is why this card sits below it rather than above. */}
-			<SettingsSection title="Resources">
-				<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-					<FactList>
-						<Fact label="Projects" value={counts ? count(counts.projects) : "—"} />
-						<Fact
-							label="Clusters"
-							value={counts ? count(counts.clusters) : "—"}
-							sub="under management"
-						/>
-						{/* Spend is a fact about what this org runs, so it is a row of the same list —
-						    not a paragraph under it. It used to sit outside as a hand-rolled
-						    flex row, which left a screen reader with three terms and their values
-						    followed by a loose line for the fourth, and the fourth is the one that
-						    costs money. The sunken band is a treatment, not a different kind of
-						    thing. */}
-						<Fact
-							className="border-t bg-surface-sunken"
-							icon={<Info size={13} />}
-							label="Estimated cloud spend under management"
-							value={counts ? formatMonthlyRate(counts.spendUnderManagement) : "—"}
-						/>
-					</FactList>
-					{/* The footnote of the figure it qualifies. It used to close the PLAN & LIMITS
-					    card — under the seats, minutes and concurrency meters, which no provider
-					    bills for — a whole section away from the only cloud-spend number here. */}
-					<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-ui-sm text-text-tertiary">
-						<Info size={13} />
-						Your cloud-resource spend is billed separately by your provider.
-					</div>
-				</div>
-			</SettingsSection>
+			<PlanAndLimits summary={summary} usage={usage} />
+			<UsageOverTimeSection />
+			<ResourcesSection />
 
 			{/* 4 · AI plan & usage — standalone metered product (daily/weekly % + top-ups). */}
 			<AiUsageSection />
@@ -406,10 +210,262 @@ export function UsagePanel() {
 				open={upgradeOpen}
 				onOpenChange={(o) => {
 					setUpgradeOpen(o);
-					if (!o) refresh();
+					// An upgrade changes the plan, the allowance and the period: re-read every read on
+					// this page that shows them (the change stream also hints, once Stripe confirms).
+					if (!o) {
+						void queryClient.invalidateQueries({ queryKey: orpc.billing.key() });
+						void queryClient.invalidateQueries({ queryKey: orpc.usage.key() });
+					}
 				}}
 				orgSlug={orgSlug}
 			/>
 		</div>
+	);
+}
+
+/** The org-usage read as the plan section consumes it. */
+interface UsageRead {
+	data: UsageReport | undefined;
+	isError: boolean;
+	error: unknown;
+	refetch: () => unknown;
+}
+
+/**
+ * 1 · Plan & limits — point-in-time gauges vs the plan, this billing period. First because it is
+ * the only section an operator can act on right now.
+ */
+function PlanAndLimits({ summary, usage }: { summary: BillingSummary; usage: UsageRead }) {
+	// "Pause at my included minutes": an optimistic flip of the cached report, rolled back if the
+	// server refuses. The checkbox IS the confirmation, so there is no success toast.
+	const pause = useActionMutation(setUsageHardCap, {
+		invalidates: [orpc.usage.org.key()],
+		optimistic: [
+			{
+				key: orpc.usage.org.queryKey(),
+				update: (current, variables) =>
+					typeof current === "object" && current !== null && "hardCap" in current
+						? { ...current, hardCap: variables.enabled }
+						: current,
+			},
+		],
+	});
+
+	if (usage.isError && usage.data === undefined) {
+		const refusal = refusalOf(usage.error);
+		return (
+			<SettingsSection title="Plan & limits">
+				{refusal ? (
+					<RegionRefusal refusal={refusal} />
+				) : (
+					<RegionError
+						title="Couldn't load this period's usage"
+						description="Something went wrong reading runner minutes and concurrency."
+						onRetry={() => void usage.refetch()}
+					/>
+				)}
+			</SettingsSection>
+		);
+	}
+
+	const report = usage.data;
+	// An ABSENT seat cap fills 0, not 100 — the same answer the concurrency meter below already
+	// gives for the identical "the plan sets no limit" case. Filling the gauge instead made a Hobby
+	// org render `3 / ∞` above a bar drawn solid to its end: "no cap" and "at the cap" stated in one
+	// cell. A gauge with no denominator has no fraction to draw, and 0 is the only reading of it
+	// that does not assert one.
+	const seatFill =
+		summary.seats != null && summary.seats > 0
+			? (summary.memberCount / summary.seats) * 100
+			: 0;
+	const concurrencyMax = report?.maxConcurrentJobs ?? null;
+	// ONE percentage, read twice. The two `sub` branches below each used to compute
+	// `Math.round(usage.pct * 100)` for themselves — two expressions, two lines apart, that a
+	// later edit could change independently while both claim to be "% of included".
+	const pctUsed = report ? Math.round(report.pct * 100) : 0;
+
+	return (
+		<SettingsSection title="Plan & limits">
+			<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
+				<div className="grid grid-cols-1 sm:grid-cols-3">
+					<Meter
+						label="Seats"
+						// `countQuota`, not a locally assembled pair: this cell printed a bare
+						// `3` when the plan set no seat cap while the concurrency cell two
+						// columns right printed `2 / ∞` for the same "no limit". An absent
+						// allowance is `∞` at both now.
+						value={countQuota(summary.memberCount, summary.seats)}
+						fill={seatFill}
+						sub={
+							summary.seats != null
+								? `${count(Math.max(0, summary.seats - summary.memberCount))} seats available`
+								: "members in this organization"
+						}
+					/>
+					<Meter
+						label="Runner minutes"
+						value={
+							// `formatQuota`, not a locally assembled pair. `usedMinutes` is a FLOAT
+							// — rendered raw it read `0.943` here and `0` after a local Math.round
+							// — and the pair around it is the second half of the same problem:
+							// this file printed `47 min / 200` while the helper written for
+							// exactly this readout prints `47 min / 200 min`. One function, one
+							// answer; the allowance still stays the plain integer the plan and
+							// the pricing page quote.
+							report ? formatQuota(report.usedMinutes, report.includedMinutes) : "—"
+						}
+						fill={report ? report.pct * 100 : 0}
+						sub={
+							!report
+								? "managed runner usage this period"
+								: report.overLimit
+									// `overageCost` is a `Money` in MINOR units and carries its own currency
+									// (#4176 part b), so neither the `* 100` this line used to apply nor the
+									// `"USD"` literal it used to name is written here any more. The currency
+									// is decided once, where the rate is (`OVERAGE_RATE_PER_MIN`).
+									? `${formatMinutes(report.overageMinutes)} over · ~${formatMoney(report.overageCost)} overage`
+									: report.approaching
+										? `${pctUsed}% used — approaching included`
+										: `${pctUsed}% of included · self-hosted is free`
+						}
+					/>
+					<Meter
+						label="Concurrency"
+						value={countQuota(report?.runningJobs ?? 0, concurrencyMax)}
+						fill={
+							concurrencyMax && concurrencyMax > 0
+								? ((report?.runningJobs ?? 0) / concurrencyMax) * 100
+								: 0
+						}
+						sub="jobs running right now"
+					/>
+				</div>
+
+				{/* Spend control: pause at the included allowance instead of overage. Billing admins
+				    only — the summary says whether this viewer may change it, so a member without
+				    the permission is not offered a control the server refuses. */}
+				{report && report.plan !== "community" && summary.canManageBilling && (
+					<label className="flex cursor-pointer items-center gap-2 border-t border-border px-6 py-3 text-ui-sm text-text-tertiary">
+						<input
+							type="checkbox"
+							name="usageHardCap"
+							className="accent-ink"
+							checked={report.hardCap}
+							disabled={pause.isPending}
+							onChange={(e) => pause.mutate({ enabled: e.target.checked })}
+						/>
+						Pause new jobs at my included minutes instead of billing overage
+					</label>
+				)}
+			</div>
+		</SettingsSection>
+	);
+}
+
+/**
+ * 2 · Usage over time — cumulative, and the ONLY home for a number the range picker can move. The
+ * picker is this section's action, so the control and everything it changes are on screen together.
+ */
+function UsageOverTimeSection() {
+	const picker = useUsageRange();
+	const [metric, setMetric] = useState<Metric>("runnerMinutes");
+	// No `keepPreviousData`: `label` changes with the picker synchronously, so keeping the previous
+	// window's bars would caption seven days of data "last 30 days" for the length of the refetch.
+	const overTime = useQuery(
+		orpc.usage.overTime.queryOptions({
+			input: { range: picker.spec },
+			retry: retryUnlessRefused,
+		}),
+	);
+	const refusal = overTime.isError ? refusalOf(overTime.error) : null;
+
+	return (
+		<SettingsSection
+			title="Usage over time"
+			action={
+				<div className="flex flex-wrap items-center gap-2">
+					<QuickRangeFilter label={picker.label} value={picker.range} onChange={picker.pickPreset} />
+					<DateRangeFilter value={picker.range} onChange={picker.pickRange} />
+				</div>
+			}
+		>
+			{refusal ? (
+				<RegionRefusal refusal={refusal} />
+			) : (
+				<OverTimeCard
+					metric={metric}
+					onMetricChange={setMetric}
+					series={overTime.data?.series}
+					totals={overTime.data?.totals}
+					// `&& !overTime.data` so a refetch that fails keeps showing the window it already
+					// has rather than replacing real bars with an error.
+					error={overTime.isError && !overTime.data}
+					onRetry={() => void overTime.refetch()}
+					rangeLabel={picker.label}
+				/>
+			)}
+		</SettingsSection>
+	);
+}
+
+/**
+ * 3 · Resources — what the org runs right now, and what those things cost OUTSIDE the plan:
+ * Alethia meters the minutes, the cloud bills the clusters. Nothing here moves when the range
+ * picker moves; the job count that did now lives in the section above, which is why this card
+ * sits below it rather than above.
+ */
+function ResourcesSection() {
+	const counts = useQuery(orpc.usage.resources.queryOptions({ retry: retryUnlessRefused }));
+
+	if (counts.isError && counts.data === undefined) {
+		const refusal = refusalOf(counts.error);
+		return (
+			<SettingsSection title="Resources">
+				{refusal ? (
+					<RegionRefusal refusal={refusal} />
+				) : (
+					<RegionError
+						title="Couldn't load resources"
+						description="Something went wrong counting this organization's projects and clusters."
+						onRetry={() => void counts.refetch()}
+					/>
+				)}
+			</SettingsSection>
+		);
+	}
+
+	const data = counts.data;
+	return (
+		<SettingsSection title="Resources">
+			<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
+				<FactList>
+					<Fact label="Projects" value={data ? count(data.projects) : "—"} />
+					<Fact
+						label="Clusters"
+						value={data ? count(data.clusters) : "—"}
+						sub="under management"
+					/>
+					{/* Spend is a fact about what this org runs, so it is a row of the same list —
+					    not a paragraph under it. It used to sit outside as a hand-rolled
+					    flex row, which left a screen reader with three terms and their values
+					    followed by a loose line for the fourth, and the fourth is the one that
+					    costs money. The sunken band is a treatment, not a different kind of
+					    thing. */}
+					<Fact
+						className="border-t bg-surface-sunken"
+						icon={<Info size={13} />}
+						label="Estimated cloud spend under management"
+						value={data ? formatMonthlyRate(data.spendUnderManagement) : "—"}
+					/>
+				</FactList>
+				{/* The footnote of the figure it qualifies. It used to close the PLAN & LIMITS
+				    card — under the seats, minutes and concurrency meters, which no provider
+				    bills for — a whole section away from the only cloud-spend number here. */}
+				<div className="flex items-center gap-2 border-t border-border bg-surface-sunken px-6 py-[14px] text-ui-sm text-text-tertiary">
+					<Info size={13} />
+					Your cloud-resource spend is billed separately by your provider.
+				</div>
+			</div>
+		</SettingsSection>
 	);
 }

@@ -139,6 +139,77 @@ CREATE TRIGGER jobs_notify_change_insdel
   AFTER INSERT OR DELETE ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.notify_change('jobs');
 
+-- ── Billing hints (#6127). The `billing` topic: the org's billing record and its mirrored invoices.
+-- Written by the Stripe webhook (plan, status, period, the subscription event watermark), by the
+-- billing page's own controls (the usage pause, the AI spend limits) and by the invoice mirror —
+-- rare, so a trigger is the right producer: it catches every writer. The billing reads it refreshes
+-- include Stripe-backed ones (the plan card reads the subscription, cached server-side).
+--
+-- The `usage` topic (AI spend) is NOT a trigger. An AI hold is written inside the transaction that
+-- holds the org's AI-budget lock, and a notifying commit serialises with every other notifying
+-- commit, so its producer is the app-layer `emitUsageHint` (lib/realtime/usage-hint.ts): after the
+-- commit, outside the lock, at most once per 30 s per org. The two DROPs below remove the AI-ledger
+-- triggers an earlier revision of this file created, wherever it was applied.
+--
+-- A billing notice routes on the org arm, unfiltered, and carries NO row id
+-- (lib/realtime/routing.ts). No migration, as above: triggers on existing columns change no shape.
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_upd ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_insdel ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_credit_grant_notify_change ON public.ai_credit_grant;
+DROP FUNCTION IF EXISTS public.notify_ai_usage_change();
+
+CREATE OR REPLACE FUNCTION public.notify_billing_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('billing', NULL,
+    CASE WHEN TG_OP = 'DELETE' THEN OLD.organization_id ELSE NEW.organization_id END, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+-- The billing record: the columns a billing or usage page renders, or that change what Stripe says
+-- (the two event watermarks move on EVERY applied subscription event, including a cancel-at-period-
+-- end flip that changes no other column here). Deliberately NOT listed: updated_at, welcomed_at,
+-- the payer declaration (payer_capacity, billing_country, authority_attestation) — none is shown.
+DROP TRIGGER IF EXISTS organization_billing_notify_change_upd ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_upd
+  AFTER UPDATE ON public.organization_billing
+  FOR EACH ROW WHEN (
+    (OLD.plan, OLD.status, OLD.seats, OLD.current_period_start, OLD.current_period_end,
+     OLD.stripe_customer_id, OLD.stripe_subscription_id, OLD.stripe_subscription_event_at,
+     OLD.usage_hard_cap, OLD.ai_tier, OLD.ai_subscription_status, OLD.ai_stripe_subscription_event_at,
+     OLD.ai_org_weekly_cap_credits, OLD.ai_per_user_weekly_cap_credits)
+    IS DISTINCT FROM
+    (NEW.plan, NEW.status, NEW.seats, NEW.current_period_start, NEW.current_period_end,
+     NEW.stripe_customer_id, NEW.stripe_subscription_id, NEW.stripe_subscription_event_at,
+     NEW.usage_hard_cap, NEW.ai_tier, NEW.ai_subscription_status, NEW.ai_stripe_subscription_event_at,
+     NEW.ai_org_weekly_cap_credits, NEW.ai_per_user_weekly_cap_credits)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS organization_billing_notify_change_insdel ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.organization_billing
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
+-- The invoice mirror: a new invoice, or a change to what the invoices table shows. updated_at and
+-- the Stripe ids are not shown.
+DROP TRIGGER IF EXISTS invoice_notify_change_upd ON public.invoice;
+CREATE TRIGGER invoice_notify_change_upd
+  AFTER UPDATE ON public.invoice
+  FOR EACH ROW WHEN (
+    (OLD.number, OLD.status, OLD.amount_total, OLD.currency, OLD.period_start, OLD.period_end,
+     OLD.description, OLD.pdf_key, OLD.hosted_invoice_url, OLD.paid_at)
+    IS DISTINCT FROM
+    (NEW.number, NEW.status, NEW.amount_total, NEW.currency, NEW.period_start, NEW.period_end,
+     NEW.description, NEW.pdf_key, NEW.hosted_invoice_url, NEW.paid_at)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS invoice_notify_change_insdel ON public.invoice;
+CREATE TRIGGER invoice_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.invoice
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
 -- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from

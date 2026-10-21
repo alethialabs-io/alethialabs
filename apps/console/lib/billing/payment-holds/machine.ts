@@ -54,6 +54,7 @@ import {
 	type SucceededPayment,
 } from "./observe";
 import type { CheckedOrgRow, HoldRef, HoldStatePatch, OpenHoldResult, ReleasedHold, ReleaseHoldInput } from "./store";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
 
 /** The write half of the Stripe client the machine uses (a structural subset of the SDK). */
 export interface HoldStripeWriter {
@@ -677,6 +678,10 @@ export async function advanceHold(start: PaymentHoldRow, deps: HoldMachineDeps):
 				});
 			} catch (err) {
 				lastError = `subscriptions.cancel: ${messageOf(err)}`;
+			} finally {
+				// Landed or not, the plan card's cached read of it may now be wrong
+				// (lib/billing/subscription-cache.ts).
+				forgetSubscription(hold.subscription_id);
 			}
 			// §5.1: re-read; `ended` goes on (T9), otherwise `cancel_unproven`.
 			continue;
