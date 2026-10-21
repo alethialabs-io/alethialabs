@@ -495,9 +495,6 @@ importers:
       undici:
         specifier: ^8.12.1
         version: 8.12.1
-      use-stick-to-bottom:
-        specifier: ^1.1.6
-        version: 1.1.6(react@19.3.1)
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -9915,11 +9912,6 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
-
-  use-stick-to-bottom@1.1.6:
-    resolution: {integrity: sha512-z3Up8jYQGTkUCsGBnwg6/wj70KgXoW5Kz1AAc1j8MtQuYMBo6ZsdhrIXoegxa7gaMMilgQYyTohTrt3p94jHog==}
-    peerDependencies:
-      react: 19.3.1
 
   use-sync-external-store@1.6.0:
     resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
@@ -19941,10 +19933,6 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.3.0
-
-  use-stick-to-bottom@1.1.6(react@19.3.1):
-    dependencies:
-      react: 19.3.1
 
   use-sync-external-store@1.6.0(react@19.3.1):
     dependencies:
