@@ -20,9 +20,12 @@ vi.mock("@/app/server/actions/connectors", () => ({
 	getConnectorsWithStatus: vi.fn(),
 }));
 vi.mock("@/app/server/actions/jobs", () => ({
-	getJob: vi.fn(),
 	getJobs: vi.fn(),
-	getPlanResult: vi.fn(),
+}));
+// The single-job reads are the jobs read procedures' readers (#6121), which apply job visibility.
+vi.mock("@/lib/rpc/procedures/jobs", () => ({
+	readJob: vi.fn(),
+	readPlanResult: vi.fn(),
 }));
 vi.mock("@/app/server/actions/runners", () => ({
 	getRunnersWithReleases: vi.fn(),
@@ -45,7 +48,8 @@ import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities"
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
-import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
+import { getJobs } from "@/app/server/actions/jobs";
+import { readJob as getJob, readPlanResult as getPlanResult } from "@/lib/rpc/procedures/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
 import {

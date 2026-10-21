@@ -211,7 +211,9 @@ const STORE_DIR = "apps/console/lib/stores";
 const STORE_FILE = /^use-[a-z0-9-]+-filters\.ts$/;
 
 /** Where a facet-bearing server builder may live. */
-const BUILDER_DIRS = ["apps/console/lib/queries", "apps/console/app/server/actions"];
+// `lib/rpc/procedures` since #6121: a list page's reader moves there from `app/server/actions` with
+// its facets (ADR 0005 D1), and a builder in a directory this does not read is a builder it cannot see.
+const BUILDER_DIRS = ["apps/console/lib/queries", "apps/console/app/server/actions", "apps/console/lib/rpc/procedures"];
 
 /** The F7 unit test — the instrument for the one predicate this file does not match. */
 export const F7_TEST = "apps/console/tests/lib/queries/filter-standard-facets.test.ts";
@@ -288,11 +290,11 @@ const ANCHORS = [
  * of these score NOT MEASURED on F7 — the honest verdict for a behaviour nothing ran.
  */
 export const F7_UNDRIVEN = /** @type {const} */ ({
-	getJobsPage: {
-		file: "apps/console/app/server/actions/jobs.ts",
+	readJobsPage: {
+		file: "apps/console/lib/rpc/procedures/jobs.ts",
 		owner: "#3796",
 		why:
-			"a `\"use server\"` action that opens its own transaction and resolves the actor before it " +
+			"a read procedure's reader that opens its own transaction and resolves the actor before it " +
 			"reads, rather than a `lib/queries` builder taking `(orgId, query)`. Driving it needs the " +
 			"auth bootstrap `tests/actions/list-page-reads.test.ts` mocks, which is a second fixture " +
 			"shape, not a second row in this one.",

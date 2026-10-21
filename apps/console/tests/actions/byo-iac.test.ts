@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The project-in-the-actor's-org check has its own suite (tests/lib/projects/refuse-other-org.test.ts).
+vi.mock("@/lib/projects/refuse-other-org", () => ({ refuseProjectOfAnotherOrg: vi.fn(async () => undefined) }));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.fn() }));
 
 import {
@@ -346,6 +348,8 @@ describe("scanIacSource", () => {
 			user_id: "user-1",
 			org_id: "org-1",
 			job_type: "IAC_SCAN",
+			// The scanned project is in the column too, so job visibility follows it (#6121).
+			project_id: "p1",
 			status: "QUEUED",
 			config_snapshot: {
 				repo_url: "https://github.com/acme/infra.git",

@@ -16,6 +16,13 @@ import { orpc } from "@/lib/rpc/client";
  * procedures. A topic with no keys yet invalidates nothing. It is exhaustive over the wire's topic
  * list (`lib/realtime/topics.ts`), so a topic the server can send always has an entry here.
  *
+ * `jobs` names its procedures one by one rather than the `orpc.jobs.key()` prefix, because ONE jobs
+ * read is not refreshed by a hint: the log head (`jobs.logsHead`, up to two thousand lines). A job's
+ * new log lines arrive on its own log stream (`/api/stream/jobs/[id]`), so re-reading the head on
+ * every jobs hint is pure cost. `tests/lib/query/topics.test.ts` enumerates the router's jobs
+ * procedures and fails on any that is neither listed here nor in {@link JOBS_NOT_ON_TOPIC}, so a new
+ * jobs read cannot silently miss its hint.
+ *
  * `jobs` also carries the legacy `["jobs"]` prefix, which covers `qk.jobs` / `qk.jobsPage` / `qk.job`
  * (lib/query/keys.ts) for every org — the shell's job feed among them (#6114), which keeps that key
  * because other pages share its cache entry. The per-org QueryClient is what keeps the prefix
@@ -29,15 +36,25 @@ import { orpc } from "@/lib/rpc/client";
  */
 export const DESTROY_HOLD_KEY = ["canvas-destroy-hold"] as const;
 
+/** The jobs procedures a `jobs` hint deliberately does NOT refresh, each with its live source. */
+export const JOBS_NOT_ON_TOPIC = {
+	logsHead: "new log lines arrive on the job's own log stream (/api/stream/jobs/[id])",
+} as const;
+
 export const TOPIC_KEYS = {
-	// The shell's capped job feed (bell, toasts, breadcrumbs, palette), the full list (runners, plan
-	// flow — on `qk.jobs(org)`, reached by the `["jobs"]` prefix) and the setup guide's "provisioned"
-	// step change with every job (#6114). So does the overview's usage read, which counts runner
-	// minutes and jobs in flight (#6118). The board's environment status carries the in-flight job,
-	// the last PLAN's cost and the drift a job wrote; its Activity card is the environment's job
-	// history; a held destroy waits on jobs (#6119).
+	// The jobs procedures one by one (not `orpc.jobs.key()`: the log head is left out, see above);
+	// the legacy `["jobs"]` prefix, which reaches `qk.jobs(org)` (runners, the plan flow); the shell's
+	// capped job feed (bell, toasts, breadcrumbs, palette) and full list; the setup guide's
+	// "provisioned" step, which changes with every job (#6114); the overview's usage read, which
+	// counts runner minutes and jobs in flight (#6118). The board's environment status carries the
+	// in-flight job, the last PLAN's cost and the drift a job wrote; its Activity card is the
+	// environment's job history; a held destroy waits on jobs (#6119).
 	jobs: (): QueryKey[] => [
-		orpc.jobs.key(),
+		orpc.jobs.page.key(),
+		orpc.jobs.detail.key(),
+		orpc.jobs.status.key(),
+		orpc.jobs.planResult.key(),
+		orpc.jobs.project.key(),
 		["jobs"],
 		orpc.workspace.recentJobs.key(),
 		orpc.workspace.jobs.key(),

@@ -4,8 +4,7 @@
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
-import { getJob, type JobWithMeta } from "@/app/server/actions/jobs";
-import type { Job } from "@/lib/db/schema";
+import type { JobWithMeta } from "@/app/server/actions/jobs";
 import { orpc, rpcClient } from "@/lib/rpc/client";
 import type { ShellJob } from "@/lib/rpc/procedures/workspace";
 import { qk } from "./keys";
@@ -30,18 +29,5 @@ export function useJobsQuery(): UseQueryResult<JobWithMeta[]> {
 	return useQuery({
 		queryKey: qk.jobs(org),
 		queryFn: () => rpcClient.workspace.jobs(),
-	});
-}
-
-/**
- * A single job by id, for the detail page. Live through the `jobs` topic, whose `["jobs"]` prefix
- * reaches `qk.job` — the 3 s in-flight poll it used to run is gone (#6114).
- */
-export function useJobQuery(jobId: string): UseQueryResult<Job | null> {
-	const { org } = useParams<{ org: string }>();
-	return useQuery({
-		queryKey: qk.job(org, jobId),
-		queryFn: () => getJob(jobId),
-		enabled: !!jobId,
 	});
 }

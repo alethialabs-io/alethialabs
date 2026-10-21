@@ -20,7 +20,6 @@ const { currentActor, getJobsPage, hasAcceptedCurrentDocuments } = vi.hoisted(()
 }));
 vi.mock("@/lib/billing/eligibility", () => ({ hasAcceptedCurrentDocuments }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor }));
-vi.mock("@/app/server/actions/jobs", () => ({ getJobsPage }));
 
 import { createORPCClient, isDefinedError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
@@ -30,6 +29,7 @@ import { getInjectedActor } from "@/lib/authz/actor-context";
 import { ForbiddenError } from "@/lib/authz/types";
 import { ActionRefusal } from "@/lib/actions/result";
 import { UnauthorizedError } from "@/lib/auth/errors";
+import { jobsReaders } from "@/lib/rpc/procedures/jobs";
 import { router, type AppRouter } from "@/lib/rpc/router";
 
 const ACME = { userId: "user-1", orgId: "org-acme" };
@@ -57,6 +57,8 @@ beforeEach(() => {
 	currentActor.mockReset();
 	getJobsPage.mockReset();
 	getJobsPage.mockResolvedValue(PAGE);
+	// The reader stands in for the database; the procedure, handler and client are the shipped ones.
+	vi.spyOn(jobsReaders, "page").mockImplementation(getJobsPage);
 	hasAcceptedCurrentDocuments.mockReset();
 	hasAcceptedCurrentDocuments.mockResolvedValue(true);
 });

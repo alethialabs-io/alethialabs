@@ -14,6 +14,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
+import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
@@ -348,6 +349,9 @@ export async function scanByoChart(input: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withActorScope(actor, async (tx) => {
+		// The scan is filed on its project (project_id, #6121), and a job of a project belongs to that
+		// project's org — the database refuses any other stamp. Say so in a sentence first.
+		await refuseProjectOfAnotherOrg(tx, input.projectId, actor);
 		const [row] = await tx
 			.select()
 			.from(projectAddons)
@@ -400,6 +404,9 @@ export async function scanByoChart(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
+				// The project the scan acts on, in the column as well as the snapshot: job visibility
+				// and the cancel permission read the column (lib/jobs/visibility.ts, operation.ts).
+				project_id: input.projectId,
 				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {
