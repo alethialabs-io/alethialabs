@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { requireMcpAuth } from "@better-auth/mcp";
 // The SDK directly, not mcp-handler. mcp-handler v2 is a thin wrapper that hardcodes
 // `legacy: "stateless"` and exposes no way to override it, so routing through it would
@@ -77,7 +78,8 @@ const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (_req, ac
 			headers: { "content-type": "application/json" },
 		});
 	}
-	const actor = await getActiveScope(subject);
+	// An OAuth grant is a person's: the subject IS the caller.
+	const actor = actorWithCredential(await getActiveScope(subject), "session");
 
 	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
 	if (!(await isAiSurfaceEnabled(actor.orgId))) {

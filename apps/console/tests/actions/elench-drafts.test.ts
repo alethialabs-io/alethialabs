@@ -317,7 +317,7 @@ beforeEach(() => {
 	tables = { elench_drafts: [], agent_threads: [], projects: [], member: [], organization: [] };
 	statements = [];
 	beforeInsert = null;
-	actor = { userId: USER, orgId: ORG_A };
+	actor = { credential: "session", userId: USER, orgId: ORG_A };
 	grants = [null];
 	tables.projects?.push({ id: PROJECT_A, org_id: ORG_A }, { id: PROJECT_B, org_id: ORG_B });
 
@@ -412,7 +412,7 @@ describe("the page org", () => {
 	});
 
 	it("community: a renamed slug answers address with slug ~", async () => {
-		actor = { userId: USER, orgId: USER };
+		actor = { credential: "session", userId: USER, orgId: USER };
 		vi.mocked(currentActor).mockImplementation(async () => notFound());
 		const out = await save({ orgId: USER });
 		expect(out).toEqual({ outcome: "scope-changed", reason: "address", slug: "~" });

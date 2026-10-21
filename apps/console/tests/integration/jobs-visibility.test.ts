@@ -40,7 +40,7 @@ vi.mock("@/lib/auth/scope", async (importOriginal) => ({
 vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/authz/guard")>()),
 	authorizeCli: async () => ({
-		actor: { userId: h.user, orgId: h.org },
+		actor: { userId: h.user, orgId: h.org, credential: "session" },
 		credential: "session",
 		orgScope: [h.org, h.user],
 	}),
@@ -90,7 +90,7 @@ const seeded = { jobP: "", jobQ: "", jobOrg: "", scanP: "", legacyScanP: "", leg
 
 /** Runs a read as `userId` in the org, as the read router binds it. */
 function readAs<T>(userId: string, read: () => Promise<T>): Promise<T> {
-	return runWithActor({ userId, orgId: ORG }, read);
+	return runWithActor({ userId, orgId: ORG, credential: "session" }, read);
 }
 
 /** Opens the job's log stream as `userId` (already aborted, so it ends after the backlog) → status. */

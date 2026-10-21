@@ -215,7 +215,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 		const turnId = randomUUID();
 		await getServiceDb().insert(elenchDrafts).values(firstClaim(user, user, conversation, token, turnId));
 
-		const out = await runWithActor({ userId: user, orgId: user }, () =>
+		const out = await runWithActor({ credential: "session", userId: user, orgId: user }, () =>
 			startConversation({
 				orgId: user,
 				projectId: null,
@@ -267,7 +267,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 		await getServiceDb().insert(agentThreads).values(threadOf(conversation, mate, org, turnId));
 		await getServiceDb().insert(elenchDrafts).values(firstClaim(user, org, conversation, token, turnId));
 
-		const actor = { userId: user, orgId: org };
+		const actor = { userId: user, orgId: org, credential: "session" as const };
 		const out = await runWithActor(actor, () =>
 			startConversation({
 				orgId: org,
@@ -309,7 +309,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 				.values(threadOf(conversation, stranger, stranger, turnId, { status }));
 			await getServiceDb().insert(elenchDrafts).values(firstClaim(user, user, conversation, token, turnId));
 
-			const out = await runWithActor({ userId: user, orgId: user }, () =>
+			const out = await runWithActor({ credential: "session", userId: user, orgId: user }, () =>
 				startConversation({
 					orgId: user,
 					projectId: null,
@@ -341,7 +341,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 		// returned WRAPPED: returned bare, the transaction would await it before committing.
 		const { running } = await getServiceDb().transaction(async (tx) => {
 			await tx.insert(elenchDrafts).values({ ...activeDraft(user, user, conversation), text: "the prompt" });
-			const start = runWithActor({ userId: user, orgId: user }, () =>
+			const start = runWithActor({ credential: "session", userId: user, orgId: user }, () =>
 				startConversation({
 					orgId: user,
 					projectId: null,
@@ -390,7 +390,7 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 			.values(firstClaim(user, user, conversation, token, turnId))
 			.returning();
 		if (!claimRow) throw new Error("no draft inserted");
-		const actor = { userId: user, orgId: user };
+		const actor = { userId: user, orgId: user, credential: "session" as const };
 
 		const { racers } = await getServiceDb().transaction(async (tx) => {
 			await tx.execute(sql`select 1 from public.elench_drafts where id = ${claimRow.id} for update`);
@@ -440,16 +440,16 @@ describeIfDb("Elench drafts and threads against Postgres", () => {
 
 		// The confirm's count: both of the caller's orgs, read from either.
 		expect(
-			await runWithActor({ userId: user, orgId: orgB }, () => countDraftsOfConversation({ id: conversation })),
+			await runWithActor({ credential: "session", userId: user, orgId: orgB }, () => countDraftsOfConversation({ id: conversation })),
 		).toEqual({ outcome: "ok", count: 2, orgs: 2 });
 
-		const out = await runWithActor({ userId: user, orgId: user }, () => deleteThread(conversation));
+		const out = await runWithActor({ credential: "session", userId: user, orgId: user }, () => deleteThread(conversation));
 		expect(out).toEqual({ purged: 2 });
 		expect(await draftsOf(conversation)).toEqual([`${stranger}/${user}`]);
 		const [tombstone] = await threadsAt(conversation);
 		expect(tombstone).toMatchObject({ user_id: user, status: "deleted", messages: [] });
 		expect(
-			await runWithActor({ userId: user, orgId: user }, () => countDraftsOfConversation({ id: conversation })),
+			await runWithActor({ credential: "session", userId: user, orgId: user }, () => countDraftsOfConversation({ id: conversation })),
 		).toEqual({ outcome: "ok", count: 0, orgs: 0 });
 	});
 });

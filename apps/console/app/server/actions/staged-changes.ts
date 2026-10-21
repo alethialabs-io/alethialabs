@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq } from "drizzle-orm";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorize } from "@/lib/authz/guard";
 import { asRecord } from "@/lib/records";
 import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
+import { assertDesignIdentitiesUsable } from "@/lib/cloud-providers/design-identities";
 import { withoutCredentials } from "@/lib/cloud-providers/credential-knobs";
 import { withActorScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
@@ -48,6 +50,13 @@ export async function stageChanges(
 		// be stored in plaintext here before it ever reached a component row. Same guard as the
 		// apply (#5565).
 		await assertDesignStoresNoNewCredentials(tx, projectId, data);
+		// The apply runs the same identity check (updateProjectDesign); refusing at staging means a
+		// design the caller could never apply is not left in the tray for someone else to apply.
+		await assertDesignIdentitiesUsable(tx, data, {
+			orgId: actor.orgId,
+			personalAuthorId: personalIdentityAuthor(actor),
+			existing: { projectId, environmentId },
+		});
 		await tx.delete(projectChanges).where(changeScope(projectId, environmentId));
 		if (rows.length)
 			await tx.insert(projectChanges).values(

@@ -221,7 +221,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		rowsResult = [];
 		countResult = 0;
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "session", userId: USER, orgId: ORG },
 			credential: "session",
 			orgScope: [ORG, USER],
 		});
@@ -297,7 +297,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// a tenant the token was never pinned to. Same actor, different credential, and the WHOLE
 		// clause is asserted so an extra arm is as visible as the missing one.
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "service_token", userId: USER, orgId: ORG },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [ORG],
@@ -322,7 +322,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// minted for this org. Bounded inside the pin — not a leak — and a wrong answer. Refused
 		// rather than ignored, because a filter that is silently dropped reads as one that worked.
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "service_token", userId: USER, orgId: ORG },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [ORG],
@@ -342,7 +342,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 
 	it("still composes ?mine=true for a session, onto the two-element list", async () => {
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "session", userId: USER, orgId: ORG },
 			credential: "session",
 			orgScope: [ORG, USER],
 		});

@@ -35,7 +35,7 @@ import "server-only";
 import { and, inArray, isNull, notInArray, or, type SQL, sql } from "drizzle-orm";
 import { cache } from "react";
 import { getPdp } from "@/lib/authz";
-import type { Actor } from "@/lib/authz/types";
+import type { ResolvedScope } from "@/lib/authz/types";
 import { jobs } from "@/lib/db/schema";
 import { isScan, type JobTarget, projectOf, SCAN_KINDS } from "@/lib/jobs/operation";
 
@@ -50,7 +50,7 @@ const viewableFor = cache(
 );
 
 /** The ids of the projects `actor` may view — the set job visibility follows. */
-export async function viewableProjectIds(actor: Actor): Promise<string[]> {
+export async function viewableProjectIds(actor: ResolvedScope): Promise<string[]> {
 	return viewableFor(actor.userId, actor.orgId);
 }
 
@@ -75,7 +75,7 @@ export function jobVisibleWhere(projectIds: readonly string[]): SQL {
 }
 
 /** The predicate on `jobs` for `actor`: {@link jobVisibleWhere} over the projects they may view. */
-export async function jobVisibleTo(actor: Actor): Promise<SQL> {
+export async function jobVisibleTo(actor: ResolvedScope): Promise<SQL> {
 	return jobVisibleWhere(await viewableProjectIds(actor));
 }
 
@@ -84,7 +84,7 @@ export async function jobVisibleTo(actor: Actor): Promise<SQL> {
  * {@link jobVisibleWhere}: the job's project (its column, or for a scan its snapshot — `projectOf`)
  * must be one the actor may view; a job with no project is org-wide, except a scan naming none.
  */
-export async function isJobVisible(actor: Actor, job: JobTarget): Promise<boolean> {
+export async function isJobVisible(actor: ResolvedScope, job: JobTarget): Promise<boolean> {
 	const projectId = projectOf(job);
 	if (projectId === null) return !isScan(job.job_type);
 	return (await viewableProjectIds(actor)).includes(projectId);
