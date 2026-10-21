@@ -12,7 +12,9 @@ import {
 } from "@repo/ui/breadcrumb";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { buildCrumbs } from "@/components/shell/breadcrumb-trail";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
+import { useSupportCasesQuery } from "@/lib/query/use-support-cases-query";
+import { caseLabel as formatCaseLabel } from "@/lib/support/case-status";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useCallback, useMemo } from "react";
@@ -26,7 +28,7 @@ import { Fragment, useCallback, useMemo } from "react";
  */
 export function HeaderBreadcrumbs() {
 	const pathname = usePathname();
-	const { data: jobs = [] } = useJobsQuery();
+	const { data: jobs = [] } = useRecentJobsQuery();
 
 	const jobLabel = useCallback(
 		(id: string) => {
@@ -36,9 +38,20 @@ export function HeaderBreadcrumbs() {
 		[jobs],
 	);
 
+	// The bell's case feed (prefetched by the `[org]` layout, so it is in the server render and the
+	// hydrating render alike): a case page's crumb is its number, not its UUID (F044, #6130).
+	const { data: cases } = useSupportCasesQuery();
+	const caseLabel = useCallback(
+		(id: string) => {
+			const found = cases?.find((c) => c.id === id);
+			return found ? formatCaseLabel(found.case_number) : undefined;
+		},
+		[cases],
+	);
+
 	const crumbs = useMemo(
-		() => buildCrumbs(pathname, jobLabel),
-		[pathname, jobLabel],
+		() => buildCrumbs(pathname, jobLabel, caseLabel),
+		[pathname, jobLabel, caseLabel],
 	);
 
 	// On /dashboard there are no route crumbs — the bar is just "[·] / Org".

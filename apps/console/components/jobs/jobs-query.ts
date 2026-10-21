@@ -8,7 +8,7 @@
 // "last 12 months" to a stale window across visits — the page keeps it as local state
 // (the activity feed's precedent) and feeds the resolved ISO bounds into the normalizer.
 
-import type { JobsQuery } from "@/app/server/actions/jobs";
+import type { JobsQuery } from "@/lib/rpc/procedures/jobs";
 
 /** The store-held filter selections (a type alias — the factory's Record constraint). */
 export type JobsFilters = {

@@ -38,11 +38,6 @@ vi.mock("@/app/server/actions/staged-changes", () => ({
 vi.mock("@/app/server/actions/resolve", () => ({
 	resolveActiveEnvironmentId: vi.fn(async () => "env-1"),
 }));
-vi.mock("@/app/server/actions/byo-charts", () => ({
-	getProjectByoCharts: vi.fn(async () => ({ charts: [] })),
-	getProjectChartWorkloads: vi.fn(async () => ({ workloads: [] })),
-}));
-vi.mock("@/app/server/actions/byo-iac", () => ({ getIacSource: vi.fn(async () => null) }));
 vi.mock("sonner", () => ({
 	toast: {
 		error: (...a: unknown[]) => toastError(...a),
@@ -54,8 +49,11 @@ vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 	useSearchParams: () => new URLSearchParams(),
 }));
+// The board's out-of-band reads (charts, workloads, IaC source, environment status) are queries;
+// none is this test's subject, so each answers "no data yet".
 vi.mock("@tanstack/react-query", () => ({
 	useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+	useQuery: () => ({ data: undefined, error: null, refetch: vi.fn() }),
 }));
 vi.mock("@xyflow/react", () => ({
 	ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -74,6 +72,7 @@ vi.mock("@/components/design-project/canvas/graph/graph-to-form", () => ({
 }));
 vi.mock("@/lib/canvas/environment-status-context", () => ({
 	useEnvironmentStatus: () => ({ iac: null }),
+	EnvironmentStatusProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({ useAddonsQuery: () => ({ data: undefined }) }));
 vi.mock("@/lib/canvas/arrange", () => ({ arrangeBoard: vi.fn() }));

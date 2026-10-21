@@ -373,7 +373,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => deleting && void confirmDelete(deleting)}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							variant="destructive"
 						>
 							Delete role
 						</AlertDialogAction>

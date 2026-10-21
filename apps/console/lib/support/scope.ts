@@ -5,14 +5,12 @@
 // owners/admins (holders of the PDP `support_case:manage_support` capability) see EVERY case
 // in the org. The decision lives entirely in RLS — this sets the active-org scope plus a
 // third GUC `app.support_all` that the support_cases policy reads (see programmables.sql).
-// Shared by the customer server actions and the SSE stream route so visibility is consistent.
+// Shared by the support read procedures and the customer server actions so visibility is consistent.
 
 import { sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import type { Actor } from "@/lib/authz/types";
 import { type Tx, withScope } from "@/lib/db";
-import { supportCases } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 
 /**
  * Runs `fn` in the caller's org scope with the tiered support-visibility flag set:
@@ -32,25 +30,5 @@ export async function withSupportScope<T>(
 			sql`select set_config('app.support_all', ${seeAll ? "true" : "false"}, true)`,
 		);
 		return fn(tx);
-	});
-}
-
-/**
- * Whether `actor` may see the given case under the tiered RLS — probes it on the
- * RLS-enforced connection (so the visibility decision is the policy's, not an ad-hoc
- * user_id compare). Used by the SSE route, which then streams the public thread over the
- * service role once visibility is confirmed.
- */
-export async function isSupportCaseVisible(
-	actor: Actor,
-	caseId: string,
-): Promise<boolean> {
-	return withSupportScope(actor, async (tx) => {
-		const [row] = await tx
-			.select({ id: supportCases.id })
-			.from(supportCases)
-			.where(eq(supportCases.id, caseId))
-			.limit(1);
-		return Boolean(row);
 	});
 }

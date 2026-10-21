@@ -128,8 +128,22 @@ you scope to.
 
 `--principal-type` is `user` (default) or `team`; `--effect` is `allow` (default) or `deny`. Both
 are closed sets and a value outside them is refused before anything is sent. `--resource-type` is
-not: `org` (default), `project`, `runner` and `cloud_identity` are what the picker offers, but the
-control plane stores whatever kind you name.
+checked by the control plane instead: it accepts `org` (default), `project`, `runner` and
+`cloud_identity`, and refuses any other kind with a message that lists these four.
+
+### A grant stays inside its organization
+
+Everything a grant names must belong to the organization you write it in. The control plane
+refuses the grant with a `400` and a `reason` when:
+
+- the role is a custom role of another organization (`foreign_role`). Built-in roles are valid
+  in every organization.
+- the team is a team of another organization (`foreign_team`).
+- the resource is not a project, runner or cloud account of this organization
+  (`foreign_resource`). An id that names nothing is refused the same way.
+
+A connector cannot be a grant's scope. The connector catalog is shared by every organization, so no
+organization owns a connector.
 
 ### The resource is picked, not typed
 

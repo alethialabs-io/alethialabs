@@ -16,7 +16,8 @@
 // Refusals are returned as a typed { ok:false } — the route maps them to 4xx. Only unexpected
 // internal errors throw.
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { RERUN_FROM_PROJECT, rerunRouteOf } from "@/lib/jobs/operation";
 import { signedJob } from "@/lib/db/signed-job";
 import type { BreakglassActionInput } from "@/types/jsonb.types";
 import { getServiceDb } from "@/lib/db";
@@ -38,7 +39,9 @@ import {
 import { handleStripeEvent } from "@/lib/billing/webhook-handler";
 import { markRunnerDraining } from "@/lib/fleet/queue";
 import { wakeFleetScaler } from "@/lib/fleet/scaler";
+import { redactJobRow } from "@/lib/jobs/redact-snapshot";
 import { notifyRunnerCancel } from "@/lib/runners/cancel-signal";
+import { snapshotWithoutRunnerToken } from "@/lib/runners/lifecycle-token";
 import { forceReleaseStateLock } from "@/lib/runners/state-lock";
 import { newTraceparent } from "@/lib/observability/trace";
 import { log } from "@/lib/observability/log";
@@ -225,13 +228,23 @@ async function runHandler(
 async function inspectJob(jobId: string): Promise<BreakglassResult> {
 	const [job] = await getServiceDb().select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
 	if (!job) return refuse(404, "Job not found.");
-	return { ok: true, detail: `inspected job ${jobId} (status ${job.status})`, data: job };
+	return {
+		ok: true,
+		detail: `inspected job ${jobId} (status ${job.status})`,
+		data: redactJobRow(job),
+	};
 }
 
 /**
- * retry_job (blast: low) — re-enqueue a FRESH job from a stuck/failed one, mirroring rerunJob but
- * cross-tenant (carries the original's user/org/project so tenancy stays correct). The poison
- * counter starts fresh (a new row), matching the product rerun semantics.
+ * retry_job (blast: low) — re-enqueue a FRESH copy of a stuck/failed job, cross-tenant (carries the
+ * original's user and org so tenancy stays correct). The poison counter starts fresh (a new row),
+ * matching the product rerun semantics.
+ *
+ * Only a job whose KIND the product re-run may copy is copied (lib/jobs/operation.ts): its copy acts
+ * on nothing but its own input. Every other job acts on something — a project's environment, a
+ * runner, a project's source — and running it again takes that thing's permission, its in-flight
+ * guards and its current configuration, which is the product's path and not an operator's. Those
+ * are refused here with where to act instead; nothing is queued.
  */
 async function retryJob(jobId: string): Promise<BreakglassResult> {
 	const db = getServiceDb();
@@ -249,6 +262,14 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 		.where(eq(jobs.id, jobId))
 		.limit(1);
 	if (!orig) return refuse(404, "Job not found.");
+	const route = rerunRouteOf(orig);
+	if (route.kind !== "copy") {
+		return refuse(
+			409,
+			`${route.kind === "refuse" ? route.reason : RERUN_FROM_PROJECT} A member with that permission ` +
+				"runs it; use unstick_env if its environment is stuck.",
+		);
+	}
 
 	const [created] = await db
 		.insert(jobs)
@@ -257,10 +278,8 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 			org_id: orig.org_id,
 			job_type: orig.job_type,
 			initiated_by: "operator",
-			config_snapshot: orig.config_snapshot,
+			config_snapshot: snapshotWithoutRunnerToken(orig.config_snapshot),
 			cloud_identity_id: orig.cloud_identity_id,
-			project_id: orig.project_id,
-			environment_id: orig.environment_id,
 			status: "QUEUED",
 			traceparent: newTraceparent(),
 		}))
@@ -270,31 +289,37 @@ async function retryJob(jobId: string): Promise<BreakglassResult> {
 }
 
 /**
- * cancel_job (blast: low) — flip to CANCELLED and, if running, signal the runner to stop mid-flight.
- * Reuses the exact cancelJob semantics (DB flip authoritative; fire-and-forget runner signal) but
- * cross-tenant. Never touches state directly — the runner does the clean SIGINT teardown.
+ * cancel_job (blast: low) — flip to CANCELLED and, if a runner had claimed it, signal the runner to
+ * stop mid-flight. Cross-tenant, and without the member permission checks of the product's cancel
+ * (lib/jobs/cancel.ts) — an operator is not a member — but with its write discipline: the flip is
+ * CONDITIONAL on a cancellable status, so a job that finished between the read and the write is not
+ * rewritten; and the runner is signalled from the row the flip actually changed (RETURNING
+ * runner_id), so a job claimed in between is signalled. Never touches state directly — the runner
+ * does the clean SIGINT teardown.
  */
 async function cancelJobBg(jobId: string): Promise<BreakglassResult> {
 	const db = getServiceDb();
 	const [job] = await db
-		.select({ status: jobs.status, runner_id: jobs.runner_id })
+		.select({ status: jobs.status })
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
 	if (!job) return refuse(404, "Job not found.");
-	if (!["QUEUED", "CLAIMED", "PROCESSING"].includes(job.status)) {
-		return refuse(400, `Cannot cancel a job in status ${job.status}.`);
-	}
-	await db
+	const [flipped] = await db
 		.update(jobs)
 		.set({
 			status: "CANCELLED",
 			error_message: "Cancelled by break-glass operator",
 			completed_at: new Date(),
 		})
-		.where(eq(jobs.id, jobId));
-	if (job.runner_id && (job.status === "CLAIMED" || job.status === "PROCESSING")) {
-		await notifyRunnerCancel(job.runner_id, jobId).catch(() => {});
+		.where(and(eq(jobs.id, jobId), inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"])))
+		.returning({ runner_id: jobs.runner_id });
+	if (!flipped) {
+		const [now] = await db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, jobId)).limit(1);
+		return refuse(400, `Cannot cancel a job in status ${now?.status ?? job.status}.`);
+	}
+	if (flipped.runner_id) {
+		await notifyRunnerCancel(flipped.runner_id, jobId).catch(() => {});
 	}
 	return { ok: true, detail: `cancelled job ${jobId} (was ${job.status})` };
 }

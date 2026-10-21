@@ -4,8 +4,8 @@
 
 // The environment's server truth, fetched ONCE per canvas and read by every node.
 //
-// Without this each card would run its own query — forty nodes, forty round-trips, forty poll
-// timers. The workbench fetches the whole environment's status in one call and publishes it here;
+// Without this each card would run its own query — forty nodes, forty round-trips. The canvas's
+// `EnvironmentStatusScope` reads the whole environment's status in one call and publishes it here;
 // `useNodeStatus` picks its own row out by `nodeStatusKey()`.
 
 import { createContext, useContext } from "react";

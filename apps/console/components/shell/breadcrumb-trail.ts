@@ -30,7 +30,7 @@
 // delete it when the redirect page goes, not a reason to change behaviour a guard cannot see.
 //
 // Deliberately free of React and of every `@/` import: `jobLabel` is injected rather than reaching
-// for `JOB_TYPES` and `useJobsQuery`, so the module a guard imports is the module the console
+// for `JOB_TYPES` and `useRecentJobsQuery`, so the module a guard imports is the module the console
 // renders, with nothing mocked in between.
 
 /** One entry in the header trail. `href` absent means it is not a link. */
@@ -41,6 +41,13 @@ export interface Crumb {
 
 /** Resolves a job UUID to its display label, or `undefined` when the job is not loaded. */
 export type JobLabelResolver = (id: string) => string | undefined;
+
+/**
+ * Resolves a support case UUID to its case NUMBER (`CASE-000002`), or `undefined` when the case is
+ * not in the shell's case feed. A case's URL is keyed by its id, but the id is not a name anybody
+ * uses: the number is what the case page, the list, the emails and the bell all say (F044).
+ */
+export type CaseLabelResolver = (id: string) => string | undefined;
 
 const SEGMENT_LABELS: Record<string, string> = {
 	new: "New project",
@@ -144,10 +151,13 @@ function ancestorCrumb(base: string, rest: string[], j: number): Crumb {
  * @param pathname  the current URL path
  * @param jobLabel  resolves a job UUID to its type label; ids it cannot resolve fall back to a
  *                  truncated form, exactly as the header did before the split
+ * @param caseLabel resolves a support case UUID to its case number; a case it cannot resolve
+ *                  reads "Case" — never the raw id
  */
 export function buildCrumbs(
 	pathname: string,
 	jobLabel: JobLabelResolver = () => undefined,
+	caseLabel: CaseLabelResolver = () => undefined,
 ): Crumb[] {
 	// C2 slug drilldown `/{org}/{project}/{env}` — resolve the project name from the
 	// store (the OrgSwitcher already shows the org, so the trail starts at the project).
@@ -173,6 +183,8 @@ export function buildCrumbs(
 					);
 				} else if (rest[j - 1] === "jobs") {
 					out.push({ label: jobLabel(s) ?? `${s.slice(0, 8)}…` });
+				} else if (rest[j - 1] === "cases" && rest[j - 2] === "support") {
+					out.push({ label: caseLabel(s) ?? "Case" });
 				} else {
 					out.push({ label: s });
 				}

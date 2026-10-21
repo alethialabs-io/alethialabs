@@ -14,6 +14,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
+import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
@@ -31,7 +32,6 @@ import { inferValuePaths } from "@/lib/addons/chart-overlay";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
 import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
-import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
@@ -187,44 +187,6 @@ export async function detachByoChart(input: {
 	return { ok: true };
 }
 
-/** Reads the BYO charts attached to an environment — the canvas renders one chart node each. */
-export async function getProjectByoCharts(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<{ environmentId: string; charts: ByoChartState[] }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withActorScope(actor, async (tx) =>
-		tx
-			.select()
-			.from(projectAddons)
-			.where(
-				and(
-					eq(projectAddons.project_id, projectId),
-					eq(projectAddons.environment_id, envId),
-					eq(projectAddons.source, "byo"),
-				),
-			),
-	);
-	const charts: ByoChartState[] = rows.map((r) => ({
-		id: r.addon_id,
-		repoUrl: r.chart_repo ?? "",
-		chartPath: r.chart_path ?? "",
-		ref: r.version ?? "HEAD",
-		namespace: r.namespace ?? "default",
-		values: r.values ?? {},
-		valuesYaml: r.values_yaml,
-		status: r.status,
-		health: r.health,
-		sync: r.sync_status,
-		lastSyncedAt: r.last_synced_at?.toISOString() ?? null,
-		scanStatus: r.scan_status,
-		scanReport: r.scan_report ?? null,
-		scannedAt: r.scanned_at?.toISOString() ?? null,
-	}));
-	return { environmentId: envId, charts };
-}
-
 /** A DESCRIBED chart workload as the canvas reads it back (W5 Path A). */
 export interface ChartWorkloadState {
 	id: string;
@@ -239,61 +201,6 @@ export interface ChartWorkloadState {
 	config: ChartWorkloadConfig;
 	/** Logical knob → chart-values dot-path (inferred at scan, user-overridable). */
 	valuePaths: ChartValuePathMap;
-}
-
-/**
- * Reads the DESCRIBED workloads of an environment's BYO charts (W5 Path A) — the canvas renders each
- * as a service-like child of its chart node (joined back to the chart's slug via the addon uuid).
- * Empty until a CHART_SCAN has run with the describe flag on.
- */
-export async function getProjectChartWorkloads(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const { rows, bindingsByWorkload } = await withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select({
-				id: projectChartWorkloads.id,
-				chartId: projectAddons.addon_id,
-				name: projectChartWorkloads.name,
-				kind: projectChartWorkloads.workload_kind,
-				rendered: projectChartWorkloads.rendered,
-				config: projectChartWorkloads.config,
-				valuePaths: projectChartWorkloads.value_paths,
-			})
-			.from(projectChartWorkloads)
-			.innerJoin(
-				projectAddons,
-				eq(projectChartWorkloads.addon_id, projectAddons.id),
-			)
-			.where(
-				and(
-					eq(projectChartWorkloads.project_id, projectId),
-					eq(projectChartWorkloads.environment_id, envId),
-				),
-			);
-		// Bindings live in the service_bindings child table (JSONB dropped, #1426).
-		const bindingsByWorkload = await serviceBindingsByOwner(tx, {
-			serviceIds: [],
-			chartWorkloadIds: rows.map((r) => r.id),
-		});
-		return { rows, bindingsByWorkload };
-	});
-	return {
-		environmentId: envId,
-		workloads: rows.map((r) => ({
-			id: r.id,
-			chartId: r.chartId,
-			name: r.name,
-			kind: r.kind,
-			rendered: r.rendered,
-			bindings: bindingsByWorkload.get(r.id) ?? [],
-			config: r.config,
-			valuePaths: r.valuePaths,
-		})),
-	};
 }
 
 /**
@@ -442,6 +349,9 @@ export async function scanByoChart(input: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withActorScope(actor, async (tx) => {
+		// The scan is filed on its project (project_id, #6121), and a job of a project belongs to that
+		// project's org — the database refuses any other stamp. Say so in a sentence first.
+		await refuseProjectOfAnotherOrg(tx, input.projectId, actor);
 		const [row] = await tx
 			.select()
 			.from(projectAddons)
@@ -494,6 +404,9 @@ export async function scanByoChart(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
+				// The project the scan acts on, in the column as well as the snapshot: job visibility
+				// and the cancel permission read the column (lib/jobs/visibility.ts, operation.ts).
+				project_id: input.projectId,
 				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {

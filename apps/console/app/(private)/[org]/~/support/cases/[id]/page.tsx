@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { ORPCError } from "@orpc/server";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { getCase } from "@/app/server/actions/support";
-import { getQueryClient } from "@/lib/query/client";
-import { qk } from "@/lib/query/keys";
-import { pageMetadata } from "@/lib/seo/page-metadata";
+import { z } from "zod";
 import { CaseDetail } from "@/components/support/cases/case-detail";
+import { getQueryClient } from "@/lib/query/client";
+import { serverOrpc } from "@/lib/rpc/server";
+import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
 	title: "Case",
@@ -15,9 +16,12 @@ export const metadata = pageMetadata({
 });
 
 /**
- * Case-detail route. Prefetches the case + thread on the server (404s when it isn't
- * visible), hydrates it into the client cache so the thread renders on first paint, and
- * lets the client view take over the live SSE updates; `loading.tsx` covers the prefetch.
+ * Case-detail route (#6130). Reads the case in-process through the read router's `support.case`
+ * — the key the client view reads — and hands the dehydrated cache to the client, so the thread is
+ * in the server HTML. A case the caller cannot see (or an id that is not a case id at all) is the
+ * segment's `not-found.tsx`, which reads the same whether the case never existed or is another
+ * org's or another requester's. Any other failure propagates to the route's error boundary rather
+ * than rendering as a missing case. `loading.tsx` covers the read.
  */
 export default async function CaseDetailRoute({
 	params,
@@ -25,11 +29,15 @@ export default async function CaseDetailRoute({
 	params: Promise<{ org: string; id: string }>;
 }) {
 	const { org, id } = await params;
-	const queryClient = getQueryClient();
-	const result = await getCase(id);
-	if (!result) notFound();
+	if (!z.string().uuid().safeParse(id).success) notFound();
 
-	queryClient.setQueryData(qk.supportCase(id), result);
+	const queryClient = getQueryClient();
+	try {
+		await queryClient.fetchQuery(serverOrpc().support.case.queryOptions({ input: { id } }));
+	} catch (error) {
+		if (error instanceof ORPCError && error.code === "NOT_FOUND") notFound();
+		throw error;
+	}
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>

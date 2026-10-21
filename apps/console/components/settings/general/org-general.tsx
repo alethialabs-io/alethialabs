@@ -45,6 +45,7 @@ import {
   AlertDialogTrigger,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { ReadOnlyValue } from "@repo/ui/read-only-value";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
@@ -285,9 +286,12 @@ export function OrgGeneral() {
                 hint="Set from billing checkout when you opt to reuse the billing address."
               >
                 {s.primaryAddress ? (
-                  <address className="rounded-sm border border-border-strong bg-surface-sunken px-3 py-2.5 text-ui-sm not-italic leading-relaxed text-text-secondary">
-                    {formatPrimaryAddress(s.primaryAddress)}
-                  </address>
+                  // Set from checkout, not here — so plain text, not the input surface (#6117).
+                  <ReadOnlyValue>
+                    <address className="not-italic leading-relaxed">
+                      {formatPrimaryAddress(s.primaryAddress)}
+                    </address>
+                  </ReadOnlyValue>
                 ) : (
                   <span className="font-mono text-ui-xs text-text-tertiary">
                     Not set — check &ldquo;use as primary address&rdquo; during
@@ -395,7 +399,7 @@ export function OrgGeneral() {
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={() => void remove()}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     Delete organization
                   </AlertDialogAction>

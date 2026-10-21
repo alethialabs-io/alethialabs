@@ -100,9 +100,9 @@ tier_separation:
   # asserted twelve things and nobody could see which were true. Per-file entries make each claim
   # separately checkable and separately falsifiable, which is what this manifest then re-reads.
   - path: lib/queries/classification.ts
-    suite: [tests/integration/classification-snapshot.test.ts, tests/integration/classification-usage.test.ts]
-    symbols: [listAssignmentsFor, countAssignmentsByKindForValue, countAssignmentsByValue, countResourcesByDimension]
-    reason: Assignment reads and the per-dimension counting joins, verified against real Postgres.
+    suite: [tests/integration/classification-snapshot.test.ts, tests/integration/classification-usage.test.ts, tests/integration/org-bound-decisions.test.ts]
+    symbols: [listAssignmentsFor, countAssignmentsByKindForValue, countAssignmentsByValue, countResourcesByDimension, getEnforcingValuesForEnvironment]
+    reason: Assignment reads, the per-dimension counting joins and the org-bound enforcing-value join, verified against real Postgres.
 
   - path: lib/queries/cluster-for-env.ts
     suite: [tests/integration/cluster-for-env.test.ts]
@@ -327,11 +327,6 @@ baseline:
     issue: "#2649"
     state: untested-export
     reason: Dimension listing and per-kind assignment reads are asserted by no suite.
-  - path: lib/queries/classification.ts
-    symbols: [getEnforcingValuesFor]
-    issue: "#2649"
-    state: mock-only
-    reason: The enforcing-value lookup is referenced only through the promotion-lifecycle test's `vi.mock` of this module; no suite executes it for real.
 
   - path: lib/queries/runner-usage.ts
     symbols: [jobMinutesByProvider]

@@ -13,7 +13,8 @@ import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources"
 import { getClusters } from "@/app/server/actions/clusters";
 import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
 import { getLatestDriftPosture } from "@/app/server/actions/drift";
-import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
+import { getJobs } from "@/app/server/actions/jobs";
+import { readJob, readPlanResult } from "@/lib/rpc/procedures/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
 
@@ -138,7 +139,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 			description: "Get one job's status + error by id. PDP-gated read.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const j = await getJob(jobId);
+				const j = await readJob(jobId);
 				if (!j) return { error: "Job not found." };
 				return {
 					id: j.id,
@@ -157,7 +158,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 				"Get a plan/deploy job's result: status, error, and the available output keys. PDP-gated read.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const r = await getPlanResult(jobId);
+				const r = await readPlanResult(jobId);
 				const meta = r.execution_metadata;
 				return {
 					status: r.status,

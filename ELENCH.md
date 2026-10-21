@@ -75,8 +75,9 @@ research- and red-team-backed rationale.
 ### AI-audit, safely (LLM = explain/propose; the gate decides)
 - `ReVerify` / `RunRemediationLoop` (above) gate any proposed fix.
 - `lib/ai/explain-findings` — turns failing controls into plain-English explanation + suggested
-  remediation via an **injected** model call (unit-tested with a fake; `explainJobFindings` supplies
-  the real AI-gateway call). The model is advisory; malformed output degrades to a generic message.
+  remediation via an **injected** model call (unit-tested with a fake). No console surface calls it
+  yet; the unwired server-action wrapper was removed, so wiring it up means writing a caller that
+  applies the job read rules. The model is advisory; malformed output degrades to a generic message.
 - `lib/agent/executor` — the agent stateless-executor core: builds a scoped system prompt from an
   `agent_identities` row (persona/mission) and narrows the tool set to the agent's `tool_scope`
   (least privilege per agent). The turn itself is run by the AI SDK with memory loaded just-in-time.
@@ -131,7 +132,7 @@ export ALETHIA_VERIFY_ACCESS_ANALYZER=1
 | 2 | Drift **core** (`Analyze`) | **Done, tested** |
 | 2 | Drift **end-to-end** — `DETECT_DRIFT` (migration 0044) → `tofu PlanRefreshOnly` → `RunDriftDetection` → runner → `execution_metadata.drift_posture`; `queueDriftDetection` action; tiered **scheduler** (`lib/drift/schedule` + `dispatch`) + cron route (`/api/internal/drift/sweep`, `ALETHIA_CRON_SECRET`) | **Done, tested** (driven in-process by the reconcile loop's `drift-schedule` reconciler, `lib/reconcile/loop.ts:113`; the cron ROUTE stays available for an external scheduler and is currently unwired — #2874) |
 | 3 | `ReVerify` + `RunRemediationLoop` + Access Analyzer seam/control/adapter | **Done, tested** |
-| 3 | AI-audit **explanation** (`lib/ai/explain-findings` + `explainJobFindings` action) + agent **executor core** (`lib/agent/executor`: system prompt + per-agent tool scoping) | **Done, tested** (injected model) |
+| 3 | AI-audit **explanation** (`lib/ai/explain-findings`; no console caller yet) + agent **executor core** (`lib/agent/executor`: system prompt + per-agent tool scoping) | **Done, tested** (injected model) |
 | 3 | Agent runtime — CRUD actions (`createAgent`/`listAgents`/`getAgent`) + **agent-scoped chat route** (`/api/agent/[agentId]`, reuses the tested executor core + memory namespace) | **Done** (integration code at codebase parity; cores unit-tested) |
 | 3 | LLM `Remediator` impl (the re-plan call) + live Access Analyzer exercise / customer-TF sandbox audit | Pending — needs LLM/AWS/sandbox runtime |
 | 3 | Agent identity/memory **data layer** — `agent_identities` + `agent_memory` tables (migration 0045) + tenant-isolation path guard (`lib/agent/memory-path.ts`) | **Done, tested** (the stateless executor on top needs an LLM) |

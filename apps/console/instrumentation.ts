@@ -24,6 +24,24 @@ export async function register() {
 			startupLog.error("sentry init failed", { component: "sentry", err }),
 		);
 	}
+	// Decide the edition at BOOT for this module instance (#6149, R2). A failed enterprise load used
+	// to surface as one thrown request and then a silently community process serving every org
+	// address from the personal scope. Bundled chunks can hold their own module instances, so this
+	// does not decide for them — each still rethrows a failed load on every call (lib/enterprise.ts);
+	// what this adds is a loud failure at startup, before the first request, in the common case.
+	const { editionState } = await import("@/lib/enterprise");
+	const edition = editionState();
+	if (edition.kind === "failed") {
+		startupLog.error("enterprise edition failed to load — refusing to start", {
+			component: "edition",
+			err: edition.error,
+		});
+		throw edition.error;
+	}
+	startupLog.info("edition decided", {
+		component: "edition",
+		edition: edition.kind === "community" ? `community (${edition.reason})` : "enterprise",
+	});
 	const { startStaleJobRecovery } = await import("@/lib/jobs/recovery");
 	startStaleJobRecovery();
 	// In-app fleet controller (sibling loop). Pools live in the DB; import any legacy
@@ -69,6 +87,10 @@ export async function register() {
 		"@/lib/observability/heartbeats"
 	);
 	startHeartbeatWatcher();
+	// The console's change bus (#6115): one `alethia_change` LISTEN for this process, proved by a
+	// NOTIFY round trip at boot and every 30 s (supervised — a deaf LISTEN turns /health degraded).
+	const { startRealtimeBus } = await import("@/lib/realtime/self-test");
+	startRealtimeBus();
 	// Sync the static authz registry (permissions + built-in roles) — idempotent.
 	const { seedAuthz } = await import("@/lib/authz/seed");
 	await seedAuthz().catch((err) =>

@@ -3,10 +3,11 @@
 // @vitest-environment node
 
 // Pins the tenant guard on GET /api/stream/jobs/[id] (the console's SSE log stream). The guard
-// reads via the service DB (RLS-bypassing), so it MUST re-apply the jobs `owner_all` RLS predicate
-// by hand: `user_id = current_owner OR org_id = current_org`. Regression under test: on a hosted org
-// (orgId ≠ userId) the `set_org_id` trigger stamps a job's org_id = user_id when the insert omits it,
-// so a strict `org_id === actor.orgId` gate 404'd owned jobs and their logs silently never rendered.
+// reads via the service DB (RLS-bypassing), so it applies the jobs `owner_all` RLS predicate by
+// hand: `org_id = current_org OR org_id = current_owner` — the job belongs to the active org or to
+// the caller's personal org (whose id is the user's id). Two properties under test: a job stamped
+// `org_id = user_id` by the `set_org_id` fallback still streams on a hosted org (orgId ≠ userId),
+// and a job is reachable only from the org it belongs to — the predicate reads `org_id` alone.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +21,8 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeUserId: (...a: unknown[]) => authorizeUserId(...a),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+const isJobVisible = vi.fn();
+vi.mock("@/lib/jobs/visibility", () => ({ isJobVisible: (...a: unknown[]) => isJobVisible(...a) }));
 vi.mock("@/lib/realtime", () => ({
 	getRealtimeTransport: () => ({ subscribe: () => () => {} }),
 }));
@@ -61,6 +64,7 @@ beforeEach(() => {
 	getOwner.mockResolvedValue("user-1");
 	authorizeUserId.mockResolvedValue(null); // authorized
 	getActiveScope.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+	isJobVisible.mockResolvedValue(true);
 });
 
 describe("GET /api/stream/jobs/[id] tenant guard", () => {
@@ -84,7 +88,7 @@ describe("GET /api/stream/jobs/[id] tenant guard", () => {
 		expect((await stream("job-1")).status).toBe(404);
 	});
 
-	it("streams an OWNED job whose org_id defaulted to user_id on a hosted org (the bug)", async () => {
+	it("streams a job whose org_id defaulted to the caller's user id on a hosted org", async () => {
 		// user_id matches the caller; org_id (= the trigger's user_id default) ≠ the active org.
 		mockDb([{ org_id: "user-1", user_id: "user-1" }]);
 		const res = await stream("job-1");
@@ -92,8 +96,52 @@ describe("GET /api/stream/jobs/[id] tenant guard", () => {
 		expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 	});
 
+	it("a job outside the addressed organization is not found", async () => {
+		// The predicate reads the job's org alone; `user_id` plays no part in it.
+		mockDb([{ org_id: "org-other", user_id: "user-1" }]);
+		expect((await stream("job-1")).status).toBe(404);
+	});
+
+	it("streams a job of the caller's personal org from a hosted org scope", async () => {
+		// org_id = the caller's personal org (= their user id), created by the system on their behalf.
+		mockDb([{ org_id: "user-1", user_id: "someone-else" }]);
+		expect((await stream("job-1")).status).toBe(200);
+	});
+
+	it("404s for a job with no org", async () => {
+		mockDb([{ org_id: null, user_id: "user-1" }]);
+		expect((await stream("job-1")).status).toBe(404);
+	});
+
 	it("streams an org-scoped job the caller doesn't personally own (teammate view)", async () => {
 		mockDb([{ org_id: "org-1", user_id: "user-creator" }]);
 		expect((await stream("job-1")).status).toBe(200);
+	});
+});
+
+describe("GET /api/stream/jobs/[id] — job visibility follows project visibility", () => {
+	it("404s a job of a project the reader may not view, as if it did not exist", async () => {
+		mockDb([{ org_id: "org-1", project_id: "proj-denied" }]);
+		isJobVisible.mockResolvedValue(false);
+		expect((await stream("job-1")).status).toBe(404);
+		expect(isJobVisible).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1" },
+			expect.objectContaining({ project_id: "proj-denied" }),
+		);
+	});
+
+	it("streams a job of a project the reader may view", async () => {
+		mockDb([{ org_id: "org-1", project_id: "proj-ok" }]);
+		expect((await stream("job-1")).status).toBe(200);
+		expect(isJobVisible).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1" },
+			expect.objectContaining({ project_id: "proj-ok" }),
+		);
+	});
+
+	it("asks nothing of a job outside the reader's tenancy — that is a 404 already", async () => {
+		mockDb([{ org_id: "org-other", project_id: "proj-x" }]);
+		expect((await stream("job-1")).status).toBe(404);
+		expect(isJobVisible).not.toHaveBeenCalled();
 	});
 });

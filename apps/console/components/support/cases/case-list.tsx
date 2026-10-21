@@ -16,22 +16,20 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
-import { listMyCases } from "@/app/server/actions/support";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import {
+	CASE_LIST_PARAM_NAMES,
 	caseFacetOptions,
 	DEFAULT_SUPPORT_CASE_FILTERS,
 	matchesSupportCaseQuery,
 	normalizeSupportCaseQuery,
-	serverFilterForBucket,
 	type SupportCaseFilters,
 } from "@/components/support/cases/case-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { useHydrated } from "@/hooks/use-hydrated";
-import { qk } from "@/lib/query/keys";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { orpc } from "@/lib/rpc/client";
 import { useSupportFilters } from "@/lib/stores/use-support-filters";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
@@ -39,14 +37,7 @@ import {
 } from "@/lib/validations/support";
 import { CaseFilterBar } from "./case-filter-bar";
 import { CaseListItem } from "./case-list-item";
-
-/**
- * The lifecycle bucket is the only filter the URL renames — `?status=active` reads better
- * than `?bucket=active`, and it is the param the old tab strip would have wanted.
- */
-const PARAM_NAMES: Partial<Record<keyof SupportCaseFilters, string>> = {
-	bucket: "status",
-};
+import { CaseListSkeletonRows } from "./case-list-skeleton";
 
 /** Stable empty result — see the note at its use site. */
 const NO_ROWS: CaseListItemData[] = [];
@@ -54,7 +45,7 @@ const NO_ROWS: CaseListItemData[] = [];
 /**
  * The support case list, on the console filter standard (lib/query/README.md →
  * "Server-side filters"): the URL-synced `useSupportFilters` store feeds a debounced,
- * normalized query into `qk.supportCases(bucket)` → `listMyCases`, and the search /
+ * normalized query into the `support.cases` GET read for its bucket, and the search /
  * severity / type refinement runs as a pure predicate over the returned rows (see the
  * header of case-query.ts for why those three are client-side and the bucket is not).
  *
@@ -71,7 +62,7 @@ export function CaseList({
 }) {
 	const filters = useSupportFilters((s) => s.filters);
 	const reset = useSupportFilters((s) => s.reset);
-	const urlRead = useFilterUrlSync(useSupportFilters, DEFAULT_SUPPORT_CASE_FILTERS, PARAM_NAMES);
+	const urlRead = useFilterUrlSync(useSupportFilters, DEFAULT_SUPPORT_CASE_FILTERS, CASE_LIST_PARAM_NAMES);
 
 	// Only the DEBOUNCED search reaches the query, and the memo is keyed on the individual
 	// filter fields rather than the `filters` object — that object gets a fresh identity on
@@ -90,24 +81,21 @@ export function CaseList({
 		[filters.bucket, filters.severity, filters.type, debouncedSearch],
 	);
 
-	const result = useQuery({
-		queryKey: qk.supportCases(query.bucket),
-		queryFn: () => listMyCases(serverFilterForBucket(query.bucket)),
-		placeholderData: keepPreviousData,
-	});
-	const { refetch } = result;
-	// The notifications bell in the shell reads this same `"all"` key. On the server it creates the
-	// query before this page's HydrationBoundary runs, so the server renders the list pending; in
-	// the browser the bell's fetch can land before this boundary hydrates. Until hydration is over,
-	// render exactly what the server did — pending, no rows — or React discards the page's server
-	// HTML with #418 (see `useHydrated`, #5786).
-	const hydrated = useHydrated();
-	const isPending = result.isPending || !hydrated;
-	const isError = hydrated && result.isError;
-	const isPlaceholderData = hydrated && result.isPlaceholderData;
+	// The route prefetched this key (`my-cases/page.tsx`), so the rows are in the server HTML and
+	// the hydrating render draws the same rows: no client fetch on mount, no pending flash. (This
+	// used to render pending until hydration was over, because the bell shared the key; the bell
+	// reads its own feed now, `workspace.supportCases`, so nothing else fills this entry early.)
+	const result = useQuery(
+		orpc.support.cases.queryOptions({
+			input: { bucket: query.bucket },
+			placeholderData: keepPreviousData,
+		}),
+	);
+	const { refetch, isPending, isPlaceholderData } = result;
+	const isError = result.isError && result.data === undefined;
 	// A module-level empty array, not an inline `= []` default: a fresh literal on every
 	// render would give the memos below a new dependency identity each time and defeat them.
-	const rows = (hydrated ? result.data : undefined) ?? NO_ROWS;
+	const rows = result.data ?? NO_ROWS;
 
 	// Facet counts come off the bucket's rows BEFORE the client-side refinement, so an
 	// option never disappears at the moment you select it.
@@ -155,18 +143,17 @@ export function CaseList({
 				typeOptions={typeOptions}
 			/>
 
-			{isError ? (
+			{isPending ? (
+				// Pending is not empty (B3): rows-shaped placeholders, never "No cases yet".
+				<CaseListSkeletonRows />
+			) : isError ? (
 				// A fetch failure must not render as "no cases yet".
-				<ErrorState
+				<RegionError
 					title="Couldn't load your cases"
 					description="Something went wrong fetching your support cases. Check your connection and try again."
-					actions={
-						<Button variant="outline" size="sm" onClick={() => refetch()}>
-							Retry
-						</Button>
-					}
+					onRetry={() => refetch()}
 				/>
-			) : visible.length === 0 && !isPending ? (
+			) : visible.length === 0 ? (
 				// Two different empties: nothing to show at all, versus nothing that
 				// survived the filters — conflating them is how a filtered list comes to
 				// look broken.

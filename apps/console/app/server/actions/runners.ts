@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries/runners";
 import type { RunnerWithRelease } from "@/lib/query/resource-fetchers";
 import { generateRunnerToken } from "@/lib/runners/auth";
+import { unheldRunnerTokenHash } from "@/lib/runners/lifecycle-token";
 import {
 	isRunnerDeployProvider,
 	runnerDeployUnsupportedMessage,
@@ -56,7 +57,12 @@ function toReleaseInfo(r: {
 
 /** The org's self/BYO runners, joined with their pinned release, default first. Managed
  *  (platform-fleet) runners are excluded by RLS — they are read separately via
- *  {@link getManagedRunnersWithReleases} on self-managed deployments. */
+ *  {@link getManagedRunnersWithReleases} on self-managed deployments.
+ *
+ *  A default is chosen per org, so `is_default` reads as "the default of the addressed org": a
+ *  personal-workspace runner listed from a team org carries `is_default: false` here even when it is
+ *  the personal workspace's default, and `personal_elsewhere: true` so the list can say where its
+ *  default is chosen. */
 export async function getRunnersWithReleases() {
 	const actor = await authorize("view", { type: "runner" });
 	return withActorScope(actor, async (tx) => {
@@ -65,15 +71,30 @@ export async function getRunnersWithReleases() {
 			.from(runners)
 			.leftJoin(runnerReleases, eq(runners.release_id, runnerReleases.id))
 			.orderBy(
-				desc(runners.is_default),
+				desc(defaultInOrg(actor.orgId)),
 				asc(runners.operator),
 				asc(runners.created_at),
 			);
 		return rows.map((r) => ({
 			...r.runner,
+			is_default: r.runner.is_default && r.runner.org_id === actor.orgId,
+			personal_elsewhere: isPersonalElsewhere(r.runner.org_id, actor),
 			runner_releases: r.release ? toReleaseInfo(r.release) : null,
 		}));
 	});
+}
+
+/** True when a runner sits in the caller's personal workspace while the request addresses a team org. */
+function isPersonalElsewhere(
+	runnerOrgId: string | null,
+	actor: { userId: string; orgId: string },
+): boolean {
+	return actor.orgId !== actor.userId && runnerOrgId === actor.userId; // authz-scope-ok
+}
+
+/** `is_default`, read as "the default of the addressed org" (a default is chosen per org). */
+function defaultInOrg(orgId: string) {
+	return sql<boolean>`(${runners.is_default} and ${runners.org_id} = ${orgId})`;
 }
 
 /**
@@ -94,6 +115,7 @@ export async function getManagedRunnersWithReleases() {
 		.orderBy(asc(runners.created_at));
 	return rows.map((r) => ({
 		...r.runner,
+		personal_elsewhere: false,
 		runner_releases: r.release ? toReleaseInfo(r.release) : null,
 	}));
 }
@@ -244,7 +266,7 @@ export async function registerRunner(name: string) {
 	return { runner, runner_token: runnerToken };
 }
 
-/** Sets (or clears) the default runner for the current user. */
+/** Sets (or clears) the current user's default runner within the addressed org (or personal workspace). */
 export async function setDefaultRunner(runnerId: string | null) {
 	const actor = await authorize("edit", {
 		type: "runner",
@@ -252,7 +274,7 @@ export async function setDefaultRunner(runnerId: string | null) {
 	});
 	const owner = actor.userId;
 	await getServiceDb().execute(
-		sql`select set_default_runner(${owner}::uuid, ${runnerId ?? null}::uuid)`,
+		sql`select set_default_runner(${owner}::uuid, ${actor.orgId}::uuid, ${runnerId ?? null}::uuid)`,
 	);
 }
 
@@ -267,10 +289,10 @@ export async function getAvailableRunners() {
 				operator: runners.operator,
 				provisioning: runners.provisioning,
 				status: runners.status,
-				is_default: runners.is_default,
+				is_default: defaultInOrg(actor.orgId),
 			})
 			.from(runners)
-			.orderBy(desc(runners.is_default), asc(runners.name)),
+			.orderBy(desc(defaultInOrg(actor.orgId)), asc(runners.name)),
 	);
 }
 
@@ -291,7 +313,6 @@ export async function deployRunner(params: {
 	if (params.assignedRunnerId)
 		await assertRunnerInOrg(getServiceDb(), params.assignedRunnerId, actor.orgId, actor.userId);
 	const owner = actor.userId;
-	const { token: runnerToken, hash: tokenHash } = generateRunnerToken();
 
 	await assertJobQuotaAllowed(actor.orgId);
 
@@ -317,14 +338,15 @@ export async function deployRunner(params: {
 				name: params.name,
 				operator: "self",
 				provisioning: "deployed",
-				token_hash: tokenHash,
+				// No usable credential until the DEPLOY_RUNNER job is claimed: the claim mints the token
+				// and hands it to the executing runner alone (lib/runners/lifecycle-token.ts).
+				token_hash: unheldRunnerTokenHash(),
 				cloud_identity_id: params.cloudIdentityId,
 			})
 			.returning({ id: runners.id, name: runners.name });
 
 		const configSnapshot = {
 			runner_id: runner.id,
-			runner_token: runnerToken,
 			runner_name: params.name,
 			image_tag: params.imageTag || "latest",
 			region: params.region,
@@ -415,7 +437,7 @@ function buildRunnerConfigSnapshot(
 		Awaited<ReturnType<typeof fetchDeployedRunner>>["deployConfig"]
 	>,
 	provider: string | null | undefined,
-	overrides?: { runner_token?: string; image_tag?: string },
+	overrides?: { image_tag?: string },
 ) {
 	const cloudProvider = provider ?? deployConfig.cloud_provider;
 	if (!cloudProvider)
@@ -425,7 +447,6 @@ function buildRunnerConfigSnapshot(
 
 	return {
 		runner_id: runner.id,
-		runner_token: overrides?.runner_token ?? "",
 		runner_name: runner.name,
 		region: deployConfig.region,
 		cloud_provider: cloudProvider,
@@ -494,7 +515,7 @@ export async function destroyRunner(
 		await assertNoActiveLifecycleJob(tx, runnerId);
 
 		// DESTROY needs no runner token: the runner's destroy path uses a placeholder tfvar and never
-		// authenticates as the target, so we pass none (the token is no longer persisted, #945).
+		// authenticates as the target, so none is issued at claim either.
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
@@ -534,10 +555,9 @@ export async function updateRunner(runnerId: string) {
 
 	await assertJobQuotaAllowed(actor.orgId);
 
-	// UPDATE re-deploys the runner container, so mint a FRESH token and store only its hash — the
-	// live plaintext is handed to this job once and never persisted at rest (#945). This also rotates
-	// the credential on every update, invalidating the previous one.
-	const { token: newToken, hash: newTokenHash } = generateRunnerToken();
+	// UPDATE re-deploys the runner container with a FRESH token. The previous credential is retired
+	// here, at enqueue, and the new one is minted when the job is claimed and handed to the executing
+	// runner alone (lib/runners/lifecycle-token.ts) — so the job row never carries it.
 
 	const result = await withActorScope(actor, async (tx) => {
 		await assertNoActiveLifecycleJob(tx, runnerId);
@@ -552,17 +572,14 @@ export async function updateRunner(runnerId: string) {
 
 		await tx
 			.update(runners)
-			.set({ token_hash: newTokenHash })
+			.set({ token_hash: unheldRunnerTokenHash() })
 			.where(eq(runners.id, runnerId));
 
 		const configSnapshot = buildRunnerConfigSnapshot(
 			runner,
 			deployConfig,
 			identity?.provider,
-			{
-				runner_token: newToken,
-				image_tag: latestRelease.version,
-			},
+			{ image_tag: latestRelease.version },
 		);
 
 		const [job] = await tx

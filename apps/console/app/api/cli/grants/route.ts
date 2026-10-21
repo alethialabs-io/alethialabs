@@ -15,6 +15,7 @@ import {
 	PERMISSIONS,
 } from "@/lib/authz/registry";
 import { parseGrantResource } from "@/lib/authz/fga-tuples";
+import { GRANT_BINDING_MESSAGE, grantBindingViolation } from "@/lib/authz/grant-binding";
 import { resourceIdOf } from "@/lib/authz/grant-scope";
 import { INACTIVE_PRINCIPAL_MESSAGE, lacksActiveMembership } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
@@ -145,7 +146,8 @@ export async function GET(req: Request) {
 /** Assigns an access grant (mirrors the assignGrant action) and syncs its PDP
  * tuples. Access management is an Enterprise capability — gated on customRoles.
  * Gated on `manage_members` of `member`. An allow grant to a user whose member row
- * in the org is not active is refused. */
+ * in the org is not active is refused, and so is a role, team principal or scoped resource that is
+ * not this org's (400, with the `GrantBindingReason` as `reason`). */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "manage_members", { type: "member" });
 	if ("error" in auth) return auth.error;
@@ -184,6 +186,22 @@ export async function POST(req: Request) {
 		return NextResponse.json({ error: scopeParse.error }, { status: 400 });
 	}
 	const scope = scopeParse.resource;
+	// The role, a team principal and the scoped resource must all be this org's (a built-in role is
+	// valid everywhere) — the same predicate, and the same order, as `assignGrant`; the
+	// `grants_org_binding` trigger backs it for every other writer (lib/authz/grant-binding.ts).
+	const unbound = await grantBindingViolation({
+		orgId: actor.orgId,
+		principalType: input.principal_type,
+		principalId: input.principal_id,
+		roleId: input.role_id ?? null,
+		resource: scope,
+	});
+	if (unbound !== null) {
+		return NextResponse.json(
+			{ error: GRANT_BINDING_MESSAGE[unbound], reason: unbound },
+			{ status: 400 },
+		);
+	}
 	// Privilege ceiling: an allow-grant may not exceed the caller's own effective permissions
 	// (a deny only removes access, so it can't escalate the grantee — skip it).
 	if (

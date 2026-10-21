@@ -34,7 +34,7 @@ import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import type { RoleRow, RolesBootstrap } from "@/app/server/actions/roles";
 import type { SsoBootstrap } from "@/app/server/actions/sso";
 import type { CaseListItem } from "@/lib/queries/support";
-import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
 
 /** The query string the "pasted link" carries; each test sets it before rendering. */
 let currentSearch = "";
@@ -52,7 +52,6 @@ vi.mock("@/app/server/actions/activity", () => ({
 	getActivityExportCsv: vi.fn(),
 }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(() => new Promise(() => {})) }));
-vi.mock("@/app/server/actions/support", () => ({ listMyCases: vi.fn(() => new Promise(() => {})) }));
 
 /** Every search `useRolesQuery` / `useSsoProvidersQuery` was called with, in render order. */
 const asked = vi.hoisted(() => ({ roles: [] as Array<string | undefined>, sso: [] as Array<string | undefined> }));
@@ -215,7 +214,7 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 	it("shows only the matching case before any debounce has elapsed", async () => {
 		currentSearch = "search=registry";
 		renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) =>
-			qc.setQueryData(qk.supportCases("all"), [
+			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, [
 				item("c1", 1042, "Runner cannot reach the registry"),
 				item("c2", 1043, "Invoice address is wrong"),
 			]),

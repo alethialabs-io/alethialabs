@@ -3,8 +3,10 @@
 
 import { and, eq } from "drizzle-orm";
 import { getOwnerScope } from "@/lib/auth/owner";
-import { getActiveScope } from "@/lib/auth/scope";
+import { EditionMisconfiguredError } from "@/lib/auth/errors";
+import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
+import { enforceDecision } from "@/lib/authz/activity";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
@@ -62,7 +64,19 @@ export async function currentActor(): Promise<Actor> {
 	//    behaved the same before this change) and `requireHostedBilling` bounds the billing case,
 	//    but it is an inconsistency, not a symmetry, and saying otherwise would be a comment
 	//    asserting a property the code does not have.
-	if (actor.orgId === userId) return actor;
+	//
+	//    ⚠ ONLY IN THE SINGLE-TENANT EDITION BY CONFIGURATION (#6149, F049, ADR 0005 Q5). With an
+	//    enterprise resolver registered, a collapse to the personal scope is the resolver disagreeing
+	//    with an address whose membership was just proved — the shape the 2026-10-19 sandbox hit,
+	//    where every server action answered for the personal workspace while the page rendered the
+	//    org — and it falls through to the substitution refusal below. With the edition UNSET and
+	//    no enterprise package found, a real AGPL checkout and a resolution failure look identical,
+	//    so it is refused and named rather than served.
+	if (actor.orgId === userId) {
+		const mode = tenancyMode();
+		if (mode === "single-tenant") return actor;
+		if (mode === "unconfigured") throw new EditionMisconfiguredError();
+	}
 
 	// 3. A DIFFERENT named org. That is the substitution, and following it would answer a request
 	//    addressed to B from some third org's scope — #3863, on the CLI's `--org` header, reaching
@@ -118,6 +132,33 @@ export async function authorizeQuiet(
 	const ref: ResourceRef = { type: resource.type, id: resource.id };
 	const decision = await getPdp().can(actor, action, ref);
 	if (!decision.allowed) throw new ForbiddenError(action, ref, decision.reason);
+	return actor;
+}
+
+/**
+ * A READ's permission check: quiet when ALLOWED, on the record when DENIED.
+ *
+ * A read a page refetches on every live hint (#6127's billing-admin reads, the project-usage reads)
+ * must not write an activity row per allowed refetch — that is {@link authorizeQuiet}'s half. But a
+ * DENIED attempt is exactly what the activity log and an org's alert rules exist for, and
+ * {@link authorizeQuiet} drops it too. So this asks `can()` and, only on a deny, hands the decision
+ * to `enforceDecision` (lib/authz/activity.ts) — the same path `enforce()` takes, which records the
+ * denial, emits it as an action event, and throws `ForbiddenError`. Who is let in is decided by the
+ * same `can()` either way.
+ */
+export async function authorizeRead(
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<Actor> {
+	const actor = await currentActor();
+	const ref: ResourceRef = { type: resource.type, id: resource.id };
+	const decision = await getPdp().can(actor, action, ref);
+	if (!decision.allowed) {
+		// `enforceDecision` records the denial, emits it, and throws. The explicit throw keeps this
+		// fail-closed if that function ever stops throwing.
+		enforceDecision(actor, action, ref, decision);
+		throw new ForbiddenError(action, ref, decision.reason);
+	}
 	return actor;
 }
 

@@ -7,6 +7,7 @@
 // values (operator/provisioning/job_type/config_snapshot), the hosted-vs-self-managed branches, the
 // duplicate-destroy guard, and that notifyScaler fires after queueing jobs.
 
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
@@ -278,6 +279,14 @@ describe("setDefaultRunner", () => {
 		expect(mock.execute).toHaveBeenCalledTimes(1);
 	});
 
+	it("chooses the default within the addressed org: user, org and runner, in that order", async () => {
+		vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+		await setDefaultRunner("r1");
+		const q = new PgDialect().sqlToQuery(mock.execute.mock.calls[0][0]);
+		expect(q.sql).toContain("set_default_runner(");
+		expect(q.params).toEqual(["user-1", "org-1", "r1"]);
+	});
+
 	it("clears the default (null) without an id on the resource", async () => {
 		await setDefaultRunner(null);
 		expect(authorize).toHaveBeenCalledWith("edit", {
@@ -319,7 +328,9 @@ describe("deployRunner", () => {
 			cloud_identity_id: "ci-1",
 			token_hash: "tok-hash",
 		});
-		// job row: DEPLOY_RUNNER, queued, snapshot carries the token + resolved provider.
+		// job row: DEPLOY_RUNNER, queued, snapshot carries the resolved provider and NO token — the
+		// token is minted at claim (lib/runners/lifecycle-token.ts), and the runner row's hash is one
+		// whose plaintext was discarded.
 		const jobValues = mock.valuesSpy.mock.calls[1][0];
 		expect(jobValues).toMatchObject({
 			job_type: "DEPLOY_RUNNER",
@@ -328,10 +339,11 @@ describe("deployRunner", () => {
 		});
 		expect(jobValues.config_snapshot).toMatchObject({
 			runner_id: "r-dep",
-			runner_token: "tok-plain",
 			cloud_provider: "aws",
 			region: "us-east-1",
 		});
+		expect(jobValues.config_snapshot).not.toHaveProperty("runner_token");
+		expect(JSON.stringify(jobValues)).not.toContain("tok-plain");
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
@@ -397,8 +409,8 @@ describe("destroyRunner", () => {
 			job_type: "DESTROY_RUNNER",
 			status: "QUEUED",
 		});
-		// DESTROY carries no real token — the runner uses a placeholder tfvar (#945).
-		expect(jobValues.config_snapshot.runner_token).toBe("");
+		// DESTROY carries no token at all — the runner uses a placeholder tfvar.
+		expect(jobValues.config_snapshot).not.toHaveProperty("runner_token");
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
@@ -496,7 +508,7 @@ describe("updateRunner", () => {
 		},
 	};
 
-	it("queues an UPDATE_RUNNER job pinned to the latest release + re-mints the token", async () => {
+	it("queues an UPDATE_RUNNER job pinned to the latest release + retires the old token", async () => {
 		mock.queue.push(
 			[runnerRow], // runner lookup
 			[{ provider: "aws" }], // identity lookup
@@ -517,10 +529,12 @@ describe("updateRunner", () => {
 			status: "QUEUED",
 		});
 		expect(jobValues.config_snapshot.image_tag).toBe("3.4.5");
-		// A fresh token is minted and handed to the job; only its hash is persisted (#945).
+		// The old credential is retired at enqueue (the row gets the hash of a discarded token) and
+		// the job carries none: the claim mints the new one.
 		expect(generateRunnerToken).toHaveBeenCalledTimes(1);
-		expect(jobValues.config_snapshot.runner_token).toBe("tok-plain");
 		expect(mock.setSpy).toHaveBeenCalledWith({ token_hash: "tok-hash" });
+		expect(jobValues.config_snapshot).not.toHaveProperty("runner_token");
+		expect(JSON.stringify(jobValues)).not.toContain("tok-plain");
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
@@ -533,7 +547,7 @@ describe("updateRunner", () => {
 		await expect(updateRunner("r-up")).rejects.toThrow(/already in progress/);
 	});
 
-	it("succeeds without a stored token — the token is re-minted, not read from at rest (#945)", async () => {
+	it("succeeds without a stored token — nothing is read from at rest (#945)", async () => {
 		mock.queue.push(
 			[
 				{
@@ -552,7 +566,7 @@ describe("updateRunner", () => {
 		const res = await updateRunner("r-up");
 		expect(res).toEqual({ jobId: "job-up" });
 		const jobValues = mock.valuesSpy.mock.calls[0][0];
-		expect(jobValues.config_snapshot.runner_token).toBe("tok-plain");
+		expect(jobValues.config_snapshot).not.toHaveProperty("runner_token");
 	});
 
 	it("throws when there are no runner releases", async () => {

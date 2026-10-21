@@ -5,7 +5,12 @@
 // Client hook for live (Stripe-authoritative) plan prices. Fetches the whole price map
 // once via the getLivePlanPrices server action (module-cached promise so every consumer
 // shares a single request), and returns a plan's amount + label with the static catalog
-// value as the synchronous fallback while loading / when Stripe isn't configured.
+// value as the synchronous fallback while loading / when Stripe isn't configured. The hook
+// stays a server action because its consumers include the public onboarding form, which has
+// no org address for the read router to resolve.
+//
+// The AI tiers' price comes from the read router instead (`billing.liveAiPrices`, prefetched
+// with the billing and usage pages — #6127); `aiPriceView` turns its row into the same label.
 
 import { useEffect, useState } from "react";
 import { type Money, money } from "@repo/format";
@@ -20,10 +25,9 @@ import {
 	planMeta,
 	shortInterval,
 } from "@repo/plan-catalog";
-import { getLiveAiPrices, getLivePlanPrices } from "@/app/server/actions/billing";
+import { getLivePlanPrices } from "@/app/server/actions/billing";
 import type {
 	LiveAiPrice,
-	LiveAiPriceMap,
 	LivePlanPrice,
 	LivePlanPriceMap,
 } from "@/lib/billing/pricing";
@@ -119,54 +123,18 @@ export function useLivePlanPrice(
 	return { unitAmount, currency, label, loading: data === null };
 }
 
-let aiPending: Promise<LiveAiPriceMap> | null = null;
-
-/** Fetch the live AI price map once and share it across all hook consumers. */
-function loadAiPrices(): Promise<LiveAiPriceMap> {
-	if (!aiPending) {
-		aiPending = getLiveAiPrices().catch((e) => {
-			aiPending = null; // allow a retry on the next mount after a transient failure
-			throw e;
-		});
-	}
-	return aiPending;
-}
-
 /**
- * The live price for a standalone AI tier in the given currency (default USD), with the AI
- * catalog value as the loading/offline fallback. The whole AI price map is fetched once and
- * shared. Free renders "Free"; the paid tiers show the Stripe amount (placeholder catalog
- * price pre-cutover). Formats identically to the org-plan hook.
+ * The price view of one AI tier from its live row — or from the catalog while there is no row
+ * (still loading, Stripe not configured). Pure, so a component that READS the live map over the
+ * read router (`orpc.billing.liveAiPrices`, prefetched with the page — #6127) renders the same
+ * label this hook does, from the first paint, without a second fetch path.
  */
-export function useLiveAiPrice(
+export function aiPriceView(
 	tier: AiPlanId,
+	data: LiveAiPrice | null | undefined,
 	currency: SupportedCurrency = "usd",
 ): LivePlanPriceView {
 	const meta = aiPlanMeta(tier);
-	const [data, setData] = useState<LiveAiPrice | null>(null);
-
-	useEffect(() => {
-		let active = true;
-		// THE PREVIOUS ROW IS DROPPED BEFORE THE NEW ONE IS FETCHED, and that is a correctness fix
-		// rather than tidiness. Without it a tier that CHANGES on a live component keeps the old
-		// row in state while the new one is in flight, so the hook reports `loading: false` — its
-		// contract for "this is the authoritative price" — beside another tier's amount. The
-		// console does exactly that transition: ai-usage-section renders
-		// `useLiveAiPrice(ai?.tier ?? "ai_free")`, so every visit shows a paid tier priced "Free"
-		// for at least one render once the summary resolves.
-		setData(null);
-		loadAiPrices()
-			.then((m: LiveAiPriceMap) => {
-				if (active) setData(m[tier]);
-			})
-			.catch(() => {
-				// Keep the catalog fallback on failure.
-			});
-		return () => {
-			active = false;
-		};
-	}, [tier]);
-
 	const unitAmount =
 		data?.amounts[currency] ?? catalogAmount(meta.priceMonthly, currency);
 	const interval = data?.interval ?? "month";
@@ -176,5 +144,5 @@ export function useLiveAiPrice(
 			? meta.priceLabel
 			: `${formatPriceLabel(unitAmount.minor, currency)} / ${shortInterval(interval)}`;
 
-	return { unitAmount, currency, label, loading: data === null };
+	return { unitAmount, currency, label, loading: data == null };
 }

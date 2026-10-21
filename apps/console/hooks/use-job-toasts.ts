@@ -5,8 +5,8 @@
 import { useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
-import type { JobWithMeta } from "@/app/server/actions/jobs";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
+import type { ShellJob } from "@/lib/rpc/procedures/workspace";
 import type { ProvisionJobStatus } from "@/lib/db/schema";
 import { track } from "@/lib/analytics/track";
 import { NOTIFY_JOB_TYPES, jobPhase, jobToastContent } from "@/lib/jobs/toast-copy";
@@ -25,7 +25,7 @@ import { NOTIFY_JOB_TYPES, jobPhase, jobToastContent } from "@/lib/jobs/toast-co
  * page and the bell.
  */
 export function useJobToasts(): void {
-	const { data: jobs } = useJobsQuery();
+	const { data: jobs } = useRecentJobsQuery();
 	const router = useRouter();
 	const { org } = useParams<{ org: string }>();
 
@@ -63,7 +63,7 @@ export function useJobToasts(): void {
 		}
 
 		/** Renders/updates the single toast for a job at its current phase. */
-		function emit(job: JobWithMeta): void {
+		function emit(job: ShellJob): void {
 			const id = `job-${job.id}`;
 			const phase = jobPhase(job.status);
 			const { title, description } = jobToastContent(job, phase);

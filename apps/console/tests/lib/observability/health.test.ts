@@ -30,12 +30,29 @@ beforeEach(() => {
 	__resetHealthCache();
 	__resetLoopHeartbeats();
 	execute.mockReset();
-	execute.mockResolvedValue([{ "?column?": 1 }]);
+	execute.mockResolvedValue([{ notify_queue_usage: 0 }]);
 	delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT; // keep OTel out of the aggregate
 });
 afterEach(() => {
 	if (savedOtel === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 	else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = savedOtel;
+});
+
+describe("getDeepHealth — the change bus's NOTIFY queue (#6127)", () => {
+	it("reports pg_notification_queue_usage() as a number on the connectivity probe", async () => {
+		execute.mockResolvedValue([{ notify_queue_usage: 0.0125 }]);
+		const health = await getDeepHealth();
+		expect(health.db.notifyQueueUsage).toBe(0.0125);
+		expect(execute).toHaveBeenCalledTimes(1); // the same round-trip, not a second query
+	});
+
+	it("reports null — not 0 — when the probe failed or answered no number", async () => {
+		execute.mockResolvedValue([{}]);
+		expect((await getDeepHealth()).db.notifyQueueUsage).toBeNull();
+		__resetHealthCache();
+		execute.mockRejectedValue(new Error("ECONNREFUSED"));
+		expect((await getDeepHealth()).db.notifyQueueUsage).toBeNull();
+	});
 });
 
 describe("getDeepHealth — aggregation", () => {

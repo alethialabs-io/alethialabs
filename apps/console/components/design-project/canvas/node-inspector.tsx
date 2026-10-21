@@ -128,7 +128,7 @@ export function InspectorPanel() {
 	// The GitOps Deploy tab (#574) is environment-wide, so it lives on the cluster — the
 	// environment's control-plane node, where ArgoCD/gitops already surface (the cluster card's
 	// ArgoCD section). It reads the same `env.gitops` the artifact panel's Deploy tab does,
-	// riding the already-polled EnvironmentStatus — no per-node fetch.
+	// riding the board's one EnvironmentStatus read — no per-node fetch.
 	const showDeploy = node.data.kind === "cluster";
 
 	// A remembered tab can name one this card does not have (Deploy is cluster-only), so it falls

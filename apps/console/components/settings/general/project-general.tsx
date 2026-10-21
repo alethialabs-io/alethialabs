@@ -42,6 +42,7 @@ import {
   AlertDialogTrigger,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { ReadOnlyValue } from "@repo/ui/read-only-value";
 import { cn } from "@repo/ui/utils";
 
 // The bound is READ from the schema, not retyped: this file carried a literal `100` while
@@ -166,9 +167,11 @@ export function ProjectGeneral({
                 label="Project URL"
                 hint="The slug in this project's URLs — kept stable across renames."
               >
-                <div className="flex h-[38px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken px-3 font-mono text-ui-sm text-text-tertiary">
+                {/* Read-only, so NOT on the input surface (#6117, F039): a sunken bordered box
+                    beside the editable name field read as a second field that ignored clicks. */}
+                <ReadOnlyValue mono>
                   /{orgSlug}/{slug ?? "—"}
-                </div>
+                </ReadOnlyValue>
               </SettingsField>
               {/* Classification (Workstream B) — chips + a picker for org editors. */}
               <SettingsField
@@ -223,7 +226,7 @@ export function ProjectGeneral({
                   <AlertDialogAction
                     onClick={() => void onDelete()}
                     disabled={deleting}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     {deleting ? "Deleting…" : "Delete project"}
                   </AlertDialogAction>

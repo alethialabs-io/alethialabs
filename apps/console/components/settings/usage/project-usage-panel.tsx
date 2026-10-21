@@ -7,9 +7,11 @@
 // It shows only what is genuinely scopeable to one project: its jobs, managed runner job-minutes,
 // clusters, estimated cloud cost, and AI credits attributed via ref_id (best-effort — see the
 // footnote). Org-wide meters (seats, plan limits, provisioned-runner hours) are NOT per-project,
-// so the toolbar links out to the organization usage report for them. Data comes from the
-// project-usage server actions through the shared TanStack cache (period-fixed reads are
-// server-prefetched + hydrated; the over-time chart re-queries as the range picker changes).
+// so the toolbar links out to the organization usage report for them. Every read is a GET
+// procedure (`usage.project*`, #6127) the route prefetches on the server — including the opening
+// window of the over-time chart, whose key is its PRESET — so the first paint carries data and the
+// browser fetches nothing on mount. No poll: the numbers move through the `jobs` and `usage`
+// topics of the org's change stream (lib/query/topics.ts).
 //
 // ── The order is usage-panel.tsx's order, deliberately ───────────────────────────────────────
 // The two pages answer one question at two scopes, so a reader who has learned one has learned
@@ -23,19 +25,19 @@
 // that is the one honest difference between the two pages, and `formatMinutes` (not `formatQuota`)
 // is where it shows.
 
-import { formatMonthlyRate } from "@repo/format";
+import { formatMinutes, formatMonthlyRate } from "@repo/format";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { RegionError } from "@/components/errors/region-error";
 import {
-	getProjectAiUsage,
-	getProjectResourceCounts,
-	getProjectUsage,
-	getProjectUsageOverTime,
-} from "@/app/server/actions/project-usage";
-import { ErrorState } from "@/components/errors/error-state";
+	RegionRefusal,
+	refusalOf,
+	retryUnlessRefused,
+} from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { useUsageRange } from "@/components/settings/usage/use-usage-range";
 import {
 	count,
 	Fact,
@@ -43,22 +45,13 @@ import {
 	type Metric,
 	OverTimeCard,
 } from "@/components/settings/usage/usage-primitives";
-import { qk } from "@/lib/query/keys";
+import { UsageSkeleton } from "@/components/settings/usage/usage-skeleton";
+import { orpc } from "@/lib/rpc/client";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { formatMinutes } from "@repo/format";
-import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
-import {
-	type DateRange,
-	DEFAULT_PRESET,
-	formatRangeLabel,
-	presetRange,
-	RANGE_PRESETS,
-} from "@repo/ui/range";
-import { Skeleton } from "@repo/ui/skeleton";
 
 /**
  * Renders the Usage view for a single project. `projectId` is resolved from the URL slug in
@@ -67,70 +60,44 @@ import { Skeleton } from "@repo/ui/skeleton";
 export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 	const orgSlug = useActiveOrgSlug();
 
-	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
-	const [rangeLabel, setRangeLabel] = useState(
-		RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days",
-	);
+	const picker = useUsageRange();
 	const [metric, setMetric] = useState<Metric>("runnerMinutes");
+	const input = { projectId };
 
 	// Period-fixed reads (server-prefetched + hydrated): runner job-minutes, resource counts, AI.
-	const usage = useQuery({
-		queryKey: [...qk.projectUsage(projectId), "report"] as const,
-		queryFn: () => getProjectUsage(projectId),
-	});
-	const counts = useQuery({
-		queryKey: [...qk.projectUsage(projectId), "counts"] as const,
-		queryFn: () => getProjectResourceCounts(projectId),
-	});
-	const ai = useQuery({
-		queryKey: [...qk.projectUsage(projectId), "ai"] as const,
-		queryFn: () => getProjectAiUsage(projectId),
-	});
+	const usage = useQuery(orpc.usage.project.queryOptions({ input, retry: retryUnlessRefused }));
+	const counts = useQuery(
+		orpc.usage.projectResources.queryOptions({ input, retry: retryUnlessRefused }),
+	);
+	const ai = useQuery(orpc.usage.projectAi.queryOptions({ input, retry: retryUnlessRefused }));
 
-	// Range-driven over-time series — re-queries whenever the window changes.
-	const overTime = useQuery({
-		queryKey: qk.projectUsageOverTime(
-			projectId,
-			range.from.toISOString(),
-			range.to.toISOString(),
-		),
-		queryFn: () =>
-			getProjectUsageOverTime(projectId, {
-				from: range.from.toISOString(),
-				to: range.to.toISOString(),
-			}),
-	});
+	// Range-driven over-time series — re-queries whenever the window changes. No
+	// `keepPreviousData`: the caption changes with the picker synchronously (see usage-panel.tsx).
+	const overTime = useQuery(
+		orpc.usage.projectOverTime.queryOptions({
+			input: { projectId, range: picker.spec },
+			retry: retryUnlessRefused,
+		}),
+	);
 
-	if (usage.isLoading && !usage.data) {
+	if (usage.data === undefined) {
+		if (!usage.isError) return <UsageSkeleton scope="project" />;
+		// A refusal (this project is not yours to see) is not a failure, and neither is "no usage":
+		// each gets its own render (RUBRIC B4).
+		const refusal = refusalOf(usage.error);
+		if (refusal) return <RegionRefusal refusal={refusal} />;
+		// A fetch failure must not read as "no usage" (dashes everywhere) — surface it with a retry
+		// that refetches every read the panel needs.
 		return (
-			<div className="space-y-4">
-				<Skeleton className="h-24 w-full" />
-				<Skeleton className="h-48 w-full" />
-			</div>
-		);
-	}
-
-	// A fetch failure must not read as "no usage" (dashes everywhere) — surface it with a retry
-	// that refetches every read the panel needs.
-	if (usage.isError && !usage.data) {
-		return (
-			<ErrorState
+			<RegionError
 				title="Couldn't load usage"
 				description="Something went wrong fetching this project's usage. Check your connection and try again."
-				actions={
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => {
-							void usage.refetch();
-							void counts.refetch();
-							void ai.refetch();
-							void overTime.refetch();
-						}}
-					>
-						Retry
-					</Button>
-				}
+				onRetry={() => {
+					void usage.refetch();
+					void counts.refetch();
+					void ai.refetch();
+					void overTime.refetch();
+				}}
 			/>
 		);
 	}
@@ -204,20 +171,11 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 				action={
 					<div className="flex flex-wrap items-center gap-2">
 						<QuickRangeFilter
-							label={rangeLabel}
-							value={range}
-							onChange={(r, l) => {
-								setRange(r);
-								setRangeLabel(l);
-							}}
+							label={picker.label}
+							value={picker.range}
+							onChange={picker.pickPreset}
 						/>
-						<DateRangeFilter
-							value={range}
-							onChange={(r) => {
-								setRange(r);
-								setRangeLabel(formatRangeLabel(r));
-							}}
-						/>
+						<DateRangeFilter value={picker.range} onChange={picker.pickRange} />
 					</div>
 				}
 			>
@@ -230,7 +188,8 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 					// has rather than replacing real bars with an error; react-query leaves the last
 					// good `data` in place across a failed refetch, and stale-but-labelled beats blank.
 					error={overTime.isError && !overTime.data}
-					rangeLabel={rangeLabel}
+					onRetry={() => void overTime.refetch()}
+					rangeLabel={picker.label}
 				/>
 			</SettingsSection>
 

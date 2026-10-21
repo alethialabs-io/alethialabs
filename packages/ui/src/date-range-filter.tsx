@@ -8,19 +8,20 @@
 //
 // Model: the committed range is two UTC instants; the chosen timezone is purely the
 // *display* basis. Every field (calendar day, date input, time input) is derived from the
-// instants via `formatInTimeZone`, and every edit recomposes the instant with
-// `fromZonedTime(wallClock, tz)`. So changing the timezone keeps the instants and just
-// re-renders the wall-clock. Generic/reusable: `value` / `onChange` only.
+// instants via `formatInZone`, and every edit recomposes the instant with
+// `zonedWallClockToInstant(date, time, tz)` (both in ./range, over `@date-fns/tz`). So
+// changing the timezone keeps the instants and just re-renders the wall-clock. Generic/reusable: `value` / `onChange` only.
 
 import { format } from "date-fns";
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type DateRange,
+  formatInZone,
   formatRangeLabel,
   localTimeZone,
   timeZoneOptions,
+  zonedWallClockToInstant,
 } from "./range";
 import { Button } from "./button";
 import { Calendar, type CalendarRange } from "./calendar";
@@ -97,10 +98,10 @@ export function DateRangeFilter({
   }, [open, value.from, value.to]);
 
   // Derived display fields (all in the chosen tz).
-  const fromDate = formatInTimeZone(from, tz, "yyyy-MM-dd");
-  const fromTime = formatInTimeZone(from, tz, "HH:mm");
-  const toDate = formatInTimeZone(to, tz, "yyyy-MM-dd");
-  const toTime = formatInTimeZone(to, tz, "HH:mm");
+  const fromDate = formatInZone(from, tz, "yyyy-MM-dd");
+  const fromTime = formatInZone(from, tz, "HH:mm");
+  const toDate = formatInZone(to, tz, "yyyy-MM-dd");
+  const toTime = formatInZone(to, tz, "HH:mm");
   // Floating local-midnight markers so the Calendar highlights the right civil day.
   const calRange: CalendarRange = {
     from: new Date(`${fromDate}T00:00:00`),
@@ -109,7 +110,7 @@ export function DateRangeFilter({
 
   /** Compose a wall-clock "YYYY-MM-DD HH:mm" in the chosen tz into a UTC instant. */
   const combine = (dateStr: string, timeStr: string) =>
-    fromZonedTime(`${dateStr} ${timeStr}:00`, tz);
+    zonedWallClockToInstant(dateStr, timeStr, tz);
 
   /** Calendar selection — keep each end's time-of-day, move only its civil day. */
   function onSelectRange(range: CalendarRange | undefined) {

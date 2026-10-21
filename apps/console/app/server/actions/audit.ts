@@ -6,7 +6,9 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { signedJob } from "@/lib/db/signed-job";
 import { withActorScope } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobs, projects } from "@/lib/db/schema";
+import { projectOrgRefusal } from "@/lib/projects/project-org";
+import { eq } from "drizzle-orm";
 import { notifyScaler } from "@/lib/scaler";
 
 /**
@@ -39,6 +41,20 @@ export async function queueAudit(
 	const trimmed = input.trim();
 	if (!trimmed) {
 		throw new Error("Audit input is required (an OpenTofu plan JSON or k8s manifests).");
+	}
+	// An attached audit runs where its project lives: the job is filed under the project's org and
+	// the quota is the actor's, so the two must be the same org.
+	if (projectId) {
+		const [project] = await withActorScope(actor, (tx) =>
+			tx
+				.select({ org_id: projects.org_id })
+				.from(projects)
+				.where(eq(projects.id, projectId))
+				.limit(1),
+		);
+		if (!project) throw new Error("Project not found.");
+		const refusal = projectOrgRefusal(project.org_id, actor);
+		if (refusal) throw new Error(refusal);
 	}
 	await assertJobQuotaAllowed(actor.orgId);
 

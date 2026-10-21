@@ -340,6 +340,18 @@ jobs:
       # is an accident of sequence, not a check, and it would vanish the moment those steps were made
       # independent. This makes the requirement explicit and order-free.
       ALETHIA_INTEGRATION_REQUIRE_DB: "1"
+      # THE EDITION IS A DECISION HERE, NOT `auto` (#6113). The job builds ee/dist below, and with it
+      # present `auto` would resolve to enterprise anyway — but `auto` cannot tell "enterprise" from
+      # "the module failed to resolve, so community", and says so itself (`lib/enterprise.ts`).
+      # `enterprise` makes a broken ee load FAIL the files that depend on it instead.
+      # Measured before choosing, on a fresh database (local Postgres): with ee/dist present under
+      # `auto` all 107 files pass; under explicit `enterprise` every file passes except two that
+      # also fail with ee ABSENT on the same laptop — cli-paging's at-scale cleanup hook timing
+      # out, and reconcile-b2c's database-wide GC then counting the rows it left. No file assumed
+      # community. This job's own run is the CI confirmation.
+      # `rpc-tenancy.community.test.ts` pins `community` for itself and restores the value after.
+      # The community edition gets its own full pass — see the step after the enterprise one.
+      ALETHIA_EDITION: enterprise
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -364,8 +376,62 @@ jobs:
           done
       - name: Migrate the test database (schema + programmables/RLS + app role)
         run: pnpm -C apps/console run db:migrate
+      # Build @alethia/ee so the ENTERPRISE edition is loadable (#6113). Its dist is gitignored, and
+      # `test:integration` calls vitest directly — no turbo `^build` — so without this step the
+      # enterprise module never exists here, and the read router's multi-tenant tenancy proof
+      # (`tests/integration/rpc-tenancy.enterprise.test.ts`, ALETHIA_EDITION=enterprise) has nothing
+      # to load. That file asserts the edition registered and FAILS rather than skips, so the guard
+      # below only names the cause earlier; it is the same guard the hero job carries.
+      #
+      # The edition of every OTHER file is `ALETHIA_EDITION` in this job's env (`enterprise`, above).
+      - name: Build @alethia/ee (the enterprise tenancy proof loads it)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the enterprise tenancy proof cannot run
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — rpc-tenancy.enterprise.test.ts cannot load the"
+            echo "::error::enterprise edition, so the read router's multi-tenant answer is unproven."
+            exit 1
+          }
       - name: Integration tests (real SQL query builders + RLS isolation + PDP parity)
         run: pnpm -C apps/console run test:integration
+      # THE COMMUNITY (AGPL) EDITION KEEPS ITS OWN PASS (#6113 review). Before ee/dist was built here,
+      # 27 files ran their community branch — `auto` with no ee found — and building ee/dist moved
+      # every one of them to enterprise. "All pass in enterprise" does not mean "none lost the
+      # community path it covered", so the whole suite runs again with the edition pinned to
+      # `community`. A second STEP, not a matrix: a matrix renames this job, and its name is a
+      # required check. Cost: one more suite run, ~200s on this job (measured on #6169).
+      #
+      # `rpc-tenancy.enterprise.test.ts` is EXCLUDED here by name, not skipped: it pins `enterprise`
+      # for itself and has already run in the step above; it is not a community test, and it fails
+      # rather than skip when its edition cannot load. `rpc-tenancy.community.test.ts` runs in both
+      # passes (it pins `community` itself).
+      #
+      # Explicit `community` is the CONFIGURED single-tenant edition, not the `auto`/not-installed
+      # state the 27 files ran under on dev; the two differ in one place — `currentActor()` refuses a
+      # personal-scope collapse when the edition is unconfigured (#6149). The configured edition is
+      # the one an AGPL install is told to run, so it is the one measured.
+      #
+      # A FRESH DATABASE, not the one the enterprise pass just used. Some suites assert on
+      # database-wide state — reconcile-b2c's `gc_fleet_actions` counts every old row in the table —
+      # so a second pass over the first pass's leftovers fails for a reason that is not the
+      # edition. Measured on #6169: the shared-database version failed exactly that test, and the
+      # same pass on a fresh database (locally) was green. The app role is cluster-wide, so the
+      # migration below grants it on the new database exactly as on the first.
+      #
+      # No coverage fingerprint moves: this job records no coverage (vitest.integration.config.ts).
+      - name: Create and migrate a fresh database for the community pass
+        env:
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia_community
+        run: |
+          psql postgres://alethia:alethia-dev-secret@localhost:5432/alethia -c 'CREATE DATABASE alethia_community'
+          pnpm -C apps/console run db:migrate
+      - name: Integration tests — community edition (the AGPL path)
+        env:
+          ALETHIA_EDITION: community
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia_community
+          ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia_community
+        run: pnpm -C apps/console run test:integration --exclude tests/integration/rpc-tenancy.enterprise.test.ts
 
   e2e-browser:
     name: E2E (browser · Playwright hero path)
@@ -1019,6 +1085,15 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-shared-surface.mjs --self-test
+      # crypto.randomUUID, navigator.clipboard and crypto.subtle are undefined when a self-hosted
+      # console is served over plain HTTP, and every test and preview runs in a secure context, so
+      # nothing else sees a regression (#6182).
+      - name: Browser code uses no SecureContext-only API without a fallback
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-secure-context-apis.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-secure-context-apis.mjs --self-test
       # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
       # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
       # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then
@@ -1130,6 +1205,28 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-filter-standard.mjs --self-test
+      # Reads travel over the GET read router, never as server actions (ADR 0005 D1, #6113): a
+      # server action as a `queryFn` queues every read on the page behind every other (F001). The
+      # ledger fails in both directions — new action-backed reads, and entries whose read has moved.
+      - name: Console reads do not travel as server actions (ADR 0005 D1 ratchet)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console run check:read-transport
+      - name: ...and that ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-read-transport.mjs --self-test
+      # Live by default (ADR 0005 §7 Q3 + §10 R7, #6115): a change the viewer did not make arrives as
+      # a topic on the org's change stream, not a poll. Every `refetchInterval` / `setInterval` is in
+      # the ledger — a timer with its reason, a poll with the lane that lifts it, and ONE sanctioned
+      # fallback poll — and polls only shrink against dev's ledger. The guards job is a shallow
+      # checkout, so dev is fetched first; an unreadable base fails rather than skipping the rule.
+      - name: The console does not poll for data (ADR 0005 live-by-default ratchet)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm -C apps/console run check:no-polling
+      - name: ...and that ratchet is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-no-polling.mjs --self-test
       # The filter bar's other half, in the e2e suite (#5800). React leaves the server's copy of a
       # streamed Suspense section in a hidden `<div hidden id="S:n">`, and `getByLabel` /
       # `getByPlaceholder` match inside it while `getByRole` does not — so a spec that asks for a
@@ -1853,6 +1950,18 @@ jobs:
       - name: ...and every go.work module is in the gomod directories
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-dependabot-gomod.mjs
+      # One react, and one react-dom peered on it. `react-dom@A(react@B)` with A ≠ B makes
+      # react-dom/server throw on every email render (#2151). It landed green three times, last by a
+      # Dependabot react bump (#4885) that raised the manifests and left `pnpm.overrides` behind.
+      # Also fails when the zod resolution is not `pnpm.overrides.zod`, or when an override does not
+      # satisfy a manifest range, which is how a bump without the override goes red here (#6137).
+      # Hermetic: reads package.json, pnpm-lock.yaml and the importers' manifests.
+      - name: Lockfile holds one react / react-dom pair and the overridden zod (self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-react-pair.mjs --self-test
+      - name: ...and the lockfile holds one react / react-dom pair and the overridden zod
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-react-pair.mjs
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
       # cla/ACTIVE, so nothing exercises it until the day it starts gating every external

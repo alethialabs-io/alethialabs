@@ -11,6 +11,7 @@ import {
 	type SubmitCaseInput,
 } from "@/lib/validations/support";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { FieldMessage } from "@/components/support/field-message";
 
 /** Step 3 — pick severity, with per-option expected-response guidance. */
 export function StepSeverity() {
@@ -43,9 +44,7 @@ export function StepSeverity() {
 					</div>
 				)}
 			/>
-			{errors.severity && (
-				<p className="text-xs text-destructive">Select a severity to continue.</p>
-			)}
+			<FieldMessage message={errors.severity ? "Select a severity to continue." : undefined} />
 		</div>
 	);
 }

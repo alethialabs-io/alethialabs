@@ -5,17 +5,27 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Console data fetching (TanStack Query)
 
+> **Superseded in part by [ADR 0005](../../../../docs/adr/0005-console-data-architecture.md)
+> (#6113).** Reads now travel over the GET read router (`lib/rpc`, oRPC) — **never** as a server
+> action in a `queryFn`, which Next dispatches one at a time (F001). New reads:
+> `useQuery(orpc.<domain>.<proc>.queryOptions({ input }))` in the browser and
+> `getQueryClient().prefetchQuery(serverOrpc().<domain>.<proc>.queryOptions({ input }))` in the
+> server component, with the SAME input. Writes stay server actions, defined with `defineAction`
+> and called through `useActionMutation` (`lib/actions/`). The browser keeps one QueryClient per
+> org. `pnpm -F console check:read-transport` ratchets the old pattern down. The jobs page
+> (`app/(private)/[org]/~/jobs/`) is the reference implementation. The sections below describe the
+> pattern being migrated away from.
+
 The console fetches server data through **TanStack Query v5**, with server-side
 prefetch + client hydration so list pages render with data on first paint (no
 post-hydration `useEffect` waterfall). Server actions in `app/server/actions/*` remain
-the data layer; query hooks just wrap them and add caching, dedup, polling, and
-invalidation.
+the data layer; query hooks just wrap them and add caching, dedup and invalidation.
 
 ## The pieces
 
 | File | Role |
 | --- | --- |
-| `lib/query/client.ts` | `getQueryClient()` — request-scoped on the server, singleton in the browser. |
+| `lib/query/client.ts` | `getQueryClient(scope)` — request-scoped (and `cache()`-shared) on the server, **one per org segment** in the browser. |
 | `app/providers.tsx` | `<QueryClientProvider>` (+ dev devtools), mounted in `app/layout.tsx`. |
 | `lib/query/keys.ts` | `qk` typed key factory. Keys are **org-scoped** so switching orgs never serves another org's cache. |
 | `lib/query/use-*-query.ts` | Per-resource hooks: a `useXQuery()` read + `useXMutation()` writes. |
@@ -31,8 +41,7 @@ export function useFooQuery() {
   return useQuery({
     queryKey: qk.foo(org),
     queryFn: () => getFoo(),               // a "use server" action
-    refetchInterval: (q) =>                 // poll only while work is in-flight
-      q.state.data?.some(isActive) ? 5_000 : false,
+    // No refetchInterval: add qk.foo's prefix to the topic in lib/query/topics.ts instead.
   });
 }
 
@@ -72,11 +81,15 @@ instantly, then revalidates. Keep filter/selection UI state in a Zustand store.
 > The page prefetch key and the hook's `useQuery` key MUST be identical (both
 > `qk.foo(org)`) — that match is what makes hydration hit instead of refetching.
 
-## Polling
+## Live updates, not polling
 
-Use the **function form** of `refetchInterval` so a page polls fast only while
-something is moving (a job `QUEUED`/`PROCESSING`, a runner mid-deploy) and idles
-otherwise. This replaces the old blanket `setInterval` timers (3s/5s/10s).
+Data that can change without the viewer's own action is **live by default** (ADR 0005 §7 Q3,
+#6115): the org's change stream sends a topic hint, and `lib/query/topics.ts` `TOPIC_KEYS` maps
+the topic to the query keys to invalidate. Add your keys there and do not set `refetchInterval`.
+`pnpm -C apps/console run check:no-polling` fails on a new `refetchInterval` or `setInterval`
+that is not in `no-polling-ledger.json`, and the ledger's polls only shrink. While the stream is
+down, the one sanctioned fallback poll (`lib/realtime/client/fallback-poll.ts`) refreshes every
+topic's keys.
 
 ## Mutations
 
@@ -183,12 +196,14 @@ rule applies unchanged. What it deliberately trades away is sessionStorage persi
 page). Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
 RSC that renders the rows itself. Do not convert one into the other without a reason.
 
-## Realtime (future)
+## Realtime
 
-Job **logs** stream over Postgres `LISTEN`/`NOTIFY` → SSE (`lib/realtime/`) and are
-unchanged. List resources currently revalidate via `refetchInterval`. If/when SSE for
-lists lands, push updates with `queryClient.setQueryData(qk.foo(org), …)` instead of
-polling.
+Job **logs** stream over Postgres `LISTEN`/`NOTIFY` → SSE on their own route and are unchanged.
+Everything else uses the org's change stream (`/{org}/~/events`, ADR 0005 D3): it carries
+**invalidation hints** (`{topic, id}`), never data. The client in `lib/realtime/client/` runs one
+stream per browser per org, coalesces the hints with jitter, and calls `invalidateQueries` on that
+org's QueryClient, so each refetch goes back through the read router (RLS + the PDP). See
+"Live updates, not polling" above.
 
 ## Page migration status
 

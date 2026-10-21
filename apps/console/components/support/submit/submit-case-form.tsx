@@ -4,19 +4,16 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState } from "react";
-import { type FieldPath, FormProvider, useForm } from "react-hook-form";
-import { useRouter } from "next/navigation";
+import { type FieldPath, FormProvider, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import type { z } from "zod";
-import { submitCase } from "@/app/server/actions/support";
 import { track } from "@/lib/analytics/track";
-import { uploadAttachment } from "@/components/support/attachments";
+import { useSubmitCase } from "@/components/support/use-submit-case";
 import { StepCategory } from "@/components/support/submit/steps/step-category";
 import { StepContact } from "@/components/support/submit/steps/step-contact";
 import { StepDetails } from "@/components/support/submit/steps/step-details";
 import { StepSeverity } from "@/components/support/submit/steps/step-severity";
 import { StepType } from "@/components/support/submit/steps/step-type";
-import { globalHref } from "@/lib/routing";
 import {
 	type SubmitCaseInput,
 	submitCaseSchema,
@@ -51,14 +48,33 @@ const STEP_FIELDS: FieldPath<SubmitCaseFormValues>[][] = [
 ];
 
 /**
+ * Whether the current step has an answer to validate at all. A step whose one choice is still
+ * unmade (no type, no area) cannot go on, so its Continue is disabled rather than enabled and then
+ * refused (F043). Text steps are not gated here: "Continue" validates them, and the message lands
+ * in a line that is already reserved, so nothing moves.
+ */
+export function stepAnswered(
+	step: number,
+	values: { type?: string; category?: string; severity?: string },
+): boolean {
+	if (step === 0) return Boolean(values.type);
+	if (step === 1) return Boolean(values.category);
+	if (step === 2) return Boolean(values.severity);
+	return true;
+}
+
+/**
  * The AWS-style multi-step new-case form. A single `useForm<SubmitCaseInput>` drives all
- * steps (shared via `FormProvider`); each "Next" validates only the current step's fields.
- * On final submit it creates the case, best-effort uploads any collected attachments to the
- * new case, then routes to the case thread — a failed attachment toasts but never blocks the
- * redirect.
+ * steps (shared via `FormProvider`); each "Continue" validates only the current step's fields.
+ * On final submit it creates the case through the mutation contract (`useSubmitCase`), best-effort
+ * uploads any collected attachments to the new case, then routes to the case thread — a failed
+ * attachment toasts but never blocks the redirect.
+ *
+ * The button row does not move (F043): there is no Back on the first step (its slot stays, empty),
+ * Continue is disabled until the step's choice is made, and every step's validation message sits
+ * in a line reserved for it.
  */
 export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
-	const router = useRouter();
 	const [step, setStep] = useState(0);
 	const [files, setFiles] = useState<File[]>([]);
 
@@ -70,12 +86,24 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 			contact: { notifyEmail: defaultEmail ?? "", channel: "email" },
 		},
 	});
-	const {
-		handleSubmit,
-		trigger,
-		setValue,
-		formState: { isSubmitting },
-	} = form;
+	const { control, handleSubmit, trigger, setValue, setError } = form;
+	const values = useWatch({ control });
+
+	const submit = useSubmitCase(orgSlug, {
+		// A server-side validation refusal lands on its field and takes the user to its step.
+		onValidationError: (fields) => {
+			for (const [name, messages] of Object.entries(fields)) {
+				const at = STEP_FIELDS.findIndex((stepFields) => stepFields.some((f) => f === name));
+				const message = messages?.[0];
+				if (at === -1 || !message) continue;
+				setError(STEP_FIELDS[at].find((f) => f === name) ?? STEP_FIELDS[at][0], { message });
+				setStep((current) => Math.min(current, at));
+			}
+		},
+		onSuccess: (_created) => {
+			if (values.category) track("support_case_opened", { category: values.category });
+		},
+	});
 
 	// Snapshot the browser context (deep link + UA) for triage.
 	useEffect(() => {
@@ -84,6 +112,7 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 	}, [setValue]);
 
 	const isLastStep = step === STEP_LABELS.length - 1;
+	const answered = stepAnswered(step, values);
 
 	/** Validates the current step, then advances. */
 	async function handleNext() {
@@ -91,22 +120,10 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 		if (valid) setStep((s) => Math.min(s + 1, STEP_LABELS.length - 1));
 	}
 
-	/** Creates the case, uploads attachments best-effort, then routes to the thread. */
-	const onSubmit = handleSubmit(async (values) => {
-		try {
-			const { id } = await submitCase(values);
-			track("support_case_opened", { category: values.category });
-			for (const file of files) {
-				try {
-					await uploadAttachment(id, file);
-				} catch {
-					toast.error(`Couldn't attach ${file.name}. You can add it later.`);
-				}
-			}
-			router.push(`${globalHref(orgSlug, "support")}/cases/${id}`);
-		} catch {
-			toast.error("Couldn't submit your case. Please try again.");
-		}
+	/** Creates the case (and its attachments) through the mutation contract. */
+	const onSubmit = handleSubmit((parsed) => {
+		if (submit.isPending) return;
+		submit.mutate({ values: parsed, files });
 	});
 
 	return (
@@ -158,20 +175,26 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 					{step === 4 && <StepContact attachmentCount={files.length} />}
 
 					<div className="mt-8 flex items-center justify-between border-t pt-6">
-						<Button
-							type="button"
-							variant="ghost"
-							onClick={() => setStep((s) => Math.max(s - 1, 0))}
-							disabled={step === 0 || isSubmitting}
-						>
-							Back
-						</Button>
+						{/* No Back on the first step — there is nowhere to go back to — but the slot
+						    stays, so Continue does not jump to the left edge of the row. */}
+						{step === 0 ? (
+							<span aria-hidden />
+						) : (
+							<Button
+								type="button"
+								variant="ghost"
+								onClick={() => setStep((s) => Math.max(s - 1, 0))}
+								disabled={submit.isPending}
+							>
+								Back
+							</Button>
+						)}
 						{isLastStep ? (
-							<Button type="submit" disabled={isSubmitting}>
-								{isSubmitting ? "Submitting…" : "Submit case"}
+							<Button type="submit" disabled={submit.isPending}>
+								{submit.isPending ? "Submitting…" : "Submit case"}
 							</Button>
 						) : (
-							<Button type="button" onClick={handleNext}>
+							<Button type="button" onClick={handleNext} disabled={!answered}>
 								Continue
 							</Button>
 						)}
