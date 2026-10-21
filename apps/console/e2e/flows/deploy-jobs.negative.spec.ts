@@ -76,7 +76,7 @@ test.describe("Deploy jobs — negative & empty states", () => {
 			timeout: 25_000,
 		});
 		await expect(
-			owner.page.getByText(/A cluster appears here as soon as its environment is sent to deploy/i),
+			owner.page.getByText(/A cluster appears here once its environment's first deploy succeeds/i),
 		).toBeVisible();
 		// WHAT THIS MEASURES IS THE EMPTY PREDICATE, and its other direction is
 		// `deploy-jobs.spec.ts` › "the project's clusters page names the cluster and its endpoint":
