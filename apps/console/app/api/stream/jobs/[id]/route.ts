@@ -8,6 +8,7 @@ import { authorizeUserId } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { jobLogs, jobs } from "@/lib/db/schema";
 import { holdRequest } from "@/lib/http/hold-request";
+import { isJobVisible } from "@/lib/jobs/visibility";
 import { getRealtimeTransport } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
@@ -45,13 +46,24 @@ export async function GET(
 	// fallback, pre-#3942 runner jobs) streaming on a hosted org, as the list shows it. The predicate
 	// is on the job's org alone: a job is reachable from the org it belongs to.
 	const [job] = await db
-		.select({ org_id: jobs.org_id })
+		.select({
+			org_id: jobs.org_id,
+			project_id: jobs.project_id,
+			job_type: jobs.job_type,
+			environment_id: jobs.environment_id,
+			config_snapshot: jobs.config_snapshot,
+		})
 		.from(jobs)
 		.where(eq(jobs.id, jobId))
 		.limit(1);
 	// The PDP (authorizeUserId) gated the action above; this bounds the row to the caller's tenancy.
 	const inScope = !!job && (job.org_id === actor.orgId || job.org_id === actor.userId); // authz-scope-ok
 	if (!inScope) {
+		return new Response("Not found", { status: 404 });
+	}
+	// Job visibility follows project visibility (lib/jobs/visibility.ts): a reader who may not view
+	// the job's project is answered exactly as for a job that does not exist, as every jobs read is.
+	if (!(await isJobVisible(actor, job))) {
 		return new Response("Not found", { status: 404 });
 	}
 

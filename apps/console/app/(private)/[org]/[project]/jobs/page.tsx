@@ -3,10 +3,12 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { getJobs } from "@/app/server/actions/jobs";
 import { resolveProjectId } from "@/app/server/actions/resolve";
+import { DEFAULT_JOBS_FILTERS, normalizeJobsQuery } from "@/components/jobs/jobs-query";
 import { getQueryClient } from "@/lib/query/client";
-import { qk } from "@/lib/query/keys";
+import { filterStateFromUrl, paramReader } from "@/lib/query/filter-url-codec";
+import { JOBS_DEFAULT_PRESET, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { JobsClient } from "../../~/jobs/jobs-client";
 
@@ -16,17 +18,21 @@ export const metadata = pageMetadata({
 });
 
 /**
- * `/{org}/{project}/jobs` — the project's jobs. Reuses the org jobs table scoped to this
- * project: prefetches the shared org jobs list (the same `qk.jobs(org)` cache the shell already
- * warms) and hands `JobsClient` the resolved project id, which filters to it and drops the
- * Project facet. `loading.tsx` covers the prefetch window.
+ * `/{org}/{project}/jobs` — the project's jobs: the org jobs table pinned to this project.
+ *
+ * Prefetches EXACTLY the key `JobsClient` reads on first paint — the `jobs.page` read for the URL's
+ * filters, the default preset and this project (#6121) — exactly as `~/jobs/page.tsx` does. It used
+ * to prefetch the unfiltered `qk.jobs` list while the client read the page key, so the first paint
+ * showed "No results." while a second request ran (F022). `loading.tsx` covers the prefetch window.
  */
 export default async function ProjectJobsRoute({
 	params,
+	searchParams,
 }: {
 	params: Promise<{ org: string; project: string }>;
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-	const { org, project } = await params;
+	const { project } = await params;
 	let projectId: string;
 	try {
 		projectId = await resolveProjectId(project);
@@ -34,11 +40,13 @@ export default async function ProjectJobsRoute({
 		notFound();
 	}
 
+	const filters = filterStateFromUrl(paramReader(await searchParams), DEFAULT_JOBS_FILTERS);
+	const input = jobsPageInputFrom(
+		normalizeJobsQuery(filters, { from: "", to: "" }, projectId),
+		{ preset: JOBS_DEFAULT_PRESET },
+	);
 	const queryClient = getQueryClient();
-	await queryClient.prefetchQuery({
-		queryKey: qk.jobs(org),
-		queryFn: () => getJobs(),
-	});
+	await queryClient.prefetchQuery(serverOrpc().jobs.page.queryOptions({ input }));
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>

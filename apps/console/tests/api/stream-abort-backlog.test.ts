@@ -52,6 +52,7 @@ function subscribeOn(t: FakeTransport, key: string, fn: (payload: string) => voi
 vi.mock("@/lib/auth/owner", () => ({ getOwner: async () => "user-1" }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: async () => ({ userId: "user-1", orgId: "org-1" }) }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeUserId: async () => null }));
+vi.mock("@/lib/jobs/visibility", () => ({ isJobVisible: async () => true }));
 vi.mock("@/lib/realtime", () => ({
 	getRealtimeTransport: () => ({
 		subscribe: (key: string, fn: (p: string) => void) => subscribeOn(state.realtime, key, fn),

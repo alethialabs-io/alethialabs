@@ -178,12 +178,12 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 10,
+			"pass": 11,
 			"fail": 0,
-			"na": 30,
+			"na": 29,
 			"notMeasured": 0,
 			"naReasons": {
-				"does-not-call-not-found": 30
+				"does-not-call-not-found": 29
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -1628,9 +1628,9 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
+					"pass": 6,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 1,
 					"score": 1
 				},
@@ -1663,11 +1663,11 @@
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 1,
-				"na": 11,
+				"na": 10,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 0.963
 			}
 		},
 		{
@@ -6539,8 +6539,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -10994,10 +10993,10 @@
 				"decision": 17,
 				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 7,
+				"inPageClosure": 6,
 				"chromeOnly": 1,
 				"sharedPackage": 0,
-				"offTree": 9,
+				"offTree": 10,
 				"predicate": "H1",
 				"owner": null
 			},
@@ -11137,6 +11136,10 @@
 			{
 				"file": "apps/console/components/forms/oauth-consent-form.tsx",
 				"hits": 2
+			},
+			{
+				"file": "apps/console/components/errors/error-state.tsx",
+				"hits": 1
 			},
 			{
 				"file": "apps/console/components/legal/accept-terms-form.tsx",

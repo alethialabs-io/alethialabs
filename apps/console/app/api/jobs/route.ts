@@ -15,6 +15,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import {
 	assertMintingProfileStillMember,
 	authorizeCli,
@@ -822,6 +823,9 @@ export async function GET(req: Request) {
 
 	const scope: [SQL, ...(SQL | undefined)[]] = [
 		visible,
+		// Job visibility follows project visibility (lib/jobs/visibility.ts), exactly as the console's
+		// jobs list: a job of a project the caller may not view is not listed, nor counted.
+		await jobVisibleTo(actor),
 		status ? sql`${jobs.status}::text = ${status}` : undefined,
 	];
 

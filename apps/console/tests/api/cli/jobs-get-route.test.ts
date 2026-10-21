@@ -9,6 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// Job visibility is not this file's subject (tests/integration/jobs-visibility.test.ts): every row is visible.
+vi.mock("@/lib/jobs/visibility", async () => {
+	const { sql } = await import("drizzle-orm");
+	return { jobVisibleTo: vi.fn(async () => sql`true`) };
+});
 
 import { GET } from "@/app/api/cli/jobs/[id]/route";
 import { authorizeCli } from "@/lib/authz/guard";

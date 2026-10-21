@@ -1,7 +1,6 @@
 {
 	"reads": [
 		"app/(private)/[org]/[project]/clusters/page.tsx :: getClusters",
-		"app/(private)/[org]/[project]/jobs/page.tsx :: getJobs",
 		"app/(private)/[org]/[project]/usage/page.tsx :: getProjectAiUsage",
 		"app/(private)/[org]/[project]/usage/page.tsx :: getProjectResourceCounts",
 		"app/(private)/[org]/[project]/usage/page.tsx :: getProjectUsage",
@@ -38,7 +37,6 @@
 		"lib/query/use-classification-query.ts :: listDimensions",
 		"lib/query/use-clusters-query.ts :: getClusters",
 		"lib/query/use-evidence-query.ts :: getOrgEvidence",
-		"lib/query/use-jobs-query.ts :: getJob",
 		"lib/query/use-members-query.ts :: getMembersPage",
 		"lib/query/use-roles-query.ts :: listRoles",
 		"lib/query/use-runners-page-query.ts :: getRunnersPage",

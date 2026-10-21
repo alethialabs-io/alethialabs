@@ -27,12 +27,11 @@ const IMPORT = /from\s+["']@\/components\/errors\/error-state["']/;
 
 /**
  * Region sites still on `ErrorState`, each owned by the page lane that converts it. Keyed by path
- * relative to apps/console.
+ * relative to apps/console. Empty: the last one (`jobs-client.tsx`) moved to `RegionError` in
+ * #6121. It stays a ledger rather than being deleted, so the next owed site has somewhere to go
+ * that this test still reads in both directions.
  */
-const OWED: Record<string, string> = {
-	// In #6113's claimed scope at the time of #6117, so not touched there; #6121 (jobs) converts it.
-	"app/(private)/[org]/~/jobs/jobs-client.tsx": "#6121",
-};
+const OWED: Record<string, string> = {};
 
 /** Every .tsx file under `dir`, recursively. */
 function walk(dir: string): string[] {

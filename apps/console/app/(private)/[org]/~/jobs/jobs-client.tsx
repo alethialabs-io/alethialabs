@@ -8,8 +8,8 @@
 
 import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
-import { ErrorState } from "@/components/errors/error-state";
-import { buildJobColumns } from "@/components/jobs/columns";
+import { RegionError } from "@/components/errors/region-error";
+import { buildJobColumns, jobHref } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
 import {
 	DEFAULT_JOBS_FILTERS,
@@ -23,7 +23,8 @@ import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { useJobsPageQuery } from "@/lib/query/use-jobs-page-query";
 import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import type { JobsFacetOption, JobWithMeta } from "@/app/server/actions/jobs";
+import type { JobsFacetOption } from "@/lib/rpc/procedures/jobs";
+import { isDefinedError } from "@orpc/client";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import {
@@ -53,6 +54,7 @@ import {
 	Boxes,
 	ClipboardList,
 	Layers,
+	Lock,
 	SearchX,
 	Users,
 	Wrench,
@@ -181,8 +183,10 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		[projectId, authorById, orgSlug],
 	);
 
-	const handleRowClick = (job: JobWithMeta) => {
-		router.push(`/${orgSlug}/~/jobs/${job.id}`);
+	// A plain click anywhere on a row opens the job; the row's Type cell is the job's real link
+	// (`buildJobColumns`), which is what a cmd-, ctrl- or middle-click and "copy link" act on.
+	const handleRowClick = (job: { id: string }) => {
+		router.push(jobHref(orgSlug, job.id));
 	};
 
 	// `total` is the count over the UNFILTERED universe, so total === 0 means the org has
@@ -212,19 +216,32 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
-			{page.isError ? (
-					// A fetch failure must NOT fall through to the empty state — that would tell the
-					// user they have no jobs when the request actually failed.
-					<ErrorState
+			{page.isError && page.data === undefined ? (
+				// Four distinct renders (RUBRIC B4): a refusal, a failure, an empty org and rows. A
+				// failed read must NOT fall through to the empty state — that would tell the user they
+				// have no jobs when the request failed. A failed REFRESH behind rows already on screen
+				// is the table's own stale notice (`DataTable` `query`), not this.
+				isDefinedError(page.error) && page.error.code === "FORBIDDEN" ? (
+					<Empty className="min-h-[60vh]" data-state="forbidden">
+						<EmptyHeader>
+							<EmptyMedia variant="icon">
+								<Lock />
+							</EmptyMedia>
+							<EmptyTitle>You can&apos;t view jobs here</EmptyTitle>
+							<EmptyDescription>
+								Your role in this organization does not include viewing jobs. An admin can grant it.
+							</EmptyDescription>
+						</EmptyHeader>
+					</Empty>
+				) : (
+					<RegionError
+						className="min-h-[60vh]"
 						title="Couldn't load jobs"
 						description="Something went wrong fetching your jobs. Check your connection and try again."
-						actions={
-							<Button variant="outline" size="sm" onClick={() => page.refetch()}>
-								Retry
-							</Button>
-						}
+						onRetry={() => void page.refetch()}
 					/>
-				) : !page.isPending && total === 0 ? (
+				)
+			) : !page.isPending && total === 0 ? (
 				<Empty className="min-h-[60vh]">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
@@ -250,7 +267,11 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 					    above is the unfiltered universe and is what tells onboarding apart from a
 					    filter that excludes everything. */}
 					<PageToolbar
-						description="Every provision, deploy and destroy this organization has run."
+						description={
+							projectId
+								? "Every provision, deploy and destroy this project has run."
+								: "Every provision, deploy and destroy this organization has run."
+						}
 						count={page.isPending ? null : rows.length}
 					/>
 					<FilterBar
@@ -372,6 +393,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 								<DataTable
 									columns={columns}
 									data={rows}
+									query={page}
 									onRowClick={handleRowClick}
 									pageSize={visibleCount}
 									loadMore={{

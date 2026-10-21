@@ -11,6 +11,7 @@ import { getEnvironmentsForSlug } from "@/app/server/actions/resolve";
 import { listSupportCases } from "@/lib/rpc/procedures/support";
 import { getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
 import { authorize } from "@/lib/authz/guard";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { withScope } from "@/lib/db";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Actor, Entitlements } from "@/lib/authz/types";
@@ -153,12 +154,15 @@ export type ShellJob = Pick<
 
 /**
  * The org's newest jobs, capped at {@link SHELL_JOB_FEED_LIMIT}, in the slim {@link ShellJob} shape.
- * Same authorization and row scope as the full feed (`getJobs`): the PDP's `view job`, then the
- * caller's owner/org scope under RLS. Bounded by the LIMIT on `created_at DESC`, so its cost does
+ * Same authorization and row scope as the full feed (`getJobs`): the PDP's `view job`, job
+ * visibility (a job is visible exactly when its project is), then the caller's owner/org scope
+ * under RLS. Bounded by the LIMIT on `created_at DESC`, so its cost does
  * not grow with the org's history — which is what lets the `[org]` layout await it.
  */
 export async function readRecentJobs(): Promise<ShellJob[]> {
 	const actor = await authorize("view", { type: "job" });
+	// Job visibility follows project visibility (lib/jobs/visibility.ts), as in every jobs read.
+	const visible = await jobVisibleTo(actor);
 	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
 		const rows = await tx
 			.select({
@@ -180,6 +184,7 @@ export async function readRecentJobs(): Promise<ShellJob[]> {
 			.leftJoin(projects, eq(jobs.project_id, projects.id))
 			.leftJoin(cloudIdentities, eq(jobs.cloud_identity_id, cloudIdentities.id))
 			.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
+			.where(visible)
 			.orderBy(desc(jobs.created_at))
 			.limit(SHELL_JOB_FEED_LIMIT);
 		return rows.map((r) => ({
