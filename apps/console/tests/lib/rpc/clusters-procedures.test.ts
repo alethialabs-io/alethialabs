@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
 	can: [] as string[],
 	enforced: [] as string[],
 	chipIds: [] as string[][],
+	/** The size of each bulkCheck call. */
+	bulk: [] as number[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -41,6 +43,15 @@ vi.mock("@/lib/authz", () => ({
 			const d = h.decisions.get(key);
 			if (d === "throw") throw new Error("pdp down");
 			return { allowed: d !== false };
+		},
+		bulkCheck: async (_actor: unknown, checks: { action: string; resource: { type: string; id?: string } }[]) => {
+			h.bulk.push(checks.length);
+			return checks.map(({ action, resource }) => {
+				const key = `${action}:${resource.type}:${resource.id ?? ""}`;
+				h.can.push(key);
+				if (h.decisions.get(key) === "throw") throw new Error("pdp down");
+				return { allowed: h.decisions.get(key) !== false };
+			});
 		},
 	}),
 }));
@@ -120,6 +131,7 @@ beforeEach(() => {
 	h.can = [];
 	h.enforced = [];
 	h.chipIds = [];
+	h.bulk = [];
 });
 
 describe("readClusters", () => {
@@ -234,6 +246,22 @@ describe("readClusterList", () => {
 			"access_readonly:cluster:c1",
 			"access_readonly:cluster:c2",
 		]);
+		// One batched check, not one per cluster.
+		expect(h.bulk).toEqual([2]);
+	});
+
+	it("explains instead of offering a download the mint refuses (a DRAFT environment over a live cluster)", async () => {
+		h.results = [[baseRow({ environment_status: "DRAFT" })], [], [], [GCP_DEPLOY]];
+		const [c] = await readClusterList(ACTOR);
+		expect(c.can_download_kubeconfig).toBe(false);
+		expect(c.kubeconfig_download_note).toMatch(/undeployed plan/);
+	});
+
+	it("says nothing about the mint to a viewer without the permission", async () => {
+		h.results = [[baseRow({ environment_status: "DRAFT" })], [], [], [GCP_DEPLOY]];
+		h.decisions.set("access_readonly:cluster:c1", false);
+		const [c] = await readClusterList(ACTOR);
+		expect([c.can_download_kubeconfig, c.kubeconfig_download_note]).toEqual([false, null]);
 	});
 
 	it("is fail-closed: a PDP error is no download, not a failed page", async () => {
