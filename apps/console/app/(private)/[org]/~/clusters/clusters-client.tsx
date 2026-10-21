@@ -62,7 +62,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 				className="min-h-[60vh]"
 				icon={<Server />}
 				title={projectId ? "This project has no clusters yet" : "No clusters under management"}
-				description="A cluster appears here as soon as its environment is sent to deploy, and stays until it is torn down."
+				description="A cluster appears here once its environment's first deploy succeeds, and stays until it is torn down."
 				action={
 					<Button
 						variant="outline"
