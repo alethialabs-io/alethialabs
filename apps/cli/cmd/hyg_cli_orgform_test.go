@@ -1025,12 +1025,11 @@ func TestHygCliOrgForm_LooksLikeUUIDMatchesTheWireShape(t *testing.T) {
 // createGrantBody, in both directions, and pins that --resource-type is NOT gated on the picker's
 // suggestion list.
 //
-// The last part is the one worth stating. The server accepts `connector` (GRANT_RESOURCE_TYPES in
-// apps/console/lib/validations/grants.ts) and grantResourceTypeSuggestions does not offer it, so a
-// CLI that refused a kind outside its own suggestion list would be refusing a grant the control
-// plane takes. The suggestions exist to fill a picker, not to gate a flag. A kind outside the
-// server's set is refused by POST /api/cli/grants with a 400 naming the set (#4755); this CLI does
-// not pre-check it.
+// The last part is the one worth stating. The suggestions exist to fill a picker, not to gate a
+// flag: the server's set (GRANT_RESOURCE_TYPES in apps/console/lib/validations/grants.ts) is the
+// authority, a kind outside it is refused by POST /api/cli/grants with a 400 naming the set
+// (#4755), and this CLI does not pre-check it. So a scoped kind the server accepts reaches the
+// server as given.
 func TestHygCliOrgForm_ClosedSetsMirrorTheRoute(t *testing.T) {
 	for _, v := range grantPrincipalTypes {
 		if err := requireOneOf("principal-type", v, grantPrincipalTypes); err != nil {
@@ -1055,10 +1054,10 @@ func TestHygCliOrgForm_ClosedSetsMirrorTheRoute(t *testing.T) {
 
 	s, run := orgFormEnv(t, orgFormDefaultPayloads())
 	code, out := run("grants", "add", "--principal", orgFormUserID, "--role", orgFormRoleID,
-		"--resource-type", "connector", "--resource", orgFormGrantID, "--no-input", "--output", "json")
+		"--resource-type", "runner", "--resource", orgFormGrantID, "--no-input", "--output", "json")
 	if code != 0 {
-		t.Fatalf("a resource kind the server accepts and the picker does not offer must reach the "+
-			"server; exit = %d, said %q", code, strings.TrimSpace(out))
+		t.Fatalf("a scoped resource kind the server accepts must reach the server; exit = %d, said %q",
+			code, strings.TrimSpace(out))
 	}
 	if !s.saw(http.MethodPost, "/api/cli/grants") {
 		t.Errorf("the grant was not sent; requests = %v", s.requests)
@@ -1067,15 +1066,26 @@ func TestHygCliOrgForm_ClosedSetsMirrorTheRoute(t *testing.T) {
 
 // grantAcceptedResourceTypesParse derives the kinds POST /api/cli/grants accepts from the two
 // TypeScript files that define them: `"org"` plus every key of `PARENTS` in fga-hierarchy.ts, and
-// only while validations/grants.ts still builds GRANT_RESOURCE_TYPES as `["org", ...INSTANCE_TYPES]`.
+// only while validations/grants.ts still builds GRANT_RESOURCE_TYPES as `["org", ...INSTANCE_TYPES]`
+// or `["org", ...INSTANCE_TYPES.filter(isGrantableScope)]` — in the second form minus the one kind
+// `isGrantableScope` excludes (`return kind !== "<kind>";`), which must be found, or nil.
 //
 // It returns nil when either shape is not found, so the guard that calls it fails rather than
 // comparing against nothing. A FUNCTION so that its own fixture test and the guard run the same
 // code — a parser checked only against the file it parses cannot tell "they agree" from "I read
 // nothing".
 func grantAcceptedResourceTypesParse(hierarchy, validation string) []string {
-	if !grantResourceTypesShape.MatchString(validation) {
+	shape := grantResourceTypesShape.FindStringSubmatch(validation)
+	if shape == nil {
 		return nil
+	}
+	excluded := ""
+	if shape[1] != "" {
+		ex := grantGrantableExclusion.FindStringSubmatch(validation)
+		if ex == nil {
+			return nil
+		}
+		excluded = ex[1]
 	}
 	start := strings.Index(hierarchy, "export const PARENTS = {")
 	if start < 0 {
@@ -1092,15 +1102,21 @@ func grantAcceptedResourceTypesParse(hierarchy, validation string) []string {
 	}
 	out := []string{"org"}
 	for _, k := range keys {
-		out = append(out, k[1])
+		if k[1] != excluded {
+			out = append(out, k[1])
+		}
 	}
 	return out
 }
 
 var (
 	// grantResourceTypesShape is the declaration of GRANT_RESOURCE_TYPES the parse above relies on.
+	// Group 1 is the `.filter(isGrantableScope)` suffix, empty when the set is unfiltered.
 	grantResourceTypesShape = regexp.MustCompile(
-		`GRANT_RESOURCE_TYPES[^=]*=\s*\[\s*"org",\s*\.\.\.INSTANCE_TYPES,?\s*\]`)
+		`GRANT_RESOURCE_TYPES[^=]*=\s*\[\s*"org",\s*\.\.\.INSTANCE_TYPES(\.filter\(isGrantableScope\))?,?\s*\]`)
+	// grantGrantableExclusion is the one kind isGrantableScope leaves out.
+	grantGrantableExclusion = regexp.MustCompile(
+		`function isGrantableScope\([^)]*\)[^{]*\{\s*return kind !== "([a-z_]+)";\s*\}`)
 	// grantParentsKey matches one row of the PARENTS table: a key at one tab of indentation.
 	grantParentsKey = regexp.MustCompile(`(?m)^\t([a-z_]+):`)
 )
@@ -1120,15 +1136,24 @@ func TestHygCliOrgForm_AcceptedResourceTypesParse(t *testing.T) {
 	if got := grantAcceptedResourceTypesParse(hierarchy, `GRANT_RESOURCE_TYPES = ["org", "project"]`); got != nil {
 		t.Errorf("a GRANT_RESOURCE_TYPES not built from INSTANCE_TYPES parses to nil, got %v", got)
 	}
+
+	filtered := "function isGrantableScope(kind: ScopableType): kind is GrantableScope {\n\treturn kind !== \"connector\";\n}\n" +
+		"export const GRANT_RESOURCE_TYPES: readonly GrantResourceType[] = [\n\t\"org\",\n\t...INSTANCE_TYPES.filter(isGrantableScope),\n];"
+	if got := grantAcceptedResourceTypesParse(hierarchy, filtered); strings.Join(got, ",") != "org,project" {
+		t.Errorf("parsed %v from the filtered form, want [org project] — the excluded kind must be dropped", got)
+	}
+	noExclusion := "export const GRANT_RESOURCE_TYPES = [\"org\", ...INSTANCE_TYPES.filter(isGrantableScope)];"
+	if got := grantAcceptedResourceTypesParse(hierarchy, noExclusion); got != nil {
+		t.Errorf("a filtered form whose exclusion cannot be read parses to nil, got %v", got)
+	}
 }
 
 // TestHygCliOrgForm_SuggestedKindsAreAccepted is the guard grantResourceTypeSuggestions' comment
 // leans on: every kind the resource-kind picker offers is one the server accepts, read from the
 // TypeScript that defines the accepted set rather than from a copy typed here.
 //
-// The direction is one way on purpose. The server accepts `connector` and the picker does not offer
-// it (no live list; TestOrgSelect_EverySuggestedKindIsListable), so "every accepted kind is
-// suggested" would be false today, and it is not a defect: the flag still reaches it.
+// The direction is one way on purpose: the picker may only offer kinds the server accepts, while a
+// kind the server accepts and the picker does not offer (none today) is still reachable by flag.
 func TestHygCliOrgForm_SuggestedKindsAreAccepted(t *testing.T) {
 	root := authFormRepoRoot(t)
 	read := func(parts ...string) string {

@@ -18,6 +18,13 @@ vi.mock("@/app/server/actions/roles", () => ({ listCustomRoles: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ getTupleSync: vi.fn() }));
+// The org-binding check asks Postgres (lib/authz/grant-binding.ts); here every grant is bound
+// unless a case says otherwise. The refusals themselves run against real Postgres in
+// tests/integration/grant-org-binding.test.ts.
+vi.mock("@/lib/authz/grant-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/grant-binding")>()),
+	grantBindingViolation: vi.fn(async () => null),
+}));
 
 import {
 	assignGrant,
@@ -37,6 +44,7 @@ import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
+import { type GrantBindingReason, grantBindingViolation } from "@/lib/authz/grant-binding";
 import { getServiceDb } from "@/lib/db";
 import {
 	GRANT_RESOURCE_TYPES,
@@ -504,7 +512,11 @@ describe("assignGrant validation", () => {
 	it("accepts every kind the hierarchy table makes scopable, plus org", async () => {
 		// Derived from the same list the action validates against — which is itself derived from
 		// `INSTANCE_TYPES` — so a kind added to the hierarchy cannot leave this boundary untested.
-		expect([...GRANT_RESOURCE_TYPES]).toEqual(["org", ...INSTANCE_TYPES]);
+		// `connector` is the one exclusion: no organization owns a connector.
+		expect([...GRANT_RESOURCE_TYPES]).toEqual([
+			"org",
+			...INSTANCE_TYPES.filter((k) => k !== "connector"),
+		]);
 		for (const kind of GRANT_RESOURCE_TYPES) {
 			const { valuesSpy, insertSpy } = mockDb();
 			const scoped = kind !== "org";
@@ -860,5 +872,33 @@ describe("listAccessGrants", () => {
 		expect(rows[1].principalLabel).toBe("team-abc…");
 		expect(rows[1].effect).toBe("allow");
 		expect(rows[1].permissionKey).toBe("runner:deploy");
+	});
+});
+
+describe("assignGrant refuses a reference outside the actor's org", () => {
+	it("throws ForbiddenError carrying the binding reason, before the ceiling, and never inserts", async () => {
+		const { insertSpy } = mockDb();
+		const reasons: GrantBindingReason[] = ["foreign_role", "foreign_team", "foreign_resource"];
+		for (const reason of reasons) {
+			vi.mocked(grantBindingViolation).mockResolvedValueOnce(reason);
+			const err = await assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: "role-x",
+				resourceType: "org",
+			}).catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(ForbiddenError);
+			expect(err instanceof ForbiddenError ? err.reason : null).toBe(reason);
+		}
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(can).not.toHaveBeenCalled();
+		expect(vi.mocked(grantBindingViolation)).toHaveBeenLastCalledWith({
+			orgId: "org-1",
+			principalType: "user",
+			principalId: "u-1",
+			roleId: "role-x",
+			resource: { resourceType: "org" },
+		});
 	});
 });

@@ -10,6 +10,7 @@ import { listCustomRoles } from "@/app/server/actions/roles";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { actorCanGrant } from "@/lib/authz/ceiling";
+import { grantBindingViolation } from "@/lib/authz/grant-binding";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { grantScopeFromRow, parseGrantResource } from "@/lib/authz/fga-tuples";
 import { INACTIVE_PRINCIPAL_MESSAGE, lacksActiveMembership } from "@/lib/authz/grants";
@@ -143,7 +144,9 @@ const assignGrantInputSchema = z.object({
  * without `member:manage_members` or the Enterprise entitlement, a role-and-permission pair (or
  * neither), an unknown permission key, the org kind carrying a resource id, an unrecognised
  * resource kind, an allow-grant that exceeds the grantor's own permissions, and an allow-grant to a
- * user without an ACTIVE member row in the org — suspended, removed, or never a member (#5472). Then syncs the grant's PDP tuples and records
+ * user without an ACTIVE member row in the org — suspended, removed, or never a member (#5472) — and
+ * a role, team principal or scoped resource that is not this org's (a `ForbiddenError` whose reason
+ * is the `GrantBindingReason`). Then syncs the grant's PDP tuples and records
  * the security event.
  */
 export async function assignGrant(raw: unknown): Promise<void> {
@@ -165,6 +168,20 @@ export async function assignGrant(raw: unknown): Promise<void> {
 	const parsed = parseGrantResource(input.resourceType, input.resourceId ?? null);
 	if (!parsed.ok) throw new Error(parsed.error);
 	const scope = parsed.resource;
+	// Everything the grant references belongs to THIS org (or is a built-in role): the role, a team
+	// principal, and the scoped resource. Checked before the ceiling, so a role of another org is
+	// refused for what it is rather than evaluated. The `grants_org_binding` trigger is the backstop
+	// for the same predicate; this is what turns it into a named refusal (lib/authz/grant-binding.ts).
+	const unbound = await grantBindingViolation({
+		orgId: actor.orgId,
+		principalType: input.principalType,
+		principalId: input.principalId,
+		roleId: input.roleId ?? null,
+		resource: scope,
+	});
+	if (unbound !== null) {
+		throw new ForbiddenError("manage_members", { type: "member" }, unbound);
+	}
 	// Privilege ceiling: an allow-grant may not exceed the grantor's own effective permissions
 	// (a deny-grant only removes access, so it can never escalate the grantee — skip it).
 	if (

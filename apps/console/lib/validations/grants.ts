@@ -21,20 +21,38 @@
 
 import { INSTANCE_TYPES, type ScopableType } from "@/lib/authz/fga-hierarchy";
 
-/** A resource kind a grant may name: a scopable instance kind, or the org-wide wildcard. */
-export type GrantResourceType = ScopableType | "org";
+/**
+ * The scopable kinds a grant may NAME: every kind in the hierarchy table except `connector`.
+ *
+ * A connector is scopable in the hierarchy — it has its own OpenFGA object type — but the
+ * connector catalog is global (lib/db/schema/connectors.ts has no org column): no organization
+ * owns a connector, so a grant cannot be scoped to one inside its own org, and the org-binding
+ * check (`grant_org_binding_violation`, lib/authz/grant-binding.ts) refuses every connector id.
+ * Naming the kind is refused here too, so the refusal is the honest one — an unaccepted kind —
+ * rather than "that resource is not part of this organization" for every id there is.
+ */
+export type GrantableScope = Exclude<ScopableType, "connector">;
+
+/** Narrows a hierarchy kind to one a grant may name. */
+function isGrantableScope(kind: ScopableType): kind is GrantableScope {
+	return kind !== "connector";
+}
+
+/** A resource kind a grant may name: a grantable instance kind, or the org-wide wildcard. */
+export type GrantResourceType = GrantableScope | "org";
 
 /**
  * Every kind a grant's `resource_type` may hold, in the order the refusal names them.
  *
  * DERIVED from `INSTANCE_TYPES` — lib/authz/fga-hierarchy.ts's `PARENTS` table, which is the set
- * `grantTarget` and `expandGrant` actually accept — plus `"org"`, the wildcard kind that is not an
- * instance type and carries no id. Adding a row to that table widens both write boundaries with
- * it; there is no second list here to fall out of step with the expander.
+ * `grantTarget` and `expandGrant` actually accept — minus `connector` (`GrantableScope`), plus
+ * `"org"`, the wildcard kind that is not an instance type and carries no id. Adding a row to that
+ * table widens both write boundaries with it; there is no second list here to fall out of step
+ * with the expander.
  */
 export const GRANT_RESOURCE_TYPES: readonly GrantResourceType[] = [
 	"org",
-	...INSTANCE_TYPES,
+	...INSTANCE_TYPES.filter(isGrantableScope),
 ];
 
 const ACCEPTED: ReadonlySet<string> = new Set<string>(GRANT_RESOURCE_TYPES);
