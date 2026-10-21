@@ -1247,6 +1247,91 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── The `clusters` topic (#6122): the real-time bus's producer for project_cluster. ────────────────
+-- Same contract as the jobs triggers near the top of this file (emit_change): identifiers only, and an
+-- UPDATE fires only when a column the clusters grid renders CHANGED. The row has org_id (derived from
+-- its project, above) and project_id but no user_id: its RLS owner arm is the PROJECT's owner, so the
+-- notice routes on the org arm only, filtered on the project's `view` (lib/realtime/routing.ts).
+-- Not listed: provider_outputs, node sizing, estimated_monthly_cost, fabric_id, org_id (a derived
+-- copy), created_at, updated_at. A deploy's writeback re-SETs cluster_name/endpoint/argocd_url to the
+-- values they already hold on every successful run; IS DISTINCT FROM keeps that silent.
+-- The trigger names are this topic's own, so the component family's per-table triggers (named
+-- <table>_notify_change_*) can never replace them.
+CREATE OR REPLACE FUNCTION public.notify_cluster_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('clusters', OLD.id, OLD.org_id, NULL, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change('clusters', NEW.id, NEW.org_id, NULL, NEW.project_id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS project_cluster_notify_clusters_upd ON public.project_cluster;
+CREATE TRIGGER project_cluster_notify_clusters_upd
+  AFTER UPDATE ON public.project_cluster
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.status_message, OLD.cluster_name, OLD.cluster_endpoint, OLD.cluster_version,
+     OLD.argocd_url, OLD.environment_id, OLD.project_id, OLD.cloud_identity_id, OLD.region)
+    IS DISTINCT FROM
+    (NEW.status, NEW.status_message, NEW.cluster_name, NEW.cluster_endpoint, NEW.cluster_version,
+     NEW.argocd_url, NEW.environment_id, NEW.project_id, NEW.cloud_identity_id, NEW.region)
+  )
+  EXECUTE FUNCTION public.notify_cluster_change();
+
+DROP TRIGGER IF EXISTS project_cluster_notify_clusters_insdel ON public.project_cluster;
+CREATE TRIGGER project_cluster_notify_clusters_insdel
+  AFTER INSERT OR DELETE ON public.project_cluster
+  FOR EACH ROW EXECUTE FUNCTION public.notify_cluster_change();
+
+-- ── Deploy-stamp backfill (#6122). "A cluster under management" (lib/queries/usage-counts.ts) reads
+-- project_environments.last_deployed_at. An environment whose successful DEPLOY predates the code that
+-- stamps it has a NULL stamp over a running cluster, so it would drop out of the clusters list and the
+-- Usage count. This stamps such an environment with its latest successful DEPLOY's completion time.
+--
+-- Not stamped: a DESTROYED environment, and one whose latest successful DESTROY is newer than its
+-- latest successful DEPLOY — a DESTROY success clears the stamp on purpose (lib/jobs/finalize-
+-- deployment.ts), and this runs on EVERY migrate, so it must never undo a recorded teardown.
+-- Idempotent: once stamped, an environment no longer matches. A function, so the integration suite
+-- runs the same statement migrate runs. The DO block reports a count only, and a failure is a
+-- WARNING, never a failed migrate.
+CREATE OR REPLACE FUNCTION public.backfill_env_deploy_stamps() RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n BIGINT;
+BEGIN
+  UPDATE public.project_environments e
+     SET last_deployed_at = d.done
+    FROM (
+      SELECT j.environment_id, max(coalesce(j.completed_at, j.updated_at)) AS done
+        FROM public.jobs j
+       WHERE j.job_type = 'DEPLOY' AND j.status = 'SUCCESS' AND j.environment_id IS NOT NULL
+       GROUP BY j.environment_id
+    ) d
+   WHERE e.id = d.environment_id
+     AND e.last_deployed_at IS NULL
+     AND e.status <> 'DESTROYED'
+     AND NOT EXISTS (
+       SELECT 1 FROM public.jobs x
+        WHERE x.environment_id = e.id
+          AND x.job_type = 'DESTROY' AND x.status = 'SUCCESS'
+          AND coalesce(x.completed_at, x.updated_at) >= d.done
+     );
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$;
+
+DO $$
+DECLARE n BIGINT;
+BEGIN
+  n := public.backfill_env_deploy_stamps();
+  IF n > 0 THEN
+    RAISE NOTICE 'environments stamped with their last successful deploy: %', n;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'deploy-stamp backfill skipped: %', SQLERRM;
+END $$;
+
 -- The other direction: a project that changes org takes its components with it. Without this, the
 -- child trigger above keeps new writes right while every EXISTING row keeps the old org — drift by
 -- omission. The child UPDATE this issues fires the child trigger, which re-derives from the row this

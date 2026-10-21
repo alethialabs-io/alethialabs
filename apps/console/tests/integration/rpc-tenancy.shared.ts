@@ -75,6 +75,7 @@ import {
 	member,
 	organization,
 	organizationBilling,
+	projectCluster,
 	projectEnvironments,
 	projectFabrics,
 	projects,
@@ -119,6 +120,9 @@ export interface Seeded {
 	/** A job on each org's project (the addressed `jobs.project` read). */
 	projectJobX: string;
 	projectJobY: string;
+	/** One cluster under management in each org — on its project's default environment (#6122). */
+	clusterX: string;
+	clusterY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -230,6 +234,16 @@ function numberField(out: unknown, field: string): number | undefined {
 function hasItem(out: unknown, field: string, id: string): boolean {
 	if (typeof out !== "object" || out === null || !(field in out)) return false;
 	return hasElement(Reflect.get(out, field), "id", id);
+}
+
+/** Whether a clusters-list output carries the cluster whose row id is `id` (#6122). */
+function hasCluster(out: unknown, id: string): boolean {
+	if (!Array.isArray(out)) return false;
+	return out.some((el: unknown) => {
+		if (typeof el !== "object" || el === null || !("project_cluster" in el)) return false;
+		const cluster: unknown = el.project_cluster;
+		return typeof cluster === "object" && cluster !== null && "id" in cluster && cluster.id === id;
+	});
 }
 
 /** A string field of an object output, or undefined. */
@@ -406,6 +420,13 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: (s, org) => ({ projectId: org === "x" ? s.projectX : s.projectY }),
 		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
 	},
+	// #6122. Each org's cluster is under management (its environment has deployed), so a list that
+	// served the wrong org — or both — names the other org's cluster by its row id.
+	"clusters.list": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasCluster(out, s.clusterX), y: hasCluster(out, s.clusterY) }),
+	},
 };
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
@@ -491,6 +512,8 @@ export async function runRpcTenancySuite(opts: {
 		identityY: "",
 		projectJobX: "",
 		projectJobY: "",
+		clusterX: "",
+		clusterY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -601,7 +624,7 @@ export async function runRpcTenancySuite(opts: {
 			expect(seeded.deliveryX && seeded.deliveryY).toBeTruthy();
 
 			// One project per org under the same slug, each with its default environment (W authors).
-			const seedProject = async (orgId: string): Promise<{ project: string; env: string }> => {
+			const seedProject = async (orgId: string): Promise<{ project: string; env: string; cluster: string }> => {
 				const [p] = await db
 					.insert(projects)
 					.values({
@@ -629,10 +652,20 @@ export async function runRpcTenancySuite(opts: {
 						fabric_id: f.id,
 					})
 					.returning({ id: projectEnvironments.id });
-				return { project: p.id, env: e.id };
+				// #6122: a cluster under management — its environment has a live deployment (the stamp a
+				// DEPLOY success writes), while a plan holds it in DRAFT.
+				await db
+					.update(projectEnvironments)
+					.set({ last_deployed_at: new Date("2026-01-01T00:00:00Z") })
+					.where(eq(projectEnvironments.id, e.id));
+				const [c] = await db
+					.insert(projectCluster)
+					.values({ project_id: p.id, environment_id: e.id, status: "ACTIVE", cluster_name: `it-6122-${orgId.slice(0, 8)}` })
+					.returning({ id: projectCluster.id });
+				return { project: p.id, env: e.id, cluster: c.id };
 			};
-			({ project: seeded.projectX, env: seeded.envX } = await seedProject(ORG_X));
-			({ project: seeded.projectY, env: seeded.envY } = await seedProject(ORG_Y));
+			({ project: seeded.projectX, env: seeded.envX, cluster: seeded.clusterX } = await seedProject(ORG_X));
+			({ project: seeded.projectY, env: seeded.envY, cluster: seeded.clusterY } = await seedProject(ORG_Y));
 
 			// One ORG-scoped cloud identity per org (W authors; visible to the org, #6119), each with one
 			// inventory region whose name marks which org's identity answered.

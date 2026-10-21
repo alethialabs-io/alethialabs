@@ -20,8 +20,7 @@
 import { headers } from "next/headers";
 import { z } from "zod";
 import { trustedClientIp } from "@/lib/auth/trusted-ip";
-import { getPdp } from "@/lib/authz";
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
@@ -83,23 +82,6 @@ function refusalStatus(refusal: MintRequestRefusal): KubeconfigDownloadRefusal {
 /** The caller's IP from the deployment's trusted proxy header, for the audit row. */
 async function sourceIp(): Promise<string | null> {
 	return trustedClientIp(new Headers(await headers()));
-}
-
-/**
- * Whether the caller may download a read-only kubeconfig for `clusterId` — `cluster:access_readonly`,
- * the action the request itself enforces. The card renders the button only on true. Non-throwing and
- * fail-closed: any error is false. This is a display decision; the request re-checks.
- */
-export async function canDownloadKubeconfig(clusterId: string): Promise<boolean> {
-	const id = z.uuid().safeParse(clusterId);
-	if (!id.success) return false;
-	try {
-		const actor = await currentActor();
-		const decision = await getPdp().can(actor, "access_readonly", { type: "cluster", id: id.data });
-		return decision.allowed;
-	} catch {
-		return false;
-	}
 }
 
 /**
