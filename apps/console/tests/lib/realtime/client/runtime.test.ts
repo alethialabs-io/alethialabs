@@ -15,6 +15,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/rpc/client", () => ({
 	orpc: {
 		jobs: { key: () => ["jobs-orpc"] },
+		// The support pages' reads (#6130).
+		support: { key: () => ["support-orpc"] },
 		// The shell's reads the topic map also reaches (#6114).
 		workspace: {
 			setupGuide: { key: () => ["ws-setup-guide"] },

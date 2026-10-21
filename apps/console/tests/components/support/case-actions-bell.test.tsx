@@ -24,29 +24,36 @@ vi.mock("@repo/ui/dropdown-menu", () => ({
 		</button>
 	),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/app/server/actions/support", () => ({
-	resolveCase: vi.fn(async () => {}),
-	reopenCase: vi.fn(async () => {}),
-	closeCase: vi.fn(async () => {}),
+	resolveCase: vi.fn(async ({ id }: { id: string }) => ({ ok: true, data: { id } })),
+	reopenCase: vi.fn(async ({ id }: { id: string }) => ({ ok: true, data: { id } })),
+	closeCase: vi.fn(async ({ id }: { id: string }) => ({ ok: true, data: { id } })),
 }));
 
 import { CaseActions } from "@/components/support/cases/case-actions";
-import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
 
+const CASE = "11111111-1111-4111-8111-111111111111";
+
 describe("case actions refresh the bell (#6114)", () => {
-	it("invalidates the bell's case feed and the case lists", async () => {
+	it("invalidates the bell's case feed, every case list and the case itself (#6130)", async () => {
 		const client = new QueryClient();
 		const bell = orpc.workspace.supportCases.queryOptions().queryKey;
+		const list = orpc.support.cases.queryOptions({ input: { bucket: "active" } }).queryKey;
+		const detail = orpc.support.case.queryOptions({ input: { id: CASE } }).queryKey;
 		client.setQueryData(bell, []);
-		client.setQueryData(qk.supportCases("all"), []);
+		client.setQueryData(list, []);
+		client.getQueryCache().build(client, { queryKey: detail });
 		render(
 			<QueryClientProvider client={client}>
-				<CaseActions caseId="case-1" status="open" />
+				<CaseActions caseId={CASE} status="open" />
 			</QueryClientProvider>,
 		);
 		fireEvent.click(screen.getByRole("button", { name: /mark resolved/i }));
 		await waitFor(() => expect(client.getQueryState(bell)?.isInvalidated).toBe(true));
-		expect(client.getQueryState(qk.supportCases("all"))?.isInvalidated).toBe(true);
+		expect(client.getQueryState(list)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(detail)?.isInvalidated).toBe(true);
 	});
 });

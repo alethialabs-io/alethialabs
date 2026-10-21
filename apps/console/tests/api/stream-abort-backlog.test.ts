@@ -27,7 +27,7 @@ const state = vi.hoisted(() => {
 		release: () => {},
 		held: Promise.resolve(),
 	};
-	return { realtime: transport(), support: transport(), gate };
+	return { realtime: transport(), gate };
 });
 
 /** Re-arm the gate so the next list read blocks until `state.gate.release()` is called. */
@@ -52,19 +52,14 @@ function subscribeOn(t: FakeTransport, key: string, fn: (payload: string) => voi
 vi.mock("@/lib/auth/owner", () => ({ getOwner: async () => "user-1" }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: async () => ({ userId: "user-1", orgId: "org-1" }) }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeUserId: async () => null }));
-vi.mock("@/lib/support/scope", () => ({ isSupportCaseVisible: async () => true }));
 vi.mock("@/lib/realtime", () => ({
 	getRealtimeTransport: () => ({
 		subscribe: (key: string, fn: (p: string) => void) => subscribeOn(state.realtime, key, fn),
 	}),
-	getSupportMessageTransport: () => ({
-		subscribe: (key: string, fn: (p: string) => void) => subscribeOn(state.support, key, fn),
-	}),
 }));
 vi.mock("@/lib/db", () => {
 	/**
-	 * A drizzle-shaped chain: `.limit()` is a single-row lookup (the job's owner, the support
-	 * cursor) and answers at once; `.orderBy()` is the backlog list read and waits on the gate.
+	 * A drizzle-shaped chain: `.limit()` is a single-row lookup (the job's owner) and answers at once; `.orderBy()` is the backlog list read and waits on the gate.
 	 */
 	const chain = {
 		select: () => chain,
@@ -105,7 +100,7 @@ function nextTask(): Promise<void> {
 }
 
 beforeEach(() => {
-	for (const t of [state.realtime, state.support]) {
+	for (const t of [state.realtime]) {
 		t.listeners.clear();
 		t.unsubscribed.length = 0;
 	}
@@ -143,24 +138,6 @@ describe("a client that disconnects during the backlog read leaves nothing runni
 		state.gate.release();
 		await nextTask();
 		expect(state.realtime.listeners.size).toBe(0);
-		expect(liveIntervals.size).toBe(0);
-		expect(await settled(reading)).toBe("closed");
-	});
-
-	it("GET /api/stream/support/cases/[id]: no thread subscription, no heartbeat, and the stream closes", async () => {
-		const { GET } = await import("@/app/api/stream/support/cases/[id]/route");
-		const ctl = new AbortController();
-		const res = await GET(
-			new Request("https://console.local/api/stream/support/cases/case-1?after=msg-0", { signal: ctl.signal }),
-			{ params: Promise.resolve({ id: "case-1" }) },
-		);
-		expect(res.status).toBe(200);
-		const reading = drain(res);
-		await state.gate.started;
-		ctl.abort();
-		state.gate.release();
-		await nextTask();
-		expect(state.support.listeners.size).toBe(0);
 		expect(liveIntervals.size).toBe(0);
 		expect(await settled(reading)).toBe("closed");
 	});

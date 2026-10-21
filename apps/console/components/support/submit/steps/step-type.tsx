@@ -10,6 +10,7 @@ import {
 	type SubmitCaseInput,
 } from "@/lib/validations/support";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { FieldMessage } from "@/components/support/field-message";
 
 /** One-line description per case type, shown under each radio card. */
 const TYPE_DESCRIPTIONS: Record<string, string> = {
@@ -51,9 +52,7 @@ export function StepType() {
 					</div>
 				)}
 			/>
-			{errors.type && (
-				<p className="text-xs text-destructive">Select a case type to continue.</p>
-			)}
+			<FieldMessage message={errors.type ? "Select a case type to continue." : undefined} />
 		</div>
 	);
 }
