@@ -21,7 +21,7 @@ import "server-only";
 
 import { and, eq, inArray, type SQL } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
-import type { Actor } from "@/lib/authz/types";
+import type { ResolvedScope } from "@/lib/authz/types";
 import type { Tx } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { permissionToCancel } from "@/lib/jobs/operation";
@@ -48,7 +48,7 @@ export type CancelOutcome =
  * any other refusal.
  */
 export async function cancelJobAs(
-	actor: Actor,
+	actor: ResolvedScope,
 	jobId: string,
 	where: SQL,
 	run: RunInScope,

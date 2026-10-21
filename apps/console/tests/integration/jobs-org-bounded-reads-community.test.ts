@@ -30,6 +30,7 @@ import { rerunJob } from "@/app/server/actions/jobs";
 import { RERUN_FROM_PROJECT, RERUN_FROM_RUNNER } from "@/lib/jobs/operation";
 import { readJob, readJobsPage } from "@/lib/rpc/procedures/jobs";
 import { getProject, getProjectsList } from "@/app/server/actions/projects";
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
@@ -44,7 +45,7 @@ import { describeIfDb } from "./db";
 const U = randomUUID();
 const PRIMARY = randomUUID(); // the real organization row signup provisions
 
-let actor: Actor = { userId: U, orgId: "" };
+let actor: Actor = { credential: "session", userId: U, orgId: "" };
 let projectId = "";
 let projectJob = "";
 let runnerJob = "";
@@ -72,7 +73,7 @@ describeIfDb("job and project reads in the single-tenant edition", () => {
 		}
 
 		// The real resolver, asked for the real org: community answers with the personal scope.
-		actor = await getActiveScope(U, PRIMARY);
+		actor = actorWithCredential(await getActiveScope(U, PRIMARY), "session");
 
 		// The shared create core (the console action and the CLI route both run it), then two jobs
 		// that leave org_id to the insert trigger: one from the project, one from the session.
