@@ -231,7 +231,7 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
 		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: ORG } as never);
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { userId: USER, orgId: ORG, credential: "session" },
 			credential: "session",
 			orgScope: [ORG, USER],
 		} as never);

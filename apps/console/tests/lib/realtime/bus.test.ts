@@ -83,7 +83,7 @@ function job(over: Partial<ChangeNotice> = {}): ChangeNotice {
 }
 
 const NO_CAPS = { fleetView: false, manageSupport: false };
-const member: Actor = { userId: USER, orgId: ORG };
+const member: Actor = { credential: "session", userId: USER, orgId: ORG };
 const memberKeys = subscriptionKeys(member, NO_CAPS);
 
 /** Lets queued PDP decisions settle. */
@@ -161,7 +161,7 @@ describe("fan-out", () => {
 		const here = recorder();
 		const there = recorder();
 		bus.subscribe(member, memberKeys, here.sink);
-		const elsewhere: Actor = { userId: USER, orgId: OTHER_ORG };
+		const elsewhere: Actor = { credential: "session", userId: USER, orgId: OTHER_ORG };
 		bus.subscribe(elsewhere, subscriptionKeys(elsewhere, NO_CAPS), there.sink);
 		// Written by USER, stamped OTHER_ORG: it belongs to the OTHER_ORG stream alone.
 		transport.emit(job({ o: OTHER_ORG, u: USER, p: null }));
@@ -171,7 +171,7 @@ describe("fan-out", () => {
 	});
 
 	it("delivers once to a stream matched by two keys (personal scope, o == u)", async () => {
-		const personal: Actor = { userId: USER, orgId: USER };
+		const personal: Actor = { credential: "session", userId: USER, orgId: USER };
 		const r = recorder();
 		bus.subscribe(personal, subscriptionKeys(personal, NO_CAPS), r.sink);
 		transport.emit(job({ o: USER, u: USER, p: null }));
@@ -181,7 +181,7 @@ describe("fan-out", () => {
 
 	it("never delivers to a stream of another org", async () => {
 		const r = recorder();
-		const elsewhere: Actor = { userId: USER, orgId: OTHER_ORG };
+		const elsewhere: Actor = { credential: "session", userId: USER, orgId: OTHER_ORG };
 		bus.subscribe(elsewhere, subscriptionKeys(elsewhere, NO_CAPS), r.sink);
 		transport.emit(job());
 		await settle();
@@ -231,7 +231,7 @@ describe("resync", () => {
 		const a = recorder();
 		const b = recorder();
 		bus.subscribe(member, memberKeys, a.sink);
-		bus.subscribe({ userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], b.sink);
+		bus.subscribe({ credential: "session", userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], b.sink);
 		transport.reconnect();
 		expect(a.resyncs.map((r) => r.reason)).toEqual(["reconnect"]);
 		expect(b.resyncs.map((r) => r.reason)).toEqual(["reconnect"]);
@@ -265,7 +265,7 @@ describe("bookkeeping", () => {
 
 	it("returns streams and keys to zero when every stream closes", () => {
 		const a = open(member, memberKeys, recorder().sink);
-		const b = open({ userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], recorder().sink);
+		const b = open({ credential: "session", userId: OTHER_USER, orgId: OTHER_ORG }, [`o:${OTHER_ORG}`], recorder().sink);
 		expect(bus.stats()).toMatchObject({ streams: 2, keys: 3, users: 2, maxPerUser: 1 });
 		a.close();
 		b.close();
@@ -386,7 +386,7 @@ describe("PdpMemo", () => {
 	it("keys an answer by user AND org: the same project asked from another org is asked again", async () => {
 		const memo = new PdpMemo({ check });
 		await memo.allowed(member, PROJECT);
-		await memo.allowed({ userId: USER, orgId: OTHER_ORG }, PROJECT);
+		await memo.allowed({ credential: "session", userId: USER, orgId: OTHER_ORG }, PROJECT);
 		expect(check).toHaveBeenCalledTimes(2);
 	});
 
@@ -406,7 +406,7 @@ describe("PdpMemo", () => {
 
 	it("evictUser forgets only that user", async () => {
 		const memo = new PdpMemo({ check });
-		const other: Actor = { userId: OTHER_USER, orgId: ORG };
+		const other: Actor = { credential: "session", userId: OTHER_USER, orgId: ORG };
 		await memo.allowed(member, PROJECT);
 		await memo.allowed(other, PROJECT);
 		memo.evictUser(USER);

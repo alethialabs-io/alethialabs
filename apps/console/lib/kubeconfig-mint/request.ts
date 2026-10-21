@@ -33,6 +33,8 @@ import { KUBECONFIG_MINT_REQUEST_WINDOW_SECONDS } from "@/lib/db/schema/kubeconf
 import { signedJob } from "@/lib/db/signed-job";
 import { newTraceparent } from "@/lib/observability/trace";
 import { identityScopeWhere } from "@/lib/runners/claim-identity";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import type { Actor } from "@/lib/authz/types";
 import { notifyScaler } from "@/lib/scaler";
 import type { CliKubeconfigMintRequest } from "@/lib/validations/cli-contract";
 import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
@@ -54,7 +56,8 @@ export interface MintActor {
 
 /** One mint request, already parsed against `cliKubeconfigMintRequest`. */
 export interface MintRequestInput {
-	actor: MintActor;
+	/** The full actor, so the identity rule reads its credential kind (`personalIdentityAuthor`). */
+	actor: Actor;
 	clusterId: string;
 	request: CliKubeconfigMintRequest;
 	client: MintClient;
@@ -207,8 +210,8 @@ export async function requestKubeconfigMint(
 	const target = await resolveMintTarget(
 		clusterId,
 		actor.orgId,
-		// A person may use their own personal identity; a service token's actor id is its minter.
-		input.credential.kind === "session" ? actor.userId : undefined,
+		// The one identity rule: a person's own personal identity, the org's shared ones.
+		personalIdentityAuthor(actor),
 	);
 	if (!target) return { ok: false, refusal: "not-found" };
 	// Bound to an identity this caller may not use: refused before any job is queued, rather than

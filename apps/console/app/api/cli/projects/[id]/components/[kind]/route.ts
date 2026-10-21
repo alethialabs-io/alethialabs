@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import {
 	ComponentWriteRefusedError,
 	componentIdentityAllowed,
@@ -99,7 +100,7 @@ export async function POST(
 			!(await componentIdentityAllowed(
 				validated.values,
 				actor.orgId,
-				userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+				personalIdentityAuthor(actor),
 			))
 		) {
 			return NextResponse.json({ error: "Cloud identity not found" }, { status: 404 });

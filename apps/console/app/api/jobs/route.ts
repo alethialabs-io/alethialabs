@@ -15,13 +15,12 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
-import { actorWithCredential } from "@/lib/authz/actor-credential";
+import { actorWithCredential, personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { jobVisibleTo } from "@/lib/jobs/visibility";
 import {
 	assertMintingProfileStillMember,
 	authorizeCli,
 	ensureCliOrgAccess,
-	userIdIsTheCaller,
 } from "@/lib/authz/guard";
 import {
 	assertRunnerInOrg,
@@ -374,7 +373,7 @@ export async function POST(req: Request) {
 						actorIdentityWhere(
 							target.cloud_identity_id,
 							actor.orgId,
-							userIdIsTheCaller(caller.credential) ? actor.userId : undefined,
+							personalIdentityAuthor(actor),
 						),
 					)
 					.limit(1);

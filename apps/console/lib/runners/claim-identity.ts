@@ -68,15 +68,17 @@ export function claimIdentityWhere(job: ClaimIdentityJob): SQL | undefined {
  * through `getServiceDb()` — the `scoped_all` RLS policy written out:
  *
  * - an `org`-scope identity of `orgId`;
- * - a `personal` identity authored by `personalAuthorId`, when one is passed. Pass the caller's id
- *   for a PERSON only: for a service token the actor's `userId` is the profile that MINTED it
- *   (`userIdIsTheCaller` in lib/authz/guard.ts, `personalIdentityAuthor` in
- *   lib/authz/actor-credential.ts), so passing it would
- *   hand the minter's personal credentials to a credential pinned to an org.
+ * - a `personal` identity authored by `personalAuthorId`, when one is passed. Always pass
+ *   `personalIdentityAuthor(actor)` (lib/authz/actor-credential.ts), which decides it from the
+ *   actor's credential: a service token's `userId` is the profile that MINTED it, so outside its
+ *   minter's own personal workspace it gets no personal arm.
  *
- * Every read or write that names an identity for a caller uses this rule — the design writes, the
- * job snapshot, the CLI identity list and inventory, the runner routes — so "which identities may
- * this caller use" has one answer.
+ * Used by: the design writes (lib/cloud-providers/design-identities.ts), the job snapshot
+ * (`buildConfigSnapshot`), the CLI project and component writes, the CLI identity list and
+ * inventory, `runners/deploy` and `runners/register`, the `/api/jobs` DESTROY_RUNNER branch and the
+ * kubeconfig mint. NOT by `lib/cloud-providers/connections.ts` (the connector routes and actions,
+ * which filter by `org_id`), nor by reads that run under the `scoped_all` RLS policy, which is this
+ * rule for a person.
  */
 export function identityScopeWhere(
 	orgId: string,
