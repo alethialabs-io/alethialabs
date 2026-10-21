@@ -427,6 +427,14 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "warm pools are platform rows with no org (self-managed only); the answer is the deployment's fleet",
 		input: undefined,
 	},
+	"runners.fleetEconomics": {
+		// The pools' month-to-date cost: pools and their usage sessions are platform rows with no org,
+		// so a manager on any org of a self-managed deployment reads the same figures, and everyone else
+		// (and every caller on hosted) reads null. With the clock frozen, both answers are deterministic.
+		kind: "not-org-scoped",
+		reason: "warm-pool economics are computed over platform rows with no org; the answer is the deployment's, or null for a non-manager",
+		input: undefined,
+	},
 	"runners.releaseNotes": {
 		kind: "not-org-scoped",
 		reason: "runner releases are global; every org reads the same changelog",
