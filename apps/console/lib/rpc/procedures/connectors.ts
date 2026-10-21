@@ -4,6 +4,7 @@
 import "server-only";
 
 import { asc, desc, eq, isNotNull } from "drizzle-orm";
+import { z } from "zod";
 import type {
 	CloudAccount,
 	CloudAccountStatus,
@@ -13,6 +14,11 @@ import type {
 	GitTokenHealth,
 } from "@/app/server/actions/connectors";
 import { getValidProviderToken } from "@/app/server/actions/identities";
+import {
+	buildConnectorsView,
+	type ConnectorsView,
+	type NormalizedConnectorQuery,
+} from "@/components/connectors/connectors-query";
 import { getPdp } from "@/lib/authz";
 import { currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
@@ -298,7 +304,12 @@ export async function readConnectedCloudProviders(): Promise<string[]> {
 
 /** What the connectors board renders, in one read. */
 export interface ConnectorsBoard {
-	/** The catalog with the actor's connection status per connector. */
+	/** The rows matching the filter, the facet counts over the UNFILTERED catalog, and its size. */
+	view: ConnectorsView;
+	/**
+	 * The whole catalog with the actor's connection status per connector — the manage sheet, the
+	 * connect sheets and the `?connect=` deep link look a connector up here whatever the filter.
+	 */
 	integrations: ConnectorWithConnection[];
 	/** Whether the actor may add, re-verify, rename or remove connections. */
 	canManage: boolean;
@@ -327,7 +338,10 @@ async function readCanManage(actor: Actor): Promise<boolean> {
  * does not say "expired" about a link its next use renews anyway — the same refresh-on-read the
  * page did before it moved here.
  */
-export async function readConnectorsBoard(actor: Actor): Promise<ConnectorsBoard> {
+export async function readConnectorsBoard(
+	actor: Actor,
+	filter: NormalizedConnectorQuery = {},
+): Promise<ConnectorsBoard> {
 	const [first, canManage] = await Promise.all([readConnectorsFor(actor), readCanManage(actor)]);
 	let integrations = first;
 	const expired = integrations.filter((i) => i.category === "git" && i.token_health === "expired");
@@ -337,15 +351,36 @@ export async function readConnectorsBoard(actor: Actor): Promise<ConnectorsBoard
 		);
 		integrations = await readConnectorsFor(actor);
 	}
-	return { integrations, canManage, platformConfigured: computePlatformConfigured() };
+	const platformConfigured = computePlatformConfigured();
+	return {
+		view: buildConnectorsView(integrations, filter, platformConfigured),
+		integrations,
+		canManage,
+		platformConfigured,
+	};
 }
+
+/** A selection on the wire: the board's normalized filter (`normalizeConnectorQuery`). */
+const selection = z.array(z.string().max(100)).max(50).optional();
+
+/** The board's input — the normalized filter query, which is also its query key (filter standard F3). */
+const connectorsBoardInput = z
+	.object({
+		search: z.string().max(200).optional(),
+		groups: selection,
+		health: selection,
+		vendors: selection,
+	})
+	.strict();
 
 /**
  * The connectors domain's reads (ADR 0005 D1, #6124). `board` is everything the connectors page
- * shows; the filter bar's selection and facet counts run over it in the browser — the catalog is one
- * short list, so every filter state is answered from the one cached read and a filter change
- * fetches nothing.
+ * shows for one normalized filter: the selection and the facet tally (over the unfiltered catalog)
+ * run here, and the filter is the input — so it is the key, and two filter states never share a
+ * cache entry (lib/query/README.md → "Server-side filters").
  */
 export const connectorsRouter = {
-	board: query.handler(({ context }) => readConnectorsBoard(context.actor)),
+	board: query
+		.input(connectorsBoardInput)
+		.handler(({ context, input }) => readConnectorsBoard(context.actor, input)),
 };

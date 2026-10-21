@@ -35,10 +35,7 @@ vi.mock("@/app/server/actions/identities", () => ({
 }));
 vi.mock("@/lib/auth/client", () => ({ authClient: {} }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn(), captureException: vi.fn() }));
-vi.mock("@/components/connectors/connectors-board", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@/components/connectors/connectors-board")>();
-	return { ...actual, useConnectorsBoard: () => board.state };
-});
+vi.mock("@/lib/query/use-connectors-query", () => ({ useConnectorsQuery: () => board.state }));
 
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 
@@ -107,7 +104,12 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		const setInterval = vi.spyOn(globalThis, "setInterval");
 		board.state = {
 			...settled,
-			data: { integrations: [datadog], canManage: false, platformConfigured: {} },
+			data: {
+				integrations: [datadog],
+				view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
+				canManage: false,
+				platformConfigured: {},
+			},
 		};
 		renderBoard();
 		expect(screen.getAllByText("Datadog").length).toBeGreaterThan(0);

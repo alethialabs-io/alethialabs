@@ -301,10 +301,20 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 
 	it("shows only the matching connector before any debounce has elapsed", async () => {
 		currentSearch = "search=Datadog";
-		// The route prefetches the board and hydrates it; the seed is that hydrated entry.
+		// The route prefetches the board for the LINK's filter and hydrates it; the seed is that
+		// entry. Only a read keyed on `{ search: "Datadog" }` finds it: a debounce that started from
+		// the store's empty search would ask the unfiltered key, find nothing, and show no Datadog.
+		const datadog = connector("datadog", "Datadog", "Datadog, Inc.");
+		const grafana = connector("grafana", "Grafana", "Grafana Labs");
 		renderWithClient(<ConnectorsPage orgSlug="acme" />, (qc) =>
-			qc.setQueryData(orpc.connectors.board.queryOptions().queryKey, {
-				integrations: [connector("datadog", "Datadog", "Datadog, Inc."), connector("grafana", "Grafana", "Grafana Labs")],
+			qc.setQueryData(orpc.connectors.board.queryOptions({ input: { search: "Datadog" } }).queryKey, {
+				view: {
+					query: { search: "Datadog" },
+					rows: [datadog],
+					facets: { groups: [], health: [], vendors: [] },
+					total: 2,
+				},
+				integrations: [datadog, grafana],
 				canManage: false,
 				platformConfigured: {},
 			}),
