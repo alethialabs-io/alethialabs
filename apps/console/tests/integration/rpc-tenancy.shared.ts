@@ -66,7 +66,9 @@ import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getServiceDb } from "@/lib/db";
 import {
+	alertChannels,
 	alertDeliveries,
+	alertRules,
 	authzActivityLog,
 	cloudIdentities,
 	cloudRegions,
@@ -110,6 +112,11 @@ export interface Seeded {
 	/** One alert delivery in each org's ledger (#6118). */
 	deliveryX: string;
 	deliveryY: string;
+	/** One alert policy and one alert channel per org, W-authored (#6125). */
+	ruleX: string;
+	ruleY: string;
+	channelX: string;
+	channelY: string;
 	/** Each project's default environment (#6119's board reads name the environment they answer for). */
 	envX: string;
 	envY: string;
@@ -334,6 +341,31 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
 	},
+	// The Alerts hub's reads (#6125). Each list's PRISTINE page is the org's whole list, so the marker
+	// is that org's seeded row; the settings read's condition options list the ADDRESSED org's projects.
+	"alerts.settings": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => {
+			const projects = field(field(out, "conditionOptions"), "projects");
+			return { x: hasElement(projects, "value", s.projectX), y: hasElement(projects, "value", s.projectY) };
+		},
+	},
+	"alerts.policies": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.ruleX), y: hasRow(out, s.ruleY) }),
+	},
+	"alerts.channels": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.channelX), y: hasRow(out, s.channelY) }),
+	},
+	"alerts.deliveries": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.deliveryX), y: hasRow(out, s.deliveryY) }),
+	},
 	// The Architecture board's reads (#6119). Each answers for ONE environment and names it, so the
 	// reveal is "the answer names that org's environment" — an empty status or a refusal names none.
 	"canvas.environmentStatus": {
@@ -485,6 +517,10 @@ export async function runRpcTenancySuite(opts: {
 		caseY: "",
 		deliveryX: "",
 		deliveryY: "",
+		ruleX: "",
+		ruleY: "",
+		channelX: "",
+		channelY: "",
 		envX: "",
 		envY: "",
 		identityX: "",
@@ -600,6 +636,21 @@ export async function runRpcTenancySuite(opts: {
 			seeded.deliveryY = deliveries.find((d) => d.org === ORG_Y)?.id ?? "";
 			expect(seeded.deliveryX && seeded.deliveryY).toBeTruthy();
 
+			// #6125: one policy and one channel per org (W authors), the Alerts hub's list markers.
+			const seedAlerting = async (orgId: string): Promise<{ rule: string; channel: string }> => {
+				const [rule] = await db
+					.insert(alertRules)
+					.values({ org_id: orgId, name: `it-6125 ${orgId.slice(0, 8)}`, event_patterns: ["system.job.failed"], created_by: W })
+					.returning({ id: alertRules.id });
+				const [channel] = await db
+					.insert(alertChannels)
+					.values({ org_id: orgId, type: "email", name: `it-6125 ${orgId.slice(0, 8)}`, created_by: W })
+					.returning({ id: alertChannels.id });
+				return { rule: rule.id, channel: channel.id };
+			};
+			({ rule: seeded.ruleX, channel: seeded.channelX } = await seedAlerting(ORG_X));
+			({ rule: seeded.ruleY, channel: seeded.channelY } = await seedAlerting(ORG_Y));
+
 			// One project per org under the same slug, each with its default environment (W authors).
 			const seedProject = async (orgId: string): Promise<{ project: string; env: string }> => {
 				const [p] = await db
@@ -690,6 +741,8 @@ export async function runRpcTenancySuite(opts: {
 			const db = getServiceDb();
 			await db.delete(jobs).where(inArray(jobs.org_id, [ORG_X, ORG_Y]));
 			await db.delete(alertDeliveries).where(inArray(alertDeliveries.org_id, [ORG_X, ORG_Y]));
+			await db.delete(alertRules).where(inArray(alertRules.org_id, [ORG_X, ORG_Y]));
+			await db.delete(alertChannels).where(inArray(alertChannels.org_id, [ORG_X, ORG_Y]));
 			await db.delete(organizationBilling).where(inArray(organizationBilling.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(supportCases).where(inArray(supportCases.org_id, [ORG_X, ORG_Y]));
 			const seededProjects = [seeded.projectX, seeded.projectY].filter((id) => id !== "");

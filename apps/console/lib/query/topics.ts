@@ -84,7 +84,10 @@ export const TOPIC_KEYS = {
 		orpc.canvas.byoCharts.key(),
 		orpc.canvas.environmentStatus.key(),
 	],
-	alerts: (): QueryKey[] => [orpc.overview.alerts.key()],
+	// The Alerts hub's reads — settings, policies, channels, the delivery ledger — and the overview's
+	// Alerts card (#6118, #6125). Hints come from the alert tables' triggers (programmables.sql) and
+	// reach only members who may `view_alerts` (lib/realtime/routing.ts).
+	alerts: (): QueryKey[] => [orpc.alerts.key(), orpc.overview.alerts.key()],
 	// The shell's bell + toaster feed, and every support page read — "My cases" in each bucket and the
 	// open case's thread (#6130). Hints come from the `support_cases` trigger (programmables.sql).
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key(), orpc.support.key()],
