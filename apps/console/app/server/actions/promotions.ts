@@ -15,7 +15,7 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { arrayIncludes } from "@/lib/type-guards";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	environmentPromotions,
@@ -229,10 +229,10 @@ export async function approvePromotion(
 	promotionId: string,
 	comment?: string,
 ): Promise<void> {
-	const { actor, promotion, rulesRow } = await loadForDecision(promotionId, "deploy");
+	const { actor, promotion, orgId, rulesRow } = await loadForDecision(promotionId);
 	if (promotion.status !== "PENDING_APPROVAL")
 		throw new Error("This promotion is not awaiting approval");
-	await assertApprover(actor, rulesRow);
+	await assertApprover(actor, orgId, rulesRow);
 	// Authorization done → run the shared service-role approval body (claim slot + re-evaluate gates).
 	await applyPromotionApproval(promotionId, actor.userId, comment);
 }
@@ -242,10 +242,10 @@ export async function rejectPromotion(
 	promotionId: string,
 	comment?: string,
 ): Promise<void> {
-	const { actor, promotion, rulesRow } = await loadForDecision(promotionId, "deploy");
+	const { actor, promotion, orgId, rulesRow } = await loadForDecision(promotionId);
 	if (promotion.status !== "PENDING_APPROVAL")
 		throw new Error("This promotion is not awaiting approval");
-	await assertApprover(actor, rulesRow);
+	await assertApprover(actor, orgId, rulesRow);
 	const db = getServiceDb();
 	const [open] = await db
 		.select()
@@ -275,7 +275,7 @@ export async function rejectPromotion(
 
 /** Cancels an in-flight promotion (leaves the written candidate design in place). */
 export async function cancelPromotion(promotionId: string): Promise<void> {
-	const { promotion } = await loadForDecision(promotionId, "deploy");
+	const { promotion } = await loadForDecision(promotionId);
 	if (!arrayIncludes(IN_FLIGHT, promotion.status))
 		throw new Error("Only an in-flight promotion can be cancelled");
 	await getServiceDb()
@@ -305,15 +305,8 @@ export async function listPromotions(projectId: string, envId?: string | null) {
 
 /** A single promotion with its approval slots. */
 export async function getPromotion(promotionId: string) {
-	// Read via service role to learn the project, then authorize the caller for it.
+	const { promotion } = await promotionInActorOrg(promotionId, "view");
 	const db = getServiceDb();
-	const [promotion] = await db
-		.select()
-		.from(environmentPromotions)
-		.where(eq(environmentPromotions.id, promotionId))
-		.limit(1);
-	if (!promotion) throw new Error("Promotion not found");
-	await authorize("view", { type: "project", id: promotion.project_id });
 	const approvals = await db
 		.select()
 		.from(promotionApprovals)
@@ -366,14 +359,8 @@ function initialsOf(name: string): string {
 export async function getPromotionDetail(
 	promotionId: string,
 ): Promise<PromotionDetail> {
+	const { promotion } = await promotionInActorOrg(promotionId, "view");
 	const db = getServiceDb();
-	const [promotion] = await db
-		.select()
-		.from(environmentPromotions)
-		.where(eq(environmentPromotions.id, promotionId))
-		.limit(1);
-	if (!promotion) throw new Error("Promotion not found");
-	await authorize("view", { type: "project", id: promotion.project_id });
 
 	const [envs, approvalRows] = await Promise.all([
 		db
@@ -440,29 +427,61 @@ export async function getPromotionDetail(
 
 // --- internals ------------------------------------------------------------------------------------
 
-/** Loads a promotion + its target rules for a decision action, authorizing the caller for the project. */
-async function loadForDecision(
+/**
+ * Resolves a promotion WITHIN the addressed organization, then authorizes the caller for its project.
+ *
+ * The promotion is read on the service role, so the org predicate here is the tenancy wall: the
+ * project's `org_id` must be the actor's org. A promotion of any other organization is reported
+ * exactly like an id that does not exist, and the PDP is never asked about its project — an org-wide
+ * grant matches any project id, so asking it would answer for a project this org does not own.
+ * The project's org is the source of truth (`environment_promotions.org_id` is nullable).
+ */
+async function promotionInActorOrg(
 	promotionId: string,
-	action: "deploy",
-): Promise<{ actor: Actor; promotion: PromotionRow; rulesRow: ProtectionRow | null }> {
-	const db = getServiceDb();
-	const [promotion] = await db
-		.select()
+	action: "view" | "deploy",
+): Promise<{ actor: Actor; promotion: PromotionRow; orgId: string }> {
+	const scope = await currentActor();
+	const [row] = await getServiceDb()
+		.select({ promotion: environmentPromotions, orgId: projects.org_id })
 		.from(environmentPromotions)
-		.where(eq(environmentPromotions.id, promotionId))
+		.innerJoin(projects, eq(projects.id, environmentPromotions.project_id))
+		.where(and(eq(environmentPromotions.id, promotionId), eq(projects.org_id, scope.orgId)))
 		.limit(1);
-	if (!promotion) throw new Error("Promotion not found");
-	const actor = await authorize(action, { type: "project", id: promotion.project_id });
-	const [rulesRow] = await db
+	if (!row?.orgId) throw new Error("Promotion not found");
+	const actor = await authorize(action, { type: "project", id: row.promotion.project_id });
+	// `authorize` resolves the actor again; it must be the same organization the row was bound to.
+	if (actor.orgId !== row.orgId) throw new Error("Promotion not found");
+	return { actor, promotion: row.promotion, orgId: row.orgId };
+}
+
+/**
+ * Loads a promotion of the actor's organization + its target env's rules for a decision action
+ * (approve / reject / cancel), authorizing the caller for `deploy` on the project.
+ */
+async function loadForDecision(promotionId: string): Promise<{
+	actor: Actor;
+	promotion: PromotionRow;
+	orgId: string;
+	rulesRow: ProtectionRow | null;
+}> {
+	const { actor, promotion, orgId } = await promotionInActorOrg(promotionId, "deploy");
+	const [rulesRow] = await getServiceDb()
 		.select()
 		.from(environmentProtectionRules)
 		.where(eq(environmentProtectionRules.environment_id, promotion.target_environment_id))
 		.limit(1);
-	return { actor, promotion, rulesRow: rulesRow ?? null };
+	return { actor, promotion, orgId, rulesRow: rulesRow ?? null };
 }
 
-/** Throws unless the actor may approve promotions into the target env. */
-async function assertApprover(actor: Actor, rulesRow: ProtectionRow | null): Promise<void> {
+/**
+ * Throws unless the actor may approve promotions into the target env. A role requirement is checked
+ * against the actor's membership in the PROMOTION's organization (`orgId`, from the bound read).
+ */
+async function assertApprover(
+	actor: Actor,
+	orgId: string,
+	rulesRow: ProtectionRow | null,
+): Promise<void> {
 	const spec: ApproverSpec | null = rulesRow?.approvers ?? null;
 	// No spec, or an empty spec → any deploy-authorized user may approve.
 	if (!spec || (spec.user_ids.length === 0 && !spec.role)) return;
@@ -471,7 +490,7 @@ async function assertApprover(actor: Actor, rulesRow: ProtectionRow | null): Pro
 		const [m] = await getServiceDb()
 			.select({ role: member.role })
 			.from(member)
-			.where(and(eq(member.userId, actor.userId), eq(member.organizationId, actor.orgId)))
+			.where(and(eq(member.userId, actor.userId), eq(member.organizationId, orgId)))
 			.limit(1);
 		if (m && (m.role === spec.role || m.role === "owner" || m.role === "admin")) return;
 	}
