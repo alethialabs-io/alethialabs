@@ -88,6 +88,8 @@ vi.mock("@/lib/rpc/client", () => {
 			},
 			// The Environments page's reads ride the environments and jobs topics (#6120).
 			environments: { key: () => ["environments-orpc"], overview: { key: () => ["environments-orpc", "overview"] } },
+			// The Evidence page's read (#6126), which the jobs, environments and projects topics invalidate.
+			evidence: proc("evidence"),
 		},
 	};
 });
