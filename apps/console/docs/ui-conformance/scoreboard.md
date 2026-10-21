@@ -84,7 +84,7 @@ RUBRIC.md defines **44 predicates**. This report scores **43** of them —
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
 | `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |
 | `apps/console/tests/lib/queries/filter-standard-facets.test.ts` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 16`) and which are measured drift (`debt: 0`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 15`) and which are measured drift (`debt: 0`) |
 | `apps/console/ui-conformance-live.json` | T5–T7, R1–R8, F8–F10 and B1–B5 as MEASURED, imported from a CI run of the Playwright `audit` and `audit-interaction` projects |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -330,7 +330,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **24 occurrences across 15 files**. This section
+`check-shared-surface` found **22 occurrences across 14 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -338,7 +338,7 @@ of the scoreboard cannot be quiet.
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | `data_table` | H4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `empty_state` | H9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `format` | H5 | 6 | 6 | 0 | 0 | 3 | 3 | 0 | 0 |
+| `format` | H5 | 4 | 4 | 0 | 0 | 1 | 3 | 0 | 0 |
 | `ink_alpha` | **none** — #4309 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `page_title` | H1 | 17 | 17 | 0 | 0 | 6 | 1 | 0 | 10 |
@@ -346,7 +346,7 @@ of the scoreboard cannot be quiet.
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 24 | 24 | 0 | 0 | 9 | 4 | 0 | 11 |
+| **total** | | 22 | 22 | 0 | 0 | 7 | 4 | 0 | 11 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
