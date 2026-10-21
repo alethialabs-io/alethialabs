@@ -92,14 +92,6 @@ export const qk = {
 	// state — an unsorted array or a stray whitespace fragments the cache into keys that never
 	// hit. `unknown` mirrors `jobsPage`/`activity`: the key factory does not need the shape, and
 	// typing it here would drag every page's query type into this module.
-	alertChannels: (org: string, query?: unknown) =>
-		query ? (["alerts", "channels", org, query] as const) : (["alerts", "channels", org] as const),
-	alertPolicies: (org: string, query?: unknown) =>
-		query ? (["alerts", "policies", org, query] as const) : (["alerts", "policies", org] as const),
-	alertDeliveries: (org: string, query?: unknown) =>
-		query
-			? (["alerts", "deliveries", org, query] as const)
-			: (["alerts", "deliveries", org] as const),
 	connectors: (org: string, query?: unknown) =>
 		query ? (["connectors", org, query] as const) : (["connectors", org] as const),
 	teams: (org: string, query?: unknown) =>

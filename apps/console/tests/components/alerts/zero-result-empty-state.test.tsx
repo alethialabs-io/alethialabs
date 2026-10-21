@@ -12,11 +12,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-	AlertsBootstrap,
-	ChannelDTO,
-	PolicyDTO,
-} from "@/app/server/actions/alerts";
+import type { ChannelDTO, PolicyDTO } from "@/app/server/actions/alerts";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 import type {
 	ActivityView,
 	ChannelsView,
@@ -34,6 +32,11 @@ vi.mock("@/app/server/actions/alerts", () => ({
 	updatePolicy: vi.fn(async () => {}),
 	verifyChannel: vi.fn(async () => {}),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 vi.mock("@/lib/stores/use-alerts-section", () => ({
 	useAlertsSection: (sel: (s: unknown) => unknown) =>
 		sel({
@@ -87,12 +90,10 @@ const policy: PolicyDTO = {
 	channelIds: [],
 };
 
-const bootstrap: AlertsBootstrap = {
+const hub: AlertsHub = {
 	channels: [channel],
 	policies: [policy],
-	deliveries: [],
 	categories: [],
-	stats: { policies: 1, enabled: 1, eventsCovered: 0, totalEvents: 0, routed24h: 0 },
 	alerting: true,
 	advancedAlerting: false,
 	canManage: true,
@@ -100,20 +101,23 @@ const bootstrap: AlertsBootstrap = {
 	conditionOptions: { projects: [], jobTypes: [], resourceTypes: [], actions: [] },
 };
 
+/** What every answered view below shares: the read has answered, and nothing is pending. */
+const answered = { stale: false, busy: false, state: "ready", refreshFailed: false, retry: () => {} } as const;
+
 /** The universe is non-empty and the filtered rows are not: the zero-RESULT state, not zero-DATA. */
 const noChannels: ChannelsView = {
+	...answered,
 	rows: [],
 	count: 0,
+	total: 1,
 	facets: { types: [], status: [] },
-	stale: false,
-	busy: false,
 };
 const noPolicies: PoliciesView = {
+	...answered,
 	rows: [],
 	count: 0,
+	total: 1,
 	facets: { status: [], kinds: [], channels: [] },
-	stale: false,
-	busy: false,
 };
 
 describe("alerts rails: a filter that matches nothing", () => {
@@ -127,12 +131,8 @@ describe("alerts rails: a filter that matches nothing", () => {
 		useAlertChannelFilters.getState().set("search", "zqxvjk");
 		const user = userEvent.setup();
 		const { container } = render(
-			<ChannelsPanel
-				bootstrap={bootstrap}
-				view={noChannels}
-				onChanged={() => {}}
-				onOpenPolicy={() => {}}
-			/>,
+			<ChannelsPanel hub={hub} view={noChannels} onOpenPolicy={() => {}} />,
+			{ wrapper: queryWrapper() },
 		);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
@@ -147,12 +147,8 @@ describe("alerts rails: a filter that matches nothing", () => {
 		useAlertPolicyFilters.getState().set("search", "zqxvjk");
 		const user = userEvent.setup();
 		const { container } = render(
-			<PoliciesPanel
-				bootstrap={bootstrap}
-				view={noPolicies}
-				onChanged={() => {}}
-				onOpenChannel={() => {}}
-			/>,
+			<PoliciesPanel hub={hub} view={noPolicies} onOpenChannel={() => {}} />,
+			{ wrapper: queryWrapper() },
 		);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
@@ -189,11 +185,11 @@ describe("alerts rails: a filter that matches nothing", () => {
 
 /** The empty activity view: no deliveries on this page of the ledger. */
 const noActivity: ActivityView = {
+	...answered,
 	rows: [],
 	count: 0,
+	total: 0,
 	facets: { status: [] },
-	stale: false,
-	busy: false,
 };
 
 /**

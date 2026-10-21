@@ -24,6 +24,8 @@ vi.mock("@/lib/rpc/client", () => ({
 		},
 		// The support pages' reads (#6130).
 		support: { key: () => ["support-orpc"] },
+		// The Alerts hub's reads (#6125).
+		alerts: { key: () => ["alerts-orpc"] },
 		// The shell's reads the topic map also reaches (#6114).
 		workspace: {
 			setupGuide: { key: () => ["ws-setup-guide"] },

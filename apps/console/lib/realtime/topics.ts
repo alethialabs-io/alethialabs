@@ -8,8 +8,8 @@
 
 /**
  * Every topic the bus can carry. A topic names a family of rows the console renders; a hint on it
- * means "something in this family changed — refetch what you show of it". `jobs`, `environments` and
- * `addons` have producers (the triggers in lib/db/programmables.sql); the rest are declared so the
+ * means "something in this family changed — refetch what you show of it". `jobs`, `environments`,
+ * `addons`, `support` and `alerts` have producers (the triggers in lib/db/programmables.sql); the rest are declared so the
  * client and the routing table are exhaustive over one list, and each lane activates its own
  * (lib/realtime/routing.ts).
  */

@@ -66,11 +66,12 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 			return false;
 		}
 	};
-	const [fleetView, manageSupport] = await Promise.all([
+	const [fleetView, manageSupport, viewAlerts] = await Promise.all([
 		ask(pdp.can(actor, "view", { type: "fleet" })),
 		ask(pdp.can(actor, "manage_support", { type: "support_case" })),
+		ask(pdp.can(actor, "view_alerts", { type: "alert" })),
 	]);
-	return { fleetView, manageSupport };
+	return { fleetView, manageSupport, viewAlerts };
 }
 
 /** Is `userId` an ACTIVE member of `orgId`? */
