@@ -45,9 +45,9 @@ const A = randomUUID();
 const B = randomUUID();
 const TOKEN_B = `token-${randomUUID()}`;
 
-const inA: Actor = { userId: U, orgId: A };
-const inPersonal: Actor = { userId: U, orgId: U };
-const asW: Actor = { userId: W, orgId: B };
+const inA: Actor = { credential: "session", userId: U, orgId: A };
+const inPersonal: Actor = { credential: "session", userId: U, orgId: U };
+const asW: Actor = { credential: "session", userId: W, orgId: B };
 
 let runnerA = ""; // self, org A, U
 let runnerB = ""; // self, org B, U's id

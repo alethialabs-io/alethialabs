@@ -80,8 +80,8 @@ beforeEach(() => {
 	vi.mocked(authorizeInOrg).mockReset();
 	vi.mocked(currentActor).mockReset();
 	injected = undefined;
-	vi.mocked(authorize).mockResolvedValue({ userId: CALLER, orgId: ORG });
-	vi.mocked(currentActor).mockResolvedValue({ userId: CALLER, orgId: ORG });
+	vi.mocked(authorize).mockResolvedValue({ credential: "session", userId: CALLER, orgId: ORG });
+	vi.mocked(currentActor).mockResolvedValue({ credential: "session", userId: CALLER, orgId: ORG });
 	mockDb([]);
 });
 
@@ -139,7 +139,7 @@ describe("privacyCaseHistory", () => {
 
 	it("proves org:edit in the CASE's organization before reading the ledger", async () => {
 		mockDb([{ id: "case-1", subjectUserId: OTHER, organizationId: ORG }]);
-		vi.mocked(authorizeInOrg).mockResolvedValue({ userId: CALLER, orgId: ORG });
+		vi.mocked(authorizeInOrg).mockResolvedValue({ credential: "session", userId: CALLER, orgId: ORG });
 		await privacyCaseHistory("DSR-ABCD1234");
 		expect(authorizeInOrg).toHaveBeenCalledWith(
 			"edit",

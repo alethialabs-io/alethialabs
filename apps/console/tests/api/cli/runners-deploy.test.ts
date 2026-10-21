@@ -91,7 +91,7 @@ beforeEach(() => {
 	// session, which is what every pre-existing case in this file assumes. A token case sets it
 	// explicitly below.
 	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId: "user-1", orgId: "org-1" },
+		actor: { userId: "user-1", orgId: "org-1", credential: "session" },
 		credential: "session",
 	} as never);
 	vi.mocked(getServiceDb).mockReturnValue(mock.db as never);
@@ -182,7 +182,7 @@ describe("POST /api/cli/runners/deploy", () => {
 	// would refuse, and what this pins is the ARGUMENT it is asked with.
 	it("gives a service token no personal-runner arm", async () => {
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: "user-1", orgId: "org-1" },
+			actor: { userId: "user-1", orgId: "org-1", credential: "service_token" },
 			credential: "service_token",
 		} as never);
 		mock.queue.push(
@@ -231,7 +231,7 @@ describe("POST /api/cli/runners/deploy", () => {
 
 	it("gives a service token the org's identities only — never the minter's personal one", async () => {
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: "user-1", orgId: "org-1" },
+			actor: { userId: "user-1", orgId: "org-1", credential: "service_token" },
 			credential: "service_token",
 		} as never);
 		mock.queue.push([]);

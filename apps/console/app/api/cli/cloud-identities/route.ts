@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, asc, eq } from "drizzle-orm";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { identityScopeWhere } from "@/lib/runners/claim-identity";
@@ -20,7 +21,7 @@ import { cliCloudIdentitiesResponse } from "@/lib/validations/cli-contract";
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "cloud_identity" });
 	if ("error" in auth) return auth.error;
-	const { actor, credential } = auth;
+	const { actor } = auth;
 
 	try {
 		// Service connection (no RLS) — scoped explicitly by `identityScopeWhere`.
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
 				and(
 					identityScopeWhere(
 						actor.orgId,
-						userIdIsTheCaller(credential) ? actor.userId : undefined,
+						personalIdentityAuthor(actor),
 					),
 					eq(cloudIdentities.is_verified, true),
 				),

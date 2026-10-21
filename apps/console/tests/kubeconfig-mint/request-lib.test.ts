@@ -150,7 +150,7 @@ async function run(
 ) {
 	queue = [target, deploy];
 	return requestKubeconfigMint({
-		actor: { userId: USER, orgId: ORG },
+		actor: { credential: credential.kind, userId: USER, orgId: ORG },
 		clusterId: CLUSTER,
 		request: { tier, ttl_seconds: 3600, shape, client_public_key: KEY },
 		client: "cli",

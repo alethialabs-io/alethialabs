@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, runners } from "@/lib/db/schema";
@@ -47,7 +48,7 @@ const registerRunnerBody = z.object({
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "create", { type: "runner" });
 	if ("error" in auth) return auth.error;
-	const { actor, credential } = auth;
+	const { actor } = auth;
 
 	const parsed = registerRunnerBody.safeParse(
 		await req.json().catch(() => null),
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
 					actorIdentityWhere(
 						cloud_identity_id,
 						actor.orgId,
-						userIdIsTheCaller(credential) ? actor.userId : undefined,
+						personalIdentityAuthor(actor),
 					),
 				)
 				.limit(1);
