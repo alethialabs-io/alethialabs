@@ -569,30 +569,37 @@ export async function updatePolicy(id: string, input: PolicyInput): Promise<void
 		data.channels.map((c) => c.id),
 	);
 
-	await db
-		.update(alertRules)
-		.set({
-			name: data.name,
-			description: data.description ?? null,
-			event_patterns: data.event_patterns,
-			match: data.match,
-			severity: data.severity,
-			throttle_seconds: data.throttle_seconds,
-			escalate: data.escalate,
-			recipient: data.recipient ?? null,
-			enabled: data.enabled,
-			updated_at: new Date(),
-		})
-		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
+	// One transaction, and the channel rewrite keys on the rule the ORG-BOUND update matched — never
+	// on the caller's `id`. A policy of another organization matches no row here, so it is refused
+	// as not found before any binding is touched.
+	await db.transaction(async (tx) => {
+		const [rule] = await tx
+			.update(alertRules)
+			.set({
+				name: data.name,
+				description: data.description ?? null,
+				event_patterns: data.event_patterns,
+				match: data.match,
+				severity: data.severity,
+				throttle_seconds: data.throttle_seconds,
+				escalate: data.escalate,
+				recipient: data.recipient ?? null,
+				enabled: data.enabled,
+				updated_at: new Date(),
+			})
+			.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)))
+			.returning({ id: alertRules.id });
+		if (!rule) throw new Error("Alert policy not found.");
 
-	await db.delete(alertRuleChannels).where(eq(alertRuleChannels.rule_id, id));
-	await db.insert(alertRuleChannels).values(
-		data.channels.map((c) => ({
-			rule_id: id,
-			channel_id: c.id,
-			min_severity: c.min_severity ?? null,
-		})),
-	);
+		await tx.delete(alertRuleChannels).where(eq(alertRuleChannels.rule_id, rule.id));
+		await tx.insert(alertRuleChannels).values(
+			data.channels.map((c) => ({
+				rule_id: rule.id,
+				channel_id: c.id,
+				min_severity: c.min_severity ?? null,
+			})),
+		);
+	});
 	invalidateOrgRules(actor.orgId);
 	revalidatePath(ALERTS_PATH, "page");
 }
