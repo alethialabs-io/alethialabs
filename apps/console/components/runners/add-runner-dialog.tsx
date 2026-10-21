@@ -18,7 +18,7 @@ import {
 	RUNNER_DEPLOY_PROVIDERS_LABEL,
 } from "@/lib/runners/deploy-providers";
 import { groupRegions } from "@/lib/cloud-providers";
-import { useCloudProviderStore as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
+import { useCloudProviderResources as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";

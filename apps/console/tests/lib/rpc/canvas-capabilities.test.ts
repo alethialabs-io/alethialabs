@@ -27,6 +27,8 @@ vi.mock("@/lib/authz/guard", () => ({
 }));
 
 vi.mock("@/lib/db", () => ({
+	// The procedure module also carries readers that use the service db; this test never reaches one.
+	getServiceDb: vi.fn(),
 	withActorScope: vi.fn(async (_a: unknown, fn: (tx: unknown) => unknown) => {
 		const chain: Record<string, (...a: unknown[]) => unknown> = {};
 		for (const m of ["select", "from", "where"]) chain[m] = () => chain;
@@ -92,7 +94,7 @@ vi.mock("@/app/server/actions/cloud-resources", () => ({
 	})),
 }));
 
-import { getIdentityCapabilities } from "@/app/server/actions/capabilities";
+import { readIdentityCapabilities as getIdentityCapabilities } from "@/lib/rpc/procedures/canvas";
 import { authorize } from "@/lib/authz/guard";
 
 beforeEach(() => {

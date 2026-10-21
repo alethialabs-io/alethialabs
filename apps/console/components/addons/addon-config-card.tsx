@@ -115,7 +115,7 @@ function initialValues(item: AddonMarketItem): FormShape {
 
 /**
  * The add-on card on the workspace rail. Resolves the catalog item by id from the environment's
- * add-ons query (the same poll the Add palette reads), so the card is addressable by
+ * add-ons query (the same read the Add palette uses), so the card is addressable by
  * `{kind:"addon", itemId}` alone — and re-renders with the install state as it changes.
  */
 export function AddonConfigCard({
@@ -133,12 +133,12 @@ export function AddonConfigCard({
   const live = addons.data?.items.find((i) => i.id === itemId) ?? null;
 
   // The row is FROZEN at the moment the card resolves it, and that is the whole point. This query
-  // polls every 15s and `AddonConfigForm` seeds react-hook-form through the `values` option, which
+  // refetches whenever an `addons` hint arrives (it used to poll every 15s) and `AddonConfigForm` seeds react-hook-form through the `values` option, which
   // re-`reset()`s the form whenever that object deep-changes — so a teammate (or the user's own
   // second tab) enabling or reconfiguring the same add-on would land a refetch that silently wiped
   // whatever was half-typed, the Advanced YAML override above all. The Sheet this card replaced
   // could not do that, because it captured the item at click time; a card resolving live from the
-  // poll reintroduced the hazard. Freezing restores the old guarantee: an open form belongs to the
+  // query reintroduced the hazard. Freezing restores the old guarantee: an open form belongs to the
   // person typing in it.
   const frozen = useRef<AddonMarketItem | null>(null);
   if (live && (frozen.current === null || frozen.current.id !== itemId)) {
@@ -193,8 +193,8 @@ export function AddonConfigForm({
   provider: CloudProviderSlug | null;
   onDone: () => void;
 }) {
-  const enable = useEnableAddon(projectId, environmentId);
-  const disable = useDisableAddon(projectId, environmentId);
+  const enable = useEnableAddon();
+  const disable = useDisableAddon();
   // Remove is not undoable and its effect lands on the next Deploy — the chart is uninstalled and
   // whatever it owns in the cluster goes with it — so the click OPENS a confirm rather than firing
   // the mutation (#4281).
