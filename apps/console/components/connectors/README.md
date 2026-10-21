@@ -73,15 +73,16 @@ The board follows the console filter standard (`apps/console/lib/query/README.md
 
 ```
 use-connector-filters (zustand)  →  useFilterUrlSync  →  useDebouncedValue (search)
-  →  normalizeConnectorQuery()  →  buildConnectorsView(board.integrations, query)
+  →  normalizeConnectorQuery()  →  useConnectorsQuery(query)  (lib/query/use-connectors-query.ts)
 ```
 
-The rows come from ONE read, `connectors.board` (`lib/rpc/procedures/connectors.ts`, a GET),
-prefetched by the route and hydrated, so the first paint is the board. The selection and the facet
-tally run over that cached read in the browser: the catalog is one short list, so a filter change
-fetches nothing. The board stays live through the `connectors` topic on the org's change stream
-(`lib/query/topics.ts`, triggers in `lib/db/programmables.sql`) — there is no poll and no
-`router.refresh()`.
+The normalized query is the input of ONE GET procedure, `connectors.board`
+(`lib/rpc/procedures/connectors.ts`), so it is the query key. The procedure answers the matching
+rows, the facet counts and the whole catalog (the manage and connect sheets look connectors up there
+whatever the filter). The route prefetches the link's filter and hydrates it, so the first paint is
+the board; `keepPreviousData` dims the rows while a new filter's answer is fetched. The board stays
+live through the `connectors` topic on the org's change stream (`lib/query/topics.ts`, triggers in
+`lib/db/programmables.sql`) — there is no poll and no `router.refresh()`.
 
 Facet counts are computed over the **unfiltered** catalog, so an option never disappears as you
 select it. The Radix `<Select>` that used to drive the group filter is gone — it is banned from

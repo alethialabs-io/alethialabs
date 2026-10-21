@@ -16,11 +16,8 @@ import {
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { RegionError } from "@/components/errors/region-error";
-import {
-	connectorKeys,
-	isRefused,
-	useConnectorsBoard,
-} from "@/components/connectors/connectors-board";
+import { connectorKeys, isRefused } from "@/components/connectors/connectors-board";
+import { useConnectorsQuery } from "@/lib/query/use-connectors-query";
 import { ConnectorsSkeleton } from "@/components/connectors/connectors-skeleton";
 import { ConnectorCard } from "@/components/connectors/connector-card";
 import { ConnectorRow } from "@/components/connectors/connector-row";
@@ -29,7 +26,6 @@ import { ConnectorsFilterBar } from "@/components/connectors/connectors-filter-b
 import {
 	DEFAULT_CONNECTOR_FILTERS,
 	GROUP_META,
-	buildConnectorsView,
 	normalizeConnectorQuery,
 } from "@/components/connectors/connectors-query";
 import { ApiKeyConnection } from "@/components/connectors/api-key-connection";
@@ -142,8 +138,7 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	const [detailOpen, setDetailOpen] = useState(false);
 
 	// ── The console filter standard (lib/query/README.md → "Server-side filters") ──────────
-	// store → URL sync → debounce → normalize. The selection runs over the one cached board read:
-	// the catalog is one short list, so a filter change refetches nothing.
+	// store → URL sync → debounce → normalize → the read's input (its key).
 	const filters = useConnectorFilters((s) => s.filters);
 	const patchFilters = useConnectorFilters((s) => s.patch);
 	const resetFilters = useConnectorFilters((s) => s.reset);
@@ -165,17 +160,14 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only deep link
 	}, []);
 
-	// The board: prefetched by the route, live through the `connectors` topic (no poll).
-	const board = useConnectorsBoard();
+	// The board for this filter: prefetched by the route for the link's filter, live through the
+	// `connectors` topic (no poll). The selection and the facet counts are the server's.
+	const board = useConnectorsQuery(query);
 	const integrations = useMemo(() => board.data?.integrations ?? [], [board.data]);
 	const canManage = board.data?.canManage ?? false;
 	const platformConfigured = useMemo(
 		() => board.data?.platformConfigured ?? {},
 		[board.data],
-	);
-	const view = useMemo(
-		() => buildConnectorsView(integrations, query, platformConfigured),
-		[integrations, query, platformConfigured],
 	);
 
 	// Cloud connect flow (AWS/GCP/Azure/extra) — shared with the create-project cloud picker. Its
@@ -205,8 +197,8 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 		onSuccess: () => setDisconnectTarget(null),
 	});
 
-	const rows = view.rows;
-	const facets = view.facets;
+	const rows = board.data?.view.rows ?? [];
+	const facets = board.data?.view.facets ?? { groups: [], health: [], vendors: [] };
 
 	// The selected connector is derived from the live list (by slug) so the manage sheet reflects
 	// fresh data after any change (disconnect / rename / add — or one another member made).
@@ -372,8 +364,9 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 					}
 				/>
 
-				{/* Dim while a refresh after a change is in flight; the rows stay on screen. */}
-				<div className={cn("space-y-6", board.isRefetching && "opacity-80")}>
+				{/* Dim while a new filter's answer is resolving — keepPreviousData keeps the previous
+				    rows on screen instead of flashing a skeleton. */}
+				<div className={cn("space-y-6", board.isPlaceholderData && "opacity-60")}>
 					{GROUP_META.map((group) => {
 						const items = rows.filter((i) => i.group === group.id);
 						if (items.length === 0) return null;
@@ -465,7 +458,7 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 							className="border"
 							icon={<SearchX />}
 							title="No connectors match"
-							description={`None of the ${view.total} connectors in the catalog match these filters.`}
+							description={`None of the ${board.data?.view.total ?? 0} connectors in the catalog match these filters.`}
 							action={
 								<Button variant="outline" onClick={resetFilters}>
 									Reset filters

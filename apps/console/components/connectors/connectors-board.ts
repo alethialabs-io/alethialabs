@@ -3,13 +3,13 @@
 
 "use client";
 
-// The connectors board's read (#6124, ADR 0005 D1): one `connectors.board` GET, prefetched by the
-// route and hydrated, so the first paint carries the catalog. Kept live by the `connectors` topic on
+// The connectors board's read helpers (#6124, ADR 0005 D1); the hook itself is
+// lib/query/use-connectors-query.ts, beside the console's other per-resource hooks. Kept live by the `connectors` topic on
 // the org's change stream (lib/query/topics.ts) — the 30 s `router.refresh()` loop it replaces
 // re-rendered the whole route twice a minute whether anything had changed or not.
 
 import { ORPCError } from "@orpc/client";
-import { type QueryKey, useQuery } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import { orpc } from "@/lib/rpc/client";
 
 /**
@@ -24,7 +24,7 @@ export function connectorKeys(): QueryKey[] {
  * The board's retry rule: one retry for a failure, none for a typed refusal — a FORBIDDEN answers
  * the same the second time, so retrying it only delays the forbidden render.
  */
-function retryUnlessRefused(failureCount: number, error: unknown): boolean {
+export function retryUnlessRefused(failureCount: number, error: unknown): boolean {
 	return !(error instanceof ORPCError && error.defined) && failureCount < 1;
 }
 
@@ -34,18 +34,5 @@ export function isRefused(error: unknown): boolean {
 		error instanceof ORPCError &&
 		error.defined &&
 		(error.code === "FORBIDDEN" || error.code === "UNAUTHORIZED")
-	);
-}
-
-/**
- * The board read. `staleTime` is minutes, not the console's 30 s default: a change the viewer did
- * not make arrives as a `connectors` hint, and the viewer's own writes invalidate it directly.
- */
-export function useConnectorsBoard() {
-	return useQuery(
-		orpc.connectors.board.queryOptions({
-			staleTime: 5 * 60_000,
-			retry: retryUnlessRefused,
-		}),
 	);
 }
