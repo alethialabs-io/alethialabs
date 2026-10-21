@@ -1121,6 +1121,33 @@ UPDATE public.jobs
    SET org_id = user_id
  WHERE org_id IS NULL;
 
+-- A project's scan carries its project in `jobs.project_id` (#6121). A scan enqueued before that
+-- carried it only in its snapshot (`config_snapshot.project_id`), so job visibility — which reads the
+-- column (lib/jobs/visibility.ts) — had to fall back to the snapshot for it. This writes the column
+-- for those rows. Only where the snapshot's project is in the SAME org as the job: the
+-- jobs_set_org_id trigger above refuses a project of another org, and a row whose snapshot names one
+-- is left as it is (the visibility predicate still reads its snapshot) and only counted.
+-- Idempotent: matches nothing once every such row has its column.
+DO $$
+DECLARE moved BIGINT; left_alone BIGINT;
+BEGIN
+  UPDATE public.jobs j
+     SET project_id = p.id
+    FROM public.projects p
+   WHERE j.job_type IN ('IAC_SCAN', 'CHART_SCAN')
+     AND j.project_id IS NULL
+     AND j.config_snapshot->>'project_id' = p.id::text
+     AND p.org_id IS NOT DISTINCT FROM j.org_id;
+  GET DIAGNOSTICS moved = ROW_COUNT;
+  SELECT count(*) INTO left_alone
+    FROM public.jobs j
+   WHERE j.job_type IN ('IAC_SCAN', 'CHART_SCAN')
+     AND j.project_id IS NULL;
+  IF moved > 0 OR left_alone > 0 THEN
+    RAISE NOTICE 'scan jobs given their project: %, left with the project in the snapshot only: %', moved, left_alone;
+  END IF;
+END $$;
+
 -- ── The project component family: a tenant column the database owns (#4116) ─────────────────────
 --
 -- Every project-bearing table in lib/db/schema/project-components.ts carries `org_id`, a copy of its

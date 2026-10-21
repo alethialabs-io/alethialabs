@@ -829,7 +829,7 @@ controls:
   # ── jobs ───────────────────────────────────────────────────────────────────────────────────
   - id: jobs.cancel
     route: /[org]/~/jobs/[id]
-    surface: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
+    surface: apps/console/app/(private)/[org]/~/jobs/[id]/job-detail.tsx
     mutation: cancelJob
     control: { role: button, name: "Cancel" }
     confirm: confirm-dialog

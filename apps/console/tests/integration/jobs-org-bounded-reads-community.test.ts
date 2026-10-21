@@ -26,7 +26,9 @@ vi.mock("next/headers", () => ({
 	cookies: async () => ({ get: () => undefined }),
 }));
 
-import { getJob, getJobsPage, rerunJob } from "@/app/server/actions/jobs";
+import { rerunJob } from "@/app/server/actions/jobs";
+import { RERUN_FROM_PROJECT, RERUN_FROM_RUNNER } from "@/lib/jobs/operation";
+import { readJob, readJobsPage } from "@/lib/rpc/procedures/jobs";
 import { getProject, getProjectsList } from "@/app/server/actions/projects";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -134,11 +136,11 @@ describeIfDb("job and project reads in the single-tenant edition", () => {
 	});
 
 	it("lists and opens the user's own jobs and project", async () => {
-		const page = await runWithActor(actor, () => getJobsPage({}));
+		const page = await runWithActor(actor, () => readJobsPage({}));
 		const ids = page.rows.map((r) => r.id);
 		expect(ids).toContain(projectJob);
 		expect(ids).toContain(runnerJob);
-		expect((await runWithActor(actor, () => getJob(projectJob)))?.id).toBe(projectJob);
+		expect((await runWithActor(actor, () => readJob(projectJob)))?.id).toBe(projectJob);
 		const list = await runWithActor(actor, () => getProjectsList());
 		expect(list.projects.some((p) => p.id === projectId)).toBe(true);
 		const opened = await runWithActor(actor, () => getProject(projectId));
@@ -146,11 +148,33 @@ describeIfDb("job and project reads in the single-tenant edition", () => {
 	});
 
 	it("re-runs a job into the same personal org", async () => {
-		const created = await runWithActor(actor, () => rerunJob(projectJob));
+		// Only an allow-listed kind is re-queued as a copy (lib/jobs/operation.ts): an org-level AUDIT.
+		const [audit] = await withActorScope(actor, (tx) =>
+			tx
+				.insert(jobs)
+				.values({ user_id: U, job_type: "AUDIT", status: "SUCCESS", config_snapshot: {} })
+				.returning({ id: jobs.id }),
+		);
+		const result = await runWithActor(actor, () => rerunJob({ jobId: audit.id }));
+		if (!result.ok) throw new Error(`re-run refused: ${JSON.stringify(result.error)}`);
 		const [row] = await getServiceDb()
 			.select({ org_id: jobs.org_id, project_id: jobs.project_id })
 			.from(jobs)
-			.where(eq(jobs.id, created.id));
-		expect(row).toEqual({ org_id: U, project_id: projectId });
+			.where(eq(jobs.id, result.data.id));
+		expect(row).toEqual({ org_id: U, project_id: null });
+	});
+
+	it("does not copy a runner's lifecycle job — that runs again from the runner", async () => {
+		expect(await runWithActor(actor, () => rerunJob({ jobId: runnerJob }))).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: RERUN_FROM_RUNNER },
+		});
+	});
+
+	it("does not re-run a project's drift check from the job — that runs again from the project", async () => {
+		expect(await runWithActor(actor, () => rerunJob({ jobId: projectJob }))).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: RERUN_FROM_PROJECT },
+		});
 	});
 });

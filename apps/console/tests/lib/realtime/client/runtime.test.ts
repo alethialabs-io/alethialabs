@@ -13,8 +13,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/rpc/client", () => ({
+	// The jobs topic names its procedures one by one (lib/query/topics.ts); `page` stands for them here.
 	orpc: {
-		jobs: { key: () => ["jobs-orpc"] },
+		jobs: {
+			page: { key: () => ["jobs-orpc"] },
+			detail: { key: () => ["jobs-orpc", "detail"] },
+			status: { key: () => ["jobs-orpc", "status"] },
+			planResult: { key: () => ["jobs-orpc", "planResult"] },
+			project: { key: () => ["jobs-orpc", "project"] },
+		},
 		// The support pages' reads (#6130).
 		support: { key: () => ["support-orpc"] },
 		// The shell's reads the topic map also reaches (#6114).

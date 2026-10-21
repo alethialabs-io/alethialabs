@@ -116,6 +116,9 @@ export interface Seeded {
 	/** One ORG-scoped cloud identity per org, W-authored, each with one inventory region (#6119). */
 	identityX: string;
 	identityY: string;
+	/** A job on each org's project (the addressed `jobs.project` read). */
+	projectJobX: string;
+	projectJobY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -141,10 +144,11 @@ const PROJECT_SLUG = "it-6114-shared-slug";
  *   address on X deep-equals the output for an address on Y, in both editions. A non-member is
  *   STILL a 404 at Y — the handler refuses the address before any procedure runs, so a read's kind
  *   cannot change that, and asserting otherwise would assert a property the code does not have.
- * - `by-id` (#6119 — the board's reads, each addressed by a project or an identity id; #6130 — one support case): its input
- *   names a row, so there is no org-wide output to look for markers in. Its claim is about the row:
- *   at an address on Y, Y's row is revealed and X's is not (enterprise), neither is revealed
- *   (community), and the session never changes the outcome — a refusal included, by its code.
+ * - `by-id` (#6119's board reads, each addressed by a project or an identity id; #6130's support
+ *   case; #6121's job reads, addressed by a job or a project id): its input names a row, so there is
+ *   no org-wide output to look for markers in. Its claim is about the row: at an address on Y, Y's
+ *   row is revealed and X's is not (enterprise), neither is revealed (community), and the session
+ *   never changes the outcome — a refusal included, by its code.
  */
 export type Fixture =
 	| {
@@ -155,7 +159,7 @@ export type Fixture =
 	| { kind: "not-org-scoped"; reason: string; input: unknown }
 	| {
 			kind: "by-id";
-			/** The input that addresses `org`'s seeded row (a project, an environment, an identity). */
+			/** The input that addresses `org`'s seeded row (a project, an environment, an identity, a job). */
 			input(seeded: Seeded, org: Org): unknown;
 			/** Whether the output IS that row's answer — a refusal or an empty answer reveals nothing. */
 			reveals(out: unknown, seeded: Seeded, org: Org): boolean;
@@ -170,6 +174,32 @@ function isCase(out: unknown, id: string): boolean {
 	const row: unknown = out.case;
 	return typeof row === "object" && row !== null && "id" in row && row.id === id;
 }
+
+/** Whether an output is the one job with this id (`{ id }`, a detail read). */
+function isJob(out: unknown, id: string): boolean {
+	return typeof out === "object" && out !== null && "id" in out && out.id === id;
+}
+
+/** Whether a list output (`[{ id }]`) carries a row with this id. */
+function listHas(out: unknown, id: string): boolean {
+	return (
+		Array.isArray(out) &&
+		out.some((row: unknown) => typeof row === "object" && row !== null && "id" in row && row.id === id)
+	);
+}
+
+/** Whether a log-head output (`{ lines }`) answered at all — the seeded jobs have no lines. */
+function isLogHead(out: unknown): boolean {
+	return typeof out === "object" && out !== null && "lines" in out && Array.isArray(out.lines);
+}
+
+/** Whether a status-shaped output (`{ status }`) answered at all. */
+function hasStatus(out: unknown): boolean {
+	return typeof out === "object" && out !== null && "status" in out && typeof out.status === "string";
+}
+
+/** The seeded job of `org`. */
+const jobOf = (s: Seeded, org: Org) => (org === "x" ? s.jobX : s.jobY);
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -351,6 +381,31 @@ export const FIXTURES: Record<string, Fixture> = {
 			return Array.isArray(regions) && regions.includes(regionOf(org));
 		},
 	},
+	"jobs.detail": {
+		kind: "by-id",
+		input: (s, org) => ({ id: jobOf(s, org) }),
+		reveals: (out, s, org) => isJob(out, jobOf(s, org)),
+	},
+	"jobs.status": {
+		kind: "by-id",
+		input: (s, org) => ({ id: jobOf(s, org) }),
+		reveals: (out) => hasStatus(out),
+	},
+	"jobs.planResult": {
+		kind: "by-id",
+		input: (s, org) => ({ id: jobOf(s, org) }),
+		reveals: (out) => hasStatus(out),
+	},
+	"jobs.logsHead": {
+		kind: "by-id",
+		input: (s, org) => ({ id: jobOf(s, org) }),
+		reveals: (out) => isLogHead(out),
+	},
+	"jobs.project": {
+		kind: "by-id",
+		input: (s, org) => ({ projectId: org === "x" ? s.projectX : s.projectY }),
+		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
+	},
 };
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
@@ -434,6 +489,8 @@ export async function runRpcTenancySuite(opts: {
 		envY: "",
 		identityX: "",
 		identityY: "",
+		projectJobX: "",
+		projectJobY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -612,6 +669,10 @@ export async function runRpcTenancySuite(opts: {
 			};
 			seeded.caseX = await seedCase(ORG_X);
 			seeded.caseY = await seedCase(ORG_Y);
+
+			// A job on each org's project: the addressed `jobs.project` read needs one (#6121).
+			seeded.projectJobX = await seedJob(W, ORG_X, { project_id: seeded.projectX });
+			seeded.projectJobY = await seedJob(W, ORG_Y, { project_id: seeded.projectY });
 			// The stamp is the premise of the markers; read it back rather than trust the insert.
 			const stamped = await db
 				.select({ id: jobs.id, org: jobs.org_id })

@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #6113: the topic → key map the real-time bus (#6115) invalidates through. The jobs topic must
-// cover every jobs read on the router (a prefix key), or a live job change would leave a page stale.
+// cover every jobs read on the router, or a live job change would leave a page stale — every one but
+// those `JOBS_NOT_ON_TOPIC` names with their own live source (#6121: the log head).
 
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
 import { orpc } from "@/lib/rpc/client";
-import { TOPIC_KEYS } from "@/lib/query/topics";
+import { JOBS_NOT_ON_TOPIC, TOPIC_KEYS } from "@/lib/query/topics";
+import { procedurePaths } from "@/lib/rpc/procedure-paths";
+import { router } from "@/lib/rpc/router";
 import { qk } from "@/lib/query/keys";
 import { TOPICS } from "@/lib/realtime/topics";
 
@@ -49,5 +54,33 @@ describe("TOPIC_KEYS", () => {
 		for (const queryKey of TOPIC_KEYS.jobs()) await client.invalidateQueries({ queryKey });
 		for (const key of legacy) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
 		expect(client.getQueryState([...qk.runners("acme")])?.isInvalidated).toBe(false);
+	});
+
+	it("#6121: a jobs hint refreshes a job's detail but not its log head (the log streams on its own)", async () => {
+		const client = new QueryClient();
+		const detail: unknown[] = [...orpc.jobs.detail.queryKey({ input: { id: "j1" } })];
+		const head: unknown[] = [...orpc.jobs.logsHead.queryKey({ input: { id: "j1" } })];
+		client.setQueryData(detail, {});
+		client.setQueryData(head, { lines: [], lastId: 0 });
+		for (const queryKey of TOPIC_KEYS.jobs()) await client.invalidateQueries({ queryKey });
+		expect(client.getQueryState(detail)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(head)?.isInvalidated).toBe(false);
+	});
+
+	it("#6121: every jobs procedure on the router is either refreshed by a jobs hint or named as not", async () => {
+		const jobsProcedures = (await procedurePaths(router))
+			.filter((path) => path.startsWith("jobs."))
+			.map((path) => path.slice("jobs.".length));
+		expect(jobsProcedures.length).toBeGreaterThan(0);
+		const covered = new Set(TOPIC_KEYS.jobs().map((key) => JSON.stringify(key)));
+		// oRPC's procedure key is `[path, {}]`. Built from the router's path rather than read off the
+		// client proxy (which answers any property), and checked against the client for one procedure
+		// so the two cannot drift.
+		const keyOf = (name: string) => JSON.stringify([["jobs", name], {}]);
+		expect(keyOf("page")).toBe(JSON.stringify(orpc.jobs.page.key()));
+		const unaccounted = jobsProcedures.filter((name) => !(name in JOBS_NOT_ON_TOPIC) && !covered.has(keyOf(name)));
+		expect(unaccounted).toEqual([]);
+		// The exclusions name real procedures — a stale one would hide nothing and excuse nothing.
+		expect(Object.keys(JOBS_NOT_ON_TOPIC).filter((name) => !jobsProcedures.includes(name))).toEqual([]);
 	});
 });

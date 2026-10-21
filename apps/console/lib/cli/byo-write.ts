@@ -11,6 +11,7 @@ import {
 	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError } from "@/lib/cli/respond";
+import { ProjectOrgRefusalError } from "@/lib/projects/refuse-other-org";
 
 /** A resolved (project, environment) pair, or the response that explains why it could not be. */
 export type ByoScope =
@@ -59,6 +60,10 @@ export async function resolveByoScope(
  */
 export function byoWriteError(err: unknown): NextResponse {
 	const message = err instanceof Error ? err.message : "Internal Server Error";
+	// A typed refusal, asked before the database would refuse it (lib/projects/refuse-other-org.ts).
+	if (err instanceof ProjectOrgRefusalError) {
+		return NextResponse.json({ error: message }, { status: 409 });
+	}
 
 	if (/not enabled on this instance/i.test(message)) {
 		return NextResponse.json({ error: message }, { status: 501 });

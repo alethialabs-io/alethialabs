@@ -33,6 +33,14 @@ vi.mock("@/lib/authz/guard", () => ({
 	ensureCliOrgAccess: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// Job visibility follows project visibility (#6121): the route ANDs the predicate for the caller's
+// viewable projects. Stubbed to the predicate for a caller who may view NO project, so it renders as
+// one fixed arm — what that predicate selects is tests/lib/jobs/visibility.test.ts's subject.
+vi.mock("@/lib/jobs/visibility", async () => {
+	const { isNull } = await import("drizzle-orm");
+	const { jobs } = await import("@/lib/db/schema");
+	return { jobVisibleTo: vi.fn(async () => isNull(jobs.project_id)) };
+});
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
@@ -276,8 +284,10 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// ONE COLUMN. That is the property — the tenancy boundary is `org_id` and nothing else, so
 		// there is no second arm for a caller's identity to widen it through.
 		await drive("");
+		// The second arm is job visibility (the stub above), not tenancy: the tenancy arm is still
+		// the one column.
 		expect(normalized(render(captured.rowsWhere).sql)).toBe(
-			'"jobs"."org_id" in ($1, $2)',
+			'("jobs"."org_id" in ($1, $2) and "jobs"."project_id" is null)',
 		);
 	});
 
@@ -298,7 +308,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		// one element for a token. Postgres plans a single-element IN exactly as an equality, so
 		// the index use the comment below describes is unchanged — but the rendered text is not,
 		// and a test that pinned the text would have to be re-read rather than re-run.
-		expect(normalized(where.sql)).toBe('"jobs"."org_id" in ($1)');
+		expect(normalized(where.sql)).toBe('("jobs"."org_id" in ($1) and "jobs"."project_id" is null)');
 		// ONE parameter: the pin. `USER` must not reach the query at all in the default mode.
 		expect(where.params).toEqual([ORG]);
 		expect(where.sql).not.toContain('"user_id"');
@@ -339,7 +349,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		await drive("?mine=true");
 		const where = render(captured.rowsWhere);
 		expect(normalized(where.sql)).toBe(
-			'("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3))',
+			'(("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3)) and "jobs"."project_id" is null)',
 		);
 		expect(where.params).toEqual([USER, ORG, USER]);
 	});
@@ -360,7 +370,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		expect(where.sql).toContain('"user_id"');
 		expect(where.sql).toContain('"org_id"');
 		expect(normalized(where.sql)).toBe(
-			'("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3))',
+			'(("jobs"."user_id" = $1 and "jobs"."org_id" in ($2, $3)) and "jobs"."project_id" is null)',
 		);
 		expect(render(captured.countWhere).params).toEqual([USER, ORG, USER]);
 	});

@@ -20,7 +20,15 @@ vi.mock("@/lib/auth/owner", () => ({
 const { recentJobsQuery, serviceDb } = vi.hoisted(() => {
 	// What `getServiceDb()` answers; the mock factory reads it, so no cast is needed to install one.
 	const serviceDb: { current: unknown } = { current: undefined };
-	return { recentJobsQuery: { selected: new Array<string>(), limit: -1 }, serviceDb };
+	const recentJobsQuery: { selected: string[]; limit: number; where: unknown } = { selected: [], limit: -1, where: undefined };
+	return { recentJobsQuery, serviceDb };
+});
+// Job visibility (a job is visible exactly when its project is): stubbed to a marker predicate, so
+// the feed can be checked to apply it; what it selects is tests/lib/jobs/visibility.test.ts's subject.
+vi.mock("@/lib/jobs/visibility", async () => {
+	const { sql } = await import("drizzle-orm");
+	const visible = sql.raw("job_visible_to_reader");
+	return { jobVisibleTo: vi.fn(async () => visible) };
 });
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => serviceDb.current,
@@ -34,6 +42,10 @@ vi.mock("@/lib/db", () => ({
 			},
 			from: () => tx,
 			leftJoin: () => tx,
+			where: (w: unknown) => {
+				recentJobsQuery.where = w;
+				return tx;
+			},
 			orderBy: () => tx,
 			limit: (n: number) => {
 				recentJobsQuery.limit = n;
@@ -49,6 +61,9 @@ vi.mock("@/lib/authz/guard", () => ({
 
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import type { Actor } from "@/lib/authz/types";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
+import { is, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import {
 	readRecentJobs,
 	readWorkspaceContext,
@@ -128,6 +143,14 @@ describe("readRecentJobs — the shell's job feed", () => {
 		await readRecentJobs();
 		expect(SHELL_JOB_FEED_LIMIT).toBe(20);
 		expect(recentJobsQuery.limit).toBe(SHELL_JOB_FEED_LIMIT);
+	});
+
+	it("applies job visibility: the feed shows a job exactly when its project is visible", async () => {
+		await readRecentJobs();
+		expect(jobVisibleTo).toHaveBeenCalled();
+		expect(is(recentJobsQuery.where, SQL) ? new PgDialect().sqlToQuery(recentJobsQuery.where).sql : "").toBe(
+			"job_visible_to_reader",
+		);
 	});
 
 	it("selects no JSONB column: the slim projection the shell renders", async () => {

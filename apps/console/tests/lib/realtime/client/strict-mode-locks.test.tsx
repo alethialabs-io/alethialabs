@@ -23,8 +23,15 @@ vi.mock("@/components/providers/viewer-provider", () => ({
 }));
 vi.mock("@/lib/rpc/client", () => ({
 	tenantSegment: (p: string) => p.split("/")[1] || "~",
+	// The jobs topic names its procedures one by one (lib/query/topics.ts); `page` stands for them here.
 	orpc: {
-		jobs: { key: () => ["jobs-orpc"] },
+		jobs: {
+			page: { key: () => ["jobs-orpc"] },
+			detail: { key: () => ["jobs-orpc", "detail"] },
+			status: { key: () => ["jobs-orpc", "status"] },
+			planResult: { key: () => ["jobs-orpc", "planResult"] },
+			project: { key: () => ["jobs-orpc", "project"] },
+		},
 		// The overview's reads ride the jobs, usage and alerts topics (#6118).
 		overview: { usage: { key: () => ["overview-usage-orpc"] }, alerts: { key: () => ["overview-alerts-orpc"] } },
 		// The board's reads (#6119), which the jobs, environments and addons topics also invalidate.

@@ -43,6 +43,7 @@ function subscribeOn(t: FakeTransport, key: string, fn: (payload: string) => voi
 vi.mock("@/lib/auth/owner", () => ({ getOwner: async () => "user-1" }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: async () => ({ userId: "user-1", orgId: "org-1" }) }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeUserId: async () => null }));
+vi.mock("@/lib/jobs/visibility", () => ({ isJobVisible: async () => true }));
 // A plain async function, not a vi.fn: a mock records its arguments, and the argument is the request.
 vi.mock("@/lib/runners/auth", () => ({
 	verifyRunnerToken: async () => ({ runnerId: "runner-1", tokenHash: "", operator: "", error: null }),

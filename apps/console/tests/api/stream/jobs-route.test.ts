@@ -21,6 +21,8 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeUserId: (...a: unknown[]) => authorizeUserId(...a),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+const isJobVisible = vi.fn();
+vi.mock("@/lib/jobs/visibility", () => ({ isJobVisible: (...a: unknown[]) => isJobVisible(...a) }));
 vi.mock("@/lib/realtime", () => ({
 	getRealtimeTransport: () => ({ subscribe: () => () => {} }),
 }));
@@ -62,6 +64,7 @@ beforeEach(() => {
 	getOwner.mockResolvedValue("user-1");
 	authorizeUserId.mockResolvedValue(null); // authorized
 	getActiveScope.mockResolvedValue({ userId: "user-1", orgId: "org-1" });
+	isJobVisible.mockResolvedValue(true);
 });
 
 describe("GET /api/stream/jobs/[id] tenant guard", () => {
@@ -113,5 +116,32 @@ describe("GET /api/stream/jobs/[id] tenant guard", () => {
 	it("streams an org-scoped job the caller doesn't personally own (teammate view)", async () => {
 		mockDb([{ org_id: "org-1", user_id: "user-creator" }]);
 		expect((await stream("job-1")).status).toBe(200);
+	});
+});
+
+describe("GET /api/stream/jobs/[id] — job visibility follows project visibility", () => {
+	it("404s a job of a project the reader may not view, as if it did not exist", async () => {
+		mockDb([{ org_id: "org-1", project_id: "proj-denied" }]);
+		isJobVisible.mockResolvedValue(false);
+		expect((await stream("job-1")).status).toBe(404);
+		expect(isJobVisible).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1" },
+			expect.objectContaining({ project_id: "proj-denied" }),
+		);
+	});
+
+	it("streams a job of a project the reader may view", async () => {
+		mockDb([{ org_id: "org-1", project_id: "proj-ok" }]);
+		expect((await stream("job-1")).status).toBe(200);
+		expect(isJobVisible).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1" },
+			expect.objectContaining({ project_id: "proj-ok" }),
+		);
+	});
+
+	it("asks nothing of a job outside the reader's tenancy — that is a 404 already", async () => {
+		mockDb([{ org_id: "org-other", project_id: "proj-x" }]);
+		expect((await stream("job-1")).status).toBe(404);
+		expect(isJobVisible).not.toHaveBeenCalled();
 	});
 });

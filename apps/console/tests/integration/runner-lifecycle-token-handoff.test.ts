@@ -14,7 +14,9 @@
 //      pre-#3874 personal-org shape is refused: the job fails, and the target's hash is untouched.
 //      The personal-org shape itself is admitted.
 //   3. EVERY READ PATH REDACTS. A row that does carry secret keys (written by an earlier build) is
-//      returned without them by getJob, getJobs, getJobsPage, GET /api/cli/jobs/:id and GET /api/jobs.
+//      returned without them by readJob, getJobs, readJobsPage, readProjectJobs, GET /api/cli/jobs/:id
+//      and GET /api/jobs. (readJob / readJobsPage / readProjectJobs are the jobs read procedures'
+//      readers, lib/rpc/procedures/jobs.ts.)
 //   4. THE SCRUB. The statement programmables.sql runs on every migrate, taken from the file itself,
 //      removes the key from settled rows (clearing their signature), leaves in-flight rows as
 //      enqueued, and is idempotent.
@@ -43,17 +45,24 @@ vi.mock("@/app/server/actions/projects", () => ({
 	destroyProject: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// Job visibility (a job is visible exactly when its project is) is not this file's subject — it has
+// its own suite (tests/integration/jobs-visibility.test.ts). Every row is visible here.
+vi.mock("@/lib/jobs/visibility", async () => {
+	const { sql: raw } = await import("drizzle-orm");
+	return { jobVisibleTo: vi.fn(async () => raw`true`), isJobVisible: vi.fn(async () => true) };
+});
 
 import { POST as claimPost } from "@/app/api/jobs/claim/route";
 import { GET as cliJobGet } from "@/app/api/cli/jobs/[id]/route";
 import { POST as deployRunnerPost } from "@/app/api/cli/runners/deploy/route";
 import { GET as jobsListGet } from "@/app/api/jobs/route";
-import { getJob, getJobs, getJobsPage } from "@/app/server/actions/jobs";
+import { getJobs } from "@/app/server/actions/jobs";
 import { getActiveScope } from "@/lib/auth/scope";
 import { authorize, authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { getServiceDb } from "@/lib/db";
-import { cloudIdentities, jobs, runners } from "@/lib/db/schema";
+import { cloudIdentities, jobs, projects, runners } from "@/lib/db/schema";
+import { readJob, readJobsPage, readProjectJobs } from "@/lib/rpc/procedures/jobs";
 import { hashRunnerToken, verifyRunnerToken } from "@/lib/runners/auth";
 
 const USER = randomUUID();
@@ -68,6 +77,9 @@ const SENTINEL = `SENTINEL-${randomUUID()}`;
 let identityId = "";
 let executorId = "";
 let legacyJobId = "";
+/** A project with a job whose snapshot carries secret keys, for the per-project read. */
+let projectId = "";
+let projectJobId = "";
 /** Runner rows this file created without USER as owner, for cleanup. */
 const extraRunnerIds: string[] = [];
 
@@ -174,11 +186,36 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 			})
 			.returning({ id: jobs.id });
 		legacyJobId = legacy.id;
+
+		const [project] = await db
+			.insert(projects)
+			.values({
+				user_id: USER,
+				org_id: ORG,
+				project_name: `it-handoff-${ORG.slice(0, 8)}`,
+				region: "eu-west-1",
+				iac_version: "1.0.0",
+			})
+			.returning({ id: projects.id });
+		projectId = project.id;
+		const [projectJob] = await db
+			.insert(jobs)
+			.values({
+				user_id: USER,
+				org_id: ORG,
+				project_id: projectId,
+				job_type: "PLAN",
+				status: "SUCCESS",
+				config_snapshot: { project_name: "handoff", nested: { password: SENTINEL }, api_token: SENTINEL },
+			})
+			.returning({ id: jobs.id });
+		projectJobId = projectJob.id;
 	});
 
 	afterAll(async () => {
 		const db = getServiceDb();
 		await db.delete(jobs).where(eq(jobs.user_id, USER));
+		if (projectId) await db.delete(projects).where(eq(projects.id, projectId));
 		await db.delete(runners).where(eq(runners.user_id, USER));
 		if (extraRunnerIds.length > 0) await db.delete(runners).where(inArray(runners.id, extraRunnerIds));
 		await db.delete(cloudIdentities).where(eq(cloudIdentities.id, identityId));
@@ -320,8 +357,8 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 	});
 
 	// ── 3. Every read path redacts ──────────────────────────────────────────────────────────────
-	it("getJob returns the row without its secret keys", async () => {
-		const job = await getJob(legacyJobId);
+	it("readJob returns the row without its secret keys", async () => {
+		const job = await readJob(legacyJobId);
 		expect(job?.config_snapshot).toMatchObject({ runner_name: "legacy", nested: {} });
 		expect(JSON.stringify(job)).not.toContain(SENTINEL);
 	});
@@ -332,8 +369,14 @@ describeIfDb("runner-lifecycle token handoff + job snapshot redaction", () => {
 		expect(JSON.stringify(all)).not.toContain(SENTINEL);
 	});
 
-	it("getJobsPage returns every row without secret keys", async () => {
-		const page = await getJobsPage({});
+	it("readProjectJobs returns the project's rows without secret keys", async () => {
+		const rows = await readProjectJobs(projectId);
+		expect(rows.map((j) => j.id)).toContain(projectJobId);
+		expect(JSON.stringify(rows)).not.toContain(SENTINEL);
+	});
+
+	it("readJobsPage returns every row without secret keys", async () => {
+		const page = await readJobsPage({});
 		expect(page.rows.map((j) => j.id)).toContain(legacyJobId);
 		expect(JSON.stringify(page)).not.toContain(SENTINEL);
 	});
