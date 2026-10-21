@@ -95,9 +95,10 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 }
 
 /**
- * The routing keys of one notice. `jobs`, `environments`, `addons` and `support` have producers; every other topic is declared
- * and routes NOWHERE until its lane adds both its trigger and its row here — a topic that routed
- * before its RLS arms were written down would be a guess about who may read it.
+ * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `usage` and `billing`
+ * have producers; every other topic is declared and routes NOWHERE until its lane adds both its
+ * trigger and its row here — a topic that routed before its RLS arms were written down would be a
+ * guess about who may read it.
  */
 export function keysFor(notice: ChangeNotice): Route[] {
 	switch (notice.t) {
@@ -145,9 +146,20 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "fleet":
 		// TODO(#6125): alert_deliveries — o: (no user_id); subscribed only with the alerting entitlement.
 		case "alerts":
-		// TODO(#6127): no trigger — an app-layer emitUsageHint(orgId), at most once per 30s per org.
-		case "usage":
 			return [];
+		// #6127: the billing record + invoice mirror (`billing`, triggers in lib/db/programmables.sql)
+		// and AI spend (`usage`, the app-layer `emitUsageHint` in lib/realtime/usage-hint.ts — at most
+		// once per 30 s per org, after commit, outside the AI-budget lock). Both are ORG-WIDE facts —
+		// the usage page's meters and the plan card are the same for every member, and the reads
+		// behind them apply their own permission — so a notice routes on the org arm, unfiltered,
+		// with no row id (neither producer sends one). A notice with no org belongs to its owner's
+		// personal scope.
+		case "usage":
+		case "billing": {
+			if (notice.o) return [{ key: orgKey(notice.o), filterProject: null }];
+			if (notice.u) return [{ key: userKey(notice.u), filterProject: null }];
+			return [];
+		}
 	}
 }
 

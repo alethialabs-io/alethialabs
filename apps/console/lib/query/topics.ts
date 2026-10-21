@@ -27,6 +27,16 @@ import { orpc } from "@/lib/rpc/client";
  * (lib/query/keys.ts) for every org — the shell's job feed among them (#6114), which keeps that key
  * because other pages share its cache entry. The per-org QueryClient is what keeps the prefix
  * from reaching another org's cache.
+ *
+ * USAGE AND BILLING (#6127). A job that starts or finishes moves the usage pages' runner minutes and
+ * concurrency, so `jobs` also invalidates those reads — but NOT the over-time charts: a 12-month
+ * series refetched on every job hint (~1/s on a busy org, per visible tab) costs more than a chart
+ * that lags by its `staleTime`. `usage` (AI spend, announced at most once per 30 s per org)
+ * invalidates the DATABASE-backed AI and over-time reads only; `billing` (the billing
+ * record and the invoice mirror — rare, Stripe-driven) invalidates every billing read and the usage
+ * reads a plan change moves. Neither invalidates `billing.liveAiPrices`: a price list does not move
+ * when an org's usage or billing record does. `projects` and `clusters` list the resource counts
+ * now, so those reads go live the day their lanes add the triggers.
  */
 /**
  * The query-key prefix of the board's held-destroy read (`components/design-project/canvas/cards/
@@ -46,7 +56,8 @@ export const TOPIC_KEYS = {
 	// the legacy `["jobs"]` prefix, which reaches `qk.jobs(org)` (runners, the plan flow); the shell's
 	// capped job feed (bell, toasts, breadcrumbs, palette) and full list; the setup guide's
 	// "provisioned" step, which changes with every job (#6114); the overview's usage read, which
-	// counts runner minutes and jobs in flight (#6118). The board's environment status carries the
+	// counts runner minutes and jobs in flight (#6118), and the usage pages' runner minutes and
+	// concurrency (#6127). The board's environment status carries the
 	// in-flight job, the last PLAN's cost and the drift a job wrote; its Activity card is the
 	// environment's job history; a held destroy waits on jobs (#6119).
 	jobs: (): QueryKey[] => [
@@ -63,6 +74,8 @@ export const TOPIC_KEYS = {
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.environmentJobs.key(),
 		[...DESTROY_HOLD_KEY],
+		orpc.usage.org.key(),
+		orpc.usage.project.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119).
@@ -73,8 +86,12 @@ export const TOPIC_KEYS = {
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
 	],
-	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
-	clusters: (): QueryKey[] => [],
+	projects: (): QueryKey[] => [
+		orpc.workspace.projects.key(),
+		orpc.workspace.setupGuide.key(),
+		orpc.usage.resources.key(),
+	],
+	clusters: (): QueryKey[] => [orpc.usage.resources.key(), orpc.usage.projectResources.key()],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
@@ -88,5 +105,22 @@ export const TOPIC_KEYS = {
 	// The shell's bell + toaster feed, and every support page read — "My cases" in each bucket and the
 	// open case's thread (#6130). Hints come from the `support_cases` trigger (programmables.sql).
 	support: (): QueryKey[] => [orpc.workspace.supportCases.key(), orpc.support.key()],
-	usage: (): QueryKey[] => [orpc.overview.usage.key()],
+	usage: (): QueryKey[] => [
+		orpc.overview.usage.key(),
+		orpc.usage.ai.key(),
+		orpc.usage.overTime.key(),
+		orpc.usage.projectAi.key(),
+		orpc.usage.projectOverTime.key(),
+	],
+	billing: (): QueryKey[] => [
+		orpc.billing.summary.key(),
+		orpc.billing.paymentMethods.key(),
+		orpc.billing.invoices.key(),
+		orpc.billing.transactions.key(),
+		orpc.billing.planHistory.key(),
+		orpc.usage.org.key(),
+		orpc.usage.ai.key(),
+		// The overview's usage card shows the plan and the AI budgets a billing change moves.
+		orpc.overview.usage.key(),
+	],
 } satisfies Record<Topic, () => QueryKey[]>;
