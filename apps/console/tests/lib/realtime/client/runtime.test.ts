@@ -31,6 +31,8 @@ vi.mock("@/lib/rpc/client", () => {
 			alerts: { key: () => ["alerts-orpc"] },
 			// The people & access reads, which the members and access topics invalidate (#6129).
 			members: { key: () => ["members-orpc"] },
+			// The connectors board's read (#6124).
+			connectors: { key: () => ["connectors-orpc"] },
 			// The shell's reads the topic map also reaches (#6114).
 			workspace: {
 				setupGuide: { key: () => ["ws-setup-guide"] },

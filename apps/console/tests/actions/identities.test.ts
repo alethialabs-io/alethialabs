@@ -5,12 +5,11 @@
 // auth boundary (Better Auth api), the PDP actor guard, connector-health emitters, next/cache and
 // next/headers. Asserts: dedup/fail-closed for getLinkedProviders; token success→markHealthy,
 // empty-token→markFailed, throw→markFailed for getValidProviderToken (and the actor-fail null
-// branch with no token call); and the unlink success/revalidate vs error branches.
+// branch with no token call); and deleteProviderToken's ActionResult branches.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue(new Headers()) }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
 	auth: {
 		api: {
@@ -21,7 +20,8 @@ vi.mock("@/lib/auth", () => ({
 	},
 }));
 vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn(), authorize: vi.fn(), authorizeQuiet: vi.fn() }));
+vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/connectors/health", () => ({ markHealthy: vi.fn(), markFailed: vi.fn() }));
 // 1.7 selectors take the LOCAL account.id, so the actions resolve it first. Mocked as a
 // boundary like the auth api itself — the resolver has its own test.
@@ -37,7 +37,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
-import { revalidatePath } from "next/cache";
 
 const listUserAccounts = vi.mocked(auth.api.listUserAccounts);
 const getAccessToken = vi.mocked(auth.api.getAccessToken);
@@ -189,26 +188,35 @@ describe("getValidProviderToken with no linked account", () => {
 });
 
 describe("deleteProviderToken", () => {
-	it("unlinks the provider, revalidates the connectors page, and reports success", async () => {
+	it("unlinks the provider and returns which one (the board is invalidated by the caller's mutation)", async () => {
 		unlinkAccount.mockResolvedValue({} as never);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 
-		const result = await deleteProviderToken("github");
+		const result = await deleteProviderToken({ provider: "github" });
 
 		expect(unlinkAccount).toHaveBeenCalledWith({
 			body: { accountId: "acct-row-1" },
 			headers: expect.any(Headers),
 		});
-		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/connectors", "page");
-		expect(result).toEqual({ success: true });
+		expect(result).toEqual({ ok: true, data: { provider: "github" } });
 	});
 
-	it("returns an error shape and skips revalidation when unlink throws", async () => {
+	it("an unlink failure is `unexpected` with a reference, never the raw error text", async () => {
 		unlinkAccount.mockRejectedValue(new Error("unlink failed"));
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 
-		const result = await deleteProviderToken("gitlab");
+		const result = await deleteProviderToken({ provider: "gitlab" });
 
-		expect(result).toEqual({ error: "Unexpected error occurred" });
-		expect(revalidatePath).not.toHaveBeenCalled();
+		expect(result).toEqual({ ok: false, error: { kind: "unexpected", ref: expect.any(String) } });
+		expect(JSON.stringify(result)).not.toContain("unlink failed");
+	});
+
+	it("refuses a provider that is not a git provider before resolving anyone", async () => {
+		// @ts-expect-error — the wire carries whatever the browser sent; the schema is the boundary.
+		const result = await deleteProviderToken({ provider: "google" });
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error.kind).toBe("validation");
+		expect(currentActor).not.toHaveBeenCalled();
 	});
 
 	// Unlinking something already unlinked is the caller's intent, satisfied. Under 1.7 there is
@@ -216,11 +224,11 @@ describe("deleteProviderToken", () => {
 	// surface as a spurious error toast.
 	it("is idempotent: no linked account reports success without calling unlinkAccount", async () => {
 		mockResolveAccountId.mockResolvedValue(null);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
 
-		const result = await deleteProviderToken("bitbucket");
+		const result = await deleteProviderToken({ provider: "bitbucket" });
 
 		expect(unlinkAccount).not.toHaveBeenCalled();
-		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/connectors", "page");
-		expect(result).toEqual({ success: true });
+		expect(result).toEqual({ ok: true, data: { provider: "bitbucket" } });
 	});
 });
