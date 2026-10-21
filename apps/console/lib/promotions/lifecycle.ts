@@ -48,7 +48,7 @@ import {
 	type PromotionRules,
 } from "@/lib/promotions/gates";
 import { claimApprovalSlot } from "@/lib/promotions/approve";
-import { getEnforcingValuesFor } from "@/lib/queries/classification";
+import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
 
 /** Promotion statuses considered "in flight" (a promotion is still resolving). */
 export const IN_FLIGHT = ["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"] as const;
@@ -91,7 +91,7 @@ async function effectiveMinApprovals(
 	envId: string,
 	rulesRow: ProtectionRow | null,
 ): Promise<number> {
-	const enforcing = await getEnforcingValuesFor(db, "project_environment", envId);
+	const enforcing = await getEnforcingValuesForEnvironment(db, envId);
 	const { minApprovals } = applyClassificationEnforcement(
 		rulesRow ? toRules(rulesRow) : OPEN_RULES,
 		rulesRow?.approvers ?? null,
@@ -219,11 +219,7 @@ async function buildGateContext(
 
 	// Fold in classification-driven gates: a value tagged on the TARGET env (e.g. Environment=
 	// production) can force approval/verify on top of the env's own rules — the label is the policy.
-	const enforcing = await getEnforcingValuesFor(
-		db,
-		"project_environment",
-		promotion.target_environment_id,
-	);
+	const enforcing = await getEnforcingValuesForEnvironment(db, promotion.target_environment_id);
 	const {
 		rules,
 		minApprovals,

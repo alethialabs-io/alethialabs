@@ -328,7 +328,7 @@ baseline:
     state: untested-export
     reason: Dimension listing and per-kind assignment reads are asserted by no suite.
   - path: lib/queries/classification.ts
-    symbols: [getEnforcingValuesFor]
+    symbols: [getEnforcingValuesForEnvironment]
     issue: "#2649"
     state: mock-only
     reason: The enforcing-value lookup is referenced only through the promotion-lifecycle test's `vi.mock` of this module; no suite executes it for real.
