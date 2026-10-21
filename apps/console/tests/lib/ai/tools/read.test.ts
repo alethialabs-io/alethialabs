@@ -372,6 +372,7 @@ describe("list_clusters", () => {
 				status: "live",
 				cloud_identities: { provider: "aws" },
 				project_cluster: {
+					id: "pc1",
 					cluster_name: "k8s",
 					cluster_endpoint: "https://x",
 					cluster_version: "1.30",
@@ -387,6 +388,8 @@ describe("list_clusters", () => {
 			clusters: Array<Record<string, unknown>>;
 		};
 		const c = out.clusters[0];
+		// #6122: one entry per cluster — keyed on the cluster row, with its project beside it.
+		expect([c.id, c.project_id]).toEqual(["pc1", "c1"]);
 		expect(c.provider).toBe("aws");
 		expect(c.cluster).toEqual({
 			name: "k8s",

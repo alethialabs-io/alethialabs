@@ -65,16 +65,18 @@ export const TOPIC_KEYS = {
 		[...DESTROY_HOLD_KEY],
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
-	// board's node states), its described chart workloads and its BYO IaC source (#6119).
+	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
+	// clusters grid (#6122) shows each cluster's environment lifecycle and its data services too.
 	environments: (): QueryKey[] => [
 		orpc.workspace.environments.key(),
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.chartWorkloads.key(),
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
+		orpc.clusters.key(),
 	],
 	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
-	clusters: (): QueryKey[] => [],
+	clusters: (): QueryKey[] => [orpc.clusters.key()],
 	runners: (): QueryKey[] => [],
 	fleet: (): QueryKey[] => [],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
