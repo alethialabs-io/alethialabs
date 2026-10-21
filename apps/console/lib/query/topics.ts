@@ -210,4 +210,7 @@ export const TOPIC_KEYS = {
 	// the access page and the grant builder's roles. Delivered only to `member:view` holders
 	// (lib/realtime/routing.ts), the people those reads answer.
 	access: (): QueryKey[] => [orpc.members.key()],
+	// A cloud account or an api_key credential changed — a sweep moved its health, another member
+	// connected or removed one (#6124). The board, and the setup guide's "connect a cloud" step.
+	connectors: (): QueryKey[] => [orpc.connectors.key(), orpc.workspace.setupGuide.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

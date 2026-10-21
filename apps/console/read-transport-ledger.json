@@ -4,7 +4,6 @@
 		"app/(private)/[org]/~/settings/sso/page.tsx :: listSsoProviders",
 		"components/classification/dimension-detail.tsx :: getDimensionResourceBreakdown",
 		"components/classification/value-drill-drawer.tsx :: getValueResourceBreakdown",
-		"components/connectors/connectors-page.tsx :: getConnectorsWithStatus",
 		"lib/query/use-activity-query.ts :: getActivityLog",
 		"lib/query/use-classification-query.ts :: canEditClassification",
 		"lib/query/use-classification-query.ts :: getAssignments",

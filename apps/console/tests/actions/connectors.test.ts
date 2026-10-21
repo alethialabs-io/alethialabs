@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the connectors actions: stub the authz guard, a thenable drizzle chain
+// Mocked-boundary tests for the connectors actions (the board's reader is
+// tests/lib/rpc/connectors-procedures.test.ts): stub the authz guard, a thenable drizzle chain
 // (getServiceDb + withScope), the secret-crypto + provider-ping boundaries, and keep the REAL
 // generated connector registry. We exercise the real exported actions and assert their guard
 // branches, the plain/secret field partition, what gets written, and the returned shapes.
@@ -23,13 +24,12 @@ vi.mock("@/lib/connectors/verify", () => ({
 
 import {
 	deleteConnectorCredential,
-	getConnectorsWithStatus,
 	saveConnectorCredential,
 	setCloudIdentityScope,
 	setConnectorCredentialScope,
 } from "@/app/server/actions/connectors";
 import { authorize, currentActor } from "@/lib/authz/guard";
-import type { Connector } from "@/lib/db/schema";
+import { ForbiddenError } from "@/lib/authz/types";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getServiceDb, withScope } from "@/lib/db";
@@ -122,32 +122,48 @@ beforeEach(() => {
 });
 
 describe("saveConnectorCredential", () => {
-	it("rejects when the caller lacks manage_connectors", async () => {
-		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
-		await expect(
-			saveConnectorCredential("vault", { address: "a", token: "t" }),
-		).rejects.toThrow(/Forbidden/);
-	});
+	const save = (slug: string, fields: Record<string, string>) => saveConnectorCredential({ slug, fields });
 
-	it("returns an error for an unknown connector slug", async () => {
-		const r = await saveConnectorCredential("does-not-exist", {});
-		expect(r).toEqual({ ok: false, error: "Unknown connector: does-not-exist" });
-	});
-
-	it("validates required fields before touching the DB", async () => {
-		// vault requires `address` (plain) + `token` (secret); omit the token.
-		const r = await saveConnectorCredential("vault", { address: "https://v" });
-		expect(r).toEqual({ ok: false, error: "Vault Token is required." });
+	it("is a typed forbidden refusal when the caller lacks manage_connectors", async () => {
+		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("manage_connectors", { type: "connector" }));
+		const r = await save("vault", { address: "a", token: "t" });
+		expect(r).toEqual({ ok: false, error: { kind: "forbidden", message: expect.any(String) } });
 		expect(pingConnector).not.toHaveBeenCalled();
 	});
 
-	it("returns an error when the connector is missing from the catalog", async () => {
-		dbh.setQueue([[]]); // catalog lookup → no row
-		const r = await saveConnectorCredential("vault", {
-			address: "https://v",
-			token: "s3cret",
+	it("refuses an unknown connector slug as a validation error on the slug", async () => {
+		const r = await save("does-not-exist", {});
+		expect(r).toEqual({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "Unknown connector: does-not-exist",
+				fields: { slug: ["Unknown connector: does-not-exist"] },
+			},
 		});
-		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("reports a missing required field UNDER that field, before touching the DB or the provider", async () => {
+		// vault requires `address` (plain) + `token` (secret); omit the token.
+		const r = await save("vault", { address: "https://v" });
+		expect(r).toEqual({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: "Vault Token is required.",
+				fields: { "fields.token": ["Vault Token is required."] },
+			},
+		});
+		expect(pingConnector).not.toHaveBeenCalled();
+		expect(getServiceDb).not.toHaveBeenCalled();
+	});
+
+	it("is a not-found refusal when the connector is missing from the catalog", async () => {
+		dbh.setQueue([[]]); // catalog lookup → no row
+		const r = await save("vault", { address: "https://v", token: "s3cret" });
+		expect(r).toEqual({ ok: false, error: { kind: "not-found", message: "Connector not in catalog: vault" } });
+		expect(dbh.spies.values).not.toHaveBeenCalled();
 	});
 
 	it("partitions plain/secret fields, encrypts secrets, pings, and upserts a verified org credential", async () => {
@@ -156,9 +172,9 @@ describe("saveConnectorCredential", () => {
 		dbh.setQueue([[{ id: "conn-1" }], []]); // catalog row, then insert result
 
 		const fields = { address: "https://v", token: "s3cret" };
-		const r = await saveConnectorCredential("vault", fields);
+		const r = await save("vault", fields);
 
-		expect(r).toEqual({ ok: true, verified: true, message: "pong" });
+		expect(r).toEqual({ ok: true, data: { verified: true, message: "pong" } });
 		// Ping receives the FULL (unencrypted) field set.
 		expect(pingConnector).toHaveBeenCalledWith("vault", fields);
 		// Only the secret field is encrypted; the plain field is not.
@@ -178,52 +194,51 @@ describe("saveConnectorCredential", () => {
 		expect(dbh.spies.onConflictDoUpdate).toHaveBeenCalled();
 	});
 
-	it("still saves (verified=false) when the provider ping fails", async () => {
+	it("still saves (verified=false) when the provider ping fails — a success the form shows as unverified", async () => {
 		vi.mocked(pingConnector).mockResolvedValue({ ok: false } as never);
 		vi.mocked(encryptSecret).mockReturnValue("ENC" as never);
 		dbh.setQueue([[{ id: "conn-1" }], []]);
 
-		const r = await saveConnectorCredential("vault", {
-			address: "https://v",
-			token: "s3cret",
-		});
-		expect(r).toEqual({ ok: true, verified: false, message: undefined });
+		const r = await save("vault", { address: "https://v", token: "s3cret" });
+		expect(r).toEqual({ ok: true, data: { verified: false, message: undefined } });
 		const values = dbh.spies.values.mock.calls[0][0] as { is_verified: boolean };
 		expect(values.is_verified).toBe(false);
 	});
 
-	it("returns an error when encryption throws", async () => {
+	it("an encryption failure is `unexpected` with a reference — its message never reaches the browser", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		vi.mocked(pingConnector).mockResolvedValue({ ok: true } as never);
 		vi.mocked(encryptSecret).mockImplementation(() => {
 			throw new Error("no key configured");
 		});
 		dbh.setQueue([[{ id: "conn-1" }]]);
-		const r = await saveConnectorCredential("vault", {
-			address: "https://v",
-			token: "s3cret",
-		});
-		expect(r).toEqual({ ok: false, error: "no key configured" });
+		const r = await save("vault", { address: "https://v", token: "s3cret" });
+		expect(r).toEqual({ ok: false, error: { kind: "unexpected", ref: expect.any(String) } });
+		expect(JSON.stringify(r)).not.toContain("no key configured");
 		expect(dbh.spies.values).not.toHaveBeenCalled();
 	});
 });
 
 describe("deleteConnectorCredential", () => {
-	it("rejects when unauthorized", async () => {
-		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
-		await expect(deleteConnectorCredential("vault")).rejects.toThrow(/Forbidden/);
+	it("is a typed forbidden refusal when unauthorized", async () => {
+		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("manage_connectors", { type: "connector" }));
+		const r = await deleteConnectorCredential({ slug: "vault" });
+		expect(r.ok).toBe(false);
+		expect(!r.ok && r.error.kind).toBe("forbidden");
+		expect(dbh.spies.delete).not.toHaveBeenCalled();
 	});
 
-	it("returns an error when the connector is not in the catalog", async () => {
+	it("is a not-found refusal when the connector is not in the catalog", async () => {
 		dbh.setQueue([[]]);
-		const r = await deleteConnectorCredential("vault");
-		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
+		const r = await deleteConnectorCredential({ slug: "vault" });
+		expect(r).toEqual({ ok: false, error: { kind: "not-found", message: "Connector not in catalog: vault" } });
 		expect(dbh.spies.delete).not.toHaveBeenCalled();
 	});
 
 	it("deletes the credential within an org scope", async () => {
 		dbh.setQueue([[{ id: "conn-1" }], []]);
-		const r = await deleteConnectorCredential("vault");
-		expect(r).toEqual({ ok: true });
+		const r = await deleteConnectorCredential({ slug: "vault" });
+		expect(r).toEqual({ ok: true, data: { slug: "vault" } });
 		expect(dbh.spies.delete).toHaveBeenCalledTimes(1);
 		expect(withScope).toHaveBeenCalledWith(
 			{ ownerId: "user-1", orgId: "org-1" },
@@ -320,295 +335,5 @@ describe("setCloudIdentityScope", () => {
 			ok: false,
 			error: "Could not change the credential's scope.",
 		});
-	});
-});
-
-describe("getConnectorsWithStatus", () => {
-	/**
-	 * Minimal catalog connector row; spread verbatim into the result. Typed against the real
-	 * `Connector` row so a fictional `category` / `auth_method` / `status` is a COMPILE error — the
-	 * blank-token-cloud-sheet bug slipped through because these fixtures used made-up auth methods
-	 * ("token", "role", "wif") that no real catalog row can hold, so the real api_key routing was
-	 * never exercised. (CLAUDE.md bans `Record<string, unknown>` for known shapes for exactly this.)
-	 */
-	function connector(over: Partial<Connector>): Partial<Connector> {
-		return {
-			id: "x",
-			slug: "x",
-			name: "X",
-			category: "git",
-			auth_method: "oauth",
-			status: "active",
-			sort_order: 0,
-			...over,
-		};
-	}
-
-	it("marks a git connector connected with a healthy token", async () => {
-		// queue order: catalog, account tokens, cloud identities (all), api_key creds
-		dbh.setQueue([
-			[connector({ slug: "github", category: "git" })],
-			[{ provider: "github", expires_at: null, refresh_token: null }],
-			[],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(true);
-		expect(row.token_health).toBe("healthy");
-		expect(row.group).toBe("source");
-		expect(row.connection_details).toBeNull();
-	});
-
-	it("flags an expired git token (refresh available) as expired", async () => {
-		dbh.setQueue([
-			[connector({ slug: "github", category: "git" })],
-			[
-				{
-					provider: "github",
-					expires_at: new Date(Date.now() - 1000).toISOString(),
-					refresh_token: "r",
-				},
-			],
-			[],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.token_health).toBe("expired");
-	});
-
-	it("surfaces a connected cloud account with its details and scope", async () => {
-		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
-			[],
-			[
-				{
-					id: "ci-1",
-					name: "prod",
-					provider: "aws",
-					credentials: { account_id: "123456789012", role_arn: "arn:x" },
-					scope: "org",
-					status: "connected",
-					last_error: null,
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(true);
-		expect(row.group).toBe("clouds");
-		expect(row.scope).toBe("org");
-		expect(row.cloud_health).toBeUndefined();
-		expect(row.accounts).toHaveLength(1);
-		expect(row.accounts?.[0]).toMatchObject({
-			identityId: "ci-1",
-			name: "prod",
-			label: "123456789012",
-			status: "connected",
-		});
-		expect(row.connection_details).toMatchObject({
-			account_id: "123456789012",
-			role_arn: "arn:x",
-			cloud_identity_id: "ci-1",
-		});
-	});
-
-	it("drives the re-verify treatment for a failed cloud verification", async () => {
-		dbh.setQueue([
-			[connector({ slug: "gcp", category: "cloud", auth_method: "service_account" })],
-			[],
-			[
-				{
-					id: "h-1",
-					name: "GCP",
-					provider: "gcp",
-					status: "failed",
-					last_error: "boom",
-					// A genuinely-configured identity (has creds) whose verification failed.
-					credentials: { project_id: "p-1" },
-					scope: "org",
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(false);
-		expect(row.cloud_health).toBe("failed");
-		expect(row.last_error).toBe("boom");
-		expect(row.reverify_identity_id).toBe("h-1");
-	});
-
-	// The reported bug: a cloud whose verification failed was filtered out of `accounts` entirely,
-	// which left it with NO disconnect affordance anywhere in the UI — the connection was unremovable.
-	// It must be listed, carrying its failure, so it can be re-verified or removed.
-	it("lists a FAILED cloud account so it can still be removed", async () => {
-		dbh.setQueue([
-			[connector({ slug: "azure", category: "cloud", auth_method: "service_principal" })],
-			[],
-			[
-				{
-					id: "az-1",
-					name: "Azure",
-					provider: "azure",
-					status: "disconnected",
-					last_error: "AADSTS700016: Application with identifier '…' was not found",
-					credentials: { subscription_id: "s-1", tenant_id: "t-1" },
-					scope: "org",
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(false);
-		expect(row.accounts).toHaveLength(1);
-		expect(row.accounts?.[0]).toMatchObject({
-			identityId: "az-1",
-			status: "failed",
-		});
-		expect(row.accounts?.[0].lastError).toMatch(/AADSTS700016/);
-	});
-
-	// `degraded` is authenticated-but-under-permissioned. It is NOT disconnected, so the connector
-	// still reads as connected — but it must say so rather than reporting an unqualified green.
-	it("surfaces a DEGRADED account as connected, with its missing permissions", async () => {
-		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
-			[],
-			[
-				{
-					id: "ci-d",
-					name: "prod",
-					provider: "aws",
-					status: "degraded",
-					last_error: null,
-					credentials: { account_id: "1", role_arn: "arn:x" },
-					scope: "org",
-					missing_permissions: ["ec2:DescribeVpcs"],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(true);
-		expect(row.cloud_health).toBe("degraded");
-		expect(row.missing_permissions).toEqual(["ec2:DescribeVpcs"]);
-		expect(row.reverify_identity_id).toBe("ci-d");
-		expect(row.accounts?.[0]).toMatchObject({ status: "degraded" });
-	});
-
-	// One healthy + one broken account used to render as a flat "Connected", hiding the broken one
-	// entirely — it was invisible and un-removable from the board.
-	it("keeps a connector connected when one of two accounts is broken, but still lists the broken one", async () => {
-		dbh.setQueue([
-			[connector({ slug: "aws", category: "cloud", auth_method: "iam_role" })],
-			[],
-			[
-				{
-					id: "ok-1",
-					name: "prod",
-					provider: "aws",
-					status: "connected",
-					last_error: null,
-					credentials: { account_id: "1", role_arn: "arn:a" },
-					scope: "org",
-					missing_permissions: [],
-				},
-				{
-					id: "bad-1",
-					name: "staging",
-					provider: "aws",
-					status: "disconnected",
-					last_error: "role gone",
-					credentials: { account_id: "2", role_arn: "arn:b" },
-					scope: "org",
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(true);
-		expect(row.accounts).toHaveLength(2);
-		expect(row.accounts?.map((a) => a.status)).toEqual(["connected", "failed"]);
-		// The healthy account is the primary — connection_details must not describe the broken one.
-		expect(row.connection_details?.cloud_identity_id).toBe("ok-1");
-	});
-
-	it("ignores never-configured placeholder identities (no phantom 'Verification failed')", async () => {
-		// A `disconnected` unverified row with EMPTY credentials — the sweeper poisoning an eager
-		// connect-sheet placeholder. It must NOT surface as a failed verification.
-		dbh.setQueue([
-			[connector({ slug: "digitalocean", category: "cloud", auth_method: "api_key" })],
-			[],
-			[
-				{
-					id: "ph-1",
-					name: "DO",
-					provider: "digitalocean",
-					status: "disconnected",
-					last_error: "No API token is stored for this connection.",
-					credentials: {},
-					scope: "org",
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(false);
-		expect(row.cloud_health).toBeUndefined();
-		expect(row.last_error).toBeUndefined();
-		expect(row.reverify_identity_id).toBeUndefined();
-		expect(row.accounts).toEqual([]);
-	});
-
-	it("still surfaces a genuine lost-access (disconnected) token cloud that has credentials", async () => {
-		dbh.setQueue([
-			[connector({ slug: "hetzner", category: "cloud", auth_method: "api_key" })],
-			[],
-			[
-				{
-					id: "d-1",
-					name: "Hetzner",
-					provider: "hetzner",
-					status: "disconnected",
-					last_error: "Token rejected by hetzner (HTTP 401).",
-					credentials: { token: "enc:…" },
-					scope: "org",
-					missing_permissions: [],
-				},
-			],
-			[],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.cloud_health).toBe("failed");
-		expect(row.reverify_identity_id).toBe("d-1");
-	});
-
-	it("marks an api_key connector connected from a verified stored credential", async () => {
-		dbh.setQueue([
-			[connector({ slug: "vault", category: "secrets", auth_method: "api_key" })],
-			[],
-			[],
-			[{ slug: "vault", is_verified: true, scope: "org" }],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(true);
-		expect(row.group).toBe("secrets");
-		expect(row.scope).toBe("org");
-		expect(row.token_health).toBe("healthy");
-	});
-
-	it("falls back to a logged-out catalog (everything disconnected) when no actor", async () => {
-		vi.mocked(currentActor).mockRejectedValue(new Error("no session"));
-		// Only the public catalog query runs when scope is null.
-		dbh.setQueue([
-			[connector({ slug: "github", category: "git" })],
-		]);
-		const [row] = await getConnectorsWithStatus();
-		expect(row.connected).toBe(false);
-		expect(row.connection_details).toBeNull();
 	});
 });

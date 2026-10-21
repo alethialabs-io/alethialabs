@@ -198,6 +198,21 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		// delivery is org-level, so there is nothing to filter on.
 		case "alerts":
 			return notice.o ? [{ key: orgAlertsKey(notice.o), filterProject: null }] : [];
+		case "connectors": {
+			// cloud_identities + connector_credentials (#6124). Their policy is `scoped_all`:
+			//     (scope = 'personal' AND user_id = current_owner) OR (scope = 'org' AND org_id = current_org)
+			// The trigger (notify_credential_change) sends `u` ONLY for a personal row, so a notice has
+			// exactly one arm:
+			//   · an org row (`u` null) → `o:<org_id>`, every member of that org, unfiltered: the board
+			//     shows every member the org's shared connections (who may CHANGE one is the PDP's);
+			//   · a personal row → its author alone, `ou:<org>:<user>` in the org it was created in
+			//     (`u:<user>` when it has none). Its author's boards in OTHER orgs pick the change up on
+			//     their next read (focus, a resync), not from a hint.
+			if (notice.u) {
+				return [{ key: notice.o ? orgUserKey(notice.o, notice.u) : userKey(notice.u), filterProject: null }];
+			}
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
+		}
 		// #6128: a project row. Both arms of its RLS policy are on `org_id` (`org_id = current_org OR
 		// org_id = current_owner`), and the personal scope's stream subscribes `o:<its user>`, which is
 		// that scope's org — so the org arm is the only route. Filtered on the project ITSELF (the

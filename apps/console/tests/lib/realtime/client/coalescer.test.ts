@@ -36,6 +36,7 @@ const topicKeys: Record<Topic, () => QueryKey[]> = {
 	organization: () => [],
 	members: () => [],
 	access: () => [],
+	connectors: () => [],
 };
 
 /** A client with an OBSERVED query per key, counting fetches. */

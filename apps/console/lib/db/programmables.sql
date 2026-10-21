@@ -3636,3 +3636,69 @@ DROP TRIGGER IF EXISTS role_permission_notify_change_insdel ON public.role_permi
 CREATE TRIGGER role_permission_notify_change_insdel
   AFTER INSERT OR DELETE ON public.role_permission
   FOR EACH ROW EXECUTE FUNCTION public.notify_role_permission_change();
+
+-- ── connectors: cloud_identities + connector_credentials (#6124) ──────────────────────────────
+-- The credential-shaped notifier. Both tables carry `scoped_all` (above): an `org` row is the org's,
+-- a `personal` row is its author's alone. So `u` is sent ONLY for a personal row — the routing
+-- (lib/realtime/routing.ts `connectors`) then tells its author and nobody else, and an org row goes
+-- to the org. Never both arms: a hint on the org key for a personal row would tell the org's members
+-- that a member's personal credential changed. When an UPDATE moves a row between audiences (a share,
+-- a demotion), the OLD audience is told too, so a board that showed the row refetches and drops it.
+CREATE OR REPLACE FUNCTION public.notify_credential_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id,
+      CASE WHEN NEW.scope = 'personal' THEN NEW.user_id END, NULL);
+  ELSIF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id,
+      CASE WHEN OLD.scope = 'personal' THEN OLD.user_id END, NULL);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id,
+      CASE WHEN NEW.scope = 'personal' THEN NEW.user_id END, NULL);
+    IF (OLD.scope, OLD.org_id, OLD.user_id) IS DISTINCT FROM (NEW.scope, NEW.org_id, NEW.user_id) THEN
+      PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id,
+        CASE WHEN OLD.scope = 'personal' THEN OLD.user_id END, NULL);
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The columns the connectors board shows (lib/rpc/procedures/connectors.ts): the account's name,
+-- health, last error and missing permissions, whether it was ever configured (`credentials`), and
+-- its audience. Deliberately NOT listed: last_tested_at, cached_resources, cached_at,
+-- verified_account_id and updated_at — the health sweep re-probes on a timer and writes those every
+-- pass, and a re-probe that finds the same health must emit nothing.
+DROP TRIGGER IF EXISTS cloud_identities_notify_change_upd ON public.cloud_identities;
+CREATE TRIGGER cloud_identities_notify_change_upd
+  AFTER UPDATE ON public.cloud_identities
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.status, OLD.is_verified, OLD.last_error, OLD.missing_permissions, OLD.credentials,
+     OLD.scope, OLD.org_id, OLD.user_id)
+    IS DISTINCT FROM
+    (NEW.name, NEW.status, NEW.is_verified, NEW.last_error, NEW.missing_permissions, NEW.credentials,
+     NEW.scope, NEW.org_id, NEW.user_id)
+  )
+  EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+DROP TRIGGER IF EXISTS cloud_identities_notify_change_insdel ON public.cloud_identities;
+CREATE TRIGGER cloud_identities_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.cloud_identities
+  FOR EACH ROW EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+-- api_key credentials: the board shows whether one exists, whether it verified, and its audience.
+-- A re-save with the same verdict (a rotated secret) changes nothing the board shows.
+DROP TRIGGER IF EXISTS connector_credentials_notify_change_upd ON public.connector_credentials;
+CREATE TRIGGER connector_credentials_notify_change_upd
+  AFTER UPDATE ON public.connector_credentials
+  FOR EACH ROW WHEN (
+    (OLD.is_verified, OLD.connector_id, OLD.scope, OLD.org_id, OLD.user_id)
+    IS DISTINCT FROM
+    (NEW.is_verified, NEW.connector_id, NEW.scope, NEW.org_id, NEW.user_id)
+  )
+  EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+DROP TRIGGER IF EXISTS connector_credentials_notify_change_insdel ON public.connector_credentials;
+CREATE TRIGGER connector_credentials_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.connector_credentials
+  FOR EACH ROW EXECUTE FUNCTION public.notify_credential_change('connectors');

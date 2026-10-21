@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import * as conn from "@/lib/cloud-providers/connections";
 
 export type AzureConnectionStatus = {
@@ -33,33 +33,4 @@ export async function initAzureIdentity(): Promise<{
 	});
 	const { identityId } = await conn.initIdentity(actor, "azure");
 	return { identityId };
-}
-
-/** Validates the Azure GUIDs, persists them, and queues a connection test. */
-export async function saveAzureIdentity(
-	identityId: string,
-	tenantId: string,
-	clientId: string,
-	subscriptionId: string,
-) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.saveAzureIdentity(
-		actor,
-		identityId,
-		tenantId,
-		clientId,
-		subscriptionId,
-	);
-}
-
-/** Resets the Azure identity to its pending state. */
-export async function disconnectAzureIdentity(identityId: string) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.disconnectIdentity(actor, identityId, "azure");
 }
