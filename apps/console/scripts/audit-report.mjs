@@ -39,7 +39,8 @@
 //
 // ── WHAT IS SCORED, AND WHAT IS EXPLICITLY NOT ───────────────────────────────────────────────
 //
-// The rubric defines 38 predicates in five families. This file now scores all 38 of them:
+// The rubric defines 44 predicates in six families. This file scores 43 of them — every one but B6,
+// which waits for the real-time bus (#6115) and is declared un-instrumented below:
 //
 //   S1–S4, T1–T4     STATIC, `scripts/check-route-states.mjs`.
 //   H1–H9            STATIC, `scripts/check-shared-surface.mjs`. All nine H rows. H3 was the
@@ -61,6 +62,9 @@
 //                    is therefore SPLIT: its static rows are scored here and its live rows are
 //                    joined, and `buildView()` takes the static F ids as the rubric's F rows MINUS
 //                    the ones `NOT_SCORED_STATICALLY` declares live — never "every F row".
+//   B1–B5            LIVE, `e2e/audit/behaviour.spec.ts` (#6116) — what the user experiences while a
+//                    route loads, in an organisation of the spec's own. Their debt is held PER ROUTE
+//                    in `BEHAVIOUR_LEDGER`, not per predicate in `LIVE_DEBT`.
 //
 // NOTHING is left un-instrumented. The `kind: "none"` bucket, the table it renders and the
 // partition check that refuses a predicate in no bucket all STAY: the next rubric row lands in
@@ -330,6 +334,7 @@ export const FAMILIES = /** @type {const} */ ({
 	H: "shared surface",
 	F: "filter standard",
 	R: "rendered integrity",
+	B: "behaviour",
 });
 
 /**
@@ -403,6 +408,18 @@ export const NOT_SCORED_STATICALLY = /** @type {const} */ ({
 	F9: { kind: "live", section: "interaction", why: "facet counts that do not move under a filter — F7's unfiltered facet pass, observed end to end on the rendered bar." },
 	F10: { kind: "live", section: "interaction", why: "a debounce you can count requests against, and a nonsense search that lands in the shared empty state." },
 	R8: { kind: "live", section: "interaction", why: "every enabled control, ACTIVATED — a rendered control is not a working one, and only a click knows." },
+	// Family B (#6116, ADR 0005) — what the user experiences while a route loads. Measured in an
+	// organisation of the spec's own, SEEDED, because an answered empty state is the one render a
+	// held-or-failed comparison cannot read (see `e2e/audit/behaviour.ts`).
+	B1: { kind: "live", section: "behaviour", why: "no client data fetch before first paint — with every read HELD, the region already renders what it renders answered." },
+	B2: { kind: "live", section: "behaviour", why: "the route's own skeleton, painted by a soft navigation whose data is held, against the page it becomes." },
+	B3: { kind: "live", section: "behaviour", why: "no empty copy while every read is held that the answered render does not show." },
+	B4: { kind: "live", section: "behaviour", why: "every read answered 500 — cold, and on the stale refetch a prefetched region makes later — never a skeleton, empty copy or silent loss." },
+	B5: { kind: "live", section: "behaviour", why: "each of the page's own reads failed ALONE; none may blank every region." },
+	// B6 is the bus's predicate. Its static half is `scripts/check-no-polling.mjs` and its live half
+	// ("a change made elsewhere appears without reload") needs the stream #6115 builds; neither is on
+	// dev, so it is declared here rather than left out of the report.
+	B6: { kind: "none", owner: "#6115", why: "live by default — a change made elsewhere appears without reload, and no data poll remains; the instrument is the real-time bus and `check:no-polling`." },
 });
 
 // ── the live half: two artifacts, two personas, two organisations ────────────────────────────
@@ -454,6 +471,16 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		// file used to report, and none of them was a claim about a PAGE. Now 141 carry a real
 		// verdict and 19 stay withheld — each with a reason the RUN produced, not this table.
 	},
+	behaviour: {
+		artifact: "test-results/ui-audit-behaviour.json",
+		spec: "apps/console/e2e/audit/behaviour.spec.ts",
+		persona: "the owner of an organisation the spec signs up itself",
+		org: "a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches",
+		covers: "every route the manifest names",
+		// Imported in the same PR that built it (#6116): run 39438241593 @ `ce9a5fdaf`, the first run
+		// on which the jobs slice passed all five. The marker it carried until then is gone with the
+		// import, which `parseLive()` enforces.
+	},
 });
 
 /**
@@ -483,6 +510,11 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
 	F8: ["not-a-list-page"],
 	F9: ["not-a-list-page"],
 	F10: ["not-a-list-page", "no-search-field"],
+	B1: ["redirect-only"],
+	B2: ["redirect-only", "no-loading-boundary"],
+	B3: ["redirect-only"],
+	B4: ["redirect-only"],
+	B5: ["redirect-only"],
 });
 
 /**
@@ -551,23 +583,122 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * with a reason, `Design with the agent` counts its sonner toast. R8 fails nowhere, so its row is
  * gone. F8 on `~/settings/members` FAILED again, on the reload half only (#4999).
  *
+ * THE SIXTH IMPORT — run 39438241593 @ `ce9a5fdaf`, all four sections of ONE run, on #6116's branch
+ * (the first to carry family B). F8 on `~/settings/members` PASSED, so its row (#4999) is gone; that
+ * cell has reversed verdict between runs before on an unchanged table, so a later import may need
+ * the row back. Family B's debt is NOT here: it is per route, in `BEHAVIOUR_LEDGER` below.
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({
-	F8: {
-		owner: "#4999",
-		why:
-			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
-			"read from the count pill). The fresh tab kept the param but no narrowed count was read back; " +
-			"Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs " +
-			"35872640708 and 35896826914, with the " +
-			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
-			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
-			"the URL is unread or the rows are placeholder data.",
-	},
-});
+export const LIVE_DEBT = /** @type {const} */ ({});
 
+
+/**
+ * Family B's debt, held PER ROUTE (#6116) — CLAUDE.md §6's two-ledger rule, applied to a live family.
+ *
+ * `LIVE_DEBT` above is per PREDICATE, and that grain is too coarse for B: every page lane in epic
+ * #6112 fixes B1–B5 on its own routes, so "B1 fails, owned by …" would name one owner for twenty
+ * pages and could never shrink one lane at a time. So a B FAIL is held to a (route, predicate) row,
+ * and the row is one of exactly two kinds:
+ *
+ *   `lifts: "#n"`   MEASURED DEBT. The named issue's lane removes it, and deletes the row in the same
+ *                   commit as the import that shows the cell passing.
+ *   `reason: "…"`   A DECISION — this route is built this way on purpose and will keep failing.
+ *                   Never "not yet": a reason that means "we haven't got to it" is what the split
+ *                   exists to prevent.
+ *
+ * Checked in BOTH directions by `behaviourLedgerProblems()`: a B FAIL with no row raises, and so does
+ * a row whose cell no longer FAILS — a debt ledger nobody is forced to shrink stops being true. An
+ * entry naming a cell that is NOT MEASURED is stale too: the ledger records findings, not gaps.
+ *
+ * WHAT THE CHECK DOES NOT DO, stated: it does not ask GitHub whether a `lifts:` issue is still OPEN.
+ * This generator runs offline by contract — the bare check gates every console PR and the only inputs
+ * are committed files (see the header) — so a network read here would make a report a function of the
+ * day it ran. A row whose issue has CLOSED with the cell still failing therefore reads as owned until
+ * the next import; `scripts/claim-work.sh` and the board are where a closed-but-unfixed lane surfaces.
+ *
+ * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
+ */
+export const BEHAVIOUR_LEDGER = {
+	// THIRD IMPORT — run 39485270886 @ `9b3278240`, on the instrument #6180's re-review corrected
+	// (a bars-only skeleton scored as one block; B3/B4 count only the page's own reads; billing and
+	// usage B2 hosted-only). Every row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\`
+	// globs hold the route — `[project]/settings/**` is #6128's, the org-level people & access pages
+	// #6129's. No row is a \`reason:\` yet: nothing here was found to be built this way on purpose.
+	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" }, B4: { lifts: "#6118" } },
+	"/[org]/[project]/architecture": { B2: { lifts: "#6119" } },
+	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
+	"/[org]/[project]/environments": { B1: { lifts: "#6120" }, B4: { lifts: "#6120" } },
+	"/[org]/[project]/jobs": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B3: { lifts: "#6121" }, B5: { lifts: "#6121" } },
+	"/[org]/[project]/settings/access": { B2: { lifts: "#6128" } },
+	"/[org]/[project]/settings/activity": { B1: { lifts: "#6128" } },
+	"/[org]/[project]/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
+	"/[org]/~/clusters": { B2: { lifts: "#6122" } },
+	"/[org]/~/connectors": { B2: { lifts: "#6124" } },
+	"/[org]/~/evidence": { B2: { lifts: "#6126" } },
+	"/[org]/~/jobs": { B2: { lifts: "#6121" } },
+	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" } },
+	"/[org]/~/new": { B2: { lifts: "#6131" } },
+	"/[org]/~/runners": { B1: { lifts: "#6123" } },
+	"/[org]/~/settings/activity": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" } },
+	"/[org]/~/settings/billing": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+	"/[org]/~/settings/billing/invoices": { B1: { lifts: "#6127" } },
+	"/[org]/~/settings/classification": { B2: { lifts: "#6129" } },
+	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" }, B5: { lifts: "#6128" } },
+	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
+	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
+	"/[org]/~/support/abuse": { B2: { lifts: "#6130" } },
+	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6130" } },
+	"/[org]/~/support/my-cases": { B2: { lifts: "#6130" } },
+	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
+	"/[org]/~/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+};
+
+/** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */
+const LEDGERED = new Set(["B1", "B2", "B3", "B4", "B5"]);
+
+/**
+ * Every way the family-B ledger disagrees with the verdicts, in both directions.
+ *
+ * @param {{route: string, predicate: string, verdict: string}[]} verdicts
+ * @param {typeof BEHAVIOUR_LEDGER} [ledger]  injectable so `--self-test` drives both directions
+ * @returns {string[]}
+ */
+export function behaviourLedgerProblems(verdicts, ledger = BEHAVIOUR_LEDGER) {
+	/** @type {string[]} */
+	const problems = [];
+	const fails = new Set(verdicts.filter((v) => LEDGERED.has(v.predicate) && v.verdict === "FAIL").map((v) => `${v.route}${KEY}${v.predicate}`));
+	for (const key of [...fails].sort()) {
+		const [route, id] = key.split(KEY);
+		if (ledger[route]?.[id] === undefined) {
+			problems.push(
+				`${id} FAILS on \`${route}\` and BEHAVIOUR_LEDGER has no row for it. Add \`lifts: "#<issue>"\` naming the lane ` +
+					`that fixes it, or \`reason:\` if the route is built this way on purpose.`,
+			);
+		}
+	}
+	for (const [route, rows] of Object.entries(ledger)) {
+		for (const [id, row] of Object.entries(rows)) {
+			if (!LEDGERED.has(id)) {
+				problems.push(`BEHAVIOUR_LEDGER names ${id} on \`${route}\`; it holds family B only (${[...LEDGERED].join(", ")}).`);
+				continue;
+			}
+			const hasLift = typeof row.lifts === "string";
+			const hasReason = typeof row.reason === "string";
+			if (hasLift === hasReason) problems.push(`BEHAVIOUR_LEDGER ${id} on \`${route}\` must carry exactly one of \`lifts\` or \`reason\`.`);
+			if (hasLift && !/^#\d+$/.test(row.lifts ?? "")) problems.push(`BEHAVIOUR_LEDGER ${id} on \`${route}\`: \`lifts\` must name an issue as \`#<n>\`, got ${JSON.stringify(row.lifts)}.`);
+			if (hasReason && !(row.reason ?? "").trim()) problems.push(`BEHAVIOUR_LEDGER ${id} on \`${route}\`: an empty \`reason\` records no decision.`);
+			if (!fails.has(`${route}${KEY}${id}`)) {
+				problems.push(
+					`BEHAVIOUR_LEDGER has a row for ${id} on \`${route}\` and that cell no longer FAILS. Delete the row in the same ` +
+						`commit as the import that shows it — a debt ledger nobody is forced to shrink stops being true.`,
+				);
+			}
+		}
+	}
+	return problems;
+}
 
 /**
  * Which section owns which live predicate, checked in both directions.
@@ -963,6 +1094,70 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 				? "the member is refused and is redirected away rather than shown a state"
 				: "the member is refused and the page renders a blank, not a deliberate state";
 		}
+		// ── family B (#6116). Each branch re-derives the defect from the evidence `e2e/audit/behaviour.ts`
+		// recorded, and refuses — through `nonEmpty` — a FAIL whose evidence shows nothing wrong.
+		if (predicate === "B1") {
+			const e = asObject(evidence, predicate);
+			const differs = asArray(e.differs, predicate).map(String);
+			nonEmpty(differs.length, "signal that separates the held render from the answered one");
+			return `with every read held, the region differs from its answered render in: ${differs.join(", ")}`;
+		}
+		if (predicate === "B2") {
+			// `judgeB2Worst` wraps the worst swap's evidence as `{ worst, swaps }`; a bare one is read as is.
+			const outer = asObject(evidence, predicate);
+			const e = "worst" in outer ? asObject(outer.worst, predicate) : outer;
+			const columns = asObject(e.columns, predicate);
+			const score = Number(e.score);
+			const budget = Number(e.budget);
+			const parts = [];
+			if (score > budget) {
+				const block = e.worstBlock && typeof e.worstBlock === "object" ? e.worstBlock : null;
+				const blockClause =
+					block && Number(block.score) >= score && block.skeleton && typeof block.skeleton === "object"
+						? ` — a ${Math.round(Number(block.skeleton.h))}px skeleton block became ${
+								block.region && typeof block.region === "object"
+									? `${Math.round(Number(block.region.h))}px${(() => {
+											const dy = Math.round(Number(block.region.y) - Number(block.skeleton.y));
+											return dy === 0 ? "" : `, ${Math.abs(dy)}px ${dy > 0 ? "lower" : "higher"}`;
+										})()}`
+									: "nothing"
+							}`
+						: "";
+				parts.push(`the skeleton moves ${score.toFixed(3)} against the page (budget ${budget})${blockClause}`);
+			}
+			if (columns.skeleton !== columns.final) {
+				const sk = Number(columns.skeleton);
+				const fin = Number(columns.final);
+				// "0 blocks side by side" read as a layout that sets blocks in a row and has none; it is a
+				// skeleton of bars, which draws no block-sized frame at all (#6180 re-review).
+				const skeletonSide = sk === 0 ? "the skeleton draws no block-sized frame" : `the skeleton sets ${plural(sk, "block")} side by side`;
+				const pageSide = fin === 0 ? "the page draws none" : `the page ${fin}`;
+				parts.push(`${skeletonSide} and ${pageSide}`);
+			}
+			nonEmpty(parts.length, "shift over budget or column mismatch");
+			return parts.join("; ");
+		}
+		if (predicate === "B3") {
+			const e = asObject(evidence, predicate);
+			const held = Number(e.heldEmpty);
+			const answered = Number(e.answeredEmpty);
+			nonEmpty(held > answered ? 1 : 0, "empty copy beyond the answered render's");
+			return `${plural(held, "empty-copy region")} while every read was held, against ${answered} once answered`;
+		}
+		if (predicate === "B4") {
+			const e = asObject(evidence, predicate);
+			const bad = asArray(e.phases, predicate)
+				.map((p) => asObject(p, predicate))
+				.filter((p) => asArray(p.problems, predicate).length > 0);
+			nonEmpty(bad.length, "failed phase with a problem");
+			return bad.map((p) => `${String(p.phase)}: ${asArray(p.problems, predicate).map(String).join(", ")}`).join("; ");
+		}
+		if (predicate === "B5") {
+			const e = asObject(evidence, predicate);
+			const blanked = asArray(e.blanked, predicate).map(String);
+			nonEmpty(blanked.length, "read whose failure blanked every region");
+			return `one read failing alone blanked every region — ${blanked.join(", ")}`;
+		}
 		throw new Error(`${predicate}: no evidence summariser. Every live predicate needs one, or its FAILs land with no diagnosis.`);
 	})();
 	if (RUN_DEPENDENT.test(detail)) {
@@ -1060,7 +1255,49 @@ const describe = (v) => (v === null ? "null" : Array.isArray(v) ? "an array" : t
  * @param {{routes: unknown, permissions: unknown}} raw parsed `test-results/ui-audit*.json`
  * @param {{run: string, commit: string}} provenance
  */
-export function importLive(raw, provenance) {
+/**
+ * Every cell the PREVIOUS import scored (PASS or FAIL) that this one does not — it reads NOT
+ * MEASURED, or has no record at all — and that `explained` does not account for.
+ *
+ * A floor on how many routes a predicate scored cannot see a cell that quietly stopped being
+ * measured: the count can stay above it while the cells under it change. So an import compares cell
+ * by cell against the committed records, and a scored cell that becomes withheld refuses the import
+ * unless `--explain=<file>` names it (`{"<route> <predicate>": "<why>"}`) — an instrument change, a
+ * route that genuinely cannot be reached any more. An explanation for a cell that did NOT become
+ * withheld is refused too, so the file cannot carry stale excuses forward.
+ *
+ * @param {Record<string, {records: {route: string, predicate: string, verdict: string}[]}>} previous  the committed `runs`
+ * @param {Record<string, {records: {route: string, predicate: string, verdict: string}[]}>} next      the imported `runs`
+ * @param {Record<string, string>} explained
+ * @returns {string[]}
+ */
+export function newlyWithheldProblems(previous, next, explained = {}) {
+	/** @type {Map<string, string>} */
+	const now = new Map();
+	for (const sec of Object.values(next ?? {})) for (const r of sec.records ?? []) now.set(`${r.route} ${r.predicate}`, r.verdict);
+	/** @type {string[]} */
+	const problems = [];
+	const used = new Set();
+	for (const sec of Object.values(previous ?? {})) {
+		for (const r of sec.records ?? []) {
+			if (r.verdict !== "PASS" && r.verdict !== "FAIL") continue;
+			const key = `${r.route} ${r.predicate}`;
+			const verdict = now.get(key);
+			if (verdict === "PASS" || verdict === "FAIL" || verdict === "N/A") continue;
+			if (typeof explained[key] === "string" && explained[key].trim()) {
+				used.add(key);
+				continue;
+			}
+			problems.push(`${key} was ${r.verdict} and is now ${verdict ?? "absent"} — explain it with --explain, or find out why the run stopped measuring it.`);
+		}
+	}
+	for (const key of Object.keys(explained)) {
+		if (!used.has(key)) problems.push(`--explain names ${key}, which did not stop being measured — an excuse for nothing is refused.`);
+	}
+	return problems;
+}
+
+export function importLive(raw, provenance, previous = null, explained = {}) {
 	const owned = livePredicateSections();
 	if (!provenance.run || !provenance.commit) {
 		throw new Error("--import-live needs both --run=<url or id> and --commit=<sha>: a baseline nobody can cite is not one.");
@@ -1112,6 +1349,12 @@ export function importLive(raw, provenance) {
 			})
 			.sort((a, b) => a.route.localeCompare(b.route) || a.predicate.localeCompare(b.predicate));
 		runs[key] = { runKey: body.runKey, records };
+	}
+	if (previous !== null) {
+		const withheld = newlyWithheldProblems(previous, runs, explained);
+		if (withheld.length > 0) {
+			throw new Error(`the import stops measuring cells the committed records scored:\n  - ${withheld.join("\n  - ")}`);
+		}
 	}
 	const body = {
 		$comment: [
@@ -1389,7 +1632,7 @@ export function parseRubric(text) {
 	/** @type {Set<string>} */
 	const seen = new Set();
 	for (const [i, line] of text.split("\n").entries()) {
-		const m = line.match(/^\|\s*\*\*([STHFR])(\d+)\*\*\s*\|/);
+		const m = line.match(/^\|\s*\*\*([STHFRB])(\d+)\*\*\s*\|/);
 		if (m === null) continue;
 		const id = `${m[1]}${m[2]}`;
 		if (seen.has(id)) {
@@ -1688,7 +1931,7 @@ export function scoreOf(pass, fail) {
  *   the same reason every other input is: `--self-test` drives the whole pipeline over a fixture.
  * @param {typeof LIVE_DEBT} [input.liveDebt]  injectable so `--self-test` can drive both directions
  */
-export function buildView({ run, rubricPredicates, surface, pageClosures, chromeClosure, live, filterVerdicts, liveDebt = LIVE_DEBT }) {
+export function buildView({ run, rubricPredicates, surface, pageClosures, chromeClosure, live, filterVerdicts, liveDebt = LIVE_DEBT, behaviourLedger = BEHAVIOUR_LEDGER }) {
 	// The F ids come from the RUBRIC, not from a constant. `check-filter-standard.mjs` exports its
 	// own F1–F7 list and using it here would make this file agree with that one instead of with the
 	// rubric — and the rubric is the predicate universe every other family is partitioned against.
@@ -1867,6 +2110,8 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	/** @type {string[]} */
 	const debtProblems = [];
 	for (const id of liveIds.keys()) {
+		// Family B is held per ROUTE, by `BEHAVIOUR_LEDGER` below — never here.
+		if (LEDGERED.has(id)) continue;
 		const fails = predicates[id].fail;
 		if (fails > 0 && liveDebt[id] === undefined) {
 			debtProblems.push(
@@ -1883,7 +2128,9 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 	}
 	for (const id of Object.keys(liveDebt)) {
 		if (!liveIds.has(id)) debtProblems.push(`LIVE_DEBT names ${id}, which is not a live predicate.`);
+		if (LEDGERED.has(id)) debtProblems.push(`LIVE_DEBT names ${id}; family B's debt is per route, in BEHAVIOUR_LEDGER.`);
 	}
+	debtProblems.push(...behaviourLedgerProblems(verdicts, behaviourLedger));
 	if (debtProblems.length > 0) throw new Error(`the live debt ledger is out of date:\n  - ${debtProblems.join("\n  - ")}`);
 
 	// ── per route, per family ─────────────────────────────────────────────────────────────────
@@ -2038,6 +2285,17 @@ export function buildView({ run, rubricPredicates, surface, pageClosures, chrome
 				]),
 			),
 			debt: Object.fromEntries(Object.entries(liveDebt).map(([id, d]) => [id, { owner: d.owner, why: d.why, fail: predicates[id].fail }])),
+			behaviourLedger: Object.entries(behaviourLedger)
+				.flatMap(([route, rows]) =>
+					Object.entries(rows).map(([predicate, row]) => ({
+						route,
+						predicate,
+						...(row.lifts === undefined ? {} : { lifts: row.lifts }),
+						...(row.reason === undefined ? {} : { reason: row.reason }),
+						detail: verdicts.find((v) => v.route === route && v.predicate === predicate)?.detail ?? null,
+					})),
+				)
+				.sort((a, b) => a.route.localeCompare(b.route) || a.predicate.localeCompare(b.predicate)),
 		},
 		predicates,
 		routes: [...routes.values()].sort((a, b) => a.route.localeCompare(b.route)),
@@ -2133,7 +2391,7 @@ export function renderScoreboard(view) {
 	L.push("| `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |");
 	L.push(`| \`${F7_TEST_PATH}\` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |`);
 	L.push(`| \`${ALLOWLIST}\` | which occurrences are a recorded decision (\`baseline: ${view.ledgers.baseline}\`) and which are measured drift (\`debt: ${view.ledgers.debt}\`) |`);
-	L.push(`| \`${LIVE_JSON}\` | T5–T7 and R1–R7 as MEASURED, imported from a CI run of the Playwright \`audit\` project |`);
+	L.push(`| \`${LIVE_JSON}\` | T5–T7, R1–R8, F8–F10 and B1–B5 as MEASURED, imported from a CI run of the Playwright \`audit\` and \`audit-interaction\` projects |`);
 	L.push(`| \`${RUBRIC}\` | the predicate set itself, read out of its own tables |`);
 	L.push("");
 
@@ -2188,11 +2446,12 @@ export function renderScoreboard(view) {
 	}
 
 	// ── the live half ─────────────────────────────────────────────────────────────────────────
-	L.push("## The live half — three artifacts, three questions, never pooled");
+	const sectionCount = Object.keys(view.live.sections).length;
+	L.push(`## The live half — ${sectionCount} artifacts, ${sectionCount} questions, never pooled`);
 	L.push("");
-	L.push("T5–T7 and R1–R8 are measured in a browser, not read off the tree. The records below were");
+	L.push("T5–T7, R1–R8, F8–F10 and B1–B5 are measured in a browser, not read off the tree. The records below were");
 	L.push(`imported from **${view.live.source.run}** at commit \`${view.live.source.commit}\` and committed to`);
-	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **three files, joined and never`);
+	L.push(`\`${LIVE_JSON}\`; refresh them with \`--import-live\`. They come from **${sectionCount} files, joined and never`);
 	L.push("pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:");
 	L.push("each section declares the predicates it may carry, and a record in the wrong one refuses to parse.");
 	L.push("");
@@ -2235,6 +2494,22 @@ export function renderScoreboard(view) {
 		L.push("| — | 0 | — | no live predicate fails on any route |");
 	} else {
 		for (const [id, d] of debtRows) L.push(`| **${id}** | ${d.fail} | ${d.owner} | ${d.why} |`);
+	}
+	L.push("");
+	L.push("**Family B is held per ROUTE** (`BEHAVIOUR_LEDGER`), because every page lane fixes B1–B5 on its own");
+	L.push("routes and a per-predicate row could never shrink one lane at a time. A row is either `lifts` — measured");
+	L.push("debt the named issue removes — or `reason` — a decision that the route is built this way. Checked in both");
+	L.push("directions, like the table above:");
+	L.push("");
+	L.push("| route | predicate | ledger | what fails |");
+	L.push("|---|---|---|---|");
+	if (view.live.behaviourLedger.length === 0) {
+		L.push("| — | — | — | no family-B predicate fails on any route |");
+	} else {
+		for (const row of view.live.behaviourLedger) {
+			const ledger = row.lifts !== undefined ? `lifts ${row.lifts}` : `reason: ${row.reason}`;
+			L.push(`| \`${row.route}\` | **${row.predicate}** | ${ledger} | ${row.detail ?? "—"} |`);
+		}
 	}
 	L.push("");
 
@@ -2285,7 +2560,7 @@ export function renderScoreboard(view) {
 	L.push(
 		`S ${famRows[0].here + famRows[0].live}/${famRows[0].all}, T ${famRows[1].here + famRows[1].live}/${famRows[1].all}, ` +
 			`H ${famRows[2].here + famRows[2].live}/${famRows[2].all}, F ${famRows[3].here + famRows[3].live}/${famRows[3].all}, ` +
-			`R ${famRows[4].here + famRows[4].live}/${famRows[4].all}.`,
+			`R ${famRows[4].here + famRows[4].live}/${famRows[4].all}, B ${famRows[5].here + famRows[5].live}/${famRows[5].all}.`,
 	);
 	L.push("");
 	L.push("**The size of each page's module closure is deliberately not in this file.** It is the set the H");
@@ -2300,15 +2575,15 @@ export function renderScoreboard(view) {
 	L.push(`**The overall column carries its withheld count ALWAYS, including when it is zero.** A score is`);
 	L.push("not comparable to another score until you know how many predicates each one is an answer to, and");
 	L.push(`\`0.97 · 4 withheld of ${predicateCount}\` is a different claim from \`0.97 · 0 withheld of ${predicateCount}\` — the first is an`);
-	L.push("answer about 34 predicates wearing the shape of an answer about 38. The zero is printed rather than");
+	L.push(`answer about ${predicateCount - 4} predicates wearing the shape of an answer about ${predicateCount}. The zero is printed rather than`);
 	L.push("implied by a missing suffix, because a suffix that is usually absent is read as decoration.");
 	L.push("");
-	L.push("| route | S | T | H | F | R | overall |");
-	L.push("|---|---|---|---|---|---|---|");
+	L.push("| route | S | T | H | F | R | B | overall |");
+	L.push("|---|---|---|---|---|---|---|---|");
 	for (const r of [...view.routes].sort((a, b) => (a.overall.score ?? 1) - (b.overall.score ?? 1) || a.route.localeCompare(b.route))) {
 		L.push(
 			`| \`${r.route}\`${r.redirectOnly ? " ·" : ""} | ${cell(r.families.S)} | ${cell(r.families.T)} | ` +
-				`${cell(r.families.H)} | ${cell(r.families.F)} | ${cell(r.families.R)} | ${overallCell(r.overall, predicateCount)} |`,
+				`${cell(r.families.H)} | ${cell(r.families.F)} | ${cell(r.families.R)} | ${cell(r.families.B)} | ${overallCell(r.overall, predicateCount)} |`,
 		);
 	}
 	L.push("");
@@ -2827,15 +3102,15 @@ function selfTest() {
 	// THE REAL RUBRIC, because the fixture above proves the parser and not the file it will read.
 	const realRubric = parseRubric(readFileSync(path.join(REPO_ROOT, RUBRIC), "utf8"));
 	ok(
-		`the real ${RUBRIC} defines 38 predicates, in five families`,
-		realRubric.predicates.length === 38 &&
-			[...new Set(realRubric.predicates.map((p) => p.family))].sort().join("") === "FHRST",
+		`the real ${RUBRIC} defines 44 predicates, in six families`,
+		realRubric.predicates.length === 44 &&
+			[...new Set(realRubric.predicates.map((p) => p.family))].sort().join("") === "BFHRST",
 	);
 	const perFamily = {};
 	for (const p of realRubric.predicates) perFamily[p.family] = (perFamily[p.family] ?? 0) + 1;
 	ok(
-		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F10 (10), R1-R8 (8)",
-		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 10 && perFamily.R === 8,
+		"...S1-S4 (4), T1-T7 (7), H1-H9 (9), F1-F10 (10), R1-R8 (8), B1-B6 (6)",
+		perFamily.S === 4 && perFamily.T === 7 && perFamily.H === 9 && perFamily.F === 10 && perFamily.R === 8 && perFamily.B === 6,
 	);
 	ok("...including H9, the empty-state row #3798 asked for", realRubric.predicates.some((p) => p.id === "H9"));
 
@@ -2847,9 +3122,9 @@ function selfTest() {
 	ok("24 predicates are scored statically — S1-S4, T1-T4, all nine H rows and all seven F rows", part.scored.length === 24);
 	ok("...and family F is one of them now (#3796), not a column of dashes", ["F1", "F2", "F3", "F4", "F5", "F6", "F7"].every((id) => part.scored.includes(id)));
 	ok("...and so is H3 (#3797), which was the last predicate with no instrument", part.scored.includes("H3"));
-	ok("14 are live", part.live.length === 14 && part.live.sort().join(",") === "F10,F8,F9,R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
+	ok("19 are live", part.live.length === 19 && part.live.sort().join(",") === "B1,B2,B3,B4,B5,F10,F8,F9,R1,R2,R3,R4,R5,R6,R7,R8,T5,T6,T7");
 	ok("...and F8-F10 are family F AND live — the one family split across both halves (#4278)", ["F8", "F9", "F10"].every((id) => part.live.includes(id) && !part.scored.includes(id)));
-	ok("0 have no instrument anywhere — the bucket is empty, and it is still a bucket", part.none.length === 0 && Array.isArray(part.none));
+	ok("1 has no instrument anywhere — B6, owned by the real-time bus (#6115)", part.none.length === 1 && part.none[0] === "B6" && NOT_SCORED_STATICALLY.B6.owner === "#6115");
 	// The bucket's contract outlives its last occupant: a row that lands in it must name an owner.
 	// Proved on a fixture rather than on the live table, which is empty.
 	ok(
@@ -3104,6 +3379,20 @@ function selfTest() {
 					liveRecord("/r", "R8", "N/A", { reason: "redirect-only" }),
 				],
 			},
+			// Family B (#6116). No FAIL here on purpose: a B FAIL is held to `BEHAVIOUR_LEDGER`, and the
+			// ledger's two directions are driven on their own fixture below. What this section keeps
+			// straight is the one NOT MEASURED family B is built to produce — an answered empty state —
+			// and the structural N/A B2 declares for a route with no loading boundary.
+			behaviour: {
+				runKey: "fixture-behaviour-org",
+				records: [
+					...["B1", "B2", "B3", "B4", "B5"].map((id) => liveRecord("/a", id, "PASS")),
+					liveRecord("/b", "B1", "NOT MEASURED", { reason: "answered-empty — the route's answered render is its empty state" }),
+					liveRecord("/b", "B2", "N/A", { reason: "no-loading-boundary" }),
+					...["B3", "B4", "B5"].map((id) => liveRecord("/b", id, "PASS")),
+					...["B1", "B2", "B3", "B4", "B5"].map((id) => liveRecord("/r", id, "N/A", { reason: "redirect-only" })),
+				],
+			},
 		},
 	};
 	// ── family F's fixture ───────────────────────────────────────────────────────────────────
@@ -3135,7 +3424,7 @@ function selfTest() {
 		R8: { owner: "#5", why: "one inert control" },
 	};
 
-	const view = buildView({
+	const view = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3165,8 +3454,8 @@ function selfTest() {
 	ok("score is null, not 0, when nothing was measured", scoreOf(0, 0) === null);
 	// #3797. H3 was the last predicate with no instrument; the `none` branch stays for the next one.
 	ok(
-		"no predicate is un-instrumented any more, and the total says so",
-		Object.values(view.predicates).every((p) => p.instrument !== "none") && view.totals.notInstrumented === 0,
+		"only B6 is un-instrumented — it waits for the real-time bus (#6115) — and the total says so",
+		Object.entries(view.predicates).filter(([, p]) => p.instrument === "none").map(([id]) => id).join(",") === "B6" && view.totals.notInstrumented === 1,
 	);
 	ok(
 		"H3 is scored by `check-shared-surface`, and a second status map FAILS the page that imports it",
@@ -3186,7 +3475,7 @@ function selfTest() {
 	raises(
 		"an F cell with NO verdict RAISES rather than scoring a short denominator",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 				filterVerdicts: fixtureFilter.filter((v) => !(v.route === "/a" && v.predicate === "F5")),
@@ -3201,7 +3490,7 @@ function selfTest() {
 	raises(
 		"...and a DUPLICATE F cell raises rather than being counted twice",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 				filterVerdicts: [...fixtureFilter, { route: "/a", predicate: "F1", verdict: "PASS" }],
@@ -3239,7 +3528,7 @@ function selfTest() {
 	// level up from the family cells.
 	ok(
 		"the overall cell carries the withheld count, and carries it when it is ZERO",
-		overallCell(view.routes.find((r) => r.route === "/b").overall, 33).endsWith("· 3 withheld of 33") &&
+		overallCell(view.routes.find((r) => r.route === "/b").overall, 33).endsWith("· 4 withheld of 33") &&
 			overallCell(view.routes.find((r) => r.route === "/a").overall, 33).endsWith("· 0 withheld of 33"),
 	);
 	ok(
@@ -3295,7 +3584,7 @@ function selfTest() {
 	// is new drift, `check-shared-surface` is red on it, and `unlisted` is the column this report
 	// tells a reader to look at first. Reading the ledger per FILE hides it, and hides it in the
 	// direction that reports a clean board.
-	const overflowed = buildView({
+	const overflowed = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3315,7 +3604,7 @@ function selfTest() {
 	raises(
 		"a rule id that maps to nothing and is not declared unmapped RAISES",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3330,7 +3619,7 @@ function selfTest() {
 	raises(
 		"...including one that only appears in the allowlist",
 		() =>
-			buildView({
+			buildView({ behaviourLedger: {},
 				run: fixtureRun,
 				rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -3345,8 +3634,9 @@ function selfTest() {
 
 	// ── the live half ────────────────────────────────────────────────────────────────────────
 	ok(
-		"the three sections partition the fourteen live predicates, disjointly",
-		livePredicateSections().size === 14 &&
+		"the four sections partition the nineteen live predicates, disjointly",
+		livePredicateSections().size === 19 &&
+			[...livePredicateSections()].filter(([, k]) => k === "behaviour").map(([id]) => id).sort().join(",") === "B1,B2,B3,B4,B5" &&
 			[...livePredicateSections()].filter(([, k]) => k === "permissions").map(([id]) => id).join(",") === "T7" &&
 			[...livePredicateSections()].filter(([, k]) => k === "interaction").map(([id]) => id).sort().join(",") === "F10,F8,F9,R8",
 	);
@@ -3375,7 +3665,7 @@ function selfTest() {
 	// The comparison is worthless if the parse found nothing, so that is asserted FIRST and
 	// separately — "the emitter's table is empty" and "the emitter's table matches" must not read
 	// the same.
-	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 14);
+	ok(`the ${LIVE_REPORT_TS} NA_REASONS table parses, and is not empty`, naBlock !== null && Object.keys(mirrored).length === 19);
 	ok(
 		"...and LIVE_NA_REASONS mirrors it exactly, key for key and reason for reason",
 		JSON.stringify(Object.entries(mirrored).sort()) === JSON.stringify(Object.entries(LIVE_NA_REASONS).map(([k, v]) => [k, [...v]]).sort()),
@@ -3846,6 +4136,7 @@ function selfTest() {
 				routes: described("routes"),
 				permissions: described("permissions"),
 				interaction: described("interaction"),
+				behaviour: described("behaviour"),
 				...Object.fromEntries(Object.entries(over ?? {}).map(([k, v]) => [k, described(k, v)])),
 			},
 		});
@@ -3905,15 +4196,15 @@ function selfTest() {
 	);
 
 	// ── vacuity: "found nothing" must not be reachable from "was not run" ─────────────────────
-	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] }, interaction: { runKey: "", records: [] } } };
+	const emptyLive = { source: fixtureLive.source, sections: { routes: { runKey: "k", records: [] }, permissions: { runKey: "k", records: [] }, interaction: { runKey: "", records: [] }, behaviour: { runKey: "", records: [] } } };
 	ok("a healthy live artifact is clean", liveVacuityProblems(fixtureLive, ["/a", "/b", "/r"]).length === 0);
 	ok(
 		"an EMPTY live artifact is a problem, not ten predicates nobody failed",
 		liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("ZERO records")),
 	);
 	ok(
-		"...and every live predicate with no record anywhere is named — ALL FOURTEEN, now that no section is pending",
-		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 14,
+		"...and every live predicate with no record anywhere is named — ALL NINETEEN, now that no section is pending",
+		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 19,
 	);
 	ok(
 		"...including F8-F10 and R8, whose section used to be spared by `awaitingFirstImport` and no longer is (#4901)",
@@ -3965,7 +4256,7 @@ function selfTest() {
 	);
 	ok("...and it leaves the denominator, exactly as an N/A does: T7 is 1 PASS / 1 FAIL / 1 withheld = 0.50", view.predicates.T7.score === 0.5);
 	ok("...so a predicate withheld everywhere scores null, never 1", scoreOf(0, 0) === null);
-	const allWithheld = buildView({
+	const allWithheld = buildView({ behaviourLedger: {},
 		run: fixtureRun,
 		rubricPredicates: fixtureRubric,
 		filterVerdicts: fixtureFilter,
@@ -4005,22 +4296,22 @@ function selfTest() {
 	// ── the live debt ledger, both directions ─────────────────────────────────────────────────
 	raises(
 		"a live predicate that FAILS with no owning issue RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { R4: fixtureDebt.R4, R5: fixtureDebt.R5 }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"T7 FAILS on 1 route(s) and no LIVE_DEBT row owns it",
 	);
 	raises(
 		"...and a debt row for a predicate that no longer fails RAISES too — the direction that keeps it true",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, R1: { owner: "#9", why: "stale" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"R1 has a LIVE_DEBT row (#9) and now FAILS nowhere",
 	);
 	raises(
 		"a debt row naming something that is not a live predicate RAISES",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: fixtureLive, liveDebt: { ...fixtureDebt, H1: { owner: "#9", why: "x" } }, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"LIVE_DEBT names H1, which is not a live predicate",
 	);
 	raises(
 		"an EMPTY live artifact refuses to build a view at all",
-		() => buildView({ run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
+		() => buildView({ behaviourLedger: {}, run: fixtureRun, rubricPredicates: fixtureRubric, filterVerdicts: fixtureFilter, surface: fixtureSurface, live: emptyLive, liveDebt: {}, pageClosures: new Map([["/a", new Set()], ["/b", new Set()], ["/r", new Set()]]), chromeClosure: new Set() }),
 		"the live audit records did not measure the console",
 	);
 
@@ -4102,6 +4393,31 @@ function selfTest() {
 				},
 			],
 		},
+		// The FOURTH artifact (#6116), shaped like what `behaviour.spec.ts` writes: a B1 FAIL with the
+		// signals that separated the held render, a B4 PASS, and the NOT MEASURED a seeded org exists
+		// to minimise.
+		behaviour: {
+			runKey: "e2e-org-4",
+			generatedAt: "2026-10-20T11:33:02.119Z",
+			records: [
+				{
+					route: "/a",
+					url: "/e2e-org-4",
+					predicate: "B1",
+					verdict: "FAIL",
+					evidence: { differs: ["skeleton", "busy", "rows"], held: ["action 7f00"], answered: {}, heldRender: {}, onlyAnswered: ["alpha"], onlyHeld: [] },
+				},
+				{ route: "/a", url: "/e2e-org-4", predicate: "B4", verdict: "PASS", evidence: { phases: [] } },
+				{
+					route: "/a",
+					url: "/e2e-org-4",
+					predicate: "B3",
+					verdict: "NOT MEASURED",
+					reason: "answered-empty — the route's answered render is its empty state",
+					evidence: { heldEmpty: 1, answeredEmpty: 1 },
+				},
+			],
+		},
 	};
 	const imported = JSON.parse(importLive(rawArtifacts, { run: "https://example.invalid/runs/7", commit: "abc123" }));
 	ok("the import keeps both runs apart, each with its own runKey", imported.runs.routes.runKey === "e2e-org-1" && imported.runs.permissions.runKey === "e2e-org-2");
@@ -4150,6 +4466,83 @@ function selfTest() {
 			imported.runs.interaction.records.length === 2 &&
 			imported.runs.interaction.records.find((r) => r.predicate === "R8").detail.includes("1 enabled control did nothing"),
 	);
+	ok(
+		"the behaviour section imports as its own run, its B1 FAIL summarised from the signals that separated the held render",
+		imported.runs.behaviour.runKey === "e2e-org-4" &&
+			imported.runs.behaviour.records.find((r) => r.predicate === "B1").detail ===
+				"with every read held, the region differs from its answered render in: skeleton, busy, rows",
+	);
+	raises(
+		"an import missing the behaviour artifact RAISES — a family nobody imported reads as one nobody failed",
+		() => importLive({ routes: rawArtifacts.routes, permissions: rawArtifacts.permissions, interaction: rawArtifacts.interaction }, { run: "r", commit: "c" }),
+		"ui-audit-behaviour.json: no `records` array",
+	);
+
+	// ── an import may not quietly stop measuring a scored cell ──────────────────────────────────
+	{
+		const prev = { behaviour: { records: [{ route: "/a", predicate: "B5", verdict: "PASS" }, { route: "/b", predicate: "B5", verdict: "FAIL" }, { route: "/c", predicate: "B5", verdict: "NOT MEASURED" }] } };
+		const next = { behaviour: { records: [{ route: "/a", predicate: "B5", verdict: "NOT MEASURED" }, { route: "/b", predicate: "B5", verdict: "PASS" }] } };
+		ok("a scored cell that becomes NOT MEASURED is refused", newlyWithheldProblems(prev, next).some((p) => p.startsWith("/a B5 was PASS")));
+		ok("...and so is one that VANISHES from the import", newlyWithheldProblems(prev, { behaviour: { records: [] } }).some((p) => p.includes("/b B5 was FAIL and is now absent")));
+		ok("...unless it is explained", newlyWithheldProblems(prev, next, { "/a B5": "instrument change" }).length === 0);
+		ok("...a cell that was already withheld is not a regression", !newlyWithheldProblems(prev, next).some((p) => p.includes("/c B5")));
+		ok("an explanation for a cell that is still measured is refused", newlyWithheldProblems(prev, next, { "/a B5": "x", "/b B5": "y" }).some((p) => p.includes("--explain names /b B5")));
+		raises("importLive raises on it", () => importLive(rawArtifacts, { run: "r", commit: "c" }, { behaviour: { records: [{ route: "/zz", predicate: "B1", verdict: "PASS" }] } }), "stops measuring cells");
+	}
+
+	// ── family B's summaries mirror the verdict ──────────────────────────────────────────────
+	ok(
+		"B2 names the outline shift AND the column mismatch when both failed",
+		summariseLiveEvidence("B2", { score: 0.0312, budget: 0.02, columns: { skeleton: 1, final: 2 } }) ===
+			"the skeleton moves 0.031 against the page (budget 0.02); the skeleton sets 1 block side by side and the page 2",
+	);
+	ok(
+		"...and only the column mismatch when the outline held",
+		summariseLiveEvidence("B2", { score: 0, budget: 0.02, columns: { skeleton: 1, final: 2 } }) === "the skeleton sets 1 block side by side and the page 2",
+	);
+	raises("a B2 FAIL whose evidence shows neither RAISES", () => summariseLiveEvidence("B2", { score: 0.001, budget: 0.02, columns: { skeleton: 1, final: 1 } }), "no shift over budget or column mismatch");
+	ok(
+		"B2 names the block whose height the skeleton got wrong, through the worst-of-swaps wrapper",
+		summariseLiveEvidence("B2", { worst: { score: 0.05, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.05, skeleton: { y: 100, h: 494 }, region: { y: 100, h: 96 } } }, swaps: ["FAIL", "PASS"] }) ===
+			"the skeleton moves 0.050 against the page (budget 0.02) — a 494px skeleton block became 96px",
+	);
+	ok(
+		"...and says how far it MOVED when the block kept its height but not its place",
+		summariseLiveEvidence("B2", { score: 0.047, budget: 0.02, columns: { skeleton: 1, final: 1 }, worstBlock: { score: 0.047, skeleton: { y: 149, h: 630 }, region: { y: 250, h: 632 } } }) ===
+			"the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower",
+	);
+	ok(
+		"...and a bars-only skeleton is named as drawing no frame, never as \"0 blocks side by side\"",
+		summariseLiveEvidence("B2", { score: 0, budget: 0.02, columns: { skeleton: 0, final: 3 } }) === "the skeleton draws no block-sized frame and the page 3",
+	);
+	ok("B3 counts the empty copy against the answered render", summariseLiveEvidence("B3", { heldEmpty: 2, answeredEmpty: 0 }) === "2 empty-copy regions while every read was held, against 0 once answered");
+	raises("a B3 FAIL with no extra empty copy RAISES", () => summariseLiveEvidence("B3", { heldEmpty: 1, answeredEmpty: 1 }), "no empty copy beyond");
+	ok(
+		"B4 names each failed phase and its problems",
+		summariseLiveEvidence("B4", { phases: [{ phase: "cold load", problems: [] }, { phase: "stale refetch", problems: ["empty copy"] }] }) === "stale refetch: empty copy",
+	);
+	raises("a B4 FAIL with no failed phase RAISES", () => summariseLiveEvidence("B4", { phases: [{ phase: "cold load", problems: [] }] }), "no failed phase");
+	ok("B5 names the read that blanked the page", summariseLiveEvidence("B5", { blanked: ["the `jobs/page` read"] }) === "one read failing alone blanked every region — the `jobs/page` read");
+	raises("a B1 FAIL with no separating signal RAISES", () => summariseLiveEvidence("B1", { differs: [] }), "no signal that separates");
+
+	// ── family B's per-route ledger, both directions ─────────────────────────────────────────
+	const bFail = [{ route: "/a", predicate: "B1", verdict: "FAIL" }, { route: "/b", predicate: "B3", verdict: "PASS" }];
+	ok("a B FAIL with a `lifts` row is clean", behaviourLedgerProblems(bFail, { "/a": { B1: { lifts: "#6121" } } }).length === 0);
+	ok("...and so is one with a `reason` row", behaviourLedgerProblems(bFail, { "/a": { B1: { reason: "built this way on purpose" } } }).length === 0);
+	ok("a B FAIL with NO row is named", behaviourLedgerProblems(bFail, {}).some((p) => p.includes("B1 FAILS on `/a`")));
+	ok("a row whose cell no longer FAILS is named — the direction that fails silently", behaviourLedgerProblems(bFail, { "/a": { B1: { lifts: "#1" } }, "/b": { B3: { lifts: "#2" } } }).some((p) => p.includes("B3 on `/b`") && p.includes("no longer FAILS")));
+	ok("a row with BOTH kinds is refused", behaviourLedgerProblems(bFail, { "/a": { B1: { lifts: "#1", reason: "x" } } }).some((p) => p.includes("exactly one of")));
+	ok("a `lifts` that names no issue is refused", behaviourLedgerProblems(bFail, { "/a": { B1: { lifts: "soon" } } }).some((p) => p.includes("`#<n>`")));
+	ok("a row for a non-B predicate is refused", behaviourLedgerProblems(bFail, { "/a": { B1: { lifts: "#1" }, R4: { lifts: "#2" } } }).some((p) => p.includes("holds family B only")));
+	ok(
+		"...and a non-B live FAIL is untouched by it — LIVE_DEBT still owns R4",
+		behaviourLedgerProblems([{ route: "/a", predicate: "R4", verdict: "FAIL" }], {}).length === 0,
+	);
+	ok(
+		"...and a NOT MEASURED B cell needs no row — the ledger records findings, not gaps",
+		behaviourLedgerProblems([{ route: "/a", predicate: "B2", verdict: "NOT MEASURED" }], {}).length === 0,
+	);
+
 	ok(
 		"...and a NOT MEASURED record keeps the RUN's reason and gains no detail",
 		(() => {
@@ -4205,14 +4598,17 @@ function selfTest() {
 	// no such row, and that is asserted as ZERO rather than left to a `.every` over an empty list,
 	// which is true of anything.
 	const noneRows = md.split("\n").filter((l) => /^\| \*\*[A-Z]\d\*\* \| [A-Z] \| \*\*none\*\*/.test(l));
-	ok("...and no row is rendered as un-instrumented at all", noneRows.length === 0, noneRows.join("\n"));
-	ok("...so the un-instrumented table is not rendered, and its sentence says why", !md.includes("| id | owner | what is not being measured |") && md.includes("Every predicate has an instrument"));
+	ok("...and exactly one row is rendered as un-instrumented — B6, owned by #6115", noneRows.length === 1 && noneRows[0].startsWith("| **B6** |"), noneRows.join("\n"));
+	ok("...so the un-instrumented table IS rendered, under a sentence that says one", md.includes("| id | owner | what is not being measured |") && md.includes("The un-instrumented one, with the issue that owns it:") && md.includes("| **B6** | #6115 |"));
 	// The sentence that introduces that table is DERIVED, so it cannot go on saying "eight" while
 	// the table under it holds one — the failure this line exists to catch is a report that reads
 	// correctly to a machine and wrongly to the person quoting it.
 	// The sentence is DERIVED from the count, in all three of its forms — one, many, none — and the
 	// two forms the live table no longer exercises are proved on a view with the bucket refilled.
-	ok("...and the count above them is derived, not typed: ZERO says every predicate has one", md.includes("Every predicate has an instrument"));
+	ok(
+		"...and the count above them is derived, not typed: ZERO says every predicate has one",
+		renderScoreboard({ ...view, totals: { ...view.totals, notInstrumented: 0 } }).includes("Every predicate has an instrument") && !md.includes("Every predicate has an instrument"),
+	);
 	{
 		const one = { ...view, totals: { ...view.totals, notInstrumented: 1 } };
 		const many = { ...view, totals: { ...view.totals, notInstrumented: 3 } };
@@ -4224,7 +4620,7 @@ function selfTest() {
 	// verdict. Neither checked-in file may move when that happens, or every such landing makes
 	// every other open console PR stale again. The summary is where the size goes, so it MUST move.
 	{
-		const grown = buildView({
+		const grown = buildView({ behaviourLedger: {},
 			run: fixtureRun,
 			rubricPredicates: fixtureRubric,
 			filterVerdicts: fixtureFilter,
@@ -4248,7 +4644,7 @@ function selfTest() {
 	);
 	ok("...and no absolute path either", !md.includes(REPO_ROOT) && !renderJson(view).includes(REPO_ROOT));
 	const parsedJson = JSON.parse(renderJson(view));
-	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 14 live, every predicate", parsedJson.verdicts.length === 3 * 38);
+	ok("the JSON carries one record per (route, predicate) it scored — 24 static + 19 live, every predicate but B6", parsedJson.verdicts.length === 3 * 43);
 	ok("...in the shape e2e/audit/report.ts writes", parsedJson.verdicts.every((v) => "route" in v && "predicate" in v && "verdict" in v));
 
 	// ── splice ───────────────────────────────────────────────────────────────────────────────
@@ -4453,7 +4849,7 @@ export const USAGE = [
  */
 export function parseCliArgs(argv) {
 	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--filter-surfaces": "filter-surfaces", "--help": "help", "-h": "help" };
-	const VALUED = ["--import-live", "--run", "--commit", "--step-summary"];
+	const VALUED = ["--import-live", "--run", "--commit", "--step-summary", "--explain"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
 	/** @type {Record<string, string>} */
@@ -4485,7 +4881,14 @@ export function parseCliArgs(argv) {
 				error: `--import-live needs ${missing.join(" and ")}: a baseline nobody can cite the provenance of is not one`,
 			};
 		}
-		return { mode: "import-live", error: null, dir: values["--import-live"], run: values["--run"], commit: values["--commit"] };
+		return {
+			mode: "import-live",
+			error: null,
+			dir: values["--import-live"],
+			run: values["--run"],
+			commit: values["--commit"],
+			...("--explain" in values ? { explain: values["--explain"] } : {}),
+		};
 	}
 	if ("--step-summary" in values) {
 		if (distinct.length > 0) return { mode: null, error: `--step-summary and ${distinct.join(" and ")} cannot both be asked for` };
@@ -4622,7 +5025,11 @@ if (invokedDirectly) {
 		/** @type {ReturnType<typeof parseLive>} */
 		let parsedBack;
 		try {
-			body = importLive(raw, { run: parsed.run, commit: parsed.commit });
+			/** @type {Record<string, string>} */
+			let explained = {};
+			if (parsed.explain !== undefined) explained = JSON.parse(readFileSync(path.resolve(parsed.explain), "utf8"));
+			const previous = JSON.parse(readFileSync(path.join(REPO_ROOT, LIVE_JSON), "utf8")).runs;
+			body = importLive(raw, { run: parsed.run, commit: parsed.commit }, previous, explained);
 			parsedBack = parseLive(body);
 		} catch (err) {
 			console.error(`audit-report: ${err instanceof Error ? err.message : String(err)}`);

@@ -16,7 +16,8 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { errorStateSignature, rendersSharedErrorState } from "./error-state";
+import { manifestConsistencyProblems, readKey, shellClassifier, shellReadsFor, workersFromManifest } from "./behaviour";
+import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
@@ -788,4 +789,61 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			record({ route: "/x", url: "/x", predicate: "R5", verdict: "N/A", reason: "redirect-only" }),
 		).toThrow(/never N\/A/);
 	});
+});
+
+// T7 and B4 read a failed or refused DATA REGION through `RegionError` (#6117), which renders no
+// `ErrorState`. Both directions, so a recogniser that stopped finding it is red here rather than a
+// column of T7 blanks and B4 "vanished" findings on pages that did the right thing.
+test("the region-level error render is recognised, and nothing else is", async ({ page }) => {
+	const fixture = (body: string) => `<!doctype html><html><body>${body}</body></html>`;
+	await page.setContent(fixture('<main><div data-slot="region-error" data-state="error">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "RegionError by its data-slot, with no role").toBe(true);
+	await page.setContent(fixture('<main><div role="alert">Couldn\'t load runners</div></main>'));
+	expect(await rendersRegionError(page), "a role=alert inside main").toBe(true);
+	await page.setContent(fixture('<div role="alert">toast</div><main><table><tr><td>row</td></tr></table></main>'));
+	expect(await rendersRegionError(page), "an alert OUTSIDE main is not a region's error").toBe(false);
+	await page.setContent(fixture('<main><div data-slot="empty">No runners yet</div></main>'));
+	expect(await rendersRegionError(page), "an empty state is not an error").toBe(false);
+});
+
+// Family B's "read" (#6116): what B1 holds, B4 fails and B5 fails alone. The change stream and its
+// probe (#6115/#6178) are never reads — a stream open for the life of the page would make every
+// route "fetch on mount" — and a server action and a read-router call always are.
+test("family B's read classifier: actions and rpc in, the change stream and its probe out", () => {
+	const req = (url: string, method: string, headers: Record<string, string>) => ({ url: () => url, method: () => method, headers: () => headers });
+	expect(readKey(req("http://x.test/acme/~/jobs", "POST", { "next-action": "7f00" }))).toBe("action 7f00");
+	expect(readKey(req("http://x.test/acme/~/rpc/jobs/page?input=1", "GET", {}))).toBe("rpc jobs/page");
+	expect(readKey(req("http://x.test/acme/~/events", "GET", { accept: "text/event-stream" })), "the change stream").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/events?probe=1", "GET", {})), "the stream's probe").toBeNull();
+	expect(readKey(req("http://x.test/acme/~/jobs", "GET", { rsc: "1" })), "a navigation's RSC payload").toBeNull();
+});
+
+// The build manifest is the shell classifier's input, so a manifest that does not describe the run
+// must refuse rather than classify: renamed worker keys (a Next upgrade, a manifest from another build)
+// name no observed route, and every shell read would silently become a page read.
+test("a build manifest that does not describe the observed run fails closed", () => {
+	const reads = new Map([["/a", ["action s1", "rpc x"]], ["/b", ["action s1"]]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const good = workersFromManifest({ node: { s1: { workers: { "app/a/page": {}, "app/b/page": {} } } } });
+	const renamed = workersFromManifest({ node: { s1: { workers: { "app/(renamed)/a/page": {}, "app/(renamed)/b/page": {} } } } });
+	expect(manifestConsistencyProblems(reads, entries, good)).toEqual([]);
+	expect(manifestConsistencyProblems(reads, entries, renamed).length, "renamed worker keys").toBe(2);
+	expect(manifestConsistencyProblems(reads, entries, workersFromManifest({ node: {} })).length, "an action the manifest omits").toBe(2);
+	expect(manifestConsistencyProblems(new Map([["/a", ["rpc x"]]]), entries, good).length, "a run that observed no action at all").toBe(1);
+});
+
+// A read the build references from every page is the SHELL's only when another route was seen making
+// it: `getJob` is in every AppShell bundle and only `~/jobs/[id]` calls it.
+test("the shell classifier needs a referenced-everywhere read to be OBSERVED elsewhere", () => {
+	const chains = new Map([["/a", "S"], ["/b", "S"]]);
+	const entries = new Map([["/a", "app/a/page"], ["/b", "app/b/page"]]);
+	const everywhere = { workers: { "app/a/page": {}, "app/b/page": {} } };
+	const workers = workersFromManifest({ node: { poll: everywhere, getJob: everywhere } });
+	const reads = new Map([["/a", ["action poll", "action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellReadsFor("/a", chains, reads, entries, workers)).toEqual(["action poll"]);
+	// The KEY is classified, not the route's answered reads: a shell read /b made and /a's warm load did
+	// not is still the shell's when /a's cold load makes it.
+	const coldOnly = new Map([["/a", ["action getJob"]], ["/b", ["action poll"]]]);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action poll")).toBe(true);
+	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action getJob")).toBe(false);
 });
