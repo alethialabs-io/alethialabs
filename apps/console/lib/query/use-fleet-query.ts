@@ -2,112 +2,77 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
+// The warm pools' client half (#6123, ADR 0005). The read is the `runners.fleet` GET procedure,
+// prefetched by the runners route and kept current by the change stream: a pool's config is a
+// `fleet` hint, its runners' states are `runners` hints, its busy count moves with `jobs` hints
+// (lib/query/topics.ts) — no poll. Writes go through `useActionMutation`.
+
+import { useQuery } from "@tanstack/react-query";
 import {
-	useMutation,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import {
-	createFleetPool,
-	deleteFleetPool,
-	setFleetPoolEnabled,
-	updateFleetPool,
+	createFleetPoolAction,
+	deleteFleetPoolAction,
+	setFleetPoolEnabledAction,
+	updateFleetPoolAction,
 } from "@/app/server/actions/fleet";
-import type {
-	FleetPoolCreateInput,
-	FleetPoolUpdateInput,
-} from "@/lib/validations/fleet";
-import { fetchFleetData, type FleetData } from "./resource-fetchers";
-import { qk } from "./keys";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { TOPIC_KEYS } from "@/lib/query/topics";
+import { orpc } from "@/lib/rpc/client";
+import type { FleetData } from "@/lib/rpc/procedures/runners";
 
 export type { FleetData };
 
-/**
- * Fleet cockpit data (warm pools + economics) for the active org. Server-prefetched and
- * hydrated, then polled every 10s so the cards track the controller's reconcile loop.
- */
-export function useFleetQuery(): UseQueryResult<FleetData> {
-	const { org } = useParams<{ org: string }>();
-	return useQuery({
-		queryKey: qk.fleet(org),
-		queryFn: fetchFleetData,
-		refetchInterval: 10_000,
-	});
+/** Fleet cockpit data (warm pools + economics). Server-prefetched on the runners route. */
+export function useFleetQuery() {
+	return useQuery(orpc.runners.fleet.queryOptions());
 }
 
-/** Invalidates the fleet cache so the pools reflect a mutation on the next reconcile. */
-function useInvalidateFleet() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return () => qc.invalidateQueries({ queryKey: qk.fleet(org) });
+/** The fleet read's key, for the optimistic patches below. */
+function fleetKey() {
+	return orpc.runners.fleet.queryKey();
+}
+
+/** Narrows a cache value to the fleet read's shape (it is the only thing stored under its key). */
+function isFleetData(value: unknown): value is FleetData {
+	return typeof value === "object" && value !== null && "pools" in value && Array.isArray(value.pools);
 }
 
 /** Creates a warm pool. */
 export function useCreatePool() {
-	const invalidate = useInvalidateFleet();
-	return useMutation({
-		mutationFn: (input: FleetPoolCreateInput) => createFleetPool(input),
-		onSuccess: () => invalidate(),
-	});
+	return useActionMutation(createFleetPoolAction, { invalidates: TOPIC_KEYS.fleet() });
 }
 
 /** Updates a warm pool's knobs. */
 export function useUpdatePool() {
-	const invalidate = useInvalidateFleet();
-	return useMutation({
-		mutationFn: ({ id, input }: { id: string; input: FleetPoolUpdateInput }) =>
-			updateFleetPool(id, input),
-		onSuccess: () => invalidate(),
-	});
+	return useActionMutation(updateFleetPoolAction, { invalidates: TOPIC_KEYS.fleet() });
 }
 
-/** Pauses/resumes a pool. Optimistically flips the toggle so it feels instant. */
+/** Pauses/resumes a pool. Optimistically flips the toggle so it feels instant; rolled back on failure. */
 export function useSetPoolEnabled() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return useMutation({
-		mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-			setFleetPoolEnabled(id, enabled),
-		onMutate: async ({ id, enabled }) => {
-			await qc.cancelQueries({ queryKey: qk.fleet(org) });
-			const prev = qc.getQueryData<FleetData>(qk.fleet(org));
-			if (prev) {
-				qc.setQueryData<FleetData>(qk.fleet(org), {
-					...prev,
-					pools: prev.pools.map((p) => (p.id === id ? { ...p, enabled } : p)),
-				});
-			}
-			return { prev };
-		},
-		onError: (_err, _vars, ctx) => {
-			if (ctx?.prev) qc.setQueryData(qk.fleet(org), ctx.prev);
-		},
-		onSettled: () => qc.invalidateQueries({ queryKey: qk.fleet(org) }),
+	return useActionMutation(setFleetPoolEnabledAction, {
+		invalidates: TOPIC_KEYS.fleet(),
+		optimistic: [
+			{
+				key: fleetKey(),
+				update: (current, { id, enabled }) =>
+					isFleetData(current)
+						? { ...current, pools: current.pools.map((p) => (p.id === id ? { ...p, enabled } : p)) }
+						: current,
+			},
+		],
 	});
 }
 
 /** Deletes a pool. Optimistically removes the card, reconciling on settle. */
 export function useDeletePool() {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return useMutation({
-		mutationFn: (id: string) => deleteFleetPool(id),
-		onMutate: async (id) => {
-			await qc.cancelQueries({ queryKey: qk.fleet(org) });
-			const prev = qc.getQueryData<FleetData>(qk.fleet(org));
-			if (prev) {
-				qc.setQueryData<FleetData>(qk.fleet(org), {
-					...prev,
-					pools: prev.pools.filter((p) => p.id !== id),
-				});
-			}
-			return { prev };
-		},
-		onError: (_err, _id, ctx) => {
-			if (ctx?.prev) qc.setQueryData(qk.fleet(org), ctx.prev);
-		},
-		onSettled: () => qc.invalidateQueries({ queryKey: qk.fleet(org) }),
+	return useActionMutation(deleteFleetPoolAction, {
+		invalidates: TOPIC_KEYS.fleet(),
+		successMessage: "Pool deleted",
+		optimistic: [
+			{
+				key: fleetKey(),
+				update: (current, { id }) =>
+					isFleetData(current) ? { ...current, pools: current.pools.filter((p) => p.id !== id) } : current,
+			},
+		],
 	});
 }

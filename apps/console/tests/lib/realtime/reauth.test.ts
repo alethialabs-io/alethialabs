@@ -144,6 +144,20 @@ describe("capabilitiesOf", () => {
 		});
 	});
 
+	it("never grants fleet view on a hosted deployment, whatever the PDP says (#6123)", async () => {
+		vi.stubEnv("ALETHIA_DEPLOYMENT_MODE", "hosted");
+		try {
+			h.can.mockResolvedValue({ allowed: true });
+			await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
+				fleetView: false,
+				manageSupport: true,
+			});
+			expect(h.can).not.toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "view", { type: "fleet" });
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it("reads a PDP error as no capability", async () => {
 		h.can.mockRejectedValue(new Error("pdp down"));
 		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({

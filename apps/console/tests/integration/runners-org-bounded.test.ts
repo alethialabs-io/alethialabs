@@ -32,6 +32,7 @@ import {
 	setDefaultRunner,
 } from "@/app/server/actions/runners";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { readRunnersData, readRunnersPage } from "@/lib/rpc/procedures/runners";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor } from "@/lib/authz/types";
@@ -266,5 +267,29 @@ describeIfDb("runner reads and writes are bounded to the addressed organization"
 			sql`select id from claim_next_job(${runnerB}::uuid, ${hashToken(TOKEN_B)}, null::uuid)`,
 		);
 		expect(claimed.map((r) => r.id)).toEqual([job.id]);
+	});
+
+	it("the runners page's reads (#6123) are org-bounded and carry no runner credential", async () => {
+		const hashes = (
+			await getServiceDb()
+				.select({ hash: runners.token_hash })
+				.from(runners)
+				.where(inArray(runners.id, [runnerA, runnerB, runnerPersonal, runnerManaged]))
+		).map((r) => r.hash);
+		expect(hashes).toHaveLength(4);
+
+		const data = await as(inA, () => readRunnersData());
+		const page = await as(inA, () => readRunnersPage({}));
+		const ids = data.runners.map((r) => r.id);
+		expect(ids).toContain(runnerA);
+		expect(ids).toContain(runnerPersonal);
+		expect(ids).not.toContain(runnerB);
+		expect(page.rows.map((r) => r.id)).not.toContain(runnerB);
+
+		// Not one byte of any runner's stored credential hash — the org's own, another org's, the
+		// managed fleet's (listed on a self-managed deployment) — is in either answer.
+		const wire = JSON.stringify([data, page]);
+		for (const hash of hashes) expect(wire).not.toContain(hash);
+		expect(wire).not.toContain("token_hash");
 	});
 });

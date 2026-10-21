@@ -78,6 +78,7 @@ import {
 	projectEnvironments,
 	projectFabrics,
 	projects,
+	runners,
 	supportCases,
 	user,
 } from "@/lib/db/schema";
@@ -119,6 +120,9 @@ export interface Seeded {
 	/** A job on each org's project (the addressed `jobs.project` read). */
 	projectJobX: string;
 	projectJobY: string;
+	/** One self runner in each org, registered by W (#6123). */
+	runnerX: string;
+	runnerY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -406,6 +410,28 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: (s, org) => ({ projectId: org === "x" ? s.projectX : s.projectY }),
 		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
 	},
+	// #6123. Runner reads take no runner id — each is the actor's whole visible set — so the markers
+	// are each org's seeded runner in that set: another org's runner is not there to be asked for.
+	"runners.list": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasItem(out, "runners", s.runnerX), y: hasItem(out, "runners", s.runnerY) }),
+	},
+	"runners.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.runnerX), y: hasRow(out, s.runnerY) }),
+	},
+	"runners.fleet": {
+		kind: "not-org-scoped",
+		reason: "warm pools are platform rows with no org (self-managed only); the answer is the deployment's fleet",
+		input: undefined,
+	},
+	"runners.releaseNotes": {
+		kind: "not-org-scoped",
+		reason: "runner releases are global; every org reads the same changelog",
+		input: { version: "0.0.0-it-6123-none" },
+	},
 };
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
@@ -491,6 +517,8 @@ export async function runRpcTenancySuite(opts: {
 		identityY: "",
 		projectJobX: "",
 		projectJobY: "",
+		runnerX: "",
+		runnerY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -600,6 +628,18 @@ export async function runRpcTenancySuite(opts: {
 			seeded.deliveryY = deliveries.find((d) => d.org === ORG_Y)?.id ?? "";
 			expect(seeded.deliveryX && seeded.deliveryY).toBeTruthy();
 
+			// #6123: one self runner per org, registered by W — U reaches each only through the org arm.
+			const seededRunners = await db
+				.insert(runners)
+				.values([
+					{ user_id: W, org_id: ORG_X, name: `it-6123-x-${ORG_X.slice(0, 6)}`, operator: "self", provisioning: "registered", token_hash: `it-6123-${randomUUID()}` },
+					{ user_id: W, org_id: ORG_Y, name: `it-6123-y-${ORG_Y.slice(0, 6)}`, operator: "self", provisioning: "registered", token_hash: `it-6123-${randomUUID()}` },
+				])
+				.returning({ id: runners.id, org: runners.org_id });
+			seeded.runnerX = seededRunners.find((r) => r.org === ORG_X)?.id ?? "";
+			seeded.runnerY = seededRunners.find((r) => r.org === ORG_Y)?.id ?? "";
+			expect(seeded.runnerX && seeded.runnerY).toBeTruthy();
+
 			// One project per org under the same slug, each with its default environment (W authors).
 			const seedProject = async (orgId: string): Promise<{ project: string; env: string }> => {
 				const [p] = await db
@@ -690,6 +730,7 @@ export async function runRpcTenancySuite(opts: {
 			const db = getServiceDb();
 			await db.delete(jobs).where(inArray(jobs.org_id, [ORG_X, ORG_Y]));
 			await db.delete(alertDeliveries).where(inArray(alertDeliveries.org_id, [ORG_X, ORG_Y]));
+			await db.delete(runners).where(inArray(runners.org_id, [ORG_X, ORG_Y]));
 			await db.delete(organizationBilling).where(inArray(organizationBilling.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(supportCases).where(inArray(supportCases.org_id, [ORG_X, ORG_Y]));
 			const seededProjects = [seeded.projectX, seeded.projectY].filter((id) => id !== "");

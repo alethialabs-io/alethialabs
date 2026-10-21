@@ -10,19 +10,19 @@ import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { Skeleton } from "@repo/ui/skeleton";
+import { RegionError } from "@/components/errors/region-error";
+import { ClockSlot } from "@/components/overview/clock-slot";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
-import { getRecentRunnerReleases } from "@/app/server/actions/runners";
-import {
-	useRunnersQuery,
-	useUpdateAllOutdated,
-	type RunnerReleaseInfo,
-} from "@/lib/query/use-runners-query";
+import { useRunnersQuery, useUpdateAllOutdated } from "@/lib/query/use-runners-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { toast } from "sonner";
 
 const MONO_LABEL = "font-mono text-ui-3xs uppercase tracking-[0.12em] text-muted-foreground";
+
+/** The widest relative time the panel normally prints, so its slot holds that width before hydration. */
+const RELATIVE_SIZER = "less than a minute ago";
 
 /** A clickable version label that opens the release-notes popover. */
 function VersionLink({ version }: { version: string }) {
@@ -38,46 +38,50 @@ function VersionLink({ version }: { version: string }) {
 	);
 }
 
+/**
+ * The Versions panel. Reads the runners universe (`runners.list`), which carries the latest release
+ * and the changelog too — prefetched by the route, so it paints with data and fetches nothing on
+ * mount (the changelog used to be fetched in an effect after the first paint).
+ */
 export function VersionsPanel() {
-	const { data: runnersData } = useRunnersQuery();
-	const runners = runnersData?.runners ?? [];
+	const { data: runnersData, isPending, isError, refetch } = useRunnersQuery();
+	const runners = runnersData?.runners;
 	const latestRelease = runnersData?.latestRelease ?? null;
-	const { mutateAsync: updateAllOutdated } = useUpdateAllOutdated();
-	const [releases, setReleases] = useState<RunnerReleaseInfo[] | null>(null);
-	const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-
-	// Recent releases for the changelog. Re-fetched when the latest version changes (a poll
-	// may have surfaced a new release).
-	useEffect(() => {
-		getRecentRunnerReleases(8)
-			.then(setReleases)
-			.catch(() => setReleases([]));
-	}, [latestRelease?.version]);
+	const releases = runnersData?.releases ?? [];
+	const updateAll = useUpdateAllOutdated();
 
 	// Runners not on the latest release, and the subset we can roll in place (deployed, i.e. have a
 	// deploy config). UPDATE re-mints a fresh token, so no stored token is needed. The rest need a
 	// manual re-deploy.
 	const { outdated, updatable } = useMemo(() => {
-		if (!latestRelease) return { outdated: 0, updatable: Array<string>() };
+		if (!latestRelease || !runners) return { outdated: 0, updatable: Array<string>() };
 		const out = runners.filter((r) => r.version && r.version !== latestRelease.version);
-		const upd = out.filter(
-			(r) => r.cloud_identity_id && r.metadata?.deploy_config,
-		);
+		const upd = out.filter((r) => r.in_place);
 		return { outdated: out.length, updatable: upd.map((r) => r.id) };
 	}, [runners, latestRelease]);
 
-	const handleUpdateAll = async () => {
-		setIsUpdatingAll(true);
-		try {
-			const { queued, failed } = await updateAllOutdated(updatable);
-			if (failed === 0) toast.success(`${queued} update${queued !== 1 ? "s" : ""} queued`);
-			else toast.warning(`${queued} queued, ${failed} failed`);
-		} catch {
-			toast.error("Failed to queue updates");
-		} finally {
-			setIsUpdatingAll(false);
-		}
+	const handleUpdateAll = () => {
+		updateAll.mutate(updatable, {
+			onSuccess: ({ queued, failed }) => {
+				if (failed === 0) toast.success(`${queued} update${queued !== 1 ? "s" : ""} queued`);
+				else toast.warning(`${queued} queued, ${failed} failed`);
+			},
+		});
 	};
+
+	if (isPending) return <VersionsPanelSkeleton />;
+	if (isError) {
+		return (
+			<section className="space-y-3">
+				<span className="text-sm font-semibold tracking-tight text-foreground">Versions</span>
+				<RegionError
+					title="Couldn't load runner versions"
+					description="Something went wrong fetching the runner releases. Try again."
+					onRetry={() => void refetch()}
+				/>
+			</section>
+		);
+	}
 
 	return (
 		<section className="space-y-3">
@@ -102,7 +106,8 @@ export function VersionsPanel() {
 							)}
 						</div>
 						<span className="text-ui-xs text-muted-foreground">
-							Released {formatRelative(latestRelease.released_at)}
+							Released{" "}
+							<ClockSlot sizer={RELATIVE_SIZER} render={() => formatRelative(latestRelease.released_at)} />
 						</span>
 					</div>
 				) : (
@@ -131,10 +136,10 @@ export function VersionsPanel() {
 									size="sm"
 									variant="outline"
 									className="h-7 text-xs"
-									disabled={isUpdatingAll}
+									disabled={updateAll.isPending}
 									onClick={handleUpdateAll}
 								>
-									{isUpdatingAll ? (
+									{updateAll.isPending ? (
 										<>
 											<Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
 											Updating…
@@ -151,12 +156,7 @@ export function VersionsPanel() {
 				{/* changelog */}
 				<div className="flex flex-col">
 					<div className={`${MONO_LABEL} px-4 pb-1 pt-3`}>Changelog</div>
-					{releases === null ? (
-						<div className="space-y-2 p-4 pt-1">
-							<Skeleton className="h-4 w-full" />
-							<Skeleton className="h-4 w-3/4" />
-						</div>
-					) : releases.length === 0 ? (
+					{releases.length === 0 ? (
 						<div className="px-4 pb-4 pt-1 text-xs text-muted-foreground">No releases.</div>
 					) : (
 						<ul className="pb-2">
@@ -172,14 +172,41 @@ export function VersionsPanel() {
 												Breaking
 											</Badge>
 										)}
-										<span className="font-mono text-ui-2xs text-muted-foreground">
-											{formatRelative(r.released_at)}
-										</span>
+										<ClockSlot
+											sizer={RELATIVE_SIZER}
+											className="font-mono text-ui-2xs text-muted-foreground"
+											render={() => formatRelative(r.released_at)}
+										/>
 									</div>
 								</li>
 							))}
 						</ul>
 					)}
+				</div>
+			</Card>
+		</section>
+	);
+}
+
+/** The panel's pending render: its header, the latest-release block and a changelog of rows. */
+export function VersionsPanelSkeleton() {
+	return (
+		<section className="space-y-3" aria-busy="true">
+			<div className="flex items-center justify-between gap-2">
+				<span className="text-sm font-semibold tracking-tight text-foreground">Versions</span>
+				<Skeleton className="h-3 w-20" />
+			</div>
+			<Card className="gap-0 overflow-hidden py-0">
+				<div className="flex flex-col gap-2 border-b border-border p-4">
+					<Skeleton className="h-2.5 w-24" />
+					<Skeleton className="h-4 w-16" />
+					<Skeleton className="h-3 w-32" />
+				</div>
+				<div className="space-y-2 px-4 pb-4 pt-3">
+					<Skeleton className="h-2.5 w-20" />
+					{[1, 2, 3].map((i) => (
+						<Skeleton key={i} className="h-4 w-full" />
+					))}
 				</div>
 			</Card>
 		</section>

@@ -8,6 +8,7 @@ import { EditionMisconfiguredError } from "@/lib/auth/errors";
 import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import type { Actor } from "@/lib/authz/types";
+import { deploymentMode } from "@/lib/billing/config";
 import { hasAcceptedCurrentDocuments } from "@/lib/billing/eligibility";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
@@ -67,7 +68,10 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 		}
 	};
 	const [fleetView, manageSupport] = await Promise.all([
-		ask(pdp.can(actor, "view", { type: "fleet" })),
+		// The managed fleet exists for a tenant only where the operator IS the customer: on the hosted
+		// SaaS its rows are never read for anyone (lib/rpc/procedures/runners.ts), so their hints are
+		// not heard either, whatever the PDP answers about `fleet` (#6123).
+		deploymentMode() === "self-managed" ? ask(pdp.can(actor, "view", { type: "fleet" })) : false,
 		ask(pdp.can(actor, "manage_support", { type: "support_case" })),
 	]);
 	return { fleetView, manageSupport };

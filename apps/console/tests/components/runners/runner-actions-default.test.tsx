@@ -9,7 +9,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const setDefaultRunner = vi.fn(async () => undefined);
+const setDefaultRunner = vi.fn();
 const toastError = vi.fn();
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -18,9 +18,9 @@ vi.mock("@/components/runners/release-notes-popover", () => ({ ReleaseNotesPopov
 vi.mock("@/components/runners/runner-select-popover", () => ({ RunnerSelectPopover: () => null }));
 vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ data: undefined }),
-	useSetDefaultRunner: () => ({ mutateAsync: setDefaultRunner }),
-	useDestroyRunner: () => ({ mutateAsync: vi.fn() }),
-	useDeleteRunner: () => ({ mutateAsync: vi.fn() }),
+	useSetDefaultRunner: () => ({ mutate: setDefaultRunner, isPending: false }),
+	useDestroyRunner: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false }),
+	useDeleteRunner: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import {
@@ -33,28 +33,21 @@ import {
 function row(overrides: Partial<RunnerRow>): RunnerRow {
 	return {
 		id: "r1",
-		user_id: "u1",
-		org_id: "org-1",
 		name: "build-box",
 		operator: "self",
 		provisioning: "registered",
 		supported_providers: null,
-		mode: null,
-		cloud_identity_id: null,
-		token_hash: "h",
 		status: "ONLINE",
 		last_heartbeat: null,
 		version: null,
-		release_id: null,
 		location: null,
-		target_release_id: null,
 		is_default: false,
-		metadata: {},
-		created_at: new Date(0),
+		in_place: false,
+		cloud_instance_id: null,
 		runner_releases: null,
 		provisioned_hours: null,
 		personal_elsewhere: false,
-		activeJob: null,
+		active_job: null,
 		...overrides,
 	};
 }
@@ -69,11 +62,11 @@ describe("default runner star", () => {
 		const star = screen.getByRole("button", { name: "Set as default runner" });
 		expect(star).toBeEnabled();
 		await userEvent.click(star);
-		expect(setDefaultRunner).toHaveBeenCalledWith("r1");
+		expect(setDefaultRunner).toHaveBeenCalledWith("r1", expect.anything());
 	});
 
 	it("a personal-workspace runner listed from a team org is gated, with the reason, and fires nothing", async () => {
-		render(<RunnerActions runner={row({ org_id: "u1", personal_elsewhere: true })} />);
+		render(<RunnerActions runner={row({ personal_elsewhere: true })} />);
 		const star = screen.getByRole("button", { name: "Set as default runner" });
 		expect(star).toBeDisabled();
 		expect(star).toHaveAccessibleDescription(PERSONAL_RUNNER_DEFAULT_REASON);

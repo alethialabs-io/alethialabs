@@ -9,7 +9,8 @@
 //
 // ── WHY THIS RESOLVES IN MEMORY AND THE OTHER BUILDERS RESOLVE IN SQL ───────────────────
 //
-// A runner row is not one table's row. `getRunnersPage()` composes the org's own runners
+// A runner row is not one table's row. `readRunnersPage()` (lib/rpc/procedures/runners.ts)
+// composes the org's own runners
 // (the RLS path, `withActorScope`) with the platform's managed fleet runners (the service
 // path, and `[]` on the hosted SaaS so a tenant never sees our fleet) — two reads under two
 // different authorization models, which is exactly why they are two reads. Pushing the
@@ -46,8 +47,8 @@ export interface RunnersQuery {
  * Rows + the facet options behind the runners toolbar.
  *
  * Generic over the row so this module owns the PREDICATE and the FACETS and nothing about
- * the payload: the action hands it whole `RunnerWithRelease`s (release info, provisioned
- * hours, everything a card renders) and gets the same objects back.
+ * the payload: the `runners.page` read hands it whole `RunnerView`s (release info, provisioned
+ * hours, the job in flight — everything a card renders) and gets the same objects back.
  */
 export interface RunnersPage<Row extends RunnerFacts = RunnerFacts> {
 	/** Runners matching the query, in the universe's order (default first). */
@@ -70,9 +71,9 @@ export interface RunnersPage<Row extends RunnerFacts = RunnerFacts> {
 /**
  * The runner fields every predicate and facet below reads.
  *
- * Spelled out rather than `Pick`ed off `RunnerWithRelease`, which is declared in
- * `lib/query/resource-fetchers.ts` — a module that imports the action module that imports
- * THIS one. The eight fields are the whole of what filtering a runner depends on.
+ * Spelled out rather than `Pick`ed off `RunnerView`, which is declared in
+ * `lib/rpc/procedures/runners.ts` — a module that imports THIS one. The eight fields are the
+ * whole of what filtering a runner depends on.
  */
 export interface RunnerFacts {
 	name: string;
@@ -187,10 +188,10 @@ export function runnerFacets(all: RunnerFacts[]): RunnersPage["facets"] {
  * Resolve `query` against the composed runner universe: the matching rows, the result count,
  * the universe size, and the facet counts over EVERY row.
  *
- * THE TWO PASSES ARE HERE, not in the action, and that is what makes them testable. The rows
+ * THE TWO PASSES ARE HERE, not in the read, and that is what makes them testable. The rows
  * pass sees `query`; the facet pass is handed `all` and cannot see it — the same division the
- * SQL builders get from issuing two queries. `getRunnersPage()` composes the universe and
- * delegates; an assertion about this function is therefore an assertion about what that action
+ * SQL builders get from issuing two queries. `readRunnersPage()` composes the universe and
+ * delegates; an assertion about this function is therefore an assertion about what that read
  * returns, which is the only arrangement in which the test is not re-deriving its own answer.
  *
  * @param all every runner this actor can see, already composed and ordered

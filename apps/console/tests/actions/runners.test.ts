@@ -10,7 +10,9 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({ deploymentMode: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/lib/queries/runner-usage", () => ({ queryProvisionedHours: vi.fn() }));
@@ -19,24 +21,27 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
 import {
 	deployRunner,
+	deployRunnerAction,
 	destroyRunner,
+	destroyRunnerAction,
 	getAvailableRunners,
-	getLatestRunnerRelease,
-	getManagedRunnerUsage,
-	getManagedRunnersWithReleases,
 	getOnlineRunnerCount,
-	getRecentRunnerReleases,
-	getReleaseNotes,
 	getRunnersWithReleases,
 	registerRunner,
+	registerRunnerAction,
 	removeRunner,
+	removeRunnerAction,
 	setDefaultRunner,
+	setDefaultRunnerAction,
 	updateRunner,
+	updateRunnerAction,
 } from "@/app/server/actions/runners";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
+import { ForbiddenError } from "@/lib/authz/types";
 import { authorize } from "@/lib/authz/guard";
 import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withActorScope } from "@/lib/db";
-import { queryProvisionedHours } from "@/lib/queries/runner-usage";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { generateRunnerToken } from "@/lib/runners/auth";
 import { notifyScaler } from "@/lib/scaler";
 
@@ -105,11 +110,11 @@ beforeEach(() => {
 	vi.mocked(deploymentMode).mockReturnValue("self-managed");
 });
 
-describe("getRunnersWithReleases", () => {
-	it("requires the view permission and flattens the joined release", async () => {
+describe("getRunnersWithReleases (the mention picker's and the agent tool's list)", () => {
+	it("requires the view permission and answers the projected view, release flattened", async () => {
 		mock.queue.push([
 			{
-				runner: { id: "r1", name: "Edge", operator: "self" },
+				runner: { id: "r1", name: "Edge", operator: "self", org_id: "org-1", metadata: {} },
 				release: {
 					version: "1.2.0",
 					release_notes: "notes",
@@ -119,11 +124,12 @@ describe("getRunnersWithReleases", () => {
 					is_breaking: false,
 				},
 			},
-			{ runner: { id: "r2", name: "NoRel", operator: "self" }, release: null },
+			{ runner: { id: "r2", name: "NoRel", operator: "self", org_id: "org-1", metadata: {} }, release: null },
 		]);
 		const res = await getRunnersWithReleases();
 		expect(authorize).toHaveBeenCalledWith("view", { type: "runner" });
 		expect(res[0]).toMatchObject({ id: "r1", name: "Edge" });
+		expect(res[0]).not.toHaveProperty("metadata");
 		// Date → ISO normalization on the joined release.
 		expect(res[0].runner_releases?.released_at).toBe("2026-01-02T00:00:00.000Z");
 		// leftJoin with no release row → null.
@@ -133,102 +139,6 @@ describe("getRunnersWithReleases", () => {
 	it("propagates an authorize rejection (unauthorized)", async () => {
 		vi.mocked(authorize).mockRejectedValueOnce(new Error("Forbidden") as never);
 		await expect(getRunnersWithReleases()).rejects.toThrow(/Forbidden/);
-	});
-});
-
-describe("getManagedRunnersWithReleases", () => {
-	it("returns [] on the hosted SaaS without touching the service DB", async () => {
-		vi.mocked(deploymentMode).mockReturnValue("hosted");
-		expect(await getManagedRunnersWithReleases()).toEqual([]);
-		expect(getServiceDb).not.toHaveBeenCalled();
-	});
-
-	it("reads managed runners via the service path on self-managed deployments", async () => {
-		vi.mocked(deploymentMode).mockReturnValue("self-managed");
-		mock.queue.push([
-			{
-				runner: { id: "m1", name: "Fleet", operator: "managed" },
-				release: null,
-			},
-		]);
-		const res = await getManagedRunnersWithReleases();
-		expect(getServiceDb).toHaveBeenCalled();
-		expect(res).toHaveLength(1);
-		expect(res[0]).toMatchObject({ id: "m1", operator: "managed" });
-	});
-});
-
-describe("getManagedRunnerUsage", () => {
-	it("returns {} on hosted without querying the ledger", async () => {
-		vi.mocked(deploymentMode).mockReturnValue("hosted");
-		expect(await getManagedRunnerUsage()).toEqual({});
-		expect(queryProvisionedHours).not.toHaveBeenCalled();
-	});
-
-	it("keys provisioned hours by runner id from the ledger query", async () => {
-		vi.mocked(deploymentMode).mockReturnValue("self-managed");
-		vi.mocked(queryProvisionedHours).mockResolvedValue([
-			{ runner_id: "m1", provisioned_hours: 12 },
-			{ runner_id: "m2", provisioned_hours: 3 },
-		] as never);
-		expect(await getManagedRunnerUsage()).toEqual({ m1: 12, m2: 3 });
-		// Window starts at the first of the current UTC month.
-		const arg = vi.mocked(queryProvisionedHours).mock.calls[0][1];
-		expect(arg.from.getUTCDate()).toBe(1);
-	});
-});
-
-describe("release readers", () => {
-	it("getLatestRunnerRelease normalizes the date, or null when none", async () => {
-		mock.queue.push([
-			{
-				version: "2.0.0",
-				release_notes: "n",
-				released_at: new Date("2026-03-01T00:00:00Z"),
-				github_release_url: null,
-				commit_sha: null,
-				is_breaking: true,
-			},
-		]);
-		const r = await getLatestRunnerRelease();
-		expect(r?.released_at).toBe("2026-03-01T00:00:00.000Z");
-		expect(r?.is_breaking).toBe(true);
-
-		mock.queue.push([]);
-		expect(await getLatestRunnerRelease()).toBeNull();
-	});
-
-	it("getRecentRunnerReleases maps every row to ISO release info", async () => {
-		mock.queue.push([
-			{
-				version: "1.0.0",
-				release_notes: "a",
-				released_at: new Date("2026-01-01T00:00:00Z"),
-				github_release_url: null,
-				commit_sha: null,
-				is_breaking: false,
-			},
-		]);
-		const rows = await getRecentRunnerReleases(5);
-		expect(rows).toHaveLength(1);
-		expect(rows[0].released_at).toBe("2026-01-01T00:00:00.000Z");
-	});
-
-	it("getReleaseNotes returns the matched version or null", async () => {
-		mock.queue.push([
-			{
-				version: "9.9.9",
-				release_notes: "found",
-				released_at: new Date("2026-05-05T00:00:00Z"),
-				github_release_url: "https://x",
-				commit_sha: "abc",
-				is_breaking: false,
-			},
-		]);
-		expect((await getReleaseNotes("9.9.9"))?.release_notes).toBe("found");
-
-		mock.queue.push([]);
-		expect(await getReleaseNotes("0.0.0")).toBeNull();
 	});
 });
 
@@ -595,5 +505,87 @@ describe("removeRunner", () => {
 		mock.queue.push([]); // no runner
 		await expect(removeRunner("nope")).rejects.toThrow(/Runner not found/);
 		expect(mock.deleteSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe("the mutation contract (defineAction wrappers, #6123)", () => {
+	const R = "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
+
+	it("answers ok with the function's result, through the SAME authorize the function runs", async () => {
+		mock.queue.push([{ id: R }]);
+		const res = await removeRunnerAction({ runnerId: R });
+		expect(res).toEqual({ ok: true, data: { runnerId: R } });
+		expect(authorize).toHaveBeenCalledWith("destroy", { type: "runner", id: R });
+	});
+
+	it("a malformed runner id is a validation result, and nothing is authorized or written", async () => {
+		const res = await updateRunnerAction({ runnerId: "nope" });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error.kind).toBe("validation");
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("a runner the caller cannot see is a not-found result with its message, not an unexpected one", async () => {
+		mock.queue.push([]);
+		const res = await removeRunnerAction({ runnerId: R });
+		expect(res).toEqual({ ok: false, error: { kind: "not-found", message: "Runner not found" } });
+	});
+
+	it("an overlapping lifecycle job is a conflict the user is told about", async () => {
+		mock.queue.push([{ id: R, name: "w", cloud_identity_id: "ci", metadata: { deploy_config: { region: "eu-west-1", cloud_provider: "aws" } } }]);
+		mock.queue.push([{ provider: "aws" }]);
+		mock.queue.push([{ config_snapshot: { runner_id: R } }]);
+		const res = await destroyRunnerAction({ runnerId: R });
+		expect(res).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "A runner-lifecycle job is already in progress for this runner" },
+		});
+	});
+
+	it("the plan's job cap is an entitlement refusal when upgrading lifts it, a conflict when it does not", async () => {
+		mock.queue.push([{ id: R, name: "w", cloud_identity_id: "ci", metadata: { deploy_config: { region: "eu-west-1", cloud_provider: "aws" } } }]);
+		mock.queue.push([{ provider: "aws" }]);
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(new UsageLimitError("Daily cap", true));
+		expect(await updateRunnerAction({ runnerId: R })).toEqual({
+			ok: false,
+			error: { kind: "entitlement", message: "Daily cap", feature: "" },
+		});
+
+		mock.queue.push([{ id: R, name: "w", cloud_identity_id: "ci", metadata: { deploy_config: { region: "eu-west-1", cloud_provider: "aws" } } }]);
+		mock.queue.push([{ provider: "aws" }]);
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(new UsageLimitError("Hard cap", false));
+		expect(await updateRunnerAction({ runnerId: R })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "Hard cap" },
+		});
+	});
+
+	it("a PDP denial is a forbidden result", async () => {
+		vi.mocked(authorize).mockRejectedValueOnce(new ForbiddenError("edit", { type: "runner", id: R }));
+		const res = await setDefaultRunnerAction({ runnerId: R });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error.kind).toBe("forbidden");
+	});
+
+	it("an unexpected failure never leaks its message to the client", async () => {
+		mock.execute.mockRejectedValueOnce(new Error("connection string postgres://secret"));
+		const res = await setDefaultRunnerAction({ runnerId: null });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.error).toEqual({ kind: "unexpected", ref: expect.any(String) });
+		expect(JSON.stringify(res)).not.toContain("secret");
+	});
+
+	it("register validates the name the dialog validates, before anything is written", async () => {
+		const res = await registerRunnerAction({ name: "   " });
+		expect(res.ok).toBe(false);
+		if (!res.ok && res.error.kind === "validation") expect(Object.keys(res.error.fields)).toEqual(["name"]);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+	});
+
+	it("deploy refuses a missing cloud account as not-found, before inserting anything", async () => {
+		mock.queue.push([]);
+		const res = await deployRunnerAction({ name: "w", cloudIdentityId: R, region: "eu-west-1" });
+		expect(res).toEqual({ ok: false, error: { kind: "not-found", message: "Cloud identity not found" } });
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
 	});
 });

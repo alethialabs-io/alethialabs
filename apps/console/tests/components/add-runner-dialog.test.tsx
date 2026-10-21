@@ -15,10 +15,18 @@ vi.mock("@/app/server/actions/aws/identities", () => ({
 	getVerifiedCloudIdentities: vi.fn(async () => []),
 	getVerifiedCloudIdentitiesByProvider: vi.fn(async () => []),
 }));
-vi.mock("@/app/server/actions/runners", () => ({ registerRunner: vi.fn() }));
+const reg = vi.hoisted(() => ({
+	mutateAsync: vi.fn(),
+	onValidationError: undefined as undefined | ((fields: Record<string, string[] | undefined>) => void),
+	refresh: vi.fn(),
+}));
 vi.mock("@/lib/query/use-runners-query", () => ({
 	useRunnersQuery: () => ({ data: { runners: [] } }),
-	useDeployRunner: () => ({ mutateAsync: vi.fn() }),
+	useDeployRunner: () => ({ mutate: vi.fn(), isPending: false }),
+	useRegisterRunner: (onValidationError: (fields: Record<string, string[] | undefined>) => void) => {
+		reg.onValidationError = onValidationError;
+		return { mutateAsync: reg.mutateAsync, isPending: false };
+	},
 }));
 vi.mock("@/lib/stores/use-cloud-provider-store", () => {
 	// The selection is a Zustand store read through a selector; the inventory is its query hook.
@@ -38,7 +46,7 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useActiveOrgSlug: () => "acme",
 }));
 vi.mock("next/navigation", () => ({
-	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+	useRouter: () => ({ push: vi.fn(), refresh: reg.refresh }),
 	useParams: () => ({}),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -71,5 +79,33 @@ describe("AddRunnerDialog — deploy path", () => {
 		).toBeInTheDocument();
 		expect(document.body.textContent).toMatch(/deployed runners are AWS only/i);
 		expect(document.body.textContent).not.toMatch(/Connect AWS, GCP, or Azure/i);
+	});
+});
+
+describe("AddRunnerDialog — register path (#6123: useActionMutation)", () => {
+	it("shows the one-time credentials on success, with no page refresh (the runner list is invalidated)", async () => {
+		reg.mutateAsync.mockResolvedValueOnce({ runner: { id: "r-1", name: "box" }, runner_token: "tok-once" });
+		const user = userEvent.setup();
+		render(<AddRunnerDialog open onOpenChange={() => {}} />);
+		await user.click(screen.getByRole("button", { name: /register your own/i }));
+		await user.type(screen.getByRole("textbox", { name: /name/i }), "box");
+		await user.click(screen.getByRole("button", { name: /register runner/i }));
+		expect(await screen.findByText(/save these credentials now/i)).toBeInTheDocument();
+		expect(reg.mutateAsync).toHaveBeenCalledWith({ name: "box" });
+		expect(reg.refresh).not.toHaveBeenCalled();
+	});
+
+	it("a server-side validation refusal lands on the name field, and the form stays", async () => {
+		reg.mutateAsync.mockImplementationOnce(async () => {
+			reg.onValidationError?.({ name: ["That name is taken"] });
+			throw new Error("refused");
+		});
+		const user = userEvent.setup();
+		render(<AddRunnerDialog open onOpenChange={() => {}} />);
+		await user.click(screen.getByRole("button", { name: /register your own/i }));
+		await user.type(screen.getByRole("textbox", { name: /name/i }), "box");
+		await user.click(screen.getByRole("button", { name: /register runner/i }));
+		expect(await screen.findByText("That name is taken")).toBeInTheDocument();
+		expect(screen.queryByText(/save these credentials now/i)).toBeNull();
 	});
 });

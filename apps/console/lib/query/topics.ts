@@ -63,6 +63,11 @@ export const TOPIC_KEYS = {
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.environmentJobs.key(),
 		[...DESTROY_HOLD_KEY],
+		// A runner card shows the job in flight on it, and a managed pool's busy count is its runners'
+		// CLAIMED/PROCESSING jobs (#6123).
+		orpc.runners.list.key(),
+		orpc.runners.page.key(),
+		orpc.runners.fleet.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119).
@@ -75,8 +80,11 @@ export const TOPIC_KEYS = {
 	],
 	projects: (): QueryKey[] => [orpc.workspace.projects.key(), orpc.workspace.setupGuide.key()],
 	clusters: (): QueryKey[] => [],
-	runners: (): QueryKey[] => [],
-	fleet: (): QueryKey[] => [],
+	// A runner's row (status, version, default, …) shows on the grid, in the universe the Versions panel
+	// and the pickers read, and — for a managed runner — in its pool's counts (#6123).
+	runners: (): QueryKey[] => [orpc.runners.list.key(), orpc.runners.page.key(), orpc.runners.fleet.key()],
+	// A pool's configuration (#6123).
+	fleet: (): QueryKey[] => [orpc.runners.fleet.key()],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
 	// the board, so its health also shows through the environment status (#6119).
 	addons: (): QueryKey[] => [

@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "runners", "fleet"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -172,11 +172,58 @@ describe("keysFor — support cases follow their tiered policy, not owner_all (#
 	});
 });
 
+/** A runners notice with the trigger's shape (no project). */
+function runner(over: Partial<ChangeNotice> = {}): ChangeNotice {
+	return { kind: "change", t: "runners", id: JOB, o: ORG, u: USER, p: null, ...over };
+}
+
+describe("keysFor — the arms of the runners policy (org_id = current_org OR org_id = current_owner), #6123", () => {
+	it("a runner of an org routes to that org's members, unfiltered (a runner has no project)", () => {
+		expect(keysFor(runner())).toEqual([{ key: `o:${ORG}`, filterProject: null }]);
+	});
+
+	it("a runner of a personal scope routes to own:<user>, which every stream of that person holds", () => {
+		expect(keysFor(runner({ o: USER }))).toEqual([{ key: `own:${USER}`, filterProject: null }]);
+		const inOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
+		const inPersonal = subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false });
+		expect(inOrg).toContain(`own:${USER}`);
+		expect(inPersonal).toContain(`own:${USER}`);
+	});
+
+	it("another person's personal runner reaches none of this person's streams", () => {
+		const OTHER = "55555555-5555-4555-8555-555555555555";
+		const keys = keysFor(runner({ o: OTHER, u: OTHER })).map((r) => r.key);
+		for (const orgId of [ORG, USER]) {
+			const held = subscriptionKeys({ userId: USER, orgId }, { fleetView: true, manageSupport: true });
+			expect(keys.filter((k) => held.includes(k))).toEqual([]);
+		}
+	});
+
+	it("a managed runner (no org, no owner) routes to platform only", () => {
+		expect(keysFor(runner({ o: null, u: null }))).toEqual([{ key: PLATFORM_KEY, filterProject: null }]);
+	});
+
+	it("a self runner with no org matches neither RLS arm, so it routes nowhere", () => {
+		expect(keysFor(runner({ o: null }))).toEqual([]);
+	});
+
+	it("a pool's configuration is a platform row", () => {
+		expect(keysFor({ kind: "change", t: "fleet", id: JOB, o: null, u: null, p: null })).toEqual([
+			{ key: PLATFORM_KEY, filterProject: null },
+		]);
+	});
+
+	it("platform reaches only a stream with fleet:view", () => {
+		const without = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
+		expect(without).not.toContain(PLATFORM_KEY);
+	});
+});
+
 describe("subscriptionKeys — what a stream holds", () => {
 	it("a member holds the org key and their own key in that org, and nothing platform-wide", () => {
 		expect(
 			subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false }),
-		).toEqual([`o:${ORG}`, `ou:${ORG}:${USER}`]);
+		).toEqual([`o:${ORG}`, `ou:${ORG}:${USER}`, `own:${USER}`]);
 	});
 
 	it("fleet:view adds the platform key; manage_support adds the org's support key", () => {
@@ -191,7 +238,7 @@ describe("subscriptionKeys — what a stream holds", () => {
 	it("only the personal scope (orgId === userId) also holds u:", () => {
 		expect(
 			subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false }),
-		).toEqual([`o:${USER}`, `ou:${USER}:${USER}`, `u:${USER}`]);
+		).toEqual([`o:${USER}`, `ou:${USER}:${USER}`, `own:${USER}`, `u:${USER}`]);
 	});
 
 	it("an org member never holds another org's key", () => {
