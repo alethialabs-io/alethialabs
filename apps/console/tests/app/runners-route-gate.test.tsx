@@ -34,7 +34,14 @@ vi.mock("@/lib/rpc/server", () => {
 			},
 		}),
 	});
-	const rpc = { runners: { page: proc("runners.page"), list: proc("runners.list"), fleet: proc("runners.fleet") } };
+	const rpc = {
+		runners: {
+			page: proc("runners.page"),
+			list: proc("runners.list"),
+			fleet: proc("runners.fleet"),
+			fleetEconomics: proc("runners.fleetEconomics"),
+		},
+	};
 	return { serverOrpc: () => rpc };
 });
 // A fresh client per route call — the browser singleton would carry one test's prefetches into the next.
@@ -97,7 +104,7 @@ describe("the runners route's plan gate (F021)", () => {
 		h.byoRunners = false;
 		const node = await route();
 		expect(isValidElement(node) && node.type).toBe(Suspense);
-		expect(h.prefetched.sort()).toEqual(["runners.fleet", "runners.list", "runners.page"]);
+		expect(h.prefetched.sort()).toEqual(["runners.fleet", "runners.fleetEconomics", "runners.list", "runners.page"]);
 	});
 });
 

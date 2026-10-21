@@ -28,7 +28,8 @@
 //   · a job whose project was deleted      → the trigger carries OLD.project_id; the bus treats a
 //                                            project that no longer exists as unfiltered.
 //   · managed runners (org_id/user_id NULL), fleet tables (no org_id) → the `platform` key, held only
-//     by a stream whose actor may `view` the fleet on a deployment that operates one (#6123).
+//     by a stream whose actor may `view` runners on a deployment that operates a fleet — the same
+//     permission the managed-runner and pool reads gate on (#6123).
 //
 // `runners`' policy is NOT owner_all. It is `org_id = current_org OR org_id = current_owner`
 // (lib/db/programmables.sql, runners_select), so a runner routes by its ORG alone:
@@ -65,8 +66,11 @@ export interface Route {
 
 /** What a stream's actor may see beyond its own org and its own rows. */
 export interface StreamCapabilities {
-	/** `can(actor, 'view', {type: 'fleet'})` — receives `platform` (managed runners, fleet). */
-	fleetView: boolean;
+	/**
+	 * Self-managed and `can(actor, 'view', {type: 'runner'})` — receives `platform` (managed runners,
+	 * warm pools): exactly who the reads show those rows to (lib/rpc/procedures/runners.ts).
+	 */
+	platformView: boolean;
 	/** `can(actor, 'manage_support', {type: 'support_case'})` — receives every case in the org. */
 	manageSupport: boolean;
 	/** `can(actor, 'view_alerts', {type: 'alert'})` — receives the org's alert changes. */
@@ -133,7 +137,7 @@ export function keysFor(notice: ChangeNotice): Route[] {
 			if (notice.o === notice.u) return [{ key: ownKey(notice.o), filterProject: null }];
 			return [{ key: orgKey(notice.o), filterProject: null }];
 		}
-		// fleet_pools carry no org: platform rows, heard only with fleet:view (subscriptionKeys).
+		// fleet_pools carry no org: platform rows, heard only with platformView (subscriptionKeys).
 		case "fleet":
 			return [{ key: PLATFORM_KEY, filterProject: null }];
 		case "jobs": {
@@ -244,7 +248,7 @@ export function subscriptionKeys(
 ): string[] {
 	const keys = [orgKey(actor.orgId), orgUserKey(actor.orgId, actor.userId), ownKey(actor.userId)];
 	if (actor.orgId === actor.userId) keys.push(userKey(actor.userId));
-	if (caps.fleetView) keys.push(PLATFORM_KEY);
+	if (caps.platformView) keys.push(PLATFORM_KEY);
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
 	if (caps.viewAlerts) keys.push(orgAlertsKey(actor.orgId));
 	return keys;

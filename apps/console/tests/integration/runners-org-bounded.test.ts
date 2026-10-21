@@ -278,8 +278,24 @@ describeIfDb("runner reads and writes are bounded to the addressed organization"
 		).map((r) => r.hash);
 		expect(hashes).toHaveLength(4);
 
+		// A legacy secret at rest in metadata, and a managed runner's VM id: the reads derive their two
+		// facts from metadata IN SQL, so the first never leaves the database and the second does.
+		const SECRET = `legacy-${randomUUID()}`;
+		// Raw SQL: the shape is a legacy one the typed column no longer allows.
+		const legacy = JSON.stringify({ deploy_config: { region: "eu-west-1", runner_token: SECRET } });
+		await getServiceDb().execute(sql`update runners set metadata = ${legacy}::jsonb where id = ${runnerA}::uuid`);
+		await getServiceDb()
+			.update(runners)
+			.set({ metadata: { cloud_instance_id: "vm-it-6123" } })
+			.where(eq(runners.id, runnerManaged));
+
 		const data = await as(inA, () => readRunnersData());
 		const page = await as(inA, () => readRunnersPage({}));
+		const a = data.runners.find((r) => r.id === runnerA);
+		// A deploy config but no cloud identity: not actionable in place.
+		expect(a?.in_place).toBe(false);
+		expect(a?.cloud_instance_id).toBeNull();
+		expect(data.runners.find((r) => r.id === runnerManaged)?.cloud_instance_id).toBe("vm-it-6123");
 		const ids = data.runners.map((r) => r.id);
 		expect(ids).toContain(runnerA);
 		expect(ids).toContain(runnerPersonal);
@@ -291,5 +307,7 @@ describeIfDb("runner reads and writes are bounded to the addressed organization"
 		const wire = JSON.stringify([data, page]);
 		for (const hash of hashes) expect(wire).not.toContain(hash);
 		expect(wire).not.toContain("token_hash");
+		expect(wire).not.toContain(SECRET);
+		expect(wire).not.toContain("deploy_config");
 	});
 });

@@ -20,7 +20,7 @@ import {
 	runnerBusyKind,
 	type RunnerRow,
 } from "@/components/runners/runner-actions";
-import { formatRelative } from "@repo/format";
+import { formatMinutes, formatRelative } from "@repo/format";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { Cloud, Server, Star } from "lucide-react";
 import Link from "next/link";
@@ -126,7 +126,7 @@ export function RunnerCard({
 				<Fact label={isManaged ? "Provisioned" : "Last seen"}>
 					<span className="text-muted-foreground">
 						{isManaged
-							? `${(runner.provisioned_hours ?? 0).toFixed(1)} h`
+							? formatMinutes((runner.provisioned_hours ?? 0) * 60)
 							: runner.last_heartbeat
 								? <LastSeen at={runner.last_heartbeat} />
 								: "Never"}

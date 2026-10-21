@@ -11,6 +11,7 @@ import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { Skeleton } from "@repo/ui/skeleton";
 import { RegionError } from "@/components/errors/region-error";
+import { isForbidden } from "@/components/overview/overview-reads";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
 import { useRunnersQuery, useUpdateAllOutdated } from "@/lib/query/use-runners-query";
@@ -44,7 +45,7 @@ function VersionLink({ version }: { version: string }) {
  * mount (the changelog used to be fetched in an effect after the first paint).
  */
 export function VersionsPanel() {
-	const { data: runnersData, isPending, isError, refetch } = useRunnersQuery();
+	const { data: runnersData, isPending, isError, error, refetch } = useRunnersQuery();
 	const runners = runnersData?.runners;
 	const latestRelease = runnersData?.latestRelease ?? null;
 	const releases = runnersData?.releases ?? [];
@@ -74,11 +75,16 @@ export function VersionsPanel() {
 		return (
 			<section className="space-y-3">
 				<span className="text-sm font-semibold tracking-tight text-foreground">Versions</span>
-				<RegionError
-					title="Couldn't load runner versions"
-					description="Something went wrong fetching the runner releases. Try again."
-					onRetry={() => void refetch()}
-				/>
+				{isForbidden(error) ? (
+					// An expected refusal, not a failure: no retry that would answer the same (RUBRIC B4).
+					<p className="text-xs text-muted-foreground">You don&rsquo;t have access to runner versions.</p>
+				) : (
+					<RegionError
+						title="Couldn't load runner versions"
+						description="Something went wrong fetching the runner releases. Try again."
+						onRetry={() => void refetch()}
+					/>
+				)}
 			</section>
 		);
 	}

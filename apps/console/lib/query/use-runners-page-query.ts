@@ -12,6 +12,7 @@
 // while the stream is down the one fallback poll covers it (lib/realtime/client/fallback-poll.ts).
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { retryUnlessRefused } from "@/components/overview/overview-reads";
 import type { RunnersQuery } from "@/lib/queries/runners";
 import { orpc } from "@/lib/rpc/client";
 
@@ -27,6 +28,8 @@ export function useRunnersPageQuery(query: RunnersQuery = {}) {
 		orpc.runners.page.queryOptions({
 			input: query,
 			placeholderData: keepPreviousData,
+			// A typed refusal (FORBIDDEN) answers the same twice: render it at once, retry only failures.
+			retry: retryUnlessRefused,
 		}),
 	);
 }

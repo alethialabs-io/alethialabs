@@ -120,7 +120,7 @@
 #                      the thing review stops. The floors sit a few percent under the live count
 #                      so an ordinary refactor need not touch them.
 
-baseline: 16
+baseline: 15
 debt: 0
 
 scanned:
@@ -138,11 +138,8 @@ scanned:
 
 format:
   - path: apps/console/components/runners/pool-card.tsx
-    hits: 2
-    reason: Provisioned hours and utilization are fleet telemetry, not money or duration — @repo/format has no opinion about either, and inventing one for two call sites would be the wrong place to decide it.
-  - path: apps/console/components/runners/runner-card.tsx
     hits: 1
-    reason: The same provisioned-hours figure as the pool card, and it must read the same way on both — `formatDuration` measures a span in milliseconds, which is a different question.
+    reason: A pool's utilization percentage is fleet telemetry, not money, a duration or a size — @repo/format has no opinion about it, and inventing one for a single call site would be the wrong place to decide it. (Provisioned hours read through `formatMinutes`, as the runner card does.)
   - path: apps/console/components/agent/agent-knowledge-panel.tsx
     hits: 1
     reason: Knowledge size is a budget you are spending against a limit, so it stays a bare compact figure (`2.1k`) rather than a formatted quantity with a unit.

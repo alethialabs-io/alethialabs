@@ -27,6 +27,7 @@ vi.mock("@/lib/query/use-runners-page-query", () => ({
 }));
 vi.mock("@/lib/query/use-fleet-query", () => ({
 	useFleetQuery: () => ({ refetch: vi.fn(), ...h.fleet }),
+	useFleetEconomicsQuery: () => ({ data: null }),
 	useSetPoolEnabled: () => ({ mutate: vi.fn(), isPending: false }),
 	useDeletePool: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -56,7 +57,7 @@ function settle(): void {
 		isError: false,
 		data: { rows: [{ id: "r1", name: "edge" }], resultCount: 1, total: 1, facets: EMPTY_FACETS },
 	};
-	h.fleet = { isPending: false, isError: false, data: { pools: [], configs: [], economics: null, canManageFleet: false } };
+	h.fleet = { isPending: false, isError: false, data: { pools: [], configs: [], canManageFleet: false } };
 	h.list = {
 		isPending: false,
 		isError: false,
@@ -124,5 +125,30 @@ describe("the Versions panel", () => {
 	it("no release is said as such, distinct from pending", () => {
 		render(<RunnersClient hosted />);
 		expect(screen.getByText("No runner releases yet.")).toBeTruthy();
+	});
+});
+
+describe("a refusal is not a failure (RUBRIC B4)", () => {
+	/** A typed FORBIDDEN as the read router sends it (lib/rpc/base.ts). */
+	const forbidden = async () => {
+		const { ORPCError } = await import("@orpc/client");
+		return new ORPCError("FORBIDDEN", { defined: true });
+	};
+
+	it("a forbidden grid says the viewer has no access — no retry, no 'Couldn't load'", async () => {
+		h.page = { isPending: false, isError: true, data: undefined, error: await forbidden() };
+		render(<RunnersClient hosted />);
+		expect(screen.getByText("You don't have access to runners")).toBeTruthy();
+		expect(screen.queryByText("Couldn't load runners")).toBeNull();
+		expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+	});
+
+	it("forbidden versions and pools say so too", async () => {
+		h.list = { isPending: false, isError: true, data: undefined, error: await forbidden() };
+		h.fleet = { isPending: false, isError: true, data: undefined, error: await forbidden() };
+		render(<RunnersClient hosted={false} />);
+		expect(screen.getByText(/access to runner versions/)).toBeTruthy();
+		expect(screen.getByText(/access to the warm pools/)).toBeTruthy();
+		expect(screen.queryByText("Couldn't load pools")).toBeNull();
 	});
 });

@@ -6,7 +6,7 @@ import "server-only";
 import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getPdp } from "@/lib/authz";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb, withActorScope } from "@/lib/db";
@@ -38,10 +38,14 @@ import { query } from "@/lib/rpc/base";
 // procedures the route prefetches in-process, and the change stream (`runners` / `fleet` topics,
 // lib/query/topics.ts) replaces the poll.
 //
-// NO RUNNER ROW TRAVELS WHOLE. Every runner read below selects named columns (`RUNNER_COLUMNS`) and
-// maps them to `RunnerView`: the credential column, the raw JSONB metadata and the deprecated
-// columns are not selected, so they cannot reach a browser by a later edit that spreads a row.
-// tests/lib/rpc/procedures/runners.test.ts pins the exact key set.
+// NO RUNNER ROW TRAVELS WHOLE. Every runner read below selects `RUNNER_COLUMNS` and maps it to
+// `RunnerView`. The credential column and the JSONB `metadata` column are never selected — not even
+// into server memory: the two facts the UI needs from `metadata` (whether a deploy config is
+// recorded, and a managed runner's VM id) are computed in SQL, so nothing else stored there can be
+// spread into a view by a later edit. `org_id` IS selected and reduced on the server to `is_default`
+// and `personal_elsewhere`. tests/lib/rpc/runners-procedures.test.ts pins the projection (no
+// credential, no metadata) and the view's exact key set; tests/integration/runners-org-bounded.test.ts
+// checks the wire against the stored hashes and a stored secret.
 
 /** A runner release as the console shows it (dates as ISO strings). */
 export interface RunnerReleaseInfo {
@@ -75,10 +79,11 @@ function toReleaseInfo(r: {
 }
 
 /**
- * The runner columns a read selects — the whole of what any runner surface renders, plus the two
- * inputs `toRunnerView` reduces to booleans/ids. Deliberately NOT here: the credential column,
- * `user_id` / `org_id` (tenancy is answered on the server, as `personal_elsewhere`), the deprecated
- * `mode`, `target_release_id`, `release_id`.
+ * What a runner read selects: the columns a runner surface renders, `org_id` (reduced on the server
+ * to `is_default` / `personal_elsewhere`, never sent), and two facts derived from `metadata` IN SQL.
+ * Deliberately NOT here: the credential column, the `metadata` column itself, `cloud_identity_id`
+ * (only whether it is set matters, inside `in_place`), `user_id`, the deprecated `mode`,
+ * `target_release_id`, `release_id`.
  */
 const RUNNER_COLUMNS = {
 	id: runners.id,
@@ -92,8 +97,10 @@ const RUNNER_COLUMNS = {
 	location: runners.location,
 	is_default: runners.is_default,
 	org_id: runners.org_id,
-	cloud_identity_id: runners.cloud_identity_id,
-	metadata: runners.metadata,
+	/** A cloud identity AND a recorded deploy config: UPDATE/DESTROY can act on the runner in place. */
+	in_place: sql<boolean>`(${runners.cloud_identity_id} is not null and coalesce(jsonb_typeof(${runners.metadata} -> 'deploy_config') = 'object', false))`,
+	/** The VM a managed runner runs on (set at bootstrap); null when none is recorded. */
+	cloud_instance_id: sql<string | null>`(${runners.metadata} ->> 'cloud_instance_id')`,
 } as const;
 
 /** One selected runner row with its joined release, before it is reduced to a view. */
@@ -111,15 +118,13 @@ interface SelectedRunner {
 		| "location"
 		| "is_default"
 		| "org_id"
-		| "cloud_identity_id"
-		| "metadata"
-	>;
+	> & { in_place: boolean; cloud_instance_id: string | null };
 	release: Parameters<typeof toReleaseInfo>[0] | null;
 }
 
 /**
- * A runner as the browser receives it. `metadata` is reduced to the two facts the UI reads from it,
- * and `cloud_identity_id` to whether the runner can be updated/destroyed in place.
+ * A runner as the browser receives it: the rendered columns, and two facts the database derived from
+ * `metadata` and `cloud_identity_id` (neither column's value leaves the database).
  */
 export interface RunnerView
 	extends Pick<
@@ -154,13 +159,15 @@ const RUNNER_LIFECYCLE_JOBS = new Set<ProvisionJobType>(["DEPLOY_RUNNER", "UPDAT
 /**
  * The jobs in flight that a runner card shows, keyed by runner: a lifecycle job by the runner its
  * snapshot targets, any other job by the runner executing it; the newest wins. Read with the same
- * `view` on `job` and the same RLS the job list uses — a reader who may not see jobs sees runners
- * with no job overlay, not a refused page.
+ * `view` on `job` (asked quietly) and the same RLS the job list uses — a reader who may not see jobs
+ * sees runners with no job overlay, not a refused page.
  */
 async function readActiveRunnerJobs(): Promise<Map<string, ActiveRunnerJob>> {
 	let actor: Actor;
 	try {
-		actor = await authorize("view", { type: "job" });
+		// Quiet: a probe for an overlay, re-asked on every refetch, must not write an activity entry or
+		// emit an event each time a reader without `view job` opens the page.
+		actor = await authorizeQuiet("view", { type: "job" });
 	} catch (error) {
 		if (error instanceof ForbiddenError) return new Map();
 		throw error;
@@ -217,8 +224,8 @@ function toRunnerView(
 		location: runner.location,
 		is_default: !managed && runner.is_default && runner.org_id === actor.orgId,
 		personal_elsewhere: !managed && isPersonalElsewhere(runner.org_id, actor),
-		in_place: runner.cloud_identity_id !== null && Boolean(runner.metadata?.deploy_config),
-		cloud_instance_id: managed ? (runner.metadata?.cloud_instance_id ?? null) : null,
+		in_place: runner.in_place,
+		cloud_instance_id: managed ? runner.cloud_instance_id : null,
 		runner_releases: release ? toReleaseInfo(release) : null,
 		provisioned_hours: managed ? (provisionedHours ?? 0) : null,
 		active_job: activeJob,
@@ -605,22 +612,38 @@ export async function readFleetEconomics(): Promise<FleetEconomics> {
 	};
 }
 
-/** Everything the Pools column renders, in one read. */
+/**
+ * The pool cards and the editor's rows, in one read. Month-to-date economics are a separate read
+ * (`runners.fleetEconomics`): their aggregates over the usage ledger and the jobs table are not worth
+ * re-running on every job transition, which is what keeps a pool's busy count live here.
+ */
 export interface FleetData extends FleetOverview {
 	/** Raw stored rows — the edit form needs the knobs the view doesn't render. Manager-only. */
 	configs: FleetPool[];
-	/** Month-to-date COGS/utilization — manager-only (null for viewers/operators). */
-	economics: FleetEconomics | null;
 }
 
 /** Pool views, plus the raw configs + economics when the actor can manage the fleet. */
 export async function readFleetData(): Promise<FleetData> {
 	const overview = await readFleetPoolViews();
-	// Raw configs + economics are manager-only (owner/admin), so they are read only when allowed.
-	const [configs, economics] = overview.canManageFleet
-		? await Promise.all([readFleetPoolConfigs(), readFleetEconomics()])
-		: [[], null];
-	return { ...overview, configs, economics };
+	// The raw configs are manager-only (owner/admin), so they are read only when allowed.
+	const configs = overview.canManageFleet ? await readFleetPoolConfigs() : [];
+	return { ...overview, configs };
+}
+
+/**
+ * The pools' month-to-date economics for a fleet manager, or null for everyone else and on hosted.
+ * The manager gate is asked quietly first, so a viewer's page (which prefetches this) records no
+ * refusal; the economics read itself then authorizes as it always has.
+ */
+export async function readFleetEconomicsForManager(): Promise<FleetEconomics | null> {
+	if (!isFleetOperatorDeployment()) return null;
+	try {
+		await authorizeQuiet("create", { type: "fleet" });
+	} catch (error) {
+		if (error instanceof ForbiddenError) return null;
+		throw error;
+	}
+	return readFleetEconomics();
 }
 
 // ── Inputs ──────────────────────────────────────────────────────────────────────────────────────
@@ -645,6 +668,7 @@ const releaseNotesInput = z.object({ version: z.string().min(1).max(100) });
  * - `list`: every runner the actor can see, the latest release and the changelog.
  * - `page`: the grid — the universe narrowed by the URL's filters, facets over all of it.
  * - `fleet`: the warm pools (self-managed only; empty on hosted).
+ * - `fleetEconomics`: the pools' month-to-date cost and utilization (managers only; null otherwise).
  * - `releaseNotes`: one release, when a version popover opens.
  *
  * None takes a runner or pool id: every runner read is the actor's whole visible set, answered under
@@ -654,5 +678,6 @@ export const runnersRouter = {
 	list: query.handler(() => readRunnersData()),
 	page: query.input(runnersPageInput).handler(({ input }) => readRunnersPage(input)),
 	fleet: query.handler(() => readFleetData()),
+	fleetEconomics: query.handler(() => readFleetEconomicsForManager()),
 	releaseNotes: query.input(releaseNotesInput).handler(({ input }) => readReleaseNotes(input.version)),
 };

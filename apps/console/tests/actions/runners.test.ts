@@ -548,7 +548,7 @@ describe("the mutation contract (defineAction wrappers, #6123)", () => {
 		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(new UsageLimitError("Daily cap", true));
 		expect(await updateRunnerAction({ runnerId: R })).toEqual({
 			ok: false,
-			error: { kind: "entitlement", message: "Daily cap", feature: "" },
+			error: { kind: "entitlement", message: "Daily cap", feature: "jobQuota" },
 		});
 
 		mock.queue.push([{ id: R, name: "w", cloud_identity_id: "ci", metadata: { deploy_config: { region: "eu-west-1", cloud_provider: "aws" } } }]);

@@ -133,11 +133,14 @@ export const TOPIC_KEYS = {
 		orpc.runners.list.key(),
 		orpc.runners.page.key(),
 		orpc.runners.fleet.key(),
+		orpc.runners.fleetEconomics.key(),
 		// The agent grid's runners widget (#6207).
 		agentWidgetKey("runners"),
 	],
-	// A pool's configuration (#6123).
-	fleet: (): QueryKey[] => [orpc.runners.fleet.key()],
+	// A pool's configuration, and the economics computed over it (#6123). The jobs topic refreshes the
+	// pools' busy counts but NOT the economics, whose month-to-date aggregates are not worth re-running
+	// on every job transition.
+	fleet: (): QueryKey[] => [orpc.runners.fleet.key(), orpc.runners.fleetEconomics.key()],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
 	// the board, so its health also shows through the environment status (#6119).
 	addons: (): QueryKey[] => [

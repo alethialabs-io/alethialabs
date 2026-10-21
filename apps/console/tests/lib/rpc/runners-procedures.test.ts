@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(), authorizeQuiet: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({ deploymentMode: () => h.mode }));
 vi.mock("@/lib/queries/runner-usage", () => ({
 	queryProvisionedHours: vi.fn(async () => h.hours),
@@ -64,7 +64,7 @@ vi.mock("@/lib/db", async () => {
 	};
 });
 
-import { authorize } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { runners } from "@/lib/db/schema";
 import {
@@ -93,8 +93,9 @@ function own(over: Record<string, unknown> = {}, release: unknown = null) {
 			location: null,
 			is_default: false,
 			org_id: ORG,
-			cloud_identity_id: null,
-			metadata: {},
+			// Computed in SQL from cloud_identity_id + metadata (RUNNER_COLUMNS); the row carries only these.
+			in_place: false,
+			cloud_instance_id: null,
 			...over,
 		},
 		release,
@@ -122,7 +123,8 @@ beforeEach(() => {
 	h.hours = [];
 	h.mode = "self-managed";
 	h.jobsForbidden = false;
-	vi.mocked(authorize).mockImplementation(async (action, resource) => {
+	vi.mocked(authorize).mockImplementation(async () => ({ userId: USER, orgId: ORG }));
+	vi.mocked(authorizeQuiet).mockImplementation(async (_action, resource) => {
 		if (h.jobsForbidden && resource.type === "job") throw new ForbiddenError("view", { type: "job" });
 		return { userId: USER, orgId: ORG };
 	});
@@ -143,6 +145,9 @@ describe("no runner read selects or returns the credential column", () => {
 			// A projection, never the whole table object (which is what `select({ runner: runners })` did).
 			expect(runnerColumns).not.toContain(undefined);
 			expect(runnerColumns).not.toContain(all.token_hash);
+			// Not even into server memory: the facts the UI needs from it are derived in SQL.
+			expect(runnerColumns).not.toContain(all.metadata);
+			expect(runnerColumns).not.toContain(all.cloud_identity_id);
 			expect(runnerColumns).not.toContain(all.user_id);
 			expect(runnerColumns).not.toContain(all.mode);
 		}
@@ -173,25 +178,22 @@ describe("no runner read selects or returns the credential column", () => {
 		);
 	});
 
-	it("the deploy config never travels — only whether the runner can be acted on in place", async () => {
-		const deploy_config = { region: "eu-west-1", runner_token: "legacy-secret" };
+	it("the two derived facts pass through as the database computed them; managed-only VM ids stay managed-only", async () => {
 		h.rows.set("tx:runners", [
-			own({ id: "a", cloud_identity_id: "ci-1", metadata: { deploy_config } }),
-			own({ id: "b", cloud_identity_id: null, metadata: { deploy_config } }),
-			own({ id: "c", cloud_identity_id: "ci-1", metadata: {} }),
+			own({ id: "a", in_place: true }),
+			own({ id: "b", in_place: false, cloud_instance_id: "vm-should-not-show" }),
 		]);
+		h.rows.set("svc:runners", [managed({ cloud_instance_id: "vm-7" })]);
 		const views = (await readRunnersData()).runners;
-		expect(views.map((v) => [v.id, v.in_place])).toEqual([
-			["a", true],
-			["b", false],
-			["c", false],
+		expect(views.map((v) => [v.id, v.in_place, v.cloud_instance_id])).toEqual([
+			["a", true, null],
+			["b", false, null],
+			["m1", false, "vm-7"],
 		]);
-		expect(JSON.stringify(views)).not.toContain("legacy-secret");
-		expect(JSON.stringify(views)).not.toContain("deploy_config");
 	});
 
 	it("the mention picker's list (getRunnersWithReleases) is the same projected view", async () => {
-		h.rows.set("tx:runners", [own({ token_hash: "leak" })]);
+		h.rows.set("tx:runners", [own({ token_hash: "leak", metadata: { secret: true } })]);
 		const [view] = await readOwnRunnerViews();
 		expect(view).not.toHaveProperty("token_hash");
 		expect(view).not.toHaveProperty("metadata");
@@ -201,7 +203,7 @@ describe("no runner read selects or returns the credential column", () => {
 describe("runners.list — the universe, the latest release and the changelog", () => {
 	it("composes the org's runners then the managed fleet, with managed hours and the release changelog", async () => {
 		h.rows.set("tx:runners", [own()]);
-		h.rows.set("svc:runners", [managed({ metadata: { cloud_instance_id: "vm-7" } })]);
+		h.rows.set("svc:runners", [managed({ cloud_instance_id: "vm-7" })]);
 		h.rows.set("tx:runner_releases", [RELEASE]);
 		h.hours = [{ runner_id: "m1", provisioned_hours: 12 }];
 		const data = await readRunnersData();
@@ -250,7 +252,9 @@ describe("runners.list — the universe, the latest release and the changelog", 
 			["a", { id: "j1", job_type: "UPDATE_RUNNER", project_name: null }],
 			["b", { id: "j2", job_type: "PLAN", project_name: "shop" }],
 		]);
-		expect(authorize).toHaveBeenCalledWith("view", { type: "job" });
+		// Asked quietly: a refetched probe must not record an activity entry on every hint.
+		expect(authorizeQuiet).toHaveBeenCalledWith("view", { type: "job" });
+		expect(authorize).not.toHaveBeenCalledWith("view", { type: "job" });
 	});
 
 	it("a reader who may not see jobs gets the runners without an overlay, not a refused page", async () => {

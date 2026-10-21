@@ -58,7 +58,7 @@ import { RPCLink } from "@orpc/client/fetch";
 import { ORPCError } from "@orpc/server";
 import { eq, inArray } from "drizzle-orm";
 import { headers } from "next/headers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "@/app/(private)/[org]/~/rpc/[[...rest]]/route";
 import { getOwnerScope } from "@/lib/auth/owner";
 import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
@@ -1032,9 +1032,17 @@ export async function runRpcTenancySuite(opts: {
 					[seeded.jobY, ORG_Y],
 				]),
 			);
+
+			// THE CLOCK IS FROZEN for the assertions (only `Date`; timers stay real). Each one deep-equals
+			// two reads made a moment apart, and a read that reports "up to now" — the managed runners'
+			// provisioned hours bill an open session up to the read (#6123) — would differ between them by
+			// the milliseconds in between, whatever another suite left running. Rounding would only move
+			// that to a boundary; one instant for the whole suite removes it.
+			vi.useFakeTimers({ toFake: ["Date"], now: new Date() });
 		});
 
 		afterAll(async () => {
+			vi.useRealTimers();
 			const db = getServiceDb();
 			await db.delete(jobs).where(inArray(jobs.org_id, [ORG_X, ORG_Y]));
 			await db.delete(alertDeliveries).where(inArray(alertDeliveries.org_id, [ORG_X, ORG_Y]));

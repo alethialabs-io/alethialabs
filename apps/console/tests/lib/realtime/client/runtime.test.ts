@@ -78,6 +78,7 @@ vi.mock("@/lib/rpc/client", () => {
 				list: proc("runners.list"),
 				page: proc("runners.page"),
 				fleet: proc("runners.fleet"),
+				fleetEconomics: proc("runners.fleetEconomics"),
 			},
 		},
 	};
