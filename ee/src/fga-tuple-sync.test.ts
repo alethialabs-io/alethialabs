@@ -42,7 +42,9 @@ import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 import {
 	type TupleReader,
+	grantBindingReason,
 	grantObject,
+	grantTuplesAllowed,
 	isActiveTeamOrgMember,
 	memberTuplesInOrg,
 	readAllTuples,
@@ -442,5 +444,56 @@ describe("isActiveTeamOrgMember", () => {
 		expect(await isActiveTeamOrgMember(answering([{ active: 1 }]), TEAM, USER)).toBe(true);
 		expect(queries[0]).toContain("join member m on m.organization_id = t.organization_id");
 		expect(queries[0]).toContain("m.status = 'active'");
+	});
+});
+
+// A grant's role, team principal and scoped resource must be its own org's. Core's SQL function
+// `grant_org_binding_violation` answers that (and the `grants_org_binding` trigger refuses new rows
+// on it, tested against real Postgres in apps/console/tests/integration/grant-org-binding.test.ts);
+// this writer asks it before `syncScopedGrant`, `resyncRole` and `backfill` write tuples, and
+// decides from the answer with `grantTuplesAllowed`.
+describe("grantTuplesAllowed — which grants may have tuples", () => {
+	it("a bound grant writes, whatever its effect", () => {
+		expect(grantTuplesAllowed("allow", null)).toBe(true);
+		expect(grantTuplesAllowed("deny", null)).toBe(true);
+	});
+
+	it("an unbound ALLOW writes nothing, for every reason", () => {
+		for (const reason of ["foreign_role", "foreign_team", "foreign_resource"]) {
+			expect(grantTuplesAllowed("allow", reason)).toBe(false);
+		}
+	});
+
+	it("an unbound DENY still writes — unless its object is another org's", () => {
+		expect(grantTuplesAllowed("deny", "foreign_role")).toBe(true);
+		expect(grantTuplesAllowed("deny", "foreign_team")).toBe(true);
+		expect(grantTuplesAllowed("deny", "foreign_resource")).toBe(false);
+	});
+});
+
+describe("grantBindingReason", () => {
+	const ROLE = "55555555-5555-4555-8555-555555555555";
+
+	it("asks core's binding function, and returns its reason or null", async () => {
+		const queries: SQL[] = [];
+		const answering = (rows: unknown[]) => ({
+			execute: async (query: SQL): Promise<unknown[]> => {
+				queries.push(query);
+				return rows;
+			},
+		});
+		const grant: Parameters<typeof grantBindingReason>[1] = {
+			orgId: ORG,
+			principalType: "user",
+			principalId: USER,
+			roleId: ROLE,
+			resourceType: "project",
+			resourceId: PROJECT,
+		};
+		expect(await grantBindingReason(answering([{ reason: null }]), grant)).toBeNull();
+		expect(await grantBindingReason(answering([{ reason: "foreign_role" }]), grant)).toBe(
+			"foreign_role",
+		);
+		expect(JSON.stringify(queries[0])).toContain("grant_org_binding_violation");
 	});
 });

@@ -228,6 +228,59 @@ export function grantObject(g: GrantScope): string {
 		: `${g.resourceType}:${g.resourceId}`;
 }
 
+/**
+ * The binding reason of a grant row, as SQL over `grants g`: core's `grant_org_binding_violation`
+ * (programmables.sql) — NULL when its role, team principal and scoped resource are all the grant's
+ * own org's, else 'foreign_role' / 'foreign_team' / 'foreign_resource'. The `grants_org_binding`
+ * trigger refuses new rows on the same function, and core's Postgres PDP reads it too.
+ */
+const BINDING_REASON = sql`public.grant_org_binding_violation(
+	g.org_id, g.principal_type, g.principal_id, g.role_id, g.resource_type, g.resource_id
+)`;
+
+/**
+ * Whether a grant may have tuples in the store, given its binding reason (null = bound).
+ *
+ * A row stored before the trigger, or whose resource has since moved org, is still in the table,
+ * and `backfill` and `resyncRole` re-expand from the table — so every writer here asks this:
+ *
+ *   allow — only when bound. An unbound allow row confers nothing, on either engine.
+ *   deny  — unless its RESOURCE is not the org's. A scoped tuple carries no org
+ *     (`<type>:<id>#perm_deny_*`), so a deny on another org's object would apply in that org; a
+ *     deny on this org's own object, or org-wide, only ever takes access away here, so it stays.
+ */
+export function grantTuplesAllowed(effect: "allow" | "deny", reason: string | null): boolean {
+	if (reason === null) return true;
+	return effect === "deny" && reason !== "foreign_resource";
+}
+
+/** What `grantBindingReason` needs: a tagged-SQL runner returning rows. */
+export interface BindingQueryRunner {
+	execute(query: SQL): Promise<unknown[]>;
+}
+
+/**
+ * The binding reason of a grant the caller HOLDS (not a stored row) — for `syncScopedGrant`, which
+ * runs after the row was written and is not handed its id. Same function as `BINDING_REASON`.
+ */
+export async function grantBindingReason(
+	db: BindingQueryRunner,
+	grant: Pick<ScopedGrant, "orgId" | "principalType" | "principalId" | "roleId"> & {
+		resourceType: string;
+		resourceId: string | null;
+	},
+): Promise<string | null> {
+	const rows = await db.execute(sql`
+		select public.grant_org_binding_violation(
+			${grant.orgId}::uuid, ${grant.principalType}, ${grant.principalId}::uuid,
+			${grant.roleId}::uuid, ${grant.resourceType}, ${grant.resourceId}::uuid
+		) as reason
+	`);
+	const first = rows[0];
+	if (typeof first !== "object" || first === null || !("reason" in first)) return null;
+	return typeof first.reason === "string" ? first.reason : null;
+}
+
 export class FgaTupleSync implements TupleSync {
 	constructor(
 		private readonly core: CoreContext,
@@ -355,6 +408,14 @@ export class FgaTupleSync implements TupleSync {
 	}
 
 	async syncScopedGrant(grant: ScopedGrant): Promise<void> {
+		// Postgres refuses an unbound grant at insert (the `grants_org_binding` trigger), so a caller
+		// that wrote its row first never reaches this with one. This holds for a caller that did not:
+		// nothing is cleared either, because a foreign object's tuples are not this grant's to clear.
+		const reason = await grantBindingReason(this.core.db, {
+			...grant,
+			resourceId: grant.resourceType === "org" ? null : grant.resourceId,
+		});
+		if (!grantTuplesAllowed(grant.effect, reason)) return;
 		const keys = grant.permissionKey
 			? [grant.permissionKey]
 			: grant.roleId
@@ -404,11 +465,19 @@ export class FgaTupleSync implements TupleSync {
 			effect: "allow" | "deny";
 			resource_type: string;
 			resource_id: string | null;
+			binding_reason: string | null;
 		}>(sql`
-			select org_id, principal_type, principal_id, effect, resource_type, resource_id
-			from grants where role_id = ${roleId}
+			select g.org_id, g.principal_type, g.principal_id, g.effect, g.resource_type, g.resource_id,
+			       ${BINDING_REASON} as binding_reason
+			from grants g where g.role_id = ${roleId}
 		`);
 		for (const g of grants) {
+			// A row of ANOTHER org that binds this role is skipped: the role's permissions are this
+			// role's org's to define, and must not reach a grant written elsewhere. Its existing
+			// tuples are not cleared here — they sit on that org's objects beside its legitimate ones,
+			// and the clear is per-subject-per-object — so they stay frozen at what they were, until
+			// the row is revoked.
+			if (!grantTuplesAllowed(g.effect, g.binding_reason)) continue;
 			// The scope, EXACTLY as syncScopedGrant sees it. This loop used to inline its own
 			// copy of the object expression and its own `g.resource_id ? g.resource_type : "org"`
 			// normalisation — a structural duplicate that a fix to `grantObject` alone would have
@@ -445,13 +514,16 @@ export class FgaTupleSync implements TupleSync {
 			permission_key: string | null;
 			resource_type: string;
 			resource_id: string | null;
+			binding_reason: string | null;
 		}>(sql`
-			select org_id, principal_type, principal_id, effect, role_id, permission_key,
-			       resource_type, resource_id
-			from grants
+			select g.org_id, g.principal_type, g.principal_id, g.effect, g.role_id, g.permission_key,
+			       g.resource_type, g.resource_id, ${BINDING_REASON} as binding_reason
+			from grants g
 		`);
 		const tuples: FgaTuple[] = [];
 		for (const g of grants) {
+			// An unbound row writes nothing (see `grantTuplesAllowed`).
+			if (!grantTuplesAllowed(g.effect, g.binding_reason)) continue;
 			// Narrowed, not spread — see `resyncRole`. A null scope writes nothing, as it always
 			// did; it just no longer reaches the expander to find that out.
 			const scope = this.core.fga.grantScopeFromRow({

@@ -26,6 +26,13 @@ vi.mock("@/lib/authz/tuple-sync", () => ({ getTupleSync: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The org-binding check asks Postgres (lib/authz/grant-binding.ts); here every grant is bound
+// unless a case says otherwise. The refusals themselves run against real Postgres in
+// tests/integration/grant-org-binding.test.ts.
+vi.mock("@/lib/authz/grant-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/grant-binding")>()),
+	grantBindingViolation: vi.fn(async () => null),
+}));
 
 import { POST } from "@/app/api/cli/grants/route";
 import { getPdp } from "@/lib/authz";
@@ -211,5 +218,37 @@ describe("POST /api/cli/grants — every accepted resource_type still writes", (
 		expect(mock.valuesSpy).toHaveBeenCalledWith(
 			expect.objectContaining({ resource_type: "org", resource_id: null }),
 		);
+	});
+});
+
+describe("POST /api/cli/grants — a reference outside the caller's org", () => {
+	it("answers 400 with the binding reason and its message, and inserts nothing", async () => {
+		const { grantBindingViolation, GRANT_BINDING_MESSAGE } = await import("@/lib/authz/grant-binding");
+		vi.mocked(grantBindingViolation).mockResolvedValueOnce("foreign_resource");
+		const res = await POST(
+			new Request("http://localhost/api/cli/grants", {
+				method: "POST",
+				body: JSON.stringify({
+					principal_type: "user",
+					principal_id: "11111111-1111-4111-8111-111111111111",
+					permission_key: "project:view",
+					resource_type: "project",
+					resource_id: "22222222-2222-4222-8222-222222222222",
+				}),
+			}),
+		);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: GRANT_BINDING_MESSAGE.foreign_resource,
+			reason: "foreign_resource",
+		});
+		expect(mock.insertSpy).not.toHaveBeenCalled();
+		expect(vi.mocked(grantBindingViolation)).toHaveBeenCalledWith({
+			orgId: "org-1",
+			principalType: "user",
+			principalId: "11111111-1111-4111-8111-111111111111",
+			roleId: null,
+			resource: { resourceType: "project", resourceId: "22222222-2222-4222-8222-222222222222" },
+		});
 	});
 });

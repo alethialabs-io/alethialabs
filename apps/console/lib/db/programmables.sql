@@ -2544,6 +2544,121 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- ── grants: everything a grant references belongs to the grant's own organization ──────────────
+-- A grant row names an org (org_id) and up to three other things: a ROLE, a TEAM principal and a
+-- scoped RESOURCE. Each of those is itself owned by an org, and the invariant is that it is the
+-- SAME org: a custom role of this org or a built-in role, a team of this org, a resource of this
+-- org. The two write boundaries (app/server/actions/grants.ts, app/api/cli/grants) check this
+-- before inserting and return a named refusal (lib/authz/grant-binding.ts); this trigger is the
+-- backstop for every other writer, so the property does not depend on a writer remembering it.
+--
+-- ONE DEFINITION, THREE READERS. `grant_org_binding_violation` is what the trigger raises on, what
+-- the write boundaries ask before inserting, and what the community PDP (matchingGrants) and the
+-- ee OpenFGA writer (backfill / resyncRole / syncScopedGrant) filter ALLOW rows through. A row
+-- stored before this trigger existed, or one whose resource later moved to another org, therefore
+-- confers nothing in either engine instead of depending on having been refused at write time.
+--
+-- WHAT IT RETURNS: NULL when the row is bound, else the reason — 'foreign_role', 'foreign_team'
+-- or 'foreign_resource'. The resource arm reads the SCOPABLE kinds (the `PARENTS` table in
+-- lib/authz/fga-hierarchy.ts; tests/integration/grant-org-binding.test.ts fails if a kind there is
+-- not refused on an unknown id). A scoped id there that resolves to no row of this org (an unknown
+-- id, a managed runner, a catalog connector — the catalog is global, so no org owns one) is
+-- 'foreign_resource'. The grant's own org id is accepted as a scope: it is the hierarchy root the
+-- community PDP walks to. Not resource-checked: a NULL id (org-wide), and a kind that is not
+-- scopable — the write boundaries refuse those (`parseGrantResource`), both engines read a stored
+-- one as conferring nothing (#4584), and none names another org's object. A user principal is not
+-- org-owned; membership is checked separately (`lacksActiveMembership`, the PDPs' member arm).
+--
+-- DEFINER RIGHTS, `row_security = off` and a pinned search_path, for the reason
+-- set_org_id_from_project gives: the lookups must see the one row an id names whatever the
+-- writer's RLS scope, or "not visible" would read as "not owned". They return only an org id or a
+-- reason code, and EXECUTE is revoked from PUBLIC; the service role owns them.
+--
+-- EXISTING ROWS. A BEFORE trigger never re-reads stored rows, so creating it cannot fail migrate.
+-- It fires on INSERT and on an UPDATE of a column it reads (not permission_key, which
+-- lib/authz/seed.ts renames in place).
+CREATE OR REPLACE FUNCTION public.authz_resource_org_id(p_type TEXT, p_id UUID)
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  SELECT CASE p_type
+    WHEN 'project' THEN (SELECT p.org_id FROM public.projects p WHERE p.id = p_id)
+    WHEN 'runner' THEN (SELECT r.org_id FROM public.runners r WHERE r.id = p_id)
+    WHEN 'cloud_identity' THEN (SELECT c.org_id FROM public.cloud_identities c WHERE c.id = p_id)
+  END
+$$;
+REVOKE EXECUTE ON FUNCTION public.authz_resource_org_id(TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grant_org_binding_violation(
+  p_org UUID,
+  p_principal_type TEXT,
+  p_principal_id UUID,
+  p_role UUID,
+  p_resource_type TEXT,
+  p_resource_id UUID
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+BEGIN
+  IF p_role IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.role r
+    WHERE r.id = p_role
+      AND ((r.organization_id IS NULL AND r.is_builtin) OR r.organization_id = p_org)
+  ) THEN
+    RETURN 'foreign_role';
+  END IF;
+  IF p_principal_type = 'team' AND NOT EXISTS (
+    SELECT 1 FROM public.team t WHERE t.id = p_principal_id AND t.organization_id = p_org
+  ) THEN
+    RETURN 'foreign_team';
+  END IF;
+  IF p_resource_id IS NOT NULL
+     AND p_resource_type IN ('project', 'runner', 'cloud_identity', 'connector')
+     AND p_resource_id IS DISTINCT FROM p_org
+     AND public.authz_resource_org_id(p_resource_type, p_resource_id) IS DISTINCT FROM p_org THEN
+    RETURN 'foreign_resource';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.grant_org_binding_violation(UUID, TEXT, UUID, UUID, TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grants_enforce_org_binding()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE reason TEXT;
+BEGIN
+  reason := public.grant_org_binding_violation(
+    NEW.org_id, NEW.principal_type, NEW.principal_id, NEW.role_id, NEW.resource_type, NEW.resource_id);
+  IF reason IS NOT NULL THEN
+    -- The text carries the reason code only, never a value read with definer rights.
+    RAISE EXCEPTION 'grant references something outside its organization (%)', reason
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'grants_org_binding';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.grants_enforce_org_binding() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS grants_org_binding ON public.grants;
+CREATE TRIGGER grants_org_binding
+  BEFORE INSERT OR UPDATE OF org_id, principal_type, principal_id, role_id, resource_type, resource_id
+  ON public.grants
+  FOR EACH ROW EXECUTE FUNCTION public.grants_enforce_org_binding();
+
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
 -- runner_usage_sessions idiom), so the least-privilege alethia_app role — the one behind every
