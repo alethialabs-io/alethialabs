@@ -3,7 +3,7 @@
 
 import "server-only";
 
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getPdp } from "@/lib/authz";
 import { authorize, authorizeQuiet } from "@/lib/authz/guard";
@@ -27,6 +27,7 @@ import {
 	fleetServerType,
 	hourlyRateEur,
 } from "@/lib/fleet/costs";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { latestReleaseVersion, type ManagedRunnerRow, managedRunnerRowsForProvider } from "@/lib/fleet/queue";
 import { jobMinutesByProvider, provisionedHoursByProvider, queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { type RunnersPage, type RunnersQuery, runnersPage } from "@/lib/queries/runners";
@@ -159,8 +160,9 @@ const RUNNER_LIFECYCLE_JOBS = new Set<ProvisionJobType>(["DEPLOY_RUNNER", "UPDAT
 /**
  * The jobs in flight that a runner card shows, keyed by runner: a lifecycle job by the runner its
  * snapshot targets, any other job by the runner executing it; the newest wins. Read with the same
- * `view` on `job` (asked quietly) and the same RLS the job list uses — a reader who may not see jobs
- * sees runners with no job overlay, not a refused page.
+ * `view` on `job` (asked quietly), the same RLS and the same project-visibility predicate the job list
+ * uses (lib/jobs/visibility.ts) — a job in a project the reader may not view is not overlaid, and a
+ * reader who may not see jobs at all sees runners with no overlay, not a refused page.
  */
 async function readActiveRunnerJobs(): Promise<Map<string, ActiveRunnerJob>> {
 	let actor: Actor;
@@ -172,6 +174,7 @@ async function readActiveRunnerJobs(): Promise<Map<string, ActiveRunnerJob>> {
 		if (error instanceof ForbiddenError) return new Map();
 		throw error;
 	}
+	const visible = await jobVisibleTo(actor);
 	const rows = await withActorScope(actor, (tx) =>
 		tx
 			.select({
@@ -183,7 +186,7 @@ async function readActiveRunnerJobs(): Promise<Map<string, ActiveRunnerJob>> {
 			})
 			.from(jobs)
 			.leftJoin(projects, eq(jobs.project_id, projects.id))
-			.where(inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]))
+			.where(and(inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]), visible))
 			.orderBy(asc(jobs.created_at)),
 	);
 	const byRunner = new Map<string, ActiveRunnerJob>();

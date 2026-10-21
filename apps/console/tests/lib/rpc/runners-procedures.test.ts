@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
 	hours: [] as { runner_id: string; provisioned_hours: number }[],
 	mode: "self-managed" as "hosted" | "self-managed",
 	jobsForbidden: false,
+	wheres: [] as { path: string; table: string; where: unknown }[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -33,6 +34,12 @@ vi.mock("@/lib/queries/runner-usage", () => ({
 }));
 vi.mock("@/lib/fleet/queue", () => ({ latestReleaseVersion: vi.fn(), managedRunnerRowsForProvider: vi.fn() }));
 vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
+// Job visibility follows project visibility (lib/jobs/visibility.ts, #6121): the overlay must apply
+// the same predicate. A marker stands in for it, so the test sees whether it reached the WHERE.
+vi.mock("@/lib/jobs/visibility", async () => {
+	const { sql } = await import("drizzle-orm");
+	return { jobVisibleTo: vi.fn(async () => sql`job_visible_marker`) };
+});
 vi.mock("@/lib/db", async () => {
 	const { getTableName } = await import("drizzle-orm");
 	const { Table } = await import("drizzle-orm");
@@ -51,7 +58,10 @@ vi.mock("@/lib/db", async () => {
 				return c;
 			},
 			leftJoin: () => c,
-			where: () => c,
+			where: (w: unknown) => {
+				h.wheres.push({ path, table, where: w });
+				return c;
+			},
 			orderBy: () => c,
 			limit: () => c,
 			then: (resolve: (v: unknown) => void) => resolve(h.rows.get(`${path}:${table}`) ?? []),
@@ -123,6 +133,7 @@ beforeEach(() => {
 	h.hours = [];
 	h.mode = "self-managed";
 	h.jobsForbidden = false;
+	h.wheres = [];
 	vi.mocked(authorize).mockImplementation(async () => ({ userId: USER, orgId: ORG }));
 	vi.mocked(authorizeQuiet).mockImplementation(async (_action, resource) => {
 		if (h.jobsForbidden && resource.type === "job") throw new ForbiddenError("view", { type: "job" });
@@ -255,6 +266,15 @@ describe("runners.list — the universe, the latest release and the changelog", 
 		// Asked quietly: a refetched probe must not record an activity entry on every hint.
 		expect(authorizeQuiet).toHaveBeenCalledWith("view", { type: "job" });
 		expect(authorize).not.toHaveBeenCalledWith("view", { type: "job" });
+	});
+
+	it("the overlay reads only jobs the reader may see: the project-visibility predicate is in its WHERE", async () => {
+		const { PgDialect } = await import("drizzle-orm/pg-core");
+		const { SQL } = await import("drizzle-orm");
+		await readRunnersData();
+		const jobsWhere = h.wheres.find((w) => w.table === "jobs")?.where;
+		if (!(jobsWhere instanceof SQL)) throw new Error("the overlay built no WHERE");
+		expect(new PgDialect().sqlToQuery(jobsWhere).sql).toContain("job_visible_marker");
 	});
 
 	it("a reader who may not see jobs gets the runners without an overlay, not a refused page", async () => {
