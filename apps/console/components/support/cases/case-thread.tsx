@@ -3,17 +3,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
+import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import {
-	Conversation,
-	ConversationContent,
-	ConversationEmptyState,
-} from "@/components/ai-elements/conversation";
+import { useEffect } from "react";
 import {
 	Message,
 	MessageContent,
 	MessageResponse,
 } from "@/components/ai-elements/message";
+import {
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerItem,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+	useMessageScroller,
+} from "@/components/ai-elements/message-scroller";
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import type { PublicMessage } from "@/lib/queries/support";
 import { CaseTime } from "./case-time";
@@ -33,6 +39,14 @@ const ROLE_INITIALS: Record<SupportAuthorType, string> = {
 	ai: "AI",
 	system: "SY",
 };
+
+/**
+ * The id prefix `CaseComposer` gives the reply it patches into the case read before the server
+ * answers. A last message carrying it is the viewer's own send — the one new message that must
+ * scroll into view even when they had scrolled up to read history. Pinned by
+ * `tests/components/support/case-thread-scroll.test.tsx`, which drives the real composer.
+ */
+const OPTIMISTIC_ID_PREFIX = "optimistic-";
 
 /**
  * Renders a single support message through the AI-Elements message primitives — the same
@@ -71,24 +85,51 @@ function ThreadMessage({ message }: { message: PublicMessage }) {
 }
 
 /**
+ * Scrolls to the newest message when it is the viewer's own send. Everything else is the
+ * scroller's `autoScroll`: a reply that lands while the viewer is at the bottom is followed, and
+ * one that lands while they are reading history is not. Their own send is the exception — they
+ * just acted, so the thread shows the result wherever they had scrolled to.
+ */
+function FollowOwnSend({ lastMessageId }: { lastMessageId: string | undefined }) {
+	const { scrollToEnd } = useMessageScroller();
+	useEffect(() => {
+		if (lastMessageId?.startsWith(OPTIMISTIC_ID_PREFIX)) scrollToEnd({ behavior: "smooth" });
+	}, [lastMessageId, scrollToEnd]);
+	return null;
+}
+
+/**
  * The customer-visible case conversation: an ordered, oldest-first list of public messages
- * rendered as chat bubbles. Empty until the first message lands.
+ * rendered as chat bubbles, in a bounded scroller that opens at the newest message. Empty until
+ * the first message lands.
  */
 export function CaseThread({ messages }: { messages: PublicMessage[] }) {
 	return (
-		<Conversation className="min-h-0">
-			<ConversationContent>
-				{messages.length === 0 ? (
-					<ConversationEmptyState
-						title="No messages yet"
-						description="Replies on this case will appear here."
-					/>
-				) : (
-					messages.map((message) => (
-						<ThreadMessage key={message.id} message={message} />
-					))
-				)}
-			</ConversationContent>
-		</Conversation>
+		<MessageScrollerProvider autoScroll defaultScrollPosition="end">
+			<FollowOwnSend lastMessageId={messages.at(-1)?.id} />
+			<MessageScroller>
+				{/* Bounded, so a long thread scrolls inside the case rather than pushing the composer
+				    below the fold — without a bound the viewport is as tall as its content and there
+				    is nothing to stick to the bottom of. */}
+				<MessageScrollerViewport aria-label="Case conversation" className="max-h-[70dvh] scrollbar-thin">
+					<MessageScrollerContent className="p-4">
+						{messages.length === 0 ? (
+							<EmptyState
+								level={3}
+								title="No messages yet"
+								description="Replies on this case will appear here."
+							/>
+						) : (
+							messages.map((message) => (
+								<MessageScrollerItem key={message.id} messageId={message.id}>
+									<ThreadMessage message={message} />
+								</MessageScrollerItem>
+							))
+						)}
+					</MessageScrollerContent>
+				</MessageScrollerViewport>
+				<MessageScrollerButton />
+			</MessageScroller>
+		</MessageScrollerProvider>
 	);
 }
