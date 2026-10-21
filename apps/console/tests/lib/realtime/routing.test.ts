@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "connectors"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -221,3 +221,37 @@ describe("TOPICS", () => {
 		expect(isTopic(SELF_TEST_TOPIC)).toBe(false);
 	});
 });
+
+// #6124: cloud_identities + connector_credentials, `scoped_all`. The trigger sends `u` only for a
+// personal row, so a notice reaches the org OR the author, never both.
+describe("keysFor — connectors, the two arms of scoped_all", () => {
+	const ROW = "55555555-5555-4555-8555-555555555555";
+	const notice = (over: Partial<ChangeNotice>): ChangeNotice => ({
+		kind: "change",
+		t: "connectors",
+		id: ROW,
+		o: ORG,
+		u: null,
+		p: null,
+		...over,
+	});
+
+	it("an org-shared row reaches every member of its org, unfiltered", () => {
+		expect(keysFor(notice({}))).toEqual([{ key: `o:${ORG}`, filterProject: null }]);
+	});
+
+	it("a personal row reaches its author alone — never the org key", () => {
+		const routes = keysFor(notice({ u: USER }));
+		expect(routes).toEqual([{ key: `ou:${ORG}:${USER}`, filterProject: null }]);
+		expect(routes.map((r) => r.key)).not.toContain(`o:${ORG}`);
+	});
+
+	it("a personal row with no org reaches the author's personal scope", () => {
+		expect(keysFor(notice({ o: null, u: USER }))).toEqual([{ key: `u:${USER}`, filterProject: null }]);
+	});
+
+	it("a row with neither routes nowhere", () => {
+		expect(keysFor(notice({ o: null, u: null }))).toEqual([]);
+	});
+});
+

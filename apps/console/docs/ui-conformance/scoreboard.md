@@ -178,7 +178,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F4** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F5** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F6** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
-| **F7** | F | `check-filter-standard` | 14 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
+| **F7** | F | `check-filter-standard` | 15 | 0 | 24 | 1 | 1.00 | `not-a-list-page` 24 |
 | **F8** | F | live — `interaction` | 13 | 1 | 24 | 2 | 0.93 | `not-a-list-page` 24 |
 | **F9** | F | live — `interaction` | 14 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
 | **F10** | F | live — `interaction` | 15 | 0 | 24 | 1 | 1.00 | `not-a-list-page` 24 |
@@ -235,7 +235,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
+| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |

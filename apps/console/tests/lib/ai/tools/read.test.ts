@@ -16,8 +16,8 @@ vi.mock("@/app/server/actions/cloud-resources", () => ({
 	getCloudIdentityInventory: vi.fn(),
 }));
 vi.mock("@/app/server/actions/clusters", () => ({ getClusters: vi.fn() }));
-vi.mock("@/app/server/actions/connectors", () => ({
-	getConnectorsWithStatus: vi.fn(),
+vi.mock("@/lib/rpc/procedures/connectors", () => ({
+	readConnectorsWithStatus: vi.fn(),
 }));
 vi.mock("@/app/server/actions/jobs", () => ({
 	getJobs: vi.fn(),
@@ -47,7 +47,7 @@ import { readTools } from "@/lib/ai/tools/read";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getJobs } from "@/app/server/actions/jobs";
 import { readJob as getJob, readPlanResult as getPlanResult } from "@/lib/rpc/procedures/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
@@ -425,7 +425,7 @@ describe("list_clusters", () => {
 
 describe("list_connectors", () => {
 	it("maps connectors to the trimmed status shape", async () => {
-		vi.mocked(getConnectorsWithStatus).mockResolvedValue([
+		vi.mocked(readConnectorsWithStatus).mockResolvedValue([
 			{
 				slug: "datadog",
 				name: "Datadog",

@@ -322,18 +322,17 @@ controls:
 
   # ── alerts ─────────────────────────────────────────────────────────────────────────────────
 
-  # The disconnect dialog is ONE control that dispatches by cloud: `confirmDisconnect`
-  # (connectors-page.tsx) branches to six different mutations behind a single AlertDialog. The
-  # `mutation` field is a scalar, so the entry above could hold one of the six and the other five
-  # went unrecorded — measured by the census on 2026-09-09, not read off the file. They are
-  # siblings rather than a list because the field contract is version 1 and scalar; each is a
-  # distinct mutation reachable from the same trigger, and the live spec drives the dialog once
-  # per seeded connector.
+  # The disconnect dialog is ONE control that dispatches by kind: `disconnectConnector`
+  # (connectors-page.tsx) sends a git link to `deleteProviderToken`, an api_key credential to
+  # `deleteConnectorCredential`, and every cloud account to `disconnectCloudAccount` (#6124 — the
+  # four per-cloud disconnect actions became one, which reads the provider from the stored row).
+  # The per-cloud entries stay siblings because the live spec drives the dialog once per seeded
+  # cloud card, and each card is its own reach.
 
   - id: connectors.disconnect.aws
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectAwsIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -350,7 +349,7 @@ controls:
   - id: connectors.disconnect.gcp
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectGcpIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -367,7 +366,7 @@ controls:
   - id: connectors.disconnect.azure
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectAzureIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -384,7 +383,7 @@ controls:
   - id: connectors.disconnect.extra
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectExtraCloud
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog

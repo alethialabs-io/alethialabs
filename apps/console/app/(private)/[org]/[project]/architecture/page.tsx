@@ -4,7 +4,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import {
 	resolveActiveEnvironmentId,
@@ -80,7 +80,7 @@ export default async function ProjectArchitecturePage({
 	const rpc = serverOrpc();
 	const [identities, connectors, sourceProject] = await Promise.all([
 		getVerifiedCloudIdentities(),
-		getConnectorsWithStatus(),
+		readConnectorsWithStatus(),
 		getProjectAsFormData(projectId, environmentId).catch(() => undefined),
 		queryClient.prefetchQuery(rpc.canvas.environmentStatus.queryOptions({ input })),
 		queryClient.prefetchQuery(rpc.canvas.addons.queryOptions({ input })),

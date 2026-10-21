@@ -368,6 +368,13 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
 		reveals: (out) => Array.isArray(field(out, "jobs")),
 	},
+	// #6124: the connectors board lists the cloud accounts the address's org shares (plus the
+	// caller's own personal ones). Each org's seeded identity is the marker.
+	"connectors.board": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: boardListsIdentity(out, s.identityX), y: boardListsIdentity(out, s.identityY) }),
+	},
 	"canvas.capabilities": {
 		kind: "by-id",
 		input: (s, org) => ({ identityId: identityOf(s, org), region: null }),
@@ -407,6 +414,16 @@ export const FIXTURES: Record<string, Fixture> = {
 		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
 	},
 };
+
+/** Whether a connectors board output lists the cloud account `identityId` on any connector. */
+function boardListsIdentity(out: unknown, identityId: string): boolean {
+	const integrations = field(out, "integrations");
+	if (!Array.isArray(integrations)) return false;
+	return integrations.some((i: unknown) => {
+		const accounts = field(i, "accounts");
+		return Array.isArray(accounts) && accounts.some((a: unknown) => field(a, "identityId") === identityId);
+	});
+}
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
 function inputFor(fixture: Fixture | undefined, seeded: Seeded, org: Org): unknown {
@@ -639,7 +656,16 @@ export async function runRpcTenancySuite(opts: {
 			const seedIdentity = async (orgId: string, org: Org): Promise<string> => {
 				const [ci] = await db
 					.insert(cloudIdentities)
-					.values({ user_id: W, org_id: orgId, scope: "org", provider: "aws", name: `it-6119-${org}` })
+					.values({
+						user_id: W,
+						org_id: orgId,
+						scope: "org",
+						provider: "aws",
+						name: `it-6119-${org}`,
+						// A configured account (a role ARN was submitted), so the connectors board lists it
+						// (#6124) — a bare placeholder is filtered out as never-configured.
+						credentials: { role_arn: `arn:aws:iam::123456789012:role/it-6124-${org}` },
+					})
 					.returning({ id: cloudIdentities.id });
 				await db.insert(cloudRegions).values({ cloud_identity_id: ci.id, provider: "aws", native_id: regionOf(org) });
 				return ci.id;

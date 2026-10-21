@@ -50,7 +50,7 @@ vi.mock("@/app/server/actions/resolve", () => ({
 	}),
 }));
 vi.mock("@/app/server/actions/aws/identities", () => ({ getVerifiedCloudIdentities: vi.fn(async () => []) }));
-vi.mock("@/app/server/actions/connectors", () => ({ getConnectorsWithStatus: vi.fn(async () => []) }));
+vi.mock("@/lib/rpc/procedures/connectors", () => ({ readConnectorsWithStatus: vi.fn(async () => []) }));
 vi.mock("@/app/server/actions/projects", () => ({ getProjectAsFormData: vi.fn(async () => undefined) }));
 vi.mock("@/lib/addons/byo-flag", () => ({ isByoHelmEnabled: () => h.flags.helm }));
 vi.mock("@/lib/addons/describe-flag", () => ({ isByoDescribeEnabled: () => h.flags.describe }));
