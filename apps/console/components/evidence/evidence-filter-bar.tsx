@@ -17,7 +17,7 @@ import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { FunnelFilter, type FunnelFacet } from "@repo/ui/funnel-filter";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import type { EvidenceFacetOption } from "@/app/server/actions/evidence";
+import type { EvidenceFacetOption } from "@/lib/rpc/procedures/evidence";
 import {
 	CLOUD_FILTER_VALUES,
 	DEFAULT_EVIDENCE_FILTERS,

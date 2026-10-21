@@ -51,7 +51,7 @@ export const DEFAULT_EVIDENCE_FILTERS: EvidenceFilters = {
 };
 
 /**
- * The stable query object placed in the TanStack key and sent to `getOrgEvidence`.
+ * The stable query object placed in the TanStack key and sent to the `evidence.page` read.
  * Only non-empty fields are present, and arrays are sorted + deduped, so two
  * equivalent filter states always produce an identical key (no cache fragmentation).
  */

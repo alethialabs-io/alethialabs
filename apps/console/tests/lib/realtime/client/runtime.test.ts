@@ -41,6 +41,8 @@ vi.mock("@/lib/rpc/client", () => ({
 				(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
 			),
 		),
+		// The Evidence page's read (#6126), which the jobs, environments and projects topics invalidate.
+		evidence: { key: () => ["evidence-orpc"] },
 	},
 }));
 

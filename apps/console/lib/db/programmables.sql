@@ -119,7 +119,8 @@ END;
 $$;
 
 -- Two triggers, not one: an INSERT trigger's WHEN may not reference OLD. The column list is the jobs
--- UI's (components/jobs/columns.tsx + the job detail page). Deliberately NOT listed: progress_at and
+-- UI's (components/jobs/columns.tsx + the job detail page), plus verify_override — a recorded
+-- verification waiver, which the Evidence page lists (#6126). Deliberately NOT listed: progress_at and
 -- updated_at (heartbeat-like), claimed_at and attempts (they move with status), usage_reported_at,
 -- priority, provider, assigned_runner_id, traceparent, and org_id (a backfill-only write).
 DROP TRIGGER IF EXISTS jobs_notify_change_upd ON public.jobs;
@@ -127,10 +128,10 @@ CREATE TRIGGER jobs_notify_change_upd
   AFTER UPDATE ON public.jobs
   FOR EACH ROW WHEN (
     (OLD.status, OLD.error_message, OLD.runner_id, OLD.started_at, OLD.completed_at,
-     OLD.project_id, OLD.environment_id, OLD.execution_metadata)
+     OLD.project_id, OLD.environment_id, OLD.execution_metadata, OLD.verify_override)
     IS DISTINCT FROM
     (NEW.status, NEW.error_message, NEW.runner_id, NEW.started_at, NEW.completed_at,
-     NEW.project_id, NEW.environment_id, NEW.execution_metadata)
+     NEW.project_id, NEW.environment_id, NEW.execution_metadata, NEW.verify_override)
   )
   EXECUTE FUNCTION public.notify_change('jobs');
 
@@ -2776,3 +2777,65 @@ DROP TRIGGER IF EXISTS project_addons_notify_change_insdel ON public.project_add
 CREATE TRIGGER project_addons_notify_change_insdel
   AFTER INSERT OR DELETE ON public.project_addons
   FOR EACH ROW EXECUTE FUNCTION public.notify_component_change('addons');
+
+-- ── The Evidence surface's posture rows (#6126): environment_drift and environment_security. ─────
+-- Same contract as the board's triggers above — identifiers only, and an UPDATE fires only when a
+-- column the UI renders CHANGED. Both notify `environments`: the Evidence read and the board's
+-- environment status show an environment's drift and security posture. The hint's id is the
+-- ENVIRONMENT's, so it names what changed in the reader's terms.
+--
+-- Why these need their own trigger when the scan is a job: the job-status route writes the posture
+-- AFTER `update_job_status` has committed the job's terminal status, so the `jobs` hint arrives first
+-- and the refetch it causes can read the previous posture. This hint is what carries the result.
+--
+-- ROUTING: these rows are RLS-less project children with no org_id, so the notifier reads the org
+-- from the parent project; lib/realtime/routing.ts routes `environments` on the org arm, filtered
+-- through the PDP's `view` on the row's project. When the parent project is already gone (a cascade
+-- delete), the org reads NULL and the notice routes nowhere — the project's own delete is the hint.
+--
+-- Listed: everything the Evidence table and drawer render, scanned_at included (the Checked column).
+-- A posture write is the tail of a scan JOB, so its rate is the job rate, not a heartbeat's.
+CREATE OR REPLACE FUNCTION public.notify_posture_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  r record;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    r := OLD;
+  ELSE
+    r := NEW;
+  END IF;
+  PERFORM public.emit_change('environments', r.environment_id,
+    (SELECT p.org_id FROM public.projects p WHERE p.id = r.project_id), NULL, r.project_id);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS environment_drift_notify_change_upd ON public.environment_drift;
+CREATE TRIGGER environment_drift_notify_change_upd
+  AFTER UPDATE ON public.environment_drift
+  FOR EACH ROW WHEN (
+    (OLD.in_sync, OLD.drifted, OLD.details, OLD.scanned_at)
+    IS DISTINCT FROM
+    (NEW.in_sync, NEW.drifted, NEW.details, NEW.scanned_at)
+  )
+  EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_drift_notify_change_insdel ON public.environment_drift;
+CREATE TRIGGER environment_drift_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_drift
+  FOR EACH ROW EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_security_notify_change_upd ON public.environment_security;
+CREATE TRIGGER environment_security_notify_change_upd
+  AFTER UPDATE ON public.environment_security
+  FOR EACH ROW WHEN (
+    (OLD.critical, OLD.high, OLD.medium, OLD.low, OLD.report_count, OLD.scanned, OLD.scanned_at)
+    IS DISTINCT FROM
+    (NEW.critical, NEW.high, NEW.medium, NEW.low, NEW.report_count, NEW.scanned, NEW.scanned_at)
+  )
+  EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_security_notify_change_insdel ON public.environment_security;
+CREATE TRIGGER environment_security_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_security
+  FOR EACH ROW EXECUTE FUNCTION public.notify_posture_change();
