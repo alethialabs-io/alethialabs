@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6122: a cluster card's posture is derived, and the ENVIRONMENT speaks first — a failed deploy
-// must read as failed even while the cluster row still says PENDING, and a deploy or teardown in
-// flight reads as in flight. Otherwise the cluster and its data services roll up as before.
+// #6122: a cluster card's posture is derived. Every card is a running cluster, so a run in flight
+// reads as in flight, and a failed last run is said on the rollup without calling a running cluster
+// failed. Otherwise the cluster and its data services roll up as before.
 
 import { describe, expect, it } from "vitest";
 import { deriveHealth } from "@/components/clusters/cluster-card";
 
 describe("deriveHealth", () => {
-	it("a failed environment is failed, whatever its rows say", () => {
-		const h = deriveHealth("PENDING", "FAILED", []);
-		expect([h.tier, h.name, h.rollup]).toEqual(["failed", "Failed", "Last run failed"]);
+	it("a failed last run on a running cluster says the run failed — not that the cluster did", () => {
+		const h = deriveHealth("ACTIVE", "FAILED", ["ACTIVE"]);
+		expect([h.tier, h.name]).toEqual(["active", "Active"]);
+		expect([h.rollupTier, h.rollup]).toEqual(["failed", "Last run failed"]);
 	});
 
 	it("a deploy in flight is pending, named for the environment's verb", () => {

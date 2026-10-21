@@ -5,8 +5,12 @@ import "server-only";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
-import type { Actor } from "@/lib/authz/types";
+import type { Actor, BulkCheck, Decision } from "@/lib/authz/types";
 import { displayedK8sVersion } from "@/lib/cloud-providers/hetzner-k8s-pin";
+import {
+	KUBECONFIG_MINT_UNPROVISIONED_REASON,
+	MINT_UNPROVISIONED_ENV_STATUSES,
+} from "@/lib/clusters/mint-eligibility";
 import { type KubeconfigAccess, readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
 import { withActorScope } from "@/lib/db";
 import {
@@ -79,6 +83,8 @@ export interface ClusterListItem extends ClusterData {
 	/** Whether the viewer may download a read-only kubeconfig (`cluster:access_readonly`). A DISPLAY
 	 *  decision — the download request re-checks (app/server/actions/kubeconfig-download.ts). */
 	can_download_kubeconfig: boolean;
+	/** Why a viewer who holds the permission cannot download right now (the mint would refuse), or null. */
+	kubeconfig_download_note: string | null;
 	/** The classification chips on this cluster (empty without `org:view`). */
 	classification: AssignedValue[];
 }
@@ -138,7 +144,10 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 					eq(projectRepositories.environment_id, projectCluster.environment_id),
 				),
 			)
-			.where(managedClusterPredicate())
+			// The org is the ADDRESS's, on the row's own tenant column — the column the Usage count, the
+			// CLI's cluster list and the kubeconfig mint all scope on. RLS alone is wider: its owner arm
+			// also admits the caller's personal-scope projects when the address names a team org.
+			.where(and(eq(projectCluster.org_id, actor.orgId), managedClusterPredicate()))
 			.orderBy(
 				desc(projects.created_at),
 				desc(projectEnvironments.is_default),
@@ -225,23 +234,19 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 }
 
 /**
- * Whether `actor` may download a read-only kubeconfig for each cluster — `cluster:access_readonly`,
- * the action the download request itself enforces. Non-recording (`can`, not `enforce`) and
- * fail-closed per cluster: any error is false. Asked only of clusters with an endpoint, the only
+ * The clusters `actor` holds `cluster:access_readonly` on — the action the download request itself
+ * enforces — in ONE batched, non-recording check (`bulkCheck`: `can`, never `enforce`). Fail-closed:
+ * a failed check is no download for any cluster. Asked only of clusters with an endpoint, the only
  * ones whose card offers the download.
  */
 async function downloadableClusters(actor: Actor, clusters: ClusterData[]): Promise<Set<string>> {
-	const pdp = getPdp();
 	const ids = clusters.filter((c) => c.project_cluster.cluster_endpoint).map((c) => c.project_cluster.id);
-	const allowed = await Promise.all(
-		ids.map((id) =>
-			pdp.can(actor, "access_readonly", { type: "cluster", id }).then(
-				(decision) => decision.allowed,
-				() => false,
-			),
-		),
-	);
-	return new Set(ids.filter((_id, i) => allowed[i]));
+	if (ids.length === 0) return new Set();
+	const checks: BulkCheck[] = ids.map((id) => ({ action: "access_readonly", resource: { type: "cluster", id } }));
+	const decisions = await getPdp()
+		.bulkCheck(actor, checks)
+		.catch((): Decision[] => []);
+	return new Set(ids.filter((_id, i) => decisions[i]?.allowed === true));
 }
 
 /**
@@ -273,11 +278,19 @@ export async function readClusterList(actor: Actor): Promise<ClusterListItem[]> 
 		downloadableClusters(actor, clusters),
 		clusterChips(actor, clusters),
 	]);
-	return clusters.map((c) => ({
-		...c,
-		can_download_kubeconfig: downloadable.has(c.project_cluster.id),
-		classification: chips.get(c.project_cluster.id) ?? [],
-	}));
+	return clusters.map((c) => {
+		const permitted = downloadable.has(c.project_cluster.id);
+		// The mint refuses an environment with an undeployed plan or a teardown in flight, even over a
+		// live cluster; say so to a viewer who could otherwise download, rather than offer a button
+		// the request will refuse.
+		const refused = MINT_UNPROVISIONED_ENV_STATUSES.has(c.status);
+		return {
+			...c,
+			can_download_kubeconfig: permitted && !refused,
+			kubeconfig_download_note: permitted && refused ? KUBECONFIG_MINT_UNPROVISIONED_REASON : null,
+			classification: chips.get(c.project_cluster.id) ?? [],
+		};
+	});
 }
 
 /**

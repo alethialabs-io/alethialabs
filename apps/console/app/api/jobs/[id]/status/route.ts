@@ -376,9 +376,10 @@ export async function PUT(
 						await move("destroyFailed");
 						await moveIac("FAILED", error_message || null);
 					} else if (status === "SUCCESS") {
-						// A successful DESTROY tore down the env's infra — clear the BYO-IaC
-						// deployed-commit pin so the source can be detached again (finalizeDeployment
-						// no-ops for template envs). Best-effort: never fail the status update.
+						// A successful DESTROY tore down the env's infra — finalizeDeployment records it:
+						// the BYO-IaC deployed-commit pin is cleared so the source can be detached again,
+						// and the env's deploy stamp and cluster row say nothing runs any more (#6122).
+						// Best-effort: never fail the status update.
 						await finalizeDeployment(jobId).catch((err) =>
 							jlog.error("finalize destroy error", { err }),
 						);

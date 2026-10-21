@@ -48,27 +48,35 @@ interface ComponentHealth {
 	pending: number;
 }
 
-/**
- * Rolls the cluster's environment, its own status and every database/cache status into a single
- * posture. The badge is DERIVED, never hardcoded. The ENVIRONMENT speaks first, because it carries
- * the lifecycle the component rows do not: a deploy that failed reads as failed even while the
- * cluster row still says PENDING, and a deploy or teardown in flight reads as in flight. Otherwise a
- * failed data service reads as degraded and an in-flight reconcile as reconciling.
- */
-export function deriveHealth(
-	clusterStatus: string,
-	envStatus: string,
-	componentStatuses: string[],
-): {
+/** A card's derived posture. */
+interface Posture {
 	tier: StatusTier;
 	/** Posture shown next to the cluster name (what an operator scans). */
 	name: string;
 	/** Short mono rollup label. */
 	rollup: string;
+	/** The rollup badge's tier — the last run's outcome, which can differ from the cluster's. */
+	rollupTier: StatusTier;
 	/** Secondary mono detail under the rollup. */
 	detail: string;
 	health: ComponentHealth;
-} {
+}
+
+/**
+ * Rolls the cluster's own status and every database/cache status into a single posture, then lets
+ * the ENVIRONMENT's lifecycle speak to what is happening to it. Every card is a cluster under
+ * management — its environment has a live deployment (lib/queries/usage-counts.ts) — so:
+ *   · a run in flight (queued, provisioning, tearing down) reads as in flight;
+ *   · a failed last run (a plan, a redeploy, a teardown) does NOT make a running cluster "Failed":
+ *     the cluster keeps the posture its rows report, and the rollup says the last run failed;
+ *   · otherwise a failed data service reads as degraded and a reconcile as reconciling.
+ * The badge is DERIVED, never hardcoded.
+ */
+export function deriveHealth(
+	clusterStatus: string,
+	envStatus: string,
+	componentStatuses: string[],
+): Posture {
 	const statuses = [clusterStatus, ...componentStatuses];
 	const total = statuses.length;
 	const healthy = statuses.filter((s) => statusTier(s) === "active").length;
@@ -78,36 +86,36 @@ export function deriveHealth(
 	const detail = `${healthy} / ${total} healthy`;
 
 	const envTier = statusTier(envStatus);
-	if (envTier === "failed") {
-		return { tier: "failed", name: "Failed", rollup: "Last run failed", detail, health };
-	}
 	if (envTier === "pending") {
 		return {
 			tier: "pending",
 			name: humanize(envStatus),
 			rollup: envStatus === "DESTROYING" ? "Tearing down" : "Provisioning",
+			rollupTier: "pending",
 			detail,
 			health,
 		};
 	}
+	const posture = rowPosture(clusterStatus, health, detail);
+	return envTier === "failed" ? { ...posture, rollup: "Last run failed", rollupTier: "failed" } : posture;
+}
+
+/** The posture the cluster's own rows report, with no run in flight. */
+function rowPosture(clusterStatus: string, health: ComponentHealth, detail: string): Posture {
+	const { total, healthy, failed, pending } = health;
 	if (failed > 0) {
-		return { tier: "failed", name: "Degraded", rollup: `${failed} failed`, detail, health };
+		return { tier: "failed", name: "Degraded", rollup: `${failed} failed`, rollupTier: "failed", detail, health };
 	}
 	if (pending > 0) {
 		// Surface the control plane's own in-flight verb when it's the one moving.
 		const name = statusTier(clusterStatus) === "pending" ? humanize(clusterStatus) : "Reconciling";
-		return { tier: "pending", name, rollup: "Reconciling", detail, health };
+		return { tier: "pending", name, rollup: "Reconciling", rollupTier: "pending", detail, health };
 	}
 	if (healthy === total) {
-		return { tier: "active", name: "Active", rollup: "Healthy", detail, health };
+		return { tier: "active", name: "Active", rollup: "Healthy", rollupTier: "active", detail, health };
 	}
-	return {
-		tier: statusTier(clusterStatus),
-		name: humanize(clusterStatus),
-		rollup: humanize(clusterStatus),
-		detail,
-		health,
-	};
+	const tier = statusTier(clusterStatus);
+	return { tier, name: humanize(clusterStatus), rollup: humanize(clusterStatus), rollupTier: tier, detail, health };
 }
 
 /**
@@ -252,8 +260,8 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 				</div>
 				<div className="shrink-0 text-right">
 					<StatusBadge
-						status={health.tier}
-						tier={health.tier}
+						status={health.rollupTier}
+						tier={health.rollupTier}
 						label={health.rollup}
 						className="justify-end"
 					/>
@@ -355,6 +363,9 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 						environment={data.environment_stage}
 						allowed={data.can_download_kubeconfig}
 					/>
+					{data.kubeconfig_download_note && (
+						<p className="text-ui-2xs text-text-tertiary">{data.kubeconfig_download_note}</p>
+					)}
 				</div>
 			)}
 
