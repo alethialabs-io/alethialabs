@@ -64,17 +64,23 @@ export function claimIdentityWhere(job: ClaimIdentityJob): SQL | undefined {
 }
 
 /**
- * The WHERE clause that admits identity `id` for a caller acting in `orgId` through
- * `getServiceDb()` — the `scoped_all` RLS policy written out:
+ * The WHERE clause that admits the cloud identities a caller acting in `orgId` may see and use,
+ * through `getServiceDb()` — the `scoped_all` RLS policy written out:
  *
  * - an `org`-scope identity of `orgId`;
- * - a `personal` identity authored by `personalAuthorId`, when one is passed. Pass the caller's id
- *   for a SESSION only: for a service token the actor's `userId` is the profile that MINTED it
- *   (`userIdIsTheCaller` in lib/authz/guard.ts), so passing it would hand the minter's personal
- *   credentials to a credential pinned to an org.
+ * - a `personal` identity authored by `personalAuthorId`, when one is passed. Always pass
+ *   `personalIdentityAuthor(actor)` (lib/authz/actor-credential.ts), which decides it from the
+ *   actor's credential: a service token's `userId` is the profile that MINTED it, so outside its
+ *   minter's own personal workspace it gets no personal arm.
+ *
+ * Used by: the design writes (lib/cloud-providers/design-identities.ts), the job snapshot
+ * (`buildConfigSnapshot`), the CLI project and component writes, the CLI identity list and
+ * inventory, `runners/deploy` and `runners/register`, the `/api/jobs` DESTROY_RUNNER branch and the
+ * kubeconfig mint. NOT by `lib/cloud-providers/connections.ts` (the connector routes and actions,
+ * which filter by `org_id`), nor by reads that run under the `scoped_all` RLS policy, which is this
+ * rule for a person.
  */
-export function actorIdentityWhere(
-	id: string,
+export function identityScopeWhere(
 	orgId: string,
 	personalAuthorId: string | undefined,
 ): SQL | undefined {
@@ -82,17 +88,26 @@ export function actorIdentityWhere(
 		eq(cloudIdentities.org_id, orgId),
 		eq(cloudIdentities.scope, "org"),
 	);
+	return personalAuthorId === undefined
+		? orgShared
+		: or(
+				orgShared,
+				and(
+					eq(cloudIdentities.user_id, personalAuthorId),
+					eq(cloudIdentities.scope, "personal"),
+				),
+			);
+}
+
+/** {@link identityScopeWhere} narrowed to the one identity `id`. */
+export function actorIdentityWhere(
+	id: string,
+	orgId: string,
+	personalAuthorId: string | undefined,
+): SQL | undefined {
 	return and(
 		eq(cloudIdentities.id, id),
-		personalAuthorId === undefined
-			? orgShared
-			: or(
-					orgShared,
-					and(
-						eq(cloudIdentities.user_id, personalAuthorId),
-						eq(cloudIdentities.scope, "personal"),
-					),
-				),
+		identityScopeWhere(orgId, personalAuthorId),
 	);
 }
 

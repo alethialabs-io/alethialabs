@@ -114,7 +114,7 @@ beforeEach(() => {
 	// A fresh user per test, so the per-user rate-limit bucket never carries between tests.
 	const user = `${USER.slice(0, 24)}${String(userSeq).padStart(12, "0")}`;
 	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId: user, orgId: ORG },
+		actor: { credential: "session", userId: user, orgId: ORG },
 		credential: "session",
 		orgScope: [ORG, user],
 	});

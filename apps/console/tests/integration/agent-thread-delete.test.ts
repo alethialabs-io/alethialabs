@@ -29,7 +29,7 @@ import { describeIfDb } from "./db";
 
 // Community tenancy model: orgId === userId (personal org).
 const OWNER = randomUUID();
-const actor = { userId: OWNER, orgId: OWNER };
+const actor = { userId: OWNER, orgId: OWNER, credential: "session" as const };
 
 /** Run `fn` as the owner. */
 function asOwner<T>(fn: () => Promise<T>): Promise<T> {

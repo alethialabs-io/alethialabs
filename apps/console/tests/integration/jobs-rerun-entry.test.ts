@@ -113,7 +113,7 @@ describeIfDb("a re-run of a project's deploy is a fresh deploy", () => {
 	});
 
 	beforeEach(async () => {
-		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: ORG });
+		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: ORG, credential: "session" });
 		await settle();
 	});
 

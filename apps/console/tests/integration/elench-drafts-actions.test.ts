@@ -54,7 +54,7 @@ async function untilWaiting(n: number): Promise<void> {
 const users: string[] = [];
 
 /** A fresh personal-org actor with an org-wide viewer grant, remembered for cleanup. */
-async function freshActor(): Promise<{ userId: string; orgId: string }> {
+async function freshActor(): Promise<{ userId: string; orgId: string; credential: "session" }> {
 	const id = randomUUID();
 	users.push(id);
 	await getServiceDb().insert(grants).values({
@@ -66,7 +66,7 @@ async function freshActor(): Promise<{ userId: string; orgId: string }> {
 		resource_type: "org",
 		resource_id: null,
 	});
-	return { userId: id, orgId: id };
+	return { userId: id, orgId: id, credential: "session" };
 }
 
 /** An active draft row of `userId` in its personal org, unanchored. */

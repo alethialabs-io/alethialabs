@@ -19,8 +19,8 @@ import { describe, expect, it } from "vitest";
 import { personalRunnerArm } from "@/lib/authz/runner-org";
 import type { Actor } from "@/lib/authz/types";
 
-const MINTER: Actor = { userId: "u-minter", orgId: "org-t" };
-const HUMAN: Actor = { userId: "u-human", orgId: "org-team" };
+const MINTER: Actor = { credential: "service_token", userId: "u-minter", orgId: "org-t" };
+const HUMAN: Actor = { credential: "session", userId: "u-human", orgId: "org-team" };
 
 describe("personalRunnerArm", () => {
 	it("gives a service token no personal arm at all", () => {

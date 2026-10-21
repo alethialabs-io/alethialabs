@@ -36,7 +36,7 @@ const OTHER = randomUUID();
 
 /** Run `fn` as `userId` in their personal org. */
 function as<T>(userId: string, fn: () => Promise<T>): Promise<T> {
-	return runWithActor({ userId, orgId: userId }, fn);
+	return runWithActor({ credential: "session", userId, orgId: userId }, fn);
 }
 
 /** Insert a thread for `userId` on the service role and return its id. */
