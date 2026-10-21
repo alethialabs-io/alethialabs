@@ -53,7 +53,7 @@ const pdp = new PostgresRbacPDP();
 
 /** Can this user view projects in ORG, per the real community PDP? */
 async function canView(userId: string): Promise<boolean> {
-	return (await pdp.can({ userId, orgId: ORG }, "view", { type: "project" })).allowed;
+	return (await pdp.can({ credential: "session", userId, orgId: ORG }, "view", { type: "project" })).allowed;
 }
 
 /** The user's grant rows in an org. */
@@ -120,7 +120,7 @@ describeIfDb("#5472 — a member who is not active keeps no power in the org", (
 
 	it("does not honour a team grant, nor a leftover user grant, for a suspended member; an active teammate is allowed", async () => {
 		expect(await canView(U.suspended)).toBe(false);
-		expect(await pdp.listAccessible({ userId: U.suspended, orgId: ORG }, "view", "project")).toEqual(
+		expect(await pdp.listAccessible({ credential: "session", userId: U.suspended, orgId: ORG }, "view", "project")).toEqual(
 			[],
 		);
 
@@ -205,13 +205,13 @@ describeIfDb("#5472 — a member who is not active keeps no power in the org", (
 		});
 		expect(await canView(U.removed)).toBe(false);
 		expect(
-			await pdp.listAccessible({ userId: U.removed, orgId: ORG }, "view", "project"),
+			await pdp.listAccessible({ credential: "session", userId: U.removed, orgId: ORG }, "view", "project"),
 		).toEqual([]);
 
 		// The personal scope (org id = user id) has no member row by design.
 		await ensureMemberGrant(U.removed, U.removed, "owner");
 		expect(
-			(await pdp.can({ userId: U.removed, orgId: U.removed }, "view", { type: "project" }))
+			(await pdp.can({ credential: "session", userId: U.removed, orgId: U.removed }, "view", { type: "project" }))
 				.allowed,
 		).toBe(true);
 	});

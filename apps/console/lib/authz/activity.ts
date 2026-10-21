@@ -16,7 +16,7 @@ import { getServiceDb } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import type { Action } from "@/lib/authz/registry";
 import {
-	type Actor,
+	type ResolvedScope,
 	type Decision,
 	ForbiddenError,
 	type ResourceRef,
@@ -36,7 +36,7 @@ const READ_ONLY: ReadonlySet<string> = new Set([
  * PDP-enforced ones. `decision` defaults to true (an allowed action).
  */
 export function recordActivity(
-	actor: Actor,
+	actor: ResolvedScope,
 	action: string,
 	resource: { type: string; id?: string | null },
 	opts?: { decision?: boolean; reason?: string },
@@ -60,7 +60,7 @@ export function recordActivity(
  * then throws `ForbiddenError` on deny. The single enforce path for both engines.
  */
 export function enforceDecision(
-	actor: Actor,
+	actor: ResolvedScope,
 	action: Action,
 	resource: ResourceRef,
 	decision: Decision,

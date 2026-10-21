@@ -3,7 +3,7 @@
 
 import { editionState, getEnterprise } from "@/lib/enterprise";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
-import type { Actor } from "@/lib/authz/types";
+import type { ResolvedScope } from "@/lib/authz/types";
 
 /**
  * Resolves a verified user's active tenancy scope — the seam between identity and
@@ -20,9 +20,9 @@ import type { Actor } from "@/lib/authz/types";
 export async function getActiveScope(
 	userId: string,
 	activeOrgId?: string,
-): Promise<Actor> {
+): Promise<ResolvedScope> {
 	const enterprise = getEnterprise();
-	const base: Actor = enterprise?.resolveScope
+	const base: ResolvedScope = enterprise?.resolveScope
 		? await enterprise.resolveScope(userId, activeOrgId)
 		: { userId, orgId: userId };
 	const entitlements = enterprise?.resolveEntitlements

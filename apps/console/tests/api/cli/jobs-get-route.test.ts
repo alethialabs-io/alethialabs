@@ -40,7 +40,7 @@ function fakeDb() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId: USER, orgId: ORG },
+		actor: { credential: "session", userId: USER, orgId: ORG },
 		credential: "session",
 		orgScope: [ORG, USER],
 	});

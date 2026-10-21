@@ -255,7 +255,7 @@ describe("GET /api/cli/clusters — the scope is one column of the paged table (
 		rowsResult = [];
 		countResult = 0;
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "session", userId: USER, orgId: ORG },
 			credential: "session",
 			orgScope: [ORG, USER],
 		});

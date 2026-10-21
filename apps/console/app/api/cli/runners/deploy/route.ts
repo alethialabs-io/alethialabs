@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
 import {
 	assertRunnerInOrg,
@@ -104,7 +105,7 @@ export async function POST(req: Request) {
 				actorIdentityWhere(
 					identityId.data,
 					actor.orgId,
-					userIdIsTheCaller(credential) ? actor.userId : undefined,
+					personalIdentityAuthor(actor),
 				),
 			)
 			.limit(1);
@@ -112,7 +113,7 @@ export async function POST(req: Request) {
 		if (!identity) {
 			return NextResponse.json(
 				{
-					error: userIdIsTheCaller(credential)
+					error: personalIdentityAuthor(actor) !== undefined
 						? "Cloud identity not found. Use one of the organization's cloud accounts, or one of your own."
 						: "Cloud identity not found. A service token can use only the organization's shared cloud accounts.",
 				},

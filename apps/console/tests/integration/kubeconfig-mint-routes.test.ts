@@ -108,7 +108,7 @@ function actingAs(userId: string, orgId: string): void {
 	// variant (#5670). Same caller, same answer.
 	for (const guard of [authorizeCli, authorizeCliQuiet]) {
 		vi.mocked(guard).mockResolvedValue({
-			actor: { userId, orgId },
+			actor: { credential: "session", userId, orgId },
 			credential: "session",
 			orgScope: [orgId, userId],
 		});
@@ -119,7 +119,7 @@ function actingAs(userId: string, orgId: string): void {
 function actingAsToken(tokenId: string): void {
 	for (const guard of [authorizeCli, authorizeCliQuiet]) {
 		vi.mocked(guard).mockResolvedValue({
-			actor: { userId: USER_A, orgId: ORG_A },
+			actor: { credential: "service_token", userId: USER_A, orgId: ORG_A },
 			credential: "service_token",
 			serviceTokenId: tokenId,
 			orgScope: [ORG_A],

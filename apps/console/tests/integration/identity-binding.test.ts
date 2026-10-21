@@ -71,6 +71,7 @@ import { POST as designPost } from "@/app/api/cli/projects/[id]/design/route";
 import { GET as identitiesGet } from "@/app/api/cli/cloud-identities/route";
 import { GET as inventoryGet } from "@/app/api/cli/cloud-identities/[id]/inventory/route";
 import { POST as deployRunnerPost } from "@/app/api/cli/runners/deploy/route";
+import { POST as registerRunnerPost } from "@/app/api/cli/runners/register/route";
 import { POST as claimPost } from "@/app/api/jobs/claim/route";
 import { POST as jobsPost } from "@/app/api/jobs/route";
 import { getActiveScope } from "@/lib/auth/scope";
@@ -89,6 +90,7 @@ import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
 	jobs,
+	projectChanges,
 	projectEnvironments,
 	projectFabrics,
 	projects,
@@ -105,7 +107,9 @@ const TEAMMATE = randomUUID();
 /** The team org the token is pinned to. */
 const TEAM = randomUUID();
 const TOKEN_HASH = `hash-it-idb-${MINTER}`;
+const HOME_TOKEN_HASH = `hash-it-idb-home-${MINTER}`;
 const PERSONAL_CANARY = "arn:aws:iam::000000000000:role/CANARY-idb-minter-personal";
+const HOME_CANARY = "arn:aws:iam::000000000000:role/CANARY-idb-minter-home";
 
 /** `org` scope in TEAM: the org's shared identity. */
 let orgIdentity: string;
@@ -117,25 +121,37 @@ let teammatePersonal: string;
 let orgBoundProject: string;
 /** A TEAM project bound to MINTER's personal identity (a member's legitimate choice). */
 let personalBoundProject: string;
+/**
+ * `personal` scope, authored by MINTER, in MINTER's own personal workspace (`org_id = MINTER`): the
+ * shape a personal identity has in production today, as opposed to `minterPersonal`'s older one.
+ */
+let minterHome: string;
+/** A TEAM project bound to `minterHome`. */
+let homeBoundTeamProject: string;
+/** A project in MINTER's personal workspace, bound to `minterHome`. */
+let workspaceProject: string;
 let runnerId: string;
+/** A runner in MINTER's personal workspace, for the workspace project's jobs. */
+let homeRunnerId: string;
 
-const SESSION: Actor = { userId: MINTER, orgId: TEAM };
-const TOKEN: Actor = actorWithCredential({ userId: MINTER, orgId: TEAM }, "service_token");
+const SESSION: Actor = actorWithCredential({ userId: MINTER, orgId: TEAM }, "session");
 
-/** Makes every CLI route below see `actor` with `credential`, as `authorizeCli` would return it. */
-function actAs(credential: "session" | "service_token", userId = MINTER) {
-	const actor =
-		credential === "service_token" ? TOKEN : { userId, orgId: TEAM };
+/**
+ * Makes every CLI route below see MINTER acting in `orgId` with `credential`, as `authorizeCli`
+ * and the `/api/jobs` token check would resolve it. `orgId` is the token's pin for a token.
+ */
+function actAs(credential: "session" | "service_token", orgId = TEAM) {
+	const actor = actorWithCredential({ userId: MINTER, orgId }, credential);
 	vi.mocked(authorizeCli).mockResolvedValue(
 		credential === "service_token"
-			? { actor, credential, serviceTokenId: "tok-idb", orgScope: [TEAM] }
-			: { actor, credential, orgScope: [TEAM] },
+			? { actor, credential, serviceTokenId: "tok-idb", orgScope: [orgId] }
+			: { actor, credential, orgScope: [orgId, MINTER] },
 	);
 	vi.mocked(verifyCliToken).mockResolvedValue({
 		payload:
 			credential === "service_token"
-				? { sub: userId, service_token_org_id: TEAM, service_token_id: "tok-idb" }
-				: { sub: userId },
+				? { sub: MINTER, service_token_org_id: orgId, service_token_id: "tok-idb" }
+				: { sub: MINTER },
 		error: null,
 	});
 }
@@ -145,12 +161,13 @@ async function seedIdentity(v: {
 	user_id: string;
 	scope: "personal" | "org";
 	role_arn: string;
+	org_id?: string;
 }): Promise<string> {
 	const [row] = await getServiceDb()
 		.insert(cloudIdentities)
 		.values({
 			user_id: v.user_id,
-			org_id: TEAM,
+			org_id: v.org_id ?? TEAM,
 			scope: v.scope,
 			provider: "aws",
 			name: `it-idb-${randomUUID().slice(0, 8)}`,
@@ -161,8 +178,8 @@ async function seedIdentity(v: {
 	return row.id;
 }
 
-/** Creates a TEAM project bound to `identityId`, the way the CLI create route does. */
-async function seedProject(identityId: string): Promise<string> {
+/** Creates a project in `orgId` bound to `identityId`, the way the CLI create route does. */
+async function seedProject(identityId: string, orgId = TEAM): Promise<string> {
 	const { project } = await getServiceDb().transaction((tx) =>
 		insertProjectWithDefaultFabric(tx, {
 			project_name: `it-idb-${randomUUID().slice(0, 8)}`,
@@ -171,7 +188,7 @@ async function seedProject(identityId: string): Promise<string> {
 			iac_version: "1.9.5",
 			environment_stage: "production",
 			owner: MINTER,
-			orgId: TEAM,
+			orgId,
 		}),
 	);
 	return project.id;
@@ -205,8 +222,8 @@ function postDesign(projectId: string, body: unknown): Promise<Response> {
 	);
 }
 
-/** POSTs a PLAN of `projectId` to /api/jobs, assigned to the suite's runner. */
-function postPlan(projectId: string): Promise<Response> {
+/** POSTs a PLAN of `projectId` to /api/jobs, assigned to `runner`. */
+function postPlan(projectId: string, runner = runnerId): Promise<Response> {
 	return jobsPost(
 		new Request("https://console.local/api/jobs", {
 			method: "POST",
@@ -214,7 +231,7 @@ function postPlan(projectId: string): Promise<Response> {
 			body: JSON.stringify({
 				job_type: "PLAN",
 				configuration_id: projectId,
-				assigned_runner_id: runnerId,
+				assigned_runner_id: runner,
 			}),
 		}),
 	);
@@ -254,8 +271,29 @@ describeIfDb("cloud identity binding — design writes, enqueue, runner deploy, 
 			scope: "personal",
 			role_arn: "arn:aws:iam::222222222222:role/idb-teammate-personal",
 		});
+		minterHome = await seedIdentity({
+			user_id: MINTER,
+			org_id: MINTER,
+			scope: "personal",
+			role_arn: HOME_CANARY,
+		});
 		orgBoundProject = await seedProject(orgIdentity);
 		personalBoundProject = await seedProject(minterPersonal);
+		homeBoundTeamProject = await seedProject(minterHome);
+		workspaceProject = await seedProject(minterHome, MINTER);
+		const [homeRunner] = await getServiceDb()
+			.insert(runners)
+			.values({
+				user_id: MINTER,
+				org_id: MINTER,
+				name: `it-idb-home-${MINTER.slice(0, 8)}`,
+				operator: "self",
+				provisioning: "registered",
+				token_hash: HOME_TOKEN_HASH,
+				status: "OFFLINE",
+			})
+			.returning({ id: runners.id });
+		homeRunnerId = homeRunner.id;
 		const [runner] = await getServiceDb()
 			.insert(runners)
 			.values({
@@ -273,8 +311,10 @@ describeIfDb("cloud identity binding — design writes, enqueue, runner deploy, 
 
 	afterAll(async () => {
 		const db = getServiceDb();
-		const ids = [orgBoundProject, personalBoundProject].filter(Boolean);
-		await db.delete(jobs).where(eq(jobs.org_id, TEAM));
+		const ids = [orgBoundProject, personalBoundProject, homeBoundTeamProject, workspaceProject].filter(
+			Boolean,
+		);
+		await db.delete(jobs).where(inArray(jobs.org_id, [TEAM, MINTER]));
 		if (ids.length > 0) {
 			await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, ids));
 			await db.delete(projectFabrics).where(inArray(projectFabrics.project_id, ids));
@@ -288,10 +328,12 @@ describeIfDb("cloud identity binding — design writes, enqueue, runner deploy, 
 				);
 			await db.delete(projects).where(inArray(projects.id, ids));
 		}
-		await db.delete(runners).where(eq(runners.org_id, TEAM));
+		await db.delete(runners).where(inArray(runners.org_id, [TEAM, MINTER]));
 		await db
 			.delete(cloudIdentities)
-			.where(inArray(cloudIdentities.id, [orgIdentity, minterPersonal, teammatePersonal]));
+			.where(
+				inArray(cloudIdentities.id, [orgIdentity, minterPersonal, teammatePersonal, minterHome]),
+			);
 	});
 
 	beforeEach(() => {
@@ -300,7 +342,10 @@ describeIfDb("cloud identity binding — design writes, enqueue, runner deploy, 
 		// stubbed, so `authorize` answers with that actor exactly as the real one would.
 		vi.mocked(authorize).mockImplementation(async () => getInjectedActor() ?? SESSION);
 		vi.mocked(currentActor).mockImplementation(async () => getInjectedActor() ?? SESSION);
-		vi.mocked(getActiveScope).mockResolvedValue({ userId: MINTER, orgId: TEAM });
+		vi.mocked(getActiveScope).mockImplementation(async (userId: string, orgId?: string) => ({
+			userId,
+			orgId: orgId ?? TEAM,
+		}));
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
 		vi.mocked(assertMintingProfileStillMember).mockResolvedValue(null);
 		vi.mocked(verifyRunnerToken).mockResolvedValue({
@@ -444,5 +489,85 @@ describeIfDb("cloud identity binding — design writes, enqueue, runner deploy, 
 
 		expect((await inventory(teammatePersonal)).status).toBe(404);
 		expect((await inventory(orgIdentity)).status).toBe(200);
+	});
+
+	// ── 5. The same rule at staging time, for the production shape, and in a personal workspace ──
+	it("refuses a token's STAGED design that binds its minter's personal identity, and stages nothing", async () => {
+		const doc = await designNaming(orgBoundProject, minterPersonal);
+		actAs("service_token");
+
+		const res = await designPost(
+			new Request(`https://console.local/api/cli/projects/${orgBoundProject}/design?stage`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(doc),
+			}),
+			{ params: Promise.resolve({ id: orgBoundProject }) },
+		);
+
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toMatch(/service token can use only/i);
+		const staged = await getServiceDb()
+			.select({ id: projectChanges.id })
+			.from(projectChanges)
+			.where(eq(projectChanges.project_id, orgBoundProject));
+		expect(staged).toEqual([]);
+	});
+
+	// A personal identity as production writes it today: in its author's own workspace.
+	it("refuses a team-pinned token's PLAN of a team project bound to a personal identity from its minter's workspace", async () => {
+		actAs("service_token");
+
+		const res = await postPlan(homeBoundTeamProject);
+
+		expect(res.status).not.toBe(201);
+		expect((await res.json()).error).toMatch(/personal cloud account, and a service token/);
+		expect(await planJobs(homeBoundTeamProject)).toEqual([]);
+	});
+
+	// A token pinned to its minter's OWN personal workspace acts for the only person there, so that
+	// person's personal identities stay usable — and the claim hands the runner the one bound.
+	it("queues a personal-workspace token's PLAN with its minter's personal identity, and the claim releases it", async () => {
+		actAs("service_token", MINTER);
+		vi.mocked(verifyRunnerToken).mockResolvedValue({
+			runnerId: homeRunnerId,
+			tokenHash: HOME_TOKEN_HASH,
+			operator: "self",
+			error: null,
+		});
+
+		const res = await postPlan(workspaceProject, homeRunnerId);
+
+		expect(res.status).toBe(201);
+		const queued = await planJobs(workspaceProject);
+		expect(queued).toHaveLength(1);
+		expect(queued[0]).toMatchObject({ cloud_identity_id: minterHome, user_id: MINTER });
+		const claim = await claimPost(
+			new Request("https://console.local/api/jobs/claim", { method: "POST" }),
+		);
+		expect(claim.status).toBe(200);
+		const body = claimBody.parse(await claim.json());
+		expect(body.job?.id).toBe(queued[0].id);
+		expect(body.cloud_identity?.role_arn).toBe(HOME_CANARY);
+	});
+
+	// ── 6. The runner register route ─────────────────────────────────────────────────────────
+	it("refuses a team-pinned token's runner registration on its minter's personal identity, and accepts the org's", async () => {
+		actAs("service_token");
+		/** POSTs a runner registration naming `identityId`. */
+		const register = (identityId: string) =>
+			registerRunnerPost(
+				new Request("https://console.local/api/cli/runners/register", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						name: `it-idb-reg-${randomUUID().slice(0, 6)}`,
+						cloud_identity_id: identityId,
+					}),
+				}),
+			);
+
+		expect((await register(minterHome)).status).toBe(400);
+		expect((await register(orgIdentity)).status).toBe(201);
 	});
 });

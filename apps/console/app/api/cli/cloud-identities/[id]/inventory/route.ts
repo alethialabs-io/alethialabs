@@ -9,7 +9,8 @@
 
 import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { openSensitive } from "@/lib/cloud-providers/inventory/upsert";
 import { getServiceDb } from "@/lib/db";
@@ -29,7 +30,7 @@ export async function GET(
 	const { id } = await params;
 	const auth = await authorizeCli(req, "view", { type: "cloud_identity", id });
 	if ("error" in auth) return auth.error;
-	const { actor, credential } = auth;
+	const { actor } = auth;
 
 	try {
 		const db = getServiceDb();
@@ -43,7 +44,7 @@ export async function GET(
 				actorIdentityWhere(
 					id,
 					actor.orgId,
-					userIdIsTheCaller(credential) ? actor.userId : undefined,
+					personalIdentityAuthor(actor),
 				),
 			)
 			.limit(1);

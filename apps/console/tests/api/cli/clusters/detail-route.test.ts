@@ -101,7 +101,7 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		clusterRows = [clusterRow()];
 		deployRows = [];
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: USER, orgId: ORG },
+			actor: { credential: "session", userId: USER, orgId: ORG },
 			credential: "session",
 			orgScope: [ORG, USER],
 		});

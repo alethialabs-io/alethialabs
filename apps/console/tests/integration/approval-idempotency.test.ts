@@ -72,7 +72,7 @@ let otherEnvId: string;
 
 /** Acts as `userId` in ORG for every authorize() call that follows. */
 function actAs(userId: string) {
-	vi.mocked(authorize).mockResolvedValue({ userId, orgId: ORG });
+	vi.mocked(authorize).mockResolvedValue({ credential: "session", userId, orgId: ORG });
 }
 
 /** Seeds a project in ORG on `identity`, with a default DRAFT environment; returns both ids. */
@@ -278,7 +278,7 @@ describeIfDb("approval idempotency — one approval, one job (#5797)", () => {
 
 		// The same person, the same key and project, scoped to their personal org: the job above is
 		// outside that org, so the lookup returns nothing.
-		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: USER });
+		vi.mocked(authorize).mockResolvedValue({ credential: "session", userId: USER, orgId: USER });
 		await expect(getApprovedJob(projectId, "plan_project", key)).resolves.toBeNull();
 
 		// And a job of this project cannot be filed under any other org to be found there: a
