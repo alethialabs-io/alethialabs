@@ -589,7 +589,7 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: { projectId: USAGE_PROJECT_X, range: { preset: "12mo" } },
 		enterprise: { x: "ok", y: "NOT_FOUND" },
 	},
-	// #6122. Each org's cluster is under management (its row moved past PENDING), so a list that
+	// #6122. Each org's cluster is under management (its environment has deployed), so a list that
 	// served the wrong org — or both — names the other org's cluster by its row id.
 	"clusters.list": {
 		kind: "org-scoped",
@@ -821,7 +821,12 @@ export async function runRpcTenancySuite(opts: {
 						fabric_id: f.id,
 					})
 					.returning({ id: projectEnvironments.id });
-				// #6122: a cluster a deploy has put under management (its environment has deployed).
+				// #6122: a cluster under management — its environment has a live deployment (the stamp a
+				// DEPLOY success writes), while a plan holds it in DRAFT.
+				await db
+					.update(projectEnvironments)
+					.set({ last_deployed_at: new Date("2026-01-01T00:00:00Z") })
+					.where(eq(projectEnvironments.id, e.id));
 				const [c] = await db
 					.insert(projectCluster)
 					.values({ project_id: p.id, environment_id: e.id, status: "ACTIVE", cluster_name: `it-6122-${orgId.slice(0, 8)}` })

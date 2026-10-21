@@ -14,27 +14,33 @@ import { jobs, projectCluster, projectEnvironments, projects } from "@/lib/db/sc
  * environment, and only when that environment was ACTIVE — so the Usage page said "1 cluster under
  * management" over a Clusters page that said "No clusters provisioned".
  *
- * A cluster is under management when its row's OWNING environment (`project_cluster.environment_id`)
- * has been sent to provision and has not been torn down:
+ * A cluster is under management when the environment that OWNS its row
+ * (`project_cluster.environment_id`) has a live deployment:
  *
- *   · the environment is not DESTROYED, and the row is not DESTROYED;
- *   · and it is not a DRAFT that never deployed — a DRAFT environment whose cluster row is still the
- *     PENDING it was created with. (A plan re-computes an environment back to DRAFT without touching
- *     live infrastructure — lib/db/env-status.ts `planSuccess` — so a DRAFT environment whose cluster
- *     a deploy already moved past PENDING is still under management.)
+ *   · the environment has deployed successfully and has not been torn down since —
+ *     `project_environments.last_deployed_at` is set (a DEPLOY success stamps it; a DESTROY success
+ *     clears it, lib/jobs/finalize-deployment.ts);
+ *   · and neither the environment nor the row is DESTROYED.
+ *
+ * Why the ENVIRONMENT's deploy stamp and not the cluster row's status: the row's status is a design
+ * value as much as a lifecycle one. Design writes (`writeComponents`, which a promotion runs before
+ * its plan) re-insert the row at PENDING under a live cluster, and a plan moves a deployed
+ * environment back to DRAFT without touching what runs (lib/db/env-status.ts `planSuccess`). So a
+ * DRAFT environment with a PENDING row can be running a cluster, and only the deploy stamp says so.
  *
  * Every environment counts, not only the default one: a project with a dedicated staging and
- * production cluster runs two. A pending cluster (a deploy queued or in flight) and a failed one are
- * under management too; the list renders them as pending and failed rather than hiding them.
+ * production cluster runs two. A redeploy or teardown in flight, and a failed last run, leave the
+ * cluster under management; the list shows them as such rather than hiding them. A first deploy still
+ * in flight is not yet under management — nothing runs until it succeeds.
  *
  * The predicate reads `project_environments` joined on the CLUSTER's own environment — every caller
  * joins it with {@link managedClusterEnvJoin}. A row with no environment has no lifecycle to read and
  * is not counted.
  */
 export function managedClusterPredicate(): SQL {
-	return sql`(${projectCluster.status} <> 'DESTROYED'
+	return sql`(${projectEnvironments.last_deployed_at} is not null
 		and ${projectEnvironments.status} <> 'DESTROYED'
-		and (${projectEnvironments.status} <> 'DRAFT' or ${projectCluster.status} <> 'PENDING'))`;
+		and ${projectCluster.status} <> 'DESTROYED')`;
 }
 
 /** The join condition every reader of {@link managedClusterPredicate} uses: the cluster's OWN environment. */

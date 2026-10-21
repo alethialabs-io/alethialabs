@@ -19,7 +19,7 @@
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
-import { isSharedClusterPlacement } from "@/lib/clusters/mint-eligibility";
+import { isSharedClusterPlacement, MINT_UNPROVISIONED_ENV_STATUSES } from "@/lib/clusters/mint-eligibility";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -38,12 +38,8 @@ import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
 import { mintShapeRefusal } from "./clouds";
 import { credentialMayMintTier } from "./gates";
 
-/** Environment statuses with no cluster to mint against. */
-const UNPROVISIONED_ENV: ReadonlySet<string> = new Set([
-	"DRAFT",
-	"DESTROYING",
-	"DESTROYED",
-]);
+/** Environment statuses with no cluster to mint against (shared with the cluster card's notice). */
+const UNPROVISIONED_ENV = MINT_UNPROVISIONED_ENV_STATUSES;
 
 /** Who is asking, as the route resolved them. */
 export interface MintActor {

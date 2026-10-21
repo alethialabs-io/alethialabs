@@ -71,13 +71,13 @@ describeIfDb("project-usage queries", () => {
 		projectA = insertedProjects[0].id;
 		projectB = insertedProjects[1].id;
 
-		// Two clusters under management under A — one per environment, each environment sent to
-		// deploy (lib/queries/usage-counts.ts `managedClusterPredicate`) — none under B.
+		// Two clusters under management under A — one per environment, each with a live deployment
+		// (lib/queries/usage-counts.ts `managedClusterPredicate`) — none under B.
 		const envs = await db
 			.insert(projectEnvironments)
 			.values([
-				{ project_id: projectA, user_id: ORG, name: "prod", status: "ACTIVE", is_default: true },
-				{ project_id: projectA, user_id: ORG, name: "staging", status: "PROVISIONING" },
+				{ project_id: projectA, user_id: ORG, name: "prod", status: "ACTIVE", is_default: true, last_deployed_at: new Date() },
+				{ project_id: projectA, user_id: ORG, name: "staging", status: "PROVISIONING", last_deployed_at: new Date() },
 			])
 			.returning({ id: projectEnvironments.id });
 		await db.insert(projectCluster).values([
