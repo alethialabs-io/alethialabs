@@ -23,7 +23,9 @@ const { currentActor, listAccessible, queryOrgEvidence } = vi.hoisted(() => ({
 	queryOrgEvidence: vi.fn(),
 }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor }));
-vi.mock("@/lib/authz", () => ({ getPdp: () => ({ listAccessible }) }));
+vi.mock("@/lib/jobs/visibility", () => ({
+	viewableProjectIds: (actor: unknown) => listAccessible(actor, "view", "project"),
+}));
 vi.mock("@/lib/queries/evidence", () => ({ queryOrgEvidence }));
 
 import { CLOUD_FILTER_VALUES } from "@/components/evidence/evidence-query";
