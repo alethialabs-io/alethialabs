@@ -11,39 +11,48 @@ import {
 import {
 	disableAddon,
 	enableAddon,
-	getProjectAddons,
 	type ProjectAddonsView,
 } from "@/app/server/actions/addons";
-import { qk } from "./keys";
+import { orpc } from "@/lib/rpc/client";
+import { environmentStatusInput } from "./use-environment-status-query";
 
 /**
- * The marketplace catalog joined with an environment's install state. Server-prefetched and
- * hydrated, then polled every 15s so ArgoCD health flips (PENDING → Healthy) surface after a
- * deploy without a manual refresh.
+ * The marketplace catalog joined with an environment's install state — the `canvas.addons` GET
+ * procedure (ADR 0005 D1, #6119), prefetched by the Architecture page.
+ *
+ * No poll. It used to refetch every 15 s so an ArgoCD health flip (PENDING → Healthy) surfaced after
+ * a deploy; that flip is a write to `project_addons`, which is now an `addons` hint on the org's
+ * change stream and invalidates this key (`lib/query/topics.ts`).
  */
 export function useAddonsQuery(
 	projectId: string | undefined,
 	environmentId?: string | null,
 ): UseQueryResult<ProjectAddonsView> {
 	return useQuery({
-		queryKey: qk.addons(projectId ?? "none", environmentId),
-		queryFn: () => getProjectAddons(projectId ?? "", environmentId),
-		refetchInterval: 15_000,
+		...orpc.canvas.addons.queryOptions({
+			input: environmentStatusInput(projectId ?? "", environmentId),
+		}),
 		// Absent in the create flow (no project/environment yet) — don't fetch.
 		enabled: !!projectId,
 	});
 }
 
-/** Invalidates the add-ons cache so the grid reflects an enable/disable on next reconcile. */
-function useInvalidateAddons(projectId: string, environmentId?: string | null) {
+/**
+ * Invalidates every key that shows an add-on's install state: the catalog itself, and the
+ * environment status (an installed add-on is a node on the board, with its health and sync).
+ */
+function useInvalidateAddons() {
 	const qc = useQueryClient();
 	return () =>
-		qc.invalidateQueries({ queryKey: qk.addons(projectId, environmentId) });
+		Promise.all([
+			qc.invalidateQueries({ queryKey: orpc.canvas.addons.key() }),
+			qc.invalidateQueries({ queryKey: orpc.canvas.environmentStatus.key() }),
+		]);
 }
 
 /** Enables or reconfigures an add-on (writes a PENDING row applied on the next deploy). */
-export function useEnableAddon(projectId: string, environmentId?: string | null) {
-	const invalidate = useInvalidateAddons(projectId, environmentId);
+export function useEnableAddon() {
+	const invalidate = useInvalidateAddons();
 	return useMutation({
 		mutationFn: (input: Parameters<typeof enableAddon>[0]) => enableAddon(input),
 		onSuccess: () => invalidate(),
@@ -51,8 +60,8 @@ export function useEnableAddon(projectId: string, environmentId?: string | null)
 }
 
 /** Disables an add-on (removes it from the environment). */
-export function useDisableAddon(projectId: string, environmentId?: string | null) {
-	const invalidate = useInvalidateAddons(projectId, environmentId);
+export function useDisableAddon() {
+	const invalidate = useInvalidateAddons();
 	return useMutation({
 		mutationFn: (input: Parameters<typeof disableAddon>[0]) =>
 			disableAddon(input),

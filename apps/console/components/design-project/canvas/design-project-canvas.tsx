@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
 import { motion } from "motion/react";
 import { Plus } from "lucide-react";
@@ -26,21 +26,15 @@ import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
 import { ByoChartCanvasProvider } from "@/components/design-project/byo/byo-chart-canvas-context";
-import {
-	getProjectByoCharts,
-	getProjectChartWorkloads,
-} from "@/app/server/actions/byo-charts";
 import { ByoIacDialog } from "@/components/design-project/byo/byo-iac-dialog";
 import { IacSourceCanvasProvider } from "@/components/design-project/byo/iac-source-canvas-context";
 import { IacNode } from "@/components/design-project/byo/iac-node";
-import {
-	getIacSource,
-	type IacSourceState,
-} from "@/app/server/actions/byo-iac";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { arrangeBoard } from "@/lib/canvas/arrange";
-import { qk } from "@/lib/query/keys";
+import { draftScope } from "@/lib/canvas/design-revision";
+import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
+import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -73,6 +67,10 @@ import { PendingChangesBar } from "./pending-changes-bar";
 import { buildShortcuts } from "./shortcuts";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
+import { BoardGuide, useDesignIsEmpty } from "./board-guide";
+import { CanvasSkeleton } from "./canvas-skeleton";
+import { EnvironmentStatusNotice } from "./environment-status-notice";
+import { EnvironmentStatusScope } from "./environment-status-scope";
 
 interface DesignProjectCanvasProps {
 	cloudIdentities: CloudIdentityOption[];
@@ -101,11 +99,13 @@ interface DesignProjectCanvasProps {
 	byoIacEnabled?: boolean;
 }
 
-/** The canvas editor surface (inside its own ReactFlowProvider). */
+/** The canvas editor surface (inside its own ReactFlowProvider and environment-status read). */
 export function DesignProjectCanvas(props: DesignProjectCanvasProps) {
 	return (
 		<ReactFlowProvider>
-			<CanvasInner {...props} />
+			<EnvironmentStatusScope projectId={props.projectId} environmentId={props.environmentId}>
+				<CanvasInner {...props} />
+			</EnvironmentStatusScope>
 		</ReactFlowProvider>
 	);
 }
@@ -154,7 +154,6 @@ function CanvasInner({
 	// repo · ref · pinned commit · scan verdict, with detach/rescan. Its RESOURCES are separate: they
 	// are external nodes on the board (see the setIacNodes effect below), because a customer who
 	// brought an entire infrastructure should see an architecture, not one card over a dimmed graph.
-	const [iacSource, setIacSource] = useState<IacSourceState | null>(null);
 	const openCard = useCanvasStore((s) => s.openCard);
 	const closeCard = useCanvasStore((s) => s.closeCard);
 	const card = useCanvasStore((s) => s.card);
@@ -177,8 +176,16 @@ function CanvasInner({
 	const setAddonNodes = useCanvasStore((s) => s.setAddonNodes);
 	const setIacNodes = useCanvasStore((s) => s.setIacNodes);
 	const setIacOutputs = useCanvasStore((s) => s.setIacOutputs);
-	// The environment's server truth (provided by the project shell) — it now also carries the BYO
-	// IaC module and the architecture derived from it.
+	// The seed the store holds. Out-of-band layers (charts, add-ons, IaC cards) are re-applied
+	// whenever it changes: a scope switch RESETS the store, and these reads are prefetched, so their
+	// data can land before the seed does — without this they would be applied and then wiped.
+	const seed = useCanvasStore((s) => s.seed);
+	// Whether the store holds THIS environment's design yet. Until it does, the board shows the
+	// skeleton over itself rather than an empty canvas (F009).
+	const seeded = seed?.scope === draftScope(projectId, environmentId);
+	const designEmpty = useDesignIsEmpty();
+	// The environment's server truth (read once by `EnvironmentStatusScope`, above) — it also carries
+	// the BYO IaC module and the architecture derived from it.
 	const envStatus = useEnvironmentStatus();
 	// A deep link can name the card to open (`?card=activity|env-settings|node:<id>|addon:<id>`)
 	// — the Jobs page and the assistant link here. Both ordering hazards it has to survive are
@@ -233,39 +240,39 @@ function CanvasInner({
 		[projectId, projectName, loadDestroyTree, handleDestroyEnvironment],
 	);
 
-	// BYO chart nodes are out-of-band: load them from getProjectByoCharts into the canvas on mount
-	// (and after attach/detach). Only in edit mode with the feature on.
-	const refreshCharts = useCallback(() => {
-		if (!projectId || !byoHelmEnabled) return;
-		void getProjectByoCharts(projectId, environmentId ?? null)
-			.then((res) => setChartNodes(res.charts))
-			.catch(() => {
-				/* best-effort — a fetch failure just leaves the canvas without chart nodes */
-			});
-	}, [projectId, environmentId, byoHelmEnabled, setChartNodes]);
+	// The reads below are the board's out-of-band layers. Each is a GET procedure the Architecture
+	// page prefetched under this same input, so the first paint carries them; a change to any of
+	// them arrives as a hint on the org's change stream and invalidates the key (lib/query/topics.ts).
+	const envInput = environmentStatusInput(projectId ?? "", environmentId);
 
-	// Described chart workloads (W5 Path A) are out-of-band too: load them into the canvas as children
-	// of their chart nodes. Only in edit mode with the describe flag on; a fetch failure just leaves
-	// the workloads absent (the honest empty state — a chart with no described children yet).
-	const refreshChartWorkloads = useCallback(() => {
-		if (!projectId || !byoDescribeEnabled) return;
-		void getProjectChartWorkloads(projectId, environmentId ?? null)
-			.then((res) => setChartWorkloadNodes(res.workloads))
-			.catch(() => {
-				/* best-effort — leaves the canvas without described-workload nodes */
-			});
-	}, [projectId, environmentId, byoDescribeEnabled, setChartWorkloadNodes]);
-
-	// A chart attach / detach / rescan (or the overlay editor) should refresh both the chart nodes and
-	// their described workloads together.
-	const refreshByo = useCallback(() => {
-		refreshCharts();
-		refreshChartWorkloads();
-	}, [refreshCharts, refreshChartWorkloads]);
-
+	// BYO chart nodes are out-of-band: they come from `canvas.byoCharts`, never from the design.
+	// Only in edit mode with the feature on.
+	const byoChartsQuery = useQuery({
+		...orpc.canvas.byoCharts.queryOptions({ input: envInput }),
+		enabled: !!projectId && !!byoHelmEnabled,
+	});
+	// Described chart workloads (W5 Path A) are out-of-band too: children of their chart nodes. Only
+	// in edit mode with the describe flag on; a failed read leaves the workloads absent (the honest
+	// empty state — a chart with no described children yet).
+	const chartWorkloadsQuery = useQuery({
+		...orpc.canvas.chartWorkloads.queryOptions({ input: envInput }),
+		enabled: !!projectId && !!byoDescribeEnabled,
+	});
+	const byoCharts = byoChartsQuery.data?.charts;
+	const chartWorkloads = chartWorkloadsQuery.data?.workloads;
 	useEffect(() => {
-		refreshByo();
-	}, [refreshByo]);
+		if (byoCharts) setChartNodes(byoCharts);
+	}, [byoCharts, setChartNodes, seed]);
+	useEffect(() => {
+		if (chartWorkloads) setChartWorkloadNodes(chartWorkloads);
+	}, [chartWorkloads, setChartWorkloadNodes, seed]);
+
+	// A chart attach / detach / rescan (or the overlay editor) refreshes the chart nodes and their
+	// described workloads together.
+	const refreshByo = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: orpc.canvas.byoCharts.key() });
+		void queryClient.invalidateQueries({ queryKey: orpc.canvas.chartWorkloads.key() });
+	}, [queryClient]);
 
 	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
 	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
@@ -286,7 +293,7 @@ function CanvasInner({
 				sync: a.install?.sync ?? null,
 			})),
 		);
-	}, [addonsQuery.data, setAddonNodes]);
+	}, [addonsQuery.data, setAddonNodes, seed]);
 
 	// The BYO IaC module's RESOURCES, as read-only external cards. They ride on the environment
 	// status — the one round-trip the board already makes — so a card and its status, cost and drift
@@ -298,22 +305,18 @@ function CanvasInner({
 		// The module's output names ride the same round-trip as its cards, so the bind sheet's
 		// facet→output picker (#823) has choices whenever there are BYO-IaC cards to bind to.
 		setIacOutputs(envStatus.iac?.outputs ?? []);
-	}, [envStatus.iac, setIacNodes, setIacOutputs]);
+	}, [envStatus.iac, setIacNodes, setIacOutputs, seed]);
 
-	// BYO IaC source is single-per-env, loaded out-of-band from getIacSource (and re-loaded after
-	// attach/detach/rescan). Only in edit mode with the feature on.
+	// BYO IaC source is single-per-env: the module's provenance card, from `canvas.iacSource`. Only in
+	// edit mode with the feature on; attach / detach / rescan invalidate it.
+	const iacSourceQuery = useQuery({
+		...orpc.canvas.iacSource.queryOptions({ input: envInput }),
+		enabled: !!projectId && !!byoIacEnabled,
+	});
+	const iacSource = iacSourceQuery.data?.source ?? null;
 	const refreshIacSource = useCallback(() => {
-		if (!projectId || !byoIacEnabled) return;
-		void getIacSource(projectId, environmentId ?? null)
-			.then(setIacSource)
-			.catch(() => {
-				/* best-effort — a fetch failure just leaves the canvas without the source card */
-			});
-	}, [projectId, environmentId, byoIacEnabled]);
-
-	useEffect(() => {
-		refreshIacSource();
-	}, [refreshIacSource]);
+		void queryClient.invalidateQueries({ queryKey: orpc.canvas.iacSource.key() });
+	}, [queryClient]);
 
 	// While an ENABLED IaC source governs this env, the component graph isn't the source of truth —
 	// so there is nothing to add to it: the Add palette and ⌘K component-add are disabled.
@@ -624,6 +627,20 @@ function CanvasInner({
 				/>
 			</motion.div>
 
+			{/* A board with nothing designed on it says what to do next (F037), instead of an empty
+			    dotted plane. Not while an IaC module governs the env: there is nothing to add. */}
+			{seeded && designEmpty && !iacGoverned && (
+				<BoardGuide onAdd={() => setPaletteOpen(true)} />
+			)}
+
+			{/* The environment-status read failed with nothing to show: say so, rather than let every
+			    node quietly read as its design state. */}
+			<EnvironmentStatusNotice />
+
+			{/* Until the store holds this environment's design, the board is the skeleton — never an
+			    empty canvas (F009). Same component as the route's loading.tsx, so nothing moves. */}
+			{!seeded && <CanvasSkeleton overlay />}
+
 			{/* Bottom-right: the BYO IaC module's PROVENANCE — repo · ref · the commit the scan pinned ·
 			    the scan verdict, with detach/rescan. It is not part of the architecture; it's where the
 			    architecture came from. The module's resources are real cards on the board above.
@@ -655,13 +672,13 @@ function CanvasInner({
 						projectId={projectId}
 						environmentId={environmentId}
 						onQueued={() => {
-							// The rail and the node statuses both key off the environment; nudge them so a
-							// queued job shows up immediately rather than on the next poll.
+							// The rail and the node statuses both key off the environment; this tab shows its
+							// own job at once (read-your-own-writes), other tabs hear the `jobs` hint.
 							void queryClient.invalidateQueries({
-								queryKey: qk.environmentJobs(projectId, environmentId),
+								queryKey: orpc.canvas.environmentJobs.key(),
 							});
 							void queryClient.invalidateQueries({
-								queryKey: qk.environmentStatus(projectId, environmentId),
+								queryKey: orpc.canvas.environmentStatus.key(),
 							});
 						}}
 					/>

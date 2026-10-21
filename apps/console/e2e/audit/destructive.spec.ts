@@ -816,13 +816,26 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// That is why an `open:` step ends by waiting for the overlay it opened, below.
 			const root = await openOverlay(page);
 			const named = new RegExp(escapeRe(name), "i");
-			const opener = root
+			const loose = root
 				.getByRole("button", { name: named })
 				.or(root.getByRole("option", { name: named }))
 				.or(root.getByRole("menuitem", { name: named }))
 				.or(root.getByLabel(named))
 				.first();
-			await opener.waitFor({ state: "visible", timeout: 8_000 });
+			await loose.waitFor({ state: "visible", timeout: 8_000 });
+			// A control whose name IS the step's name beats one whose label merely CONTAINS it (#6119).
+			// `{open: "Add"}` is the canvas toolbar's **Add** button; the case-insensitive substring also
+			// matches the canvas card labelled "Add-on Prometheus + Grafana", which comes FIRST in
+			// document order. While the card arrived after the board's own client fetch, `.first()` won
+			// the race by accident; with the board's reads prefetched the card is on the first paint,
+			// and the step clicked the card — opening its inspector, not the palette. Exact first, the
+			// substring union only when nothing is named exactly (an option whose name carries more).
+			const exact = root
+				.getByRole("button", { name, exact: true })
+				.or(root.getByRole("option", { name, exact: true }))
+				.or(root.getByRole("menuitem", { name, exact: true }))
+				.first();
+			const opener = (await exact.isVisible()) ? exact : loose;
 			// What was already up BEFORE the click, so the wait below can tell the overlay this click
 			// opens from the one it was clicked inside.
 			const seen = kind === "open" ? await visibleOverlays(page) : null;
@@ -2059,6 +2072,19 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Prometheus + Grafana" }] };
 	expect(await walkReach(page, entry), "the step names a real option in the open dialog, so it must be taken").toBeNull();
 	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
+});
+
+test("self-test — an `open:` step clicks the control NAMED exactly, not an earlier one whose label contains the name", async ({ page }) => {
+	// #6119, `addons.remove`'s first step on the gate: the board's add-on card ("Add-on Prometheus +
+	// Grafana") is in the DOM before the toolbar's **Add** button, and `/Add/i` matches both.
+	await page.setContent(`
+		<main>
+			<div role="group" aria-label="Add-on Prometheus + Grafana" onclick="document.body.dataset.hit='card'">card</div>
+			<button onclick="document.body.dataset.hit='add'">Add</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Add" }] };
+	expect(await walkReach(page, entry), "the step names a real button, so it must be taken").toBeNull();
+	await expect(page.locator("body")).toHaveAttribute("data-hit", "add");
 });
 
 test("self-test — an `open:` step waits for the overlay it opened, so a SLOW palette still scopes the next step", async ({ page }) => {

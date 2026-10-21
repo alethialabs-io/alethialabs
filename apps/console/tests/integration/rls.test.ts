@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { getProjectAddons } from "@/app/server/actions/addons";
+import { readProjectAddons as getProjectAddons } from "@/lib/rpc/procedures/canvas";
 import { getLatestDriftPosture } from "@/app/server/actions/drift";
 import { runWithActor } from "@/lib/authz/actor-context";
 import type { Actor } from "@/lib/authz/types";

@@ -96,14 +96,6 @@
 			"count": 1,
 			"lifts": "#6131"
 		},
-		"components/design-project/canvas/cards/activity-card.tsx :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6119"
-		},
-		"components/design-project/canvas/cards/destroy-hold.tsx :: setInterval": {
-			"count": 1,
-			"lifts": "#6119"
-		},
 		"components/org/pending-paid-setup.ts :: setInterval": {
 			"count": 1,
 			"lifts": "unassigned"
@@ -112,17 +104,9 @@
 			"count": 1,
 			"lifts": "#6114"
 		},
-		"lib/query/use-addons-query.ts :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6119"
-		},
 		"lib/query/use-clusters-query.ts :: refetchInterval": {
 			"count": 1,
 			"lifts": "#6122"
-		},
-		"lib/query/use-environment-status-query.ts :: refetchInterval": {
-			"count": 1,
-			"lifts": "#6119"
 		},
 		"lib/query/use-fleet-query.ts :: refetchInterval": {
 			"count": 1,

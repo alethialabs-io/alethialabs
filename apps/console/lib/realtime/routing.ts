@@ -95,7 +95,7 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 }
 
 /**
- * The routing keys of one notice. `jobs` is the only producer today; every other topic is declared
+ * The routing keys of one notice. `jobs`, `environments` and `addons` have producers; every other topic is declared
  * and routes NOWHERE until its lane adds both its trigger and its row here — a topic that routed
  * before its RLS arms were written down would be a guess about who may read it.
  */
@@ -113,9 +113,14 @@ export function keysFor(notice: ChangeNotice): Route[] {
 			}
 			return routes;
 		}
-		// TODO(#6119/#6120): project_environments + the component tables — o:, u: where an owner arm
-		// exists; project view filter.
+		// project_environments, project_fabrics, the component family (`environments`) and
+		// project_addons (`addons`), #6119. Their RLS is the project's: the org arm, or the PROJECT's
+		// owner (`projects.user_id`) — which is not a column of these rows, so there is no owner route.
+		// `u` on an environments notice is the environment's CREATOR, not an RLS arm, and is ignored.
+		// Every delivery is filtered through the PDP's `view` on the row's project.
 		case "environments":
+		case "addons":
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
 		// TODO(#6131): projects — o:, u:; project view filter on the row's own id.
 		case "projects":
 		// TODO(#6122): project_cluster — o: only; project view filter.
@@ -124,8 +129,6 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		case "runners":
 		// TODO(#6123): fleet_pools config columns + fleet_actions INSERT → platform. Never fleet_leader.
 		case "fleet":
-		// TODO(#6119): project_addons — o:; project view filter.
-		case "addons":
 		// TODO(#6125): alert_deliveries — o: (no user_id); subscribed only with the alerting entitlement.
 		case "alerts":
 		// TODO(#6130/#6114): support_cases — ou:<org>:<user>, osupport:<org> (manage_support only).

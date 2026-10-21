@@ -1,81 +1,93 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The environment-status query must run on the DEFAULT environment.
+// The environment-status query (#6119: now the `canvas.environmentStatus` GET procedure).
 //
-// It was gated on `!!projectId && !!environmentId`, and the caller passes
-// `searchParams.get("environment_id")` — which is null on every visit to a project that hasn't
-// explicitly switched environments. So on the default environment the query never ran, and
-// everything it feeds was dead there: component status (a FAILED database read "Ready"), the drift
-// chips, the cost chip, and the BYO-IaC architecture. It only came alive if the URL happened to
-// carry an explicit `?environment_id=`.
+// It must run on the DEFAULT environment. It was once gated on `!!projectId && !!environmentId`, and
+// the caller passed `searchParams.get("environment_id")` — null on every visit to a project that has
+// not explicitly switched environments — so on the default environment it never ran, and everything
+// it feeds was dead there. The server has always resolved an absent id to the project's default.
 //
-// The server has always resolved an absent id to the project's default. Only the guard was wrong.
+// And it must NOT poll: a change to the environment is a hint on the org's change stream
+// (lib/query/topics.ts). It used to refetch every 4 s while a job ran and every 30 s otherwise.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
-const getEnvironmentComponentStatus = vi.fn();
-vi.mock("@/app/server/actions/component-status", () => ({
-	getEnvironmentComponentStatus: (...args: unknown[]) =>
-		getEnvironmentComponentStatus(...args),
-}));
+const h = vi.hoisted(() => {
+	const handlers: Record<string, FakeHandler> = {};
+	const calls: FakeCall[] = [];
+	return { handlers, calls };
+});
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(h.handlers, h.calls).orpc };
+});
 
 const { useEnvironmentStatusQuery } = await import(
 	"@/lib/query/use-environment-status-query"
 );
 const { EMPTY_ENVIRONMENT_STATUS } = await import("@/lib/canvas/component-status");
 
+let client: QueryClient;
+
 function wrapper({ children }: { children: ReactNode }) {
-	const client = new QueryClient({
-		defaultOptions: { queries: { retry: false, refetchInterval: false } },
-	});
 	return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
+/** The inputs `canvas.environmentStatus` was read with, in order. */
+function reads(): unknown[] {
+	return h.calls.filter((c) => c.path === "canvas.environmentStatus").map((c) => c.input);
+}
+
 beforeEach(() => {
-	getEnvironmentComponentStatus.mockReset();
-	getEnvironmentComponentStatus.mockResolvedValue(EMPTY_ENVIRONMENT_STATUS);
+	client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	h.calls.length = 0;
+	h.handlers["canvas.environmentStatus"] = async () => EMPTY_ENVIRONMENT_STATUS;
 });
 
 describe("useEnvironmentStatusQuery", () => {
 	it("RUNS when the environment id is null — that means 'the default environment'", async () => {
-		// The regression. `searchParams.get("environment_id")` is null in the common case, and the
-		// query used to be disabled on it, silently killing status, cost, drift and the BYO-IaC board.
 		renderHook(() => useEnvironmentStatusQuery("proj-1", null), { wrapper });
-
-		await waitFor(() => expect(getEnvironmentComponentStatus).toHaveBeenCalled());
 		// null is forwarded verbatim — the SERVER resolves it to the project's default env.
-		expect(getEnvironmentComponentStatus).toHaveBeenCalledWith("proj-1", null);
+		await waitFor(() => expect(reads()).toEqual([{ projectId: "proj-1", environmentId: null }]));
 	});
 
 	it("runs with an explicit environment id too", async () => {
 		renderHook(() => useEnvironmentStatusQuery("proj-1", "env-9"), { wrapper });
-		await waitFor(() =>
-			expect(getEnvironmentComponentStatus).toHaveBeenCalledWith("proj-1", "env-9"),
-		);
+		await waitFor(() => expect(reads()).toEqual([{ projectId: "proj-1", environmentId: "env-9" }]));
+	});
+
+	it("reads undefined as null, so the key equals the one the page prefetched", async () => {
+		renderHook(() => useEnvironmentStatusQuery("proj-1", undefined), { wrapper });
+		await waitFor(() => expect(reads()).toEqual([{ projectId: "proj-1", environmentId: null }]));
 	});
 
 	it("does NOT run without a project — the create flow has nothing to fetch", async () => {
 		renderHook(() => useEnvironmentStatusQuery(undefined, null), { wrapper });
 		await new Promise((r) => setTimeout(r, 50));
-		expect(getEnvironmentComponentStatus).not.toHaveBeenCalled();
+		expect(reads()).toEqual([]);
 	});
 
 	it("keys null and an explicit id separately, so switching envs refetches", async () => {
+		const initialProps: { env: string | null } = { env: null };
 		const { rerender } = renderHook(
 			({ env }: { env: string | null }) => useEnvironmentStatusQuery("proj-1", env),
-			{ wrapper, initialProps: { env: null as string | null } },
+			{ wrapper, initialProps },
 		);
-		await waitFor(() =>
-			expect(getEnvironmentComponentStatus).toHaveBeenCalledWith("proj-1", null),
-		);
+		await waitFor(() => expect(reads()).toHaveLength(1));
 		rerender({ env: "env-9" });
-		await waitFor(() =>
-			expect(getEnvironmentComponentStatus).toHaveBeenCalledWith("proj-1", "env-9"),
-		);
-		expect(getEnvironmentComponentStatus).toHaveBeenCalledTimes(2);
+		await waitFor(() => expect(reads()).toHaveLength(2));
+		expect(reads()[1]).toEqual({ projectId: "proj-1", environmentId: "env-9" });
+	});
+
+	it("declares no poll: the query carries no refetchInterval", async () => {
+		renderHook(() => useEnvironmentStatusQuery("proj-1", null), { wrapper });
+		await waitFor(() => expect(reads()).toHaveLength(1));
+		const [query] = client.getQueryCache().getAll();
+		expect(query?.observers[0]?.options.refetchInterval).toBeUndefined();
 	});
 });
