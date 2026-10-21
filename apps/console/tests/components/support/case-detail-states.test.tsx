@@ -14,12 +14,16 @@ import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActionResult } from "@/lib/actions/result";
 import type { CaseWithThread } from "@/lib/queries/support";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const { toast } = vi.hoisted(() => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast }));
 const { markCaseRead } = vi.hoisted(() => ({
-	markCaseRead: vi.fn(async ({ id }: { id: string }) => ({ ok: true as const, data: { id } })),
+	markCaseRead: vi.fn(
+		async ({ id }: { id: string }): Promise<ActionResult<{ id: string }>> => ({ ok: true, data: { id } }),
+	),
 }));
 vi.mock("@/app/server/actions/support", () => ({
 	markCaseRead,
@@ -146,5 +150,14 @@ describe("CaseDetail — the read watermark", () => {
 	it("is advanced by markCaseRead once the case is on screen", async () => {
 		renderView((qc) => qc.setQueryData(key, caseRead("open")));
 		await waitFor(() => expect(markCaseRead).toHaveBeenCalledWith({ id: CASE }));
+	});
+
+	it("fails SILENTLY: a refused watermark write shows no toast and leaves the case on screen", async () => {
+		markCaseRead.mockResolvedValueOnce({ ok: false, error: { kind: "not-found", message: "gone" } });
+		renderView((qc) => qc.setQueryData(key, caseRead("open")));
+		await waitFor(() => expect(markCaseRead).toHaveBeenCalled());
+		await new Promise((r) => setTimeout(r, 0));
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(screen.getByRole("textbox", { name: "Reply" })).toBeInTheDocument();
 	});
 });

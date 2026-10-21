@@ -8,13 +8,13 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { isDefinedError } from "@orpc/client";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Lock, Paperclip, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 import { markCaseRead } from "@/app/server/actions/support";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { RegionError } from "@/components/errors/region-error";
-import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
@@ -53,8 +53,20 @@ export function CaseDetail({
 
 	// The read watermark: advanced once the case is on screen and again whenever a newer message
 	// lands, so the unread dot in "My cases" and the bell clears for what the viewer has seen.
-	const markRead = useActionMutation(markCaseRead, {
-		invalidates: [orpc.support.cases.key(), orpc.workspace.supportCases.key()],
+	// SILENT ON FAILURE, deliberately not `useActionMutation`: nobody asked for this write, so a
+	// toast about it would be noise over a page that is working — a failed watermark only leaves an
+	// unread dot, which the next view retries. Success refreshes the two places that show the dot.
+	const queryClient = useQueryClient();
+	const markRead = useMutation({
+		mutationFn: async (vars: { id: string }) => {
+			const result = await markCaseRead(vars);
+			if (!result.ok) throw new Error(result.error.kind);
+			return result.data;
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: orpc.support.cases.key() });
+			void queryClient.invalidateQueries({ queryKey: orpc.workspace.supportCases.key() });
+		},
 	});
 	const { mutate: mark } = markRead;
 	const hasCase = data !== undefined;

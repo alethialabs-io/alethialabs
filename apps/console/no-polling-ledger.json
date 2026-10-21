@@ -22,10 +22,6 @@
 			"count": 1,
 			"reason": "SSE heartbeat on the per-job log stream; writes a comment frame, reads no data"
 		},
-		"app/api/stream/support/cases/[id]/route.ts :: setInterval": {
-			"count": 1,
-			"reason": "SSE heartbeat on the support-case stream; writes a comment frame, reads no data"
-		},
 		"components/jobs/columns.tsx :: setInterval": {
 			"count": 1,
 			"reason": "elapsed-time ticker: re-renders a running job's duration once a second; reads no data"
