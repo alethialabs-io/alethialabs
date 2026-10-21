@@ -15,7 +15,8 @@
 //
 // The CLI's job surface follows the same rule — `GET /api/jobs`, `GET /api/cli/jobs/[id]`,
 // `GET /api/cli/jobs/[id]/logs`, `POST /api/cli/jobs/[id]/cancel` — so the terminal and the browser
-// agree about which jobs a reader has.
+// agree about which jobs a reader has; and `GET /api/cli/projects/[id]/drift` asks about the
+// addressed project, so P's drift posture is refused to the reader the Evidence page hides P from.
 //
 // WHAT IS MOCKED: the session lookup the log stream does (`getOwner`, `getActiveScope`), and the CLI
 // guard's credential resolution (`authorizeCli`, to the same caller) — the session is the input
@@ -49,6 +50,7 @@ vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 import { GET as cliJob } from "@/app/api/cli/jobs/[id]/route";
 import { POST as cliCancel } from "@/app/api/cli/jobs/[id]/cancel/route";
 import { GET as cliJobLogs } from "@/app/api/cli/jobs/[id]/logs/route";
+import { GET as cliDrift } from "@/app/api/cli/projects/[id]/drift/route";
 import { GET as cliJobs } from "@/app/api/jobs/route";
 import { GET as streamJobLogs } from "@/app/api/stream/jobs/[id]/route";
 import { ForbiddenError } from "@/lib/authz/types";
@@ -306,6 +308,20 @@ describeIfDb("job visibility follows project visibility", () => {
 			expect(await cliStatus(cliJobLogs, DENIED, seeded.jobP, "/logs")).toBe(404);
 			expect(await cliStatus(cliJobLogs, DENIED, seeded.jobQ, "/logs")).toBe(200);
 			expect(await cliStatus(cliJobLogs, VIEWER, seeded.jobP, "/logs")).toBe(200);
+		});
+
+		it("GET /api/cli/projects/[id]/drift answers P as not found for the denied reader only", async () => {
+			// The drift posture is P's evidence: the Evidence page leaves P out for this reader, so the
+			// terminal does too. The org-wide project permission alone is not the question.
+			const drift = async (userId: string, projectId: string) =>
+				(
+					await cliDrift(cliRequest(userId, `/api/cli/projects/${projectId}/drift`), {
+						params: Promise.resolve({ id: projectId }),
+					})
+				).status;
+			expect(await drift(DENIED, P)).toBe(404);
+			expect(await drift(DENIED, Q)).toBe(200);
+			expect(await drift(VIEWER, P)).toBe(200);
 		});
 
 		it("POST /api/cli/jobs/[id]/cancel answers a job of P as not found for the denied reader", async () => {
