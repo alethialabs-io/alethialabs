@@ -20,6 +20,7 @@ import { jobVisibleTo } from "@/lib/jobs/visibility";
  * ORG LIST `GET /api/jobs` USES, from the guard (`auth.orgScope`) rather than re-derived — a
  * narrower list let a Teams member list a pre-#3942 runner job and then 404 cancelling it (#4154).
  * Beside it, job visibility follows project visibility (lib/jobs/visibility.ts), as in the console.
+ * The console's cancel (app/server/actions/jobs.ts) is narrower: it binds to the addressed org alone.
  */
 export async function POST(
 	req: Request,
