@@ -40,6 +40,10 @@ const CLUSTERS_LIST = "clusters";
  * predicate is now the column, and the count and the rows query receive the identical fragment;
  * `paginate` hands it to both, and the rows query adds only the keyset predicate on top.
  *
+ * The scope ALSO carries a visibility predicate — `project_cluster.project_id` among the projects
+ * the caller may view — on the same table and for the same reason. It narrows within the tenancy
+ * boundary; it is not part of it.
+ *
  * WHY ONE COLUMN MATTERS HERE. These routes read through `getServiceDb()`, whose role bypasses
  * RLS, so this predicate is the entire tenancy boundary. A boundary that spans two tables has a
  * second place to widen it: drop the join condition, or leave the join and lose the `WHERE`, and the
@@ -130,12 +134,14 @@ export async function GET(req: Request) {
 	try {
 		const db = getServiceDb();
 
-		// The tenancy boundary, on ONE column of the table being paged — the column the database
-		// derives from the parent project (#4116). It is the SAME object the count and the rows
-		// query receive.
-		// The tenancy predicate, then visibility: only clusters of projects the caller may view (a
-		// project-scoped deny hides its clusters). Both are columns of `project_cluster` itself, so
-		// the single-table count below still sees exactly the rows the page returns.
+		// The scope, as TWO predicates on columns of the table being paged, and the SAME object the
+		// count and the rows query receive:
+		//   1. tenancy — `project_cluster.org_id`, the column the database derives from the parent
+		//      project (#4116). This is the boundary; nothing else here widens or replaces it.
+		//   2. visibility — `project_cluster.project_id` among the projects the caller may view, so a
+		//      project-scoped deny hides that project's clusters.
+		// Both name `project_cluster` alone, so the single-table count sees exactly the rows the page
+		// returns.
 		const viewable = await cliViewableProjectIds(actor);
 		const scope: [SQL, ...(SQL | undefined)[]] = [
 			eq(projectCluster.org_id, actor.orgId),
@@ -177,7 +183,8 @@ export async function GET(req: Request) {
 						region: projects.region,
 					})
 					.from(projectCluster)
-					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is `org_id` above.
+					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is `org_id` and `project_id` on
+					// `project_cluster` above.
 					// `project_id` is NOT NULL and references `projects.id`, so this innerJoin is
 					// 1:1 and cannot drop a row the count included. The leftJoin cannot duplicate
 					// one either: `project_environments_one_default` is a partial UNIQUE index on

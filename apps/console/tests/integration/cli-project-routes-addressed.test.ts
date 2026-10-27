@@ -16,7 +16,13 @@
 //   - `GET  /api/cli/clusters/[id]`                                    — `view` of its project
 //   - `GET  /api/cli/configurations` and `GET /api/cli/clusters`       — the lists
 //
-// A refusal is recorded: it leaves a `decision = false` activity row naming the project.
+// Also `GET /api/cli/projects/[id]/drift`, and the agent reads (`GET /api/cli/agents`, `…/[id]`),
+// which authorize at org level and return rows that may name a project.
+//
+// RECORDING, as far as this file proves it: a refused edit (environments POST) and a refused view
+// (agent by id) each leave exactly ONE `decision = false` activity row naming the project, and an
+// allowed edit leaves none. Each test makes its own request and counts rows before and after it, so
+// none depends on another having run.
 //
 // One org, two projects (P and Q), four members. VIEWER and OPERATOR hold their role across the
 // org; VIEW_DENIED is a viewer with an explicit deny on viewing P; EDIT_DENIED is an operator with an
@@ -49,18 +55,22 @@ vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	}),
 }));
 
+import { GET as cliAgent } from "@/app/api/cli/agents/[id]/route";
+import { GET as cliAgents } from "@/app/api/cli/agents/route";
 import { GET as cliCluster } from "@/app/api/cli/clusters/[id]/route";
 import { GET as cliClusters } from "@/app/api/cli/clusters/route";
 import { GET as cliConfigByName } from "@/app/api/cli/configurations/[name]/route";
 import { GET as cliConfigByProjectName } from "@/app/api/cli/configurations/by-project-name/[project_name]/route";
 import { GET as cliConfigurations } from "@/app/api/cli/configurations/route";
 import { GET as cliCost } from "@/app/api/cli/projects/[id]/cost/route";
+import { GET as cliDrift } from "@/app/api/cli/projects/[id]/drift/route";
 import { POST as cliAddEnvironment } from "@/app/api/cli/projects/[id]/environments/route";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
 import {
+	agentIdentities,
 	authzActivityLog,
 	grants,
 	member,
@@ -85,6 +95,8 @@ const P = randomUUID();
 const Q = randomUUID();
 const NAME = { [P]: `it-cli-addressed-p-${P.slice(0, 8)}`, [Q]: `it-cli-addressed-q-${Q.slice(0, 8)}` };
 const CLUSTER = { [P]: "", [Q]: "" };
+/** Agent identities authored by ADMIN in ORG: one bound to P, one to Q, one to no project. */
+const AGENT = { P: randomUUID(), Q: randomUUID(), NONE: randomUUID() };
 
 /** Acts as `userId` in the org for the next CLI call. */
 function actAs(userId: string): void {
@@ -187,9 +199,12 @@ async function listedClusters(userId: string): Promise<string[]> {
 	);
 }
 
-/** The refusals recorded for `userId` doing `action` on project P. */
-async function refusalsOnP(userId: string, action: string) {
-	return getServiceDb()
+/**
+ * How many activity rows name project P for `userId` doing `action` — only refusals when `decision`
+ * is false, every decision when it is omitted.
+ */
+async function projectRowsOnP(userId: string, action: string, decision?: boolean): Promise<number> {
+	const rows = await getServiceDb()
 		.select({ id: authzActivityLog.id })
 		.from(authzActivityLog)
 		.where(
@@ -199,9 +214,45 @@ async function refusalsOnP(userId: string, action: string) {
 				eq(authzActivityLog.action, action),
 				eq(authzActivityLog.resource_type, "project"),
 				eq(authzActivityLog.resource_id, P),
-				eq(authzActivityLog.decision, false),
+				...(decision === undefined ? [] : [eq(authzActivityLog.decision, decision)]),
 			),
 		);
+	return rows.length;
+}
+
+/**
+ * Settles the fire-and-forget activity writes of the request just made: waits for `count()` to reach
+ * `expected`, then waits a little longer and requires it to still BE `expected` — so a second row
+ * written late is caught, and a zero is not read before the write could have landed.
+ */
+async function settlesAt(count: () => Promise<number>, expected: number): Promise<void> {
+	await vi.waitFor(async () => expect(await count()).toBe(expected));
+	await new Promise((r) => setTimeout(r, 300));
+	expect(await count()).toBe(expected);
+}
+
+/** A fresh environment name, so a test never depends on what another test added. */
+function envName(prefix: string): string {
+	return `${prefix}-${randomUUID().slice(0, 8)}`;
+}
+
+/** `GET /api/cli/agents/:id` as `userId` → status. */
+async function agentStatus(userId: string, id: string): Promise<number> {
+	return (await getAs(userId, cliAgent, `/api/cli/agents/${id}`, { params: Promise.resolve({ id }) })).status;
+}
+
+/** The agent ids `GET /api/cli/agents` lists for `userId`. */
+async function listedAgents(userId: string): Promise<string[]> {
+	actAs(userId);
+	const res = await cliAgents(new Request("https://console.test/api/cli/agents"));
+	expect(res.status).toBe(200);
+	const body: unknown = await res.json();
+	if (typeof body !== "object" || body === null || !("agents" in body) || !Array.isArray(body.agents)) {
+		throw new Error(`unexpected body: ${JSON.stringify(body)}`);
+	}
+	return body.agents.flatMap((a: unknown) =>
+		typeof a === "object" && a !== null && "id" in a && typeof a.id === "string" ? [a.id] : [],
+	);
 }
 
 /** Writes an explicit deny of `permissionKey` on project P for `userId`: the row, then its mirror. */
@@ -304,12 +355,30 @@ describeIfDb("CLI project routes check the addressed project", () => {
 			if (!c) throw new Error("cluster seed returned no row");
 			CLUSTER[id] = c.id;
 		}
+		await db.insert(agentIdentities).values(
+			(
+				[
+					[AGENT.P, P],
+					[AGENT.Q, Q],
+					[AGENT.NONE, null],
+				] as const
+			).map(([id, projectId]) => ({
+				id,
+				user_id: ADMIN,
+				org_id: ORG,
+				project_id: projectId,
+				persona: "it-agent",
+				mission: "integration fixture",
+				memory_namespace: `it-${id.slice(0, 8)}`,
+			})),
+		);
 		await denyOnP(VIEW_DENIED, "project:view");
 		await denyOnP(EDIT_DENIED, "project:edit");
 	});
 
 	afterAll(async () => {
 		const db = getServiceDb();
+		await db.delete(agentIdentities).where(eq(agentIdentities.org_id, ORG));
 		await db.delete(projectCluster).where(inArray(projectCluster.project_id, [P, Q]));
 		await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, [P, Q]));
 		await db.delete(resourceHierarchy).where(eq(resourceHierarchy.parent_id, ORG));
@@ -338,31 +407,73 @@ describeIfDb("CLI project routes check the addressed project", () => {
 
 	describe("a write — POST environments (edit)", () => {
 		it("answers P as not found for the member denied editing P, and writes nothing", async () => {
-			expect(await addEnvironment(EDIT_DENIED, P, "refused")).toEqual({
-				status: 404,
-				body: NOT_FOUND,
-			});
-			expect(await environmentNames(P)).not.toContain("refused");
+			const name = envName("refused");
+			expect(await addEnvironment(EDIT_DENIED, P, name)).toEqual({ status: 404, body: NOT_FOUND });
+			expect(await environmentNames(P)).not.toContain(name);
 		});
 
-		it("records the refusal: a denied activity row naming P", async () => {
-			// The activity write is fire-and-forget, so it is waited for rather than read once.
-			await vi.waitFor(async () => {
-				expect((await refusalsOnP(EDIT_DENIED, "edit")).length).toBeGreaterThan(0);
-			});
+		it("records the refusal: exactly one denied activity row naming P", async () => {
+			const refusals = () => projectRowsOnP(EDIT_DENIED, "edit", false);
+			const before = await refusals();
+			expect((await addEnvironment(EDIT_DENIED, P, envName("refused"))).status).toBe(404);
+			await settlesAt(refusals, before + 1);
+		});
+
+		it("an allowed edit records no project-level row (authorizeCli's org-level row is the record)", async () => {
+			const rows = () => projectRowsOnP(OPERATOR, "edit");
+			const before = await rows();
+			expect((await addEnvironment(OPERATOR, P, envName("allowed"))).status).toBe(201);
+			await settlesAt(rows, before);
 		});
 
 		it("adds the environment to Q for that member, and to P for a member without the deny", async () => {
-			expect((await addEnvironment(EDIT_DENIED, Q, "allowed-q")).status).toBe(201);
-			expect(await environmentNames(Q)).toContain("allowed-q");
-			expect((await addEnvironment(OPERATOR, P, "allowed-p")).status).toBe(201);
-			expect(await environmentNames(P)).toContain("allowed-p");
+			const q = envName("allowed-q");
+			expect((await addEnvironment(EDIT_DENIED, Q, q)).status).toBe(201);
+			expect(await environmentNames(Q)).toContain(q);
+			const p = envName("allowed-p");
+			expect((await addEnvironment(OPERATOR, P, p)).status).toBe(201);
+			expect(await environmentNames(P)).toContain(p);
 		});
 
 		it("a deny on editing P leaves viewing P alone (the second question asks the route's own action)", async () => {
 			// The second question asks the route's OWN action, not a blanket one: the operator denied
 			// editing P still reads P.
 			expect((await cost(EDIT_DENIED, P)).status).toBe(200);
+		});
+	});
+
+	describe("drift", () => {
+		it("answers P as not found for the member denied viewing P only", async () => {
+			const drift = async (userId: string, projectId: string) =>
+				(await getAs(userId, cliDrift, `/api/cli/projects/${projectId}/drift`, {
+					params: Promise.resolve({ id: projectId }),
+				})).status;
+			expect(await drift(VIEW_DENIED, P)).toBe(404);
+			expect(await drift(VIEW_DENIED, Q)).toBe(200);
+			expect(await drift(VIEWER, P)).toBe(200);
+		});
+	});
+
+	describe("agent reads — org-level authorization, rows that name a project", () => {
+		it("the agent by id answers P's agent as not found for the member denied viewing P", async () => {
+			expect(await agentStatus(VIEW_DENIED, AGENT.P)).toBe(404);
+			expect(await agentStatus(VIEW_DENIED, AGENT.Q)).toBe(200);
+			expect(await agentStatus(VIEW_DENIED, AGENT.NONE)).toBe(200);
+			expect(await agentStatus(VIEWER, AGENT.P)).toBe(200);
+		});
+
+		it("records that refusal: exactly one denied view row naming P", async () => {
+			const refusals = () => projectRowsOnP(VIEW_DENIED, "view", false);
+			const before = await refusals();
+			expect(await agentStatus(VIEW_DENIED, AGENT.P)).toBe(404);
+			await settlesAt(refusals, before + 1);
+		});
+
+		it("the agent list leaves P's agent out for that member, and keeps it for the others", async () => {
+			const denied = await listedAgents(VIEW_DENIED);
+			expect(denied).not.toContain(AGENT.P);
+			expect(denied).toEqual(expect.arrayContaining([AGENT.Q, AGENT.NONE]));
+			expect(await listedAgents(VIEWER)).toEqual(expect.arrayContaining([AGENT.P, AGENT.Q, AGENT.NONE]));
 		});
 	});
 

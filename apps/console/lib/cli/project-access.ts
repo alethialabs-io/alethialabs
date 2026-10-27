@@ -11,17 +11,26 @@
 // stopped there would answer for the org and not for the project the caller named.
 //
 // {@link resolveCliProjectAuthorized} is the second half: resolve the project inside the caller's
-// org, then ask the same action about THAT project. The routes under
-// `app/api/cli/projects/[id]/` reach a project only through it (or through `resolveByoScope`,
-// which calls it). A route that reaches the project some other way — a configuration read by
-// project name, a cluster read by cluster id — asks {@link cliMayActOnProject} with the project id
-// it found. tests/app/api/cli/project-routes-addressed.test.ts holds them to that.
+// org, then ask the same action about THAT project. A route that reaches the project some other way
+// — a configuration read by project name, a cluster read by cluster id — asks
+// {@link cliMayActOnProject} with the project id it found, and a list of project-owned rows filters
+// on {@link cliViewableProjectIds}.
+//
+// WHAT HOLDS ROUTES TO THIS is tests/app/api/cli/project-routes-addressed.test.ts, and only within
+// the boundary its header states: every handler under app/api/cli/ that authorizes the org-wide
+// project permission must also call one of these with the same action, except the handlers in its
+// exemption ledger (each with its reason), and no file but this one may import `resolveCliProject`.
+// A route that reads project-owned rows WITHOUT that org-wide project authorization is outside the
+// test's reach — it has to apply these by hand.
 
+import { type AnyColumn, and, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import { enforceDecision } from "@/lib/authz/activity";
 import type { Action } from "@/lib/authz/registry";
 import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import { resolveCliProject } from "@/lib/cli/resolve-project";
+import { getServiceDb } from "@/lib/db";
+import { projects } from "@/lib/db/schema";
 
 /** A project row as {@link resolveCliProject} returns it. */
 type CliProject = NonNullable<Awaited<ReturnType<typeof resolveCliProject>>>;
@@ -85,4 +94,47 @@ export async function cliMayActOnProject(
  */
 export async function cliViewableProjectIds(actor: Actor): Promise<string[]> {
 	return getPdp().listAccessible(actor, "view", "project");
+}
+
+/**
+ * For a row that is OWNED by another resource but may name a project (an agent identity's
+ * `project_id`): true when `actor` may see it as far as that project is concerned.
+ *
+ *   - no project → nothing to ask (true);
+ *   - a project that is not in `actor.orgId` → not this org's question (true). Such a row reached
+ *     the caller through its own tenancy arm (a session's own personal rows), and the deny that
+ *     could hide it lives in the org that owns the project;
+ *   - a project in `actor.orgId` → {@link cliMayActOnProject} `view`, which records a refusal.
+ */
+export async function cliMayViewProjectBoundRow(
+	actor: Actor,
+	projectId: string | null,
+): Promise<boolean> {
+	if (!projectId) return true;
+	const [inOrg] = await getServiceDb()
+		.select({ id: projects.id })
+		.from(projects)
+		.where(and(eq(projects.id, projectId), eq(projects.org_id, actor.orgId)))
+		.limit(1);
+	if (!inOrg) return true;
+	return cliMayActOnProject(actor, projectId, "view");
+}
+
+/**
+ * The list form of {@link cliMayViewProjectBoundRow}, as a predicate on `projectIdColumn`: the row
+ * names no project, or a project the caller may view, or a project outside `actor.orgId`. ANDed
+ * onto a list's own tenancy predicate; it narrows within it and never widens it.
+ */
+export async function cliProjectBoundVisibleWhere(
+	actor: Actor,
+	projectIdColumn: AnyColumn,
+): Promise<SQL> {
+	const viewable = await cliViewableProjectIds(actor);
+	return (
+		or(
+			isNull(projectIdColumn),
+			inArray(projectIdColumn, viewable),
+			sql`not exists (select 1 from ${projects} where ${projects.id} = ${projectIdColumn} and ${projects.org_id} = ${actor.orgId})`,
+		) ?? sql`false`
+	);
 }

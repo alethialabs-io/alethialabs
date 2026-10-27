@@ -19,10 +19,12 @@
 // BOUNDARY, stated so a green is not read as more than it is:
 // - HANDLERS: every `route.ts` under app/api/cli/, found by walking the directory. Each exported
 //   `export async function GET|POST|PUT|PATCH|DELETE` is read as the text from that line to the next
-//   such export, with comments stripped (so a helper's name in a comment does not count). Any other
+//   such export, with comments stripped (so a helper's name in a comment does not count — see
+//   `stripComments` for the case where that stripping errs toward a false green). Any other
 //   export form for a handler (`export const GET =`, `export { x as GET }`) is red, because this
 //   reader cannot see into it.
-// - THE RULE: a handler that calls `authorizeCli(req, "<a>", { type: "project" })` must also call
+// - THE RULE: a handler that calls `authorizeCli(<request>, "<a>", { type: "project" })` (or
+//   `authorizeCliQuiet`, with the request under any name) must also call
 //   `resolveCliProjectAuthorized(…, "<a>")`, `resolveByoScope(…, "<a>")` or
 //   `cliMayActOnProject(…, "<a>")` with the SAME action, or — only when <a> is "view" —
 //   `cliViewableProjectIds(…)`. Under app/api/cli/projects/[id]/ every handler must call that
@@ -36,6 +38,10 @@
 // - DIRECT RESOLUTION: every .ts file under app/ and lib/ (no tests) is read for an `import` of
 //   `resolveCliProject` from @/lib/cli/resolve-project, or a namespace import of that module. Only
 //   lib/cli/project-access.ts may do either, besides the files in the exemption ledger.
+// - PROJECT-BOUND ROWS UNDER ORG-LEVEL AUTHORIZATION: a route that authorizes something other than
+//   the org-wide project permission (e.g. org `view`) but returns rows that may name a project is
+//   OUTSIDE the derived rule above. Those found so far are pinned by hand in PROJECT_BOUND_READS —
+//   NOT derived, so a new such route is not caught until it is added there.
 // - EXEMPT: a closed, handler-keyed ledger with a reason each, checked in both directions — an entry
 //   whose handler no longer exists, or that now goes through a helper, is red.
 
@@ -56,14 +62,18 @@ const EXEMPT: Record<string, string> = {
 	"app/api/cli/projects/route.ts POST": "creates a project: there is no existing project to ask about",
 	"app/api/cli/schema/addons/route.ts GET": "the static add-on catalogue: reads no project",
 	"app/api/cli/schema/components/route.ts GET": "the static component catalogue: reads no project",
-	"app/api/cli/projects/[id]/drift/route.ts GET":
-		"changed by #6238, which asks view of the addressed project inline; moves onto the helper after it lands",
 };
 
 /** Files that may import `resolveCliProject` directly besides the helper, and why. */
-const DIRECT_IMPORT_EXEMPT: Record<string, string> = {
-	"app/api/cli/projects/[id]/drift/route.ts": "see EXEMPT",
-};
+const DIRECT_IMPORT_EXEMPT: Record<string, string> = {};
+
+/**
+ * Handlers that authorize at org level yet return rows naming a project, and must therefore ask about
+ * that project themselves. Hand-written (see the header): a pin, not a derivation.
+ */
+const PROJECT_BOUND_READS = ["app/api/cli/agents/route.ts GET", "app/api/cli/agents/[id]/route.ts GET"];
+/** The helpers that answer for a row which may name a project. */
+const PROJECT_BOUND_HELPERS = ["cliMayViewProjectBoundRow", "cliProjectBoundVisibleWhere"];
 
 /** The calls that answer the addressed-project question with an action argument. */
 const PER_PROJECT_HELPERS = ["resolveCliProjectAuthorized", "resolveByoScope", "cliMayActOnProject"];
@@ -93,9 +103,17 @@ function cliRoutes(): string[] {
 		.sort();
 }
 
-/** `source` without its comments. Over-strips a `//` inside a string, which can only remove a match. */
+/**
+ * `source` without its comments, so a helper's name in a comment does not count as a call.
+ *
+ * TEXTUAL, NOT A TOKENIZER, and the error runs in the UNSAFE direction: a `/*` or a `//` inside a
+ * string literal starts a "comment" here, and stripping it can remove the `authorizeCli(` trigger as
+ * well as a helper call — which leaves the handler unread, a false green, not a false red. A `//`
+ * right after `:` (a URL scheme) is left alone, which covers the strings these routes actually
+ * carry; any other string holding `//` or `/*` before a handler's authorization is not covered.
+ */
 function stripComments(source: string): string {
-	return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+	return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/gm, "$1");
 }
 
 /** The exported HTTP handlers of a route file, each as [method, body text]. */
@@ -118,7 +136,8 @@ function hasUnreadableHandlerExport(source: string): boolean {
 
 /** The action of a handler's org-wide project authorization, or null if it makes none. */
 function orgWideProjectAction(body: string): string | null {
-	const m = body.match(/authorizeCli\(\s*req,\s*"(\w+)",\s*\{\s*type:\s*"project"\s*\}\s*\)/);
+	// Either CLI guard (the recording one or `authorizeCliQuiet`), whatever the request is named.
+	const m = body.match(/\bauthorizeCli(?:Quiet)?\(\s*\w+,\s*"(\w+)",\s*\{\s*type:\s*"project"\s*\}\s*\)/);
 	return m?.[1] ?? null;
 }
 
@@ -162,6 +181,8 @@ describe("CLI project routes ask about the addressed project", () => {
 		expect(typeof mod.resolveCliProjectAuthorized).toBe("function");
 		expect(typeof mod.cliMayActOnProject).toBe("function");
 		expect(typeof mod.cliViewableProjectIds).toBe("function");
+		expect(typeof mod.cliMayViewProjectBoundRow).toBe("function");
+		expect(typeof mod.cliProjectBoundVisibleWhere).toBe("function");
 		const byo = await import("@/lib/cli/byo-write");
 		expect(typeof byo.resolveByoScope).toBe("function");
 	});
@@ -200,6 +221,18 @@ describe("CLI project routes ask about the addressed project", () => {
 			if (action === null) return [];
 			const finding = handlerFinding(body, action);
 			return finding ? [`${key}: ${finding}`] : [];
+		});
+		expect(findings).toEqual([]);
+	});
+
+	it("every pinned project-bound read asks about the project its rows name", () => {
+		const byKey = new Map(allHandlers().map(([key, , body]) => [key, body]));
+		const findings = PROJECT_BOUND_READS.flatMap((key) => {
+			const body = byKey.get(key);
+			if (body === undefined) return [`${key}: no such handler (the pin outlived its route)`];
+			return PROJECT_BOUND_HELPERS.some((name) => new RegExp(`\\b${name}\\(`).test(body))
+				? []
+				: [`${key}: returns project-bound rows without cliMayViewProjectBoundRow / cliProjectBoundVisibleWhere`];
 		});
 		expect(findings).toEqual([]);
 	});

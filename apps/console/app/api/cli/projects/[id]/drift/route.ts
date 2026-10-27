@@ -5,15 +5,15 @@
 // scoped to one environment). Gated on `view` of THE ADDRESSED PROJECT, not only the org-wide
 // project permission: a reader with a scoped deny on a project is refused its drift here exactly as
 // the Evidence page leaves it out, and the refusal reads as "not found" so it does not confirm the
-// project exists. Org-scoped via the service DB with an explicit projects.org_id filter (RLS is
+// project exists (resolveCliProjectAuthorized, which also records the refusal). Org-scoped via the service DB with an explicit projects.org_id filter (RLS is
 // bypassed on this path — the predicate IS the tenancy wall). Mirrors getLatestDriftPosture (web),
 // which can't be called here because it authorizes via the session cookie.
 
 import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getPdp } from "@/lib/authz";
 import { authorizeCli } from "@/lib/authz/guard";
-import { resolveCliEnvironment, resolveCliProject } from "@/lib/cli/resolve-project";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
+import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { environmentDrift, projects } from "@/lib/db/schema";
@@ -30,8 +30,8 @@ export async function GET(
 	const envParam = new URL(req.url).searchParams.get("env");
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
-		if (!project || !(await getPdp().can(actor, "view", { type: "project", id: project.id })).allowed) {
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
+		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
 
