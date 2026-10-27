@@ -34,7 +34,8 @@ const driftDetailSchema: z.ZodType<DriftDetail> = z.object({
 	attributes: z.array(z.string()).optional(),
 });
 
-// Mirrors the Go `drift.Posture`. `in_sync` and `drifted` are the finding and are required; the
+// The runner's drift posture (packages/core/drift; typed here as `DriftPosture`). `in_sync` and
+// `drifted` are the finding and are required; the
 // rest is context. `unmanaged_known` defaults to FALSE when missing, because "we did not check" is
 // the only honest reading of a posture that does not say.
 const driftPostureSchema: z.ZodType<DriftPosture> = z.object({
@@ -138,11 +139,13 @@ function readPlanCounts(raw: unknown): PlanOutcome["counts"] | null {
 }
 
 // The three keys the block reads, each still unvalidated: the column's TYPE is not evidence of its
-// shape (see the head of this file), so each is validated by its own reader below.
+// shape (see the head of this file), so each is validated by its own reader below. `.optional()` is
+// load-bearing: zod 4 REQUIRES a key whose schema is a bare `z.unknown()`, so without it every
+// metadata object missing one of the three failed here and read as "no result".
 const resultKeysSchema = z.object({
-	drift_posture: z.unknown(),
-	plan_result: z.unknown(),
-	cost_breakdown: z.unknown(),
+	drift_posture: z.unknown().optional(),
+	plan_result: z.unknown().optional(),
+	cost_breakdown: z.unknown().optional(),
 });
 
 /**
