@@ -21,12 +21,12 @@
 		"scoredHere": 24,
 		"live": 19,
 		"notInstrumented": 1,
-		"findings": 24,
-		"findingFiles": 15,
+		"findings": 22,
+		"findingFiles": 14,
 		"liveNotMeasured": 83
 	},
 	"ledgers": {
-		"baseline": 16,
+		"baseline": 15,
 		"debt": 0
 	},
 	"live": {
@@ -12852,11 +12852,11 @@
 				"owner": null
 			},
 			"format": {
-				"total": 6,
-				"decision": 6,
+				"total": 4,
+				"decision": 4,
 				"debt": 0,
 				"unlisted": 0,
-				"inPageClosure": 3,
+				"inPageClosure": 1,
 				"chromeOnly": 3,
 				"sharedPackage": 0,
 				"offTree": 0,

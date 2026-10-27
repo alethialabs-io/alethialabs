@@ -210,6 +210,107 @@ CREATE TRIGGER invoice_notify_change_insdel
   AFTER INSERT OR DELETE ON public.invoice
   FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
 
+-- The `runners` topic (#6123). A runner row carries no project_id, so it has its own notifier: id,
+-- org_id, user_id (managed runners: both NULL → the bus's `platform` key; lib/realtime/routing.ts).
+--
+-- The UPDATE column list is what a runner surface renders (the runner card, the Versions panel, the
+-- pickers, a managed pool's version/location tallies). Deliberately NOT listed, so the runner's own
+-- high-frequency writes stay SILENT (ADR 0005 §10 R5):
+--   · last_heartbeat — runner_heartbeat, runner_present and claim_next_job stamp it every few seconds
+--     and SET status = 'ONLINE' on a runner that is already ONLINE (no change, so no notice);
+--     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
+--     runner really reports something new — which is then exactly one notice;
+--   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
+-- tests/integration/realtime-notify-runners.test.ts drives the real RPCs: a heartbeat and a presence
+-- ping emit zero; an OFFLINE→ONLINE flip, a sweep to OFFLINE and a new reported version emit one.
+CREATE OR REPLACE FUNCTION public.notify_runner_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('runners', OLD.id, OLD.org_id, OLD.user_id, NULL);
+  ELSE
+    PERFORM public.emit_change('runners', NEW.id, NEW.org_id, NEW.user_id, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS runners_notify_change_upd ON public.runners;
+CREATE TRIGGER runners_notify_change_upd
+  AFTER UPDATE ON public.runners
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.status, OLD.provisioning, OLD.version, OLD.release_id, OLD.target_release_id,
+     OLD.is_default, OLD.location, OLD.cloud_identity_id, OLD.supported_providers, OLD.metadata)
+    IS DISTINCT FROM
+    (NEW.name, NEW.status, NEW.provisioning, NEW.version, NEW.release_id, NEW.target_release_id,
+     NEW.is_default, NEW.location, NEW.cloud_identity_id, NEW.supported_providers, NEW.metadata)
+  )
+  EXECUTE FUNCTION public.notify_runner_change();
+
+DROP TRIGGER IF EXISTS runners_notify_change_insdel ON public.runners;
+CREATE TRIGGER runners_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.runners
+  FOR EACH ROW EXECUTE FUNCTION public.notify_runner_change();
+
+-- BEGIN runner-metadata-credential-scrub
+-- Runner metadata keeps no deploy credential at rest (#6123). A deploy config records what a
+-- DEPLOY_RUNNER job was given (region, image, size); the runner's credential is minted at claim time
+-- and never belongs there (lib/runners/lifecycle-token.ts), and the metadata route strips it on write.
+-- This removes the key from any row that still carries it. Idempotent: a second run matches no row.
+-- It reports a COUNT only, never a value, and it must never fail a migrate — a failure is a NOTICE.
+-- tests/integration/runner-metadata-scrub.test.ts runs this exact block (between the BEGIN/END
+-- markers) against a seeded row, twice.
+DO $$
+DECLARE scrubbed integer;
+BEGIN
+  UPDATE public.runners
+     SET metadata = metadata #- '{deploy_config,runner_token}'
+   WHERE jsonb_typeof(metadata -> 'deploy_config') = 'object'
+     AND (metadata -> 'deploy_config') ? 'runner_token';
+  GET DIAGNOSTICS scrubbed = ROW_COUNT;
+  IF scrubbed > 0 THEN
+    RAISE NOTICE 'runner metadata: removed a stored deploy credential from % row(s)', scrubbed;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'runner metadata credential scrub skipped (%)', SQLSTATE;
+END $$;
+-- END runner-metadata-credential-scrub
+
+-- The `fleet` topic (#6123): a warm pool's configuration. fleet_pools has no org, so every notice is
+-- a `platform` one, heard only by a stream whose actor may view runners on a self-managed
+-- deployment. updated_at is not listed (it moves with every listed column). Not triggered, on
+-- purpose: fleet_actions (the scaler appends a decision on every pass and no console surface reads
+-- it — the runner rows those decisions create or drain are `runners` notices) and fleet_leader (the
+-- controller renews its lease every tick).
+CREATE OR REPLACE FUNCTION public.notify_fleet_pool_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('fleet', OLD.id, NULL, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('fleet', NEW.id, NULL, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS fleet_pools_notify_change_upd ON public.fleet_pools;
+CREATE TRIGGER fleet_pools_notify_change_upd
+  AFTER UPDATE ON public.fleet_pools
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.warm_min, OLD.max, OLD.slots_per_runner, OLD.locations, OLD.min_per_location,
+     OLD.surge, OLD.buffer, OLD.scale_down_grace_ticks, OLD.version, OLD.channel, OLD.enabled,
+     OLD.deleting)
+    IS DISTINCT FROM
+    (NEW.name, NEW.warm_min, NEW.max, NEW.slots_per_runner, NEW.locations, NEW.min_per_location,
+     NEW.surge, NEW.buffer, NEW.scale_down_grace_ticks, NEW.version, NEW.channel, NEW.enabled,
+     NEW.deleting)
+  )
+  EXECUTE FUNCTION public.notify_fleet_pool_change();
+
+DROP TRIGGER IF EXISTS fleet_pools_notify_change_insdel ON public.fleet_pools;
+CREATE TRIGGER fleet_pools_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.fleet_pools
+  FOR EACH ROW EXECUTE FUNCTION public.notify_fleet_pool_change();
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
 -- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from

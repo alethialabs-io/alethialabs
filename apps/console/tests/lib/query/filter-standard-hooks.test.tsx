@@ -29,11 +29,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 
-// The alerts lists read over the `alerts.*` GET procedures (#6125): the seam is the read router's
-// handler, reached through the same oRPC query utilities the browser uses.
+// The alerts lists (#6125) and the runners grid (#6123) read over GET procedures: the seam is the
+// read router's handler, reached through the same oRPC query utilities the browser uses. ONE mock of
+// the client carries both routers — a second `vi.mock` of the same module would replace the first.
 const getAlertChannelsPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
 const getAlertDeliveriesPage = vi.fn();
+const getRunnersPage = vi.fn();
 vi.mock("@/lib/rpc/client", async () => {
 	const { os, createRouterClient } = await import("@orpc/server");
 	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
@@ -46,6 +48,7 @@ vi.mock("@/lib/rpc/client", async () => {
 			policies: page((input) => getAlertPoliciesPage(input)),
 			deliveries: page((input) => getAlertDeliveriesPage(input)),
 		},
+		runners: { page: page((input) => getRunnersPage(input)) },
 	};
 	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
 });
@@ -53,11 +56,6 @@ vi.mock("@/lib/rpc/client", async () => {
 const getAccessGrantsPage = vi.fn();
 vi.mock("@/app/server/actions/grants", () => ({
 	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
-}));
-
-const getRunnersPage = vi.fn();
-vi.mock("@/app/server/actions/runners", () => ({
-	getRunnersPage: (...a: unknown[]) => getRunnersPage(...a),
 }));
 
 const getTeamsPage = vi.fn();
@@ -154,7 +152,10 @@ const SUBJECTS: Record<string, Subject> = {
 	useRunnersPageQuery: {
 		usePage: (q) => useRunnersPageQuery(q),
 		action: getRunnersPage,
-		prefix: ["runners", "org-1", "page"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["runners", "page"]],
+		queryOf: orpcInput,
 	},
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
@@ -187,7 +188,7 @@ beforeEach(() => {
 	}
 });
 
-/** A fresh client per test — `refetchInterval: false` so the runners poll cannot race. */
+/** A fresh client per test, without retries. */
 function harness() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, refetchInterval: false } },

@@ -28,7 +28,16 @@
 //   · a job whose project was deleted      → the trigger carries OLD.project_id; the bus treats a
 //                                            project that no longer exists as unfiltered.
 //   · managed runners (org_id/user_id NULL), fleet tables (no org_id) → the `platform` key, held only
-//     by a stream whose actor may `view` the fleet. No topic routes there yet (#6123).
+//     by a stream whose actor may `view` runners on a deployment that operates a fleet — the same
+//     permission the managed-runner and pool reads gate on (#6123).
+//
+// `runners`' policy is NOT owner_all. It is `org_id = current_org OR org_id = current_owner`
+// (lib/db/programmables.sql, runners_select), so a runner routes by its ORG alone:
+//   · a runner of an org            → `o:<org_id>` — every member of that org (no project, so no filter);
+//   · a runner of a personal scope  → `own:<user_id>` (org_id = user_id): the policy's second arm shows it
+//                                     from EVERY scope of that person, so every one of their streams
+//                                     holds this key — and nobody else's does;
+//   · a managed runner (no org, no owner) → `platform`.
 
 import { type Hint, isTopic, SELF_TEST_TOPIC, type Topic } from "./topics";
 
@@ -57,8 +66,11 @@ export interface Route {
 
 /** What a stream's actor may see beyond its own org and its own rows. */
 export interface StreamCapabilities {
-	/** `can(actor, 'view', {type: 'fleet'})` — receives `platform` (managed runners, fleet). */
-	fleetView: boolean;
+	/**
+	 * Self-managed and `can(actor, 'view', {type: 'runner'})` — receives `platform` (managed runners,
+	 * warm pools): exactly who the reads show those rows to (lib/rpc/procedures/runners.ts).
+	 */
+	platformView: boolean;
 	/** `can(actor, 'manage_support', {type: 'support_case'})` — receives every case in the org. */
 	manageSupport: boolean;
 	/** `can(actor, 'view_alerts', {type: 'alert'})` — receives the org's alert changes. */
@@ -98,9 +110,9 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 
 /**
  * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `alerts`, `usage`,
- * `billing`, `clusters`, `projects` and `organization` have producers; every other topic is
- * declared and routes NOWHERE until its lane adds both its trigger and its row here — a topic
- * that routed before its RLS arms were written down would be a guess about who may read it.
+ * `billing`, `clusters`, `projects`, `organization`, `runners` and `fleet` have producers; every
+ * other topic is declared and routes NOWHERE until its lane adds both its trigger and its row here —
+ * a topic that routed before its RLS arms were written down would be a guess about who may read it.
  */
 export function keysFor(notice: ChangeNotice): Route[] {
 	switch (notice.t) {
@@ -118,6 +130,16 @@ export function keysFor(notice: ChangeNotice): Route[] {
 				{ key: orgSupportKey(notice.o), filterProject: null },
 			];
 		}
+		case "runners": {
+			// Managed: no owner AND no org (runners_operator_owner_ck). A self runner always has both once
+			// the org backfill has run; one without an org matches neither RLS arm, so it routes nowhere.
+			if (!notice.o) return notice.u ? [] : [{ key: PLATFORM_KEY, filterProject: null }];
+			if (notice.o === notice.u) return [{ key: ownKey(notice.o), filterProject: null }];
+			return [{ key: orgKey(notice.o), filterProject: null }];
+		}
+		// fleet_pools carry no org: platform rows, heard only with platformView (subscriptionKeys).
+		case "fleet":
+			return [{ key: PLATFORM_KEY, filterProject: null }];
 		case "jobs": {
 			const routes: Route[] = [];
 			// The org arm. A job with no project is visible to the whole org by RLS, so it is unfiltered;
@@ -162,10 +184,6 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		// the org arm is unfiltered.
 		case "organization":
 			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
-		// TODO(#6123): runners — o:/u: for self runners; managed runners (org_id NULL) → platform.
-		case "runners":
-		// TODO(#6123): fleet_pools config columns + fleet_actions INSERT → platform. Never fleet_leader.
-		case "fleet":
 			return [];
 		// #6127: the billing record + invoice mirror (`billing`, triggers in lib/db/programmables.sql)
 		// and AI spend (`usage`, the app-layer `emitUsageHint` in lib/realtime/usage-hint.ts — at most
@@ -193,6 +211,14 @@ function userKey(userId: string): string {
 	return `u:${userId}`;
 }
 
+/**
+ * The routing key of rows in a person's PERSONAL scope that an RLS arm shows from every scope of
+ * theirs (`org_id = current_owner`, the runners policy). Every stream of that person holds it.
+ */
+function ownKey(userId: string): string {
+	return `own:${userId}`;
+}
+
 /** The routing key of a person's own rows inside one org (the owner arm). */
 function orgUserKey(orgId: string, userId: string): string {
 	return `ou:${orgId}:${userId}`;
@@ -212,16 +238,17 @@ function orgAlertsKey(orgId: string): string {
 export const PLATFORM_KEY = "platform";
 
 /**
- * The keys a stream subscribes to — all of them scoped to the stream's org. `u:` (rows with no org)
- * is held only by the personal scope, where org and user are the same id.
+ * The keys a stream subscribes to — all of them scoped to the stream's org, except `own:`, the
+ * stream's own person's personal-scope rows that RLS shows from every scope (see the header). `u:`
+ * (rows with no org) is held only by the personal scope, where org and user are the same id.
  */
 export function subscriptionKeys(
 	actor: StreamIdentity,
 	caps: StreamCapabilities,
 ): string[] {
-	const keys = [orgKey(actor.orgId), orgUserKey(actor.orgId, actor.userId)];
+	const keys = [orgKey(actor.orgId), orgUserKey(actor.orgId, actor.userId), ownKey(actor.userId)];
 	if (actor.orgId === actor.userId) keys.push(userKey(actor.userId));
-	if (caps.fleetView) keys.push(PLATFORM_KEY);
+	if (caps.platformView) keys.push(PLATFORM_KEY);
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
 	if (caps.viewAlerts) keys.push(orgAlertsKey(actor.orgId));
 	return keys;

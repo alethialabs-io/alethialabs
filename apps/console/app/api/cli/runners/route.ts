@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { deploymentMode } from "@/lib/billing/config";
 import { getServiceDb } from "@/lib/db";
 import { runners } from "@/lib/db/schema";
 import { desc, eq, or } from "drizzle-orm";
@@ -9,7 +10,13 @@ import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliRunnersResponse } from "@/lib/validations/cli-contract";
 
-/** Lists runners owned by the CLI user (plus managed runners visible to all). */
+/**
+ * Lists the addressed org's runners, plus the managed fleet's where the console shows it too.
+ *
+ * The CLI list follows the console's deployment rule for managed runners
+ * (lib/rpc/procedures/runners.ts): they are listed on a self-managed deployment, where the operator
+ * runs the fleet, and not on the hosted SaaS.
+ */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "runner" });
 	if ("error" in auth) return auth.error;
@@ -32,7 +39,9 @@ export async function GET(req: Request) {
 			})
 			.from(runners)
 			.where(
-				or(eq(runners.org_id, actor.orgId), eq(runners.operator, "managed")),
+				deploymentMode() === "self-managed"
+					? or(eq(runners.org_id, actor.orgId), eq(runners.operator, "managed"))
+					: eq(runners.org_id, actor.orgId),
 			)
 			.orderBy(desc(runners.is_default), desc(runners.created_at));
 
