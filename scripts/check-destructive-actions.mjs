@@ -35,9 +35,10 @@
 // import-shape regex, the scan roots and the verb table are each one refactor away from matching
 // zero — `apps/console/app` moving under a `src/`, imports switching to a barrel file, the
 // codebase adopting `use server` inline — and in every one of those cases this guard would go
-// green while measuring nothing. 27 sits at today's census with room for a lane to legitimately
-// delete a handful of controls, and far above zero. If it ever fires, the answer is to find out
-// what stopped matching, NOT to lower it.
+// green while measuring nothing. It is far above zero and tracks the census: when a lane really
+// removes or merges controls, it lowers the floor to the measured count with the reason beside the
+// constant (see SITE_FLOOR). If it fires for any other reason, the answer is to find out what
+// stopped matching, NOT to lower it.
 //
 // ── OMISSIONS, STATED RATHER THAN INFERRED ──────────────────────────────────────────────────────
 //
