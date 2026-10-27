@@ -21,8 +21,9 @@
 //
 // RECORDING, as far as this file proves it: a refused edit (environments POST) and a refused view
 // (agent by id) each leave exactly ONE `decision = false` activity row naming the project, and an
-// allowed edit leaves none. Each test makes its own request and counts rows before and after it, so
-// none depends on another having run.
+// allowed edit leaves none. Each test makes its own request and counts rows before and after it, as
+// a member no other test acts as (a refusal's row is written fire-and-forget, so a shared member's
+// earlier row could land mid-count), so none depends on another having run.
 //
 // One org, two projects (P and Q), four members. VIEWER and OPERATOR hold their role across the
 // org; VIEW_DENIED is a viewer with an explicit deny on viewing P; EDIT_DENIED is an operator with an
@@ -90,7 +91,13 @@ const VIEWER = randomUUID();
 const VIEW_DENIED = randomUUID(); // viewer, explicitly denied viewing P
 const OPERATOR = randomUUID();
 const EDIT_DENIED = randomUUID(); // operator, explicitly denied editing P
-const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED];
+// The recording tests count activity rows, and a refusal's row is written fire-and-forget — so a
+// member another test also refuses could have a row land mid-count. Each recording test therefore
+// acts as a member NO other test uses, holding the same role and deny as its counterpart above.
+const RECORD_EDIT = randomUUID(); // operator, denied editing P; used only by the edit-recording test
+const RECORD_VIEW = randomUUID(); // viewer, denied viewing P; used only by the view-recording test
+const RECORD_ALLOW = randomUUID(); // operator, no deny; used only by the allowed-edit-recording test
+const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED, RECORD_EDIT, RECORD_VIEW, RECORD_ALLOW];
 const P = randomUUID();
 const Q = randomUUID();
 const NAME = { [P]: `it-cli-addressed-p-${P.slice(0, 8)}`, [Q]: `it-cli-addressed-q-${Q.slice(0, 8)}` };
@@ -308,6 +315,9 @@ describeIfDb("CLI project routes check the addressed project", () => {
 			[VIEW_DENIED, "viewer"],
 			[OPERATOR, "operator"],
 			[EDIT_DENIED, "operator"],
+			[RECORD_EDIT, "operator"],
+			[RECORD_VIEW, "viewer"],
+			[RECORD_ALLOW, "operator"],
 		];
 		await db
 			.insert(member)
@@ -374,6 +384,8 @@ describeIfDb("CLI project routes check the addressed project", () => {
 		);
 		await denyOnP(VIEW_DENIED, "project:view");
 		await denyOnP(EDIT_DENIED, "project:edit");
+		await denyOnP(RECORD_EDIT, "project:edit");
+		await denyOnP(RECORD_VIEW, "project:view");
 	});
 
 	afterAll(async () => {
@@ -413,16 +425,16 @@ describeIfDb("CLI project routes check the addressed project", () => {
 		});
 
 		it("records the refusal: exactly one denied activity row naming P", async () => {
-			const refusals = () => projectRowsOnP(EDIT_DENIED, "edit", false);
+			const refusals = () => projectRowsOnP(RECORD_EDIT, "edit", false);
 			const before = await refusals();
-			expect((await addEnvironment(EDIT_DENIED, P, envName("refused"))).status).toBe(404);
+			expect((await addEnvironment(RECORD_EDIT, P, envName("refused"))).status).toBe(404);
 			await settlesAt(refusals, before + 1);
 		});
 
 		it("an allowed edit records no project-level row (authorizeCli's org-level row is the record)", async () => {
-			const rows = () => projectRowsOnP(OPERATOR, "edit");
+			const rows = () => projectRowsOnP(RECORD_ALLOW, "edit");
 			const before = await rows();
-			expect((await addEnvironment(OPERATOR, P, envName("allowed"))).status).toBe(201);
+			expect((await addEnvironment(RECORD_ALLOW, P, envName("allowed"))).status).toBe(201);
 			await settlesAt(rows, before);
 		});
 
@@ -463,9 +475,9 @@ describeIfDb("CLI project routes check the addressed project", () => {
 		});
 
 		it("records that refusal: exactly one denied view row naming P", async () => {
-			const refusals = () => projectRowsOnP(VIEW_DENIED, "view", false);
+			const refusals = () => projectRowsOnP(RECORD_VIEW, "view", false);
 			const before = await refusals();
-			expect(await agentStatus(VIEW_DENIED, AGENT.P)).toBe(404);
+			expect(await agentStatus(RECORD_VIEW, AGENT.P)).toBe(404);
 			await settlesAt(refusals, before + 1);
 		});
 
