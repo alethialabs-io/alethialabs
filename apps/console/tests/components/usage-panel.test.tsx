@@ -136,8 +136,19 @@ describe("UsagePanel", () => {
 		expect(screen.getByText("Projects")).toBeInTheDocument();
 		expect(await screen.findByText("9")).toBeInTheDocument(); // projects (projects)
 		expect(screen.getByText("2")).toBeInTheDocument(); // clusters
-		expect(screen.getByRole("link", { name: /manage billing/i })).toBeInTheDocument();
+		// The org-global billing route: `/{org}/settings/billing` (no `~`) is a PROJECT path.
+		expect(screen.getByRole("link", { name: /manage billing/i })).toHaveAttribute(
+			"href",
+			"/acme/~/settings/billing",
+		);
 		expect(screen.queryByRole("button", { name: /upgrade to pro/i })).toBeNull();
+	});
+
+	it("is the AI card's only home, under the #ai anchor the Billing page links to (#6133)", async () => {
+		reads.summary.mockResolvedValue(summary());
+		renderWithReads(<UsagePanel />);
+		const heading = await screen.findByText("AI plan & usage");
+		expect(heading.closest("#ai")).not.toBeNull();
 	});
 
 	it("offers Upgrade to Pro for a Hobby org", async () => {

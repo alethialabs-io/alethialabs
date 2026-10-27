@@ -323,11 +323,20 @@ test.describe("Billing settings — Pro trial (team)", () => {
 		await expect(team.page.getByText(/^Cancels /)).toHaveCount(0);
 	});
 
-	test("cloud-spend disclaimer is shown on the plan card", { tag: "@needs:stripe" }, async ({ team }) => {
+	// #6133, design decision A: Usage owns all of AI (tier, meters, credits, spend limits). The plan
+	// card states the AI tier as one row linking there, and neither the AI card nor the cloud-spend
+	// note (Usage's footnote to its cloud-spend figure) is on this page.
+	test("the plan card names the AI plan and links to Usage, which owns the AI controls", { tag: "@needs:stripe" }, async ({ team }) => {
 		await team.page.goto(billingPath(team.orgSlug));
-		await expect(
-			team.page.getByText(/cloud-resource spend is billed separately/i),
-		).toBeVisible({ timeout: 30_000 });
+		const aiRow = team.page.getByTestId("billing-ai-plan-row");
+		await expect(aiRow.getByText(/^AI (Free|Plus|Max)$/)).toBeVisible({ timeout: 30_000 });
+		await expect(aiRow.getByRole("link", { name: /usage & limits/i })).toHaveAttribute(
+			"href",
+			`/${team.orgSlug}/~/usage#ai`,
+		);
+		await expect(team.page.getByRole("heading", { name: "AI plan & usage" })).toHaveCount(0);
+		await expect(team.page.getByRole("button", { name: "Upgrade AI plan" })).toHaveCount(0);
+		await expect(team.page.getByText(/cloud-resource spend is billed separately/i)).toHaveCount(0);
 	});
 
 	test("a Stripe customer (trial) gets the in-app Payment methods section", { tag: "@needs:stripe" }, async ({ team }) => {
@@ -745,7 +754,10 @@ test.describe("Usage — Pro trial (team)", () => {
 		await team.page.goto(usagePath(team.orgSlug));
 		await expect(team.page.getByText("Pro plan")).toBeVisible({ timeout: 30_000 });
 		// Non-community → a Manage billing link (not an inline upgrade CTA).
-		await expect(team.page.getByRole("link", { name: /manage billing/i })).toBeVisible();
+		await expect(team.page.getByRole("link", { name: /manage billing/i })).toHaveAttribute(
+			"href",
+			`/${team.orgSlug}/~/settings/billing`,
+		);
 	});
 
 	test("plan & limits renders the seats / concurrency gauges", { tag: "@needs:stripe" }, async ({ team }) => {

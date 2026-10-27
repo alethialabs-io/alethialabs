@@ -215,7 +215,7 @@
 				"Billing settings — Pro trial (team) › a live (trialing) sub exposes Cancel plan, never an Upgrade CTA": "passed",
 				"Billing settings — Pro trial (team) › plan card surfaces per-seat pricing (seats vs the $20 unit)": "passed",
 				"Billing settings — Pro trial (team) › a trialing sub renews rather than cancels, with a dated period label": "passed",
-				"Billing settings — Pro trial (team) › cloud-spend disclaimer is shown on the plan card": "passed",
+				"Billing settings — Pro trial (team) › the plan card names the AI plan and links to Usage, which owns the AI controls": "passed",
 				"Billing settings — Pro trial (team) › a Stripe customer (trial) gets the in-app Payment methods section": "passed",
 				"Billing settings — Pro trial (team) › plan history, transactions and invoices sections render for a customer": "passed",
 				"Billing — Stripe test mode › the upgrade sheet mounts Stripe.js's own card fields, not a look-alike": "passed",
