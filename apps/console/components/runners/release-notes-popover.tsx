@@ -8,16 +8,15 @@ import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
-import { getReleaseNotes } from "@/app/server/actions/runners";
-import {
-  useUpdateRunner,
-  type RunnerReleaseInfo,
-} from "@/lib/query/use-runners-query";
+import { RegionError } from "@/components/errors/region-error";
+import { useUpdateRunner } from "@/lib/query/use-runners-query";
+import { orpc } from "@/lib/rpc/client";
+import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 /** Fetches the markdown renderer's chunk (streamdown and its unified pipeline). */
@@ -74,43 +73,32 @@ export function ReleaseNotesPopover({
   children,
 }: ReleaseNotesPopoverProps) {
   const router = useRouter();
-  const { mutateAsync: updateRunner } = useUpdateRunner();
+  const updateRunner = useUpdateRunner();
   const [open, setOpen] = useState(false);
-  const [release, setRelease] = useState<RunnerReleaseInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [updating, setUpdating] = useState(false);
+  // Read when the popover opens (the reader's own action), through the read router; cached per
+  // version, so reopening it is instant. Release notes never change after publication.
+  const notes = useQuery(
+    orpc.runners.releaseNotes.queryOptions({
+      input: { version: version ?? "" },
+      enabled: open && !!version,
+      staleTime: Infinity,
+    }),
+  );
+  const release = notes.data ?? null;
 
-  useEffect(() => {
-    if (!open || !version) {
-      setRelease(null);
-      return;
-    }
-    setLoading(true);
-    getReleaseNotes(version)
-      .then(setRelease)
-      .catch(() => setRelease(null))
-      .finally(() => setLoading(false));
-  }, [open, version]);
-
-  const handleUpdate = async () => {
+  const handleUpdate = () => {
     if (!runnerId) return;
-    setUpdating(true);
-    try {
-      const { jobId } = await updateRunner(runnerId);
-      toast.success("Update job queued", {
-        action: {
-          label: "View job",
-          onClick: () => router.push(`/dashboard/jobs/${jobId}`),
-        },
-      });
-      setOpen(false);
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to queue update",
-      );
-    } finally {
-      setUpdating(false);
-    }
+    updateRunner.mutate(runnerId, {
+      onSuccess: ({ jobId }) => {
+        toast.success("Update job queued", {
+          action: {
+            label: "View job",
+            onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+          },
+        });
+        setOpen(false);
+      },
+    });
   };
 
   return (
@@ -148,7 +136,13 @@ export function ReleaseNotesPopover({
 
         <ScrollArea className="max-h-[50vh]">
           <div className="p-3">
-            {loading ? (
+            {notes.isError ? (
+              <RegionError
+                title="Couldn't load the release notes"
+                description="Something went wrong fetching this release. Try again."
+                onRetry={() => void notes.refetch()}
+              />
+            ) : notes.isPending && version ? (
               <ReleaseNotesSkeleton />
             ) : release?.release_notes ? (
               <ReleaseNotesMarkdown markdown={release.release_notes} />
@@ -180,8 +174,8 @@ export function ReleaseNotesPopover({
               </Button>
             )}
             {isOutdated && runnerId && (
-              <Button size="sm" disabled={updating} onClick={handleUpdate}>
-                {updating ? (
+              <Button size="sm" disabled={updateRunner.isPending} onClick={handleUpdate}>
+                {updateRunner.isPending ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                     Updating...

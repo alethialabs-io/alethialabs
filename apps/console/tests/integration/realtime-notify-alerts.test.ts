@@ -90,7 +90,7 @@ async function seeded(): Promise<{ channel: string; rule: string }> {
 /** Whether a change stream with this identity would receive `n` (the bus matches on these keys). */
 function hears(n: Notice, userId: string, orgId: string, viewAlerts: boolean): boolean {
 	const change: ChangeNotice = { kind: "change", t: "alerts", id: n.id, o: n.o, u: n.u, p: n.p };
-	const held = subscriptionKeys({ userId, orgId }, { fleetView: true, manageSupport: true, viewAlerts });
+	const held = subscriptionKeys({ userId, orgId }, { platformView: true, manageSupport: true, viewAlerts });
 	return keysFor(change).some((route) => held.includes(route.key));
 }
 

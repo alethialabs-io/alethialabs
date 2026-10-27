@@ -4,7 +4,7 @@
 // The runners surface's normalize step (#4890) — step 4 of the console filter standard
 // (lib/query/README.md → "Server-side filters").
 //
-// What it is FOR: the output goes straight into `qk.runnersPage(org, q)`, and TanStack hashes
+// What it is FOR: the output is the `runners.page` read's input, so its key, and TanStack hashes
 // that key. So two filter states a user cannot tell apart must produce one object, character for
 // character — `["gcp","aws"]` and `["aws","gcp"]` are the same selection and must not be two
 // cache entries that never hit. That is the whole of "unsorted arrays fragment the cache".

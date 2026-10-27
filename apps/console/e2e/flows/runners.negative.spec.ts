@@ -4,8 +4,8 @@
 // Runners domain — gate / tenancy / destructive-confirmation paths.
 //
 // THE ENTITLEMENT GATE IS NOT MEASURABLE ON THIS LEG, and pretending otherwise is what the two
-// tests this file used to open with did. `runners-client.tsx` renders `<FeatureUpsell feature="byoRunners" />`
-// only when `isHosted && !canByoRunners`; `isHosted` comes from `deploymentMode()`, which answers
+// tests this file used to open with did. The route (`page.tsx`) renders `<FeatureUpsell feature="byoRunners" />`
+// only when it is hosted and the plan lacks byoRunners; "hosted" comes from `deploymentMode()`, which answers
 // "hosted" only for a literal `ALETHIA_DEPLOYMENT_MODE=hosted`. `.github/workflows/release-gate.yml`
 // sets that variable NOWHERE and says why it must not ("packages/email then refuses the OTP log
 // fallback and nothing can sign in") — so the console every leg drives is SELF-MANAGED, the gate is

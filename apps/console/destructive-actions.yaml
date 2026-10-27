@@ -789,7 +789,7 @@ controls:
     route: /[org]/~/runners
     surface: apps/console/components/runners/pool-card.tsx
     mutation_surface: apps/console/lib/query/use-fleet-query.ts
-    mutation: deleteFleetPool
+    mutation: deleteFleetPoolAction
     reach: [{ menu: "Pool actions" }]
     control: { role: menuitem, name: "Delete" }
     confirm: alert-dialog
@@ -803,7 +803,7 @@ controls:
   - id: runners.destroy
     route: /[org]/~/runners
     surface: apps/console/components/runners/runner-actions.tsx
-    mutation: destroyRunner
+    mutation: destroyRunnerAction
     mutation_surface: apps/console/lib/query/use-runners-query.ts
     control: { role: button, name: "Destroy" }
     confirm: popover
@@ -818,7 +818,7 @@ controls:
     route: /[org]/~/runners
     surface: apps/console/components/runners/runner-actions.tsx
     mutation_surface: apps/console/lib/query/use-runners-query.ts
-    mutation: removeRunner
+    mutation: removeRunnerAction
     control: { role: button, name: "Remove" }
     confirm: alert-dialog
     confirm_action: "Remove"
