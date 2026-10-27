@@ -44,6 +44,11 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+/** The one project the caller may view. Hoisted: the project-access mock factory reads it. */
+const { VISIBLE_PROJECT } = vi.hoisted(() => ({
+	VISIBLE_PROJECT: "55555555-5555-4555-8555-555555555555",
+}));
+
 // A mock that wrote its own org list would be a second opinion about the values #4154 is about, so
 // the SCOPES BELOW ARE LITERAL and the mapping from a credential to them is proven separately, in
 // tests/lib/authz/guard.ts's `orgScopeFor` suite. Two assertions with one seam between them: the
@@ -53,6 +58,12 @@ vi.mock("@/lib/authz/guard", () => ({
 	ensureCliOrgAccess: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The projects the caller may view — the PDP's answer, literal here for the same reason the scopes
+// are. That the PDP's answer leaves out a denied project is driven against the real engine in
+// tests/integration/cli-project-routes-addressed.test.ts.
+vi.mock("@/lib/cli/project-access", () => ({
+	cliViewableProjectIds: vi.fn(async () => [VISIBLE_PROJECT]),
+}));
 
 import { GET } from "@/app/api/cli/clusters/route";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -80,7 +91,10 @@ const CURSOR_KEY = "2026-06-30T00:00:00.123456Z";
  * assertable — every character of the shape is here, including which table each identifier
  * belongs to.
  */
-const EXPECTED_SCOPE = '"project_cluster"."org_id" = $1';
+const EXPECTED_SCOPE =
+	'("project_cluster"."org_id" = $1 and "project_cluster"."project_id" in ($2))';
+/** The parameters {@link EXPECTED_SCOPE} binds: the org, then the projects the caller may view. */
+const SCOPE_PARAMS = [ORG, VISIBLE_PROJECT];
 
 const dialect = new PgDialect();
 
@@ -270,16 +284,18 @@ describe("GET /api/cli/clusters — the scope is one column of the paged table (
 		});
 	});
 
-	it("renders the scope as project_cluster.org_id and NOTHING else", async () => {
+	it("renders the scope as project_cluster.org_id plus project visibility, and NOTHING else", async () => {
 		// The whole rendered clause, `toBe` rather than `toContain`: an extra ANDed arm is as much
 		// a defect as a missing one, and a containment check cannot see one.
 		//
-		// ONE COLUMN OF THE PAGED TABLE — `project_cluster.org_id`, which the database derives from
-		// the parent project (#4116). What must NOT appear is `projects.org_id`, which is the join
-		// predicate this replaced and the shape `countScoped` cannot issue.
+		// COLUMNS OF THE PAGED TABLE — the tenancy is `project_cluster.org_id`, which the database
+		// derives from the parent project (#4116); the second arm is `project_cluster.project_id`
+		// against the projects the caller may view, so a project-scoped deny hides its clusters.
+		// What must NOT appear is `projects.org_id`, which is the join predicate this replaced and
+		// the shape `countScoped` cannot issue.
 		await drive("");
 		expect(normalized(render(captured.rowsWhere).sql)).toBe(EXPECTED_SCOPE);
-		expect(render(captured.rowsWhere).params).toEqual([ORG]);
+		expect(render(captured.rowsWhere).params).toEqual(SCOPE_PARAMS);
 	});
 
 	it("takes exactly ONE subject — the org — never the caller's identity", async () => {
@@ -331,8 +347,8 @@ describe("GET /api/cli/clusters — the scope is one column of the paged table (
 		// The keyset predicate is on the rows query only. A total that shrank as the caller paged
 		// would read as rows disappearing from under them.
 		expect(rows.sql).toContain("::timestamptz");
-		expect(rows.params).toEqual([ORG, CURSOR_KEY, CLUSTER_ID]);
-		expect(counted.params).toEqual([ORG]);
+		expect(rows.params).toEqual([...SCOPE_PARAMS, CURSOR_KEY, CLUSTER_ID]);
+		expect(counted.params).toEqual(SCOPE_PARAMS);
 		expect(normalized(counted.sql)).toBe(EXPECTED_SCOPE);
 	});
 
