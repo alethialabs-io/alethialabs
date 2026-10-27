@@ -1,23 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import {
-	getEnvConsistency,
-	getProjectEnvironments,
-} from "@/app/server/actions/projects";
-import {
-	getPromotionDetail,
-	listPromotions,
-} from "@/app/server/actions/promotions";
-import { listProtectionRules } from "@/app/server/actions/protection";
-import { getEnvReconcileStates } from "@/app/server/actions/reconcile";
 import { resolveProjectId } from "@/app/server/actions/resolve";
-import {
-	EnvironmentsView,
-	type EnvRow,
-	type PromotionRowView,
-} from "@/components/environments/environments-view";
+import { EnvironmentsView } from "@/components/environments/environments-view";
+import { getQueryClient } from "@/lib/query/client";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export async function generateMetadata() {
@@ -29,7 +18,18 @@ export async function generateMetadata() {
 
 /**
  * `/{org}/{project}/environments` — the project's Environments management view (in place of the
- * canvas). Lists every environment; create / duplicate / delete are handled in the client view.
+ * canvas). Lists every environment; create / duplicate / delete / promote are handled in the client
+ * view.
+ *
+ * THE ADR 0005 SLICE (#6120), as the jobs route (#6113): the page's one read,
+ * `environments.overview`, is prefetched IN-PROCESS through the read router with exactly the key
+ * the client asks for, and the dehydrated cache is handed to the client — so the first paint
+ * carries the environments and the client issues no request on mount. `loading.tsx` covers the
+ * prefetch window with the view's own skeleton.
+ *
+ * An unresolvable slug is a real 404 here, inside this segment's children slot (see the
+ * `[project]` layout). A read that fails is NOT rendered here: the failed query does not dehydrate,
+ * so the client renders the read's own failed or refused state (RUBRIC B4) — never an empty list.
  */
 export default async function ProjectEnvironmentsPage({
 	params,
@@ -37,66 +37,20 @@ export default async function ProjectEnvironmentsPage({
 	params: Promise<{ org: string; project: string }>;
 }) {
 	const { org, project } = await params;
-	let projectId: string;
 	try {
-		projectId = await resolveProjectId(project);
+		await resolveProjectId(project);
 	} catch {
 		notFound();
 	}
 
-	// The environments list is the core of the page and must always render. The three enrichment
-	// probes (consistency / reconcile / promotions) each read per-env design and can throw (e.g. a
-	// since-deleted cloud identity); they degrade to safe empty defaults rather than crashing the page.
-	const { environments } = await getProjectEnvironments(projectId);
-	const [consistency, reconcile, promotions, protectionByEnv] = await Promise.all([
-		getEnvConsistency(projectId).catch(() => ({
-			envs: environments.map((e) => ({ id: e.id, name: e.name, stage: e.stage })),
-			rows: [],
-		})),
-		getEnvReconcileStates(projectId).catch(() => []),
-		listPromotions(projectId).catch(() => []),
-		listProtectionRules(projectId).catch(() => ({})),
-	]);
-	const envs: EnvRow[] = environments.map((e) => ({
-		id: e.id,
-		name: e.name,
-		stage: e.stage,
-		is_default: e.is_default,
-		updated_at: e.updated_at.toISOString(),
-	}));
-	const promotionRows: PromotionRowView[] = promotions.map((p) => ({
-		id: p.id,
-		source_environment_id: p.source_environment_id,
-		target_environment_id: p.target_environment_id,
-		status: p.status,
-		error_message: p.error_message,
-		created_at: p.created_at.toISOString(),
-	}));
-
-	// The in-flight promotion (if any) drives the active-promotion panel; hydrate its detail
-	// (gates + named approval slots + diff). Degrades to null so the page still renders.
-	const inFlight = new Set([
-		"PENDING_PLAN",
-		"PENDING_APPROVAL",
-		"APPROVED",
-		"DEPLOYING",
-	]);
-	const active = promotions.find((p) => inFlight.has(p.status));
-	const activePromotion = active
-		? await getPromotionDetail(active.id).catch(() => null)
-		: null;
+	const queryClient = getQueryClient();
+	await queryClient.prefetchQuery(
+		serverOrpc().environments.overview.queryOptions({ input: { project } }),
+	);
 
 	return (
-		<EnvironmentsView
-			org={org}
-			project={project}
-			projectId={projectId}
-			envs={envs}
-			consistency={consistency}
-			reconcile={reconcile}
-			promotions={promotionRows}
-			activePromotion={activePromotion}
-			protectionByEnv={protectionByEnv}
-		/>
+		<HydrationBoundary state={dehydrate(queryClient)}>
+			<EnvironmentsView org={org} project={project} />
+		</HydrationBoundary>
 	);
 }

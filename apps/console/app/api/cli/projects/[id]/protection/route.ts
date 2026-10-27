@@ -4,7 +4,7 @@
 // GET /api/cli/projects/:id/protection — each environment's promotion protection rules
 // (predecessor / verify-pass / approval / soak / cost gates). Gated on project `view`;
 // org-scoped via an explicit projects.org_id filter (RLS is bypassed here — the predicate is
-// the tenancy wall). Mirrors listProtectionRules (web).
+// the tenancy wall). Mirrors the web protection summaries (lib/rpc/procedures/environments.ts).
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";

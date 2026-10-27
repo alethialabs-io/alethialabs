@@ -4,6 +4,7 @@
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
+import { ActionRefusal } from "@/lib/actions/result";
 import type { Tx } from "@/lib/db";
 import { projectEnvironments } from "@/lib/db/schema";
 
@@ -38,7 +39,9 @@ import { projectEnvironments } from "@/lib/db/schema";
  * @param tx an actor-scoped transaction
  * @param projectId the project the caller was authorized against
  * @param envId the environment the caller supplied
- * @throws when the environment does not belong to that project (or does not exist)
+ * @throws a `not-found` {@link ActionRefusal} when the environment does not belong to that project (or
+ *   does not exist) — a refusal, so the rules editor's write (`defineAction`) shows its sentence
+ *   instead of an unexpected-error reference.
  */
 export async function assertEnvInProject(
 	tx: Tx,
@@ -55,5 +58,5 @@ export async function assertEnvInProject(
 			),
 		)
 		.limit(1);
-	if (!row) throw new Error("Unknown environment for this project");
+	if (!row) throw new ActionRefusal("not-found", "Unknown environment for this project");
 }

@@ -2,62 +2,57 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The project's Environments surface. Leads with the active-promotion panel (when a promotion is in
-// flight), then the environments spine (grouped by stage, each with drift/deploy, classification,
-// the "gates into this env" protection summary, and auto-heal/duplicate/delete), a consistency
-// matrix, and the promotions history. Destructive/confirm actions go through the shared AlertDialog.
-// No page header — the section labels carry it.
+// The project's Environments surface. Opens with the page toolbar (the environment count, one line
+// of description, New Environment / Promote) — NO page title: the sidebar entry and the breadcrumb
+// already name the page (F010). Then the active-promotion panel (when a promotion is in flight), the
+// environments spine (grouped by stage, each with drift/deploy, classification, the "gates into this
+// env" protection summary, and auto-heal/duplicate/delete), a consistency matrix, and the promotions
+// history. Destructive/confirm actions go through the shared ConfirmDialog.
+//
+// DATA (#6120, ADR 0005). Everything here is ONE read, `environments.overview`, which the route
+// prefetches on the server and hydrates — so the first paint carries it and nothing is fetched on
+// mount. It is live by the change stream: an environment, a promotion, an approval slot or a
+// protection rule that changes is an `environments` hint that invalidates this read
+// (lib/query/topics.ts); a job that moves a promotion or a reconcile badge is a `jobs` hint. Every
+// write goes through `useActionMutation` and invalidates the reads that show what it changed.
 
-import { ArrowUpFromLine, Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { isDefinedError } from "@orpc/client";
+import { ArrowUpFromLine, Lock, Plus } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
-import {
-	deleteEnvironment,
-	type EnvConsistency,
-	setAutoHeal,
-} from "@/app/server/actions/projects";
-import type { ProtectionSummary } from "@/app/server/actions/protection";
+import { deleteEnvironment, setAutoHeal } from "@/app/server/actions/projects";
 import {
 	approvePromotion,
 	cancelPromotion,
-	type PromotionDetail,
 	rejectPromotion,
 } from "@/app/server/actions/promotions";
-import type { EnvReconcileState } from "@/app/server/actions/reconcile";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { RegionError } from "@/components/errors/region-error";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
 import { PromoteDialog } from "@/components/environments/promote-dialog";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { orpc } from "@/lib/rpc/client";
+import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
 import { Button } from "@repo/ui/button";
-import { EmptyState } from "@repo/ui/empty";
-import { SectionHeading } from "@repo/ui/section-heading";
+import {
+	Empty,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyState,
+	EmptyTitle,
+} from "@repo/ui/empty";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { ActivePromotionPanel } from "./active-promotion-panel";
 import { ConsistencyMatrix } from "./consistency-matrix";
 import { EnvironmentCard } from "./environment-card";
+import { EnvironmentsSkeleton } from "./environments-skeleton";
 import { PromotionDetailOverlay } from "./promotion-detail-overlay";
 import { PromotionsHistory } from "./promotions-history";
-
-/** One environment row (serialized from the DB — `updated_at` is an ISO string). */
-export interface EnvRow {
-	id: string;
-	name: string;
-	stage: string;
-	is_default: boolean;
-	updated_at: string;
-}
-
-/** A promotion row projected for the client. */
-export interface PromotionRowView {
-	id: string;
-	source_environment_id: string;
-	target_environment_id: string;
-	status: string;
-	error_message: string | null;
-	created_at: string;
-}
+import { settleThrown } from "./settle-action";
 
 const STAGE_ORDER = ["development", "staging", "production"];
 const STAGE_LABEL: Record<string, string> = {
@@ -66,28 +61,74 @@ const STAGE_LABEL: Record<string, string> = {
 	production: "Production",
 };
 
-export function EnvironmentsView({
+/** The page's one line of supporting copy (the breadcrumb already names the page). */
+const DESCRIPTION = "Isolated instances of this project's services.";
+
+/**
+ * The Environments page for the project `project` (its slug) of org `org`. Reads the page's data
+ * through the `environments.overview` query the route prefetched, and renders the four states of
+ * that read distinctly (RUBRIC B4): pending (the route's own skeleton), refused (forbidden, or a
+ * project that is not there), failed (a region error with a retry), and the data.
+ */
+export function EnvironmentsView({ org, project }: { org: string; project: string }) {
+	const overview = useQuery(orpc.environments.overview.queryOptions({ input: { project } }));
+
+	if (overview.data === undefined) {
+		if (!overview.isError) return <EnvironmentsSkeleton />;
+		const code = isDefinedError(overview.error) ? overview.error.code : null;
+		if (code === "FORBIDDEN") {
+			return (
+				<Empty className="min-h-[60vh]" data-state="forbidden">
+					<EmptyHeader>
+						<EmptyMedia variant="icon">
+							<Lock />
+						</EmptyMedia>
+						<EmptyTitle>You can&apos;t view this project&apos;s environments</EmptyTitle>
+						<EmptyDescription>
+							Your role in this organization does not include viewing this project. An admin can
+							grant it.
+						</EmptyDescription>
+					</EmptyHeader>
+				</Empty>
+			);
+		}
+		if (code === "NOT_FOUND") {
+			return (
+				<Empty className="min-h-[60vh]" data-state="not-found">
+					<EmptyHeader>
+						<EmptyTitle>This project is not here</EmptyTitle>
+						<EmptyDescription>
+							It may have been deleted, or it belongs to another organization.
+						</EmptyDescription>
+					</EmptyHeader>
+				</Empty>
+			);
+		}
+		return (
+			<RegionError
+				className="min-h-[60vh]"
+				title="Couldn't load environments"
+				description="Something went wrong fetching this project's environments. Check your connection and try again."
+				onRetry={() => void overview.refetch()}
+			/>
+		);
+	}
+
+	return <EnvironmentsBody org={org} project={project} data={overview.data} />;
+}
+
+/** The page with its data: the toolbar, the panels, and every write the page offers. */
+function EnvironmentsBody({
 	org,
 	project,
-	projectId,
-	envs,
-	consistency,
-	reconcile,
-	promotions,
-	activePromotion,
-	protectionByEnv,
+	data,
 }: {
 	org: string;
 	project: string;
-	projectId: string;
-	envs: EnvRow[];
-	consistency: EnvConsistency;
-	reconcile: EnvReconcileState[];
-	promotions: PromotionRowView[];
-	activePromotion: PromotionDetail | null;
-	protectionByEnv: Record<string, ProtectionSummary>;
+	data: EnvironmentsOverview;
 }) {
-	const router = useRouter();
+	const { projectId, envs, consistency, reconcile, promotions, activePromotion, protectionByEnv } =
+		data;
 	const [createOpen, setCreateOpen] = useState(false);
 	const [duplicateFrom, setDuplicateFrom] = useState<EnvRow | null>(null);
 	const [promoteOpen, setPromoteOpen] = useState(false);
@@ -96,6 +137,45 @@ export function EnvironmentsView({
 	const [detailOpen, setDetailOpen] = useState(false);
 	const [confirmReject, setConfirmReject] = useState(false);
 	const [confirmCancel, setConfirmCancel] = useState(false);
+
+	// Every read that shows an environment or a promotion: this page's, and the topbar switcher's.
+	const environmentReads = [orpc.environments.key(), orpc.workspace.environments.key()];
+
+	const approve = useActionMutation(approvePromotion, {
+		invalidates: [orpc.environments.key()],
+		successMessage: "Promotion approved",
+	});
+	const reject = useActionMutation(rejectPromotion, {
+		invalidates: [orpc.environments.key()],
+		successMessage: "Promotion rejected",
+	});
+	const cancel = useActionMutation(cancelPromotion, {
+		invalidates: [orpc.environments.key()],
+		successMessage: "Promotion cancelled",
+	});
+	const remove = useActionMutation(
+		(env: EnvRow) =>
+			settleThrown(async () => {
+				await deleteEnvironment(projectId, env.id);
+				return env.name;
+			}),
+		{
+			invalidates: environmentReads,
+			successMessage: (name) => `Deleted ${name}`,
+		},
+	);
+	const heal = useActionMutation(
+		(request: { env: EnvRow; enabled: boolean }) =>
+			settleThrown(async () => {
+				await setAutoHeal(projectId, request.env.id, request.enabled);
+				return request;
+			}),
+		{
+			invalidates: [orpc.environments.key()],
+			successMessage: (r) => `Auto-heal ${r.enabled ? "on" : "off"} for ${r.env.name}`,
+		},
+	);
+	const deciding = approve.isPending || reject.isPending || cancel.isPending;
 
 	const switcherEnvs: SwitcherEnv[] = envs.map((e) => ({
 		id: e.id,
@@ -118,18 +198,28 @@ export function EnvironmentsView({
 		envs: envs.filter((e) => e.stage === stage),
 	})).filter((g) => g.envs.length > 0);
 
-	const run = async (fn: () => Promise<unknown>, ok: string) => {
-		try {
-			await fn();
-			toast.success(ok);
-			router.refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Action failed");
-		}
-	};
-
 	return (
 		<div className="space-y-8">
+			{/* The count rides the toolbar's pill — the console's one place for a result count. */}
+			<PageToolbar
+				count={envs.length}
+				description={DESCRIPTION}
+				actions={
+					<>
+						<Button size="sm" onClick={() => setCreateOpen(true)}>
+							<Plus className="mr-1.5 size-3.5" />
+							New Environment
+						</Button>
+						{envs.length > 1 && (
+							<Button size="sm" variant="outline" onClick={() => setPromoteOpen(true)}>
+								<ArrowUpFromLine className="mr-1.5 size-3.5" />
+								Promote
+							</Button>
+						)}
+					</>
+				}
+			/>
+
 			{/* Active promotion */}
 			{activePromotion && (
 				<ActivePromotionPanel
@@ -141,9 +231,10 @@ export function EnvironmentsView({
 					canCancel={["PENDING_PLAN", "PENDING_APPROVAL", "DEPLOYING"].includes(
 						activePromotion.status,
 					)}
-					onApprove={() =>
-						run(() => approvePromotion(activePromotion.id), "Promotion approved")
-					}
+					busy={deciding}
+					onApprove={() => {
+						if (!deciding) approve.mutate({ promotionId: activePromotion.id });
+					}}
 					onReject={() => setConfirmReject(true)}
 					onCancel={() => setConfirmCancel(true)}
 					onOpenDetail={() => setDetailOpen(true)}
@@ -151,29 +242,7 @@ export function EnvironmentsView({
 			)}
 
 			{/* Environments spine */}
-			<section className="space-y-4">
-				{/* The count rides the header's pill, which is where the console filter standard
-				    puts a result count — it used to be prose ("N total") beside the heading. */}
-				<SectionHeading
-					level={2}
-					title="Environments"
-					count={envs.length}
-					actions={
-						<>
-							<Button size="sm" onClick={() => setCreateOpen(true)}>
-								<Plus className="mr-1.5 size-3.5" />
-								New Environment
-							</Button>
-							{envs.length > 1 && (
-								<Button size="sm" variant="outline" onClick={() => setPromoteOpen(true)}>
-									<ArrowUpFromLine className="mr-1.5 size-3.5" />
-									Promote
-								</Button>
-							)}
-						</>
-					}
-				/>
-
+			<section className="space-y-4" aria-label="Environments">
 				{groups.map((g) => (
 					<div key={g.stage} className="space-y-2.5">
 						<div className="font-mono text-ui-2xs uppercase tracking-[0.16em] text-text-tertiary">
@@ -190,12 +259,9 @@ export function EnvironmentsView({
 								classAssignments={classMap[env.id]}
 								canEdit
 								onEditRules={() => setProtectFor(env)}
-								onToggleHeal={(v) =>
-									run(
-										() => setAutoHeal(projectId, env.id, v),
-										`Auto-heal ${v ? "on" : "off"} for ${env.name}`,
-									)
-								}
+								onToggleHeal={(enabled) => {
+									if (!heal.isPending) heal.mutate({ env, enabled });
+								}}
 								onDuplicate={() => {
 									setDuplicateFrom(env);
 									setCreateOpen(true);
@@ -229,9 +295,7 @@ export function EnvironmentsView({
 				)}
 			</section>
 
-			{consistency.rows.length > 0 && (
-				<ConsistencyMatrix consistency={consistency} />
-			)}
+			{consistency.rows.length > 0 && <ConsistencyMatrix consistency={consistency} />}
 			{promotions.length > 0 && (
 				<PromotionsHistory
 					promotions={promotions}
@@ -250,14 +314,16 @@ export function EnvironmentsView({
 				projectId={projectId}
 				envs={switcherEnvs}
 				defaultBaseId={duplicateFrom?.id}
-				onCreated={() => router.refresh()}
+				// The dialog invalidates this page's read and the switcher's itself.
+				onCreated={() => {}}
 			/>
 			<PromoteDialog
 				open={promoteOpen}
 				onOpenChange={setPromoteOpen}
 				projectId={projectId}
 				envs={envs.map((e) => ({ id: e.id, name: e.name, stage: e.stage }))}
-				onPromoted={() => router.refresh()}
+				// The promote mutation invalidates this page's read itself.
+				onPromoted={() => {}}
 			/>
 			{protectFor && (
 				<ProtectionRulesDialog
@@ -280,11 +346,7 @@ export function EnvironmentsView({
 				description="This permanently deletes the environment and its staged configuration. Provisioned infrastructure is not destroyed. This cannot be undone."
 				confirmLabel="Delete environment"
 				onConfirm={() => {
-					if (pendingDelete)
-						void run(
-							() => deleteEnvironment(projectId, pendingDelete.id),
-							`Deleted ${pendingDelete.name}`,
-						);
+					if (pendingDelete && !remove.isPending) remove.mutate(pendingDelete);
 				}}
 			/>
 			<ConfirmDialog
@@ -294,11 +356,7 @@ export function EnvironmentsView({
 				description="The promotion is cancelled and nothing is deployed. The initiator can start a new one."
 				confirmLabel="Reject promotion"
 				onConfirm={() => {
-					if (activePromotion)
-						void run(
-							() => rejectPromotion(activePromotion.id),
-							"Promotion rejected",
-						);
+					if (activePromotion && !deciding) reject.mutate({ promotionId: activePromotion.id });
 				}}
 			/>
 			<ConfirmDialog
@@ -308,8 +366,7 @@ export function EnvironmentsView({
 				description="The in-flight promotion is stopped. Nothing further is deployed."
 				confirmLabel="Cancel promotion"
 				onConfirm={() => {
-					if (activePromotion)
-						void run(() => cancelPromotion(activePromotion.id), "Promotion cancelled");
+					if (activePromotion && !deciding) cancel.mutate({ promotionId: activePromotion.id });
 				}}
 			/>
 		</div>

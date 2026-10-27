@@ -623,9 +623,16 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 			ok: false,
 			error: personal,
 		});
+		// The promotion is on the mutation contract (#6120): the same sentence, as a `conflict` result.
 		expect(
-			await as(inA, () => promoteEnvironment(projectPersonal, envPersonalDev, envPersonalProd)),
-		).toEqual({ ok: false, error: personal });
+			await as(inA, () =>
+				promoteEnvironment({
+					projectId: projectPersonal,
+					sourceEnvId: envPersonalDev,
+					targetEnvId: envPersonalProd,
+				}),
+			),
+		).toEqual({ ok: false, error: { kind: "conflict", message: personal } });
 
 		const after = await getServiceDb()
 			.select({ id: jobs.id })

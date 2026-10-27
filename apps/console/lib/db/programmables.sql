@@ -3325,3 +3325,96 @@ DROP TRIGGER IF EXISTS projects_notify_change_insdel ON public.projects;
 CREATE TRIGGER projects_notify_change_insdel
   AFTER INSERT OR DELETE ON public.projects
   FOR EACH ROW EXECUTE FUNCTION public.notify_project_change();
+
+-- ── The Environments page's promotion topics (#6120): on `environments`. ───────────────────────────
+-- What the page shows that changes without the viewer acting: a promotion advancing (its PLAN or
+-- DEPLOY job ends, a teammate approves or rejects it, the gate evaluation is rewritten), an approval
+-- slot being decided, and a teammate editing an environment's protection rules. Same contract as
+-- the board's triggers above: identifiers only, an UPDATE fires only when a column the page renders
+-- CHANGED, routed on the ORG arm and filtered through the PDP's `view` on the row's project
+-- (lib/realtime/routing.ts, `environments`).
+--
+-- One notifier for the three tables. Each carries id, project_id and a NULLABLE org_id (no trigger
+-- stamps it on these tables, and the service-role lifecycle writes approval slots without one), so
+-- the org falls back to the PROJECT's — the source of truth the reads bind to
+-- (lib/promotions/org-binding.ts). `u` is NULL: none of these rows' user columns is an RLS arm.
+-- DEFINER RIGHTS for that one lookup, for the reason derive_component_org_id gives: the writer may be
+-- the app role, and an RLS policy hiding the project would route the notice nowhere. It reads one
+-- column of the project the row's own FK names and returns nothing to the caller.
+CREATE OR REPLACE FUNCTION public.notify_promotion_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE
+  v_id uuid;
+  v_project uuid;
+  v_org uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_id := OLD.id; v_project := OLD.project_id; v_org := OLD.org_id;
+  ELSE
+    v_id := NEW.id; v_project := NEW.project_id; v_org := NEW.org_id;
+  END IF;
+  IF v_org IS NULL THEN
+    SELECT p.org_id INTO v_org FROM public.projects p WHERE p.id = v_project;
+  END IF;
+  PERFORM public.emit_change('environments', v_id, v_org, NULL, v_project);
+  RETURN NULL;
+END;
+$$;
+
+-- environment_promotions. Not listed: candidate_hash (written once, with the row), updated_at and
+-- completed_at (they move with status), user_id, org_id.
+DROP TRIGGER IF EXISTS environment_promotions_notify_change_upd ON public.environment_promotions;
+CREATE TRIGGER environment_promotions_notify_change_upd
+  AFTER UPDATE ON public.environment_promotions
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.error_message, OLD.gate_evaluations, OLD.diff_summary, OLD.plan_job_id,
+     OLD.deploy_job_id)
+    IS DISTINCT FROM
+    (NEW.status, NEW.error_message, NEW.gate_evaluations, NEW.diff_summary, NEW.plan_job_id,
+     NEW.deploy_job_id)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS environment_promotions_notify_change_insdel ON public.environment_promotions;
+CREATE TRIGGER environment_promotions_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_promotions
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- promotion_approvals: a slot opened (insert) or decided. Not listed: created_at, decided_at (it moves
+-- with status), required_role (written once).
+DROP TRIGGER IF EXISTS promotion_approvals_notify_change_upd ON public.promotion_approvals;
+CREATE TRIGGER promotion_approvals_notify_change_upd
+  AFTER UPDATE ON public.promotion_approvals
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.decided_by, OLD.comment) IS DISTINCT FROM (NEW.status, NEW.decided_by, NEW.comment)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS promotion_approvals_notify_change_insdel ON public.promotion_approvals;
+CREATE TRIGGER promotion_approvals_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.promotion_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- environment_protection_rules: the gates the env card summarises and the rules drawer edits. Not
+-- listed: updated_at (stamped on every save, change or not), user_id, org_id.
+DROP TRIGGER IF EXISTS environment_protection_rules_notify_change_upd ON public.environment_protection_rules;
+CREATE TRIGGER environment_protection_rules_notify_change_upd
+  AFTER UPDATE ON public.environment_protection_rules
+  FOR EACH ROW WHEN (
+    (OLD.require_predecessor, OLD.require_verify_pass, OLD.require_approval, OLD.approvers,
+     OLD.soak_minutes, OLD.cost_delta_threshold)
+    IS DISTINCT FROM
+    (NEW.require_predecessor, NEW.require_verify_pass, NEW.require_approval, NEW.approvers,
+     NEW.soak_minutes, NEW.cost_delta_threshold)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS environment_protection_rules_notify_change_insdel ON public.environment_protection_rules;
+CREATE TRIGGER environment_protection_rules_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_protection_rules
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
