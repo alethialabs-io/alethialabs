@@ -61,7 +61,7 @@ describe("TOPIC_KEYS — the Environments page's reads (#6120)", () => {
 		expect(await invalidatedBy("jobs")).toEqual(["overview"]);
 	});
 
-	it.each(["projects", "clusters", "runners", "fleet", "addons", "alerts", "support", "usage", "billing"] as const)(
+	it.each(["projects", "clusters", "runners", "fleet", "addons", "alerts", "support", "usage", "billing", "organization"] as const)(
 		"a %s hint touches none of the page's reads",
 		async (topic) => {
 			expect(await invalidatedBy(topic)).toEqual([]);
