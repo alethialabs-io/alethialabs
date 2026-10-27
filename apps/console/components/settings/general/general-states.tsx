@@ -40,7 +40,7 @@ function SectionSkeleton({
 			</div>
 			<div
 				className={cn(
-					"rounded-lg border bg-surface shadow-sm",
+					"@container rounded-lg border bg-surface shadow-sm",
 					danger ? "border-border-strong" : "border-border",
 				)}
 			>
@@ -49,9 +49,9 @@ function SectionSkeleton({
 						danger ? (
 							<div
 								key={f}
-								className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0"
+								className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-[22px] py-4 last:border-b-0"
 							>
-								<div className="flex min-w-0 flex-col gap-1.5">
+								<div className="flex min-w-0 flex-[1_1_16rem] flex-col gap-1.5">
 									<Skeleton className="h-3.5 w-36" />
 									<Skeleton className="h-3 w-72 max-w-full" />
 								</div>
@@ -60,23 +60,24 @@ function SectionSkeleton({
 						) : (
 							<div
 								key={f}
-								className="flex items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0"
+								className="flex flex-col gap-2 border-b border-border px-[22px] py-[15px] last:border-b-0 @lg:flex-row @lg:items-start @lg:gap-6"
 							>
-								{/* `SettingsField` is a `200px 1fr` grid at every width; a fixed 200px
-								    column beside a flexible one is the same geometry. */}
-								<div className="flex w-[200px] shrink-0 flex-col gap-1.5">
+								{/* `SettingsField` stacks below 32rem of panel width and is a `200px 1fr`
+								    grid from there (#6135); a fixed 200px column beside a flexible one
+								    is the same geometry, and the panel above is the same container. */}
+								<div className="flex flex-col gap-1.5 @lg:w-[200px] @lg:shrink-0">
 									<Skeleton className="h-3.5 w-28" />
 									<Skeleton className="h-3 w-40 max-w-full" />
 								</div>
-								<Skeleton className="h-[38px] min-w-0 flex-1 rounded-sm" />
+								<Skeleton className="h-[38px] w-full min-w-0 rounded-sm @lg:w-auto @lg:flex-1" />
 							</div>
 						),
 					)}
 				</div>
 				{foot ? (
-					<div className="flex items-center justify-between gap-4 border-t border-border bg-surface-sunken px-[22px] py-[13px]">
+					<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border bg-surface-sunken px-[22px] py-[13px]">
 						<Skeleton className="h-3 w-32" />
-						<Skeleton className="h-8 w-28 rounded-md" />
+						<Skeleton className="ml-auto h-8 w-28 rounded-md" />
 					</div>
 				) : null}
 			</div>
