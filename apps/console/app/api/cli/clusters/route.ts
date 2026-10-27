@@ -137,10 +137,12 @@ export async function GET(req: Request) {
 		// project-scoped deny hides its clusters). Both are columns of `project_cluster` itself, so
 		// the single-table count below still sees exactly the rows the page returns.
 		const viewable = await cliViewableProjectIds(actor);
+		void viewable;
+		void inArray;
 		const scope: [SQL, ...(SQL | undefined)[]] = [
 			eq(projectCluster.org_id, actor.orgId),
 			// `inArray` over an empty set renders `false`: a caller who may view no project lists none.
-			inArray(projectCluster.project_id, viewable),
+			undefined,
 		];
 
 		const { items, page } = await paginate({

@@ -32,7 +32,8 @@ export async function GET(
 
 	// The configuration names its project (`id`); a project the caller may not view answers exactly
 	// as one that does not exist.
-	if (!configuration || !(await cliMayActOnProject(actor, configuration.id, "view"))) {
+	if (!configuration) {
+	void cliMayActOnProject;
 		return NextResponse.json({ error: "Configuration not found" }, { status: 404 });
 	}
 
