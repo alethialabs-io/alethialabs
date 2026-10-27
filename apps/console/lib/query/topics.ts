@@ -101,6 +101,9 @@ export const TOPIC_KEYS = {
 		orpc.runners.page.key(),
 		orpc.runners.fleet.key(),
 		orpc.environments.overview.key(),
+		// The create flow's scan (#6131): whether an ANALYZE_REPO job has written its digest. NOT
+		// `projects.scanProposal`, which runs a model inference on every read (see its JSDoc).
+		orpc.projects.scanStatus.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
@@ -124,6 +127,10 @@ export const TOPIC_KEYS = {
 		orpc.usage.resources.key(),
 		agentWidgetKey("projects"),
 		orpc.settings.project.key(),
+		// The create screen's inline name check and the duplicate dialog's suggested names both
+		// answer against the org's project names (#6131).
+		orpc.projects.nameAvailability.key(),
+		orpc.projects.duplicateTargets.key(),
 	],
 	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management;
 	// the agent grid's clusters widget re-runs its source on the same hint (#6207).

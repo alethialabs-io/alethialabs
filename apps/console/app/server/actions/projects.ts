@@ -21,7 +21,7 @@ import {
 import {
 	PROJECT_NAME_MAX_LENGTH,
 	helmRegistryProviderConfigSchema,
-	pickFreeProjectName,
+	deriveDuplicateName,
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
@@ -3285,33 +3285,6 @@ export type DuplicateProjectResult =
 	| ProjectRefusal;
 
 /**
- * The name a cross-cloud clone gets when the user does not choose one.
- *
- * ` (${targetProvider})` is 6–10 characters and `pickFreeProjectName` adds up to " N" more, all of
- * it against `PROJECT_NAME_MAX_LENGTH` (100) — which `createProject` has ENFORCED since #4738.
- * Before that the column was an unbounded `text()` and an over-long derived name simply persisted;
- * now it throws, so a project whose own name is within the suffix of the cap became impossible to
- * duplicate at all (aws/gcp: 95 chars, azure: 93, alibaba/hetzner: 91 — two fewer each once a
- * collision adds " 2"). That is why the dialog needs a name FIELD and not just a better default:
- * no derivation can shorten a name the user has not been asked about.
- *
- * Kept as one function with exactly one caller-visible behaviour so the default shown in the dialog
- * and the default the action falls back to cannot drift into two answers.
- *
- * @param sourceName the source project's display name
- * @param targetProvider the cloud being duplicated onto
- * @param takenNames every project name already in the org
- * @returns a name the org does not hold — which may exceed the cap, and is not checked here
- */
-function deriveDuplicateName(
-	sourceName: string,
-	targetProvider: CloudProviderSlug,
-	takenNames: string[],
-): string {
-	return pickFreeProjectName(`${sourceName} (${targetProvider})`, takenNames);
-}
-
-/**
  * Duplicates a project config for a different cloud provider, mapping provider-specific values.
  *
  * THROWS on a refusal, like `createProject` does — see its JSDoc for why, and use
@@ -3462,81 +3435,6 @@ export async function tryDuplicateProjectForProvider(
 		// digest it would replace, so an unmapped error stays an unexpected one.
 		throw err;
 	}
-}
-
-/**
- * The infrastructure categories a project's default environment currently provisions — used by the
- * cross-cloud duplicate dialog to preview which managed services will be translated (cluster → GKE,
- * Aurora → Cloud SQL, …). `network` + `cluster` are always present; the rest are listed only when
- * the design actually has one. Purely a read of the design (no provisioned state).
- */
-export type DuplicateCategory =
-	| "network"
-	| "cluster"
-	| "dns"
-	| "databases"
-	| "caches"
-	| "nosql"
-	| "queues"
-	| "topics"
-	| "secrets";
-
-/**
- * Source provider, the service categories present, and the per-target default NAME, for the
- * cross-cloud duplicate preview.
- *
- * `suggestedNames` is what pre-fills the dialog's name field, and it is keyed by target cloud
- * because the suffix NAMES that cloud — a field still reading " (aws)" after the user switched the
- * target to GCP is a wrong default, not a stale one. It is computed HERE, by the same
- * `deriveDuplicateName` the action falls back to, rather than in the client: a second derivation in
- * the dialog would be a second source of truth, and the client has no business reading the org's
- * project names to de-duplicate against. Only the source project's own name reaches the client, in
- * five pre-composed strings.
- *
- * It is a SUGGESTION and nothing here checks it against `PROJECT_NAME_MAX_LENGTH`: when the source
- * name is long enough the suggestion is over the cap and the form says so on the first render —
- * which is the honest reading, because that is precisely the project #4738 made un-duplicatable and
- * the field the user must now shorten.
- */
-export async function getProjectDuplicateSummary(projectId: string): Promise<{
-	provider: CloudProviderSlug;
-	projectName: string;
-	categories: DuplicateCategory[];
-	suggestedNames: Record<CloudProviderSlug, string>;
-}> {
-	const { formData, provider } = await getProjectAsFormData(projectId);
-	const categories: DuplicateCategory[] = ["network", "cluster"];
-	if (formData.dns?.enabled) categories.push("dns");
-	if (formData.databases?.length) categories.push("databases");
-	if (formData.caches?.length) categories.push("caches");
-	if (formData.nosql_tables?.length) categories.push("nosql");
-	if (formData.queues?.length) categories.push("queues");
-	if (formData.topics?.length) categories.push("topics");
-	if (formData.secrets?.length) categories.push("secrets");
-
-	const actor = await currentActor();
-	const takenNames = await withActorScope(actor, async (tx) => {
-		const names = await tx
-			.select({ project_name: projects.project_name })
-			.from(projects)
-			.where(eq(projects.org_id, actor.orgId));
-		return names.map((n) => n.project_name);
-	});
-	const sourceName = formData.project.project_name;
-	// A literal annotated `Record<CloudProviderSlug, string>` rather than a fold over
-	// `CLOUD_PROVIDER_SLUGS`: the annotation is checked in BOTH directions, so a cloud added to the
-	// slug union fails to compile here until it is given a suggestion, and one removed fails too. A
-	// fold would need an `as` on its seed to type an accumulator that is briefly incomplete — and
-	// that cast is exactly the thing that would let a missing key through silently.
-	const suggestedNames: Record<CloudProviderSlug, string> = {
-		aws: deriveDuplicateName(sourceName, "aws", takenNames),
-		gcp: deriveDuplicateName(sourceName, "gcp", takenNames),
-		azure: deriveDuplicateName(sourceName, "azure", takenNames),
-		hetzner: deriveDuplicateName(sourceName, "hetzner", takenNames),
-		alibaba: deriveDuplicateName(sourceName, "alibaba", takenNames),
-	};
-
-	return { provider, projectName: sourceName, categories, suggestedNames };
 }
 
 // ============================================================

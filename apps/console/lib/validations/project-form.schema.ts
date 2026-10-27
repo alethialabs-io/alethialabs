@@ -855,3 +855,30 @@ export function pickFreeProjectName(base: string, taken: string[]): string {
 	while (used.has(`${base} ${n}`.toLowerCase())) n++;
 	return `${base} ${n}`;
 }
+
+/**
+ * The name a cross-cloud clone gets when the user does not choose one: `${source} (${target})`,
+ * de-duplicated against the org's names by {@link pickFreeProjectName}.
+ *
+ * ONE function for both of its readers, so the default the duplicate dialog pre-fills (the
+ * `projects.duplicateTargets` read, `lib/rpc/procedures/projects.ts`) and the default
+ * `duplicateProjectForProvider` falls back to (`app/server/actions/projects.ts`) cannot drift into
+ * two answers. It lives here for the reason `pickFreeProjectName` does: one of those readers is a
+ * `"use server"` module, which may export nothing but async functions.
+ *
+ * ` (${targetProvider})` is 6–10 characters, all of it against `PROJECT_NAME_MAX_LENGTH`, and
+ * nothing here checks the cap: an over-long suggestion is the honest reading of a source name too
+ * long to clone under its own name, and the dialog's field says so on the first render (#4162).
+ *
+ * @param sourceName the source project's display name
+ * @param targetProvider the cloud being duplicated onto (its slug)
+ * @param takenNames every project name already in the org
+ * @returns a name the org does not hold — which may exceed the cap
+ */
+export function deriveDuplicateName(
+	sourceName: string,
+	targetProvider: string,
+	takenNames: string[],
+): string {
+	return pickFreeProjectName(`${sourceName} (${targetProvider})`, takenNames);
+}

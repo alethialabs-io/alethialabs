@@ -21,6 +21,12 @@ vi.mock("@/lib/db", () => ({
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// `readDuplicateTargets` lives with the other projects reads in lib/rpc/procedures/projects.ts
+// (#6131); that module also serves the import flow, whose git-account and model readers are not
+// this file's subject and would otherwise load Better Auth and the AI SDK here.
+vi.mock("@/lib/auth", () => ({ auth: { api: {} } }));
+vi.mock("@/lib/jobs/visibility", () => ({ jobVisibleTo: vi.fn() }));
+vi.mock("@/lib/scanner/infer", () => ({ inferStack: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 // `UsageLimitError` stays REAL: `refusalAsValue` decides by `instanceof`, so a stand-in class would
 // prove only that the test agrees with itself.
@@ -52,6 +58,7 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
+import { readDuplicateTargets } from "@/lib/rpc/procedures/projects";
 import {
 	type DestroyTreeSubject,
 	FabricHasLiveTenantsError,
@@ -72,7 +79,6 @@ import {
 	getProject,
 	getDestroyTree,
 	getProjectAsFormData,
-	getProjectDuplicateSummary,
 	getProjectEnvironments,
 	getProjects,
 	getProjectsList,
@@ -3586,7 +3592,7 @@ describe("tryDuplicateProjectForProvider", () => {
 	});
 });
 
-describe("getProjectDuplicateSummary", () => {
+describe("readDuplicateTargets (the duplicate dialog's read, moved from getProjectDuplicateSummary in #6131)", () => {
 	// The dialog pre-fills its name field from THIS, so the default it shows and the default the
 	// action falls back to are one derivation rather than two. Keyed by target cloud because the
 	// suffix names that cloud.
@@ -3626,7 +3632,7 @@ describe("getProjectDuplicateSummary", () => {
 			]),
 		});
 
-		const summary = await getProjectDuplicateSummary("p1");
+		const summary = await readDuplicateTargets("p1");
 		expect(summary.provider).toBe("aws");
 		expect(summary.projectName).toBe("My App");
 		expect(summary.categories).toContain("dns");

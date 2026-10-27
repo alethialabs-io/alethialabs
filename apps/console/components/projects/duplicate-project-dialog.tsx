@@ -23,21 +23,16 @@ import {
 	Loader2,
 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { getProvider, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { z } from "zod";
-import {
-	getVerifiedCloudIdentities,
-	type CloudIdentityOption,
-} from "@/app/server/actions/aws/identities";
-import {
-	type DuplicateCategory,
-	getProjectDuplicateSummary,
-	tryDuplicateProjectForProvider,
-} from "@/app/server/actions/projects";
+import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
+import type { ActionResult } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import type { ConversionWarning } from "@/lib/cloud-providers";
 import { groupRegions, REGION_LABELS } from "@/lib/cloud-providers";
 import {
@@ -45,7 +40,10 @@ import {
 	type CloudProviderSlug,
 	PROVIDERS,
 } from "@/lib/cloud-providers/generated/catalog";
+import { errorDigest } from "@/lib/errors";
 import { projectHref } from "@/lib/routing";
+import { orpc } from "@/lib/rpc/client";
+import type { DuplicateCategory } from "@/lib/rpc/procedures/projects";
 import { canSlugify } from "@/lib/utils/slugify";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { Button } from "@repo/ui/button";
@@ -79,9 +77,6 @@ import {
 } from "@repo/ui/select";
 import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
-
-/** Clouds with full provisioning templates + a conversion mapping — the only valid duplicate targets. */
-const TARGET_PROVIDERS: CloudProviderSlug[] = ["aws", "gcp", "azure", "alibaba"];
 
 /**
  * The form's shape. SHAPE ONLY — nothing here asks whether the org already holds the name.
@@ -142,37 +137,95 @@ interface DuplicateResult {
 	warnings: ConversionWarning[];
 }
 
+/** What the duplicate mutation is handed: the source project and the submitted form. */
+interface DuplicateVariables {
+	sourceProjectId: string;
+	values: DuplicateFormValues;
+}
+
+/**
+ * `tryDuplicateProjectForProvider` in the mutation contract's shape (ADR 0005 D4). Its refusals are
+ * sentences about the NAME (taken, or no schema accepts it) or about a stored credential, all shown
+ * beside the name field — so they travel as a `validation` error on `projectName` and reach the
+ * field, not a toast. A failure thrown out of the `"use server"` export is a digest in a production
+ * build; it becomes `unexpected`, toasted once with that digest as its reference.
+ */
+async function duplicateAction({
+	sourceProjectId,
+	values,
+}: DuplicateVariables): Promise<ActionResult<DuplicateResult>> {
+	try {
+		// `tryDuplicateProjectForProvider`, not `duplicateProjectForProvider`: a THROWN refusal is
+		// redacted to an opaque `digest` in a production build — the #4644 defect.
+		const res = await tryDuplicateProjectForProvider(
+			sourceProjectId,
+			values.cloudIdentityId,
+			values.region,
+			values.projectName,
+		);
+		if (!res.ok) {
+			return {
+				ok: false,
+				error: { kind: "validation", message: res.error, fields: { projectName: [res.error] } },
+			};
+		}
+		return { ok: true, data: { newProjectSlug: res.newProjectSlug, warnings: res.warnings } };
+	} catch (err) {
+		return { ok: false, error: { kind: "unexpected", ref: errorDigest(err) ?? "unavailable" } };
+	}
+}
+
 /**
  * Dialog for duplicating a project onto a different cloud provider. `sourceProjectId` /
  * `sourceProjectName` identify the project being copied; `orgSlug` is used to navigate into the new
  * project's canvas on success.
  */
-export function DuplicateProjectDialog({
-	open,
-	onOpenChange,
-	sourceProjectId,
-	sourceProjectName,
-	orgSlug,
-}: {
+export function DuplicateProjectDialog(props: DuplicateProjectDialogProps) {
+	// Mounted only while open: the dialog's read (and its query client) belongs to the open dialog,
+	// so a project card or table row that merely CAN open it reads nothing and needs no provider —
+	// and every open starts from a fresh form.
+	return props.open ? <OpenDuplicateProjectDialog {...props} /> : null;
+}
+
+/** {@link DuplicateProjectDialog}'s props. */
+interface DuplicateProjectDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	sourceProjectId: string;
 	sourceProjectName: string;
 	orgSlug: string;
-}) {
+}
+
+/** The dialog itself, while it is open. */
+function OpenDuplicateProjectDialog({
+	open,
+	onOpenChange,
+	sourceProjectId,
+	sourceProjectName,
+	orgSlug,
+}: DuplicateProjectDialogProps) {
 	const router = useRouter();
 
-	const [sourceProvider, setSourceProvider] = useState<CloudProviderSlug | null>(
-		null,
-	);
-	const [categories, setCategories] = useState<DuplicateCategory[]>([]);
-	const [identities, setIdentities] = useState<CloudIdentityOption[]>([]);
+	// The source's design summary, the per-cloud default names and the target accounts — ONE GET
+	// read (`projects.duplicateTargets`), made when the dialog opens. It used to be two server
+	// actions in an effect, queued as POSTs behind every other action on the page, with a failure
+	// reported only as a toast over a dialog that then said "No other-cloud accounts connected".
+	const targets = useQuery({
+		...orpc.projects.duplicateTargets.queryOptions({ input: { projectId: sourceProjectId } }),
+		enabled: open,
+		// An expected refusal (the project is gone, or not this viewer's to read) answers the same
+		// the second time: no retry for it, and its own sentence below — not "try again".
+		retry: retryUnlessRefused,
+	});
+	const targetsRefusal = targets.isError ? refusalOf(targets.error) : null;
+	const sourceProvider = targets.data?.provider ?? null;
+	const categories: DuplicateCategory[] = targets.data?.categories ?? [];
+	const identities = targets.data?.identities ?? [];
 	// The server's default name PER TARGET CLOUD, because the suffix names that cloud. Empty until
-	// the summary lands; the name field is pre-filled from it when an account is chosen.
-	const [suggestedNames, setSuggestedNames] = useState<
-		Partial<Record<CloudProviderSlug, string>>
-	>({});
-	const [loadingContext, setLoadingContext] = useState(false);
+	// the read lands; the name field is pre-filled from it when an account is chosen.
+	const suggestedNames: Partial<Record<CloudProviderSlug, string>> =
+		targets.data?.suggestedNames ?? {};
+	const loadingContext = open && targets.isPending;
 	const [result, setResult] = useState<DuplicateResult | null>(null);
 
 	const form = useForm<DuplicateFormValues>({
@@ -192,42 +245,29 @@ export function DuplicateProjectDialog({
 		setResult(null);
 	}, [form]);
 
-	// Load the source project's design summary + the user's other-cloud accounts when the dialog opens.
+	// Every open starts from a clean form.
 	useEffect(() => {
-		if (!open) return;
-		reset();
-		let cancelled = false;
-		setLoadingContext(true);
-		(async () => {
-			try {
-				const [summary, allIdentities] = await Promise.all([
-					getProjectDuplicateSummary(sourceProjectId),
-					getVerifiedCloudIdentities(),
-				]);
-				if (cancelled) return;
-				setSourceProvider(summary.provider);
-				setCategories(summary.categories);
-				setSuggestedNames(summary.suggestedNames);
-				// Only other-provider accounts on a cloud we can actually provision + convert to.
-				setIdentities(
-					allIdentities.filter(
-						(i) =>
-							i.provider !== summary.provider &&
-							// `.some(===)` compares the identity's CloudProvider against the
-							// CloudProviderSlug targets without a cast (the slugs derive from the enum).
-							TARGET_PROVIDERS.some((t) => t === i.provider),
-					),
-				);
-			} catch {
-				if (!cancelled) toast.error("Failed to load project details");
-			} finally {
-				if (!cancelled) setLoadingContext(false);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [open, sourceProjectId, reset]);
+		if (open) reset();
+	}, [open, reset]);
+
+	// A clone is a new project: every read of the org's projects moves with it — the shell's list
+	// (switcher, breadcrumbs, palette; F036), the setup guide, the usage counts, and the reads that
+	// answer against the org's project names.
+	const duplicate = useActionMutation(duplicateAction, {
+		invalidates: [
+			orpc.workspace.projects.key(),
+			orpc.workspace.setupGuide.key(),
+			orpc.usage.resources.key(),
+			orpc.projects.nameAvailability.key(),
+			orpc.projects.duplicateTargets.key(),
+		],
+		onValidationError: (fields) => {
+			const message = fields.projectName?.[0];
+			if (message) form.setError("projectName", { type: "server", message });
+		},
+		// No success toast: the dialog itself turns into the "Project duplicated" result.
+		onSuccess: (duplicated) => setResult(duplicated),
+	});
 
 	const targetIdentity = identities.find((i) => i.id === cloudIdentityId);
 	const targetProvider =
@@ -262,31 +302,10 @@ export function DuplicateProjectDialog({
 
 	/** Submits the duplication request and shows the conversion result, or the server's refusal. */
 	async function onSubmit(values: DuplicateFormValues) {
-		try {
-			// `tryDuplicateProjectForProvider`, not `duplicateProjectForProvider`: this is a
-			// `"use client"` component, so the call is a Server Action round trip and a THROWN
-			// refusal is redacted to an opaque `digest` in a production build — the #4644 defect,
-			// surviving on this screen. A refusal comes back as a value and lands on the field the
-			// user can act on; the `catch` below is for what remains, a failure that is a defect
-			// rather than advice.
-			const res = await tryDuplicateProjectForProvider(
-				sourceProjectId,
-				values.cloudIdentityId,
-				values.region,
-				values.projectName,
-			);
-			if (!res.ok) {
-				form.setError("projectName", { type: "server", message: res.error });
-				toast.error(res.error);
-				return;
-			}
-			setResult({ newProjectSlug: res.newProjectSlug, warnings: res.warnings });
-			toast.success("Project duplicated");
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to duplicate project",
-			);
-		}
+		if (duplicate.isPending) return;
+		// `mutateAsync` inside `handleSubmit` keeps `isSubmitting` true for the whole round trip; a
+		// failure is routed by the mutation itself (the field, or one toast), so it is not rethrown.
+		await duplicate.mutateAsync({ sourceProjectId, values }).catch(() => undefined);
 	}
 
 	/** Opens the new project's canvas so the user can review before the first deploy. */
@@ -365,7 +384,7 @@ export function DuplicateProjectDialog({
 	const targetRegionCodes = targetProvider
 		? Object.keys(REGION_LABELS[targetProvider] ?? {})
 		: [];
-	const noTargets = !loadingContext && identities.length === 0;
+	const noTargets = !loadingContext && !targets.isError && identities.length === 0;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -390,7 +409,26 @@ export function DuplicateProjectDialog({
 									<FormLabel className="text-xs font-medium">
 										Target cloud account
 									</FormLabel>
-									{loadingContext ? (
+									{targetsRefusal ? (
+										<p role="alert" className="text-sm text-muted-foreground">
+											{targetsRefusal === "forbidden"
+												? "You don’t have permission to duplicate this project."
+												: targetsRefusal === "not-found"
+													? "This project no longer exists, or isn’t in this organization."
+													: "Duplicating this project isn’t included in your plan."}
+										</p>
+									) : targets.isError ? (
+										<p role="alert" className="text-sm text-muted-foreground">
+											Couldn’t load this project’s details.{" "}
+											<button
+												type="button"
+												onClick={() => void targets.refetch()}
+												className="underline underline-offset-2 hover:text-foreground"
+											>
+												Try again
+											</button>
+										</p>
+									) : loadingContext ? (
 										<div className="flex items-center gap-2 text-sm text-muted-foreground">
 											<Loader2 className="h-4 w-4 animate-spin" />
 											Loading accounts…

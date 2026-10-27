@@ -7,6 +7,7 @@
 // console's one `TemplateId`, handing over the starter repository the chosen template names — and
 // NOT changing the cluster, because `alethia-starter-ai` is CPU-only by decision (#4112).
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,12 @@ const push = vi.fn();
 vi.mock("@/app/server/actions/projects", () => ({
   tryCreateProject: (...args: unknown[]) => tryCreateProject(...args),
 }));
-vi.mock("@/app/server/actions/scanner", () => ({ getScanProposal: vi.fn() }));
+// The screen's reads (the scan, the inline name check) are read-router queries; a scratch on-ramp has
+// no scan, and the name check is another file's subject (configure-project-refusal.test.tsx).
+vi.mock("@/components/create-project/use-create-project-reads", () => ({
+  useScanResult: () => ({ result: null, retry: vi.fn() }),
+  useNameAvailability: () => ({ availability: undefined, checking: false }),
+}));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh: vi.fn() }),
@@ -56,16 +62,18 @@ import { ConfigureProject } from "@/components/create-project/configure-project"
 /** Renders the Configure screen for a scratch on-ramp. */
 function renderFor(scratch: "template" | "blank") {
   return render(
-    <ConfigureProject
-      orgSlug="acme"
-      source={{ kind: "scratch", scratch }}
-      canManage
-      integrations={[]}
-      awsSetup={null}
-      gcpSetup={null}
-      azureSetup={null}
-      platformConfigured={{}}
-    />,
+    <QueryClientProvider client={new QueryClient()}>
+      <ConfigureProject
+        orgSlug="acme"
+        source={{ kind: "scratch", scratch }}
+        canManage
+        integrations={[]}
+        awsSetup={null}
+        gcpSetup={null}
+        azureSetup={null}
+        platformConfigured={{}}
+      />
+    </QueryClientProvider>,
   );
 }
 

@@ -15,18 +15,13 @@ import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
 
+import { EXAMPLE_PROMPTS, examplePromptLabel } from "./example-prompts";
 import { RepoImportPanel } from "./repo-import-panel";
 import {
 	StartFromScratchCards,
 	type ScratchKind,
 } from "./start-from-scratch-cards";
 
-/** Example prompts seeding the agent hero. */
-const EXAMPLE_PROMPTS = [
-	"An EKS cluster for an AI inference API — autoscaling GPU node pool, Postgres + pgvector, Redis.",
-	"A GPU training cluster on AWS — spot node pool, shared storage, a Postgres metadata database.",
-	"Postgres + pgvector, Redis, and an object store wired into a small cluster for a RAG backend.",
-];
 
 interface CreateProjectChooserProps {
 	orgSlug: string;
@@ -162,7 +157,7 @@ export function CreateProjectForm({
 							onClick={() => setPrompt(ex)}
 							className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 						>
-							{ex.split(" — ")[0]}
+							{examplePromptLabel(ex)}
 						</button>
 					))}
 				</div>

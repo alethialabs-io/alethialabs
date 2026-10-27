@@ -88,10 +88,6 @@
 			"count": 1,
 			"lifts": "#6124"
 		},
-		"components/create-project/configure-project.tsx :: setInterval": {
-			"count": 1,
-			"lifts": "#6131"
-		},
 		"components/org/pending-paid-setup.ts :: setInterval": {
 			"count": 1,
 			"lifts": "unassigned"
