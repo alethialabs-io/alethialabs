@@ -18,30 +18,30 @@
 		"@repo/plan-catalog": "workspace:*",
 		"@repo/privacy": "workspace:*",
 		"@repo/ui": "workspace:*",
-		"@hookform/resolvers": "^5.9.1",
+		"@hookform/resolvers": "^5.9.2",
 		"@react-email/components": "^1.0.12",
 		"libphonenumber-js": "^1.13.15",
-		"next": "16.4.1",
+		"next": "16.4.3",
 		"next-runtime-env": "^3.3.0",
 		"next-themes": "^0.4.6",
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
-		"react-hook-form": "^7.90.0",
+		"react-hook-form": "^7.91.0",
 		"sonner": "^2.0.8",
 		"stripe": "^22.6.2",
 		"zod": "^4.6.7"
 	},
 	"devDependencies": {
-		"@vitest/coverage-v8": "^4.1.11",
+		"@vitest/coverage-v8": "^4.1.12",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^20",
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
 		"eslint": "^9",
-		"eslint-config-next": "16.4.1",
+		"eslint-config-next": "16.4.3",
 		"tailwindcss": "^4.3.3",
 		"tw-animate-css": "^1.3.6",
 		"typescript": "^5",
-		"vitest": "^4.1.11"
+		"vitest": "^4.1.12"
 	}
 }
