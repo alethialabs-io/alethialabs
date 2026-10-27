@@ -29,13 +29,13 @@
 //
 // ── THE FLOOR, AND WHAT IT PROTECTS AGAINST ─────────────────────────────────────────────────────
 //
-// `SITE_FLOOR` refuses a run that finds fewer than 29 call sites. It is NOT a quality bar and it
-// is not "we expect 29 destructive controls". It exists because every rule above is of the shape
+// `SITE_FLOOR` refuses a run that finds fewer than 27 call sites. It is NOT a quality bar and it
+// is not "we expect 27 destructive controls". It exists because every rule above is of the shape
 // "for each site found…", and a scan that finds nothing satisfies all of them vacuously. The
 // import-shape regex, the scan roots and the verb table are each one refactor away from matching
 // zero — `apps/console/app` moving under a `src/`, imports switching to a barrel file, the
 // codebase adopting `use server` inline — and in every one of those cases this guard would go
-// green while measuring nothing. 29 sits at or below today's census with room for a lane to legitimately
+// green while measuring nothing. 27 sits at today's census with room for a lane to legitimately
 // delete a handful of controls, and far above zero. If it ever fires, the answer is to find out
 // what stopped matching, NOT to lower it.
 //
@@ -115,10 +115,10 @@ export const SCAN_EXCLUDE = ["apps/console/app/api", "apps/console/app/server"];
 
 /**
  * See "THE FLOOR" above. Lower this only after finding out what stopped matching.
- * 30 → 29 (#6124): nothing stopped matching — the connectors board's four per-cloud disconnect
- * calls became one `disconnectCloudAccount`, so the census measured 29 real sites.
+ * 30 → 27 (#6124): nothing stopped matching — the connectors board's four per-cloud disconnect
+ * calls became one `disconnectCloudAccount`, taking dev's 30 real sites to 27.
  */
-export const SITE_FLOOR = 29;
+export const SITE_FLOOR = 27;
 
 const SCAN_EXT = new Set([".tsx", ".ts"]);
 
