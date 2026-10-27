@@ -1,10 +1,8 @@
 {
 	"reads": [
-		"app/(private)/[org]/[project]/clusters/page.tsx :: getClusters",
 		"app/(private)/[org]/~/alerts/page.tsx :: getAlertChannelsPage",
 		"app/(private)/[org]/~/alerts/page.tsx :: getAlertDeliveriesPage",
 		"app/(private)/[org]/~/alerts/page.tsx :: getAlertPoliciesPage",
-		"app/(private)/[org]/~/clusters/page.tsx :: getClusters",
 		"app/(private)/[org]/~/evidence/page.tsx :: getOrgEvidence",
 		"app/(private)/[org]/~/runners/page.tsx :: getRunnersPage",
 		"app/(private)/[org]/~/settings/classification/page.tsx :: listDimensions",
@@ -13,7 +11,6 @@
 		"app/(private)/[org]/~/settings/sso/page.tsx :: listSsoProviders",
 		"components/classification/dimension-detail.tsx :: getDimensionResourceBreakdown",
 		"components/classification/value-drill-drawer.tsx :: getValueResourceBreakdown",
-		"components/clusters/kubeconfig-download/kubeconfig-download.tsx :: canDownloadKubeconfig",
 		"components/connectors/connectors-page.tsx :: getConnectorsWithStatus",
 		"components/settings/access/access-manager.tsx :: getGrantOptions",
 		"components/settings/members/members-table.tsx :: getCollaborationAccess",
@@ -27,7 +24,6 @@
 		"lib/query/use-classification-query.ts :: getAssignments",
 		"lib/query/use-classification-query.ts :: getAssignmentsForKind",
 		"lib/query/use-classification-query.ts :: listDimensions",
-		"lib/query/use-clusters-query.ts :: getClusters",
 		"lib/query/use-evidence-query.ts :: getOrgEvidence",
 		"lib/query/use-members-query.ts :: getMembersPage",
 		"lib/query/use-roles-query.ts :: listRoles",

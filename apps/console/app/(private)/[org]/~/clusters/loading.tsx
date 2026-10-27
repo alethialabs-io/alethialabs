@@ -1,35 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Skeleton } from "@repo/ui/skeleton";
+import { ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 
 /**
- * Instant skeleton shown while the clusters route prefetches on the server.
- *
- * No heading, deliberately: ClustersClient renders none either ("the surface opens straight into
- * content"), so a title here is one that disappears on hydration, taking the grid up with it.
+ * Instant skeleton shown while the clusters route prefetches on the server: the grid's own pending
+ * render (`ClustersSkeleton`), so nothing moves when the cards land.
  */
 export default function ClustersLoading() {
-	return (
-		<div className="space-y-6">
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-				{[1, 2].map((i) => (
-					<div key={i} className="rounded-lg border border-border/40 p-5 space-y-4">
-						<div className="flex items-center justify-between">
-							<Skeleton className="h-5 w-32" />
-							<Skeleton className="h-5 w-16 rounded-full" />
-						</div>
-						<div className="space-y-2">
-							<Skeleton className="h-3 w-48" />
-							<Skeleton className="h-3 w-36" />
-						</div>
-						<div className="flex gap-2 pt-2">
-							<Skeleton className="h-7 w-20 rounded-md" />
-							<Skeleton className="h-7 w-24 rounded-md" />
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
-	);
+	return <ClustersSkeleton />;
 }

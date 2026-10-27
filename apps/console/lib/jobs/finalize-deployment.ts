@@ -219,6 +219,38 @@ export async function finalizeDeployment(jobId: string) {
 		}
 	}
 
+	// A successful DESTROY tore the environment's infrastructure down: record that on the rows that say
+	// whether a cluster runs (#6122). The environment's deploy stamp is cleared and its cluster row is
+	// marked DESTROYED, so "a cluster under management" (lib/queries/usage-counts.ts) stops counting it —
+	// including after a later plan moves the environment back to DRAFT, which a status alone cannot tell
+	// apart from a live environment's re-plan. Gated on the environment still being in the teardown the
+	// status route is about to finish (destroySuccess's from-set): a straggler arriving after a redeploy
+	// must not erase the stamp of infrastructure that exists again.
+	if (job.job_type === "DESTROY") {
+		const torn = await db
+			.update(projectEnvironments)
+			.set({ last_deployed_at: null, updated_at: new Date() })
+			.where(
+				and(
+					eq(projectEnvironments.id, job.environment_id),
+					inArray(projectEnvironments.status, ["DESTROYING", "QUEUED"]),
+				),
+			)
+			.returning({ id: projectEnvironments.id });
+		if (torn.length > 0) {
+			await db
+				.update(projectCluster)
+				.set({ status: "DESTROYED", updated_at: new Date() })
+				.where(
+					and(
+						eq(projectCluster.project_id, job.project_id),
+						eq(projectCluster.environment_id, job.environment_id),
+					),
+				);
+		}
+		return;
+	}
+
 	if (job.job_type !== "DEPLOY") return;
 	if (!job.execution_metadata) return;
 
