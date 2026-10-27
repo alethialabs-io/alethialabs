@@ -20,7 +20,6 @@ import {
 	pgTable,
 	text,
 	timestamp,
-	unique,
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
@@ -60,9 +59,23 @@ export const orgSigningKey = pgTable(
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		// key_id is the globally-unique handle a receipt records; the full row set is the retained
-		// key_id→public_key history that keeps old receipts verifiable across rotation (D4).
-		unique("org_signing_key_key_id_key").on(t.key_id),
+		// key_id is the handle a receipt records; the full row set is the retained key_id→public_key
+		// history that keeps old receipts verifiable across rotation (D4).
+		//
+		// What these two indexes enforce, and no more:
+		//   · within one org, a key_id appears on at most one row, whatever its status;
+		//   · across orgs, at most one row with `status = 'active'` carries a given key_id. Rows that
+		//     are `pending_verification` or `invalid` may share a key_id across orgs, so revoking a key
+		//     (status → invalid) frees it for another org's active row.
+		// Nothing in this repo sets `status = 'active'` yet — the proof-of-possession job that would is
+		// a follow-on, and it must answer this index's conflict itself. Nor does any reader filter on
+		// status: the CLI's receipt verifier (apps/cli/cmd/verify.go, `trustedKeys`) resolves a key_id
+		// against EVERY row of the addressed org's history (GET /api/cli/signing-keys), pending and
+		// invalid included. Within one org that resolution is unambiguous because of the first index.
+		uniqueIndex("org_signing_key_org_key_id_key").on(t.org_id, t.key_id),
+		uniqueIndex("org_signing_key_verified_key_id_key")
+			.on(t.key_id)
+			.where(sql`${t.status} = 'active'`),
 		// At most one ACTIVE signing key per org (D3 — single active per-org key).
 		uniqueIndex("org_signing_key_one_active")
 			.on(t.org_id)

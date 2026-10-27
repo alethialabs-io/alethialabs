@@ -6,9 +6,11 @@
 // the project — the org-level job permissions alone are not enough.
 //
 // One org, one project P with a finished deploy and a queued deploy, authored by an admin who never
-// acts. Two operators act: OPERATOR holds the operator role (job create/edit, project deploy);
-// NO_DEPLOY holds the same role and an explicit deny on deploying P. Both are written the way the
-// app writes them — the Postgres row, then its tuple mirror — so the enterprise PDP reads them too.
+// acts. Three operators act: OPERATOR holds the operator role (job create/edit, project deploy);
+// NO_DEPLOY holds the same role and an explicit deny on deploying P; NO_VIEW holds the same role and
+// an explicit deny on viewing P (so P's jobs are not visible to it — lib/jobs/visibility.ts). Each is
+// written the way the app writes it — the Postgres row, then its tuple mirror — so the enterprise
+// PDP reads them too.
 //
 // The other half of the rule — that a re-run goes through the fresh-run entry point, its environment
 // guard and the project's current configuration — is tests/integration/jobs-rerun-entry.test.ts.
@@ -32,7 +34,7 @@ vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
 import { POST as cliCancel } from "@/app/api/cli/jobs/[id]/cancel/route";
-import { cancelJob, rerunJob } from "@/app/server/actions/jobs";
+import { cancelJob, recordVerifyOverride, rerunJob } from "@/app/server/actions/jobs";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
@@ -55,7 +57,8 @@ const ORG = randomUUID();
 const ADMIN = randomUUID(); // authors every row; never acts
 const OPERATOR = randomUUID(); // may deploy P
 const NO_DEPLOY = randomUUID(); // the same role, and an explicit deny on deploying P
-const USERS = [ADMIN, OPERATOR, NO_DEPLOY];
+const NO_VIEW = randomUUID(); // the same role, and an explicit deny on viewing P
+const USERS = [ADMIN, OPERATOR, NO_DEPLOY, NO_VIEW];
 const P = randomUUID();
 /** A deploy of P in `status`, seeded for ONE case — no case depends on another's leftovers. */
 function deployOfP(status: "SUCCESS" | "QUEUED"): Promise<string> {
@@ -104,10 +107,12 @@ describeIfDb("acting on a project's job takes the project's permission for its o
 			{ organizationId: ORG, userId: ADMIN, role: "admin" },
 			{ organizationId: ORG, userId: OPERATOR, role: "operator" },
 			{ organizationId: ORG, userId: NO_DEPLOY, role: "operator" },
+			{ organizationId: ORG, userId: NO_VIEW, role: "operator" },
 		]);
 		await ensureMemberGrant(ORG, ADMIN, "admin");
 		await ensureMemberGrant(ORG, OPERATOR, "operator");
 		await ensureMemberGrant(ORG, NO_DEPLOY, "operator");
+		await ensureMemberGrant(ORG, NO_VIEW, "operator");
 		await db.insert(projects).values({
 			id: P,
 			user_id: ADMIN,
@@ -118,25 +123,30 @@ describeIfDb("acting on a project's job takes the project's permission for its o
 		});
 		await db.insert(resourceHierarchy).values({ child_type: "project", child_id: P, parent_type: "org", parent_id: ORG });
 		await getTupleSync().syncHierarchyEdge({ childType: "project", childId: P, parentType: "org", parentId: ORG });
-		await db.insert(grants).values({
-			org_id: ORG,
-			principal_type: "user",
-			principal_id: NO_DEPLOY,
-			effect: "deny",
-			permission_key: "project:deploy",
-			resource_type: "project",
-			resource_id: P,
-		});
-		await getTupleSync().syncScopedGrant({
-			orgId: ORG,
-			principalType: "user",
-			principalId: NO_DEPLOY,
-			effect: "deny",
-			resourceType: "project",
-			resourceId: P,
-			roleId: null,
-			permissionKey: "project:deploy",
-		});
+		for (const [principal, permissionKey] of [
+			[NO_DEPLOY, "project:deploy"],
+			[NO_VIEW, "project:view"],
+		] as const) {
+			await db.insert(grants).values({
+				org_id: ORG,
+				principal_type: "user",
+				principal_id: principal,
+				effect: "deny",
+				permission_key: permissionKey,
+				resource_type: "project",
+				resource_id: P,
+			});
+			await getTupleSync().syncScopedGrant({
+				orgId: ORG,
+				principalType: "user",
+				principalId: principal,
+				effect: "deny",
+				resourceType: "project",
+				resourceId: P,
+				roleId: null,
+				permissionKey,
+			});
+		}
 	});
 
 	afterAll(async () => {
@@ -196,6 +206,21 @@ describeIfDb("acting on a project's job takes the project's permission for its o
 			.where(eq(jobs.id, queued));
 		expect(row?.status).toBe("CANCELLED");
 		expect(row?.completed_at).toBeInstanceOf(Date);
+	});
+
+	it("a verification override is refused, as not found, on a job of a project the member may not view", async () => {
+		// NO_VIEW holds the org's job edit, so the org-level check passes: only job visibility (which
+		// follows project visibility) keeps P's job out of reach.
+		const queued = await deployOfP("QUEUED");
+		await expect(actAs(NO_VIEW, () => recordVerifyOverride(queued, ["c-1"], "waived"))).rejects.toMatchObject({
+			kind: "not-found",
+		});
+		const overrideOf = async () =>
+			(await getServiceDb().select({ v: jobs.verify_override }).from(jobs).where(eq(jobs.id, queued)))[0]?.v;
+		expect(await overrideOf()).toBeNull();
+		// Positive control: the same role without the deny writes it.
+		await actAs(OPERATOR, () => recordVerifyOverride(queued, ["c-1"], "waived"));
+		expect(await overrideOf()).toMatchObject({ controls: ["c-1"], by: OPERATOR });
 	});
 
 	it("a finished job is not rewritten by a cancel, from either surface", async () => {
