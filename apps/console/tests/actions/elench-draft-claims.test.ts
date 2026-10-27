@@ -282,13 +282,13 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	tables = { elench_drafts: [], agent_threads: [], projects: [], member: [], organization: [] };
 	statements = [];
-	actor = { userId: USER, orgId: ORG_A };
+	actor = { credential: "session", userId: USER, orgId: ORG_A };
 	vi.mocked(currentActor).mockImplementation(async () => actor);
 	vi.mocked(authorizeQuiet).mockImplementation(async () => actor);
 	vi.mocked(getOwnerScope).mockResolvedValue({ userId: USER, sessionId: "s" });
 	vi.mocked(getOwner).mockResolvedValue(USER);
 	vi.mocked(resolveTurnActor).mockImplementation(async (userId, orgId) =>
-		orgId === ORG_A ? { userId, orgId } : null,
+		orgId === ORG_A ? { credential: "session", userId, orgId } : null,
 	);
 	vi.mocked(checkRateLimit).mockResolvedValue({ ok: true, remaining: 19 });
 	// The fake implements only the builder surface the code uses, so it crosses the seam untyped,

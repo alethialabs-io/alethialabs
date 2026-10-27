@@ -55,9 +55,9 @@ import {
 	currentActor,
 } from "@/lib/authz/guard";
 
-const SESSION_ACTOR: Actor = { userId: "u-session", orgId: "org-session" };
-const INJECTED_ACTOR: Actor = { userId: "u-mcp", orgId: "org-mcp" };
-const CLI_ACTOR: Actor = { userId: "u-cli", orgId: "org-cli" };
+const SESSION_ACTOR: Actor = { credential: "session", userId: "u-session", orgId: "org-session" };
+const INJECTED_ACTOR: Actor = { credential: "session", userId: "u-mcp", orgId: "org-mcp" };
+const CLI_ACTOR: Actor = { credential: "session", userId: "u-cli", orgId: "org-cli" };
 
 const enforce = vi.fn();
 const can = vi.fn();
@@ -96,7 +96,8 @@ describe("currentActor", () => {
 	it("resolves from owner scope → getActiveScope(userId, activeOrgId) when not injected", async () => {
 		const actor = await currentActor();
 
-		expect(actor).toBe(SESSION_ACTOR);
+		// A fresh object carrying the session credential, built from the resolved scope.
+		expect(actor).toEqual(SESSION_ACTOR);
 		expect(getOwnerScope).toHaveBeenCalledTimes(1);
 		expect(getActiveScope).toHaveBeenCalledWith("u-session", "org-session");
 	});
@@ -106,7 +107,7 @@ describe("currentActor", () => {
 			userId: "u-personal",
 			activeOrgId: undefined,
 		} as never);
-		const personal: Actor = { userId: "u-personal", orgId: "u-personal" };
+		const personal: Actor = { credential: "session", userId: "u-personal", orgId: "u-personal" };
 		vi.mocked(getActiveScope).mockResolvedValue(personal);
 
 		const actor = await currentActor();
@@ -124,7 +125,8 @@ describe("authorize", () => {
 			id: "c-1",
 		});
 
-		expect(actor).toBe(SESSION_ACTOR);
+		// A fresh object carrying the session credential, built from the resolved scope.
+		expect(actor).toEqual(SESSION_ACTOR);
 		expect(enforce).toHaveBeenCalledWith(SESSION_ACTOR, "manage_connectors", {
 			type: "connector",
 			id: "c-1",
@@ -162,7 +164,8 @@ describe("authorizeQuiet", () => {
 			id: "c-2",
 		});
 
-		expect(actor).toBe(SESSION_ACTOR);
+		// A fresh object carrying the session credential, built from the resolved scope.
+		expect(actor).toEqual(SESSION_ACTOR);
 		expect(can).toHaveBeenCalledWith(SESSION_ACTOR, "manage_connectors", {
 			type: "connector",
 			id: "c-2",
@@ -190,18 +193,18 @@ describe("authorizeQuiet", () => {
 describe("orgScopeFor", () => {
 	it("pins a service token to its org and nothing else", () => {
 		expect(
-			orgScopeFor({ userId: "u-minter", orgId: "org-t" }, "service_token"),
+			orgScopeFor({ credential: "service_token", userId: "u-minter", orgId: "org-t" }, "service_token"),
 		).toEqual(["org-t"]);
 	});
 
 	it("lets a session see its own personal org, where pre-#3942 runner jobs still live", () => {
 		expect(
-			orgScopeFor({ userId: "u-cli", orgId: "org-team" }, "session"),
+			orgScopeFor({ credential: "session", userId: "u-cli", orgId: "org-team" }, "session"),
 		).toEqual(["org-team", "u-cli"]);
 	});
 
 	it("does not list one org twice when the session's scope IS the personal org", () => {
-		expect(orgScopeFor({ userId: "u-cli", orgId: "u-cli" }, "session")).toEqual(
+		expect(orgScopeFor({ credential: "session", userId: "u-cli", orgId: "u-cli" }, "session")).toEqual(
 			["u-cli"],
 		);
 	});
@@ -212,7 +215,7 @@ describe("orgScopeFor", () => {
 	it("is never empty, for either credential", () => {
 		for (const credential of ["session", "service_token"] as const) {
 			expect(
-				orgScopeFor({ userId: "u", orgId: "o" }, credential).length,
+				orgScopeFor({ credential, userId: "u", orgId: "o" }, credential).length,
 			).toBeGreaterThan(0);
 		}
 	});
@@ -220,7 +223,7 @@ describe("orgScopeFor", () => {
 	// The minter's personal org is the value #4154 was about: a token must never carry it.
 	it("never gives a token the minter's personal org", () => {
 		expect(
-			orgScopeFor({ userId: "u-minter", orgId: "org-t" }, "service_token"),
+			orgScopeFor({ credential: "service_token", userId: "u-minter", orgId: "org-t" }, "service_token"),
 		).not.toContain("u-minter");
 	});
 });
@@ -260,7 +263,7 @@ describe("ensureCliOrgAccess", () => {
 	it("admits a service token to the org it is pinned to", async () => {
 		expect(
 			await ensureCliOrgAccess(
-				{ userId: "u-minter", orgId: "org-t" },
+				{ credential: "service_token", userId: "u-minter", orgId: "org-t" },
 				"service_token",
 				"org-t",
 				...MANAGE,
@@ -274,7 +277,7 @@ describe("ensureCliOrgAccess", () => {
 	it("refuses a service token an org its minter belongs to but its pin does not name", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
 		const denied = await ensureCliOrgAccess(
-			{ userId: "u-minter", orgId: "org-t" },
+			{ credential: "service_token", userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
 			...MANAGE,
@@ -287,7 +290,7 @@ describe("ensureCliOrgAccess", () => {
 	it("does not consult membership or the PDP at all for a service token", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
 		await ensureCliOrgAccess(
-			{ userId: "u-minter", orgId: "org-t" },
+			{ credential: "service_token", userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
 			...MANAGE,
@@ -305,7 +308,7 @@ describe("ensureCliOrgAccess", () => {
 
 	it("admits a session to another org where it is an active member holding the permission", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-1" }]);
-		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		const inOther: Actor = { credential: "session", userId: "u-cli", orgId: "org-other" };
 		vi.mocked(getActiveScope).mockResolvedValue(inOther);
 		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE)).toBeNull();
 		// The permission is asked of the PATH org's scope, not of the caller's resolved one.
@@ -329,7 +332,7 @@ describe("ensureCliOrgAccess", () => {
 	// The shape the defect was reached by: a caller in their PERSONAL scope, where they own
 	// everything, naming an org they are an ordinary member of.
 	it("does not let a personal-scope caller carry its own-org permission into another org", async () => {
-		const personal: Actor = { userId: "u-p", orgId: "u-p" };
+		const personal: Actor = { credential: "session", userId: "u-p", orgId: "u-p" };
 		dbLimit.mockResolvedValue([{ id: "m-viewer" }]);
 		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-p", orgId: "org-b" });
 		can.mockImplementation(async (a: Actor) => ({ allowed: a.orgId === "u-p" }));
@@ -362,7 +365,7 @@ describe("ensureCliOrgAccess", () => {
 describe("authorizeCliOrg", () => {
 	it("returns the actor scoped to the PATH org for a cross-org session", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-1" }]);
-		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		const inOther: Actor = { credential: "session", userId: "u-cli", orgId: "org-other" };
 		vi.mocked(getActiveScope).mockResolvedValue(inOther);
 		expect(
 			await authorizeCliOrg(CLI_ACTOR, "session", "org-other", "manage_members", {
@@ -690,14 +693,14 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 		});
 
 		expect(result).toEqual({
-			actor: { userId: "u-cli", orgId: "u-cli" },
+			actor: { userId: "u-cli", orgId: "u-cli", credential: "session" },
 			credential: "session",
 			orgScope: ["u-cli"],
 		});
 		// The literal, not `actor.userId`: the team org the old fallback served was "org-team".
 		expect((result as { actor: Actor }).actor.orgId).toBe("u-cli");
 		expect(enforce).toHaveBeenCalledWith(
-			{ userId: "u-cli", orgId: "u-cli" },
+			{ userId: "u-cli", orgId: "u-cli", credential: "session" },
 			"manage_connectors",
 			{
 				type: "connector",
@@ -722,7 +725,7 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 		);
 
 		expect(result).toEqual({
-			actor: { userId: "u-cli", orgId: "org-team" },
+			actor: { userId: "u-cli", orgId: "org-team", credential: "session" },
 			credential: "session",
 			orgScope: ["org-team", "u-cli"],
 		});
@@ -804,7 +807,7 @@ describe("authorizeCli with an X-Alethia-Org header", () => {
 // anti-vacuity tripwire for scanning source and executing none of the code, and this is the same
 // property on the other side of the wire.
 describe("authorizeCli with a service-account token", () => {
-	const SERVICE_ACTOR: Actor = { userId: "u-minter", orgId: "org-A" };
+	const SERVICE_ACTOR: Actor = { credential: "session", userId: "u-minter", orgId: "org-A" };
 
 	/** A request carrying a service-token payload, optionally scoped by an org header. */
 	function serviceReq(headerOrg?: string): Request {
@@ -837,7 +840,9 @@ describe("authorizeCli with a service-account token", () => {
 		// PERSON last had active, i.e. somebody's session state standing in for a machine's scope.
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
 		expect(result).toEqual({
-			actor: SERVICE_ACTOR,
+			// Marked on the actor itself, so a server action reached through runWithActor can tell
+			// the minter is not the caller (lib/authz/actor-credential.ts).
+			actor: { ...SERVICE_ACTOR, credential: "service_token" },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
@@ -851,7 +856,9 @@ describe("authorizeCli with a service-account token", () => {
 
 		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
 		expect(result).toEqual({
-			actor: SERVICE_ACTOR,
+			// Marked on the actor itself, so a server action reached through runWithActor can tell
+			// the minter is not the caller (lib/authz/actor-credential.ts).
+			actor: { ...SERVICE_ACTOR, credential: "service_token" },
 			credential: "service_token",
 			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],

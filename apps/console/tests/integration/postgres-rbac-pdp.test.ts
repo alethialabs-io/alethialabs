@@ -40,7 +40,7 @@ const PROJ_A = randomUUID(); // child of ORG in the hierarchy
 const PROJ_B = randomUUID(); // NOT under ORG in the hierarchy (a sibling, no edge)
 
 const pdp = new PostgresRbacPDP();
-const actor: Actor = { userId: USER, orgId: ORG };
+const actor: Actor = { credential: "session", userId: USER, orgId: ORG };
 
 /** Insert one grant row for the test-org, returning nothing (cleaned up in afterEach). */
 async function seedGrant(values: {
@@ -392,7 +392,7 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 
 		// OUTSIDER is in the same org but NOT on the team → the team grant doesn't apply.
 		const outsider = await pdp.can(
-			{ userId: OUTSIDER, orgId: ORG },
+			{ credential: "session", userId: OUTSIDER, orgId: ORG },
 			"view",
 			{ type: "project", id: PROJ_A },
 		);
@@ -418,7 +418,7 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 			resource_type: "project",
 			resource_id: null,
 		});
-		const noRow: Actor = { userId: NO_ROW, orgId: ORG };
+		const noRow: Actor = { credential: "session", userId: NO_ROW, orgId: ORG };
 		const d = await pdp.can(noRow, "view", { type: "project", id: PROJ_A });
 		expect(d.allowed).toBe(false);
 		expect(d.reason).toBe("no_grant");
@@ -437,7 +437,7 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		});
 		// Same user, different active org → the grant (org_id = ORG) must not match.
 		const elsewhere = await pdp.can(
-			{ userId: USER, orgId: randomUUID() },
+			{ credential: "session", userId: USER, orgId: randomUUID() },
 			"view",
 			{ type: "project", id: PROJ_A },
 		);

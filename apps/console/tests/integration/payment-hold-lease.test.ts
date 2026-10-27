@@ -343,7 +343,7 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 	const USER = randomUUID();
 	const CUSTOMER = `cus_it_lease_${randomUUID().slice(0, 8)}`;
 	const KEY = `user:${USER}`;
-	const actor: Actor = { userId: USER, orgId: USER, entitlements: ENTITLEMENTS };
+	const actor: Actor = { credential: "session", userId: USER, orgId: USER, entitlements: ENTITLEMENTS };
 	const saved: Record<string, string | undefined> = {};
 
 	/** The purchase as request `by` ("A" or "B") makes it, on the user's one customer. */
@@ -507,7 +507,7 @@ describeIfDb("the org-plan purchase under the advisory key AND the org-plan: lea
 	const ORG = randomUUID();
 	const CUSTOMER = `cus_it_orgplan_${randomUUID().slice(0, 8)}`;
 	const KEY = `org-plan:${ORG}`;
-	const actor: Actor = { userId: OWNER, orgId: ORG, entitlements: ENTITLEMENTS };
+	const actor: Actor = { credential: "session", userId: OWNER, orgId: ORG, entitlements: ENTITLEMENTS };
 	const saved: Record<string, string | undefined> = {};
 
 	/** The org-plan purchase as request `by` ("A" or "B") makes it, on the org's one customer. */

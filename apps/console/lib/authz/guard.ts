@@ -8,11 +8,14 @@ import { getActiveScope, tenancyMode } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { enforceDecision } from "@/lib/authz/activity";
 import { getInjectedActor } from "@/lib/authz/actor-context";
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import { urlScopedOrgId } from "@/lib/authz/org-scope";
 import type { Action, Resource } from "@/lib/authz/registry";
 import {
 	type Actor,
+	type ActorCredential,
 	ForbiddenError,
+	type ResolvedScope,
 	type ResourceRef,
 } from "@/lib/authz/types";
 import { verifyCliToken } from "@/lib/cli/auth";
@@ -37,14 +40,18 @@ export async function currentActor(): Promise<Actor> {
 	// `/cli/login`, `/api/**`, the MCP token path). See `lib/authz/org-scope.ts` for why the URL
 	// wins rather than the mismatch throwing.
 	const urlOrgId = await urlScopedOrgId(userId);
-	if (urlOrgId === null) return getActiveScope(userId, activeOrgId);
+	// Every actor this function builds is a person's: a cookie session (an injected actor returned
+	// above already carries its own credential).
+	if (urlOrgId === null) {
+		return actorWithCredential(await getActiveScope(userId, activeOrgId), "session");
+	}
 
 	// WHAT COUNTS AS THE RESOLVER AGREEING. `getActiveScope` treats its org argument as a
 	// PREFERENCE and substitutes on a miss — deliberately, so a stale session cannot lock anyone
 	// out — so the answer has to be checked rather than trusted. But the check is THREE-WAY here,
 	// not the two-way `resolveNamedOrgScope` applies to a CLI `--org` header, and the third arm is
 	// the difference between this working and the open-core build serving nothing at all:
-	const actor = await getActiveScope(userId, urlOrgId);
+	const actor = actorWithCredential(await getActiveScope(userId, urlOrgId), "session");
 
 	// 1. It landed on the org the address named. The multi-tenant answer.
 	if (actor.orgId === urlOrgId) return actor;
@@ -195,9 +202,10 @@ function forbidden(): Response {
 async function resolveNamedOrgScope(
 	userId: string,
 	orgId: string,
+	credential: CliCredential,
 ): Promise<Actor | null> {
-	const actor = await getActiveScope(userId, orgId);
-	return actor.orgId === orgId ? actor : null;
+	const scope = await getActiveScope(userId, orgId);
+	return scope.orgId === orgId ? actorWithCredential(scope, credential) : null;
 }
 
 /**
@@ -224,7 +232,7 @@ export async function authorizeInOrg(
 	orgId: string,
 ): Promise<Actor> {
 	const { userId } = await getOwnerScope();
-	const actor = await resolveNamedOrgScope(userId, orgId);
+	const actor = await resolveNamedOrgScope(userId, orgId, "session");
 	if (!actor) {
 		throw new ForbiddenError(
 			action,
@@ -269,7 +277,8 @@ export async function resolveTurnActor(
 	orgId: string | undefined,
 ): Promise<Actor | null> {
 	if (!orgId) return null;
-	const actor = await resolveNamedOrgScope(userId, orgId);
+	// A chat turn is a person's (the route authenticated a session).
+	const actor = await resolveNamedOrgScope(userId, orgId, "session");
 	if (!actor) return null;
 	const decision = await getPdp().can(actor, "view", { type: "org" });
 	return decision.allowed ? actor : null;
@@ -345,7 +354,7 @@ export async function authorizeCliOrg(
 			if (!(await isActiveOrgMember(actor.userId, orgId))) {
 				return { error: forbidden() };
 			}
-			const scoped = await resolveNamedOrgScope(actor.userId, orgId);
+			const scoped = await resolveNamedOrgScope(actor.userId, orgId, "session");
 			if (!scoped) return { error: forbidden() };
 			const decision = await getPdp().can(scoped, action, {
 				type: resource.type,
@@ -407,7 +416,7 @@ async function isActiveOrgMember(userId: string, orgId: string): Promise<boolean
  * membership, so a database blip surfaces as a 500 and never as a silent refusal.
  */
 export async function assertMintingProfileStillMember(
-	defaultScope: Actor,
+	defaultScope: ResolvedScope,
 	orgId: string,
 ): Promise<Response | null> {
 	if (defaultScope.orgId === orgId) return null;
@@ -428,7 +437,7 @@ export async function assertMintingProfileStillMember(
  * - `service_token` — a machine credential pinned to `orgId` at mint time (#4154). `userId` is
  *   the minting profile, and nothing about the caller may be inferred from it beyond membership.
  */
-export type CliCredential = "session" | "service_token";
+export type CliCredential = ActorCredential;
 
 /**
  * The org ids a request's credential may see rows of — the TENANCY BOUNDARY, computed once.
@@ -649,7 +658,9 @@ async function authorizeCliWith(
 		}
 		// The pin is a named org like a header is, so it gets the same treatment: a scope that
 		// resolves to anything other than the pinned org is refused, never substituted.
-		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg);
+		// Bound to the credential on the actor itself, so a server action this route reaches through
+		// `runWithActor` can tell that `userId` is the minter (see `personalIdentityAuthor`).
+		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg, "service_token");
 		if (!serviceActor) return { error: forbidden() };
 		if (!(await decide(serviceActor, action, { type: resource.type, id: resource.id }))) {
 			return { error: forbidden() };
@@ -669,8 +680,8 @@ async function authorizeCliWith(
 	// resolveNamedOrgScope). Without one there is nothing to compare against: resolving the
 	// caller's default scope is the whole intent, and that path is left alone.
 	const actor = headerOrg
-		? await resolveNamedOrgScope(userId, headerOrg)
-		: await getActiveScope(userId);
+		? await resolveNamedOrgScope(userId, headerOrg, "session")
+		: actorWithCredential(await getActiveScope(userId), "session");
 	if (!actor) return { error: forbidden() };
 	if (!(await decide(actor, action, { type: resource.type, id: resource.id }))) {
 		return { error: forbidden() };

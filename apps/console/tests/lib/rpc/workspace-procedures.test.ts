@@ -87,7 +87,7 @@ function mockDb(rows: unknown[]): void {
 
 /** An actor for user-1 on `orgId`, holding `entitlements` when given. */
 function actor(orgId: string, entitlements?: Actor["entitlements"]): Actor {
-	return { userId: "user-1", orgId, entitlements };
+	return { credential: "session", userId: "user-1", orgId, entitlements };
 }
 
 beforeEach(() => {

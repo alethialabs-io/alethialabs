@@ -41,7 +41,7 @@ import {
 import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
-import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
+import type { Entitlements, Pdp, ResolvedScope } from "@/lib/authz/types";
 import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
@@ -210,7 +210,7 @@ export interface EnterpriseModule {
    * session selected (validate membership before honoring it); fall back to the
    * user's primary org, then the personal org. Community = personal org.
    */
-  resolveScope?: (userId: string, activeOrgId?: string) => Promise<Actor>;
+  resolveScope?: (userId: string, activeOrgId?: string) => Promise<ResolvedScope>;
   /** Extra Better Auth plugins (organization, SSO). Community = none. */
   authPlugins?: NonNullable<BetterAuthOptions["plugins"]>;
   /**

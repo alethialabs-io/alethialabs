@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { signedJob } from "@/lib/db/signed-job";
 import {
@@ -15,9 +16,11 @@ import {
 	isRunnerDeployProvider,
 	runnerDeployUnsupportedMessage,
 } from "@/lib/runners/deploy-providers";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { unheldRunnerTokenHash } from "@/lib/runners/lifecycle-token";
 import { notifyScaler } from "@/lib/scaler";
-import { desc, eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
+import { z } from "zod";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { deployRunnerWire } from "@/lib/validations/cli-contract";
@@ -51,6 +54,14 @@ export async function POST(req: Request) {
 			);
 		}
 
+		const identityId = z.uuid().safeParse(cloud_identity_id);
+		if (!identityId.success) {
+			return NextResponse.json(
+				{ error: "cloud_identity_id must be a cloud identity id (a UUID)" },
+				{ status: 400 },
+			);
+		}
+
 		const db = getServiceDb();
 
 		// Defense-in-depth: the existing runner that will run this deploy must belong
@@ -79,27 +90,34 @@ export async function POST(req: Request) {
 			}
 		}
 
+		// The identity the DEPLOY_RUNNER job carries — and the claim route hands the runner — must be
+		// one this caller may use: an `org` identity of this org, or a person's own `personal` one.
+		// The same rule as the `/api/jobs` DESTROY_RUNNER branch. A service token's `userId` is its
+		// minter, so it gets the org arm only. Another org's identity, another member's personal one
+		// and an id that does not exist all answer the same 404.
 		const [identity] = await db
 			.select({
 				id: cloudIdentities.id,
 				provider: cloudIdentities.provider,
-				org_id: cloudIdentities.org_id,
 			})
 			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, cloud_identity_id))
+			.where(
+				actorIdentityWhere(
+					identityId.data,
+					actor.orgId,
+					personalIdentityAuthor(actor),
+				),
+			)
 			.limit(1);
 
 		if (!identity) {
 			return NextResponse.json(
-				{ error: "Cloud identity not found" },
+				{
+					error: personalIdentityAuthor(actor) !== undefined
+						? "Cloud identity not found. Use one of the organization's cloud accounts, or one of your own."
+						: "Cloud identity not found. A service token can use only the organization's shared cloud accounts.",
+				},
 				{ status: 404 },
-			);
-		}
-
-		if (identity.org_id !== actor.orgId) {
-			return NextResponse.json(
-				{ error: "Unauthorized: cloud identity belongs to another org" },
-				{ status: 403 },
 			);
 		}
 
@@ -142,7 +160,7 @@ export async function POST(req: Request) {
 				// No usable credential until the DEPLOY_RUNNER job is claimed: the claim mints the token
 				// and hands it to the executing runner alone (lib/runners/lifecycle-token.ts).
 				token_hash: unheldRunnerTokenHash(),
-				cloud_identity_id,
+				cloud_identity_id: identityId.data,
 			})
 			.returning({ id: runners.id, name: runners.name });
 
@@ -162,7 +180,7 @@ export async function POST(req: Request) {
 				user_id: actor.userId,
 				// Explicitly retain the active tenant; claim-time compatibility handles legacy runners.
 				org_id: actor.orgId,
-				cloud_identity_id,
+				cloud_identity_id: identityId.data,
 				job_type: "DEPLOY_RUNNER",
 				initiated_by: "user",
 				config_snapshot: configSnapshot,

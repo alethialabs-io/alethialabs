@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({ user: "", org: "" }));
 vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/authz/guard")>()),
 	authorizeCli: async () => ({
-		actor: { userId: h.user, orgId: h.org },
+		actor: { userId: h.user, orgId: h.org, credential: "session" },
 		credential: "session",
 		orgScope: [h.org, h.user],
 	}),
@@ -74,7 +74,7 @@ async function cliCancelAs(userId: string, jobId: string): Promise<number> {
 
 /** Runs an action as `userId` in the org. */
 function actAs<T>(userId: string, run: () => Promise<T>): Promise<T> {
-	return runWithActor({ userId, orgId: ORG }, run);
+	return runWithActor({ userId, orgId: ORG, credential: "session" }, run);
 }
 
 /** The job's current status. */
