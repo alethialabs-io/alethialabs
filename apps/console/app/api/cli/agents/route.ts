@@ -4,11 +4,14 @@
 // GET /api/cli/agents — the caller's agent identities (machine/agent personas). Gated on org
 // `view`; org-scoped via the SAME predicate the web listAgents uses — (user_id = caller) OR
 // (org_id = caller's org) — since agent_identities carries no RLS and a nullable org_id. Both keys
-// are the caller's, so neither arm can match another tenant's row.
+// are the caller's, so neither arm can match another tenant's row. An agent bound to a project of
+// this org that the caller may not view is left out (cliProjectBoundVisibleWhere), as a project
+// read of that project would be refused.
 
-import { desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { cliProjectBoundVisibleWhere } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
@@ -20,20 +23,24 @@ export async function GET(req: Request) {
 	const { actor, credential } = auth;
 
 	try {
+		const projectVisible = await cliProjectBoundVisibleWhere(actor, agentIdentities.project_id);
 		const rows = await getServiceDb()
 			.select()
 			.from(agentIdentities)
 			.where(
-				// #4298: the `user_id` arm is the CALLER's own id for a session, and the MINTING
-				// profile's for a service token — so on a token this returned the minter's personal
-				// and other-org agent identities through a credential pinned to one org. A token
-				// sees the org arm alone; the pin is the whole of what it was issued for.
-				userIdIsTheCaller(credential)
-					? or(
-							eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: session caller's own globally-unique id; org_id arm scopes Teams
-							eq(agentIdentities.org_id, actor.orgId),
-						)
-					: eq(agentIdentities.org_id, actor.orgId),
+				and(
+					// #4298: the `user_id` arm is the CALLER's own id for a session, and the MINTING
+					// profile's for a service token — so on a token this returned the minter's personal
+					// and other-org agent identities through a credential pinned to one org. A token
+					// sees the org arm alone; the pin is the whole of what it was issued for.
+					userIdIsTheCaller(credential)
+						? or(
+								eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: session caller's own globally-unique id; org_id arm scopes Teams
+								eq(agentIdentities.org_id, actor.orgId),
+							)
+						: eq(agentIdentities.org_id, actor.orgId),
+					projectVisible,
+				),
 			)
 			.orderBy(desc(agentIdentities.created_at));
 
