@@ -47,6 +47,25 @@ export class ActionRefusal extends Error {
 	}
 }
 
+/**
+ * A refusal about one or more FIELDS that only the server can decide — a slug another organization
+ * already holds, a name taken since the form was loaded. `defineAction` maps it to a `validation`
+ * result, so the client puts each message under its field exactly as it does for a schema failure,
+ * instead of a toast that is gone while the value that caused it is still in the box (#6128).
+ *
+ * Every message is shown to the user verbatim; the keys are the form's field names.
+ */
+export class FieldRefusal extends Error {
+	/** Builds a refusal; `message` is the summary, `fields` the per-field sentences. */
+	constructor(
+		readonly fields: FieldErrors,
+		message: string,
+	) {
+		super(message);
+		this.name = "FieldRefusal";
+	}
+}
+
 /** A failed result raised on the client so TanStack's `onError` + rollback path runs. */
 export class ActionFailure extends Error {
 	/** Wraps the server's `ActionError`; `message` is a human sentence for logs, never parsed. */
