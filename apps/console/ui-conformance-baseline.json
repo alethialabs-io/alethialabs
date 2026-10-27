@@ -1932,10 +1932,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -1958,11 +1958,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
+				"pass": 35,
 				"fail": 3,
 				"na": 3,
-				"notMeasured": 3,
-				"score": 0.9189
+				"notMeasured": 2,
+				"score": 0.9211
 			}
 		},
 		{
@@ -6930,8 +6930,8 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
-			"verdict": "NOT MEASURED",
-			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
+			"verdict": "PASS",
+			"detail": "queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/connectors",

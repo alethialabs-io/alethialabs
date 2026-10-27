@@ -284,7 +284,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 |---|---|---|---|---|---|---|---|
 | `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/5 · 0.20 | **0.87** · 0 withheld of 44 |
 | `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/5 · 0.40 | **0.90** · 0 withheld of 44 |
-| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | 0/3 · 0.00 · 2 withheld | **0.92** · 3 withheld of 44 |
+| `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 0/3 · 0.00 · 2 withheld | **0.92** · 2 withheld of 44 |
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 0/2 · 0.00 · 3 withheld | **0.93** · 3 withheld of 44 |
 | `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | 3/5 · 0.60 | **0.93** · 1 withheld of 44 |
 | `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.93** · 3 withheld of 44 |
