@@ -364,7 +364,9 @@ test.describe("RBAC — Teams (Enterprise gate)", () => {
 		await expect(
 			owner.page.getByRole("heading", { name: "Create and manage teams" }),
 		).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByText("Available on the Enterprise plan.")).toBeVisible();
+		// EXACT: the disabled Create team button carries its own (hidden) reason, "Teams are available
+		// on the Enterprise plan." (#6129, `DisabledReason`), which a substring match also finds.
+		await expect(owner.page.getByText("Available on the Enterprise plan.", { exact: true })).toBeVisible();
 	});
 
 	test("Hobby: Create team is disabled and says it needs the Enterprise plan", async ({
