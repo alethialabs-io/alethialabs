@@ -29,7 +29,7 @@ vi.mock("@/lib/jobs/visibility", () => ({
 vi.mock("@/lib/queries/evidence", () => ({ queryOrgEvidence }));
 
 import { CLOUD_FILTER_VALUES } from "@/components/evidence/evidence-query";
-import { ForbiddenError } from "@/lib/authz/types";
+import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import type { EvidenceEnvRow, OrgEvidence } from "@/lib/queries/evidence";
 import { evidenceRouter } from "@/lib/rpc/procedures/evidence";
 
@@ -72,7 +72,7 @@ function rollup(rows: EvidenceEnvRow[]): OrgEvidence {
 	};
 }
 
-const ACTOR = { userId: "user-1", orgId: "org-1" };
+const ACTOR: Actor = { userId: "user-1", orgId: "org-1", credential: "session" };
 const client = createRouterClient(evidenceRouter, { context: { actor: ACTOR } });
 
 beforeEach(() => {
@@ -90,7 +90,7 @@ describe("evidence.page — what it asks for", () => {
 	});
 
 	it("reads the personal scope like any org — a person's own environments are evidence too", async () => {
-		const personal = { userId: "user-1", orgId: "user-1" };
+		const personal: Actor = { userId: "user-1", orgId: "user-1", credential: "session" };
 		currentActor.mockResolvedValue(personal);
 		queryOrgEvidence.mockResolvedValue(rollup([mkRow({ id: "e1" })]));
 

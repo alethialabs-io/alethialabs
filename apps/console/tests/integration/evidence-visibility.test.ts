@@ -73,7 +73,7 @@ function override(reason: string): VerifyOverrideInput {
 
 /** Reads the evidence page as `userId` in the org, as the read router binds it. */
 function readAs(userId: string): Promise<EvidenceResult> {
-	return runWithActor({ userId, orgId: ORG }, () => readOrgEvidence({}));
+	return runWithActor({ userId, orgId: ORG, credential: "session" }, () => readOrgEvidence({}));
 }
 
 /** The environment ids a result lists. */
