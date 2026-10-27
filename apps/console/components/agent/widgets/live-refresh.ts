@@ -20,6 +20,10 @@
 //   · only a widget that is on the grid, LIVE, and has a topic auto-refreshes. A frozen widget is a
 //     fixed snapshot; a widget whose data nothing on the stream announces refreshes only on its
 //     refresh button.
+//   · a FLOOR between hint-driven re-runs (the registry's `minRefreshMs`, the old poll cadence): a
+//     re-run executes the tool and writes a row, and a busy org sends a jobs hint about once a second.
+//     A hint inside the window schedules exactly one trailing re-run at the window's end, so the last
+//     change is never lost; the refresh button bypasses the floor; unmounting cancels the trailing run.
 //   · a failed re-run keeps the last snapshot and does not wedge the widget: the entry is written
 //     back either way, which clears its invalidated flag so the next hint is heard again.
 
@@ -51,6 +55,15 @@ export function widgetTopic(widget: Pick<ThreadWidget, "source">): Topic | null 
 export function widgetQueryKey(widget: Pick<ThreadWidget, "id" | "org_id" | "user_id" | "source">): QueryKey {
 	const owner = widget.org_id ?? `user:${widget.user_id}`;
 	return [...AGENT_WIDGET_KEY, widgetTopic(widget) ?? "none", owner, widget.id];
+}
+
+/** The floor when a widget's tool is not in the registry (the slowest old poll that was not 5 min). */
+export const DEFAULT_MIN_REFRESH_MS = 60_000;
+
+/** The minimum time between two hint-driven re-runs of this widget. */
+export function minRefreshMs(widget: Pick<ThreadWidget, "source">): number {
+	if (!widget.source) return DEFAULT_MIN_REFRESH_MS;
+	return WIDGET_REGISTRY[widget.source.tool]?.minRefreshMs ?? DEFAULT_MIN_REFRESH_MS;
 }
 
 /** Whether a hint re-runs this widget: it is live and something on the stream announces its data. */
@@ -94,6 +107,13 @@ export interface WidgetRefresherOptions {
 	run: (id: string) => Promise<ThreadWidget | null>;
 	/** Whether the tab is being looked at. */
 	isVisible: () => boolean;
+	/** The clock the floor is measured on (tests pin it). */
+	now?: () => number;
+	/** The trailing re-run's timer (tests pin it). */
+	timers?: {
+		setTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout>;
+		clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+	};
 }
 
 /** The refresher's surface. */
@@ -102,7 +122,7 @@ export interface WidgetRefresher {
 	refresh(id: string): void;
 	/** The tab became visible: re-run, once each, the live widgets a hidden-tab hint reached. */
 	onVisible(): void;
-	/** Stop listening; a re-run already in flight writes nothing back. */
+	/** Stop listening and cancel every trailing re-run; a re-run already in flight writes nothing back. */
 	dispose(): void;
 }
 
@@ -112,6 +132,13 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 	const inFlight = new Set<string>();
 	const again = new Set<string>();
 	const dueOnVisible = new Set<string>();
+	const lastStart = new Map<string, number>();
+	const trailing = new Map<string, ReturnType<typeof setTimeout>>();
+	const now = options.now ?? (() => Date.now());
+	const timers = options.timers ?? {
+		setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+		clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
+	};
 	let disposed = false;
 
 	const find = (id: string) => options.widgets().find((w) => w.id === id);
@@ -122,6 +149,7 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 			return;
 		}
 		inFlight.add(widget.id);
+		lastStart.set(widget.id, now());
 		const key = widgetQueryKey(widget);
 		// Re-seat the entry first: that clears its invalidated flag, so a hint that lands DURING the
 		// re-run is heard (an already-invalidated query emits no second invalidation) and queues one
@@ -140,9 +168,36 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 				// in a tab nobody is looking at (it waits for the tab instead).
 				const next = find(widget.id);
 				if (!next?.source) return;
-				if (options.isVisible()) start(next);
+				if (options.isVisible()) hinted(next);
 				else dueOnVisible.add(next.id);
 			});
+	};
+
+	// A hint-driven re-run, under the floor: now if the window since the last run has passed, else ONE
+	// trailing run at the window's end (later hints inside the window ride on it).
+	const hinted = (widget: ThreadWidget) => {
+		const last = lastStart.get(widget.id);
+		const wait = last === undefined ? 0 : last + minRefreshMs(widget) - now();
+		if (wait <= 0) {
+			start(widget);
+			return;
+		}
+		if (trailing.has(widget.id)) return;
+		const id = widget.id;
+		trailing.set(
+			id,
+			timers.setTimeout(() => {
+				trailing.delete(id);
+				if (disposed) return;
+				const next = find(id);
+				if (!next || !autoRefreshes(next)) return;
+				if (!options.isVisible()) {
+					dueOnVisible.add(id);
+					return;
+				}
+				start(next);
+			}, wait),
+		);
 	};
 
 	const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
@@ -155,13 +210,20 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 			dueOnVisible.add(id);
 			return;
 		}
-		start(widget);
+		hinted(widget);
 	});
 
 	return {
 		refresh(id) {
 			const widget = find(id);
-			if (widget?.source) start(widget);
+			if (!widget?.source) return;
+			// The button bypasses the floor, and its run covers any hint a trailing run was waiting on.
+			const pending = trailing.get(id);
+			if (pending !== undefined) {
+				timers.clearTimeout(pending);
+				trailing.delete(id);
+			}
+			start(widget);
 		},
 		onVisible() {
 			if (disposed || !options.isVisible()) return;
@@ -169,7 +231,7 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 			dueOnVisible.clear();
 			for (const id of due) {
 				const widget = find(id);
-				if (widget && autoRefreshes(widget)) start(widget);
+				if (widget && autoRefreshes(widget)) hinted(widget);
 			}
 		},
 		dispose() {
@@ -177,6 +239,8 @@ export function createWidgetRefresher(options: WidgetRefresherOptions): WidgetRe
 			unsubscribe();
 			dueOnVisible.clear();
 			again.clear();
+			for (const handle of trailing.values()) timers.clearTimeout(handle);
+			trailing.clear();
 		},
 	};
 }

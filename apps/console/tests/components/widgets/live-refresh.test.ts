@@ -20,6 +20,7 @@ vi.mock("@/app/server/actions/widgets", () => ({
 
 import {
 	autoRefreshes,
+	minRefreshMs,
 	createWidgetRefresher,
 	liveData,
 	type WidgetRefresher,
@@ -164,7 +165,7 @@ describe("live widgets refresh on their topic's hint (#6207)", () => {
 		r.refresher.dispose();
 	});
 
-	it("hints that land while a re-run is in flight queue exactly one follow-up, not one each", async () => {
+	it("hints that land while a re-run is in flight queue exactly one follow-up, not one each (at the floor)", async () => {
 		const first = deferred<ThreadWidget | null>();
 		let calls = 0;
 		const r = rig([widget()], async () => {
@@ -179,7 +180,11 @@ describe("live widgets refresh on their topic's hint (#6207)", () => {
 		expect(r.run).toHaveBeenCalledTimes(1); // still the first one
 		first.resolve(null);
 		await vi.advanceTimersByTimeAsync(10);
+		expect(r.run).toHaveBeenCalledTimes(1); // the follow-up waits for the jobs floor
+		await vi.advanceTimersByTimeAsync(minRefreshMs(widget()));
 		expect(r.run).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(minRefreshMs(widget()) * 3);
+		expect(r.run).toHaveBeenCalledTimes(2); // and only one
 		r.refresher.dispose();
 	});
 
@@ -192,6 +197,7 @@ describe("live widgets refresh on their topic's hint (#6207)", () => {
 		expect(r.run).toHaveBeenCalledTimes(1);
 		expect(r.client.getQueryData<ThreadWidget>(widgetQueryKey(w))?.data).toEqual(w.data);
 		await hint(r, "jobs");
+		await vi.advanceTimersByTimeAsync(minRefreshMs(w));
 		expect(r.run).toHaveBeenCalledTimes(2);
 		r.refresher.dispose();
 	});
@@ -218,6 +224,64 @@ describe("live widgets refresh on their topic's hint (#6207)", () => {
 		await vi.advanceTimersByTimeAsync(10);
 		expect(r.run.mock.calls).toEqual([["frozen"]]);
 		r.refresher.dispose();
+	});
+});
+
+describe("the floor between hint-driven re-runs (minRefreshMs)", () => {
+	it("keeps the old poll cadences: 15 s for the jobs list, 60 s for clusters", () => {
+		expect(minRefreshMs(widget())).toBe(15_000);
+		expect(minRefreshMs(widget({ source: { tool: "list_clusters", args: null } }))).toBe(60_000);
+		expect(minRefreshMs(widget({ source: { tool: "not_a_tool", args: null } }))).toBe(60_000);
+	});
+
+	it("a burst inside the window is one immediate run plus ONE trailing run at the window's end", async () => {
+		const w = widget();
+		const r = rig([w]);
+		await hint(r, "jobs");
+		expect(r.run).toHaveBeenCalledTimes(1);
+		// Ten more hints spread over the window: none runs now.
+		for (let i = 0; i < 10; i++) await hint(r, "jobs");
+		expect(r.run).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(minRefreshMs(w));
+		expect(r.run).toHaveBeenCalledTimes(2);
+		// Nothing further was hinted, so nothing further runs.
+		await vi.advanceTimersByTimeAsync(minRefreshMs(w) * 4);
+		expect(r.run).toHaveBeenCalledTimes(2);
+		r.refresher.dispose();
+	});
+
+	it("a hint after the window has passed runs at once", async () => {
+		const w = widget();
+		const r = rig([w]);
+		await hint(r, "jobs");
+		await vi.advanceTimersByTimeAsync(minRefreshMs(w));
+		await hint(r, "jobs");
+		expect(r.run).toHaveBeenCalledTimes(2);
+		r.refresher.dispose();
+	});
+
+	it("the refresh button bypasses the floor", async () => {
+		const r = rig([widget()]);
+		await hint(r, "jobs");
+		expect(r.run).toHaveBeenCalledTimes(1);
+		r.refresher.refresh("w1");
+		await vi.advanceTimersByTimeAsync(10);
+		expect(r.run).toHaveBeenCalledTimes(2);
+		r.refresher.refresh("w1");
+		await vi.advanceTimersByTimeAsync(10);
+		expect(r.run).toHaveBeenCalledTimes(3);
+		r.refresher.dispose();
+	});
+
+	it("the trailing run is cancelled when the grid unmounts (dispose)", async () => {
+		const w = widget();
+		const r = rig([w]);
+		await hint(r, "jobs");
+		await hint(r, "jobs"); // inside the window: schedules the trailing run
+		expect(r.run).toHaveBeenCalledTimes(1);
+		r.refresher.dispose();
+		await vi.advanceTimersByTimeAsync(minRefreshMs(w) * 2);
+		expect(r.run).toHaveBeenCalledTimes(1);
 	});
 });
 

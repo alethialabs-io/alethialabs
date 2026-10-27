@@ -107,7 +107,9 @@
   `use-jobs-query.ts:25,42`, `use-runners-page-query.ts:47`, `use-runners-query.ts:52`,
   `use-support-cases-query.ts:21`) plus `components/design-project/canvas/cards/activity-card.tsx:64`,
   and hand `setInterval`s in UI (`components/connectors/connectors-page.tsx:180`,
-  `components/jobs/columns.tsx:37`, `hooks/use-widget-refresh.ts:51`, …).
+  `components/jobs/columns.tsx:37`, `components/org/pending-paid-setup.ts:704`, …). The agent
+  grid's widget poll that this list once cited (`hooks/use-widget-refresh.ts`) was replaced by
+  topic-driven re-runs in #6207.
 - **The domain events already exist, one layer up.** Job status transitions arrive at
   `PUT /api/jobs/[id]/status` (`app/api/jobs/[id]/status/route.ts:52`) and are written by the SQL
   function `update_job_status` (`:77-78`), then emitted as org-scoped `system.*` events through

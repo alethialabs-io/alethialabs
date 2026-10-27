@@ -132,6 +132,14 @@ export interface WidgetDef {
 	 * no timer: a topic with no producer yet goes live the day its lane adds the trigger.
 	 */
 	topic: Topic | null;
+	/**
+	 * The floor between two HINT-driven re-runs of this widget, in ms. A re-run executes the tool and
+	 * writes a snapshot row, and a busy org can send a jobs hint about once a second, so a hint inside
+	 * the window schedules one trailing re-run at its end instead (the last change is never lost). The
+	 * values are the old poll cadences, so a hint can never cost more than the timer it replaced. The
+	 * refresh button ignores it.
+	 */
+	minRefreshMs: number;
 }
 
 /** "4 rows" / "1 row". */
@@ -315,6 +323,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: ProjectsBody,
 		liveByDefault: false,
 		topic: "projects",
+		minRefreshMs: 60_000,
 	},
 	list_jobs: {
 		kind: "table",
@@ -328,6 +337,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: JobsBody,
 		liveByDefault: true,
 		topic: "jobs",
+		minRefreshMs: 15_000,
 	},
 	list_clusters: {
 		kind: "table",
@@ -341,6 +351,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: ClustersBody,
 		liveByDefault: true,
 		topic: "clusters",
+		minRefreshMs: 60_000,
 	},
 	list_connectors: {
 		kind: "table",
@@ -354,6 +365,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: ConnectorsBody,
 		liveByDefault: true,
 		topic: null,
+		minRefreshMs: 60_000,
 	},
 	list_runners: {
 		kind: "table",
@@ -367,6 +379,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: RunnersBody,
 		liveByDefault: true,
 		topic: "runners",
+		minRefreshMs: 60_000,
 	},
 	get_org_usage: {
 		kind: "keyvalue",
@@ -377,6 +390,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: OrgUsageBody,
 		liveByDefault: true,
 		topic: "jobs",
+		minRefreshMs: 300_000,
 	},
 	get_ai_usage: {
 		kind: "keyvalue",
@@ -387,6 +401,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: AiUsageBody,
 		liveByDefault: true,
 		topic: "usage",
+		minRefreshMs: 300_000,
 	},
 	get_billing_summary: {
 		kind: "keyvalue",
@@ -397,6 +412,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: BillingBody,
 		liveByDefault: false,
 		topic: "billing",
+		minRefreshMs: 60_000,
 	},
 	get_drift_posture: {
 		kind: "keyvalue",
@@ -407,6 +423,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		Body: DriftBody,
 		liveByDefault: true,
 		topic: "jobs",
+		minRefreshMs: 300_000,
 	},
 };
 
