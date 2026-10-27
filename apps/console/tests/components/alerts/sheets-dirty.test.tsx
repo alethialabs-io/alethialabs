@@ -3,9 +3,10 @@
 
 // #6125 — the create sheets track whether they are DIRTY.
 //
-//   · The policy sheet's Create is disabled until something was entered — and a pick in the event
-//     matrix counts, not only typing: the matrix writes through `setValue`, which react-hook-form
-//     does not mark dirty unless told to, so a sheet with three events chosen used to read pristine.
+//   · A pick in the policy sheet's event matrix counts as an edit, not only typing: the matrix writes
+//     through `setValue`, which react-hook-form does not mark dirty unless told to, so a sheet with
+//     three events chosen used to read pristine.
+//   · Create stays pressable on a pristine sheet, and pressing it names what is missing inline.
 //   · Closing a dirty sheet asks before discarding it; closing a pristine one just closes.
 //   · Server validation lands on the field it names, and the sheet stays open.
 //   · A destination that does not verify is said inline beside the form, and nothing closes.
@@ -73,16 +74,22 @@ function renderPolicySheet() {
 describe("the policy sheet tracks dirty state", () => {
 	beforeEach(() => createPolicy.mockReset());
 
-	it("Create is disabled while the sheet is pristine", () => {
-		renderPolicySheet();
-		expect(screen.getByRole("button", { name: "Create policy" })).toBeDisabled();
-	});
-
-	it("choosing an event alone makes it dirty — a matrix pick is an edit", async () => {
+	it("submitting a pristine sheet names what is missing, inline, and sends nothing", async () => {
 		const user = userEvent.setup();
 		renderPolicySheet();
+		await user.click(screen.getByRole("button", { name: "Create policy" }));
+		expect(await screen.findByText("Name your policy")).toBeInTheDocument();
+		expect(screen.getByText("Pick at least one event.")).toBeInTheDocument();
+		expect(createPolicy).not.toHaveBeenCalled();
+	});
+
+	it("choosing an event alone makes it dirty — a matrix pick is an edit, so closing asks first", async () => {
+		const user = userEvent.setup();
+		const { onOpenChange } = renderPolicySheet();
 		await pickEvent(user);
-		expect(screen.getByRole("button", { name: "Create policy" })).toBeEnabled();
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(await screen.findByText("Discard this policy?")).toBeInTheDocument();
+		expect(onOpenChange).not.toHaveBeenCalled();
 	});
 
 	it("closing a pristine sheet just closes it", async () => {

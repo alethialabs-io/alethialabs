@@ -10,7 +10,8 @@
 // #6125: the sheet tracks whether the form is DIRTY. Every editor writes through `setValue(…,
 // { shouldDirty: true })`, so a chosen event, a bound channel or a moved throttle counts as an edit
 // (react-hook-form only marks registered inputs dirty on its own); closing a dirty sheet asks before
-// discarding it, and Create is disabled until something was entered. The write goes through
+// discarding it. Create stays pressable on a pristine sheet: pressing it is how the sheet says what
+// is missing (inline, per field) rather than a disabled button that explains nothing. The write goes through
 // `useActionMutation`: pending state on Create, server validation on the field it names, one toast
 // for a refusal, and invalidation of every alert key.
 
@@ -383,7 +384,7 @@ export function PolicySheet({
 					>
 						Cancel
 					</Button>
-					<Button size="sm" onClick={onSubmit} disabled={saving || !dirty}>
+					<Button size="sm" onClick={onSubmit} disabled={saving}>
 						{saving ? "Creating…" : "Create policy"}
 					</Button>
 				</SheetFooter>
