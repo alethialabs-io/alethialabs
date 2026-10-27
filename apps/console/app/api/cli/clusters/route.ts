@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { type SQL, and, eq } from "drizzle-orm";
+import { type SQL, and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
+import { cliViewableProjectIds } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -132,8 +133,14 @@ export async function GET(req: Request) {
 		// The tenancy boundary, on ONE column of the table being paged — the column the database
 		// derives from the parent project (#4116). It is the SAME object the count and the rows
 		// query receive.
+		// The tenancy predicate, then visibility: only clusters of projects the caller may view (a
+		// project-scoped deny hides its clusters). Both are columns of `project_cluster` itself, so
+		// the single-table count below still sees exactly the rows the page returns.
+		const viewable = await cliViewableProjectIds(actor);
 		const scope: [SQL, ...(SQL | undefined)[]] = [
 			eq(projectCluster.org_id, actor.orgId),
+			// `inArray` over an empty set renders `false`: a caller who may view no project lists none.
+			inArray(projectCluster.project_id, viewable),
 		];
 
 		const { items, page } = await paginate({

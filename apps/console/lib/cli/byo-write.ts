@@ -6,10 +6,10 @@
 // rather than twice with a chance of disagreeing about which status a refusal deserves.
 
 import { NextResponse } from "next/server";
-import {
-	resolveCliProject,
-	resolveCliWriteEnvironment,
-} from "@/lib/cli/resolve-project";
+import type { Action } from "@/lib/authz/registry";
+import type { Actor } from "@/lib/authz/types";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
+import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError } from "@/lib/cli/respond";
 import { ProjectOrgRefusalError } from "@/lib/projects/refuse-other-org";
 
@@ -20,14 +20,17 @@ export type ByoScope =
 
 /**
  * Resolves the project and target environment a BYO write applies to: the project from the path
- * segment, scoped to the actor's org, and the environment from `?env=` or the project's default.
+ * segment, scoped to the actor's org and returned only when the actor may `action` that project
+ * (a missing project and a refused one are the same 404), and the environment from `?env=` or the
+ * project's default.
  */
 export async function resolveByoScope(
-	orgId: string,
+	actor: Actor,
 	projectRef: string,
 	req: Request,
+	action: Action,
 ): Promise<ByoScope> {
-	const project = await resolveCliProject(orgId, projectRef);
+	const project = await resolveCliProjectAuthorized(actor, projectRef, action);
 	if (!project) {
 		return {
 			error: NextResponse.json({ error: "Project not found" }, { status: 404 }),
