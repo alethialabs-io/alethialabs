@@ -1,9 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { FormSkeleton } from "@/components/skeletons/page-skeletons";
+import { ChooserSkeleton } from "@/components/create-project/create-project-skeletons";
+import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
+import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 
-/** Instant skeleton for the new-project route: the form, with no title above it. */
+/**
+ * Instant skeleton for the new-project route, in the shape of the screen a bare `/~/new` lands on:
+ * the source chooser (no title above it). The Configure step has its own boundary inside the page
+ * (`ConfigureSkeleton`), because a `loading.tsx` cannot read the `?scan=` / `?scratch=` that decide
+ * which of the two screens is coming.
+ */
 export default function NewProjectLoading() {
-	return <FormSkeleton fields={5} />;
+	return <ChooserSkeleton byoHelmEnabled={isByoHelmEnabled()} byoIacEnabled={isByoIacEnabled()} />;
 }

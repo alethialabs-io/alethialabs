@@ -64,6 +64,12 @@ vi.mock("@/lib/rpc/client", () => {
 					(name) => [name, { key: () => [`canvas-${name}-orpc`] }],
 				),
 			),
+			// The create flow's reads ride the jobs and projects topics (#6131).
+			projects: {
+				scanStatus: proc("projects.scanStatus"),
+				nameAvailability: proc("projects.nameAvailability"),
+				duplicateTargets: proc("projects.duplicateTargets"),
+			},
 			billing: {
 				summary: proc("billing.summary"),
 				paymentMethods: proc("billing.paymentMethods"),
