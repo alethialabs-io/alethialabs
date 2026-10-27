@@ -20,6 +20,7 @@ import {
 import type { DashboardBlock } from "@/types/jsonb.types";
 import { SaveArtifactButton } from "./artifact-controls";
 import { DashboardBlockBody } from "./bodies/blocks";
+import { useWidgetData } from "./live-refresh";
 import { WIDGET_REGISTRY } from "./registry";
 
 /** Drag intent a card hands to the grid (which owns the pointer math). */
@@ -51,6 +52,13 @@ export function WidgetBody({ widget }: { widget: WidgetPayload }) {
   );
 }
 
+/** A grid row's body, rendering the payload Query holds for it — the refreshed snapshot once its
+ * topic's hint has re-run the source (`live-refresh.ts`), the pinned one until then. */
+export function LiveWidgetBody({ widget }: { widget: ThreadWidget }) {
+  const live = useWidgetData(widget);
+  return <WidgetBody widget={{ source: widget.source, data: live.data }} />;
+}
+
 /**
  * One bento-grid widget: hairline card with a lean caption row (drag grip, live/frozen,
  * refresh, save, delete) over its registry/block body. Pointer users drag from the grip
@@ -68,13 +76,15 @@ export function WidgetCard({
   widget: ThreadWidget;
   onDragStart: (e: React.PointerEvent, id: string, mode: DragMode) => void;
   announce: (msg: string) => void;
-  /** Manual live-refresh (from the grid's polling hook). */
+  /** Re-run this widget's source now (the grid's refresher; hints do the same on their own). */
   onRefresh?: (id: string) => void;
 }) {
   const place = useWidgetGridStore((s) => s.place);
   const remove = useWidgetGridStore((s) => s.remove);
   const setMode = useWidgetGridStore((s) => s.setMode);
   const widgets = useWidgetGridStore((s) => s.widgets);
+  // The payload lives in Query (keyed per widget and owner); the store row carries the placement.
+  const live = useWidgetData(widget);
   const [kb, setKb] = useState<{ mode: DragMode; rect: GridRect } | null>(null);
   // Whether a remove has been REQUESTED. The trash sits two icons from Refresh in a hover-revealed
   // strip, and removing a widget deletes its row — there is no undo — so the click asks first
@@ -236,8 +246,8 @@ export function WidgetCard({
               {widget.mode === "live"
                 ? "Live: refreshes on its own. Click to freeze as a fixed snapshot."
                 : "Frozen: a fixed snapshot that won't update. Click to make it live."}
-              {widget.refreshed_at
-                ? ` · updated ${formatRelative(widget.refreshed_at)}`
+              {live.refreshed_at
+                ? ` · updated ${formatRelative(live.refreshed_at)}`
                 : ""}
             </TooltipContent>
           </Tooltip>
@@ -261,7 +271,7 @@ export function WidgetCard({
             </button>
           )}
           <SaveArtifactButton
-            widgets={[widget]}
+            widgets={[{ ...widget, ...live }]}
             kind="widget"
             iconOnly
             defaultName={widget.title}
@@ -277,7 +287,7 @@ export function WidgetCard({
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <WidgetBody widget={widget} />
+        <WidgetBody widget={{ source: widget.source, data: live.data }} />
       </div>
       {/* SE resize handle (pointer). */}
       <button
