@@ -38,7 +38,7 @@ function publicKey(): string {
 
 /** Registers `key` in `orgId` as its admin. */
 function register(userId: string, orgId: string, key: string) {
-	return runWithActor({ userId, orgId }, () =>
+	return runWithActor({ userId, orgId, credential: "session" }, () =>
 		registerOrgSigningKey({ provider: "aws", backend: "kms", key_ref: `arn:aws:kms:eu-west-1:1:key/${orgId}`, public_key: key }),
 	);
 }
