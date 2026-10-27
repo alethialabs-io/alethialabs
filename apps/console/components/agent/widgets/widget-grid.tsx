@@ -27,10 +27,10 @@ import {
 	type Occupancy,
 	occupancyExcluding,
 } from "@/lib/widgets/layout";
-import { useWidgetRefresh } from "@/hooks/use-widget-refresh";
 import { ArtifactBrowser, SaveArtifactButton } from "./artifact-controls";
 import { CellPrompt } from "./cell-prompt";
-import { type DragMode, WidgetBody, WidgetCard } from "./widget-card";
+import { useLiveWidgets, useWidgetLiveRefresh } from "./live-refresh";
+import { type DragMode, LiveWidgetBody, WidgetCard } from "./widget-card";
 
 /** Fixed row height (px) — pairs with `gap-2` (8px) for the cell math. */
 const ROW_H = 88;
@@ -62,8 +62,9 @@ export function WidgetGrid({ className }: { className?: string }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [drag, setDrag] = useState<DragState | null>(null);
 	const [liveMsg, setLiveMsg] = useState("");
-	// Live widgets poll on their registry cadence while the tab is visible.
-	const refresh = useWidgetRefresh();
+	// Live widgets re-run their source on their topic's hint from the org's change stream — no timer.
+	const refresh = useWidgetLiveRefresh();
+	const liveWidgets = useLiveWidgets(widgets);
 	const cellPrompt = useWidgetGridStore((s) => s.cellPrompt);
 	const setCellPrompt = useWidgetGridStore((s) => s.setCellPrompt);
 	const maxRow = widgets.reduce((m, w) => Math.max(m, w.pos_y + w.rowspan), 0);
@@ -263,7 +264,7 @@ export function WidgetGrid({ className }: { className?: string }) {
 					<span className="vx-eyebrow text-ui-3xs">Grid</span>
 					<span className="flex items-center gap-1.5">
 						<ArtifactBrowser threadId={threadId} />
-						<SaveArtifactButton widgets={widgets} kind="dashboard" />
+						<SaveArtifactButton widgets={liveWidgets} kind="dashboard" />
 					</span>
 				</div>
 				{widgets.length === 0 && !loading && (
@@ -351,7 +352,7 @@ export function WidgetGrid({ className }: { className?: string }) {
 						</span>
 					</div>
 					<div className="min-h-0 flex-1 overflow-hidden">
-						<WidgetBody widget={activeWidget} />
+						<LiveWidgetBody widget={activeWidget} />
 					</div>
 				</div>
 			) : null}

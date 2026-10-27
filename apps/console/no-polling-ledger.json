@@ -96,10 +96,6 @@
 			"count": 1,
 			"lifts": "unassigned"
 		},
-		"hooks/use-widget-refresh.ts :: setInterval": {
-			"count": 1,
-			"lifts": "#6114"
-		},
 		"lib/query/use-fleet-query.ts :: refetchInterval": {
 			"count": 1,
 			"lifts": "#6123"
