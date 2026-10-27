@@ -35,7 +35,7 @@ The spec asserts we **reach** the Deploy / pending-changes state and that the **
 present** — it does **not** click Deploy. Clicking Deploy queues real provisioning
 (`applyStagedChanges → provisionProject`), which requires a **verified** cloud identity and would
 then stand up real infrastructure. A truthful browser test stops here; it does not fake a `QUEUED`
-job or a live cluster. The clusters surface at the end correctly shows *"No clusters provisioned"* —
+job or a live cluster. The clusters surface at the end correctly shows *"No clusters under management"* —
 that is the truth for a hermetic run that never deployed.
 
 **To extend to an actual "DEPLOY job is QUEUED" assertion:** seed a *verified* `cloud_identity` for
