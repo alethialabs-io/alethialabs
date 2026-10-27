@@ -63,6 +63,8 @@ vi.mock("@/lib/rpc/client", () => {
 				transactions: proc("billing.transactions"),
 				planHistory: proc("billing.planHistory"),
 			},
+			// The clusters grid rides the clusters and environments topics (#6122).
+			clusters: { key: () => ["clusters-orpc"] },
 		},
 	};
 });

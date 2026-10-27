@@ -153,8 +153,16 @@ tier_separation:
 
   - path: lib/queries/usage-counts.ts
     suite: [tests/integration/usage-counts.test.ts, tests/integration/project-usage.test.ts]
-    symbols: [queryResourceCounts, queryRunningJobs, queryProjectResourceCounts, queryProjectRunningJobs]
-    reason: The resource-count and running-job gauges, including the project_cluster org join.
+    symbols:
+      [
+        queryResourceCounts,
+        queryRunningJobs,
+        queryProjectResourceCounts,
+        queryProjectRunningJobs,
+        managedClusterPredicate,
+        managedClusterEnvJoin,
+      ]
+    reason: The resource-count and running-job gauges, including which clusters count as under management.
 
   # ── lib/billing ───────────────────────────────────────────────────────────────────────────
   - path: lib/billing/ai-quota.ts
