@@ -37,6 +37,7 @@ import {
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { connectRoute } from "@/lib/connectors/helpers";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import {
@@ -133,6 +134,7 @@ function disconnectConnector(target: DisconnectTarget): Promise<ActionResult<unk
 export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
+	const hydrated = useHydrated();
 
 	const [viewMode, setViewMode] = useState<ViewMode>("card");
 	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -346,24 +348,29 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 					count={rows.length}
 				/>
 
-				<ConnectorsFilterBar
-					facets={facets}
-					end={
-						<>
-							<ViewToggle value={viewMode} onChange={setViewMode} />
-							<a
-								href="/docs/concepts/connectors"
-								target="_blank"
-								rel="noopener noreferrer"
-								title="What are connectors?"
-								className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
-							>
-								<BookOpen className="size-4" />
-								<span className="sr-only">What are connectors?</span>
-							</a>
-						</>
-					}
-				/>
+				{/* Disabled until React has hydrated: before that, a keystroke lands in server HTML that
+				    hydration then resets — the search the user typed (or a facet they opened) would be
+				    silently dropped. Native `disabled` on the fieldset covers every control in the bar. */}
+				<fieldset disabled={!hydrated} className="m-0 min-w-0 border-0 p-0">
+					<ConnectorsFilterBar
+						facets={facets}
+						end={
+							<>
+								<ViewToggle value={viewMode} onChange={setViewMode} />
+								<a
+									href="/docs/concepts/connectors"
+									target="_blank"
+									rel="noopener noreferrer"
+									title="What are connectors?"
+									className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
+								>
+									<BookOpen className="size-4" />
+									<span className="sr-only">What are connectors?</span>
+								</a>
+							</>
+						}
+					/>
+				</fieldset>
 
 				{/* Always mounted, so a screen reader announces the hint when its text appears. */}
 				<p role="status" className="-mt-4 text-ui-sm text-text-tertiary empty:hidden">
