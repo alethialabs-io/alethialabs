@@ -179,19 +179,30 @@ async function duplicateAction({
  * `sourceProjectName` identify the project being copied; `orgSlug` is used to navigate into the new
  * project's canvas on success.
  */
-export function DuplicateProjectDialog({
-	open,
-	onOpenChange,
-	sourceProjectId,
-	sourceProjectName,
-	orgSlug,
-}: {
+export function DuplicateProjectDialog(props: DuplicateProjectDialogProps) {
+	// Mounted only while open: the dialog's read (and its query client) belongs to the open dialog,
+	// so a project card or table row that merely CAN open it reads nothing and needs no provider —
+	// and every open starts from a fresh form.
+	return props.open ? <OpenDuplicateProjectDialog {...props} /> : null;
+}
+
+/** {@link DuplicateProjectDialog}'s props. */
+interface DuplicateProjectDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	sourceProjectId: string;
 	sourceProjectName: string;
 	orgSlug: string;
-}) {
+}
+
+/** The dialog itself, while it is open. */
+function OpenDuplicateProjectDialog({
+	open,
+	onOpenChange,
+	sourceProjectId,
+	sourceProjectName,
+	orgSlug,
+}: DuplicateProjectDialogProps) {
 	const router = useRouter();
 
 	// The source's design summary, the per-cloud default names and the target accounts — ONE GET

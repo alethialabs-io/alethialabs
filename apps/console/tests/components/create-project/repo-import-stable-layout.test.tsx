@@ -86,6 +86,8 @@ describe("RepositorySelector — one layout through load (F034)", () => {
 	});
 
 	it("unseeded, the first render is the loading row — never a Link panel the data will take away", async () => {
+		// The list lands this time, so the loading row can end (it waits for the repositories).
+		vi.mocked(fetchRepositoriesByProvider).mockResolvedValueOnce({ repositories: [] });
 		renderSelector(undefined);
 
 		expect(screen.queryByText("No Git accounts linked")).toBeNull();
