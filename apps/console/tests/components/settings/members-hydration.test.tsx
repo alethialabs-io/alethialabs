@@ -58,7 +58,6 @@ vi.mock("@/lib/rpc/client", async () => {
 });
 vi.mock("@/app/server/actions/members", () => ({
 	setMemberSuspended: vi.fn(),
-	setMemberSuspended: vi.fn(),
 }));
 vi.mock("@/app/server/actions/billing", () => ({
 	getCollaborationAccess: () => new Promise(() => {}),

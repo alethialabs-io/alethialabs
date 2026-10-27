@@ -57,20 +57,12 @@ const G4 = "00000000-0000-4000-8000-0000000000c4";
 const MISSING = "00000000-0000-4000-8000-0000000000cf";
 
 /**
- * Asserts that an action REFUSED: by kind (`"forbidden"`, `"validation"`, `"entitlement"`), or by
- * the sentence it shows the user (a domain refusal's message, matched as a pattern or substring).
+ * What an action's refusal says: its kind, and the sentence it shows the user (empty for a kind that
+ * carries none). Null when the action SUCCEEDED, so an assertion on it cannot pass on a success.
  */
-function expectRefused(
-	result: ActionResult<unknown>,
-	expected: "forbidden" | "validation" | "entitlement" | RegExp | string,
-): void {
-	expect(result.ok, "the action succeeded").toBe(false);
-	if (result.ok) return;
-	if (expected === "forbidden" || expected === "validation" || expected === "entitlement") {
-		expect(result.error.kind).toBe(expected);
-		return;
-	}
-	expect("message" in result.error ? result.error.message : "").toMatch(expected);
+function refusal(result: ActionResult<unknown>): { kind: string; message: string } | null {
+	if (result.ok) return null;
+	return { kind: result.error.kind, message: "message" in result.error ? result.error.message : "" };
 }
 
 /** The member row of an active member, the principal every allow-grant case assumes. */
@@ -172,13 +164,13 @@ describe("PDP gate (authorize) — denied actor is blocked before any DB write",
 	it("assignGrant answers forbidden and never inserts", async () => {
 		const { insertSpy } = mockDb();
 		deny();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				roleId: BUILTIN_ROLE_IDS.owner,
 				resourceType: "org",
-			}), "forbidden");
+			}))?.kind).toBe("forbidden");
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 		expect(emitAlertEventSafe).not.toHaveBeenCalled();
@@ -199,7 +191,7 @@ describe("PDP gate (authorize) — denied actor is blocked before any DB write",
 			},
 		]);
 		deny();
-		expectRefused(await revokeGrant({ id: G1 }), "forbidden");
+		expect(refusal(await revokeGrant({ id: G1 }))?.kind).toBe("forbidden");
 		expect(deleteSpy).not.toHaveBeenCalled();
 		expect(removeScopedGrant).not.toHaveBeenCalled();
 	});
@@ -223,13 +215,13 @@ describe("privilege ceiling — a grant above the actor's own permissions is blo
 	it("assignGrant rejects a single permission the actor lacks and never inserts", async () => {
 		const { insertSpy } = mockDb();
 		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "billing:manage_billing",
 				resourceType: "org",
-			}), "forbidden");
+			}))?.kind).toBe("forbidden");
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 	});
@@ -238,13 +230,13 @@ describe("privilege ceiling — a grant above the actor's own permissions is blo
 		const { insertSpy } = mockDb();
 		vi.mocked(rolePermissionKeys).mockResolvedValue(["billing:manage_billing"]);
 		can.mockResolvedValue({ allowed: false, reason: "no_grant" });
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				roleId: BUILTIN_ROLE_IDS.owner,
 				resourceType: "org",
-			}), "forbidden");
+			}))?.kind).toBe("forbidden");
 		expect(insertSpy).not.toHaveBeenCalled();
 	});
 
@@ -267,13 +259,13 @@ describe("a member who is not active gets no allow grant (#5472)", () => {
 	// `ensureMemberGrant` refuses a suspended member; before #5472 this API was the way around it.
 	it("assignGrant refuses an ALLOW grant to a suspended member and never inserts; a deny and an active member still go through", async () => {
 		const suspended = mockDb([], new Map([[member, [{ status: "suspended" }]]]));
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				roleId: BUILTIN_ROLE_IDS.admin,
 				resourceType: "org",
-			}), /not an active member/);
+			}))?.message).toMatch(/not an active member/);
 		expect(suspended.insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 
@@ -303,21 +295,21 @@ describe("a user with NO member row gets no allow grant (#5472)", () => {
 	// A grant planted for a non-member would go live the moment they joined the org.
 	it("assignGrant refuses an org-wide or scoped ALLOW grant to a user with no member row and never inserts; a deny still goes through", async () => {
 		const none = mockDb([], new Map([[member, []]]));
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				roleId: BUILTIN_ROLE_IDS.admin,
 				resourceType: "org",
-			}), /not an active member/);
-		expectRefused(await assignGrant({
+			}))?.message).toMatch(/not an active member/);
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "project:view",
 				resourceType: "project",
 				resourceId: "p-1",
-			}), /not an active member/);
+			}))?.message).toMatch(/not an active member/);
 		expect(none.insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 
@@ -342,7 +334,7 @@ describe("a user with NO member row gets no allow grant (#5472)", () => {
 		// A server action's argument is a claim the compiler cannot keep: the wire carries whatever
 		// the request says, which is exactly what this sends.
 		// @ts-expect-error — no `effect`, as a hand-built request may omit it
-		expectRefused(await assignGrant(noEffect), "validation");
+		expect(refusal(await assignGrant(noEffect))?.kind).toBe("validation");
 		const oddPrincipal = {
 			principalType: "service",
 			principalId: "u-1",
@@ -351,7 +343,7 @@ describe("a user with NO member row gets no allow grant (#5472)", () => {
 			resourceType: "org",
 		};
 		// @ts-expect-error — a principal type the schema does not name
-		expectRefused(await assignGrant(oddPrincipal), "validation");
+		expect(refusal(await assignGrant(oddPrincipal))?.kind).toBe("validation");
 		expect(none.insertSpy).not.toHaveBeenCalled();
 	});
 });
@@ -363,13 +355,13 @@ describe("requireAccessAdmin gate", () => {
 			userId: "user-1",
 			entitlements: undefined,
 		} as never);
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-9",
 				effect: "allow",
 				permissionKey: "project:view",
 				resourceType: "project",
-			}), "entitlement");
+			}))?.kind).toBe("entitlement");
 	});
 
 	it("revokeGrant rejects an actor without the customRoles entitlement", async () => {
@@ -378,31 +370,31 @@ describe("requireAccessAdmin gate", () => {
 			userId: "user-1",
 			entitlements: { customRoles: false },
 		} as never);
-		expectRefused(await revokeGrant({ id: G1 }), "entitlement");
+		expect(refusal(await revokeGrant({ id: G1 }))?.kind).toBe("entitlement");
 	});
 });
 
 describe("assignGrant validation", () => {
 	it("rejects when both a role and a permission are provided", async () => {
 		mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				roleId: "r-1",
 				permissionKey: "project:view",
 				resourceType: "project",
-			}), /exactly one/);
+			}))?.message).toMatch(/exactly one/);
 	});
 
 	it("rejects when neither a role nor a permission is provided", async () => {
 		mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				resourceType: "project",
-			}), /exactly one/);
+			}))?.message).toMatch(/exactly one/);
 	});
 
 	// `"org"` is the DEFAULT resource kind here and on the CLI route, so a caller who names a
@@ -415,14 +407,14 @@ describe("assignGrant validation", () => {
 	// keeps that kind. Without them, over-refusing here would pass this test and break both.
 	it("rejects an org-kind grant that also carries a resource id", async () => {
 		mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "project:view",
 				resourceType: "org",
 				resourceId: "11111111-2222-3333-4444-555555555555",
-			}), /cannot carry a resource id/);
+			}))?.message).toMatch(/cannot carry a resource id/);
 	});
 
 	// The kind half of the scope (#4734). `resourceType` is a bare `string` on the wire, and since
@@ -434,14 +426,14 @@ describe("assignGrant validation", () => {
 	// A validator that refused everything would close this bug and break the product.
 	it("rejects an unrecognised resource kind and never inserts", async () => {
 		const { insertSpy } = mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "deny",
 				permissionKey: "project:deploy",
 				resourceType: "projects",
 				resourceId: "11111111-2222-3333-4444-555555555555",
-			}), UNKNOWN_RESOURCE_TYPE);
+			}))?.message).toMatch(UNKNOWN_RESOURCE_TYPE);
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 	});
@@ -466,13 +458,13 @@ describe("assignGrant validation", () => {
 	// given, so an unrefused typo becomes a real ORGANIZATION-WIDE grant rather than a scoped one.
 	it("rejects an unrecognised resource kind sent without a resource id", async () => {
 		const { insertSpy } = mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "project:view",
 				resourceType: "projects",
-			}), UNKNOWN_RESOURCE_TYPE);
+			}))?.message).toMatch(UNKNOWN_RESOURCE_TYPE);
 		expect(insertSpy).not.toHaveBeenCalled();
 	});
 
@@ -481,14 +473,14 @@ describe("assignGrant validation", () => {
 	// (resource_id is uuid) with an unnamed error. Nothing was stored; it is now refused by name.
 	it("rejects an empty resource id on a scoped kind and never inserts", async () => {
 		const { insertSpy } = mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "project:view",
 				resourceType: "project",
 				resourceId: "",
-			}), EMPTY_RESOURCE_ID);
+			}))?.message).toMatch(EMPTY_RESOURCE_ID);
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 	});
@@ -524,13 +516,13 @@ describe("assignGrant validation", () => {
 
 	it("rejects an unknown permission key", async () => {
 		mockDb();
-		expectRefused(await assignGrant({
+		expect(refusal(await assignGrant({
 				principalType: "user",
 				principalId: "u-1",
 				effect: "allow",
 				permissionKey: "project:nuke",
 				resourceType: "project",
-			}), /Unknown permission/);
+			}))?.message).toMatch(/Unknown permission/);
 	});
 });
 
@@ -808,16 +800,14 @@ describe("assignGrant refuses a reference outside the actor's org", () => {
 			vi.mocked(grantBindingViolation).mockResolvedValueOnce(reason);
 			// The reason is the server's (logged with the PDP's denial); the client is told only that
 			// the grant was refused — it never learns which of the three references was foreign.
-			expectRefused(
-				await assignGrant({
+			expect(refusal(await assignGrant({
 					principalType: "user",
 					principalId: "u-1",
 					effect: "allow",
 					roleId: "role-x",
 					resourceType: "org",
 				}),
-				"forbidden",
-			);
+				"forbidden")?.message).toMatch();
 		}
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(can).not.toHaveBeenCalled();
