@@ -114,9 +114,9 @@ beforeEach(() => {
 	h.reauthorize.mockReset().mockResolvedValue({
 		ok: true,
 		actor: ACME,
-		caps: { fleetView: false, manageSupport: false },
+		caps: { fleetView: false, manageSupport: false, viewAlerts: false },
 	});
-	h.capabilitiesOf.mockReset().mockResolvedValue({ fleetView: false, manageSupport: false });
+	h.capabilitiesOf.mockReset().mockResolvedValue({ fleetView: false, manageSupport: false, viewAlerts: false });
 	h.startRealtimeBus.mockReset();
 	const transport = {
 		tap: (cb: (v: ChangeValue) => void) => {
@@ -423,7 +423,7 @@ describe("re-authorisation every 60 s", () => {
 		h.reauthorize.mockResolvedValue({
 			ok: true,
 			actor: ACME,
-			caps: { fleetView: true, manageSupport: false },
+			caps: { fleetView: true, manageSupport: false, viewAlerts: false },
 		});
 		const ac = new AbortController();
 		const res = await GET(request("/acme/~/events", ac.signal));

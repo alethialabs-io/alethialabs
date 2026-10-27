@@ -67,7 +67,7 @@ describe("reauthorize", () => {
 		expect(result).toEqual({
 			ok: true,
 			actor: { userId: USER, orgId: ORG, credential: "session" },
-			caps: { fleetView: false, manageSupport: false },
+			caps: { fleetView: false, manageSupport: false, viewAlerts: false },
 		});
 		// The session is read from the SNAPSHOTTED cookie, not from a request scope.
 		const headers: Headers = h.getSession.mock.calls[0][0].headers;
@@ -130,14 +130,16 @@ describe("reauthorize", () => {
 });
 
 describe("capabilitiesOf", () => {
-	it("asks the PDP with can() for fleet view and manage_support", async () => {
+	it("asks the PDP with can() for fleet view, manage_support and view_alerts", async () => {
 		h.can.mockImplementation(async (_a: unknown, action: string) => ({
-			allowed: action === "view",
+			allowed: action === "view" || action === "view_alerts",
 		}));
 		await expect(capabilitiesOf({ credential: "session", userId: USER, orgId: ORG })).resolves.toEqual({
 			fleetView: true,
 			manageSupport: false,
+			viewAlerts: true,
 		});
+		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view_alerts", { type: "alert" });
 		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view", { type: "fleet" });
 		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "manage_support", {
 			type: "support_case",
@@ -149,6 +151,7 @@ describe("capabilitiesOf", () => {
 		await expect(capabilitiesOf({ credential: "session", userId: USER, orgId: ORG })).resolves.toEqual({
 			fleetView: false,
 			manageSupport: false,
+			viewAlerts: false,
 		});
 	});
 });

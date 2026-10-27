@@ -3,7 +3,7 @@
 
 // RocketChat channel sender (lib/alerts/channels/rocketchat.ts). Mocked boundary: stub
 // decryptSecret (so we don't need a real crypto key) and the SSRF-guarded network sink
-// safeFetch (the sender's only outbound call); assert the POSTed {text, attachments}
+// safeDeliver (the sender's only outbound call); assert the POSTed {text, attachments}
 // payload — severity→colour, field building, optional link, the test (verify) synthetic
 // context, and the missing-URL / non-2xx error paths. (The SSRF guard is covered by
 // tests/unit/ssrf-guard.test.ts.)
@@ -12,16 +12,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/crypto/secrets", () => ({ decryptSecret: vi.fn() }));
-vi.mock("@/lib/net/ssrf-guard", () => ({ safeFetch: vi.fn() }));
+vi.mock("@/lib/net/ssrf-guard", () => ({ safeDeliver: vi.fn() }));
 
 import { rocketchatSender } from "@/lib/alerts/channels/rocketchat";
 import { decryptSecret } from "@/lib/crypto/secrets";
-import { safeFetch } from "@/lib/net/ssrf-guard";
+import { safeDeliver } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertEventContext } from "@/types/jsonb.types";
 
-/** The mocked outbound sink — the sender POSTs through safeFetch, not global fetch. */
-const fetchMock = vi.mocked(safeFetch);
+/** The mocked outbound sink — the sender POSTs through safeDeliver, not global fetch. */
+const fetchMock = vi.mocked(safeDeliver);
 
 const WEBHOOK = "https://chat.example.com/hooks/abc/xyz";
 
@@ -43,7 +43,7 @@ function lastBody(): {
 	}[];
 } {
 	const call = fetchMock.mock.calls.at(-1);
-	if (!call) throw new Error("safeFetch was not called");
+	if (!call) throw new Error("safeDeliver was not called");
 	return JSON.parse(call[1]?.body as string);
 }
 
