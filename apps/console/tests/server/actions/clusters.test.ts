@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 interface Signed {
 	userId: string;
 	orgId: string;
+	credential: "session";
 }
 
 const h = vi.hoisted(() => {
@@ -41,9 +42,9 @@ beforeEach(() => {
 
 describe("getClusters", () => {
 	it("reads the clusters procedure's definition for the signed-in actor", async () => {
-		h.actor = { userId: "u1", orgId: "o1" };
+		h.actor = { userId: "u1", orgId: "o1", credential: "session" };
 		expect(await getClusters()).toEqual([{ id: "p1" }]);
-		expect(h.read).toEqual([{ userId: "u1", orgId: "o1" }]);
+		expect(h.read).toEqual([{ userId: "u1", orgId: "o1", credential: "session" }]);
 	});
 
 	it("answers no clusters, and reads nothing, without a signed-in actor", async () => {

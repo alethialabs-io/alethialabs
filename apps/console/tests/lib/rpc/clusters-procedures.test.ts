@@ -85,10 +85,10 @@ function fakeTx() {
 	};
 }
 
-import { ForbiddenError } from "@/lib/authz/types";
+import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { readClusterList, readClusters } from "@/lib/rpc/procedures/clusters";
 
-const ACTOR = { userId: "u1", orgId: "o1" };
+const ACTOR: Actor = { userId: "u1", orgId: "o1", credential: "session" };
 
 /** One joined base row (one cluster); each test overrides what it is about. */
 function baseRow(over: Record<string, unknown>) {

@@ -186,13 +186,13 @@ describeIfDb("usage-counts queries", () => {
 
 	it("the Clusters page lists exactly the clusters the Usage page counts (F005)", async () => {
 		// UNFILTERED: the list scopes on the address's org itself, so it is compared whole.
-		const listed = (await readClusters({ userId: ORG, orgId: ORG })).map((c) => c.project_cluster.id);
+		const listed = (await readClusters({ userId: ORG, orgId: ORG, credential: "session" })).map((c) => c.project_cluster.id);
 		expect(new Set(listed)).toEqual(new Set([...managedIds(A_CASES), ...managedIds(B_CASES)]));
 		expect(listed).toHaveLength((await queryResourceCounts(ORG)).clusters);
 	});
 
 	it("a member reading the org from another personal scope (userId ≠ orgId) sees the org's count, not their own projects", async () => {
-		const listed = (await readClusters({ userId: MEMBER, orgId: ORG })).map((c) => c.project_cluster.id);
+		const listed = (await readClusters({ userId: MEMBER, orgId: ORG, credential: "session" })).map((c) => c.project_cluster.id);
 		expect(listed).not.toContain(clusterIds.get("personal"));
 		expect(new Set(listed)).toEqual(new Set([...managedIds(A_CASES), ...managedIds(B_CASES)]));
 		expect(listed).toHaveLength((await queryResourceCounts(ORG)).clusters);
@@ -200,7 +200,7 @@ describeIfDb("usage-counts queries", () => {
 
 	it("lists each cluster with its OWN environment's name and lifecycle", async () => {
 		const byId = new Map(
-			(await readClusters({ userId: ORG, orgId: ORG })).map((c) => [c.project_cluster.id, c]),
+			(await readClusters({ userId: ORG, orgId: ORG, credential: "session" })).map((c) => [c.project_cluster.id, c]),
 		);
 		const failed = byId.get(clusterIds.get("last-run-failed") ?? "");
 		expect([failed?.environment_stage, failed?.status, failed?.project_cluster.status]).toEqual([
@@ -224,7 +224,7 @@ describeIfDb("usage-counts queries", () => {
 		// bypasses RLS and would see every org's rows.
 		if (!APP_ROLE_DISTINCT) return;
 		const OTHER = randomUUID();
-		const foreign = (await readClusters({ userId: OTHER, orgId: OTHER })).map((c) => c.project_cluster.id);
+		const foreign = (await readClusters({ userId: OTHER, orgId: OTHER, credential: "session" })).map((c) => c.project_cluster.id);
 		const mine = new Set(clusterIds.values());
 		expect(foreign.filter((id) => mine.has(id))).toEqual([]);
 	});

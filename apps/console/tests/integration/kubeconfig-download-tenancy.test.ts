@@ -59,8 +59,8 @@ const KEY = "Qw9LmFlmUUWmsbonQCRIe9ZvA6LdV313U8aNfX0AwAw";
 
 /** Points the stubbed guard at `userId` in `orgId`: the actor the address resolved. */
 function actingAs(userId: string, orgId: string): void {
-	vi.mocked(authorize).mockResolvedValue({ userId, orgId });
-	vi.mocked(authorizeQuiet).mockResolvedValue({ userId, orgId });
+	vi.mocked(authorize).mockResolvedValue({ userId, orgId, credential: "session" });
+	vi.mocked(authorizeQuiet).mockResolvedValue({ userId, orgId, credential: "session" });
 }
 
 /** Mint rows on `clusterId`. */
