@@ -26,6 +26,7 @@
 import {
 	type QueryClient,
 	type QueryKey,
+	queryOptions,
 	skipToken,
 	useQueries,
 	useQuery,
@@ -215,12 +216,12 @@ export function useWidgetLiveRefresh(): (id: string) => void {
 
 /** The Query options of one widget's payload: seeded with its grid row, never fetched by Query. */
 function widgetDataQuery(widget: ThreadWidget) {
-	return {
+	return queryOptions({
 		queryKey: widgetQueryKey(widget),
 		queryFn: skipToken,
 		initialData: widget,
 		staleTime: Number.POSITIVE_INFINITY,
-	};
+	});
 }
 
 /**
@@ -232,10 +233,29 @@ export function useWidgetData(widget: ThreadWidget): Pick<ThreadWidget, "data" |
 	return liveData(data, widget);
 }
 
+/** Narrows a cached entry to the row shape `liveData` reads (`useQueries` does not carry each
+ * entry's type through a mapped list). */
+function isWidgetRow(value: unknown): value is Pick<ThreadWidget, "data" | "refreshed_at" | "updated_at"> {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"data" in value &&
+		typeof value.data === "object" &&
+		value.data !== null &&
+		"updated_at" in value &&
+		(value.updated_at instanceof Date || typeof value.updated_at === "string") &&
+		"refreshed_at" in value
+	);
+}
+
 /** Every grid row with its payload from Query — what saving the whole grid as a dashboard copies. */
 export function useLiveWidgets(widgets: ThreadWidget[]): ThreadWidget[] {
 	return useQueries({
 		queries: widgets.map(widgetDataQuery),
-		combine: (results) => widgets.map((w, i) => ({ ...w, ...liveData(results[i]?.data, w) })),
+		combine: (results) =>
+			widgets.map((w, i) => {
+				const fromQuery = results[i]?.data;
+				return { ...w, ...liveData(isWidgetRow(fromQuery) ? fromQuery : undefined, w) };
+			}),
 	});
 }
