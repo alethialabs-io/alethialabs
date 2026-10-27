@@ -105,11 +105,14 @@ export const TOPIC_KEYS = {
 		[...DESTROY_HOLD_KEY],
 		orpc.clusters.key(),
 	],
+	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
+	// (switcher, breadcrumbs, palette), the setup guide, usage, and the project's Settings → General.
 	projects: (): QueryKey[] => [
 		orpc.workspace.projects.key(),
 		orpc.workspace.setupGuide.key(),
 		orpc.usage.resources.key(),
 		agentWidgetKey("projects"),
+		orpc.settings.project.key(),
 	],
 	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management;
 	// the agent grid's clusters widget re-runs its source on the same hint (#6207).
@@ -155,4 +158,7 @@ export const TOPIC_KEYS = {
 		orpc.overview.usage.key(),
 		agentWidgetKey("billing"),
 	],
+	// The org row changed (#6128): its name, slug and logo in the switcher and breadcrumb (the
+	// workspace context) and Settings → General.
+	organization: (): QueryKey[] => [orpc.workspace.context.key(), orpc.settings.org.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters", "projects", "organization"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -256,6 +256,53 @@ describe("keysFor — alerts reach only members who may view_alerts (#6125)", ()
 
 	it("a notice with no org routes nowhere", () => {
 		expect(keysFor(alerts({ o: null }))).toEqual([]);
+	});
+});
+
+describe("keysFor — #6128: a project row and the organization row", () => {
+	/** A projects notice with the trigger's shape: `p` is the project's own id. */
+	const project = (over: Partial<ChangeNotice> = {}): ChangeNotice => ({
+		kind: "change",
+		t: "projects",
+		id: PROJECT,
+		o: ORG,
+		u: USER,
+		p: PROJECT,
+		...over,
+	});
+
+	it("a project routes to its org's arm only, PDP-filtered on the project itself", () => {
+		expect(keysFor(project())).toEqual([{ key: `o:${ORG}`, filterProject: PROJECT }]);
+	});
+
+	it("a personal-scope project (org_id = its owner) reaches that person's personal stream", () => {
+		const keys = keysFor(project({ o: USER })).map((r) => r.key);
+		const personal = subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false, viewAlerts: false });
+		expect(keys.every((k) => personal.includes(k))).toBe(true);
+		expect(keys).toEqual([`o:${USER}`]);
+	});
+
+	it("the project's creator is not an RLS arm: no owner route", () => {
+		expect(keysFor(project()).some((r) => r.key.startsWith("ou:"))).toBe(false);
+	});
+
+	it("a project with no org routes nowhere", () => {
+		expect(keysFor(project({ o: null }))).toEqual([]);
+	});
+
+	it("the organization row routes to that org's arm, unfiltered — every member reads it", () => {
+		expect(keysFor({ kind: "change", t: "organization", id: ORG, o: ORG, u: null, p: null })).toEqual([
+			{ key: `o:${ORG}`, filterProject: null },
+		]);
+	});
+
+	it("the organization row never reaches another org's stream", () => {
+		const OTHER = "55555555-5555-4555-8555-555555555555";
+		const keys = keysFor({ kind: "change", t: "organization", id: OTHER, o: OTHER, u: null, p: null }).map(
+			(r) => r.key,
+		);
+		const streamA = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: true, manageSupport: true, viewAlerts: true });
+		expect(keys.filter((k) => streamA.includes(k))).toEqual([]);
 	});
 });
 

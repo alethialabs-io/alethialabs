@@ -9,6 +9,7 @@ import { UnauthorizedError } from "@/lib/auth/errors";
 import { ForbiddenError } from "@/lib/authz/types";
 import {
 	ActionRefusal,
+	FieldRefusal,
 	type ActionError,
 	type ActionResult,
 	type FieldErrors,
@@ -35,6 +36,8 @@ export interface ActionDefinition<S extends z.ZodType, T> {
  *   `unstable_rethrow`, so an action can still navigate.
  * - `ForbiddenError` (PDP deny) → `forbidden`; `UnauthorizedError` → `unauthenticated`.
  * - `ActionRefusal` → its declared kind, with its message shown verbatim.
+ * - `FieldRefusal` → `validation`, with its per-field messages (a refusal only the server can
+ *   decide, such as a slug another organization holds).
  * - Anything else → `unexpected` with a reference id that is logged server-side; the original
  *   message never reaches the client (internals and validator text do not leak — F013).
  *
@@ -78,6 +81,9 @@ function mapThrown(error: unknown): ActionError {
 			return { kind: "entitlement", message: error.message, feature: error.feature ?? "" };
 		}
 		return { kind: error.kind, message: error.message };
+	}
+	if (error instanceof FieldRefusal) {
+		return { kind: "validation", message: error.message, fields: error.fields };
 	}
 	if (error instanceof ForbiddenError) {
 		return { kind: "forbidden", message: "You don't have permission to do that." };

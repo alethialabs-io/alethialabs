@@ -35,16 +35,8 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 		select({ activeOrgId: "org_1", fetchWorkspace: vi.fn() }),
 }));
 vi.mock("@/app/server/actions/org-settings", () => ({
-	getOrgSettings: vi.fn(async () => ({
-		name: "Acme",
-		slug: "acme",
-		logo: null,
-		description: "",
-		primaryAddress: null,
-		region: "eu-west-1",
-		defaultEnv: "production",
-		terraformVersion: "1.9.0",
-	})),
+	saveOrgGeneral: vi.fn(),
+	deleteOrganization: vi.fn(),
 }));
 // No linked provider: the selector renders its "No Git accounts linked" branch, which is the one
 // the audit user sees.
@@ -63,7 +55,7 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 }));
 
 const { RepositorySelector } = await import("@/components/repository-selector");
-const { OrgGeneral } = await import("@/components/settings/general/org-general");
+const { renderOrgGeneral } = await import("../support/general-settings");
 const { CreateProjectForm } = await import(
 	"@/components/create-project/create-project-form"
 );
@@ -138,7 +130,7 @@ describe("RepositorySelector — Link buttons", () => {
 
 describe("OrgGeneral — Transfer", () => {
 	it("is disabled and says ownership transfer is coming soon", async () => {
-		render(<OrgGeneral />);
+		renderOrgGeneral();
 		const transfer = await screen.findByRole("button", { name: "Transfer" });
 		expect(transfer).toBeDisabled();
 		expect(transfer).toHaveAccessibleDescription("Ownership transfer is coming soon");
