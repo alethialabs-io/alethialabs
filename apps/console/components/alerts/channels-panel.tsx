@@ -73,7 +73,7 @@ interface ChannelsPanelProps {
 
 /** Channels master-detail. */
 export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
-	const { channels, policies, canManage, encryptionConfigured } = hub;
+	const { channels, policies, policiesKnown, canManage, encryptionConfigured } = hub;
 	const selectedId = useAlertsSection((s) => s.selectedChannelId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedChannelId);
 
@@ -217,9 +217,13 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 				onOpenChange={(o) => !o && setDeleteTarget(null)}
 				title={`Delete channel "${deleteTarget?.name ?? ""}"?`}
 				description={
-					deleteTarget && policiesUsing(deleteTarget.id).length > 0
-						? `${policiesUsing(deleteTarget.id).length} policy/policies route here and will lose this destination. Delivery history is kept. This cannot be undone.`
-						: "Delivery history is kept. This cannot be undone."
+					// Without the policies read there is no answer to "what routes here" — say so rather
+					// than imply nothing does.
+					!policiesKnown
+						? "Couldn't check which policies route here; any that do will lose this destination. Delivery history is kept. This cannot be undone."
+						: deleteTarget && policiesUsing(deleteTarget.id).length > 0
+							? `${policiesUsing(deleteTarget.id).length} policy/policies route here and will lose this destination. Delivery history is kept. This cannot be undone.`
+							: "Delivery history is kept. This cannot be undone."
 				}
 				confirmLabel="Delete channel"
 				pendingLabel="Deleting…"

@@ -99,6 +99,7 @@ const hub: AlertsHub = {
 	canManage: true,
 	encryptionConfigured: true,
 	conditionOptions: { projects: [], jobTypes: [], resourceTypes: [], actions: [] },
+	policiesKnown: true,
 };
 
 /** What every answered view below shares: the read has answered, and nothing is pending. */

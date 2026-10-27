@@ -115,6 +115,8 @@ export function PolicySheet({
 }: PolicySheetProps) {
 	const { categories, channels, advancedAlerting, conditionOptions } = hub;
 	const [confirmDiscard, setConfirmDiscard] = useState(false);
+	// A server validation message that names no field on this sheet — shown under the form, never lost.
+	const [formError, setFormError] = useState<string | null>(null);
 	const wasOpen = useRef(false);
 	// The switch's name is the visible row title, by reference — `role="switch"` takes its name
 	// from the author only, so the text beside it names nothing unless it is pointed at (#4352).
@@ -140,8 +142,10 @@ export function PolicySheet({
 		onValidationError: (fields) => {
 			for (const [path, messages] of Object.entries(fields)) {
 				const message = messages?.[0];
+				if (!message) continue;
 				const field = policyFieldOf(path);
-				if (message && field) form.setError(field, { message });
+				if (field) form.setError(field, { message });
+				else setFormError(message);
 			}
 		},
 	});
@@ -158,6 +162,7 @@ export function PolicySheet({
 
 	const onSubmit = form.handleSubmit((values) => {
 		if (saving) return;
+		setFormError(null);
 		const input: PolicyInput = {
 			name: values.name.trim(),
 			description: values.description.trim() || undefined,
@@ -364,6 +369,11 @@ export function PolicySheet({
 					</section>
 				</div>
 
+				{formError && (
+					<p role="alert" className="border-t border-border/60 px-4 pt-3 text-destructive text-xs">
+						{formError}
+					</p>
+				)}
 				<SheetFooter className="flex-row items-center justify-between border-t border-border/60 p-4">
 					<Button
 						variant="ghost"

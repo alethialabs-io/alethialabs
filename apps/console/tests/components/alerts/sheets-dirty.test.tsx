@@ -25,6 +25,14 @@ vi.mock("@/app/server/actions/alerts", () => ({
 	addChannel: (input: unknown) => addChannel(input),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// The routing picker is a popover the tests do not need to drive: a stand-in that binds one channel.
+vi.mock("@/components/alerts/channel-routing", () => ({
+	ChannelRouting: ({ onChange }: { onChange: (next: { id: string }[]) => void }) => (
+		<button type="button" onClick={() => onChange([{ id: "22222222-2222-4222-8222-222222222222" }])}>
+			bind a channel
+		</button>
+	),
+}));
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc({}).orpc };
@@ -42,6 +50,7 @@ const hub: AlertsHub = {
 	advancedAlerting: false,
 	canManage: true,
 	encryptionConfigured: true,
+	policiesKnown: true,
 };
 
 /** The first live, non-security event in the real catalog, as the matrix labels it. */
@@ -105,6 +114,24 @@ describe("the policy sheet tracks dirty state", () => {
 		await user.click(screen.getByRole("button", { name: "Create policy" }));
 		expect(await screen.findByText("Bind at least one channel.")).toBeInTheDocument();
 		expect(createPolicy).not.toHaveBeenCalled();
+		expect(onOpenChange).not.toHaveBeenCalled();
+	});
+});
+
+describe("the policy sheet never loses a server validation message", () => {
+	it("a message naming no field on the sheet is shown under the form, and the sheet stays open", async () => {
+		createPolicy.mockResolvedValue({
+			ok: false,
+			error: { kind: "validation", message: "Invalid", fields: { recipient: ["Recipient is too long."] } },
+		});
+		const user = userEvent.setup();
+		const { onOpenChange } = renderPolicySheet();
+		await user.type(screen.getByLabelText("Name"), "Prod failures");
+		await pickEvent(user);
+		await user.click(screen.getByRole("button", { name: "bind a channel" }));
+		await user.click(screen.getByRole("button", { name: "Create policy" }));
+		expect(await screen.findByText("Recipient is too long.")).toBeInTheDocument();
+		expect(createPolicy).toHaveBeenCalledTimes(1);
 		expect(onOpenChange).not.toHaveBeenCalled();
 	});
 });

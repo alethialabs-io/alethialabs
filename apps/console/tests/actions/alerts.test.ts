@@ -40,6 +40,7 @@ import { getChannelSender } from "@/lib/alerts/channels";
 import { invalidateOrgRules } from "@/lib/alerts/rule-cache";
 import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets";
 import { getServiceDb } from "@/lib/db";
+import { SsrfError } from "@/lib/net/ssrf-guard";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
@@ -316,6 +317,21 @@ describe("verifyChannel", () => {
 		expect(await verifyChannel({ id: CH })).toEqual({ ok: true, data: { verified: true } });
 		expect(senderVerify).toHaveBeenCalledWith({ id: CH, type: "slack" });
 		expect(setSpy.mock.calls[0][0].is_verified).toBe(true);
+	});
+
+	it("a destination the outbound guard refuses gets one fixed sentence, never the guard's own words", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		mockDb({ selectRows: [{ id: CH, type: "webhook" }] });
+		senderVerify.mockRejectedValue(
+			new SsrfError("Refusing to connect to non-public address 10.1.2.3 for host internal.example"),
+		);
+		const result = await verifyChannel({ id: CH });
+		expect(result).toEqual({
+			ok: true,
+			data: { verified: false, error: "This destination isn't publicly reachable over HTTPS." },
+		});
+		expect(JSON.stringify(result)).not.toContain("10.1.2.3");
+		warn.mockRestore();
 	});
 
 	it("maps a network failure to a friendly reachability message", async () => {

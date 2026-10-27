@@ -13,4 +13,10 @@ import type { AlertsSettings } from "@/lib/rpc/procedures/alerts";
 export interface AlertsHub extends AlertsSettings {
 	policies: PolicyDTO[];
 	channels: ChannelDTO[];
+	/**
+	 * Whether `policies` is an ANSWER. False while the policies read is pending or after it failed,
+	 * when `policies` is `[]` without meaning "no policies" — so nothing may claim that none route
+	 * to a channel.
+	 */
+	policiesKnown: boolean;
 }

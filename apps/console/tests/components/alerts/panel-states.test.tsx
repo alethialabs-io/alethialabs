@@ -75,6 +75,7 @@ const hub: AlertsHub = {
 	advancedAlerting: false,
 	canManage: true,
 	encryptionConfigured: true,
+	policiesKnown: true,
 };
 
 type State = "loading" | "error" | "ready";
@@ -205,6 +206,37 @@ describe("deleting a channel has a pending state", () => {
 		// Back to the idle label, still asking.
 		expect(await screen.findByRole("button", { name: /^delete channel$/i })).toBeEnabled();
 		expect(screen.getByText(/delete channel "ops mail"\?/i)).toBeInTheDocument();
+	});
+});
+
+describe("the delete warning says only what the policies read answered", () => {
+	it("with the policies unread, it says it couldn't check — never that nothing routes here", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChannelsPanel
+				hub={{ ...hub, channels: [channel], policiesKnown: false }}
+				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				onOpenPolicy={() => {}}
+			/>,
+			{ wrapper: queryWrapper() },
+		);
+		await user.click(screen.getByRole("button", { name: /delete channel/i }));
+		expect(await screen.findByText(/couldn't check which policies route here/i)).toBeInTheDocument();
+	});
+
+	it("with the policies read and none routing here, it does not claim it couldn't check", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChannelsPanel
+				hub={{ ...hub, channels: [channel] }}
+				view={{ ...channelsView("ready"), rows: [channel], count: 1, total: 1 }}
+				onOpenPolicy={() => {}}
+			/>,
+			{ wrapper: queryWrapper() },
+		);
+		await user.click(screen.getByRole("button", { name: /delete channel/i }));
+		expect(await screen.findByText("Delivery history is kept. This cannot be undone.")).toBeInTheDocument();
+		expect(screen.queryByText(/couldn't check/i)).toBeNull();
 	});
 });
 

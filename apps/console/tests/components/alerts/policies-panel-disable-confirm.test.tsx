@@ -83,6 +83,7 @@ const hub: AlertsHub = {
 	advancedAlerting: false,
 	canManage: true,
 	encryptionConfigured: true,
+	policiesKnown: true,
 };
 
 /** An answered policies view over `rows`. */

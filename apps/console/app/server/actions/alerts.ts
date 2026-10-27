@@ -24,6 +24,7 @@ import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { getChannelSender } from "@/lib/alerts/channels";
 import { isSecurityKey } from "@/lib/alerts/catalog";
 import { invalidateOrgRules } from "@/lib/alerts/rule-cache";
+import { SsrfError } from "@/lib/net/ssrf-guard";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
@@ -322,8 +323,21 @@ async function verifyOwnedChannel(id: string): Promise<VerifyChannelOutcome> {
 	return { verified: true };
 }
 
-/** Maps a raw sender/network error to a friendly, actionable verification message. */
+/** What a destination the outbound guard refuses is told — one fixed sentence, whatever the reason. */
+const UNREACHABLE_DESTINATION = "This destination isn't publicly reachable over HTTPS.";
+
+/**
+ * Maps a raw sender/network error to a friendly, actionable verification message.
+ *
+ * A refusal by the outbound-URL guard always reads as {@link UNREACHABLE_DESTINATION}: its own
+ * message describes how the destination resolved, which is the server's business, so it is logged
+ * here and never returned.
+ */
 function friendlyVerifyError(err: unknown): string {
+	if (err instanceof SsrfError) {
+		console.warn("[alerts] channel destination refused by the outbound guard:", err.message);
+		return UNREACHABLE_DESTINATION;
+	}
 	const raw = err instanceof Error ? err.message : String(err);
 	const low = raw.toLowerCase();
 	if (

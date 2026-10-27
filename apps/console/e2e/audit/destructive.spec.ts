@@ -563,9 +563,11 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 // writes (roles, grants, SSO) that no page load reaches.
 //
 // `account.delete` lives on `/[org]`, whose overview mounts `AlertsCard`
-// (components/overview/alerts-card.tsx), which calls `getAlertsBootstrap()` from a `useEffect` —
-// a client-side server action that starts AFTER `domcontentloaded`, i.e. while the reach chain is
-// already clicking "Account menu" → "Account settings". `getAlertsBootstrap` authorizes `view_alerts`
+// (components/overview/alerts-card.tsx), which AT THE TIME called a `getAlertsBootstrap()` server
+// action from a `useEffect` (since removed: the card reads the prefetched `overview.alerts` GET read,
+// #6118, and the hub's bootstrap is gone, #6125) — a client-side server action that started AFTER
+// `domcontentloaded`, i.e. while the reach chain was already clicking "Account menu" → "Account
+// settings". That action authorized `view_alerts`
 // (read-only, not recorded) and then calls `canManageAlerts`, which probes the capability with
 // `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
 // allowed `manage_alerts` on `alert` is recorded on EVERY overview load (`enforceDecision` records an
@@ -644,7 +646,7 @@ interface InFlight {
 
 /**
  * Track every request the page starts until it finishes or fails. Installed BEFORE navigation, so a
- * request the page fires on mount — the `getAlertsBootstrap` that wrote #5639's row — is counted even
+ * request the page fires on mount — like the since-removed `getAlertsBootstrap` that wrote #5639's row — is counted even
  * when it starts while the reach chain is still clicking.
  */
 function trackInFlight(page: Page): InFlight {
@@ -852,8 +854,8 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				//
 				// There is NO fixed floor after it any more. #5636 kept a 300 ms one because, without it,
 				// `account.delete` failed on its first gate run (job 112906793672) with "Cancel was pressed
-				// and rows still moved: authz_activity_log 15→16" — the overview's `getAlertsBootstrap`
-				// records a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
+				// and rows still moved: authz_activity_log 15→16" — the overview's then `getAlertsBootstrap` (since
+				// removed, #6125) recorded a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
 				// it. That race is now NARROWED where it belongs, at the SNAPSHOT (`settledFingerprint`,
 				// #5639: network-idle plus a quiet-interval re-read; a write landing later than that is
 				// still possible, see there), so a step's settle answers only "is the UI ready", and an
@@ -2126,7 +2128,8 @@ async function routeSlowWriter(page: Page, respondAfterMs: number, onAnswered: (
 }
 
 test("self-test — the snapshot waits out a request the PAGE started, and the fire-and-forget write after it (#5639)", async ({ page }) => {
-	// `account.delete`'s shape: the overview fires `getAlertsBootstrap` on mount, the server answers,
+	// `account.delete`'s shape as #5639 found it: the overview fired a read on mount (then the since-removed
+	// `getAlertsBootstrap`), the server answered,
 	// and the activity row commits AFTER the answer. The request here answers at 600 ms — past the
 	// 300 ms floor this replaced — and its "row" lands 150 ms after that, inside one quiet interval,
 	// so a single reading taken the moment the request finished misses it as surely as one taken

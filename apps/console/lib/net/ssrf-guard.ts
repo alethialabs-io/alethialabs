@@ -187,9 +187,13 @@ function isPublicUnicastV6(bytes: number[]): boolean {
 	}
 	if ((bytes[0] & 0xfe) === 0xfc) return false; // fc00::/7 unique-local (ULA)
 	if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return false; // fe80::/10 link-local
+	if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0xc0) return false; // fec0::/10 site-local (deprecated)
 	if (bytes[0] === 0xff) return false; // ff00::/8 multicast
 	if (bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8) {
 		return false; // 2001:db8::/32 documentation
+	}
+	if (bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x00 && bytes[3] === 0x00) {
+		return false; // 2001::/32 Teredo — a tunnel whose far end is not this address
 	}
 	if (bytes[0] === 0x01 && bytes[1] === 0x00 && zeros(2, 8)) return false; // 100::/64 discard
 	// Anything else in 0000::/8 is reserved/unroutable — the legitimate ::/8 sub-forms (unspecified,
@@ -286,7 +290,11 @@ function pinnedLookup(addresses: LookupAddress[]): LookupFunction {
  *             `dispatcher` are managed internally and ignored if supplied.
  * @throws {SsrfError} if the URL, any resolved address, or any redirect target is unsafe.
  */
-export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function safeFetch(
+	url: string,
+	init?: RequestInit,
+	options: { discardBody?: boolean } = {},
+): Promise<Response> {
 	// Combine the caller's signal with a request-wide timeout using a plain AbortController —
 	// avoids AbortSignal.any/AbortSignal.timeout, which the jsdom test env (and older runtimes)
 	// don't provide. Cleared in `finally` so the timer never leaks.
@@ -340,12 +348,27 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
 					continue;
 				}
 			}
-			// Final response: the caller owns the body, so leave the socket to undici's
-			// keep-alive reaper rather than closing the agent out from under it.
+			// Final response. A caller that only reads the status (`safeDeliver`) has the body
+			// discarded and the per-request pool closed here, so the connection is released now
+			// rather than whenever undici's keep-alive reaper runs. Otherwise the caller owns the
+			// body, and the socket is left to that reaper rather than closed out from under it.
+			if (options.discardBody) {
+				await res.body?.cancel().catch(() => {});
+				await agent.close().catch(() => {});
+			}
 			return res;
 		}
 	} finally {
 		clearTimeout(timer);
 		if (caller) caller.removeEventListener("abort", onCallerAbort);
 	}
+}
+
+/**
+ * {@link safeFetch} for a caller that reads only the response's status — an alert delivery or a
+ * channel verification. The body is discarded and the per-request connection pool closed as soon as
+ * the response arrives, so every delivery releases its connection.
+ */
+export function safeDeliver(url: string, init?: RequestInit): Promise<Response> {
+	return safeFetch(url, init, { discardBody: true });
 }

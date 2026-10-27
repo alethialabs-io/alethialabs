@@ -124,6 +124,7 @@ export function AlertsPage() {
 	const hub: AlertsHub = {
 		...settings.data,
 		policies: policiesUniverse.data?.rows ?? [],
+		policiesKnown: policiesUniverse.data !== undefined,
 		channels: channelsUniverse.data?.rows ?? [],
 	};
 	const scrollTo = (id: AlertsSection) => {
