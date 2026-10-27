@@ -124,4 +124,43 @@ describe("useActionMutation", () => {
 		await act(async () => release({ ok: true, data: "x" }));
 		await waitFor(() => expect(result.current.isPending).toBe(false));
 	});
+
+	it("hands a refusal to the caller's inline alert instead of a toast when it renders one (#6120)", async () => {
+		const { wrapper } = setup();
+		const onRefusal = vi.fn();
+		const action = async (): Promise<ActionResult<string>> => ({
+			ok: false,
+			error: { kind: "conflict", message: "A promotion into this environment is already in progress." },
+		});
+		const { result } = renderHook(
+			() => useActionMutation(action, { invalidates: [KEY], onRefusal }),
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(onRefusal).toHaveBeenCalledWith({
+			kind: "conflict",
+			message: "A promotion into this environment is already in progress.",
+		});
+		expect(toast.error).not.toHaveBeenCalled();
+	});
+
+	it("still toasts an unexpected failure when the caller renders refusals inline — that is not a refusal", async () => {
+		const { wrapper } = setup();
+		const onRefusal = vi.fn();
+		const action = async (): Promise<ActionResult<string>> => ({
+			ok: false,
+			error: { kind: "unexpected", ref: "abc123" },
+		});
+		const { result } = renderHook(
+			() => useActionMutation(action, { invalidates: [KEY], onRefusal }),
+			{ wrapper },
+		);
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(onRefusal).not.toHaveBeenCalled();
+		expect(toast.error).toHaveBeenCalledWith("Something went wrong on our side. Reference: abc123");
+	});
 });

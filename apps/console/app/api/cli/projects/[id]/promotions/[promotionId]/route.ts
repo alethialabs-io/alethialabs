@@ -3,8 +3,9 @@
 
 // GET /api/cli/projects/:id/promotions/:promotionId — one promotion with its approval slots.
 // Gated on project `view`; the promotion is loaded scoped to the resolved project + org (the
-// tenancy wall). Mirrors getPromotionDetail (web) but omits the per-gate evaluation + config diff
-// (console-only) — the CLI shows status, the approval tally, and the approval slots.
+// tenancy wall). Mirrors readPromotionDetail (web, lib/rpc/procedures/environments.ts) but omits the
+// per-gate evaluation + config diff (console-only) — the CLI shows status, the approval tally, and
+// the approval slots.
 
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";

@@ -433,10 +433,10 @@ test.describe("Deploy jobs — environments, drift and promotion gates", () => {
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${deployed.slug}/environments`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// The heading carries a count pill, so the name is a prefix match, not an equality.
-		await expect(
-			owner.page.getByRole("heading", { name: /^Environments/ }),
-		).toBeVisible({ timeout: 25_000 });
+		// The list is headed by the page toolbar (its count and actions), not an in-content title:
+		// #6120 removed the "Environments N" heading (F010) — the breadcrumb names the page.
+		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toBeVisible({ timeout: 25_000 });
+		await expect(owner.page.getByRole("heading", { name: /^Environments/ })).toHaveCount(0);
 		await expect(owner.page.getByRole("link", { name: "production" })).toBeVisible();
 	});
 

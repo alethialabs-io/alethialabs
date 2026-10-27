@@ -491,6 +491,35 @@ export const FIXTURES: Record<string, Fixture> = {
 			return Array.isArray(regions) && regions.includes(regionOf(org));
 		},
 	},
+	// The Environments page's reads (#6120). `overview` addresses the project by its SLUG — the same
+	// slug names a project in each org — so the answer must be the ADDRESSED org's project; in the
+	// personal scope (community's answer for every org address) the slug names no project at all.
+	// The two dialog reads are addressed by ids: another org's project is a NOT_FOUND, never its rows.
+	"environments.overview": {
+		kind: "gated",
+		reason: "addresses a project by slug: the addressed org's project, NOT_FOUND in the personal scope",
+		input: { project: PROJECT_SLUG },
+		enterprise: { x: "ok", y: "ok" },
+		markers: (out, s) => ({
+			x: field(out, "projectId") === s.projectX,
+			y: field(out, "projectId") === s.projectY,
+		}),
+	},
+	"environments.protectionRules": {
+		kind: "by-id",
+		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
+	"environments.promotionPreview": {
+		kind: "by-id",
+		input: (s, org) => ({
+			projectId: projectOf(s, org),
+			sourceId: envOf(s, org),
+			targetId: envOf(s, org),
+			includeRemovals: false,
+		}),
+		reveals: (out, s, org) => field(out, "sourceId") === envOf(s, org),
+	},
 	"jobs.detail": {
 		kind: "by-id",
 		input: (s, org) => ({ id: jobOf(s, org) }),
