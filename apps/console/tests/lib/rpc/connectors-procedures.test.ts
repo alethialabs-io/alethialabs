@@ -411,7 +411,7 @@ describe("readConnectorsWithStatus", () => {
 });
 
 describe("readConnectorsBoard", () => {
-	const actor: Actor = { userId: "user-1", orgId: "org-1" };
+	const actor: Actor = { userId: "user-1", orgId: "org-1", credential: "session" };
 	const cloudCatalogRow: Partial<Connector> = {
 		id: "c-aws",
 		slug: "aws",

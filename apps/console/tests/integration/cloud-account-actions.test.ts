@@ -51,6 +51,7 @@ import {
 	verifyCloudAccount,
 } from "@/app/server/actions/identities";
 import { authorize } from "@/lib/authz/guard";
+import type { Actor } from "@/lib/authz/types";
 import * as conn from "@/lib/cloud-providers/connections";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
@@ -61,6 +62,9 @@ const CALLER = randomUUID(); // member of X, acting at X
 const TEAMMATE = randomUUID(); // another member of X
 
 const seeded = { orgShared: "", ownPersonal: "", teammatePersonal: "", otherOrg: "" };
+
+/** The caller as a signed-in person — the PDP's answer, stubbed to allow. */
+const session: Actor = { userId: CALLER, orgId: ORG_X, credential: "session" };
 
 /** Inserts one configured AWS identity. */
 async function seedIdentity(userId: string, orgId: string, scope: "org" | "personal"): Promise<string> {
@@ -104,7 +108,7 @@ describeIfDb("cloud-account writes — an id the caller cannot reach is not-foun
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(authorize).mockResolvedValue({ userId: CALLER, orgId: ORG_X } as never);
+		vi.mocked(authorize).mockResolvedValue(session);
 	});
 
 	it("another org's identity, addressed by id: every write is not-found and nothing is written", async () => {
@@ -128,6 +132,14 @@ describeIfDb("cloud-account writes — an id the caller cannot reach is not-foun
 		for (const id of [seeded.orgShared, seeded.ownPersonal]) {
 			for (const r of await Promise.all(everyWrite(id))) expect(r.ok).toBe(true);
 		}
-		expect(conn.disconnectIdentity).toHaveBeenCalledWith({ userId: CALLER, orgId: ORG_X }, seeded.orgShared, "aws");
+		expect(conn.disconnectIdentity).toHaveBeenCalledWith(session, seeded.orgShared, "aws");
+	});
+
+	it("a service token pinned to the org gets the org's shared identities only — not its minter's personal one", async () => {
+		vi.mocked(authorize).mockResolvedValue({ ...session, credential: "service_token" });
+		for (const r of await Promise.all(everyWrite(seeded.ownPersonal))) {
+			expect(!r.ok && r.error.kind).toBe("not-found");
+		}
+		for (const r of await Promise.all(everyWrite(seeded.orgShared))) expect(r.ok).toBe(true);
 	});
 });
