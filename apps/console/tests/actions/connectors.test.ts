@@ -25,8 +25,6 @@ vi.mock("@/lib/connectors/verify", () => ({
 import {
 	deleteConnectorCredential,
 	saveConnectorCredential,
-	setCloudIdentityScope,
-	setConnectorCredentialScope,
 } from "@/app/server/actions/connectors";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
@@ -244,96 +242,5 @@ describe("deleteConnectorCredential", () => {
 			{ ownerId: "user-1", orgId: "org-1" },
 			expect.any(Function),
 		);
-	});
-});
-
-describe("setConnectorCredentialScope", () => {
-	it("returns an error when the connector is not in the catalog", async () => {
-		dbh.setQueue([[]]);
-		const r = await setConnectorCredentialScope("vault", "org");
-		expect(r).toEqual({ ok: false, error: "Connector not in catalog: vault" });
-	});
-
-	it("promotes the caller's personal credential to org scope", async () => {
-		dbh.setQueue([[{ id: "conn-1" }], [{ id: "cred-1" }]]);
-		const r = await setConnectorCredentialScope("vault", "org");
-		expect(r).toEqual({ ok: true });
-		const setArg = dbh.spies.set.mock.calls[0][0] as {
-			scope: string;
-			org_id: string;
-		};
-		expect(setArg.scope).toBe("org");
-		expect(setArg.org_id).toBe("org-1");
-	});
-
-	it("reports when there is no personal credential to share", async () => {
-		dbh.setQueue([[{ id: "conn-1" }], []]); // update returns no rows
-		const r = await setConnectorCredentialScope("vault", "org");
-		expect(r).toEqual({ ok: false, error: "No personal credential to share." });
-	});
-
-	it("demotes an org credential back to personal", async () => {
-		dbh.setQueue([[{ id: "conn-1" }], [{ id: "cred-1" }]]);
-		const r = await setConnectorCredentialScope("vault", "personal");
-		expect(r).toEqual({ ok: true });
-		const setArg = dbh.spies.set.mock.calls[0][0] as { scope: string };
-		expect(setArg.scope).toBe("personal");
-	});
-
-	it("reports when there is no shared credential to make personal", async () => {
-		dbh.setQueue([[{ id: "conn-1" }], []]);
-		const r = await setConnectorCredentialScope("vault", "personal");
-		expect(r).toEqual({
-			ok: false,
-			error: "No shared credential to make personal.",
-		});
-	});
-
-	it("maps a unique-violation into a friendly conflict error", async () => {
-		dbh.setQueue([[{ id: "conn-1" }], new Error("duplicate key")]);
-		const r = await setConnectorCredentialScope("vault", "org");
-		expect(r).toEqual({
-			ok: false,
-			error: "An org credential already exists for this connector.",
-		});
-	});
-});
-
-describe("setCloudIdentityScope", () => {
-	it("rejects when manage_identities is denied", async () => {
-		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
-		await expect(setCloudIdentityScope("ci-1", "org")).rejects.toThrow(
-			/Forbidden/,
-		);
-	});
-
-	it("promotes a personal cloud identity to org scope", async () => {
-		dbh.setQueue([[{ id: "ci-1" }]]); // update returning
-		const r = await setCloudIdentityScope("ci-1", "org");
-		expect(r).toEqual({ ok: true });
-		const setArg = dbh.spies.set.mock.calls[0][0] as {
-			scope: string;
-			org_id: string;
-		};
-		expect(setArg.scope).toBe("org");
-		expect(setArg.org_id).toBe("org-1");
-	});
-
-	it("returns not-found when no row matched", async () => {
-		dbh.setQueue([[]]);
-		const r = await setCloudIdentityScope("ci-1", "personal");
-		expect(r).toEqual({
-			ok: false,
-			error: "Cloud identity not found for this action.",
-		});
-	});
-
-	it("maps a DB error to a generic scope-change failure", async () => {
-		dbh.setQueue([new Error("constraint")]);
-		const r = await setCloudIdentityScope("ci-1", "org");
-		expect(r).toEqual({
-			ok: false,
-			error: "Could not change the credential's scope.",
-		});
 	});
 });

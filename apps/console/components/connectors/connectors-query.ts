@@ -229,12 +229,18 @@ function normalizeList(values: string[]): string[] | undefined {
 	return [...new Set(values)].sort();
 }
 
+/**
+ * The longest search the board reads (`connectors.board` refuses a longer one). Longer input is cut
+ * here, and the page says so under the bar, so an over-long paste is a hint — never a failed read.
+ */
+export const CONNECTOR_SEARCH_MAX = 200;
+
 /** Normalize filter state into the stable query object (trim, sort, drop empties). */
 export function normalizeConnectorQuery(
 	filters: ConnectorFilters,
 ): NormalizedConnectorQuery {
 	const query: NormalizedConnectorQuery = {};
-	const search = filters.search.trim();
+	const search = filters.search.trim().slice(0, CONNECTOR_SEARCH_MAX);
 	if (search) query.search = search;
 	const groups = normalizeList(filters.groups);
 	if (groups) query.groups = groups;

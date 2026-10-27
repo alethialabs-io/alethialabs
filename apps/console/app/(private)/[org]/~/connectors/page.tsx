@@ -31,8 +31,11 @@ function isConnectorsRead(query: Pick<Query, "queryKey" | "state">): boolean {
  * Connectors route (#6124, ADR 0005). Prefetches EXACTLY the key the client asks for on first paint
  * — the board read for the link's filters: the matching rows and facets, the catalog with this
  * org's connection status, the manage capability and the per-provider availability — in-process
- * through the read router, so the first paint is the board, not a skeleton that then fetches. Nothing here writes: the pending identity a connect sheet binds to is created when the
- * sheet opens. `loading.tsx` covers the prefetch window.
+ * through the read router, so the first paint is the board, not a skeleton that then fetches. The
+ * render creates no row: the pending identity a connect sheet binds to is started when the sheet
+ * opens. The one side effect the read keeps is the git-link refresh it always did (an expired but
+ * refreshable link is renewed before its status is read — `readConnectorsBoard`). `loading.tsx`
+ * covers the prefetch window.
  */
 export default async function ConnectorsRoute({
 	params,

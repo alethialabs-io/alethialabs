@@ -2,14 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withScope } from "@/lib/db";
 import {
-	cloudIdentities,
 	type Connector,
 	connectorCredentials,
 	connectors as connectorsTable,
@@ -223,126 +222,4 @@ async function runDeleteConnectorCredential(input: z.output<typeof deleteConnect
 		tx.delete(connectorCredentials).where(eq(connectorCredentials.connector_id, connectorId)),
 	);
 	return { slug: input.slug };
-}
-
-/**
- * Shares an api_key connector credential with the whole org (scope='org') or pulls it
- * back to personal. Managing org credentials is a PDP `manage_connectors` action — so
- * it also flows through the activity/alert chokepoint. Promotes the caller's personal row;
- * demotes the org row back to its author.
- */
-export async function setConnectorCredentialScope(
-	slug: string,
-	scope: CredentialScope,
-): Promise<{ ok: boolean; error?: string }> {
-	const actor = await authorize("manage_connectors", { type: "connector" });
-	const db = getServiceDb();
-
-	const [connector] = await db
-		.select({ id: connectorsTable.id })
-		.from(connectorsTable)
-		.where(eq(connectorsTable.slug, slug))
-		.limit(1);
-	if (!connector) return { ok: false, error: `Connector not in catalog: ${slug}` };
-
-	try {
-		const updated =
-			scope === "org"
-				? await db
-						.update(connectorCredentials)
-						.set({ scope: "org", org_id: actor.orgId, updated_at: new Date() })
-						.where(
-							and(
-								eq(connectorCredentials.connector_id, connector.id),
-								eq(connectorCredentials.user_id, actor.userId), // authz-scope-ok: actor's own personal credential (personal→org promotion)
-								eq(connectorCredentials.scope, "personal"),
-							),
-						)
-						.returning({ id: connectorCredentials.id })
-				: await db
-						.update(connectorCredentials)
-						// Back to personal: org_id follows the author so personal RLS holds.
-						.set({
-							scope: "personal",
-							org_id: sql`user_id`,
-							updated_at: new Date(),
-						})
-						.where(
-							and(
-								eq(connectorCredentials.connector_id, connector.id),
-								eq(connectorCredentials.org_id, actor.orgId),
-								eq(connectorCredentials.scope, "org"),
-							),
-						)
-						.returning({ id: connectorCredentials.id });
-
-		if (updated.length === 0) {
-			return {
-				ok: false,
-				error:
-					scope === "org"
-						? "No personal credential to share."
-						: "No shared credential to make personal.",
-			};
-		}
-		return { ok: true };
-	} catch {
-		return {
-			ok: false,
-			error: `An ${scope === "org" ? "org" : "personal"} credential already exists for this connector.`,
-		};
-	}
-}
-
-/**
- * Shares a cloud identity with the org (scope='org') or pulls it back to personal.
- * Guarded by the PDP `manage_identities` action.
- */
-export async function setCloudIdentityScope(
-	identityId: string,
-	scope: CredentialScope,
-): Promise<{ ok: boolean; error?: string }> {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	const db = getServiceDb();
-
-	try {
-		const updated =
-			scope === "org"
-				? await db
-						.update(cloudIdentities)
-						.set({ scope: "org", org_id: actor.orgId, updated_at: new Date() })
-						.where(
-							and(
-								eq(cloudIdentities.id, identityId),
-								eq(cloudIdentities.user_id, actor.userId), // authz-scope-ok: actor's own personal cloud identity (personal→org promotion)
-								eq(cloudIdentities.scope, "personal"),
-							),
-						)
-						.returning({ id: cloudIdentities.id })
-				: await db
-						.update(cloudIdentities)
-						.set({
-							scope: "personal",
-							org_id: sql`user_id`,
-							updated_at: new Date(),
-						})
-						.where(
-							and(
-								eq(cloudIdentities.id, identityId),
-								eq(cloudIdentities.org_id, actor.orgId),
-								eq(cloudIdentities.scope, "org"),
-							),
-						)
-						.returning({ id: cloudIdentities.id });
-
-		if (updated.length === 0) {
-			return { ok: false, error: "Cloud identity not found for this action." };
-		}
-		return { ok: true };
-	} catch {
-		return { ok: false, error: "Could not change the credential's scope." };
-	}
 }

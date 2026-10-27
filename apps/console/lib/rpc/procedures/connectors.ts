@@ -16,6 +16,7 @@ import type {
 import { getValidProviderToken } from "@/app/server/actions/identities";
 import {
 	buildConnectorsView,
+	CONNECTOR_SEARCH_MAX,
 	type ConnectorsView,
 	type NormalizedConnectorQuery,
 } from "@/components/connectors/connectors-query";
@@ -91,9 +92,9 @@ function accountStatus(status: string): CloudAccountStatus {
  * the label; no secret field, token or encrypted envelope is placed in the result, and no git token
  * value is selected at all.
  *
- * WHICH IDENTITIES. The `scoped_all` RLS policy decides (`withScope`): the org-shared identities
- * of the actor's org plus the caller's own personal ones — the rule this read had as a server
- * action, unchanged by the move.
+ * WHICH IDENTITIES. The `scoped_all` RLS policy decides (`withScope`) — the org-shared identities of
+ * the actor's org plus the caller's own personal ones — narrowed to the identities that live in the
+ * addressed org, the same binding the board's writes apply, so every listed account can be acted on.
  */
 async function readConnectorsFor(actor: Actor | null): Promise<ConnectorWithConnection[]> {
 	// Public catalog — service connection (no owner scope).
@@ -132,6 +133,10 @@ async function readConnectorsFor(actor: Actor | null): Promise<ConnectorWithConn
 						missing_permissions: cloudIdentities.missing_permissions,
 					})
 					.from(cloudIdentities)
+					// Bound to the addressed org: a personal account the caller created in ANOTHER org is
+					// theirs under RLS, but every write on this board acts within this org and would
+					// refuse it — so it is not listed here, where no action on it could succeed.
+					.where(eq(cloudIdentities.org_id, actor.orgId))
 					.orderBy(desc(cloudIdentities.updated_at)),
 			)
 		: [];
@@ -366,7 +371,7 @@ const selection = z.array(z.string().max(100)).max(50).optional();
 /** The board's input — the normalized filter query, which is also its query key (filter standard F3). */
 const connectorsBoardInput = z
 	.object({
-		search: z.string().max(200).optional(),
+		search: z.string().max(CONNECTOR_SEARCH_MAX).optional(),
 		groups: selection,
 		health: selection,
 		vendors: selection,
