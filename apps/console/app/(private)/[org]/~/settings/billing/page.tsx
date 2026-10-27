@@ -14,7 +14,8 @@ export const metadata = pageMetadata({
 });
 
 /**
- * Billing & subscription: current plan, AI plan, payment methods, plan history, transactions,
+ * Billing & subscription: current plan (with the AI tier as one row — the AI card, its meters and
+ * spend limits live on the Usage page, #6133), payment methods, plan history, transactions,
  * invoices (#6127, ADR 0005 D1).
  *
  * Prefetches EXACTLY the reads the panel makes on first paint, in-process through the read router,
@@ -37,7 +38,6 @@ export default async function BillingPage() {
 		const customer = admin && summary.canManage;
 		await Promise.all([
 			queryClient.prefetchQuery(rpc.usage.ai.queryOptions()),
-			queryClient.prefetchQuery(rpc.billing.liveAiPrices.queryOptions()),
 			admin ? queryClient.prefetchQuery(rpc.billing.planHistory.queryOptions()) : null,
 			customer ? queryClient.prefetchQuery(rpc.billing.paymentMethods.queryOptions()) : null,
 			customer ? queryClient.prefetchQuery(rpc.billing.transactions.queryOptions()) : null,

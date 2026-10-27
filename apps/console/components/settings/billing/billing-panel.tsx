@@ -3,11 +3,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Billing page — the authored claude.ai/design panel composed from the shared
-// settings primitives (shadcn + Tailwind tokens; no CSS module): page header, a
-// current-plan card with usage meters, payment methods + billing details (two-column),
+// settings primitives (shadcn + Tailwind tokens; no CSS module): a current-plan card (with
+// one AI-tier row that links to Usage), payment methods + billing details (two-column),
 // plan-history timeline, transaction history, and invoices. A Hobby→Pro upgrade opens the
 // shared in-place UpgradeOrgSheet (via useUpgradeSheet) rather than an inline plan dialog;
 // cancel/resume + saved cards + invoices are all in-app.
+//
+// #6133 (design decision A): Billing is the page for MONEY INSTRUMENTS. The AI plan, its meters,
+// credits and the admin spend limits all live on the Usage page, beside the runner hard cap, which
+// is the same kind of control. Billing states the AI tier as one fact on the plan card and links
+// there; it never renders the AI card itself, so the spend limits have exactly one home. The
+// "cloud-resource spend is billed separately" note is Usage's too: there it is the footnote of the
+// cloud-spend figure, and on this card it qualified nothing.
 //
 // #6127 (ADR 0005): every section reads a GET procedure the route prefetches on the server, so the
 // first paint is the page, not a two-box skeleton, and each section renders its own pending,
@@ -16,25 +23,27 @@
 // billing permission; anyone else gets one note saying so, instead of four sections that refuse.
 
 import { useQuery } from "@tanstack/react-query";
-import { Info } from "lucide-react";
-import { useState } from "react";
+import { ArrowUpRight } from "lucide-react";
+import Link from "next/link";
+import { type ReactNode, useState } from "react";
 import { formatDate, formatMoney, scaleMoney } from "@repo/format";
 import { cancelPlan, resumePlan } from "@/app/server/actions/billing";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { RegionError } from "@/components/errors/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
-import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { ClockText } from "@/components/settings/usage/clock-text";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { globalHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { BillingSummary } from "@/lib/rpc/procedures/billing";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { planMeta } from "@repo/plan-catalog";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { Skeleton } from "@repo/ui/skeleton";
+import { aiPlanMeta, planMeta } from "@repo/plan-catalog";
+import { useActiveOrgSlug, useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { BillingSkeleton } from "./billing-skeleton";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "./read-state";
 import { RecentInvoices } from "./recent-invoices";
@@ -260,11 +269,9 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 						)}
 					</div>
 
-					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
-						<div className="flex items-center gap-2 text-ui-sm text-text-tertiary">
-							<Info size={13} />
-							Your cloud-resource spend is billed separately by your provider.
-						</div>
+					<AiPlanRow />
+
+					<div className="flex flex-wrap items-center justify-end gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
 						<div className="flex gap-2.5">
 							{hasSub ? (
 								<Button
@@ -294,9 +301,6 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 					</div>
 				</div>
 			</SettingsSection>
-
-			{/* AI plan & usage — the standalone metered AI product (tier + daily/weekly %). */}
-			<AiUsageSection />
 
 			{summary.canManageBilling ? (
 				<>
@@ -338,6 +342,49 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 				confirmLabel="Confirm cancellation"
 				onConfirm={() => cancel.mutate({})}
 			/>
+		</div>
+	);
+}
+
+/**
+ * The plan card's AI row: the org's AI tier as one fact, and the link to the Usage page's AI
+ * section, which owns the meters, credits and spend limits (#6133). Reads `usage.ai` — the same
+ * cache entry the Usage page's AI card reads, prefetched by this route — and shows no price, so it
+ * cannot disagree with the AI card's live one. A failed or refused read says so in the row; the
+ * link stays, because the AI section renders that read's full error or refusal.
+ */
+function AiPlanRow() {
+	const orgSlug = useActiveOrgSlug();
+	const ai = useQuery(orpc.usage.ai.queryOptions({ retry: retryUnlessRefused }));
+
+	let tier: ReactNode;
+	if (ai.data !== undefined) {
+		tier = <span className="text-text-primary">{aiPlanMeta(ai.data.tier).name}</span>;
+	} else if (ai.isError) {
+		tier = (
+			<span className="text-text-secondary">
+				{refusalOf(ai.error) ? "Not available to you" : "Couldn't load the AI plan"}
+			</span>
+		);
+	} else {
+		// The height of one `text-ui-sm` line, so the row does not move when the tier arrives.
+		tier = <Skeleton aria-busy="true" className="h-4 w-16" />;
+	}
+
+	return (
+		<div
+			data-testid="billing-ai-plan-row"
+			className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-6 py-3 text-ui-sm"
+		>
+			<span className="text-text-tertiary">AI plan</span>
+			<div className="min-w-0 flex-1">{tier}</div>
+			<Link
+				href={`${globalHref(orgSlug, "usage")}#ai`}
+				className="inline-flex items-center gap-1 text-text-secondary transition-colors hover:text-text-primary"
+			>
+				Usage &amp; limits
+				<ArrowUpRight size={13} />
+			</Link>
 		</div>
 	);
 }

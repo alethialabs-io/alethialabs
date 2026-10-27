@@ -9,11 +9,12 @@
 // free orgs can't top up, they upgrade. AI is metered independently of the org plan
 // (lib/billing/ai-plan.ts).
 //
-// Rendered on both the Usage and the Billing page from ONE read and one cache entry (`usage.ai`), so
-// the two can never disagree. Which page should own which half is design unit #6133's to decide.
+// Rendered on the Usage page only (#6133, design decision A: Usage owns all of AI). The Billing page
+// shows the tier as one row on its plan card, from the same cache entry (`usage.ai`), so the two
+// can never disagree, and links here.
 //
-// The read is `usage.ai` over GET, prefetched by both routes (#6127), so the first paint carries the
-// plan and the meters. No poll: AI spend moves through the `usage` topic of the change stream.
+// The read is `usage.ai` over GET, prefetched by the Usage route (#6127), so the first paint carries
+// the plan and the meters. No poll: AI spend moves through the `usage` topic of the change stream.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Zap } from "lucide-react";
