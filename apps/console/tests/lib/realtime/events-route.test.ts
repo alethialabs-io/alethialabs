@@ -55,7 +55,7 @@ const OTHER_ORG = "66666666-6666-4666-8666-666666666666";
 const PROJECT = "33333333-3333-4333-8333-333333333333";
 const SECRET_PROJECT = "88888888-8888-4888-8888-888888888888";
 const JOB = "44444444-4444-4444-8444-444444444444";
-const ACME: Actor = { userId: USER, orgId: ORG };
+const ACME: Actor = { credential: "session", userId: USER, orgId: ORG };
 
 let emit: (v: ChangeValue) => void = () => {};
 let bus: ChangeBus;

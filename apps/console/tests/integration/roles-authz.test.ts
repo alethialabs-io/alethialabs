@@ -66,7 +66,7 @@ const ENTITLEMENTS: Entitlements = {
 
 /** Builds an injected actor bound to the test org with the Enterprise entitlement. */
 function actorFor(userId: string): Actor {
-	return { userId, orgId: ORG, entitlements: ENTITLEMENTS };
+	return { credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS };
 }
 
 /** Seeds one org-wide role grant (principal → built-in role, resource_id NULL = org-wide). */

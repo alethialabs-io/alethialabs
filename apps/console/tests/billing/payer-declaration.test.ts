@@ -210,9 +210,9 @@ function stubDb(rows: unknown[] = []) {
 }
 
 beforeEach(() => {
-	vi.mocked(currentActor).mockResolvedValue({ userId: "u-1", orgId: "org-1" });
-	vi.mocked(authorize).mockResolvedValue({ userId: "u-1", orgId: "org-1" });
-	vi.mocked(authorizeInOrg).mockResolvedValue({ userId: "u-1", orgId: "org-new" });
+	vi.mocked(currentActor).mockResolvedValue({ credential: "session", userId: "u-1", orgId: "org-1" });
+	vi.mocked(authorize).mockResolvedValue({ credential: "session", userId: "u-1", orgId: "org-1" });
+	vi.mocked(authorizeInOrg).mockResolvedValue({ credential: "session", userId: "u-1", orgId: "org-new" });
 });
 afterEach(() => vi.resetAllMocks());
 

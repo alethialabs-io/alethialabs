@@ -49,12 +49,12 @@ let members: MemberRow[] = [];
  * named as itself, a named org with an ACTIVE row, else the earliest active membership, else personal.
  */
 async function enterpriseResolveScope(userId: string, activeOrgId?: string): Promise<Actor> {
-	if (activeOrgId === userId) return { userId, orgId: userId };
+	if (activeOrgId === userId) return { credential: "session", userId, orgId: userId };
 	const active = members.filter((m) => m.userId === userId && m.status === "active");
 	if (activeOrgId && active.some((m) => m.orgId === activeOrgId)) {
-		return { userId, orgId: activeOrgId };
+		return { credential: "session", userId, orgId: activeOrgId };
 	}
-	return { userId, orgId: active[0]?.orgId ?? userId };
+	return { credential: "session", userId, orgId: active[0]?.orgId ?? userId };
 }
 
 const can = vi.fn();
@@ -87,7 +87,7 @@ beforeEach(() => {
 	// A session and an injected actor that both name ANOTHER org: if either were read, the answer
 	// would be ORG_B — which no test below expects.
 	vi.mocked(getOwnerScope).mockResolvedValue({ userId: USER, sessionId: "s-1", activeOrgId: ORG_B });
-	vi.mocked(getInjectedActor).mockReturnValue({ userId: USER, orgId: ORG_B });
+	vi.mocked(getInjectedActor).mockReturnValue({ credential: "session", userId: USER, orgId: ORG_B });
 });
 
 describe("resolveTurnActor — community", () => {

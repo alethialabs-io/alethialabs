@@ -15,12 +15,12 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { actorWithCredential, personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { jobVisibleTo } from "@/lib/jobs/visibility";
 import {
 	assertMintingProfileStillMember,
 	authorizeCli,
 	ensureCliOrgAccess,
-	userIdIsTheCaller,
 } from "@/lib/authz/guard";
 import {
 	assertRunnerInOrg,
@@ -247,7 +247,12 @@ export async function POST(req: Request) {
 			);
 		}
 		const scopedOrg = scopedOrgOf(caller, req);
-		const actor = await getActiveScope(userId, scopedOrg);
+		// Carries the credential kind, so the server actions below (reached through `runWithActor`)
+		// never treat a service token's minter as the person asking (`personalIdentityAuthor`).
+		const actor = actorWithCredential(
+			await getActiveScope(userId, scopedOrg),
+			caller.credential,
+		);
 		// WHICH QUESTION TO ASK DEPENDS ON WHAT THE CREDENTIAL IS (#4298).
 		//
 		// This route resolves its own scope rather than going through `authorizeCli`, so it
@@ -368,7 +373,7 @@ export async function POST(req: Request) {
 						actorIdentityWhere(
 							target.cloud_identity_id,
 							actor.orgId,
-							userIdIsTheCaller(caller.credential) ? actor.userId : undefined,
+							personalIdentityAuthor(actor),
 						),
 					)
 					.limit(1);

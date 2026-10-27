@@ -95,7 +95,7 @@ const ENTITLEMENTS: Entitlements = {
 	},
 };
 
-const admin: Actor = { userId: ADMIN, orgId: ORG_A, entitlements: ENTITLEMENTS };
+const admin: Actor = { userId: ADMIN, orgId: ORG_A, entitlements: ENTITLEMENTS, credential: "session" };
 
 /** The grants in A whose principal is `principalId`. */
 async function grantsOf(principalId: string): Promise<(typeof grants.$inferSelect)[]> {
@@ -406,7 +406,7 @@ describeIfDb("a grant's role, team and resource belong to the grant's org", () =
 
 	describe("the community PDP ignores a STORED unbound allow row", () => {
 		const pdp = new PostgresRbacPDP();
-		const reader: Actor = { userId: READER, orgId: ORG_A };
+		const reader: Actor = { userId: READER, orgId: ORG_A, credential: "session" };
 		const stored = {
 			org_id: ORG_A,
 			principal_type: "user",

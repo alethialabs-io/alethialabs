@@ -108,9 +108,9 @@ let jobA = ""; // org A, user_id X
 let jobPersonal = ""; // U's personal org, no project
 let keyB = "";
 
-const inA: Actor = { userId: U, orgId: A };
-const inPersonal: Actor = { userId: U, orgId: U };
-const asW: Actor = { userId: W, orgId: B };
+const inA: Actor = { credential: "session", userId: U, orgId: A };
+const inPersonal: Actor = { credential: "session", userId: U, orgId: U };
+const asW: Actor = { credential: "session", userId: W, orgId: B };
 
 /** Runs `fn` as `actor`, the way the oRPC read router and server actions bind one. */
 const as = <T>(actor: Actor, fn: () => Promise<T>) => runWithActor(actor, fn);
