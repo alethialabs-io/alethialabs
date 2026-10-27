@@ -36,7 +36,6 @@ import { cn } from "@repo/ui/utils";
 import { type QueryKey, useQuery } from "@tanstack/react-query";
 import {
 	Ban,
-	CheckCircle2,
 	ChevronRight,
 	Loader2,
 	Lock,
@@ -54,6 +53,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import JobDetailLoading from "./loading";
 import { JOB_VIEWPORT_HEIGHT } from "./detail-column";
+import { JobOutcome } from "./job-outcome";
 
 /**
  * One collapsible block of the job's detail column — a real heading over a disclosure.
@@ -296,6 +296,31 @@ export function JobDetail({
 							className="min-w-0 flex-1"
 							description={
 								<span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+									{/* Which project and environment this job ran for (#6134). Here and not
+									    in the breadcrumb: a crumb is an ancestor ROUTE, and this job's route
+									    is under `~`, not under the project — and the breadcrumb is hidden
+									    below `md`, where this row is not. */}
+									{job.project_slug && (
+										<span>
+											<Link
+												href={`/${org}/${job.project_slug}`}
+												className="text-text-primary underline-offset-4 hover:underline"
+											>
+												{job.project_name ?? job.project_slug}
+											</Link>
+											{job.environment_name && (
+												<>
+													{" / "}
+													<Link
+														href={`/${org}/${job.project_slug}/environments`}
+														className="text-text-primary underline-offset-4 hover:underline"
+													>
+														{job.environment_name}
+													</Link>
+												</>
+											)}
+										</span>
+									)}
 									<StatusBadge status={jobState ?? job.status} />
 									{/* A finished job's duration is fixed; a running one reads the clock, so it
 									    waits for hydration in a reserved slot (React #418, columns.tsx). */}
@@ -374,12 +399,13 @@ export function JobDetail({
 
 					{/* The outcome, next to the status it explains rather than below the log. A failure
 					    message is bounded: an OpenTofu error can run to hundreds of lines, and letting
-					    it grow here would push the log — the thing the page is for — off the screen. */}
+					    it grow here would push the log — the thing the page is for — off the screen.
+					    A successful drift scan or plan states what it FOUND (#6134): `SUCCESS` only
+					    says the job ran, and "21 resources drifted" is not a status. */}
 					{jobState === "SUCCESS" && (
-						<p className="mt-3 flex items-center gap-2 text-ui-md text-text-secondary">
-							<CheckCircle2 className="size-4 shrink-0" />
-							Job completed successfully.
-						</p>
+						<JobOutcome
+							job={{ job_type: job.job_type, status: jobState, execution_metadata: job.execution_metadata }}
+						/>
 					)}
 					{(jobState === "FAILED" || jobState === "CANCELLED") && (
 						<div
@@ -487,7 +513,12 @@ export function JobDetail({
 								<Fact label="Created" value={<LocalDateTime at={job.created_at} />} />
 								<Fact label="Started" value={<LocalDateTime at={job.started_at} />} />
 								<Fact label="Completed" value={<LocalDateTime at={job.completed_at} />} />
-								{job.project_id && <Fact label="Project" value={job.project_id} />}
+								{job.project_id && (
+									<Fact
+										label="Project"
+										value={job.project_name ? `${job.project_name} (${job.project_id})` : job.project_id}
+									/>
+								)}
 							</FactList>
 						</div>
 					</DetailSection>
