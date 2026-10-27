@@ -182,6 +182,12 @@ export type Fixture =
 			kind: "org-scoped";
 			input: unknown;
 			markers(out: unknown, seeded: Seeded): { x: boolean; y: boolean };
+			/**
+			 * Drops the fields a read stamps from the CLOCK (when it was read, a synthesized "active
+			 * now"), which two reads a few milliseconds apart answer differently whatever the org — so
+			 * the address-beats-session equality compares everything else. Optional; most reads have none.
+			 */
+			withoutClock?(out: unknown): unknown;
 	  }
 	| { kind: "not-org-scoped"; reason: string; input: unknown }
 	| {
@@ -796,6 +802,15 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.page": {
 		kind: "org-scoped",
 		input: {},
+		// `asOf` is the read's own instant, and the personal scope's synthesized owner is "active now".
+		withoutClock: (out) => {
+			const members = field(out, "members");
+			return {
+				...Object(out),
+				asOf: null,
+				members: Array.isArray(members) ? members.map((m: unknown) => ({ ...Object(m), lastActiveAt: null })) : members,
+			};
+		},
 		markers: (out) => {
 			const members = field(out, "members");
 			const n = Array.isArray(members) ? members.length : -1;
@@ -805,6 +820,8 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.list": {
 		kind: "org-scoped",
 		input: undefined,
+		// The personal scope's synthesized owner is "active now".
+		withoutClock: (out) => (Array.isArray(out) ? out.map((m: unknown) => ({ ...Object(m), lastActiveAt: null })) : out),
 		markers: (out) => ({ x: Array.isArray(out) && out.length === 3, y: Array.isArray(out) && out.length === 2 }),
 	},
 	"members.gate": {
@@ -860,6 +877,11 @@ export const FIXTURES: Record<string, Fixture> = {
 		markers: (out, s) => ({ x: hasItem(out, "principals", s.teamX), y: hasItem(out, "principals", s.teamY) }),
 	},
 };
+
+/** A read's output with its clock fields dropped, for fixtures that declare them. */
+function comparable(fixture: Fixture, out: unknown): unknown {
+	return fixture.kind === "org-scoped" && fixture.withoutClock ? fixture.withoutClock(out) : out;
+}
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
 function inputFor(fixture: Fixture | undefined, seeded: Seeded, org: Org): unknown {
@@ -1357,7 +1379,7 @@ export async function runRpcTenancySuite(opts: {
 				expect(matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
 				if (mismatched.status !== undefined) expect(mismatched.status).toBe(200);
-				expect(mismatched.value).toEqual(matched.value);
+				expect(comparable(fixture, mismatched.value)).toEqual(comparable(fixture, matched.value));
 
 				if (fixture.kind === "not-org-scoped") {
 					// Its honest claim: the org in the address does not change the answer either.
@@ -1400,7 +1422,7 @@ export async function runRpcTenancySuite(opts: {
 				}
 				expect(mismatched.ok && matched.ok).toBe(true);
 				if (!mismatched.ok || !matched.ok) return;
-				expect(mismatched.value).toEqual(matched.value);
+				expect(comparable(fixture, mismatched.value)).toEqual(comparable(fixture, matched.value));
 				if (fixture.kind === "not-org-scoped") return; // equality above is its whole claim here
 				if (fixture.kind === "gated") throw new Error(`${path}: a gated fixture is asserted above`);
 				expect(fixture.markers(mismatched.value, seeded)).toEqual(
