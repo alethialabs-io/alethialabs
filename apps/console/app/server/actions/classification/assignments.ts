@@ -187,15 +187,15 @@ export async function assignClassification(input: AssignInput): Promise<void> {
 
 /**
  * Clears a single value assignment from a resource. A resource that lives in a project the caller
- * may not edit is refused as not found (and the refusal is recorded).
+ * may not edit is answered as an unknown resource is — nothing is cleared, nothing is thrown — and
+ * the refusal is recorded.
  */
 export async function unassignClassification(
 	input: UnassignInput,
 ): Promise<void> {
 	const actor = await authorize("edit", { type: "org" });
 	const data = unassignInputSchema.parse(input);
-	if (!(await mayClassifyResource(actor, data.resource_kind, data.resource_id, "edit")))
-		throw new Error("Resource not found");
+	if (!(await mayClassifyResource(actor, data.resource_kind, data.resource_id, "edit"))) return;
 	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		tx
 			.delete(classificationAssignment)

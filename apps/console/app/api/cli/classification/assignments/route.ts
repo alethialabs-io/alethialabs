@@ -7,8 +7,9 @@
 // addressed by dimension key + value slug (friendlier than uuids); single-valued dimensions swap.
 // A resource that lives in a project (the project, its environments, its clusters) also asks the
 // same action about that project (mayClassifyResource, lib/classification/resource-project.ts), as
-// the console's assignment actions do: a refused read answers what an unknown resource answers (no
-// assignments), a refused write answers its not-found, and either refusal is recorded.
+// the console's assignment actions do. A refusal is recorded, and answered exactly as an unknown
+// resource is answered by the same handler: GET and DELETE with no assignments (DELETE clearing
+// nothing), POST with its not-found.
 
 import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -221,8 +222,9 @@ export async function DELETE(req: Request) {
 	}
 
 	try {
+		// Refused: clear nothing and answer what an unknown resource gets (no assignments).
 		if (!(await mayClassifyResource(actor, target.kind, target.id, "edit"))) {
-			return NextResponse.json({ error: `No ${target.kind} ${target.id}` }, { status: 404 });
+			return cliJson(cliClassificationAssignmentsResponse, { assignments: [] });
 		}
 		const db = getServiceDb();
 		// Find the value ids (within the org) whose slug matches, then clear them off the resource.

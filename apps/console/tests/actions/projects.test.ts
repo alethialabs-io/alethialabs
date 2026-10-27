@@ -75,6 +75,7 @@ import {
 	duplicateProjectForProvider,
 	getProject,
 	getDestroyTree,
+	getEnvConsistency,
 	getProjectAsFormData,
 	getProjectDuplicateSummary,
 	getProjectEnvironments,
@@ -3678,6 +3679,16 @@ describe("getProjectEnvironments", () => {
 		expect(authorize).not.toHaveBeenCalled();
 		expect(r.environments).toHaveLength(2);
 		expect(r.environments[1]).toMatchObject({ id: "env-2", name: "staging" });
+	});
+});
+
+describe("getEnvConsistency", () => {
+	it("uses the read check for itself and for the list it reads, never the recording one", async () => {
+		setupDb({ select: new Map([[projectEnvironments, []]]) });
+		const r = await getEnvConsistency("p1");
+		expect(r).toEqual({ envs: [], rows: [] });
+		expect(authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 });
 

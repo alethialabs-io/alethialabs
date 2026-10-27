@@ -29,7 +29,8 @@
 // served P.
 //
 // RECORDING: a refused read (getAgent, getProjectEnvironments) and a refused write
-// (assignClassification, setAutoHeal) each leave exactly ONE `decision = false` activity row naming P. Each counting test acts as a member no other test
+// (assignClassification, unassignClassification, setAutoHeal) each leave exactly ONE
+// `decision = false` activity row naming P. Each counting test acts as a member no other test
 // acts as, because a refusal's row is written fire-and-forget and a shared member's earlier row could
 // land mid-count.
 //
@@ -107,7 +108,19 @@ const RECORD_VIEW = randomUUID(); // viewer, denied viewing P; used only by the 
 const RECORD_EDIT = randomUUID(); // operator, denied editing P; used only by the classification-recording test
 const RECORD_ENV_VIEW = randomUUID(); // viewer, denied viewing P; used only by the environments-read recording test
 const RECORD_ENV_EDIT = randomUUID(); // operator, denied editing P; used only by the environment-write recording test
-const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED, RECORD_VIEW, RECORD_EDIT, RECORD_ENV_VIEW, RECORD_ENV_EDIT];
+const RECORD_UNASSIGN = randomUUID(); // operator, denied editing P; used only by the unassign recording test
+const USERS = [
+	ADMIN,
+	VIEWER,
+	VIEW_DENIED,
+	OPERATOR,
+	EDIT_DENIED,
+	RECORD_VIEW,
+	RECORD_EDIT,
+	RECORD_ENV_VIEW,
+	RECORD_ENV_EDIT,
+	RECORD_UNASSIGN,
+];
 const P = randomUUID();
 const Q = randomUUID();
 const NAME = { [P]: `it-proj-bound-p-${P.slice(0, 8)}`, [Q]: `it-proj-bound-q-${Q.slice(0, 8)}` };
@@ -241,8 +254,11 @@ async function cliPin(userId: string, kind: string, id: string): Promise<number>
 	return res.status;
 }
 
-/** `DELETE /api/cli/classification/assignments` clearing `seeded` from `id` as `userId` → status. */
-async function cliClear(userId: string, kind: string, id: string): Promise<number> {
+/**
+ * `DELETE /api/cli/classification/assignments` clearing `seeded` from `id` as `userId` → status and
+ * the count of assignments the response lists.
+ */
+async function cliClear(userId: string, kind: string, id: string) {
 	actAs(userId);
 	const res = await cliUnassign(
 		new Request(
@@ -250,7 +266,7 @@ async function cliClear(userId: string, kind: string, id: string): Promise<numbe
 			{ method: "DELETE" },
 		),
 	);
-	return res.status;
+	return { status: res.status, count: res.status === 200 ? (await cliBodyAssignments(res)).length : -1 };
 }
 
 let dimensionId = "";
@@ -285,6 +301,7 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			[RECORD_EDIT, "operator"],
 			[RECORD_ENV_VIEW, "viewer"],
 			[RECORD_ENV_EDIT, "operator"],
+			[RECORD_UNASSIGN, "operator"],
 		];
 		await db.insert(member).values(roles.map(([userId, role]) => ({ organizationId: ORG, userId, role })));
 		for (const [userId, role] of roles) await ensureMemberGrant(ORG, userId, role);
@@ -372,6 +389,7 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 		await denyOnP(RECORD_EDIT, "project:edit");
 		await denyOnP(RECORD_ENV_VIEW, "project:view");
 		await denyOnP(RECORD_ENV_EDIT, "project:edit");
+		await denyOnP(RECORD_UNASSIGN, "project:edit");
 	});
 
 	afterAll(async () => {
@@ -462,12 +480,23 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			await settlesAt(refusals, before + 1);
 		});
 
-		it("unassignClassification refuses P for the member denied editing P, and leaves its chip", async () => {
-			await expect(
+		it("unassignClassification answers P for the member denied editing P as it answers an unknown resource, and leaves its chip", async () => {
+			const unassign = (id: string) =>
 				actingAs(EDIT_DENIED, () =>
-					unassignClassification({ value_id: VALUE.seeded, resource_kind: "project", resource_id: P }),
-				),
-			).rejects.toThrow("Resource not found");
+					unassignClassification({ value_id: VALUE.seeded, resource_kind: "project", resource_id: id }),
+				);
+			await expect(unassign(randomUUID())).resolves.toBeUndefined();
+			await expect(unassign(P)).resolves.toBeUndefined();
+			expect(await assignedValues(P)).toContain(VALUE.seeded);
+		});
+
+		it("records the refused unassign: exactly one denied edit row naming P", async () => {
+			const refusals = () => refusalsOnP(RECORD_UNASSIGN, "edit");
+			const before = await refusals();
+			await actingAs(RECORD_UNASSIGN, () =>
+				unassignClassification({ value_id: VALUE.seeded, resource_kind: "project", resource_id: P }),
+			);
+			await settlesAt(refusals, before + 1);
 			expect(await assignedValues(P)).toContain(VALUE.seeded);
 		});
 	});
@@ -488,10 +517,11 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			expect(await cliPin(EDIT_DENIED, "project_environment", ENV[Q] ?? "")).toBe(200);
 		});
 
-		it("DELETE answers P as not found for the member denied editing P, and clears nothing", async () => {
-			expect(await cliClear(EDIT_DENIED, "project_environment", ENV[P] ?? "")).toBe(404);
+		it("DELETE answers P for the member denied editing P as it answers an unknown resource, and clears nothing", async () => {
+			expect(await cliClear(EDIT_DENIED, "project_environment", randomUUID())).toEqual({ status: 200, count: 0 });
+			expect(await cliClear(EDIT_DENIED, "project_environment", ENV[P] ?? "")).toEqual({ status: 200, count: 0 });
 			expect(await assignedValues(ENV[P] ?? "")).toContain(VALUE.seeded);
-			expect(await cliClear(OPERATOR, "project_environment", ENV[Q] ?? "")).toBe(200);
+			expect((await cliClear(OPERATOR, "project_environment", ENV[Q] ?? "")).status).toBe(200);
 			expect(await assignedValues(ENV[Q] ?? "")).not.toContain(VALUE.seeded);
 		});
 	});

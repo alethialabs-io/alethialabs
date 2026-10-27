@@ -250,9 +250,11 @@ async function downloadableClusters(actor: Actor, clusters: ClusterData[]): Prom
 }
 
 /**
- * The classification chips of every cluster, in one batched read. Chips need `org:view` — the check
- * the chips' own read makes (app/server/actions/classification/assignments.ts); without it the
- * clusters still render, chipless.
+ * The classification chips of every cluster, in one batched read. Chips need `org:view`; without it
+ * the clusters still render, chipless. Unlike the chips' own read
+ * (app/server/actions/classification/assignments.ts `getAssignmentsForKind`), this does not also
+ * leave out clusters of a project the viewer may not view: it labels exactly the clusters
+ * `readClusters` returns, and that list is org-scoped.
  */
 async function clusterChips(actor: Actor, clusters: ClusterData[]): Promise<Map<string, AssignedValue[]>> {
 	if (clusters.length === 0) return new Map();
