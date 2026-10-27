@@ -102,7 +102,7 @@ async function dispatched(): Promise<{ path: string; body: unknown; cookie: stri
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(currentActor).mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
+	vi.mocked(currentActor).mockResolvedValue({ orgId: "org-1", userId: "user-1", credential: "session" } as never);
 	pdpCan.mockResolvedValue({ allowed: true });
 	authAnswers(200, { id: "org-1" });
 	mockDb([{ metadata: JSON.stringify({ region: "us-east-1" }) }]);
@@ -128,7 +128,7 @@ describe("saveOrgGeneral — a save", () => {
 	it("asks the PDP for edit on the org, then updates the ADDRESSED org as the caller", async () => {
 		const result = await saveOrgGeneral(VALID);
 		expect(result).toEqual({ ok: true, data: { name: "Acme Corp", slug: "acme-corp" } });
-		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1" }, "edit", { type: "org" });
+		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1", credential: "session" }, "edit", { type: "org" });
 		const sent = await dispatched();
 		expect(sent.path).toBe("/api/auth/organization/update");
 		expect(sent.cookie).toBe("better-auth.session_token=s1");
@@ -167,7 +167,7 @@ describe("saveOrgGeneral — a save", () => {
 	});
 
 	it("refuses the personal workspace without a write", async () => {
-		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1", credential: "session" } as never);
 		const result = await saveOrgGeneral(VALID);
 		expect(result).toMatchObject({ ok: false, error: { kind: "not-found" } });
 		expect(auth.handler).not.toHaveBeenCalled();
@@ -222,7 +222,7 @@ describe("saveOrgGeneral — the Activity log records what happened, once it hap
 	it("records the edit AFTER a successful save", async () => {
 		await saveOrgGeneral(VALID);
 		expect(recordActivity).toHaveBeenCalledWith(
-			{ orgId: "org-1", userId: "user-1" },
+			{ orgId: "org-1", userId: "user-1", credential: "session" },
 			"edit",
 			{ type: "org", id: "org-1" },
 		);
@@ -304,14 +304,14 @@ describe("deleteOrganization", () => {
 	it("records the delete as a DESTROY of the org, after it succeeded — and keeps it alertable", async () => {
 		await deleteOrganization({});
 		expect(emitActionEvent).toHaveBeenCalledWith(
-			{ orgId: "org-1", userId: "user-1" },
+			{ orgId: "org-1", userId: "user-1", credential: "session" },
 			"destroy",
 			{ type: "org" },
 			true,
 		);
 		expect(recordActivity).toHaveBeenCalledTimes(1);
 		expect(recordActivity).toHaveBeenCalledWith(
-			{ orgId: "org-1", userId: "user-1" },
+			{ orgId: "org-1", userId: "user-1", credential: "session" },
 			"destroy",
 			{ type: "org", id: "org-1" },
 		);
@@ -327,7 +327,7 @@ describe("deleteOrganization", () => {
 	it("asks the PDP first, then deletes the ADDRESSED org", async () => {
 		const result = await deleteOrganization({});
 		expect(result).toEqual({ ok: true, data: { deleted: true } });
-		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1" }, "edit", { type: "org" });
+		expect(pdpCan).toHaveBeenCalledWith({ orgId: "org-1", userId: "user-1", credential: "session" }, "edit", { type: "org" });
 		const sent = await dispatched();
 		expect(sent.path).toBe("/api/auth/organization/delete");
 		expect(sent.body).toEqual({ organizationId: "org-1" });
@@ -345,7 +345,7 @@ describe("deleteOrganization", () => {
 	});
 
 	it("refuses the personal workspace", async () => {
-		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1", credential: "session" } as never);
 		expect(await deleteOrganization({})).toMatchObject({ ok: false, error: { kind: "not-found" } });
 		expect(auth.handler).not.toHaveBeenCalled();
 	});
@@ -353,7 +353,7 @@ describe("deleteOrganization", () => {
 
 describe("updateOrgPrimaryAddress", () => {
 	it("refuses the personal scope", async () => {
-		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ orgId: "user-1", userId: "user-1", credential: "session" } as never);
 		await expect(
 			updateOrgPrimaryAddress({ name: "X", line1: "1 St", country: "EE" }),
 		).rejects.toThrow(/No organization/);

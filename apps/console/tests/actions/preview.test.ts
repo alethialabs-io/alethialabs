@@ -60,7 +60,7 @@ function makeTx(opts: {
 	return tx;
 }
 
-const ACTOR = { userId: "user-1", orgId: "org-1" };
+const ACTOR = { userId: "user-1", orgId: "org-1", credential: "session" };
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const VALID_INPUT = {
 	enabled: true,

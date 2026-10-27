@@ -54,7 +54,7 @@ import { readOrgGeneral, settingsRouter } from "@/lib/rpc/procedures/settings";
 
 /** An actor in org `orgId` (personal when it equals the user). */
 function actor(orgId: string): Actor {
-	return { userId: "user-1", orgId };
+	return { userId: "user-1", orgId, credential: "session" };
 }
 
 /** The router as the browser reaches it, for one actor. */
