@@ -19,7 +19,10 @@ vi.mock("next/navigation", () => ({
 	usePathname: () => "/acme/~/settings/roles",
 	useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
+// The role catalog is a prefetched GET read since #6129 (`members.roleCatalog`); the test's
+// catalog is handed to the manager through it.
+const CATALOG = vi.hoisted((): { current: RolesBootstrap | null } => ({ current: null }));
 // The custom-role list is the server half. `rolesQuery` answers per search key, so a test can
 // model the universe (no search), a settled search, and a search still in flight on the
 // previous answer (`keepPreviousData` → isPlaceholderData).
@@ -38,8 +41,8 @@ const rolesQuery = vi.hoisted(() => ({
 	}),
 }));
 vi.mock("@/lib/query/use-roles-query", () => ({
+	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
 	useRolesQuery: (search?: string) => rolesQuery.answer(search),
-	useInvalidateRoles: () => vi.fn(),
 }));
 vi.mock("@/hooks/use-debounced-value", () => ({
 	useDebouncedValue: <T,>(value: T): T => value,
@@ -68,6 +71,7 @@ const bootstrap: RolesBootstrap = {
 	customRoles: false,
 	canManage: false,
 };
+CATALOG.current = bootstrap;
 
 /** A settled answer carrying `data`. */
 function settled(data: RoleRow[]): FakeRolesResult {
@@ -93,7 +97,7 @@ describe("roles: a search that matches nothing", () => {
 	it("renders the shared empty state in place of the master-detail, and Reset clears the search", async () => {
 		useRolesFilters.getState().set("search", "zqxvjk");
 		const user = userEvent.setup();
-		const { container } = render(<RolesManager bootstrap={bootstrap} />);
+		const { container } = render(<RolesManager />);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
 		expect(screen.getByText("No roles match")).toBeInTheDocument();
@@ -107,7 +111,7 @@ describe("roles: a search that matches nothing", () => {
 
 	it("does not render it when the search matches a role", () => {
 		useRolesFilters.getState().set("search", "view");
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		expect(screen.queryByText("No roles match")).toBeNull();
 		expect(screen.getAllByText("Viewer").length).toBeGreaterThan(0);
 	});
@@ -119,7 +123,7 @@ describe("roles: a search that matches nothing", () => {
 			search === undefined
 				? settled(custom(5))
 				: { data: [], isFetching: true, isPending: false, isPlaceholderData: true };
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		expect(screen.queryByText("No roles match")).toBeNull();
 	});
 
@@ -129,7 +133,7 @@ describe("roles: a search that matches nothing", () => {
 			search === undefined
 				? settled(custom(5))
 				: { data: undefined, isFetching: true, isPending: true, isPlaceholderData: false };
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		expect(screen.queryByText("No roles match")).toBeNull();
 	});
 
@@ -138,7 +142,7 @@ describe("roles: a search that matches nothing", () => {
 		// is empty — the count must still say 6.
 		useRolesFilters.getState().set("search", "zqxvjk");
 		rolesQuery.answer = (search) => settled(search === undefined ? custom(5) : []);
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		expect(screen.getByText("None of the 6 roles match these filters.")).toBeInTheDocument();
 	});
 });

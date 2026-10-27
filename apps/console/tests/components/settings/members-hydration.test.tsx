@@ -45,8 +45,19 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(),
 }));
 
+// The members reads go over GET since #6129; on the client they stay in flight, so what renders is
+// exactly the route's dehydrated seed.
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({
+			"members.page": () => new Promise(() => {}),
+			"members.gate": () => new Promise(() => {}),
+		}).orpc,
+	};
+});
 vi.mock("@/app/server/actions/members", () => ({
-	getMembersPage: vi.fn(() => new Promise<MembersPage>(() => {})),
+	setMemberSuspended: vi.fn(),
 	setMemberSuspended: vi.fn(),
 }));
 vi.mock("@/app/server/actions/billing", () => ({
@@ -117,10 +128,11 @@ const PAGE: MembersPage = {
 	},
 };
 
-/** The route's seed, as `page.tsx` builds it: the pristine key prefetched, then dehydrated. */
+/** The route's seed, as `page.tsx` builds it: the pristine page and the gate prefetched, then dehydrated. */
 function dehydratedSeed() {
 	const server = new QueryClient();
-	server.setQueryData(["members", "acme", {}], PAGE);
+	server.setQueryData([["members", "page"], { input: {}, type: "query" }], PAGE);
+	server.setQueryData([["members", "gate"], { input: undefined, type: "query" }], { canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "Inviting members is available on the Pro plan." });
 	return dehydrate(server);
 }
 

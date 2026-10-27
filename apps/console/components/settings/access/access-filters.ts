@@ -14,6 +14,7 @@
 import { roleDisplayName } from "@/lib/authz/registry";
 import type { AccessGrantQuery } from "@/lib/queries/access-grants";
 import type { FacetOption } from "@/lib/queries/facets";
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 
 /** The Access grants list's filter state (a type alias, for the store's `Record` constraint). */
 export type AccessFilters = {
@@ -114,4 +115,13 @@ export function facetCounts(options: FacetOption[]): Record<string, number> {
 	const counts: Record<string, number> = {};
 	for (const o of options) counts[o.value] = o.count;
 	return counts;
+}
+
+/**
+ * The grants list's query for a URL — the `members.grants` input the list settles on once
+ * `useFilterUrlSync` has read the link, so the route can prefetch it (#4999's rule, #6129).
+ */
+export function accessQueryFromUrl(params: ParamReader, projectId?: string): NormalizedAccessQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_ACCESS_FILTERS);
+	return normalizeAccessQuery(filters, filters.search, projectId);
 }

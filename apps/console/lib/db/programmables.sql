@@ -3481,3 +3481,155 @@ DROP TRIGGER IF EXISTS environment_security_notify_change_insdel ON public.envir
 CREATE TRIGGER environment_security_notify_change_insdel
   AFTER INSERT OR DELETE ON public.environment_security
   FOR EACH ROW EXECUTE FUNCTION public.notify_posture_change();
+
+-- ── The people & access topics (#6129): `members` and `access`. ─────────────────────────────────
+-- Reuses emit_change() from the real-time block near the top. Same contract as the jobs triggers:
+-- identifiers only, and an UPDATE fires only when a column the console renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts):
+--   · members → the org arm `o:<org>`, unfiltered. Every member of an org reads its member list,
+--     its pending invitations and its teams (the members.* reads answer any member).
+--   · access  → the org's `oaccess:<org>` key, held only by a stream whose actor may `view` members:
+--     grants and custom roles are read under `member:view`, which an operator does not hold.
+-- `u`/`p` are not RLS arms of any of these tables and are sent NULL.
+
+-- member: the role and the lifecycle status are what the table shows (and what a suspension or a
+-- role change writes). Not listed: created_at, and organization_id/user_id (never rewritten).
+CREATE OR REPLACE FUNCTION public.notify_member_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('members', OLD.id, OLD.organization_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('members', NEW.id, NEW.organization_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS member_notify_change_upd ON public.member;
+CREATE TRIGGER member_notify_change_upd
+  AFTER UPDATE ON public.member
+  FOR EACH ROW WHEN ((OLD.role, OLD.status) IS DISTINCT FROM (NEW.role, NEW.status))
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS member_notify_change_insdel ON public.member;
+CREATE TRIGGER member_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.member
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- invitation: a pending invitation is a row of the members table; accepting, cancelling or
+-- re-roling it changes status/role. Not listed: expires_at, team_id, inviter_id, created_at.
+DROP TRIGGER IF EXISTS invitation_notify_change_upd ON public.invitation;
+CREATE TRIGGER invitation_notify_change_upd
+  AFTER UPDATE ON public.invitation
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.role, OLD.email) IS DISTINCT FROM (NEW.status, NEW.role, NEW.email)
+  )
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS invitation_notify_change_insdel ON public.invitation;
+CREATE TRIGGER invitation_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.invitation
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- team: its name. Not listed: member_count (a counter better-auth keeps; the membership itself is
+-- team_member's hint below), created_at, updated_at.
+DROP TRIGGER IF EXISTS team_notify_change_upd ON public.team;
+CREATE TRIGGER team_notify_change_upd
+  AFTER UPDATE ON public.team
+  FOR EACH ROW WHEN (OLD.name IS DISTINCT FROM NEW.name)
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS team_notify_change_insdel ON public.team;
+CREATE TRIGGER team_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.team
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- team_member carries no org, so its team's is looked up; the hint names the TEAM (the row the
+-- teams page shows). A team_member deleted by its team's cascade finds no team and routes nowhere —
+-- the team's own delete above carries that hint.
+CREATE OR REPLACE FUNCTION public.notify_team_member_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_team uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.team_id ELSE NEW.team_id END;
+BEGIN
+  PERFORM public.emit_change('members', v_team,
+    (SELECT t.organization_id FROM public.team t WHERE t.id = v_team), NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS team_member_notify_change_insdel ON public.team_member;
+CREATE TRIGGER team_member_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.team_member
+  FOR EACH ROW EXECUTE FUNCTION public.notify_team_member_change();
+
+-- grants: every column the Access table renders. Not listed: created_at.
+CREATE OR REPLACE FUNCTION public.notify_grant_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('access', OLD.id, OLD.org_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('access', NEW.id, NEW.org_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS grants_notify_change_upd ON public.grants;
+CREATE TRIGGER grants_notify_change_upd
+  AFTER UPDATE ON public.grants
+  FOR EACH ROW WHEN (
+    (OLD.principal_type, OLD.principal_id, OLD.effect, OLD.role_id, OLD.permission_key,
+     OLD.resource_type, OLD.resource_id)
+    IS DISTINCT FROM
+    (NEW.principal_type, NEW.principal_id, NEW.effect, NEW.role_id, NEW.permission_key,
+     NEW.resource_type, NEW.resource_id)
+  )
+  EXECUTE FUNCTION public.notify_grant_change();
+
+DROP TRIGGER IF EXISTS grants_notify_change_insdel ON public.grants;
+CREATE TRIGGER grants_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.grants
+  FOR EACH ROW EXECUTE FUNCTION public.notify_grant_change();
+
+-- role: a custom role's name and description (a built-in role has no org and routes nowhere).
+CREATE OR REPLACE FUNCTION public.notify_role_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('access', OLD.id, OLD.organization_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('access', NEW.id, NEW.organization_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS role_notify_change_upd ON public.role;
+CREATE TRIGGER role_notify_change_upd
+  AFTER UPDATE ON public.role
+  FOR EACH ROW WHEN ((OLD.name, OLD.description) IS DISTINCT FROM (NEW.name, NEW.description))
+  EXECUTE FUNCTION public.notify_role_change();
+
+DROP TRIGGER IF EXISTS role_notify_change_insdel ON public.role;
+CREATE TRIGGER role_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.role
+  FOR EACH ROW EXECUTE FUNCTION public.notify_role_change();
+
+-- role_permission carries no org and no id of its own: the hint names the ROLE, with the role's
+-- org looked up (a cascade from the role's delete finds none; the role's own delete carries it).
+-- Rewriting a role's key set deletes and re-inserts its rows; identical notices inside one
+-- transaction are delivered once (NOTIFY de-duplicates them), and the client coalesces the rest.
+CREATE OR REPLACE FUNCTION public.notify_role_permission_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_role uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.role_id ELSE NEW.role_id END;
+BEGIN
+  PERFORM public.emit_change('access', v_role,
+    (SELECT r.organization_id FROM public.role r WHERE r.id = v_role), NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS role_permission_notify_change_insdel ON public.role_permission;
+CREATE TRIGGER role_permission_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.role_permission
+  FOR EACH ROW EXECUTE FUNCTION public.notify_role_permission_change();

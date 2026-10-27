@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the members actions: stub the actor/authorize guards, the PDP grant
-// helpers, and a queue-backed thenable drizzle chain (each `await db…` resolves to the next seeded
-// result set). Asserts the synthetic personal-owner fallback, team/last-active joining, the
-// invitation mapping + personal-scope short-circuit, and every branch of setMemberSuspended.
+// Mocked-boundary tests for the members reads and writes: stub the actor/authorize guards, the PDP
+// grant helpers, and a queue-backed thenable drizzle chain (each `await db…` resolves to the next
+// seeded result set). Asserts the synthetic personal-owner fallback and team/last-active joining of
+// the `members.list` read (lib/rpc/procedures/members.ts, #6129), and every branch of
+// setMemberSuspended — now a `defineAction`, so each refusal is a typed `ActionResult`.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,15 +19,18 @@ vi.mock("@/lib/authz/grants", () => ({
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 
-import {
-	getInvitations,
-	getMembers,
-	setMemberSuspended,
-} from "@/app/server/actions/members";
+import { setMemberSuspended } from "@/app/server/actions/members";
+import { listOrgMembers as getMembers } from "@/lib/rpc/procedures/members";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { invitation, member } from "@/lib/db/schema";
+
+/** Member-row ids as the action now requires them: uuids. */
+const M1 = "00000000-0000-4000-8000-0000000000a1";
+const M2 = "00000000-0000-4000-8000-0000000000a2";
+const MISSING = "00000000-0000-4000-8000-0000000000ff";
 
 /**
  * The columns an `order by` call names, read out of drizzle's SQL chunks.
@@ -100,7 +104,7 @@ beforeEach(() => {
 	} as never);
 });
 
-describe("getMembers", () => {
+describe("members.list (listOrgMembers)", () => {
 	it("synthesizes the sole personal owner when the org has no member rows", async () => {
 		const created = new Date("2026-01-02T03:04:05.000Z");
 		mockDb([
@@ -202,70 +206,6 @@ describe("getMembers", () => {
 	});
 });
 
-describe("getInvitations", () => {
-	it("orders the invitation rows TOTALLY, for the same reason the member rows are ordered", async () => {
-		// The members table concatenates both reads into one list, so either one shuffling re-keys
-		// the whole table.
-		const { orderBySpy } = mockDb([[]]);
-		await getInvitations();
-		expect(orderBySpy).toHaveBeenCalledTimes(1);
-		expect(orderedColumns(orderBySpy.mock.calls[0])).toEqual(
-			expect.arrayContaining([invitation.createdAt, invitation.id]),
-		);
-	});
-
-	it("short-circuits to an empty list in the personal scope without touching the db", async () => {
-		vi.mocked(currentActor).mockResolvedValue({
-			orgId: "user-1",
-			userId: "user-1",
-		} as never);
-		expect(await getInvitations()).toEqual([]);
-		expect(getServiceDb).not.toHaveBeenCalled();
-	});
-
-	it("maps pending invitations, defaulting role and inviter name", async () => {
-		const created = new Date("2026-04-04T04:04:04.000Z");
-		mockDb([
-			[
-				{
-					id: "inv-1",
-					email: "new@example.com",
-					role: "admin",
-					inviterName: "Ada",
-					inviterEmail: "ada@example.com",
-					createdAt: created,
-				},
-				{
-					id: "inv-2",
-					email: "other@example.com",
-					role: null, // → defaults to "viewer"
-					inviterName: null,
-					inviterEmail: "boss@example.com", // → falls back to inviter email
-					createdAt: created,
-				},
-			],
-		]);
-
-		const rows = await getInvitations();
-		expect(rows).toEqual([
-			{
-				id: "inv-1",
-				email: "new@example.com",
-				role: "admin",
-				inviterName: "Ada",
-				createdAt: created.toISOString(),
-			},
-			{
-				id: "inv-2",
-				email: "other@example.com",
-				role: "viewer",
-				inviterName: "boss@example.com",
-				createdAt: created.toISOString(),
-			},
-		]);
-	});
-});
-
 describe("setMemberSuspended", () => {
 	it("suspends a member: flips status and revokes their PDP grant", async () => {
 		// Distinct values (not the "m-2" arg) prove the scope flows from the looked-up row.
@@ -273,7 +213,7 @@ describe("setMemberSuspended", () => {
 			[{ orgId: "org-1", userId: "user-BBB", role: "member" }], // member lookup
 		]);
 
-		expect(await setMemberSuspended("m-2", true)).toEqual({ ok: true });
+		expect(await setMemberSuspended({ memberId: M2, suspended: true })).toEqual({ ok: true, data: expect.anything() });
 		expect(setSpy).toHaveBeenCalledWith({ status: "suspended" });
 		expect(revokeMemberGrant).toHaveBeenCalledWith("org-1", "user-BBB");
 		expect(ensureMemberGrant).not.toHaveBeenCalled();
@@ -288,14 +228,14 @@ describe("setMemberSuspended", () => {
 		const { setSpy, updateSpy } = mockDb([
 			[{ orgId: "org-1", userId: "user-BBB", role: "admin" }],
 		]);
-		await setMemberSuspended("m-2", true);
+		await setMemberSuspended({ memberId: M2, suspended: true });
 		expect(updateSpy).toHaveBeenCalledWith(member);
 		expect(updateSpy).toHaveBeenCalledWith(invitation);
 		expect(setSpy).toHaveBeenCalledWith({ status: "canceled" });
 
 		vi.clearAllMocks();
 		const reactivated = mockDb([[{ orgId: "org-1", userId: "user-BBB", role: "admin" }]]);
-		await setMemberSuspended("m-2", false);
+		await setMemberSuspended({ memberId: M2, suspended: false });
 		expect(reactivated.updateSpy).not.toHaveBeenCalledWith(invitation);
 	});
 
@@ -304,32 +244,35 @@ describe("setMemberSuspended", () => {
 			[{ orgId: "org-1", userId: "user-BBB", role: "admin" }],
 		]);
 
-		expect(await setMemberSuspended("m-2", false)).toEqual({ ok: true });
+		expect(await setMemberSuspended({ memberId: M2, suspended: false })).toEqual({ ok: true, data: expect.anything() });
 		expect(setSpy).toHaveBeenCalledWith({ status: "active" });
 		expect(ensureMemberGrant).toHaveBeenCalledWith("org-1", "user-BBB", "admin");
 		expect(revokeMemberGrant).not.toHaveBeenCalled();
 	});
 
-	it("throws when the member doesn't exist", async () => {
+	it("answers not-found when the member doesn't exist", async () => {
 		mockDb([[]]);
-		await expect(setMemberSuspended("missing", true)).rejects.toThrow(
-			/Member not found/,
-		);
+		expect(await setMemberSuspended({ memberId: MISSING, suspended: true })).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Member not found." },
+		});
 		expect(revokeMemberGrant).not.toHaveBeenCalled();
 	});
 
 	it("refuses to touch a member from a different org", async () => {
 		mockDb([[{ orgId: "other-org", userId: "u-2", role: "member" }]]);
-		await expect(setMemberSuspended("m-2", true)).rejects.toThrow(
-			/Member not found/,
-		);
+		expect(await setMemberSuspended({ memberId: M2, suspended: true })).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Member not found." },
+		});
 	});
 
 	it("refuses to suspend the org owner", async () => {
 		mockDb([[{ orgId: "org-1", userId: "u-1", role: "owner" }]]);
-		await expect(setMemberSuspended("m-1", true)).rejects.toThrow(
-			/owner can't be suspended/,
-		);
+		expect(await setMemberSuspended({ memberId: M1, suspended: true })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "The owner can\'t be suspended." },
+		});
 		expect(revokeMemberGrant).not.toHaveBeenCalled();
 	});
 
@@ -339,9 +282,10 @@ describe("setMemberSuspended", () => {
 		"refuses to suspend %j, which the PDP reads as an owner",
 		async (role) => {
 			const { setSpy } = mockDb([[{ orgId: "org-1", userId: "u-1", role }]]);
-			await expect(setMemberSuspended("m-1", true)).rejects.toThrow(
-				/owner can't be suspended/,
-			);
+			expect(await setMemberSuspended({ memberId: M1, suspended: true })).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "The owner can\'t be suspended." },
+		});
 			expect(setSpy).not.toHaveBeenCalled();
 			expect(revokeMemberGrant).not.toHaveBeenCalled();
 		},
@@ -351,16 +295,27 @@ describe("setMemberSuspended", () => {
 		const { setSpy } = mockDb([
 			[{ orgId: "org-1", userId: "u-1", role: "owner" }],
 		]);
-		expect(await setMemberSuspended("m-1", false)).toEqual({ ok: true });
+		expect(await setMemberSuspended({ memberId: M1, suspended: false })).toEqual({ ok: true, data: expect.anything() });
 		expect(setSpy).toHaveBeenCalledWith({ status: "active" });
 		expect(ensureMemberGrant).toHaveBeenCalledWith("org-1", "u-1", "owner");
 	});
 
-	it("propagates the authorization failure (no db access)", async () => {
-		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
-		await expect(setMemberSuspended("m-2", true)).rejects.toThrow(
-			/Forbidden/,
+	it("answers forbidden on a PDP denial, before any db access", async () => {
+		vi.mocked(authorize).mockRejectedValue(
+			new ForbiddenError("manage_members", { type: "member" }, "denied"),
 		);
+		expect(await setMemberSuspended({ memberId: M2, suspended: true })).toMatchObject({
+			ok: false,
+			error: { kind: "forbidden" },
+		});
 		expect(getServiceDb).not.toHaveBeenCalled();
+	});
+
+	it("refuses a malformed request as a validation result, before authorization", async () => {
+		expect(await setMemberSuspended({ memberId: "not-a-uuid", suspended: true })).toMatchObject({
+			ok: false,
+			error: { kind: "validation" },
+		});
+		expect(authorize).not.toHaveBeenCalled();
 	});
 });

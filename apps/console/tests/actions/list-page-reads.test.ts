@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The seven `get*Page` server actions #2899 adds — the server half of the console filter
-// standard. Each is a thin wrapper, and the thinness is the point: a page read that takes a
+// The seven `get*Page` reads #2899 adds — the server half of the console filter standard. The
+// members, teams and access ones are the bodies of the `members.page` / `members.teams` /
+// `members.grants` GET procedures since #6129 (lib/rpc/procedures/members.ts); the same two
+// properties are asserted of them. Each is a thin wrapper, and the thinness is the point: a page read that takes a
 // client-supplied query is exactly the shape where a tenancy bug hides, because the query
 // object arrives from the browser and the org must NOT.
 //
@@ -49,9 +51,11 @@ import {
 	readAlertDeliveriesPage as getAlertDeliveriesPage,
 	readAlertPoliciesPage as getAlertPoliciesPage,
 } from "@/lib/rpc/procedures/alerts";
-import { getAccessGrantsPage } from "@/app/server/actions/grants";
-import { getMembersPage } from "@/app/server/actions/members";
-import { getTeamsPage } from "@/app/server/actions/teams";
+import {
+	readGrantsPage as getAccessGrantsPage,
+	readMembersPage as getMembersPage,
+	readTeamsPage as getTeamsPage,
+} from "@/lib/rpc/procedures/members";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { queryAccessGrantsPage } from "@/lib/queries/access-grants";
@@ -141,7 +145,7 @@ describe("getAccessGrantsPage", () => {
 
 	it("reads nothing when the gate denies", async () => {
 		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("view", { type: "member" }));
-		await expect(getAccessGrantsPage()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(getAccessGrantsPage({})).rejects.toBeInstanceOf(ForbiddenError);
 		expect(queryAccessGrantsPage).not.toHaveBeenCalled();
 	});
 });
@@ -158,13 +162,13 @@ describe("getMembersPage", () => {
 
 	it("defaults to an empty query", async () => {
 		vi.mocked(queryMembersPage).mockResolvedValue({ members: [] } as never);
-		await getMembersPage();
+		await getMembersPage({});
 		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", {});
 	});
 
 	it("reads nothing when there is no active tenancy", async () => {
 		vi.mocked(currentActor).mockRejectedValue(new ForbiddenError("view", { type: "member" }));
-		await expect(getMembersPage()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(getMembersPage({})).rejects.toBeInstanceOf(ForbiddenError);
 		expect(queryMembersPage).not.toHaveBeenCalled();
 	});
 });
@@ -182,7 +186,7 @@ describe("getTeamsPage", () => {
 
 	it("reads nothing when there is no active tenancy", async () => {
 		vi.mocked(currentActor).mockRejectedValue(new ForbiddenError("view", { type: "member" }));
-		await expect(getTeamsPage()).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(getTeamsPage({})).rejects.toBeInstanceOf(ForbiddenError);
 		expect(queryTeamsPage).not.toHaveBeenCalled();
 	});
 });

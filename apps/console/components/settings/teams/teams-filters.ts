@@ -9,6 +9,8 @@
 // narrows in SQL and counts the size facet over the org's unfiltered teams, so `filterTeams`
 // and `teamsFacetCounts` are gone and this module is the normalize step and nothing else.
 
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
+
 /** The teams list's filter state (a type alias, for the store's `Record` constraint). */
 export type TeamsFilters = {
 	search: string;
@@ -45,4 +47,13 @@ export function normalizeTeamsQuery(
 	if (trimmed) query.search = trimmed;
 	if (filters.sizes.length) query.sizes = [...new Set(filters.sizes)].sort();
 	return query;
+}
+
+/**
+ * The teams list's query for a URL — the key the client settles on once `useFilterUrlSync` has read
+ * the link, so it is the key the route prefetches for a pasted filtered link (#4999's rule, #6129).
+ */
+export function teamsQueryFromUrl(params: ParamReader): NormalizedTeamsQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_TEAMS_FILTERS);
+	return normalizeTeamsQuery(filters, filters.search);
 }

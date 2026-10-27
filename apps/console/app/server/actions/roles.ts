@@ -2,27 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, asc, eq, exists, inArray, isNotNull, or, sql } from "drizzle-orm";
+// WRITES ONLY (ADR 0005 D1/D4, #6129). The role reads (the catalog, the custom-role list) moved to
+// `lib/rpc/procedures/members.ts` and are served over GET; every export here is a `defineAction`
+// returning `ActionResult<T>`. The row types stay here: the procedures and the page shape with them.
+
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { recordActivity } from "@/lib/authz/activity";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
-import { getPdp } from "@/lib/authz";
 import { actorHoldsAllKeys } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorizeQuiet } from "@/lib/authz/guard";
-import {
-	BUILT_IN_ROLE_DESCRIPTIONS,
-	BUILT_IN_ROLES,
-	BUILTIN_ROLE_IDS,
-	type BuiltInRole,
-	type PermissionDef,
-	PERMISSIONS,
-} from "@/lib/authz/registry";
+import { type PermissionDef, PERMISSIONS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
-import { likeTerm } from "@/lib/db/like";
-import { grants, role, rolePermission } from "@/lib/db/schema";
+import { role, rolePermission } from "@/lib/db/schema";
 
 export interface CustomRole {
 	id: string;
@@ -52,41 +50,11 @@ export interface RolesBootstrap {
 	canManage: boolean;
 }
 
-const ALL_KEYS: string[] = PERMISSIONS.map((p) => p.key);
-const VALID_KEYS: ReadonlySet<string> = new Set(ALL_KEYS);
-const ORDER: BuiltInRole[] = ["owner", "admin", "operator", "viewer"];
+const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
 /** Keep only known, de-duplicated permission keys (no unsafe input reaches the DB). */
 function sanitize(keys: string[]): string[] {
 	return [...new Set(keys.filter((k) => VALID_KEYS.has(k)))];
-}
-
-/** The permission keys a built-in role grants ("*" → every key). */
-function builtinKeys(name: BuiltInRole): string[] {
-	const grant = BUILT_IN_ROLES[name];
-	return grant === "*" ? ALL_KEYS : grant;
-}
-
-/**
- * Distinct-USER grant counts per role in an org. Counts only `user` principals (team grants
- * contribute 0) and de-duplicates a principal that holds the role both org-wide and scoped, so
- * "N members affected" is accurate. Roles with no grants are absent (→ 0).
- */
-async function grantCountsByRole(
-	db: ReturnType<typeof getServiceDb>,
-	orgId: string,
-): Promise<Map<string, number>> {
-	const rows = await db
-		.select({
-			roleId: grants.role_id,
-			n: sql<number>`count(distinct case when ${grants.principal_type} = 'user' then ${grants.principal_id} end)`,
-		})
-		.from(grants)
-		.where(and(eq(grants.org_id, orgId), isNotNull(grants.role_id)))
-		.groupBy(grants.role_id);
-	const map = new Map<string, number>();
-	for (const r of rows) if (r.roleId) map.set(r.roleId, Number(r.n));
-	return map;
 }
 
 /**
@@ -101,130 +69,37 @@ async function grantCountsByRole(
 async function requireCustomRoles(): Promise<Actor> {
 	const actor = await authorizeQuiet("manage_members", { type: "member" });
 	if (!getEntitlements(actor).customRoles) {
-		throw new Error("Custom roles require an Enterprise license.");
+		throw new ActionRefusal("entitlement", "Custom roles require an Enterprise license.", "customRoles");
 	}
 	return actor;
 }
 
-/** The active org's custom (non-built-in) roles with their permission keys. Reading the role config
- *  requires `member:view` (roles are member-management config; non-members are denied). */
-export async function listCustomRoles(): Promise<CustomRole[]> {
-	const actor = await authorizeQuiet("view", { type: "member" });
-	const db = getServiceDb();
-	const roles = await db
-		.select({ id: role.id, name: role.name, description: role.description })
-		.from(role)
-		.where(and(eq(role.organization_id, actor.orgId), eq(role.is_builtin, false)));
-	if (roles.length === 0) return [];
-
-	const perms = await db
-		.select({ roleId: rolePermission.role_id, key: rolePermission.permission_key })
-		.from(rolePermission)
-		.where(inArray(rolePermission.role_id, roles.map((r) => r.id)));
-	const byRole = new Map<string, string[]>();
-	for (const p of perms) {
-		const list = byRole.get(p.roleId) ?? [];
-		list.push(p.key);
-		byRole.set(p.roleId, list);
-	}
-	return roles.map((r) => ({ ...r, permissionKeys: byRole.get(r.id) ?? [] }));
-}
-
 /**
- * One round-trip of everything the Roles page needs beyond the searchable custom list: the
- * built-in roles (from the registry) with their grant counts, the permission catalog, the
- * Enterprise entitlement, and a non-throwing manage-permission check. Reading requires
- * `member:view` (throws ForbiddenError → the page renders a no-access notice).
+ * A role's editable fields as they arrive over the wire. The shape is checked here; the permission
+ * keys are then `sanitize`d against the registry, so an unknown key never reaches the database.
  */
-export async function getRolesBootstrap(): Promise<RolesBootstrap> {
-	const actor = await authorizeQuiet("view", { type: "member" });
-	const db = getServiceDb();
-	const [counts, canManage] = await Promise.all([
-		grantCountsByRole(db, actor.orgId),
-		getPdp()
-			.can(actor, "manage_members", { type: "member" })
-			.then((d) => d.allowed),
-	]);
-	const builtin: RoleRow[] = ORDER.map((name) => ({
-		id: BUILTIN_ROLE_IDS[name],
-		name,
-		description: BUILT_IN_ROLE_DESCRIPTIONS[name],
-		builtin: true,
-		permissionKeys: builtinKeys(name),
-		grantCount: counts.get(BUILTIN_ROLE_IDS[name]) ?? 0,
-	}));
-	return {
-		builtin,
-		permissions: PERMISSIONS,
-		customRoles: getEntitlements(actor).customRoles,
-		canManage,
-	};
-}
+const roleFields = {
+	name: z.string().trim().min(1, "Name your role").max(120),
+	permissionKeys: z.array(z.string().max(200)).max(500),
+	description: z.string().max(500).optional(),
+};
 
-/**
- * The active org's custom roles, filtered SERVER-SIDE by `search` over the role name,
- * description, or any of its permission keys (LIKE-escaped). Returns each role's permission
- * keys + distinct-user grant count. `member:view` gated.
- */
-export async function listRoles(search?: string): Promise<RoleRow[]> {
-	const actor = await authorizeQuiet("view", { type: "member" });
-	const db = getServiceDb();
-	const q = search?.trim();
-	const like = q ? likeTerm(q) : null;
+const createRoleInput = z.object(roleFields);
+const updateRoleInput = z.object({ id: z.string().uuid(), ...roleFields });
+const deleteRoleInput = z.object({ id: z.string().uuid() });
 
-	const roles = await db
-		.select({ id: role.id, name: role.name, description: role.description })
-		.from(role)
-		.where(
-			and(
-				eq(role.organization_id, actor.orgId),
-				eq(role.is_builtin, false),
-				like
-					? or(
-							sql`${role.name} ilike ${like}`,
-							sql`${role.description} ilike ${like}`,
-							exists(
-								db
-									.select({ one: sql`1` })
-									.from(rolePermission)
-									.where(
-										and(
-											eq(rolePermission.role_id, role.id),
-											sql`${rolePermission.permission_key} ilike ${like}`,
-										),
-									),
-							),
-						)
-					: undefined,
-			),
-		)
-		.orderBy(asc(role.name));
-	if (roles.length === 0) return [];
-
-	const [perms, counts] = await Promise.all([
-		db
-			.select({ roleId: rolePermission.role_id, key: rolePermission.permission_key })
-			.from(rolePermission)
-			.where(inArray(rolePermission.role_id, roles.map((r) => r.id))),
-		grantCountsByRole(db, actor.orgId),
-	]);
-	const byRole = new Map<string, string[]>();
-	for (const p of perms) {
-		const list = byRole.get(p.roleId) ?? [];
-		list.push(p.key);
-		byRole.set(p.roleId, list);
-	}
-	return roles.map((r) => ({
-		id: r.id,
-		name: r.name,
-		description: r.description,
-		builtin: false,
-		permissionKeys: byRole.get(r.id) ?? [],
-		grantCount: counts.get(r.id) ?? 0,
-	}));
-}
-
+/** Creates a custom role in the addressed org. Gated by {@link requireCustomRoles} and the ceiling. */
 export async function createRole(
+	raw: z.input<typeof createRoleInput>,
+): Promise<ActionResult<CustomRole>> {
+	return defineAction({
+		input: createRoleInput,
+		run: ({ input }) => insertRole(input.name, input.permissionKeys, input.description),
+	})(raw);
+}
+
+/** The body of {@link createRole}, on validated input. */
+async function insertRole(
 	name: string,
 	permissionKeys: string[],
 	description?: string,
@@ -264,7 +139,21 @@ export async function createRole(
 	};
 }
 
+/** Rewrites one of the addressed org's custom roles. Gated like {@link createRole}. */
 export async function updateRole(
+	raw: z.input<typeof updateRoleInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: updateRoleInput,
+		run: async ({ input }) => {
+			await rewriteRole(input.id, input.name, input.permissionKeys, input.description);
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** The body of {@link updateRole}, on validated input. */
+async function rewriteRole(
 	id: string,
 	name: string,
 	permissionKeys: string[],
@@ -280,7 +169,7 @@ export async function updateRole(
 		throw new ForbiddenError("manage_members", { type: "member" }, "role_exceeds_editor_privilege");
 	}
 	const db = getServiceDb();
-	// Only this org's non-built-in roles may be edited.
+	// Only this org's non-built-in roles may be edited; another org's role reads as not found.
 	const [target] = await db
 		.select({ id: role.id })
 		.from(role)
@@ -292,7 +181,7 @@ export async function updateRole(
 			),
 		)
 		.limit(1);
-	if (!target) throw new Error("Role not found");
+	if (!target) throw new ActionRefusal("not-found", "Role not found.");
 
 	await db.update(role).set({ name, description: desc }).where(eq(role.id, id));
 	await db.delete(rolePermission).where(eq(rolePermission.role_id, id));
@@ -317,7 +206,21 @@ export async function updateRole(
 	recordActivity(actor, "edit", { type: "role", id });
 }
 
-export async function deleteRole(id: string): Promise<void> {
+/** Deletes one of the addressed org's custom roles. Gated like {@link createRole}. */
+export async function deleteRole(
+	raw: z.input<typeof deleteRoleInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: deleteRoleInput,
+		run: async ({ input }) => {
+			await removeRole(input.id);
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** The body of {@link deleteRole}, on validated input. */
+async function removeRole(id: string): Promise<void> {
 	const actor = await requireCustomRoles();
 	// Grants referencing the role cascade-delete (FK); their tuples reconcile on the
 	// next backfill. Only this org's non-built-in roles may be deleted.

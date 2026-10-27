@@ -18,7 +18,10 @@ vi.mock("next/navigation", () => ({
 	usePathname: () => "/acme/~/settings/roles",
 	useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
+// The role catalog is a prefetched GET read since #6129 (`members.roleCatalog`); the test's
+// catalog is handed to the manager through it.
+const CATALOG = vi.hoisted((): { current: RolesBootstrap | null } => ({ current: null }));
 
 /** The custom roles the mocked server-side query returns. */
 const customRoles: RoleRow[] = [
@@ -40,13 +43,13 @@ const customRoles: RoleRow[] = [
 	},
 ];
 vi.mock("@/lib/query/use-roles-query", () => ({
+	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
 	useRolesQuery: () => ({
 		data: customRoles,
 		isFetching: false,
 		isPending: false,
 		isPlaceholderData: false,
 	}),
-	useInvalidateRoles: () => vi.fn(),
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
@@ -72,6 +75,7 @@ const bootstrap: RolesBootstrap = {
 	customRoles: true,
 	canManage: true,
 };
+CATALOG.current = bootstrap;
 
 /** True when any element in `root` (or `root` itself) carries the CSS `capitalize` utility. */
 function hasCapitalize(root: HTMLElement): boolean {
@@ -80,14 +84,14 @@ function hasCapitalize(root: HTMLElement): boolean {
 
 describe("role names on the Roles page", () => {
 	it("a built-in role is called by its label — visibly and to assistive tech", () => {
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		// jsdom joins the row's name and count spans with no space: "<name><permission count>".
 		const owner = screen.getByRole("button", { name: "Owner2" });
 		expect(hasCapitalize(owner)).toBe(false);
 	});
 
 	it("a custom role's name is rendered exactly as the user typed it, never re-cased", () => {
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		const cases: Array<[name: string, permissionCount: number]> = [
 			["k8s-readers", 1],
 			["iOS team", 0],
@@ -100,7 +104,7 @@ describe("role names on the Roles page", () => {
 	});
 
 	it("the detail header names the selected role the same way the rail does", () => {
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		// The default selection is the first built-in, so the header shows its label.
 		const headers = screen.getAllByText("Owner").filter((el) => el.closest("button") === null);
 		expect(headers).toHaveLength(1);

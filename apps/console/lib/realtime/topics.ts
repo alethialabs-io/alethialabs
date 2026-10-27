@@ -16,6 +16,8 @@
  * `billing` are split by what a refetch COSTS: `usage` (AI spend, at most once per 30 s per org)
  * refreshes database reads only; `billing` (the billing record and its invoices, rare) also
  * refreshes the Stripe-backed plan card (#6127).
+ * `members` (members, invitations, teams and team membership) and `access` (grants, custom roles
+ * and their permissions) have trigger producers too (#6129).
  */
 export const TOPICS = [
 	"jobs",
@@ -30,6 +32,8 @@ export const TOPICS = [
 	"usage",
 	"billing",
 	"organization",
+	"members",
+	"access",
 ] as const;
 
 /** One topic of {@link TOPICS}. */

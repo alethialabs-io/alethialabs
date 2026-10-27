@@ -83,9 +83,12 @@ import {
 	projectFabrics,
 	projects,
 	runners,
+	role,
 	supportCases,
+	team,
 	user,
 } from "@/lib/db/schema";
+import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { editionState } from "@/lib/enterprise";
 import { errorDigest } from "@/lib/errors";
 import { procedurePaths } from "@/lib/rpc/procedure-paths";
@@ -138,6 +141,11 @@ export interface Seeded {
 	/** One ANALYZE_REPO job per org, with no digest yet (#6131's scan reads address a SCAN job). */
 	scanJobX: string;
 	scanJobY: string;
+	/** People & access markers (#6129): one team and one custom role per org, and a grant to each team. */
+	teamX: string;
+	teamY: string;
+	roleX: string;
+	roleY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -782,6 +790,75 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "runner releases are global; every org reads the same changelog",
 		input: { version: "0.0.0-it-6123-none" },
 	},
+	// The people & access reads (#6129). Members, teams and the invite context answer any member;
+	// roles and grants answer `member:view`, which the caller U (a viewer) holds. X has three members
+	// (U, V, W), Y two (U, W); the community personal scope has the caller alone.
+	"members.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out) => {
+			const members = field(out, "members");
+			const n = Array.isArray(members) ? members.length : -1;
+			return { x: n === 3, y: n === 2 };
+		},
+	},
+	"members.list": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({ x: Array.isArray(out) && out.length === 3, y: Array.isArray(out) && out.length === 2 }),
+	},
+	"members.gate": {
+		// Both seeded orgs are on the same live Team plan (#6118), so the gate's answer is the SAME at
+		// X and Y by construction; what is asserted is that the address — never the session — decides
+		// it, and that a non-member of Y is refused. It is not a claim that the gate ignores the org.
+		kind: "not-org-scoped",
+		reason: "both seeded orgs are on the same live plan, so their gates are identical",
+		input: undefined,
+	},
+	"members.inviteContext": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => {
+			const emails = field(out, "existingEmails");
+			const n = Array.isArray(emails) ? emails.length : -1;
+			return { x: n === 3, y: n === 2 };
+		},
+	},
+	"members.teams": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.teamX), y: hasRow(out, s.teamY) }),
+	},
+	"members.roles": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasElement(out, "id", s.roleX), y: hasElement(out, "id", s.roleY) }),
+	},
+	"members.roleCatalog": {
+		// The built-in viewer's distinct-user grant count IS the org's marker: U and V in X, U in Y.
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => {
+			const builtin = field(out, "builtin");
+			const viewer = Array.isArray(builtin) ? builtin.find((r: unknown) => field(r, "name") === "viewer") : undefined;
+			const n = numberField(viewer, "grantCount");
+			return { x: n === 2, y: n === 1 };
+		},
+	},
+	"members.grants": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => {
+			const rows = field(out, "rows");
+			const names = (id: string) => Array.isArray(rows) && rows.some((r: unknown) => field(r, "principalId") === id);
+			return { x: names(s.teamX), y: names(s.teamY) };
+		},
+	},
+	"members.grantOptions": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: hasItem(out, "principals", s.teamX), y: hasItem(out, "principals", s.teamY) }),
+	},
 };
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
@@ -877,6 +954,10 @@ export async function runRpcTenancySuite(opts: {
 		clusterY: "",
 		runnerX: "",
 		runnerY: "",
+		teamX: "",
+		teamY: "",
+		roleX: "",
+		roleY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -1099,6 +1180,30 @@ export async function runRpcTenancySuite(opts: {
 			// #6131: a repository scan per org, as `/~/new` queues one — project-less, no digest yet.
 			seeded.scanJobX = await seedJob(W, ORG_X, { job_type: "ANALYZE_REPO" });
 			seeded.scanJobY = await seedJob(W, ORG_Y, { job_type: "ANALYZE_REPO" });
+			// #6129's markers: a team and a custom role in each org, and an org-wide viewer grant to
+			// each team — so the teams, roles, grants and grant-option reads each carry a row that
+			// names its org. A team grant counts toward no role's member count.
+			const seedPeople = async (orgId: string, org: Org): Promise<{ team: string; role: string }> => {
+				const [t] = await db
+					.insert(team)
+					.values({ name: `it-6129-team-${org}`, organizationId: orgId })
+					.returning({ id: team.id });
+				const [r] = await db
+					.insert(role)
+					.values({ organization_id: orgId, name: `it-6129-role-${org}`, is_builtin: false })
+					.returning({ id: role.id });
+				await db.insert(grants).values({
+					org_id: orgId,
+					principal_type: "team",
+					principal_id: t.id,
+					effect: "allow",
+					role_id: BUILTIN_ROLE_IDS.viewer,
+					resource_type: "org",
+				});
+				return { team: t.id, role: r.id };
+			};
+			({ team: seeded.teamX, role: seeded.roleX } = await seedPeople(ORG_X, "x"));
+			({ team: seeded.teamY, role: seeded.roleY } = await seedPeople(ORG_Y, "y"));
 			// #6127's markers, on the billing records #6118 seeded above (both on a live Team plan): an AI
 			// cap and a distinct paid period per org; then one invoice per org and one more project in X.
 			// U's `manage_billing` in X is granted per read (`billingAdminInX`), never suite-wide.
@@ -1164,6 +1269,8 @@ export async function runRpcTenancySuite(opts: {
 			await db.delete(invoice).where(inArray(invoice.organizationId, [ORG_X, ORG_Y]));
 			await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(grants).where(inArray(grants.org_id, [ORG_X, ORG_Y, ...USERS]));
+			await db.delete(team).where(inArray(team.organizationId, [ORG_X, ORG_Y]));
+			await db.delete(role).where(inArray(role.organization_id, [ORG_X, ORG_Y]));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(organization).where(inArray(organization.id, [ORG_X, ORG_Y]));
 			await db.delete(user).where(inArray(user.id, USERS));

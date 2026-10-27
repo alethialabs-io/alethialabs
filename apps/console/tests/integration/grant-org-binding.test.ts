@@ -36,14 +36,22 @@ vi.mock("@/lib/authz/guard", async (importOriginal) => {
 	};
 });
 
+// The binding check runs for REAL; it is wrapped in a pass-through spy only so the server action's
+// test can read the reason it answered. Since #6129 `assignGrant` is a `defineAction`: the browser
+// is told `forbidden` and nothing more, so the reason is read where the server decided it.
+vi.mock("@/lib/authz/grant-binding", async (importOriginal) => {
+	const real = await importOriginal<typeof import("@/lib/authz/grant-binding")>();
+	return { ...real, grantBindingViolation: vi.fn(real.grantBindingViolation) };
+});
+
 import { POST } from "@/app/api/cli/grants/route";
 import { assignGrant } from "@/app/server/actions/grants";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { grantBindingViolation } from "@/lib/authz/grant-binding";
 import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
-import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	authzActivityLog,
@@ -105,15 +113,22 @@ async function grantsOf(principalId: string): Promise<(typeof grants.$inferSelec
 		.where(and(eq(grants.org_id, ORG_A), eq(grants.principal_id, principalId)));
 }
 
-/** Runs `assignGrant` as A's owner and returns the ForbiddenError reason it threw, or "ok". */
-async function assignAsAdmin(input: Record<string, unknown>): Promise<string> {
-	try {
-		await runWithActor(admin, () => assignGrant(input));
-		return "ok";
-	} catch (err) {
-		if (err instanceof ForbiddenError) return err.reason ?? "forbidden";
-		throw err;
-	}
+/** One `assignGrant` request, as the action takes it. */
+type GrantRequest = Parameters<typeof assignGrant>[0];
+
+/**
+ * Runs `assignGrant` as A's owner. Answers "ok", or — for a `forbidden` refusal — the reason the
+ * org-binding check gave for THIS request (read from the pass-through spy above), or the refusal's
+ * kind when it was refused for anything else.
+ */
+async function assignAsAdmin(input: GrantRequest): Promise<string> {
+	vi.mocked(grantBindingViolation).mockClear();
+	const result = await runWithActor(admin, () => assignGrant(input));
+	if (result.ok) return "ok";
+	if (result.error.kind !== "forbidden") return result.error.kind;
+	const asked = vi.mocked(grantBindingViolation).mock.results.at(-1);
+	const reason: unknown = asked ? await asked.value : null;
+	return typeof reason === "string" ? reason : "forbidden";
 }
 
 /** POSTs a grant to the CLI route as A's owner. */
@@ -222,7 +237,7 @@ describeIfDb("a grant's role, team and resource belong to the grant's org", () =
 
 	describe("assignGrant (server action)", () => {
 		it("refuses another org's role, as allow and as deny, and writes nothing", async () => {
-			for (const effect of ["allow", "deny"]) {
+			for (const effect of ["allow", "deny"] as const) {
 				expect(
 					await assignAsAdmin({
 						principalType: "user",
@@ -266,7 +281,7 @@ describeIfDb("a grant's role, team and resource belong to the grant's org", () =
 		});
 
 		it("CONTROL: this org's custom role, a built-in role, its project and its team are accepted", async () => {
-			const requests = [
+			const requests: GrantRequest[] = [
 				{ principalType: "user", principalId: TARGET, effect: "allow", roleId: ROLE_A, resourceType: "org" },
 				{ principalType: "user", principalId: TARGET, effect: "allow", roleId: BUILTIN_ROLE_IDS.viewer, resourceType: "org" },
 				{ principalType: "user", principalId: TARGET, effect: "allow", permissionKey: "project:view", resourceType: "project", resourceId: PROJ_A },

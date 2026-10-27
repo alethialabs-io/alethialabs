@@ -31,7 +31,6 @@ import { act, render, screen } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import type { RoleRow, RolesBootstrap } from "@/app/server/actions/roles";
 import type { SsoBootstrap } from "@/app/server/actions/sso";
 import type { CaseListItem } from "@/lib/queries/support";
 import { orpc } from "@/lib/rpc/client";
@@ -67,12 +66,30 @@ vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(() => new Pro
 
 /** Every search `useRolesQuery` / `useSsoProvidersQuery` was called with, in render order. */
 const asked = vi.hoisted(() => ({ roles: [] as Array<string | undefined>, sso: [] as Array<string | undefined> }));
+/** The role catalog the route prefetches (#6129) — a viewer's, with one built-in role. */
+const catalog = vi.hoisted(() => ({
+	data: {
+		builtin: [
+			{
+				id: "role-viewer",
+				name: "Viewer",
+				description: "Read-only access.",
+				builtin: true,
+				permissionKeys: [],
+				grantCount: 0,
+			},
+		],
+		permissions: [],
+		customRoles: false,
+		canManage: false,
+	},
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRolesQuery: (search?: string) => {
 		asked.roles.push(search);
-		return { data: [], isFetching: false, isPending: false, isPlaceholderData: false };
+		return { data: [], error: null, isFetching: false, isPending: false, isPlaceholderData: false };
 	},
-	useInvalidateRoles: () => vi.fn(),
+	useRoleCatalogQuery: () => ({ data: catalog.data, error: null, isPending: false, isError: false }),
 }));
 vi.mock("@/lib/query/use-sso-query", () => ({
 	useSsoProvidersQuery: (filter?: { search?: string }) => {
@@ -81,7 +98,7 @@ vi.mock("@/lib/query/use-sso-query", () => ({
 	},
 	useInvalidateSso: () => vi.fn(),
 }));
-vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
 vi.mock("@/app/server/actions/connectors", () => ({
 	getConnectorsWithStatus: vi.fn(() => new Promise(() => {})),
 	deleteConnectorCredential: vi.fn(),
@@ -239,19 +256,9 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 });
 
 describe("RolesManager — ~/settings/roles?search=…", () => {
-	const viewer: RoleRow = {
-		id: "role-viewer",
-		name: "Viewer",
-		description: "Read-only access.",
-		builtin: true,
-		permissionKeys: [],
-		grantCount: 0,
-	};
-	const bootstrap: RolesBootstrap = { builtin: [viewer], permissions: [], customRoles: false, canManage: false };
-
 	it("asks for the link's search before any debounce has elapsed", async () => {
 		currentSearch = "search=deployer";
-		renderWithClient(<RolesManager bootstrap={bootstrap} />);
+		renderWithClient(<RolesManager />);
 		await settleWithoutTime();
 
 		expect(asked.roles).toContain("deployer");
