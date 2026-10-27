@@ -64,6 +64,11 @@ interface WidgetGridState {
  * Per-thread widget-grid state: hydrated from `thread_widgets`, mutated optimistically
  * (drag/resize/mode/delete persist via server actions), with client-side first-fit for
  * new pins. One grid at a time — keyed by the active thread.
+ *
+ * It owns the grid's PLACEMENT and each row as it was pinned or hydrated. A live widget's
+ * refreshed payload does not come back here: it lives in Query, keyed per widget and owner,
+ * and is re-run on its topic's hint (`components/agent/widgets/live-refresh.ts`, #6207). A
+ * row here only seeds that entry, and wins over it only when it is the newer write (a re-pin).
  */
 export const useWidgetGridStore = create<WidgetGridState>((set, get) => ({
 	threadId: null,

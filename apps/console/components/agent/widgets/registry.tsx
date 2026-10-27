@@ -12,6 +12,7 @@
 import type { ComponentType } from "react";
 import { z } from "zod";
 import { formatMinutes, formatMoney, money, moneyFromMajor } from "@repo/format";
+import type { Topic } from "@/lib/realtime/topics";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import type { WidgetKind } from "@/types/jsonb.types";
 import {
@@ -123,9 +124,14 @@ export interface WidgetDef {
 	/** Marker-line/caption detail for a parsed output (e.g. "7 rows"). */
 	detail: (output: unknown) => string | undefined;
 	Body: ComponentType<WidgetBodyProps>;
-	/** PR 3: live widgets refetch via their source on this cadence. */
 	liveByDefault: boolean;
-	refreshIntervalMs: number | null;
+	/**
+	 * The change-stream topic whose hint re-runs a LIVE widget's source tool
+	 * (`live-refresh.ts`, ADR 0005 §7 Q3). `null` = nothing on the stream announces this
+	 * data, so the widget refreshes only when someone presses its refresh button. There is
+	 * no timer: a topic with no producer yet goes live the day its lane adds the trigger.
+	 */
+	topic: Topic | null;
 }
 
 /** "4 rows" / "1 row". */
@@ -293,7 +299,8 @@ function DriftBody({ output }: WidgetBodyProps) {
 
 /**
  * The registry, keyed by tool name (no `tool-` prefix). Tabular reads land 3×2;
- * summaries land 2×2 key/value cards. Refresh cadences take effect in PR 3.
+ * summaries land 2×2 key/value cards. `get_org_usage` counts runner minutes and jobs in
+ * flight, and drift posture is written by a job, so both ride the `jobs` topic.
  */
 export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 	list_projects: {
@@ -307,7 +314,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		},
 		Body: ProjectsBody,
 		liveByDefault: false,
-		refreshIntervalMs: null,
+		topic: "projects",
 	},
 	list_jobs: {
 		kind: "table",
@@ -320,7 +327,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		},
 		Body: JobsBody,
 		liveByDefault: true,
-		refreshIntervalMs: 15_000,
+		topic: "jobs",
 	},
 	list_clusters: {
 		kind: "table",
@@ -333,7 +340,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		},
 		Body: ClustersBody,
 		liveByDefault: true,
-		refreshIntervalMs: 60_000,
+		topic: "clusters",
 	},
 	list_connectors: {
 		kind: "table",
@@ -346,7 +353,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		},
 		Body: ConnectorsBody,
 		liveByDefault: true,
-		refreshIntervalMs: 60_000,
+		topic: null,
 	},
 	list_runners: {
 		kind: "table",
@@ -359,7 +366,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		},
 		Body: RunnersBody,
 		liveByDefault: true,
-		refreshIntervalMs: 60_000,
+		topic: "runners",
 	},
 	get_org_usage: {
 		kind: "keyvalue",
@@ -369,7 +376,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		detail: () => undefined,
 		Body: OrgUsageBody,
 		liveByDefault: true,
-		refreshIntervalMs: 300_000,
+		topic: "jobs",
 	},
 	get_ai_usage: {
 		kind: "keyvalue",
@@ -379,7 +386,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		detail: () => undefined,
 		Body: AiUsageBody,
 		liveByDefault: true,
-		refreshIntervalMs: 300_000,
+		topic: "usage",
 	},
 	get_billing_summary: {
 		kind: "keyvalue",
@@ -389,7 +396,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		detail: () => undefined,
 		Body: BillingBody,
 		liveByDefault: false,
-		refreshIntervalMs: null,
+		topic: "billing",
 	},
 	get_drift_posture: {
 		kind: "keyvalue",
@@ -399,7 +406,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDef> = {
 		detail: () => undefined,
 		Body: DriftBody,
 		liveByDefault: true,
-		refreshIntervalMs: 300_000,
+		topic: "jobs",
 	},
 };
 
