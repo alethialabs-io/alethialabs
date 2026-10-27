@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #5660: the alerts bootstrap's `canManage` flag is a capability PROBE — it shows or hides
+// #5660: the alerts hub's `canManage` flag (the `alerts.settings` read since #6125) is a capability PROBE — it shows or hides
 // controls and authorizes nothing — so it must not write to the org's audit trail. It used to
 // probe with `getPdp().enforce(...)`, and `enforce` routes through `enforceDecision`, which records
 // every non-read allow and every deny and emits the action event. So every overview / alerts-hub
@@ -31,7 +31,8 @@ vi.mock("@/lib/crypto/secrets", () => ({
 	encryptSecret: vi.fn(),
 	isCredEncryptionConfigured: vi.fn(() => true),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The settings read's condition options list the org's projects; not what this file is about.
+vi.mock("@/app/server/actions/projects", () => ({ getProjects: vi.fn(async () => []) }));
 // The guard's session-resolution dependencies. Never reached — the actor is injected — but
 // stubbed so importing the real guard does not pull in the auth runtime.
 vi.mock("@/lib/auth/owner", () => ({ getOwnerScope: vi.fn() }));
@@ -42,10 +43,10 @@ vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 import {
 	deleteChannel,
 	deletePolicy,
-	getAlertsBootstrap,
 	setChannelEnabled,
 	togglePolicy,
 } from "@/app/server/actions/alerts";
+import { readAlertsSettings } from "@/lib/rpc/procedures/alerts";
 import { emitActionEvent } from "@/lib/alerts/emit";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -53,6 +54,9 @@ import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Actor, Decision } from "@/lib/authz/types";
 import { authzActivityLog } from "@/lib/db/schema";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
+
+const RULE = "33333333-3333-4333-8333-333333333333";
+const CH = "22222222-2222-4222-8222-222222222222";
 
 const ACTOR: Actor = {
 	credential: "session",
@@ -128,17 +132,17 @@ beforeEach(() => {
 	installDb();
 });
 
-describe("getAlertsBootstrap — the canManage probe records nothing (#5660)", () => {
+describe("alerts.settings — the canManage probe records nothing (#5660)", () => {
 	it("a manager loading the page writes no manage_alerts activity row and emits no event", async () => {
 		installPdp({ allowed: true });
-		const r = await runWithActor(ACTOR, () => getAlertsBootstrap());
+		const r = await runWithActor(ACTOR, () => readAlertsSettings());
 		expect(r.canManage).toBe(true);
 		expect(manageAlertsTrail()).toEqual({ rows: [], events: [] });
 	});
 
 	it("a non-manager loading the page writes no DENIAL row and emits no denied event", async () => {
 		installPdp({ allowed: false, reason: "no_grant" });
-		const r = await runWithActor(ACTOR, () => getAlertsBootstrap());
+		const r = await runWithActor(ACTOR, () => readAlertsSettings());
 		expect(r.canManage).toBe(false);
 		expect(manageAlertsTrail()).toEqual({ rows: [], events: [] });
 	});
@@ -148,10 +152,10 @@ describe("alert mutations still go through the RECORDING gate", () => {
 	// Each of these is a write whose only body is a row change, so it runs to completion against the
 	// empty DB stand-in; the richer writes (addChannel, createPolicy, …) share the same first line.
 	it.each([
-		["deletePolicy", () => deletePolicy("rule-1")],
-		["togglePolicy", () => togglePolicy("rule-1", false)],
-		["deleteChannel", () => deleteChannel("ch-1")],
-		["setChannelEnabled", () => setChannelEnabled("ch-1", false)],
+		["deletePolicy", () => deletePolicy({ id: RULE })],
+		["togglePolicy", () => togglePolicy({ id: RULE, enabled: false })],
+		["deleteChannel", () => deleteChannel({ id: CH })],
+		["setChannelEnabled", () => setChannelEnabled({ id: CH, enabled: false })],
 	])("an allowed %s records a manage_alerts row and emits the allowed event", async (_name, run) => {
 		installPdp({ allowed: true });
 		await runWithActor(ACTOR, run);
@@ -168,9 +172,10 @@ describe("alert mutations still go through the RECORDING gate", () => {
 		expect(events[0][3]).toBe(true);
 	});
 
-	it("a denied deletePolicy throws, records the DENIAL and emits the denied event", async () => {
+	it("a denied deletePolicy is refused as forbidden, records the DENIAL and emits the denied event", async () => {
 		installPdp({ allowed: false, reason: "no_grant" });
-		await expect(runWithActor(ACTOR, () => deletePolicy("rule-1"))).rejects.toThrow();
+		const result = await runWithActor(ACTOR, () => deletePolicy({ id: RULE }));
+		expect(result).toEqual({ ok: false, error: { kind: "forbidden", message: expect.any(String) } });
 		const { rows, events } = manageAlertsTrail();
 		expect(rows).toEqual([
 			expect.objectContaining({ decision: false, reason: "no_grant" }),

@@ -11,7 +11,8 @@
 // the actions run under an injected actor (the runWithActor seam the MCP server uses).
 //
 // Covered: promotion decisions and reads (approve / reject / cancel / getPromotion /
-// getPromotionDetail), alert policy updates, classification assignment, and the classification
+// getPromotionDetail), alert policy updates (every other alert write: alerts-org-bound.test.ts),
+// classification assignment, and the classification
 // values the promotion gate engine reads for an environment.
 
 import { randomUUID } from "node:crypto";
@@ -299,18 +300,20 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 		it("another organization's policy is not found and keeps its own bindings", async () => {
 			const a = await seedRule(ORG_A);
 			const b = await seedRule(ORG_B);
-			await expect(asA(() => updatePolicy(b.ruleId, input(a.channelId)))).rejects.toThrow(
-				"Alert policy not found.",
-			);
+			expect(await asA(() => updatePolicy({ ...input(a.channelId), id: b.ruleId }))).toEqual({
+				ok: false,
+				error: { kind: "not-found", message: "Alert policy not found." },
+			});
 			expect(await ruleState(b.ruleId)).toEqual({ name: "original", channels: [b.channelId] });
 		});
 
 		it("a channel of another organization cannot be attached", async () => {
 			const a = await seedRule(ORG_A);
 			const b = await seedRule(ORG_B);
-			await expect(asA(() => updatePolicy(a.ruleId, input(b.channelId)))).rejects.toThrow(
-				"One or more channels are invalid.",
-			);
+			expect(await asA(() => updatePolicy({ ...input(b.channelId), id: a.ruleId }))).toEqual({
+				ok: false,
+				error: { kind: "not-found", message: "One or more channels are invalid." },
+			});
 			expect(await ruleState(a.ruleId)).toEqual({ name: "original", channels: [a.channelId] });
 		});
 
@@ -321,7 +324,10 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 				.insert(alertChannels)
 				.values({ org_id: ORG_A, type: "webhook", name: "second", created_by: ORG_A })
 				.returning({ id: alertChannels.id });
-			await asA(() => updatePolicy(a.ruleId, input(second.id)));
+			expect(await asA(() => updatePolicy({ ...input(second.id), id: a.ruleId }))).toEqual({
+				ok: true,
+				data: { id: a.ruleId },
+			});
 			expect(await ruleState(a.ruleId)).toEqual({ name: "rewritten", channels: [second.id] });
 		});
 	});
