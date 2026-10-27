@@ -5,6 +5,7 @@
 import { and, desc, eq, or } from "drizzle-orm";
 import { memoryNamespace } from "@/lib/agent/memory-path";
 import { currentActor } from "@/lib/authz/guard";
+import { cliMayViewProjectBoundRow, cliProjectBoundVisibleWhere } from "@/lib/cli/project-access";
 import { withScope } from "@/lib/db";
 import { type AgentIdentity, agentIdentities } from "@/lib/db/schema";
 
@@ -54,17 +55,25 @@ export async function createAgent(input: CreateAgentInput): Promise<AgentIdentit
  * (own user rows OR the active org's rows) so another org's agents are never
  * returned — agent_identities has no RLS backstop yet, so this predicate is the
  * enforcement point.
+ *
+ * Within that tenancy, an agent bound to a project of this org that the caller may
+ * not view is left out (`cliProjectBoundVisibleWhere`, the predicate the CLI's
+ * `GET /api/cli/agents` uses), so the list follows project visibility.
  */
 export async function listAgents(): Promise<AgentIdentity[]> {
 	const actor = await currentActor();
+	const projectVisible = await cliProjectBoundVisibleWhere(actor, agentIdentities.project_id);
 	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) =>
 		tx
 			.select()
 			.from(agentIdentities)
 			.where(
-				or(
-					eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
-					eq(agentIdentities.org_id, actor.orgId),
+				and(
+					or(
+						eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
+						eq(agentIdentities.org_id, actor.orgId),
+					),
+					projectVisible,
 				),
 			)
 			.orderBy(desc(agentIdentities.created_at)),
@@ -76,11 +85,15 @@ export async function listAgents(): Promise<AgentIdentity[]> {
  * org's agent id resolves to null (→ 404 at the call site), never that org's
  * persona/mission. The org predicate is enforced in the query itself (no reliance
  * on RLS, which agent_identities does not yet carry).
+ *
+ * An agent bound to a project of this org that the caller may not view resolves to
+ * the same null, and the refusal is recorded (`cliMayViewProjectBoundRow`, as the
+ * CLI's `GET /api/cli/agents/:id` asks it).
  */
 export async function getAgent(id: string): Promise<AgentIdentity | null> {
 	const actor = await currentActor();
-	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
-		const [agent] = await tx
+	const agent = await withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+		const [row] = await tx
 			.select()
 			.from(agentIdentities)
 			.where(
@@ -93,6 +106,8 @@ export async function getAgent(id: string): Promise<AgentIdentity | null> {
 				),
 			)
 			.limit(1);
-		return agent ?? null;
+		return row ?? null;
 	});
+	if (!agent || !(await cliMayViewProjectBoundRow(actor, agent.project_id))) return null;
+	return agent;
 }
