@@ -347,10 +347,13 @@ export function RepositorySelector({
   };
 
   if (loading) {
+    // The loading row in the settled row's shape: a label bar only when there IS a label, and the
+    // provider + repository row at its own height (h-9). With `label=""` (the import panel) the old
+    // label bar was a line the settled layout does not have.
     return (
-      <div className="space-y-2 animate-pulse">
-        <div className="h-4 w-24 bg-muted rounded" />
-        <div className="h-10 w-full bg-muted rounded" />
+      <div className={cn("animate-pulse", label && "space-y-1.5")}>
+        {label && <div className="h-4 w-24 bg-muted rounded" />}
+        <div className="h-9 w-full bg-muted rounded" />
       </div>
     );
   }

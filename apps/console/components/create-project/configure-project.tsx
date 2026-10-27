@@ -222,7 +222,7 @@ export function ConfigureProject({
 	// against the org, and only its slug is previewed from the server.
 	const nameIsWellFormed =
 		name.trim().length > 0 && name.length <= PROJECT_NAME_MAX_LENGTH && canSlugify(name);
-	const { availability, checking } = useNameAvailability(name, nameIsWellFormed);
+	const { availability, checking, failed: checkFailed } = useNameAvailability(name, nameIsWellFormed);
 	// The slug the project will REALLY get — de-duplicated against the org's, as the create does —
 	// once the server has answered for this name; the local derivation until then (F035).
 	const slug = availability?.slug ?? slugify(name, "project");
@@ -443,6 +443,14 @@ export function ConfigureProject({
 							aria-busy={checking || undefined}
 						>
 							{orgSlug}/<span className="text-foreground">{slug}</span>
+							{/* A failed check is not a free name: say the check did not happen, so the
+							    absence of "taken" is not read as an answer. Create still works — the
+							    server re-asks, and its refusal lands in the slot above. */}
+							{checkFailed && (
+								<span className="ml-2 font-sans text-muted-foreground">
+									· couldn’t check whether this name is free
+								</span>
+							)}
 						</p>
 					</Section>
 

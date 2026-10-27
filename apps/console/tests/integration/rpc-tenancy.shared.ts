@@ -135,6 +135,9 @@ export interface Seeded {
 	/** One self runner in each org, registered by W (#6123). */
 	runnerX: string;
 	runnerY: string;
+	/** One ANALYZE_REPO job per org, with no digest yet (#6131's scan reads address a SCAN job). */
+	scanJobX: string;
+	scanJobY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -555,23 +558,25 @@ export const FIXTURES: Record<string, Fixture> = {
 	// ── #6131: the create flow and the duplicate dialog. ─────────────────────────────────────────
 	"projects.linkedGitProviders": {
 		// The git accounts linked to the CALLER's login (Better Auth's account rows): a property of
-		// the person, so the same at every org address. With no session cookie here it is empty at
-		// both — the claim is only that the address does not change it.
+		// the person, so the same at every org address. With no session cookie here the reader sees
+		// no signed-in person and answers [] at both — the claim is only that the address does not
+		// change it.
 		kind: "not-org-scoped",
 		reason: "the caller's own linked git accounts, which belong to the person, not to an org",
 		input: undefined,
 	},
-	// The scan reads are addressed by a JOB id and read it under RLS. The seeded jobs carry no repo
-	// digest, so the addressed org's job answers PENDING (and never reaches the model inference) and
-	// the other org's answers NOT_FOUND — the reveal is "this job was found".
+	// The scan reads are addressed by a SCAN job's id (an ANALYZE_REPO job; any other kind answers
+	// NOT_FOUND) and read it under RLS and the jobs visibility rule. The seeded scans carry no repo
+	// digest, so the addressed org's answers PENDING (and never reaches the model inference) and the
+	// other org's answers NOT_FOUND — the reveal is "this scan was found".
 	"projects.scanStatus": {
 		kind: "by-id",
-		input: (s, org) => ({ jobId: jobOf(s, org) }),
+		input: (s, org) => ({ jobId: org === "x" ? s.scanJobX : s.scanJobY }),
 		reveals: (out) => field(out, "status") === "PENDING",
 	},
 	"projects.scanProposal": {
 		kind: "by-id",
-		input: (s, org) => ({ jobId: jobOf(s, org) }),
+		input: (s, org) => ({ jobId: org === "x" ? s.scanJobX : s.scanJobY }),
 		reveals: (out) => field(out, "status") === "PENDING",
 	},
 	// Addressed by a NAME: each org's project carries a distinct one, so "taken" reveals that the
@@ -853,6 +858,8 @@ export async function runRpcTenancySuite(opts: {
 		identityY: "",
 		projectJobX: "",
 		projectJobY: "",
+		scanJobX: "",
+		scanJobY: "",
 		clusterX: "",
 		clusterY: "",
 		runnerX: "",
@@ -1076,6 +1083,9 @@ export async function runRpcTenancySuite(opts: {
 			// A job on each org's project: the addressed `jobs.project` read needs one (#6121).
 			seeded.projectJobX = await seedJob(W, ORG_X, { project_id: seeded.projectX });
 			seeded.projectJobY = await seedJob(W, ORG_Y, { project_id: seeded.projectY });
+			// #6131: a repository scan per org, as `/~/new` queues one — project-less, no digest yet.
+			seeded.scanJobX = await seedJob(W, ORG_X, { job_type: "ANALYZE_REPO" });
+			seeded.scanJobY = await seedJob(W, ORG_Y, { job_type: "ANALYZE_REPO" });
 			// #6127's markers, on the billing records #6118 seeded above (both on a live Team plan): an AI
 			// cap and a distinct paid period per org; then one invoice per org and one more project in X.
 			// U's `manage_billing` in X is granted per read (`billingAdminInX`), never suite-wide.

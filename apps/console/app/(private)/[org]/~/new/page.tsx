@@ -70,7 +70,7 @@ export default async function NewProjectPage({
 		return (
 			<Suspense
 				key={scanJobId ? `scan:${scanJobId}` : `scratch:${scratch}`}
-				fallback={<ConfigureSkeleton />}
+				fallback={<ConfigureSkeleton template={scratch === "template"} />}
 			>
 				<ConfigureStep org={org} source={source} />
 			</Suspense>
@@ -79,7 +79,12 @@ export default async function NewProjectPage({
 
 	// Step 1 — the source chooser.
 	return (
-		<Suspense key="chooser" fallback={<ChooserSkeleton />}>
+		<Suspense
+			key="chooser"
+			fallback={
+				<ChooserSkeleton byoHelmEnabled={isByoHelmEnabled()} byoIacEnabled={isByoIacEnabled()} />
+			}
+		>
 			<ChooserStep org={org} />
 		</Suspense>
 	);

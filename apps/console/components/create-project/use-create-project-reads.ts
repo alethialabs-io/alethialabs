@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { orpc } from "@/lib/rpc/client";
 import type { ScanProposal } from "@/lib/scanner/schema";
@@ -40,8 +40,13 @@ const TERMINAL_WITHOUT_DIGEST = new Set(["FAILED", "CANCELLED"]);
  * The import's scan, live: the cheap STATUS read rides the `jobs` topic (lib/query/topics.ts), so
  * the screen learns the scan finished within a second of the runner writing it — the 2.5 s
  * `setInterval` poll this replaces is gone. The PROPOSAL is read once the status says the digest is
- * there, and never again for this scan (`staleTime: Infinity`, on no topic): it runs a model
- * inference per read.
+ * there, and never again for this scan: it costs a model inference.
+ *
+ * "Never again" is enforced by the observer, not by `staleTime`. The realtime resync after a
+ * reconnect (`lib/realtime/client/coalescer.ts` `flushAll`) invalidates EVERY query and refetches
+ * every ACTIVE one whatever its staleTime — so once the proposal is in the cache its observer is
+ * disabled, and a disabled query is not active: no hint, resync, focus or remount refetches it. The
+ * server keeps one inference per scan as well (`inferredStacks` in lib/rpc/procedures/projects.ts).
  *
  * `jobId` null (a scratch on-ramp) reads nothing and answers null.
  */
@@ -50,9 +55,13 @@ export function useScanResult(jobId: string | null): { result: ScanResult | null
 	const input = { jobId: jobId ?? "" };
 	const status = useQuery({ ...orpc.projects.scanStatus.queryOptions({ input }), enabled: valid });
 	const scanned = status.data?.status === "SCANNED";
+	const queryClient = useQueryClient();
+	const proposalOptions = orpc.projects.scanProposal.queryOptions({ input });
+	// Answered once → inactive for good (see above): only a read with nothing cached may run.
+	const answered = queryClient.getQueryData(proposalOptions.queryKey) !== undefined;
 	const proposal = useQuery({
-		...orpc.projects.scanProposal.queryOptions({ input }),
-		enabled: valid && scanned,
+		...proposalOptions,
+		enabled: valid && scanned && !answered,
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	});
@@ -97,5 +106,7 @@ export function useNameAvailability(name: string, enabled: boolean) {
 	return {
 		availability: current,
 		checking: enabled && wanted.length > 0 && (!settled || query.isFetching),
+		// The check itself failed for this name: said, so a missing "taken" is not read as "free".
+		failed: enabled && settled && query.isError,
 	};
 }

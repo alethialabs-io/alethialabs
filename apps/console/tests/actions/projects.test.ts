@@ -24,7 +24,8 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 // `readDuplicateTargets` lives with the other projects reads in lib/rpc/procedures/projects.ts
 // (#6131); that module also serves the import flow, whose git-account and model readers are not
 // this file's subject and would otherwise load Better Auth and the AI SDK here.
-vi.mock("@/app/server/actions/identities", () => ({ getLinkedProviders: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ auth: { api: {} } }));
+vi.mock("@/lib/jobs/visibility", () => ({ jobVisibleTo: vi.fn() }));
 vi.mock("@/lib/scanner/infer", () => ({ inferStack: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 // `UsageLimitError` stays REAL: `refusalAsValue` decides by `instanceof`, so a stand-in class would

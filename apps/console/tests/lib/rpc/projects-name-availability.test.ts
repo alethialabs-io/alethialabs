@@ -12,6 +12,8 @@
 // Mocked boundary: the guard and the RLS transaction (a chain answering the org's project rows).
 // The integration tenancy proof (tests/integration/rpc-tenancy.shared.ts) covers whose rows those are.
 
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const org = vi.hoisted(() => {
@@ -42,7 +44,8 @@ vi.mock("@/lib/db", () => ({
 }));
 // The module's other readers (the import flow's git accounts, the model inference, the duplicate
 // dialog's design read) are not this file's subject.
-vi.mock("@/app/server/actions/identities", () => ({ getLinkedProviders: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ auth: { api: {} } }));
+vi.mock("@/lib/jobs/visibility", () => ({ jobVisibleTo: vi.fn() }));
 vi.mock("@/app/server/actions/aws/identities", () => ({ getVerifiedCloudIdentities: vi.fn() }));
 vi.mock("@/app/server/actions/projects", () => ({ getProjectAsFormData: vi.fn() }));
 vi.mock("@/lib/scanner/infer", () => ({ inferStack: vi.fn() }));
@@ -63,7 +66,11 @@ describe("readNameAvailability — the create's own two rules, asked early (F035
 		expect(await readNameAvailability("api")).toEqual({ available: true, slug: "api" });
 		expect(authorize).toHaveBeenCalledWith("view", { type: "project" });
 		// Asked of the actor's own org, explicitly — not left to RLS alone (the create's predicate).
-		expect(org.orgFilter).toBeDefined();
+		expect(org.orgFilter).toBeInstanceOf(SQL);
+		if (!(org.orgFilter instanceof SQL)) return;
+		const where = new PgDialect().sqlToQuery(org.orgFilter);
+		expect(where.sql).toBe('"projects"."org_id" = $1');
+		expect(where.params).toEqual(["org-1"]);
 	});
 
 	it("a name the org holds is taken, compared without regard to case", async () => {

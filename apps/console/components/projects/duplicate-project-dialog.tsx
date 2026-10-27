@@ -32,6 +32,7 @@ import { z } from "zod";
 import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import type { ConversionWarning } from "@/lib/cloud-providers";
 import { groupRegions, REGION_LABELS } from "@/lib/cloud-providers";
 import {
@@ -212,7 +213,11 @@ function OpenDuplicateProjectDialog({
 	const targets = useQuery({
 		...orpc.projects.duplicateTargets.queryOptions({ input: { projectId: sourceProjectId } }),
 		enabled: open,
+		// An expected refusal (the project is gone, or not this viewer's to read) answers the same
+		// the second time: no retry for it, and its own sentence below — not "try again".
+		retry: retryUnlessRefused,
 	});
+	const targetsRefusal = targets.isError ? refusalOf(targets.error) : null;
 	const sourceProvider = targets.data?.provider ?? null;
 	const categories: DuplicateCategory[] = targets.data?.categories ?? [];
 	const identities = targets.data?.identities ?? [];
@@ -404,7 +409,15 @@ function OpenDuplicateProjectDialog({
 									<FormLabel className="text-xs font-medium">
 										Target cloud account
 									</FormLabel>
-									{targets.isError ? (
+									{targetsRefusal ? (
+										<p role="alert" className="text-sm text-muted-foreground">
+											{targetsRefusal === "forbidden"
+												? "You don’t have permission to duplicate this project."
+												: targetsRefusal === "not-found"
+													? "This project no longer exists, or isn’t in this organization."
+													: "Duplicating this project isn’t included in your plan."}
+										</p>
+									) : targets.isError ? (
 										<p role="alert" className="text-sm text-muted-foreground">
 											Couldn’t load this project’s details.{" "}
 											<button

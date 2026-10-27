@@ -3,19 +3,23 @@
 
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { headers } from "next/headers";
 import { z } from "zod";
 import {
 	type CloudIdentityOption,
 	getVerifiedCloudIdentities,
 } from "@/app/server/actions/aws/identities";
-import { getLinkedProviders } from "@/app/server/actions/identities";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
+import { auth } from "@/lib/auth";
+import { getOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
+import { isGitProvider } from "@/lib/connectors/git-providers";
 import { withActorScope } from "@/lib/db";
 import { type GitProvider, jobs, projects } from "@/lib/db/schema";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS } from "@/lib/routing";
 import { query } from "@/lib/rpc/base";
 import { inferStack } from "@/lib/scanner/infer";
@@ -33,8 +37,11 @@ import {
 //   · readDuplicateTargets              ← app/server/actions/projects.ts getProjectDuplicateSummary
 //                                         (deleted) + the dialog's own getVerifiedCloudIdentities
 //   · readNameAvailability              — new: the Configure screen's inline name check (F035)
-// `linkedGitProviders` calls `getLinkedProviders` in-process: that reader belongs to the identities
-// module (another lane's), and the selector on other screens still calls it as an action.
+//   · readLinkedGitProviders            — the caller's linked git accounts. Not `getLinkedProviders`
+//                                         (app/server/actions/identities.ts, which the selector on
+//                                         other screens still calls): that one answers [] on ANY
+//                                         failure, and a read that turns an outage into "nothing is
+//                                         linked" would render the Link panel as if it were true.
 //
 // The shell's project LIST is `workspace.projects` (#6114); a write that changes it invalidates that
 // key, and the `projects` topic carries other people's changes.
@@ -71,8 +78,41 @@ export type ScanProposalResult =
 	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
 	| { status: "READY"; proposal: ScanProposal };
 
-/** See {@link ScanStatus}. The job is read under the caller's RLS, so another tenant's is NOT_FOUND. */
+/**
+ * The scan job addressed by `jobId`, as the two scan reads may see it: an ANALYZE_REPO job (a job of
+ * any other kind is not a scan, and answers NOT_FOUND rather than "pending" forever), visible to the
+ * caller under the jobs rule (`lib/jobs/visibility.ts` — these two reads are on its list), read under
+ * the caller's RLS.
+ */
+async function scanJobWhere(jobId: string) {
+	const actor = await authorize("view", { type: "job" });
+	return and(eq(jobs.id, jobId), eq(jobs.job_type, "ANALYZE_REPO"), await jobVisibleTo(actor));
+}
+
+/** How many inferred stacks one process keeps (oldest dropped first). */
+const INFERRED_STACKS_MAX = 256;
+
+/**
+ * Inferred stacks by scan job id, per process. The inference is a pure function of the job's digest,
+ * which the runner writes once, so the first answer is the answer; caching it is what keeps a page
+ * refresh, a retry or a second tab from re-running (and re-metering) a model call. Keyed by job id
+ * and only ever read AFTER {@link scanJobWhere} has found the job for this caller, so the cache
+ * answers nobody who could not read the job.
+ */
+const inferredStacks = new Map<string, ScanProposal["stack"]>();
+
+/** Remembers one inferred stack, dropping the oldest past the bound. */
+function rememberStack(jobId: string, stack: ScanProposal["stack"]): void {
+	inferredStacks.set(jobId, stack);
+	if (inferredStacks.size > INFERRED_STACKS_MAX) {
+		const oldest = inferredStacks.keys().next().value;
+		if (oldest !== undefined) inferredStacks.delete(oldest);
+	}
+}
+
+/** See {@link ScanStatus}. Another tenant's job, or one that is not a scan, is NOT_FOUND. */
 export async function readScanStatus(jobId: string): Promise<ScanStatus> {
+	const where = await scanJobWhere(jobId);
 	const actor = await currentActor();
 	const job = await withActorScope(actor, async (tx) => {
 		const [j] = await tx
@@ -83,7 +123,7 @@ export async function readScanStatus(jobId: string): Promise<ScanStatus> {
 				scanned: sql<boolean>`coalesce(jsonb_typeof(${jobs.execution_metadata} -> 'repo_digest') = 'object', false)`,
 			})
 			.from(jobs)
-			.where(eq(jobs.id, jobId))
+			.where(where)
 			.limit(1);
 		return j ?? null;
 	});
@@ -94,10 +134,12 @@ export async function readScanStatus(jobId: string): Promise<ScanStatus> {
 /**
  * Build a review-ready proposal from a completed scan: the model infers an InferredStack from the
  * digest, then a deterministic mapper turns it into a guaranteed-valid Project placed on the caller's
- * first verified cloud account. Recomputes on every read — which is why the client reads it once
- * per scan (`staleTime: Infinity`) and no topic refreshes it (see {@link ScanStatus}).
+ * first verified cloud account. The inference runs once per scan per process (`inferredStacks`); the
+ * client also reads this once per scan — its observer goes inactive once it holds an answer, so no
+ * topic hint, resync or focus refetches it (see {@link ScanStatus}).
  */
 export async function readScanProposal(jobId: string): Promise<ScanProposalResult> {
+	const where = await scanJobWhere(jobId);
 	const scanActor = await currentActor();
 	const job = await withActorScope(scanActor, async (tx) => {
 		const [j] = await tx
@@ -107,7 +149,7 @@ export async function readScanProposal(jobId: string): Promise<ScanProposalResul
 				config_snapshot: jobs.config_snapshot,
 			})
 			.from(jobs)
-			.where(eq(jobs.id, jobId))
+			.where(where)
 			.limit(1);
 		return j ?? null;
 	});
@@ -120,22 +162,28 @@ export async function readScanProposal(jobId: string): Promise<ScanProposalResul
 		typeof job.config_snapshot?.repo_url === "string" ? job.config_snapshot.repo_url : "";
 	const ref = typeof job.config_snapshot?.ref === "string" ? job.config_snapshot.ref : undefined;
 
-	const inferred = await inferStack(digest);
-	const stack = inferred.stack;
-	// Record the inference's real token cost (credits were already charged at queue time in
-	// scanRepo; this 0-credit row carries cost-of-serve only).
-	void recordAiUsage({
-		orgId: scanActor.orgId,
-		userId: scanActor.userId,
-		kind: "scan",
-		credits: 0,
-		source: "included",
-		refId: jobId,
-		model: inferred.model,
-		inputTokens: inferred.inputTokens,
-		outputTokens: inferred.outputTokens,
-		cachedInputTokens: inferred.cachedInputTokens,
-	}).catch(meteringFailed(scanActor.orgId));
+	// ONE inference per scan per process (see `inferredStacks`): a refresh of `/~/new?scan=`, the
+	// client's retry and a second tab all answer from it, and only a real inference is metered.
+	let stack = inferredStacks.get(jobId);
+	if (!stack) {
+		const inferred = await inferStack(digest);
+		stack = inferred.stack;
+		rememberStack(jobId, stack);
+		// Record the inference's real token cost (credits were already charged at queue time in
+		// scanRepo; this 0-credit row carries cost-of-serve only).
+		void recordAiUsage({
+			orgId: scanActor.orgId,
+			userId: scanActor.userId,
+			kind: "scan",
+			credits: 0,
+			source: "included",
+			refId: jobId,
+			model: inferred.model,
+			inputTokens: inferred.inputTokens,
+			outputTokens: inferred.outputTokens,
+			cachedInputTokens: inferred.cachedInputTokens,
+		}).catch(meteringFailed(scanActor.orgId));
+	}
 
 	const identities = await getVerifiedCloudIdentities();
 	if (identities.length === 0) {
@@ -156,6 +204,21 @@ export async function readScanProposal(jobId: string): Promise<ScanProposalResul
 		status: "READY",
 		proposal: { stack, proposedProject, provider, identityId: identity.id },
 	};
+}
+
+// ── The import panel ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The git providers linked to the signed-in person's login (Better Auth's account rows). No session
+ * is no accounts; any OTHER failure throws, so the panel renders an error rather than the Link panel
+ * — "nothing is linked" is a claim, and an outage is not evidence for it.
+ */
+export async function readLinkedGitProviders(): Promise<GitProvider[]> {
+	if (!(await getOwner())) return [];
+	const accounts = await auth.api.listUserAccounts({ headers: await headers() });
+	const linked = new Set<GitProvider>();
+	for (const a of accounts) if (isGitProvider(a.providerId)) linked.add(a.providerId);
+	return [...linked];
 }
 
 // ── The Configure screen's name field ────────────────────────────────────────────────────────────
@@ -299,7 +362,7 @@ const byName = z.object({ name: z.string().trim().min(1).max(PROJECT_NAME_MAX_LE
  */
 export const projectsRouter = {
 	/** The git providers the CALLER has linked — the import panel's first paint (F034). */
-	linkedGitProviders: query.handler((): Promise<GitProvider[]> => getLinkedProviders()),
+	linkedGitProviders: query.handler(() => readLinkedGitProviders()),
 	scanStatus: query.input(byScanJob).handler(({ input }) => readScanStatus(input.jobId)),
 	scanProposal: query.input(byScanJob).handler(({ input }) => readScanProposal(input.jobId)),
 	nameAvailability: query.input(byName).handler(({ input }) => readNameAvailability(input.name)),

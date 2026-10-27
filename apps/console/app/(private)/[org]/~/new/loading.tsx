@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ChooserSkeleton } from "@/components/create-project/create-project-skeletons";
+import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
+import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 
 /**
  * Instant skeleton for the new-project route, in the shape of the screen a bare `/~/new` lands on:
@@ -10,5 +12,5 @@ import { ChooserSkeleton } from "@/components/create-project/create-project-skel
  * which of the two screens is coming.
  */
 export default function NewProjectLoading() {
-	return <ChooserSkeleton />;
+	return <ChooserSkeleton byoHelmEnabled={isByoHelmEnabled()} byoIacEnabled={isByoIacEnabled()} />;
 }

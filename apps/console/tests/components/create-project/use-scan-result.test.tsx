@@ -10,10 +10,12 @@
 // refetches: every answer here comes from the hydrated entries alone, which is RUBRIC B1's claim.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { useScanResult } from "@/components/create-project/use-create-project-reads";
+import { TOPIC_KEYS } from "@/lib/query/topics";
+import { createCoalescer } from "@/lib/realtime/client/coalescer";
 import { orpc } from "@/lib/rpc/client";
 
 const JOB = "00000000-0000-4000-8000-0000000000aa";
@@ -70,5 +72,44 @@ describe("useScanResult — the scan as the Configure screen renders it", () => 
 		expect(
 			answer(seeded({ status: "SCANNED" }, { status: "NEEDS_SETUP", needsIdentity: true }), JOB),
 		).toEqual({ status: "NEEDS_SETUP", needsIdentity: true });
+	});
+});
+
+describe("useScanResult — the proposal is read once (a model inference per read)", () => {
+	it("a realtime RESYNC refetches the scan's status but never an answered proposal", async () => {
+		const client = seeded({ status: "SCANNED" }, { status: "NEEDS_SETUP", needsIdentity: true });
+		const statusHash = client
+			.getQueryCache()
+			.find({ queryKey: [...orpc.projects.scanStatus.queryKey({ input: { jobId: JOB } })] })?.queryHash;
+		const proposalHash = client
+			.getQueryCache()
+			.find({ queryKey: [...orpc.projects.scanProposal.queryKey({ input: { jobId: JOB } })] })?.queryHash;
+		const fetches: string[] = [];
+		client.getQueryCache().subscribe((event) => {
+			if (event.type === "updated" && event.action.type === "fetch") fetches.push(event.query.queryHash);
+		});
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={client}>{children}</QueryClientProvider>
+		);
+		renderHook(() => useScanResult(JOB), { wrapper });
+
+		// What a reconnect does (lib/realtime/client/runtime.ts → coalescer.resync → flushAll):
+		// invalidate EVERY query and refetch the active ones, whatever their staleTime.
+		const coalescer = createCoalescer({
+			queryClient: client,
+			topicKeys: TOPIC_KEYS,
+			isVisible: () => true,
+			random: () => 0,
+		});
+		await act(async () => {
+			coalescer.resync();
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		});
+		coalescer.dispose();
+
+		// The resync DID run — the status read is active and was refetched…
+		expect(fetches).toContain(statusHash);
+		// …and the answered proposal was not: its observer is inactive once it holds an answer.
+		expect(fetches).not.toContain(proposalHash);
 	});
 });

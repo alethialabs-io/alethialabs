@@ -16,6 +16,8 @@
 //     (the bell, toasts, breadcrumbs, the command palette, the overview's recent jobs) and the full
 //     `workspace.jobs` (`getJobs`, also the assistant's `list_jobs` and mentions); the assistant's
 //     `get_job` and `get_plan_result` read through the procedures' readers;
+//   · the create flow's repository-scan reads (lib/rpc/procedures/projects.ts `readScanStatus` and
+//     `readScanProposal`, #6131) — an ANALYZE_REPO job carries no project, so it is org-wide here;
 //   · the console's re-run, cancel, apply and verification override (app/server/actions/jobs.ts);
 //   · the per-job log stream (app/api/stream/jobs/[id]);
 //   · the runners page's job overlay — the job in flight on each runner card

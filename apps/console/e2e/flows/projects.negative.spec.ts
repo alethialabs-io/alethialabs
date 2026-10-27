@@ -66,6 +66,23 @@ async function expectNameRefusedInline(page: Page): Promise<void> {
 	});
 }
 
+/**
+ * Takes the inline name check out of the way, so Create reaches the SERVER: the read router's
+ * `projects.nameAvailability` request is aborted, the screen says it could not check, and Create
+ * stays enabled. What is then asserted is the create's own refusal — the index decides, not the
+ * preview — rendered beside the field as an alert.
+ */
+async function skipInlineNameCheck(page: Page): Promise<void> {
+	await page.route("**/~/rpc/projects/nameAvailability**", (route) => route.abort());
+}
+
+/** The SERVER's refusal of a create, beside the name field (the alert a pressed Create gets back). */
+async function expectServerRefusalInline(page: Page): Promise<void> {
+	const refusal = page.locator("#project_name_error");
+	await expect(refusal).toHaveAttribute("role", "alert", { timeout: 15_000 });
+	await expect(refusal).toContainText(/already exists/i);
+}
+
 /** How many projects the org holds under exactly this display name (case-insensitively). */
 async function projectCount(orgId: string, name: string): Promise<number> {
 	const [{ count }] = await db()<{ count: number }[]>`
@@ -184,21 +201,23 @@ test.describe("Projects — duplicate name behavior", () => {
 	// user's back — the slug is derived and may be suffixed, the display name is theirs and is the
 	// token `alethia project get <name>` addresses.
 	//
-	// Asserted on BEHAVIOUR (no navigation, no second project) AND on being told: since #6131 the
-	// Configure screen checks the name while it is typed and says it is taken beside the field, with
-	// Create disabled — see `expectNameRefusedInline` above. Staying put alone would be true of a
-	// silent failure too, which is why the inline sentence is asserted as well.
+	// Asserted on BEHAVIOUR (no navigation, no second project) AND on being told. The first two
+	// tests take the inline name check out of the way (`skipInlineNameCheck`) so Create reaches the
+	// server, and assert the create's own refusal beside the field — returned as a value since
+	// #4644, so its sentence survives a production build. The third asserts the check made while
+	// typing (#6131). Staying put alone would be true of a silent failure too.
 	test("a duplicate display name is refused, and no second project is created", async ({
 		owner,
 	}) => {
 		const name = `e2e-dupe-${Date.now()}`;
 		const first = await seedProject(ownerId(owner), { name, status: "DRAFT" });
+		await skipInlineNameCheck(owner.page);
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=blank`);
 		const field = owner.page.getByLabel(/project name/i);
 		await expect(field).toBeVisible({ timeout: 45_000 });
 		await field.fill(name);
-		await expectNameRefusedInline(owner.page);
-		await expect(owner.page.getByRole("button", { name: /create project/i })).toBeDisabled();
+		await owner.page.getByRole("button", { name: /create project/i }).click();
+		await expectServerRefusalInline(owner.page);
 
 		// It must NOT navigate to a project. Given a generous window: passing this by being slow
 		// would be indistinguishable from passing by being correct, so the wait is long enough
@@ -219,14 +238,29 @@ test.describe("Projects — duplicate name behavior", () => {
 		// test above and fail this one, which is the difference the migration chose deliberately.
 		const name = `e2e-case-${Date.now()}`;
 		await seedProject(ownerId(owner), { name, status: "DRAFT" });
+		await skipInlineNameCheck(owner.page);
 		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=blank`);
 		const field = owner.page.getByLabel(/project name/i);
 		await expect(field).toBeVisible({ timeout: 45_000 });
 		await field.fill(name.toUpperCase());
-		await expectNameRefusedInline(owner.page);
-		await expect(owner.page.getByRole("button", { name: /create project/i })).toBeDisabled();
+		await owner.page.getByRole("button", { name: /create project/i }).click();
+		await expectServerRefusalInline(owner.page);
 		await owner.page.waitForTimeout(5_000);
 		await expect(owner.page).toHaveURL(/\/~\/new/);
+		expect(await projectCount(owner.orgId!, name)).toBe(1);
+	});
+
+	test("a taken name is said WHILE it is typed, and Create will not submit it (F035)", async ({
+		owner,
+	}) => {
+		const name = `e2e-typed-${Date.now()}`;
+		await seedProject(ownerId(owner), { name, status: "DRAFT" });
+		await owner.page.goto(`/${owner.orgSlug}/~/new?scratch=blank`);
+		const field = owner.page.getByLabel(/project name/i);
+		await expect(field).toBeVisible({ timeout: 45_000 });
+		await field.fill(name);
+		await expectNameRefusedInline(owner.page);
+		await expect(owner.page.getByRole("button", { name: /create project/i })).toBeDisabled();
 		expect(await projectCount(owner.orgId!, name)).toBe(1);
 	});
 });
