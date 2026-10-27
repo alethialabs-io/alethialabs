@@ -42,6 +42,10 @@ const customRoles: RoleRow[] = [
 		grantCount: 0,
 	},
 ];
+// The delete is a mutation since #6129; nothing here deletes, so it is an idle stand-in.
+vi.mock("@/lib/actions/use-action-mutation", () => ({
+	useActionMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
 	useRolesQuery: () => ({

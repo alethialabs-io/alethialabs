@@ -22,6 +22,10 @@ vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ 
 // The role catalog is a prefetched GET read since #6129 (`members.roleCatalog`); the test's
 // catalog is handed to the manager through it.
 const CATALOG = vi.hoisted((): { current: RolesBootstrap | null } => ({ current: null }));
+// The delete is a mutation since #6129; nothing here deletes, so it is an idle stand-in.
+vi.mock("@/lib/actions/use-action-mutation", () => ({
+	useActionMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
 	useRolesQuery: () => ({ data: [], isFetching: false, isPending: false, isPlaceholderData: false }),
