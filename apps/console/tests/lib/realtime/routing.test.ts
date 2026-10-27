@@ -277,7 +277,7 @@ describe("keysFor — #6128: a project row and the organization row", () => {
 
 	it("a personal-scope project (org_id = its owner) reaches that person's personal stream", () => {
 		const keys = keysFor(project({ o: USER })).map((r) => r.key);
-		const personal = subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false, viewAlerts: false });
+		const personal = subscriptionKeys({ userId: USER, orgId: USER }, { platformView: false, manageSupport: false, viewAlerts: false });
 		expect(keys.every((k) => personal.includes(k))).toBe(true);
 		expect(keys).toEqual([`o:${USER}`]);
 	});
@@ -301,7 +301,7 @@ describe("keysFor — #6128: a project row and the organization row", () => {
 		const keys = keysFor({ kind: "change", t: "organization", id: OTHER, o: OTHER, u: null, p: null }).map(
 			(r) => r.key,
 		);
-		const streamA = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: true, manageSupport: true, viewAlerts: true });
+		const streamA = subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: true, manageSupport: true, viewAlerts: true });
 		expect(keys.filter((k) => streamA.includes(k))).toEqual([]);
 	});
 });
