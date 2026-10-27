@@ -62,11 +62,16 @@ export const orgSigningKey = pgTable(
 		// key_id is the handle a receipt records; the full row set is the retained key_id→public_key
 		// history that keeps old receipts verifiable across rotation (D4).
 		//
-		// It is unique among VERIFIED keys only. Registration is shape-only (no proof of possession)
-		// and a public key is public material, so an unverified registration claims nothing: only
-		// proof of possession (status → active) claims a key_id across orgs, and a revoked key
-		// (status → invalid) releases it. Within one org a key_id is registered once. A receipt
-		// resolves its key_id against the verified row.
+		// What these two indexes enforce, and no more:
+		//   · within one org, a key_id appears on at most one row, whatever its status;
+		//   · across orgs, at most one row with `status = 'active'` carries a given key_id. Rows that
+		//     are `pending_verification` or `invalid` may share a key_id across orgs, so revoking a key
+		//     (status → invalid) frees it for another org's active row.
+		// Nothing in this repo sets `status = 'active'` yet — the proof-of-possession job that would is
+		// a follow-on, and it must answer this index's conflict itself. Nor does any reader filter on
+		// status: the CLI's receipt verifier (apps/cli/cmd/verify.go, `trustedKeys`) resolves a key_id
+		// against EVERY row of the addressed org's history (GET /api/cli/signing-keys), pending and
+		// invalid included. Within one org that resolution is unambiguous because of the first index.
 		uniqueIndex("org_signing_key_org_key_id_key").on(t.org_id, t.key_id),
 		uniqueIndex("org_signing_key_verified_key_id_key")
 			.on(t.key_id)
