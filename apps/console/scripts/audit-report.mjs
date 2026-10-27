@@ -591,7 +591,18 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({});
+export const LIVE_DEBT = /** @type {const} */ ({
+	// THE SEVENTH IMPORT — run 40485396792 @ `3b8a1fffb` (#6116's branch on dev after the console wave's
+	// lanes landed). One live finding no row owned, in a lane's own surface, recorded here because the
+	// import that found it must not land with it unowned:
+	T5: {
+		owner: "#6119",
+		why:
+			"`[project]/architecture` (and `[project]`, which redirects there): the empty canvas renders \"Nothing designed yet\" " +
+			"through `data-slot=empty-title` with no `@repo/ui/empty` region around it, so T5 reads a hand-rolled empty " +
+			"region. Appeared with the canvas lane's GET reads (#6213).",
+	},
+});
 
 
 /**
@@ -621,30 +632,29 @@ export const LIVE_DEBT = /** @type {const} */ ({});
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {
-	// THIRD IMPORT — run 39485270886 @ `9b3278240`, on the instrument #6180's re-review corrected
-	// (a bars-only skeleton scored as one block; B3/B4 count only the page's own reads; billing and
-	// usage B2 hosted-only). Every row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\`
-	// globs hold the route — `[project]/settings/**` is #6128's, the org-level people & access pages
-	// #6129's. No row is a \`reason:\` yet: nothing here was found to be built this way on purpose.
-	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" }, B4: { lifts: "#6118" } },
-	"/[org]/[project]/architecture": { B2: { lifts: "#6119" } },
+	// FOURTH IMPORT — run 40485396792 @ `3b8a1fffb`, on dev after the shell (#6193), jobs (#6191),
+	// overview (#6200), support (#6218), canvas (#6213) and usage & billing (#6209) lanes landed. Every
+	// row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\` globs hold the route —
+	// `[project]/settings/**` is #6128's, the org-level people & access pages #6129's. No row is a
+	// \`reason:\` yet: nothing here was found to be built this way on purpose.
+	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" } },
+	"/[org]/[project]/architecture": { B1: { lifts: "#6119" } },
 	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
 	"/[org]/[project]/environments": { B1: { lifts: "#6120" }, B4: { lifts: "#6120" } },
-	"/[org]/[project]/jobs": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" }, B3: { lifts: "#6121" }, B5: { lifts: "#6121" } },
+	"/[org]/[project]/jobs": { B2: { lifts: "#6121" } },
 	"/[org]/[project]/settings/access": { B2: { lifts: "#6128" } },
 	"/[org]/[project]/settings/activity": { B1: { lifts: "#6128" } },
-	"/[org]/[project]/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" } },
+	"/[org]/[project]/settings/general": { B1: { lifts: "#6128" }, B4: { lifts: "#6128" } },
+	"/[org]/[project]/usage": { B4: { lifts: "#6127" } },
 	"/[org]/~/clusters": { B2: { lifts: "#6122" } },
-	"/[org]/~/connectors": { B2: { lifts: "#6124" } },
+	"/[org]/~/connectors": { B1: { lifts: "#6124" }, B2: { lifts: "#6124" }, B4: { lifts: "#6124" } },
 	"/[org]/~/evidence": { B2: { lifts: "#6126" } },
-	"/[org]/~/jobs": { B2: { lifts: "#6121" } },
-	"/[org]/~/jobs/[id]": { B1: { lifts: "#6121" }, B2: { lifts: "#6121" } },
+	"/[org]/~/jobs/[id]": { B2: { lifts: "#6121" } },
 	"/[org]/~/new": { B2: { lifts: "#6131" } },
-	"/[org]/~/runners": { B1: { lifts: "#6123" } },
-	"/[org]/~/settings/activity": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" } },
-	"/[org]/~/settings/billing": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
-	"/[org]/~/settings/billing/invoices": { B1: { lifts: "#6127" } },
-	"/[org]/~/settings/classification": { B2: { lifts: "#6129" } },
+	"/[org]/~/runners": { B1: { lifts: "#6123" }, B4: { lifts: "#6123" } },
+	"/[org]/~/settings/activity": { B1: { lifts: "#6129" } },
+	"/[org]/~/settings/billing/invoices": { B2: { lifts: "#6127" } },
+	"/[org]/~/settings/classification": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" }, B4: { lifts: "#6129" } },
 	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" }, B5: { lifts: "#6128" } },
 	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
 	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
@@ -652,7 +662,7 @@ export const BEHAVIOUR_LEDGER = {
 	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/my-cases": { B2: { lifts: "#6130" } },
 	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
-	"/[org]/~/usage": { B1: { lifts: "#6127" }, B4: { lifts: "#6127" }, B5: { lifts: "#6127" } },
+	"/[org]/~/usage": { B2: { lifts: "#6127" } },
 };
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */

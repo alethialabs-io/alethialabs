@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/39485270886",
-		"commit": "9b32782401ee3bf7a50792b6b0a1e2355df49624"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/40485396792",
+		"commit": "3b8a1fffbd1e6f661c5d275e342216c0ba55f7b3"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1792525510602-872389",
+			"runKey": "e2e-e2e-1793097485607-815589",
 			"records": [
 				{
 					"route": "/[org]",
@@ -109,8 +109,8 @@
 				{
 					"route": "/[org]/[project]",
 					"predicate": "T5",
-					"verdict": "N/A",
-					"reason": "no-empty-state"
+					"verdict": "FAIL",
+					"detail": "1 hand-rolled empty region, none resolving to @repo/ui/empty"
 				},
 				{
 					"route": "/[org]/[project]",
@@ -157,8 +157,8 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "T5",
-					"verdict": "N/A",
-					"reason": "no-empty-state"
+					"verdict": "FAIL",
+					"detail": "1 hand-rolled empty region, none resolving to @repo/ui/empty"
 				},
 				{
 					"route": "/[org]/[project]/architecture",
@@ -581,8 +581,7 @@
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "T5",
-					"verdict": "N/A",
-					"reason": "no-empty-state"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/usage",
@@ -1911,7 +1910,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1792526412583-1",
+			"runKey": "e2e-e2e-audit-owner-1793098404361-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1988,7 +1987,8 @@
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "T7",
-					"verdict": "PASS"
+					"verdict": "N/A",
+					"reason": "no-restricted-surface"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
@@ -2080,7 +2080,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1792525537056-479834",
+			"runKey": "e2e-e2e-1793098517573-353694",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2303,7 +2303,8 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "R8",
-					"verdict": "PASS"
+					"verdict": "N/A",
+					"reason": "no-enabled-controls"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
@@ -2968,13 +2969,13 @@
 			"persona": "the owner of an organisation the spec signs up itself",
 			"org": "a THIRD organisation, on the default plan, seeded with two rows in every list `seedFilterFixtures` reaches",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-audit-behaviour-1792525654485-1",
+			"runKey": "e2e-e2e-audit-behaviour-1793097675829-1",
 			"records": [
 				{
 					"route": "/[org]",
 					"predicate": "B1",
 					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
+					"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 				},
 				{
 					"route": "/[org]",
@@ -2985,18 +2986,20 @@
 				{
 					"route": "/[org]",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]",
 					"predicate": "B4",
-					"verdict": "FAIL",
-					"detail": "cold load: endless skeleton, empty copy, content vanished with no error surface; stale refetch: endless skeleton, empty copy, content vanished with no error surface"
+					"verdict": "NOT MEASURED",
+					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 				},
 				{
 					"route": "/[org]",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/[org]/[project]",
@@ -3031,13 +3034,13 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "B1",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 				},
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "B2",
-					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.042 against the page (budget 0.02) — a 788px skeleton block became 847px; the skeleton sets 1 block side by side and the page draws none"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/architecture",
@@ -3113,20 +3116,18 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: empty copy, rows, content"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower"
+					"detail": "the skeleton moves 0.020 against the page (budget 0.02) — a 630px skeleton block became 632px, 46px lower"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "B3",
-					"verdict": "FAIL",
-					"detail": "1 empty-copy region while every read was held, against 0 once answered"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
@@ -3136,8 +3137,7 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "B5",
-					"verdict": "FAIL",
-					"detail": "one read failing alone blanked every region — the `jobs/page` read"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings",
@@ -3228,7 +3228,8 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "B1",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "with every read held, the region differs from its answered render in: content"
 				},
 				{
 					"route": "/[org]/[project]/settings/general",
@@ -3243,7 +3244,8 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "B4",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 				},
 				{
 					"route": "/[org]/[project]/settings/general",
@@ -3278,8 +3280,8 @@
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: skeleton"
+					"verdict": "NOT MEASURED",
+					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 				},
 				{
 					"route": "/[org]/[project]/usage",
@@ -3290,18 +3292,20 @@
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "B4",
 					"verdict": "FAIL",
-					"detail": "cold load: empty copy; stale refetch: empty copy"
+					"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 				},
 				{
 					"route": "/[org]/[project]/usage",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/[org]/~/alerts",
@@ -3365,7 +3369,8 @@
 				{
 					"route": "/[org]/~/connectors",
 					"predicate": "B1",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "with every read held, the region differs from its answered render in: content"
 				},
 				{
 					"route": "/[org]/~/connectors",
@@ -3382,7 +3387,8 @@
 				{
 					"route": "/[org]/~/connectors",
 					"predicate": "B4",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 				},
 				{
 					"route": "/[org]/~/connectors",
@@ -3427,8 +3433,7 @@
 				{
 					"route": "/[org]/~/jobs",
 					"predicate": "B2",
-					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.047 against the page (budget 0.02) — a 630px skeleton block became 632px, 101px lower"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/jobs",
@@ -3448,14 +3453,14 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: empty copy, content"
+					"verdict": "NOT MEASURED",
+					"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.038 against the page (budget 0.02) — a 630px skeleton block became 707px, 1px lower"
+					"detail": "the skeleton moves 0.049 against the page (budget 0.02) — a 630px skeleton block became 707px, 96px higher"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
@@ -3466,8 +3471,7 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "B4",
-					"verdict": "NOT MEASURED",
-					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/jobs/[id]",
@@ -3521,12 +3525,14 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "B4",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "stale refetch: endless skeleton"
 				},
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "over-read-budget — the route makes 12 reads of its own and B5 fails at most 8 one at a time"
 				},
 				{
 					"route": "/[org]/~/settings",
@@ -3596,8 +3602,7 @@
 				{
 					"route": "/[org]/~/settings/activity",
 					"predicate": "B2",
-					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.026 against the page (budget 0.02) — a 402px skeleton block became 301px; the skeleton sets 1 block side by side and the page draws none"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
@@ -3617,8 +3622,7 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing",
@@ -3629,35 +3633,36 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "B4",
-					"verdict": "FAIL",
-					"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "B5",
-					"verdict": "FAIL",
-					"detail": "one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action"
+					"verdict": "NOT MEASURED",
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "B2",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "the skeleton moves 0.022 against the page (budget 0.02) — a 155px skeleton block became 132px, 122px higher"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "B3",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -3667,12 +3672,14 @@
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "B5",
-					"verdict": "PASS"
+					"verdict": "NOT MEASURED",
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
 					"predicate": "B1",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "with every read held, the region differs from its answered render in: content"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
@@ -3688,7 +3695,8 @@
 				{
 					"route": "/[org]/~/settings/classification",
 					"predicate": "B4",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 				},
 				{
 					"route": "/[org]/~/settings/classification",
@@ -3869,7 +3877,7 @@
 					"route": "/[org]/~/support/abuse",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.081 against the page (budget 0.02) — a 494px skeleton block became 735px; the skeleton draws no block-sized frame and the page 1"
+					"detail": "the skeleton moves 0.115 against the page (budget 0.02) — a 494px skeleton block became 807px; the skeleton draws no block-sized frame and the page 1"
 				},
 				{
 					"route": "/[org]/~/support/abuse",
@@ -3927,7 +3935,7 @@
 					"route": "/[org]/~/support/cases/[id]",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.038 against the page (budget 0.02) — a 350px skeleton block became 142px, 39px lower"
+					"detail": "the skeleton moves 0.035 against the page (budget 0.02) — a 64px skeleton block became 221px, 114px higher"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -3955,7 +3963,7 @@
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton moves 0.041 against the page (budget 0.02) — a 367px skeleton block became 139px, 55px lower"
+					"detail": "the skeleton moves 0.074 against the page (budget 0.02) — a 415px skeleton block became 139px"
 				},
 				{
 					"route": "/[org]/~/support/my-cases",
@@ -3966,14 +3974,13 @@
 				{
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "B4",
-					"verdict": "NOT MEASURED",
-					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support/my-cases",
 					"predicate": "B5",
 					"verdict": "NOT MEASURED",
-					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/[org]/~/support/submit",
@@ -3984,7 +3991,7 @@
 					"route": "/[org]/~/support/submit",
 					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "the skeleton draws no block-sized frame and the page 2"
+					"detail": "the skeleton moves 0.020 against the page (budget 0.02) — a 420px skeleton block became 507px; the skeleton draws no block-sized frame and the page 2"
 				},
 				{
 					"route": "/[org]/~/support/submit",
@@ -4007,31 +4014,30 @@
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "B1",
-					"verdict": "FAIL",
-					"detail": "with every read held, the region differs from its answered render in: skeleton, content"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "B2",
-					"verdict": "NOT MEASURED",
-					"reason": "hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "B3",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/usage",
-					"predicate": "B4",
+					"predicate": "B2",
 					"verdict": "FAIL",
-					"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+					"detail": "the skeleton moves 0.066 against the page (budget 0.02) — a 82px skeleton block became 96px, 81px higher; the skeleton sets 2 blocks side by side and the page 1"
+				},
+				{
+					"route": "/[org]/~/usage",
+					"predicate": "B3",
+					"verdict": "NOT MEASURED",
+					"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+				},
+				{
+					"route": "/[org]/~/usage",
+					"predicate": "B4",
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "B5",
-					"verdict": "FAIL",
-					"detail": "one read failing alone blanked every region — the `getBillingSummary (apps/console/app/server/actions/billing.ts)` server action"
+					"verdict": "NOT MEASURED",
+					"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 				},
 				{
 					"route": "/cli/login",
