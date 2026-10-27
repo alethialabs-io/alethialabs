@@ -865,6 +865,8 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.grants": {
 		kind: "org-scoped",
 		input: {},
+		// `asOf` is the read's own instant — what "Granted … ago" is computed against.
+		withoutClock: (out) => ({ ...Object(out), asOf: null }),
 		markers: (out, s) => {
 			const rows = field(out, "rows");
 			const names = (id: string) => Array.isArray(rows) && rows.some((r: unknown) => field(r, "principalId") === id);
