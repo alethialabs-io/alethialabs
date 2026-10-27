@@ -13,6 +13,8 @@
 //   * Scoped to A or to U's personal org, B's rows are outside the addressed organization: they are
 //     not listed, opened, cancelled, re-run, revoked or streamed. Scoped to B, W reaches all of them.
 //   * Rows of A that another member wrote, and rows of U's personal org, stay reachable from A.
+//     Reachable is not writable: a job-by-id write (cancel, verification override) from A names A,
+//     so a personal-org job is written only from the personal scope.
 //   * The project child tables and job_logs, whose policies read `projects`/`jobs` through a
 //     sub-select, inherit the bound.
 //   * A legacy job with no org is backfilled into its author's personal org before the policy runs.
@@ -47,7 +49,7 @@ vi.mock("@/lib/realtime", () => ({
 vi.mock("@/lib/http/hold-request", () => ({ holdRequest: () => {} }));
 
 import { GET as streamJobLogs } from "@/app/api/stream/jobs/[id]/route";
-import { cancelJob, getJobs, rerunJob } from "@/app/server/actions/jobs";
+import { cancelJob, getJobs, recordVerifyOverride, rerunJob } from "@/app/server/actions/jobs";
 import { RERUN_FROM_PROJECT } from "@/lib/jobs/operation";
 import {
 	readJob as getJob,
@@ -453,6 +455,45 @@ describeIfDb("job and project reads are bounded to the addressed organization", 
 			.where(eq(jobs.org_id, A))
 			.then((rows) => rows.filter((r) => r.id !== jobA));
 		expect(fresh).toHaveLength(0);
+	});
+
+	it("job-by-id writes act on the addressed organization only: a personal-org job is not cancelled or overridden from org A", async () => {
+		// RLS admits U's personal org from A (the listing above relies on it), so the write itself must
+		// name the addressed org: a decision taken under A's grants writes only A's rows.
+		const db = getServiceDb();
+		const queuedAudit = async (orgId: string, userId: string) => {
+			const [row] = await db
+				.insert(jobs)
+				.values({ user_id: userId, org_id: orgId, job_type: "AUDIT", status: "QUEUED", config_snapshot: {} })
+				.returning({ id: jobs.id });
+			return row.id;
+		};
+		const stateOf = async (id: string) => {
+			const [row] = await db
+				.select({ status: jobs.status, verify_override: jobs.verify_override })
+				.from(jobs)
+				.where(eq(jobs.id, id));
+			return row;
+		};
+		const personal = await queuedAudit(U, U);
+		const inOrgA = await queuedAudit(A, X);
+
+		expect(await as(inA, () => cancelJob({ jobId: personal }))).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Job not found." },
+		});
+		await expect(as(inA, () => recordVerifyOverride(personal, ["c-1"], "waived"))).rejects.toThrow(/Job not found/);
+		expect(await stateOf(personal)).toEqual({ status: "QUEUED", verify_override: null });
+
+		// Positive controls: the same writes on a job of the addressed org — A's job from A, and the
+		// personal job from the personal scope — land.
+		await as(inA, () => recordVerifyOverride(inOrgA, ["c-1"], "waived"));
+		expect((await stateOf(inOrgA)).verify_override).toMatchObject({ controls: ["c-1"], by: U });
+		expect(await as(inA, () => cancelJob({ jobId: inOrgA }))).toEqual({ ok: true, data: null });
+		await as(inPersonal, () => recordVerifyOverride(personal, ["c-2"], "waived"));
+		expect((await stateOf(personal)).verify_override).toMatchObject({ controls: ["c-2"], by: U });
+		expect(await as(inPersonal, () => cancelJob({ jobId: personal }))).toEqual({ ok: true, data: null });
+		expect((await stateOf(personal)).status).toBe("CANCELLED");
 	});
 
 	it("a re-run stays within the addressed organization", async () => {

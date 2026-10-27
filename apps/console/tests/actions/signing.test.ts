@@ -104,9 +104,27 @@ describe("registerOrgSigningKey", () => {
 		expect(Object.keys(vals)).not.toContain("private_key");
 	});
 
-	it("rejects a duplicate public key (its key_id is UNIQUE)", async () => {
-		setupDb({ select: new Map([[orgSigningKey, [{ id: "existing" }]]]) });
-		await expect(registerOrgSigningKey(base)).rejects.toThrow(/already registered/);
+	it("refuses a key the org already registered, asking about THIS org's rows only", async () => {
+		const { whereSpy } = setupDb({ select: new Map([[orgSigningKey, [{ id: "existing" }]]]) });
+		await expect(registerOrgSigningKey(base)).rejects.toThrow("This public key can't be registered for this organization.");
+		const q = renderedWhere(whereSpy);
+		expect(q.sql).toContain('"org_id" = $');
+		expect(q.params).toEqual(expect.arrayContaining(["org-1", KEY_ID]));
+	});
+
+	it("answers a unique violation from the database with the same one sentence, not the driver's error", async () => {
+		setupDb({ select: new Map([[orgSigningKey, []]]) });
+		const driver = Object.assign(new Error('duplicate key value violates unique constraint "org_signing_key_org_key_id_key"'), {
+			code: "23505",
+		});
+		vi.mocked(withActorScope).mockRejectedValueOnce(new Error("Failed query: insert", { cause: driver }));
+		await expect(registerOrgSigningKey(base)).rejects.toThrow("This public key can't be registered for this organization.");
+	});
+
+	it("lets any other database error through unchanged", async () => {
+		setupDb({ select: new Map([[orgSigningKey, []]]) });
+		vi.mocked(withActorScope).mockRejectedValueOnce(new Error("connection reset"));
+		await expect(registerOrgSigningKey(base)).rejects.toThrow("connection reset");
 	});
 
 	it("rejects a malformed public key before any db work", async () => {
