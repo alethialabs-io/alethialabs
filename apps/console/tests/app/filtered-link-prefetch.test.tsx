@@ -30,7 +30,8 @@ const { runnersPage, getMembersPage } = vi.hoisted(() => {
 	};
 });
 
-// The runners route reads over the read router in-process (#6123). The router here has the runners
+// The runners (#6123) and members (#6129) routes read over the read router in-process. ONE mock of
+// `serverOrpc` carries both — a second `vi.mock` of the module would replace the first. The router here has the runners
 // procedures' SHAPE, with the page read answering the input it was given; keys come from the same
 // oRPC utilities the browser uses, so a key asserted below is the key the client looks up.
 vi.mock("@/lib/rpc/server", async () => {
@@ -44,6 +45,12 @@ vi.mock("@/lib/rpc/server", async () => {
 			fleet: os.handler(async () => ({ pools: [] })),
 			fleetEconomics: os.handler(async () => null),
 		},
+		// The members route prefetches through the same router since #6129: the page read answers the
+		// input it was given, and the gate is a fixed answer.
+		members: {
+			page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => getMembersPage(input)),
+			gate: os.handler(async () => ({ canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "x" })),
+		},
 	};
 	const utils = createTanstackQueryUtils(createRouterClient(router));
 	return { serverOrpc: () => utils };
@@ -55,18 +62,6 @@ vi.mock("@/app/(private)/[org]/~/runners/runners-client", () => ({
 }));
 vi.mock("@/components/runners/runners-skeleton", () => ({ RunnersSkeleton: () => null }));
 
-// The members route prefetches through the in-process read router since #6129: the fake read
-// client stands in for `serverOrpc()`, with the same spy behind `members.page`.
-vi.mock("@/lib/rpc/server", async () => {
-	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
-	return {
-		serverOrpc: () =>
-			fakeOrpc({
-				"members.page": async (input) => getMembersPage(input),
-				"members.gate": async () => ({ canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "x" }),
-			}).orpc,
-	};
-});
 vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: () => null }));
 
 // A fresh client per route call — the browser singleton would carry one test's keys into the next.
