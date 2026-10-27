@@ -15,6 +15,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// Whether the caller may view the cluster's project is not this file's question; it allows.
+// tests/integration/cli-project-routes-addressed.test.ts drives the real decision.
+vi.mock("@/lib/cli/project-access", () => ({
+	cliMayActOnProject: vi.fn(async () => true),
+}));
 vi.mock("@/lib/gitops/deploy-status", () => ({
 	readGitopsDeployStatus: vi.fn(),
 }));

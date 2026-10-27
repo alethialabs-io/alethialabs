@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	getKindDef,
 	listProjectComponents,
 	parseComponentPageOpts,
 } from "@/lib/cli/project-components";
 import { MAX_PAGE_SIZE } from "@/lib/cli/paging";
-import {
-	resolveCliEnvironment,
-	resolveCliProject,
-} from "@/lib/cli/resolve-project";
+import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliComponentsResponse } from "@/lib/validations/cli-contract";
@@ -48,7 +46,7 @@ export async function GET(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

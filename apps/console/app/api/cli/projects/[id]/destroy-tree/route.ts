@@ -13,8 +13,9 @@ import { NextResponse } from "next/server";
 import { getDestroyTree } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { ForbiddenError } from "@/lib/authz/types";
-import { resolveCliProject, resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
+import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import { cliDestroyTreeResponse } from "@/lib/validations/cli-contract";
 
@@ -30,7 +31,7 @@ export async function GET(
 
 	try {
 		// Org-scoped: a project of another org is "not found", never a different tenant's tree.
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

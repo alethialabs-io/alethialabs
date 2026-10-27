@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	ComponentWriteRefusedError,
 	componentIdentityAllowed,
@@ -16,7 +17,6 @@ import {
 	validateComponentFields,
 } from "@/lib/cli/project-components";
 import {
-	resolveCliProject,
 	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError } from "@/lib/cli/respond";
@@ -81,7 +81,7 @@ export async function POST(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -147,7 +147,7 @@ export async function DELETE(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

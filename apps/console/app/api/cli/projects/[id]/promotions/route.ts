@@ -9,6 +9,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -16,7 +17,7 @@ import {
 	paginate,
 	parsePageOpts,
 } from "@/lib/cli/paging";
-import { resolveCliEnvironment, resolveCliProject } from "@/lib/cli/resolve-project";
+import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { environmentPromotions, projectEnvironments, projects } from "@/lib/db/schema";
@@ -47,7 +48,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

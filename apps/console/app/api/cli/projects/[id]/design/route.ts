@@ -29,8 +29,8 @@ import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identiti
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
-	resolveCliProject,
 	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
@@ -64,7 +64,7 @@ export async function POST(
 	const stage = url.searchParams.has("stage");
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
