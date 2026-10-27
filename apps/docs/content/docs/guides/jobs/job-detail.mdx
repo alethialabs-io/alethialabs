@@ -1,6 +1,6 @@
 ---
 title: Job Detail & Logs
-description: Real-time log streaming, status polling, and job actions.
+description: What a job found, real-time log streaming, status polling, and job actions.
 ---
 
 # Job Detail & Logs
@@ -11,6 +11,7 @@ The job detail page (`/{org}/~/jobs/{id}`) shows the full execution state of a j
 
 ### Header
 - Job type icon and label
+- Project and environment the job ran for, each a link: the project name opens the project, and the environment name opens the project's environments list
 - Status badge
 - Duration (elapsed or final run time)
 - Job ID (first 8 chars)
@@ -33,7 +34,7 @@ Auto-scroll pins to the bottom as new logs arrive.
 
 Three expandable sections below the logs:
 
-- **Job Details** — full metadata (ID, type, runner, project, and the created/started/completed timestamps)
+- **Job Details** — full metadata (ID, type, runner, project name and ID, and the created/started/completed timestamps)
 - **Config Snapshot** — the project configuration at time of job creation (JSON)
 - **Execution Metadata** — OpenTofu outputs, cost data, cluster info, and the **`verify_result`** report (JSON)
 
@@ -53,8 +54,46 @@ The page polls `getJob(jobId)` every 3 seconds while the job is in-flight (QUEUE
 
 ## Status Banner
 
-When the job reaches a terminal state, a banner appears:
+When the job reaches a terminal state, a banner appears under the header:
 
-- **SUCCESS** — neutral banner with a checkmark ("Job completed successfully.")
+- **SUCCESS** — the result block for a drift scan or a plan (see [Result block](#result-block)). Any other successful job shows a neutral banner with a checkmark ("Job completed successfully.").
 - **FAILED** — destructive banner with the error message ("Job failed")
 - **CANCELLED** — muted banner ("Job cancelled")
+
+## Result block
+
+The `SUCCESS` status only says that the job ran. For a successful `DETECT_DRIFT` or `PLAN` job, the result block says what the job found. Its heading is the finding. The block reads the result that the runner stored in the job's execution metadata.
+
+### Drift scan
+
+The heading states the finding:
+
+- **"N resources drifted"** when managed resources differ from the live cloud
+- **"In sync — no managed resource has drifted."** when nothing differs
+
+Under the heading, the block can show:
+
+- How many differences were dismissed as representational, for example "9 differences dismissed as representational". These are differences in how a value is written, not in what it is.
+- "Unmanaged resources: not checked by a refresh-only scan". A refresh-only scan cannot see resources that exist in the cloud but not in state, so the drifted count does not include them. When the scan did check, the block shows how many unmanaged resources it found instead.
+- The first five drifted resources. Each row shows a kind label (**Modified**, **Deleted**, or **Other**), the resource address, and the attribute paths that differ. The block shows attribute paths only, never values.
+
+When more than five resources drifted, the list ends with "… N more" and a **Show all N** button. Select it to see the full list, which scrolls inside the block so the log stays on screen. Select **Show fewer** to fold the list back.
+
+For how drift detection works, see [Drift detection](/concepts/drift).
+
+### Plan
+
+The heading states the total number of changes, for example "4 changes planned". When the plan changes nothing, the heading is "No changes — the infrastructure matches the configuration."
+
+Under the heading, the block shows a count for each action:
+
+```text
++1 to create · ~1 to update · −1 to destroy · ±1 to replace
+```
+
+When the job stored a cost estimate, the block also shows the monthly cost change and the estimated monthly total, for example "Monthly cost change +$13/mo · Estimated total $143/mo".
+
+### When the block is not shown
+
+- A job of any other type, or an older job with no stored result, shows "Job completed successfully."
+- A job whose stored result cannot be read shows "Drift summary unavailable" or "Plan summary unavailable". The raw output is still in the log.
