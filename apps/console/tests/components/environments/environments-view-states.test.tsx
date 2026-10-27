@@ -63,8 +63,12 @@ const OVERVIEW: EnvironmentsOverview = {
 
 /** Renders the view over a cache `seed` prepared — the state the route's prefetch handed over. */
 function renderView(seed: (qc: QueryClient) => void) {
-	// staleTime: the cached entry IS the server's answer; the test is about rendering it, not refetching.
-	const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+	// staleTime / retryOnMount: the cached entry IS the server's answer; the test is about rendering
+	// it, not refetching. (An errored entry with no data is refetched on mount by default, and a
+	// refetch of a never-successful query resets it to pending — the render under test would vanish.)
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: Infinity, retryOnMount: false } },
+	});
 	seed(qc);
 	return render(
 		<QueryClientProvider client={qc}>
