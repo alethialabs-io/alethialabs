@@ -15,6 +15,7 @@ import { GCP_PROJECT_ID_REGEX } from "@/lib/cloud-providers/gcp-wif";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { headers } from "next/headers";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
 import { auth } from "@/lib/auth";
@@ -124,7 +125,8 @@ async function runDeleteProviderToken(input: z.output<typeof deleteProviderToken
 // The connectors board's writes on cloud identities (#6124, ADR 0005 D4). Each one:
 //   1. asks the PDP for `manage_identities` on the identity;
 //   2. loads the identity by id through the SAME rule the board read it with — an org-shared
-//      identity of the addressed org, or the caller's own personal one (`actorIdentityWhere`) — AND bound to the addressed org. An id that fails either test
+//      identity of the addressed org, or the caller's own personal one (`actorIdentityWhere` +
+//      `personalIdentityAuthor`) — AND bound to the addressed org. An id that fails either test
 //      is "not found", whatever the PDP answered;
 //   3. only then calls the connection library (`lib/cloud-providers/connections.ts`).
 
@@ -150,8 +152,7 @@ async function manageableIdentity(actor: Actor, identityId: string) {
 		.from(cloudIdentities)
 		.where(
 			and(
-				// The console's writes are a signed-in person's (a session), so the personal arm is theirs.
-				actorIdentityWhere(identityId, actor.orgId, actor.userId),
+				actorIdentityWhere(identityId, actor.orgId, personalIdentityAuthor(actor)),
 				eq(cloudIdentities.org_id, actor.orgId),
 			),
 		)

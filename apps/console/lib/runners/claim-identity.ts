@@ -76,9 +76,11 @@ export function claimIdentityWhere(job: ClaimIdentityJob): SQL | undefined {
  * Used by: the design writes (lib/cloud-providers/design-identities.ts), the job snapshot
  * (`buildConfigSnapshot`), the CLI project and component writes, the CLI identity list and
  * inventory, `runners/deploy` and `runners/register`, the `/api/jobs` DESTROY_RUNNER branch and the
- * kubeconfig mint. NOT by `lib/cloud-providers/connections.ts` (the connector routes and actions,
- * which filter by `org_id`), nor by reads that run under the `scoped_all` RLS policy, which is this
- * rule for a person.
+ * kubeconfig mint, and — through `actorIdentityWhere` — the connectors board's cloud-account writes
+ * (`app/server/actions/identities.ts`), which load the identity through it, bound to the addressed
+ * org, BEFORE calling the connection library. NOT by `lib/cloud-providers/connections.ts` itself
+ * (the CLI connector routes call it directly; it filters by `org_id`), nor by reads that run under
+ * the `scoped_all` RLS policy, which is this rule for a person.
  */
 export function identityScopeWhere(
 	orgId: string,

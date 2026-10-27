@@ -190,7 +190,7 @@ describe("getValidProviderToken with no linked account", () => {
 describe("deleteProviderToken", () => {
 	it("unlinks the provider and returns which one (the board is invalidated by the caller's mutation)", async () => {
 		unlinkAccount.mockResolvedValue({} as never);
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" });
 
 		const result = await deleteProviderToken({ provider: "github" });
 
@@ -203,7 +203,7 @@ describe("deleteProviderToken", () => {
 
 	it("an unlink failure is `unexpected` with a reference, never the raw error text", async () => {
 		unlinkAccount.mockRejectedValue(new Error("unlink failed"));
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" });
 
 		const result = await deleteProviderToken({ provider: "gitlab" });
 
@@ -224,7 +224,7 @@ describe("deleteProviderToken", () => {
 	// surface as a spurious error toast.
 	it("is idempotent: no linked account reports success without calling unlinkAccount", async () => {
 		mockResolveAccountId.mockResolvedValue(null);
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" });
 
 		const result = await deleteProviderToken({ provider: "bitbucket" });
 
