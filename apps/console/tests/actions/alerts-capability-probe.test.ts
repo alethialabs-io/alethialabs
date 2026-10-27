@@ -55,6 +55,7 @@ import { authzActivityLog } from "@/lib/db/schema";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 
 const ACTOR: Actor = {
+	credential: "session",
 	orgId: "org-1",
 	userId: "user-1",
 	entitlements: { ...COMMUNITY_ENTITLEMENTS, alerting: true },

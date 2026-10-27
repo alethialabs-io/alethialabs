@@ -15,7 +15,9 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn(async () => ({ userId: "u-1", orgId: "org-1" })) }));
+vi.mock("@/lib/authz/guard", () => ({
+	authorize: vi.fn(async () => ({ userId: "u-1", orgId: "org-1", credential: "session" })),
+}));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn() }));
 vi.mock("@/app/server/actions/projects", () => ({
 	getProjectAsFormData: vi.fn(),
@@ -26,6 +28,7 @@ const { stageChanges } = await import("@/app/server/actions/staged-changes");
 const { getProjectAsFormData } = await import("@/app/server/actions/projects");
 const { withActorScope } = await import("@/lib/db");
 const { CredentialKnobRefusedError } = await import("@/lib/cloud-providers/credential-knobs");
+const { CloudIdentityRefusedError } = await import("@/lib/cloud-providers/design-identities");
 const { projectChanges, projectSecrets } = await import("@/lib/db/schema");
 
 /** Records what the staged-changes transaction deleted and inserted; `stored` answers the guard's read of secrets. */
@@ -35,7 +38,12 @@ function wireTx(stored: unknown[]) {
 	const tx = {
 		select: () => ({
 			from: (table: unknown) => ({
-				where: () => Promise.resolve(table === projectSecrets ? stored : []),
+				// Awaitable as is (the credential guard's read) or after `.limit()` (the identity
+				// checks); no table but `project_secrets` has rows, so no cloud identity is usable.
+				where: () => {
+					const rows = Promise.resolve(table === projectSecrets ? stored : []);
+					return Object.assign(rows, { limit: () => rows, orderBy: () => rows });
+				},
 			}),
 		}),
 		delete: (table: unknown) => ({
@@ -98,5 +106,23 @@ describe("stageChanges and a credential in provider_config (#5565)", () => {
 		// The change itself is still staged, with the rest of the component.
 		expect(JSON.stringify(staged?.rows)).toContain('"length":48');
 		expect(JSON.stringify(staged?.rows)).toContain('"keepers"');
+	});
+});
+
+// The identity half of the same guard: a design naming a cloud identity the caller may not use is
+// refused at STAGING too, so it never sits in the tray for someone else to apply. The fake db finds
+// no usable identity and nothing stored, so any named identity is refused.
+describe("stageChanges and a cloud identity the caller may not use", () => {
+	it("refuses it before replacing any staged row", async () => {
+		const { deleted, inserted } = wireTx([]);
+		const withIdentity = {
+			...design({}),
+			project: { ...design({}).project, cloud_identity_id: "ci-not-usable" },
+		};
+		await expect(stageChanges("p1", "env-1", withIdentity as never)).rejects.toBeInstanceOf(
+			CloudIdentityRefusedError,
+		);
+		expect(deleted).toEqual([]);
+		expect(inserted).toEqual([]);
 	});
 });

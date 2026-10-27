@@ -38,7 +38,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }
 vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/authz/guard")>()),
 	authorizeCli: vi.fn(async () => ({
-		actor: { userId: ORG_A_ID, orgId: ORG_A_ID },
+		actor: { userId: ORG_A_ID, orgId: ORG_A_ID, credential: "session" },
 		credential: "session",
 		orgScope: [ORG_A_ID],
 	})),
@@ -80,6 +80,7 @@ const ORG_B = randomUUID();
 
 /** Org A's actor, entitled to alerting so the alert action reaches its write. */
 const ACTOR_A: Actor = {
+	credential: "session",
 	userId: ORG_A,
 	orgId: ORG_A,
 	entitlements: { ...COMMUNITY_ENTITLEMENTS, alerting: true },

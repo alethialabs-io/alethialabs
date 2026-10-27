@@ -143,7 +143,7 @@ describe("where the session is still the answer", () => {
 	it("...and an injected actor (the MCP token path) is untouched — it has no address", async () => {
 		requestPath = "/acme/hero-app/environments";
 		orgRow = [{ id: ORG_B }];
-		const injected = { userId: USER, orgId: ORG_A };
+		const injected = { userId: USER, orgId: ORG_A, credential: "session" as const };
 		const actor = await runWithActor(injected, () => currentActor());
 		expect(actor).toBe(injected);
 		expect(getActiveScope).not.toHaveBeenCalled();

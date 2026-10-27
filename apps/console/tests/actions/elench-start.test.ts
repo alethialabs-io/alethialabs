@@ -332,7 +332,7 @@ beforeEach(() => {
 	insertedThreadRevision = 1;
 	concurrentDraft = null;
 	committedElsewhere = [];
-	actor = { userId: USER, orgId: ORG_A };
+	actor = { credential: "session", userId: USER, orgId: ORG_A };
 	vi.mocked(currentActor).mockImplementation(async () => actor);
 	vi.mocked(authorizeQuiet).mockImplementation(async () => actor);
 	vi.mocked(getOwnerScope).mockResolvedValue({ userId: USER, sessionId: "s" });
@@ -510,7 +510,7 @@ describe("startConversation, composer origin (S2)", () => {
 
 	it("a start with A's key from org B's page is scope-changed and stores nothing", async () => {
 		tables.elench_drafts?.push(claimedRow());
-		actor = { userId: USER, orgId: ORG_B };
+		actor = { credential: "session", userId: USER, orgId: ORG_B };
 		expect(await composer()).toEqual({ outcome: "scope-changed", reason: "other-org" });
 		expect(statements).toEqual([]);
 		expect(thread()).toBeUndefined();
