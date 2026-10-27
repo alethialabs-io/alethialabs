@@ -9,10 +9,16 @@
 // procedures, the `query` base (its refusal mapping and actor binding), the org binding
 // (lib/promotions/org-binding.ts) and oRPC's input validation.
 //
-// Pinned: an id-addressed read binds its project to the ADDRESSED org before the PDP is asked — a
-// project of another org is a typed NOT_FOUND and the PDP never hears of it (an org-wide grant would
-// answer for any id); an environment outside the project is a NOT_FOUND; the overview resolves the
-// slug inside the addressed org; a malformed id never reaches the database; and no read writes.
+// WHAT THE DATABASE MOCK CANNOT SEE: it answers each select from a script, IN CALL ORDER, and ignores
+// `.where(...)` entirely — so nothing here proves WHICH predicate a query carries. That the org-bound
+// project lookup really filters on `projects.org_id = actor.orgId` (and the slug lookup likewise) is
+// proven against real Postgres by tests/integration/rpc-tenancy.shared.ts (another org's ids and
+// slug answer NOT_FOUND) and tests/integration/environments-project-deny.test.ts (a project deny).
+//
+// Pinned here, given those lookups' answers: the ORDER — a project the org-bound lookup did not find
+// is a typed NOT_FOUND before the PDP is asked or any design is read; an environment outside the
+// project is a NOT_FOUND; a malformed id is a BAD_REQUEST that never reaches the database; a failed
+// promotions or protection read fails the page instead of reading as "none"; and no read writes.
 
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,10 +28,12 @@ vi.mock("server-only", () => ({}));
 const h = vi.hoisted(() => ({
 	authorizeRead: vi.fn(),
 	authorize: vi.fn(),
-	/** What each service-role `select … limit()` answers, in call order. */
-	serviceRows: [] as unknown[][],
-	/** What each actor-scoped select answers, in call order. */
-	scopedRows: [] as unknown[][],
+	/** What each service-role `select … limit()` answers, in call order (an Error rejects). */
+	serviceRows: [] as (unknown[] | Error)[],
+	/** What each actor-scoped select answers, in call order (an Error rejects). */
+	scopedRows: [] as (unknown[] | Error)[],
+	/** How many selects were issued on either connection. */
+	selects: 0,
 	getProjectEnvironments: vi.fn(),
 	getEnvConsistency: vi.fn(),
 	getProjectAsFormData: vi.fn(),
@@ -42,14 +50,20 @@ vi.mock("@/lib/authz/guard", () => ({
 }));
 
 /** A chainable select whose terminal (`limit`, or awaiting the chain) answers the next scripted rows. */
-function chain(next: () => unknown[]) {
+function chain(script: () => unknown[] | Error) {
+	h.selects += 1;
+	const next = async () => {
+		const answer = script();
+		if (answer instanceof Error) throw answer;
+		return answer;
+	};
 	const node: Record<string, unknown> = {};
 	for (const m of ["select", "from", "where", "innerJoin", "leftJoin", "orderBy"]) {
 		node[m] = () => node;
 	}
 	node.limit = async () => next();
 	node.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-		Promise.resolve(next()).then(resolve, reject);
+		next().then(resolve, reject);
 	return node;
 }
 
@@ -105,6 +119,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	h.serviceRows.length = 0;
 	h.scopedRows.length = 0;
+	h.selects = 0;
 	h.authorizeRead.mockResolvedValue(ACTOR);
 	h.getProjectEnvironments.mockResolvedValue({ environments: [] });
 	h.getEnvConsistency.mockResolvedValue({ envs: [], rows: [] });
@@ -147,9 +162,10 @@ describe("environments.protectionRules", () => {
 	});
 
 	it("a malformed id never reaches the database", async () => {
-		await expect(
-			client.protectionRules({ projectId: "nope", environmentId: ENV_A }),
-		).rejects.toBeInstanceOf(ORPCError);
+		expect(await codeOf(client.protectionRules({ projectId: "nope", environmentId: ENV_A }))).toBe(
+			"BAD_REQUEST",
+		);
+		expect(h.selects).toBe(0);
 		expect(h.authorizeRead).not.toHaveBeenCalled();
 	});
 });
@@ -211,6 +227,18 @@ describe("environments.overview", () => {
 			protectionByEnv: {},
 		});
 		expect(h.getProjectEnvironments).toHaveBeenCalledWith(PROJECT);
+	});
+
+	it("a failed promotions read fails the page — it never reads as 'no promotion in flight'", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.scopedRows.push(new Error("promotions read failed"), []);
+		await expect(client.overview({ project: "payments" })).rejects.toBeTruthy();
+	});
+
+	it("a failed protection read fails the page — it never reads as 'no protection'", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.scopedRows.push([], new Error("protection read failed"));
+		await expect(client.overview({ project: "payments" })).rejects.toBeTruthy();
 	});
 
 	it("a failure of the environment list itself is a failure — not an empty page", async () => {

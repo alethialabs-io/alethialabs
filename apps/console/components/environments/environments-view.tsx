@@ -210,12 +210,18 @@ function EnvironmentsBody({
 							<Plus className="mr-1.5 size-3.5" />
 							New Environment
 						</Button>
-						{envs.length > 1 && (
-							<Button size="sm" variant="outline" onClick={() => setPromoteOpen(true)}>
-								<ArrowUpFromLine className="mr-1.5 size-3.5" />
-								Promote
-							</Button>
-						)}
+						{/* Always rendered, disabled under two environments: the toolbar keeps one shape
+						    whatever the count, so the route skeleton can reserve it exactly (B2). The
+						    one-environment note below says why there is nothing to promote yet. */}
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={envs.length < 2}
+							onClick={() => setPromoteOpen(true)}
+						>
+							<ArrowUpFromLine className="mr-1.5 size-3.5" />
+							Promote
+						</Button>
 					</>
 				}
 			/>

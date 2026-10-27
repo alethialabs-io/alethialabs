@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(async () => ({ orgId: "org-1", userId: "u1" })),
+	currentActor: vi.fn(async () => ({ orgId: "org-1", userId: "u1" })),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/lib/promotions/lifecycle", () => ({
@@ -61,7 +62,8 @@ import {
 	reconcileEnvironmentComponents,
 	tryPlanProject,
 } from "@/app/server/actions/projects";
-import { withActorScope } from "@/lib/db";
+import { authorize } from "@/lib/authz/guard";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { diffIsEmpty } from "@/lib/promotions/diff";
 
@@ -104,6 +106,15 @@ let insertFails: Error | null = null;
  * then the promotion insert and recorded updates.
  */
 function mockScope(envs: EnvRow[], projectOrg: string | null = "org-1") {
+	// The org binding's project lookup, on the service role, BEFORE the PDP (null: no such project).
+	const service = {
+		select: () => ({
+			from: () => ({
+				where: () => ({ limit: async () => (projectOrg === null ? [] : [{ org_id: projectOrg }]) }),
+			}),
+		}),
+	};
+	vi.mocked(getServiceDb).mockReturnValue(service as never);
 	const tx = {
 		select: () => ({
 			from: (table: unknown) =>
@@ -146,6 +157,16 @@ describe("promoteEnvironment — a refusal is a value", () => {
 		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal("This project belongs to your personal workspace — switch to it to run this."));
 		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
 		expect(tryPlanProject).not.toHaveBeenCalled();
+	});
+
+	it("another organization's project reads like an unknown one — before the PDP is asked", async () => {
+		mockScope([DEV, PROD], "org-2");
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Project not found." },
+		});
+		expect(authorize).not.toHaveBeenCalled();
+		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
 	});
 
 	it("refuses a promotion to a lower stage", async () => {

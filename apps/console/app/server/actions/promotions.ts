@@ -24,7 +24,7 @@ import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { arrayIncludes } from "@/lib/type-guards";
-import { authorize } from "@/lib/authz/guard";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	environmentPromotions,
@@ -97,18 +97,28 @@ async function promote(
 	targetEnvId: string,
 	opts?: { includeRemovals?: boolean; runnerId?: string | null },
 ): Promise<PromoteQueued> {
+	// The project is bound to the ADDRESSED org before the PDP is asked, as every other entry point
+	// here does (lib/promotions/org-binding.ts): an org-wide `deploy` grant answers for any project
+	// id. A project of the caller's own personal workspace, addressed from a team org, is refused with
+	// a sentence the person can act on; any other org's project reads exactly like an unknown id.
+	const scope = await currentActor();
+	const [project] = await getServiceDb()
+		.select({ org_id: projects.org_id })
+		.from(projects)
+		.where(eq(projects.id, projectId))
+		.limit(1);
+	const orgRefusal = project ? projectOrgRefusal(project.org_id, scope) : null;
+	if (!project || (orgRefusal && project.org_id !== scope.userId))
+		throw new ActionRefusal("not-found", "Project not found.");
+	if (orgRefusal) throw new ActionRefusal("conflict", orgRefusal);
+
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	const owner = actor.userId;
 	if (sourceEnvId === targetEnvId)
 		throw new ActionRefusal("conflict", "Source and target environments must differ.");
 
 	// Validate both environments belong to the project + check stage order and target state.
-	const { source, target, projectOrgId } = await withActorScope(actor, async (tx) => {
-		const [project] = await tx
-			.select({ org_id: projects.org_id })
-			.from(projects)
-			.where(eq(projects.id, projectId))
-			.limit(1);
+	const { source, target } = await withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select()
 			.from(projectEnvironments)
@@ -121,12 +131,8 @@ async function promote(
 		return {
 			source: rows.find((r) => r.id === sourceEnvId),
 			target: rows.find((r) => r.id === targetEnvId),
-			projectOrgId: project?.org_id ?? null,
 		};
 	});
-	// The promotion and its jobs belong to the project's org; refuse before anything is written.
-	const orgRefusal = projectOrgRefusal(projectOrgId, actor);
-	if (source && target && orgRefusal) throw new ActionRefusal("conflict", orgRefusal);
 	if (!source || !target)
 		throw new ActionRefusal("not-found", "Environment not found for this project");
 	if (STAGE_ORDER[target.stage] < STAGE_ORDER[source.stage])

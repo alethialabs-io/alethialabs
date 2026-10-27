@@ -8,8 +8,8 @@ import { Skeleton } from "@repo/ui/skeleton";
  * The Environments page while its read is in flight — the route's `loading.tsx` and the view's own
  * pending branch render THIS one component, so the two cannot drift apart (RUBRIC B2).
  *
- * It has the final layout's shape: the toolbar row (count, one line of description, the New
- * Environment action), a stage label, and environment cards built like `EnvironmentCard` — the
+ * It has the final layout's shape: the toolbar row (count, one line of description, and the page's
+ * two actions — New Environment and Promote, which the page renders at every environment count), a stage label, and environment cards built like `EnvironmentCard` — the
  * identity line, the meta line, the classification row, the "gates into this env" block, and the
  * right rail on wide screens. It promises nothing the page may not render: no promotion panel
  * (most projects have none in flight) and no matrix or history (they render only with data).
@@ -17,7 +17,7 @@ import { Skeleton } from "@repo/ui/skeleton";
 export function EnvironmentsSkeleton() {
 	return (
 		<div className="space-y-8" aria-busy>
-			<PageToolbarSkeleton count actions={1} />
+			<PageToolbarSkeleton count actions={2} />
 			<section className="space-y-4">
 				<div className="space-y-2.5">
 					<Skeleton className="h-3 w-24" />

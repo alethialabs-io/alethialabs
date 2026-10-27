@@ -352,11 +352,14 @@ export async function readProtectionRules(
 /**
  * Everything the Environments page paints for the project `slug` names in the addressed org.
  *
- * The environment list is the core of the page: if it fails, the read fails, and the page renders
- * its error — never an empty list. The enrichment probes (consistency / reconcile / promotions /
- * protection / the active promotion) each read per-environment design and can throw (e.g. a
- * since-deleted cloud identity); they degrade to safe empty defaults rather than failing the page,
- * exactly as the server-rendered page did before this moved.
+ * What may degrade and what may not:
+ *  - The environment list, the promotions, the in-flight promotion's detail and the protection rules
+ *    are FACTS a person acts on. If any of them fails, the read fails and the page renders its error
+ *    — never an empty list, never "no promotion in flight" over a promotion that is, never "no
+ *    protection" over gates that exist.
+ *  - The consistency matrix and the reconcile badges read every environment's DESIGN, which can throw
+ *    for a reason unrelated to the page (a since-deleted cloud identity). They degrade: the matrix to
+ *    no rows (it is then not rendered), the badges to "never scanned".
  */
 export async function readEnvironmentsOverview(slug: string): Promise<EnvironmentsOverview> {
 	const projectId = await resolveProjectInOrg(await currentActor(), slug);
@@ -371,12 +374,12 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 			}),
 		),
 		getEnvReconcileStates(projectId).catch((): EnvReconcileState[] => []),
-		readPromotions(actor, projectId).catch((): PromotionRow[] => []),
-		readProtectionSummaries(actor, projectId).catch((): Record<string, ProtectionSummary> => ({})),
+		readPromotions(actor, projectId),
+		readProtectionSummaries(actor, projectId),
 	]);
 
 	const active = promotions.find((p) => arrayIncludes(IN_FLIGHT, p.status));
-	const activePromotion = active ? await readPromotionDetail(active.id).catch(() => null) : null;
+	const activePromotion = active ? await readPromotionDetail(active.id) : null;
 
 	return {
 		projectId,

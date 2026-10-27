@@ -22,15 +22,19 @@
 
 //
 // THE READ AND THE WRITE (#6120, ADR 0005). The rules are the `environments.protectionRules` GET
-// procedure, read when the drawer opens; the form is reset from them once they land, and the form
-// is not editable before then — so a save can never send the defaults over rules it never saw. The
-// save is `setProtectionRules` through `useActionMutation`: pending + double-submit guard, field
-// errors onto the fields, and the page's read invalidated so the env card's gate chips update.
+// procedure, FETCHED FRESH every time the drawer opens (`refetchOnMount: "always"`), and the form is
+// seeded only from that fetch — never from whatever the cache held. A cached answer can be minutes
+// old (30 s fresh, kept for 5 min, and a live hint only marks it stale), so seeding from it would let
+// a save silently revert a teammate's newer gate — switch approval back off, say. Until the fresh
+// answer is in the form it is not editable and Save is disabled, so a save never sends defaults or a
+// stale copy over rules it did not just read. The save is `setProtectionRules` through
+// `useActionMutation`: pending + double-submit guard, field errors onto the fields, and the page's
+// read invalidated so the env card's gate chips update.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useState } from "react";
 import { type Control, Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { setProtectionRules } from "@/app/server/actions/protection";
@@ -87,6 +91,7 @@ export function ProtectionRulesDialog({
 	envName: string;
 }) {
 	const minCountLabelId = useId();
+	const minCountErrorId = useId();
 	const { control, handleSubmit, reset, watch, setError } = useForm<RulesForm>({
 		resolver: zodResolver(rulesSchema),
 		defaultValues: DEFAULTS,
@@ -97,17 +102,23 @@ export function ProtectionRulesDialog({
 			input: { projectId, environmentId: envId },
 		}),
 		enabled: open,
+		// Never trust the cache for what a save will be computed from (see the header).
+		refetchOnMount: "always",
 	});
-	const loaded = rulesQuery.data;
+	// The answer of a fetch made SINCE this drawer mounted — not a cached copy, and not a cached copy
+	// left behind by a fetch that failed.
+	const fresh =
+		rulesQuery.isSuccess && rulesQuery.isFetchedAfterMount && !rulesQuery.isFetching
+			? rulesQuery.data
+			: undefined;
 
-	// Seed the form from the stored rules ONCE, when they first land. A live update while the drawer
-	// is open refreshes the read but does not reset the form: that would discard what the person is
-	// in the middle of editing. The drawer mounts per open, so each open seeds afresh.
-	const seeded = useRef(false);
+	// Seed the form ONCE, from the fresh answer. A live update while the drawer is open refreshes the
+	// read but does not reset the form: that would discard what the person is in the middle of
+	// editing. The drawer mounts per open, so each open seeds afresh.
+	const [seeded, setSeeded] = useState(false);
 	useEffect(() => {
-		if (!loaded || seeded.current) return;
-		seeded.current = true;
-		const row = loaded.rules;
+		if (!fresh || seeded) return;
+		const row = fresh.rules;
 		reset(
 			row
 				? {
@@ -120,7 +131,8 @@ export function ProtectionRulesDialog({
 					}
 				: DEFAULTS,
 		);
-	}, [loaded, reset]);
+		setSeeded(true);
+	}, [fresh, seeded, reset]);
 
 	const requireApproval = watch("require_approval");
 
@@ -155,9 +167,9 @@ export function ProtectionRulesDialog({
 		});
 	});
 
-	// The form is only editable once the stored rules are in it.
-	const ready = !!loaded;
-	const failed = rulesQuery.isError && !loaded;
+	// The form is only editable once the freshly read rules are in it; a failed read is its own render.
+	const ready = seeded;
+	const failed = !seeded && rulesQuery.isError;
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
@@ -240,18 +252,26 @@ export function ProtectionRulesDialog({
 										control={control}
 										name="min_count"
 										render={({ field, fieldState }) => (
-											<Input
-												type="number"
-												min={1}
-												max={10}
-												aria-labelledby={minCountLabelId}
-												aria-invalid={fieldState.error ? true : undefined}
-												className="h-[34px] w-[84px] text-sm"
-												value={field.value}
-												onChange={(e) =>
-													field.onChange(e.target.value === "" ? 1 : Number(e.target.value))
-												}
-											/>
+											<span className="flex flex-col items-end gap-1">
+												<Input
+													type="number"
+													min={1}
+													max={10}
+													aria-labelledby={minCountLabelId}
+													aria-describedby={fieldState.error ? minCountErrorId : undefined}
+													aria-invalid={fieldState.error ? true : undefined}
+													className="h-[34px] w-[84px] text-sm"
+													value={field.value}
+													onChange={(e) =>
+														field.onChange(e.target.value === "" ? 1 : Number(e.target.value))
+													}
+												/>
+												{fieldState.error?.message ? (
+													<span id={minCountErrorId} role="alert" className="text-ui-xs text-destructive">
+														{fieldState.error.message}
+													</span>
+												) : null}
+											</span>
 										)}
 									/>
 								</div>

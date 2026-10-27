@@ -48,6 +48,11 @@ const OP_META = {
 	DELETE: { icon: MinusCircle, label: "remove" },
 } as const;
 
+/** The identity of one promotion request: the pair and the removals choice. */
+function requestKey(sourceId: string, targetId: string, includeRemovals: boolean): string {
+	return `${sourceId}|${targetId}|${includeRemovals}`;
+}
+
 /** Dialog to promote `source` → `target` within a project. */
 export function PromoteDialog({
 	open,
@@ -69,19 +74,7 @@ export function PromoteDialog({
 	const [sourceId, setSourceId] = useState("");
 	const [targetId, setTargetId] = useState("");
 	const [includeRemovals, setIncludeRemovals] = useState(false);
-	// The sentence of a refusal `promoteEnvironment` answered (#5454), shown in the dialog beside the
-	// button that was pressed. Stored with the request it answered, and shown only while the pair
-	// and the removals choice are still that request; closing the dialog drops it.
-	const [refused, setRefused] = useState<{ request: string; error: string } | null>(null);
-	const refusalId = useId();
-	const request = `${sourceId}|${targetId}|${includeRemovals}`;
-	const refusal = refused?.request === request ? refused.error : null;
-
-	/** Forwards an open/close to the caller, and drops a shown refusal when the dialog closes. */
-	function handleOpenChange(v: boolean) {
-		if (!v) setRefused(null);
-		onOpenChange(v);
-	}
+	const request = requestKey(sourceId, targetId, includeRemovals);
 
 	// The diff preview for the chosen pair; asked only while the dialog is open on two distinct envs.
 	const pairChosen = open && !!sourceId && !!targetId && sourceId !== targetId;
@@ -105,9 +98,9 @@ export function PromoteDialog({
 		// history, the active-promotion panel, the consistency matrix) shows both.
 		invalidates: [orpc.environments.key()],
 		successMessage: "Promotion queued",
-		// A refusal the user can act on stays in the dialog, where the pair can be changed and
-		// Promote pressed again — not a toast that disappears.
-		onRefusal: (error) => setRefused({ request, error: error.message }),
+		// A refusal the user can act on stays in the dialog (below), where the pair can be changed and
+		// Promote pressed again — handed here so it is not ALSO toasted.
+		onRefusal: () => {},
 		onSuccess: () => {
 			handleOpenChange(false);
 			void onPromoted();
@@ -115,10 +108,30 @@ export function PromoteDialog({
 	});
 	const submitting = promote.isPending;
 
+	/** Forwards an open/close to the caller, and drops a shown refusal when the dialog closes. */
+	function handleOpenChange(v: boolean) {
+		if (!v) promote.reset();
+		onOpenChange(v);
+	}
+
+	// The sentence of a refusal `promoteEnvironment` answered (#5454), shown beside the button that
+	// was pressed — and only while the pair and the removals choice are still the request it answered.
+	// That request is the mutation's own VARIABLES, not this render's selection: a pair changed while
+	// the promotion was in flight must not inherit a refusal meant for the pair that was sent.
+	const refusalId = useId();
+	const failure = promote.error?.error;
+	const sent = promote.variables;
+	const refusal =
+		failure &&
+		(failure.kind === "conflict" || failure.kind === "not-found" || failure.kind === "forbidden") &&
+		sent &&
+		requestKey(sent.sourceEnvId, sent.targetEnvId, sent.includeRemovals ?? false) === request
+			? failure.message
+			: null;
+
 	/** Sends the promotion for the chosen pair (a pending one is never sent twice). */
 	function submit() {
 		if (!sourceId || !targetId || submitting) return;
-		setRefused(null);
 		promote.mutate({ projectId, sourceEnvId: sourceId, targetEnvId: targetId, includeRemovals });
 	}
 
