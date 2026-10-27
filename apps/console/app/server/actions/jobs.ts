@@ -199,6 +199,8 @@ async function cancel(jobId: string): Promise<null> {
 	const actor = await authorize("edit", { type: "job", id: jobId });
 	// The job is bound to the addressed org explicitly: RLS also admits the caller's own personal
 	// org, and a decision taken under this org's grants must only ever write this org's rows.
+	// The CLI's cancel (app/api/cli/jobs/[id]/cancel/route.ts) differs on purpose: a session there is
+	// scoped to `auth.orgScope`, which also holds the caller's personal org (#4154).
 	const where = and(eq(jobs.org_id, actor.orgId), await jobVisibleTo(actor));
 	if (!where) throw new Error("no tenancy predicate");
 	const outcome = await cancelJobAs(actor, jobId, where, (work) =>
@@ -287,13 +289,13 @@ export async function recordVerifyOverride(
 			.from(jobs)
 			.where(target)
 			.limit(1);
-		if (!job) throw new Error("Job not found");
+		if (!job) throw new ActionRefusal("not-found", "Job not found.");
 		if (job.status !== "QUEUED") {
 			throw new Error(
 				`A verification override can only be set on a QUEUED job (status ${job.status})`,
 			);
 		}
-		await tx
+		const [written] = await tx
 			.update(jobs)
 			.set({
 				verify_override: {
@@ -303,6 +305,15 @@ export async function recordVerifyOverride(
 					expiry,
 				},
 			})
-			.where(and(target, eq(jobs.status, "QUEUED")));
+			.where(and(target, eq(jobs.status, "QUEUED")))
+			.returning({ id: jobs.id });
+		// The write is conditional on QUEUED: a job a runner claimed between the read and the write
+		// is not written, and the caller is told so rather than handed a silent success.
+		if (!written) {
+			throw new ActionRefusal(
+				"conflict",
+				"This job is no longer queued, so a verification override can't be set on it.",
+			);
+		}
 	});
 }
