@@ -56,7 +56,7 @@ vi.mock("@/lib/observability/health", async (importOriginal) => {
 			status: current.status,
 			ts: "2026-10-07T00:00:00.000Z",
 			version: "test",
-			db: { reachable: current.status !== "unhealthy", latencyMs: 1 },
+			db: { reachable: current.status !== "unhealthy", latencyMs: 1, notifyQueueUsage: 0 },
 			loops: [],
 			otel: { configured: false, reachable: null },
 		}),

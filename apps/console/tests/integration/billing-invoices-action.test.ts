@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: `listInvoices` / `getInvoice` read the MIRRORED invoice table, so they must work
-// on a deployment where Stripe is not configured — through the real authorization stack, against
-// real Postgres.
+// Integration: `listInvoices` reads the MIRRORED invoice table, so it must work on a deployment
+// where Stripe is not configured — through the real authorization stack, against real Postgres.
+// (Its body is the billing domain's read procedure since #6127; `getInvoice`, the sibling read with
+// no production caller, was deleted then, as its own comment asked of the next person to touch it.)
 //
 // THE DEFECT (#3731). Both actions called `requireHostedBilling()`, which throws whenever
 // STRIPE_SECRET_KEY is unset. The UI conformance audit drove `~/settings/billing/invoices` on a
@@ -23,7 +24,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { getInvoice, listInvoices } from "@/app/server/actions/billing";
+import { listInvoices } from "@/lib/rpc/procedures/billing";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
@@ -141,19 +142,9 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 	});
 
 	// Removing a guard must not have removed the tenancy boundary with it: the other org's
-	// invoice exists in the same table and must not be visible or fetchable.
+	// invoice exists in the same table and must not be visible.
 	it("stays scoped to the actor's org", async () => {
 		const rows = await runWithActor(owner, () => listInvoices({}));
 		expect(rows.map((r) => r.number)).not.toContain("IT-9999");
-		expect(await runWithActor(owner, () => getInvoice(INVOICE_THEIRS))).toBeNull();
-	});
-
-	// `getInvoice` is the single-invoice sibling of the same read. It has NO production caller
-	// today, so it contributed none of the two 500s — it is covered here because it carried the
-	// identical guard over the identical table, not because the page called it.
-	it("loads one of the org's own invoices", async () => {
-		const row = await runWithActor(owner, () => getInvoice(INVOICE_MINE));
-		expect(row?.number).toBe("IT-0001");
-		expect(row?.total).toBe(2000);
 	});
 });

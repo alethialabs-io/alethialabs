@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { InvoiceInfo } from "@/app/server/actions/billing";
+import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
@@ -20,17 +20,17 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(""),
 }));
 
-const { listInvoices } = vi.hoisted(() => ({
-	listInvoices: vi.fn<(params: unknown) => Promise<InvoiceInfo[]>>(),
-}));
-
-vi.mock("@/app/server/actions/billing", () => ({ listInvoices }));
+// The list is the `billing.invoices` GET read (#6127): a fake transport under the real TanStack utils.
+vi.mock("@/lib/rpc/client", async () => ({ orpc: (await import("./billing-rpc-fake")).fakeOrpc }));
 vi.mock("@/components/settings/billing/invoice-preview-dialog", () => ({
 	InvoicePreviewDialog: () => null,
 }));
 
 import { InvoicesPanel } from "@/components/settings/billing/invoices-panel";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
+import { reads, resetReads } from "./billing-rpc-fake";
+
+const listInvoices = reads.invoices;
 
 /** One paid invoice. */
 const INVOICE: InvoiceInfo = {
@@ -67,12 +67,12 @@ function busyNode(container: HTMLElement): Element {
 beforeEach(() => {
 	sessionStorage.clear();
 	useInvoiceFilters.getState().reset();
-	listInvoices.mockReset();
+	resetReads();
 });
 
 describe("InvoicesPanel marks its list busy until its first answer (#5494)", () => {
 	it("declares aria-busy around the first-load skeleton", async () => {
-		listInvoices.mockImplementation(() => new Promise<InvoiceInfo[]>(() => {}));
+		listInvoices.mockImplementation(() => new Promise(() => {}));
 		const { container } = render(tree());
 		await waitFor(() => expect(listInvoices).toHaveBeenCalled());
 		expect(busyNode(container).getAttribute("aria-busy")).toBe("true");

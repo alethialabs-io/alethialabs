@@ -139,6 +139,77 @@ CREATE TRIGGER jobs_notify_change_insdel
   AFTER INSERT OR DELETE ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.notify_change('jobs');
 
+-- ── Billing hints (#6127). The `billing` topic: the org's billing record and its mirrored invoices.
+-- Written by the Stripe webhook (plan, status, period, the subscription event watermark), by the
+-- billing page's own controls (the usage pause, the AI spend limits) and by the invoice mirror —
+-- rare, so a trigger is the right producer: it catches every writer. The billing reads it refreshes
+-- include Stripe-backed ones (the plan card reads the subscription, cached server-side).
+--
+-- The `usage` topic (AI spend) is NOT a trigger. An AI hold is written inside the transaction that
+-- holds the org's AI-budget lock, and a notifying commit serialises with every other notifying
+-- commit, so its producer is the app-layer `emitUsageHint` (lib/realtime/usage-hint.ts): after the
+-- commit, outside the lock, at most once per 30 s per org. The two DROPs below remove the AI-ledger
+-- triggers an earlier revision of this file created, wherever it was applied.
+--
+-- A billing notice routes on the org arm, unfiltered, and carries NO row id
+-- (lib/realtime/routing.ts). No migration, as above: triggers on existing columns change no shape.
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_upd ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_insdel ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_credit_grant_notify_change ON public.ai_credit_grant;
+DROP FUNCTION IF EXISTS public.notify_ai_usage_change();
+
+CREATE OR REPLACE FUNCTION public.notify_billing_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('billing', NULL,
+    CASE WHEN TG_OP = 'DELETE' THEN OLD.organization_id ELSE NEW.organization_id END, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+-- The billing record: the columns a billing or usage page renders, or that change what Stripe says
+-- (the two event watermarks move on EVERY applied subscription event, including a cancel-at-period-
+-- end flip that changes no other column here). Deliberately NOT listed: updated_at, welcomed_at,
+-- the payer declaration (payer_capacity, billing_country, authority_attestation) — none is shown.
+DROP TRIGGER IF EXISTS organization_billing_notify_change_upd ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_upd
+  AFTER UPDATE ON public.organization_billing
+  FOR EACH ROW WHEN (
+    (OLD.plan, OLD.status, OLD.seats, OLD.current_period_start, OLD.current_period_end,
+     OLD.stripe_customer_id, OLD.stripe_subscription_id, OLD.stripe_subscription_event_at,
+     OLD.usage_hard_cap, OLD.ai_tier, OLD.ai_subscription_status, OLD.ai_stripe_subscription_event_at,
+     OLD.ai_org_weekly_cap_credits, OLD.ai_per_user_weekly_cap_credits)
+    IS DISTINCT FROM
+    (NEW.plan, NEW.status, NEW.seats, NEW.current_period_start, NEW.current_period_end,
+     NEW.stripe_customer_id, NEW.stripe_subscription_id, NEW.stripe_subscription_event_at,
+     NEW.usage_hard_cap, NEW.ai_tier, NEW.ai_subscription_status, NEW.ai_stripe_subscription_event_at,
+     NEW.ai_org_weekly_cap_credits, NEW.ai_per_user_weekly_cap_credits)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS organization_billing_notify_change_insdel ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.organization_billing
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
+-- The invoice mirror: a new invoice, or a change to what the invoices table shows. updated_at and
+-- the Stripe ids are not shown.
+DROP TRIGGER IF EXISTS invoice_notify_change_upd ON public.invoice;
+CREATE TRIGGER invoice_notify_change_upd
+  AFTER UPDATE ON public.invoice
+  FOR EACH ROW WHEN (
+    (OLD.number, OLD.status, OLD.amount_total, OLD.currency, OLD.period_start, OLD.period_end,
+     OLD.description, OLD.pdf_key, OLD.hosted_invoice_url, OLD.paid_at)
+    IS DISTINCT FROM
+    (NEW.number, NEW.status, NEW.amount_total, NEW.currency, NEW.period_start, NEW.period_end,
+     NEW.description, NEW.pdf_key, NEW.hosted_invoice_url, NEW.paid_at)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS invoice_notify_change_insdel ON public.invoice;
+CREATE TRIGGER invoice_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.invoice
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
 -- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from
@@ -2570,6 +2641,129 @@ DO $$ BEGIN
     EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE ON public.authz_activity_log FROM alethia_app';
   END IF;
 END $$;
+
+-- ── grants: everything a grant references belongs to the grant's own organization ──────────────
+-- A grant row names an org (org_id) and up to three other things: a ROLE, a TEAM principal and a
+-- scoped RESOURCE. Each of those is itself owned by an org, and the invariant is that it is the
+-- SAME org: a custom role of this org or a built-in role, a team of this org, a resource of this
+-- org. The two write boundaries (app/server/actions/grants.ts, app/api/cli/grants) check this
+-- before inserting and return a named refusal (lib/authz/grant-binding.ts); this trigger is the
+-- backstop for every other writer, so the property does not depend on a writer remembering it.
+--
+-- ONE DEFINITION, THREE READERS. `grant_org_binding_violation` is what the trigger raises on, what
+-- the write boundaries ask before inserting, and what the community PDP (matchingGrants) and the
+-- ee OpenFGA writer (backfill / resyncRole / syncScopedGrant) filter ALLOW rows through. A row
+-- stored before this trigger existed, or one whose resource later moved to another org, therefore
+-- confers nothing in either engine instead of depending on having been refused at write time.
+--
+-- WHAT IT RETURNS: NULL when the row is bound, else the reason — 'foreign_role', 'foreign_team'
+-- or 'foreign_resource'. The resource arm reads the SCOPABLE kinds (the `PARENTS` table in
+-- lib/authz/fga-hierarchy.ts; tests/integration/grant-org-binding.test.ts fails if a kind there is
+-- not refused on an unknown id). A scoped id there that resolves to no row of this org (an unknown
+-- id, a managed runner, a catalog connector — the catalog is global, so no org owns one) is
+-- 'foreign_resource'. The grant's own org id is accepted as a scope: it is the hierarchy root the
+-- community PDP walks to. Not resource-checked: a NULL id (org-wide), and a kind that is not
+-- scopable — the write boundaries refuse those (`parseGrantResource`), both engines read a stored
+-- one as conferring nothing (#4584), and none names another org's object. A user principal is not
+-- org-owned; membership is checked separately (`lacksActiveMembership`, the PDPs' member arm).
+--
+-- DEFINER RIGHTS, `row_security = off` and a pinned search_path, for the reason
+-- set_org_id_from_project gives: the lookups must see the one row an id names whatever the
+-- writer's RLS scope, or "not visible" would read as "not owned". They return only an org id or a
+-- reason code; the service role owns them.
+--
+-- EXISTING ROWS. A BEFORE trigger never re-reads stored rows, so creating it cannot fail migrate.
+-- It fires on INSERT and on an UPDATE of a column it reads, plus `effect` — a stored unbound DENY
+-- must not become an ALLOW by an update (not permission_key, which lib/authz/seed.ts renames in
+-- place).
+--
+-- EXECUTE is revoked from PUBLIC on the two lookup functions (they answer for any id); not on the
+-- trigger function, by this file's rule for trigger functions (the note after
+-- project_environments_require_one_default()).
+CREATE OR REPLACE FUNCTION public.authz_resource_org_id(p_type TEXT, p_id UUID)
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  SELECT CASE p_type
+    WHEN 'project' THEN (SELECT p.org_id FROM public.projects p WHERE p.id = p_id)
+    WHEN 'runner' THEN (SELECT r.org_id FROM public.runners r WHERE r.id = p_id)
+    WHEN 'cloud_identity' THEN (SELECT c.org_id FROM public.cloud_identities c WHERE c.id = p_id)
+  END
+$$;
+REVOKE EXECUTE ON FUNCTION public.authz_resource_org_id(TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grant_org_binding_violation(
+  p_org UUID,
+  p_principal_type TEXT,
+  p_principal_id UUID,
+  p_role UUID,
+  p_resource_type TEXT,
+  p_resource_id UUID
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+BEGIN
+  IF p_role IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.role r
+    WHERE r.id = p_role
+      AND ((r.organization_id IS NULL AND r.is_builtin) OR r.organization_id = p_org)
+  ) THEN
+    RETURN 'foreign_role';
+  END IF;
+  IF p_principal_type = 'team' AND NOT EXISTS (
+    SELECT 1 FROM public.team t WHERE t.id = p_principal_id AND t.organization_id = p_org
+  ) THEN
+    RETURN 'foreign_team';
+  END IF;
+  IF p_resource_id IS NOT NULL
+     AND p_resource_type IN ('project', 'runner', 'cloud_identity', 'connector')
+     AND p_resource_id IS DISTINCT FROM p_org
+     AND public.authz_resource_org_id(p_resource_type, p_resource_id) IS DISTINCT FROM p_org THEN
+    RETURN 'foreign_resource';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.grant_org_binding_violation(UUID, TEXT, UUID, UUID, TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grants_enforce_org_binding()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE reason TEXT;
+BEGIN
+  reason := public.grant_org_binding_violation(
+    NEW.org_id, NEW.principal_type, NEW.principal_id, NEW.role_id, NEW.resource_type, NEW.resource_id);
+  IF reason IS NOT NULL THEN
+    -- The text carries the reason code only, never a value read with definer rights.
+    RAISE EXCEPTION 'grant references something outside its organization (%)', reason
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'grants_org_binding';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- No REVOKE on this trigger function, for the reason stated after
+-- project_environments_require_one_default(): `RETURNS TRIGGER` cannot be called directly, and
+-- the EXECUTE check happens at CREATE TRIGGER, so the file relies on the default grant for every
+-- trigger function.
+
+DROP TRIGGER IF EXISTS grants_org_binding ON public.grants;
+CREATE TRIGGER grants_org_binding
+  BEFORE INSERT OR UPDATE OF org_id, principal_type, principal_id, effect, role_id, resource_type, resource_id
+  ON public.grants
+  FOR EACH ROW EXECUTE FUNCTION public.grants_enforce_org_binding();
 
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /

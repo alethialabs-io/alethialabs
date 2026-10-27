@@ -4,8 +4,9 @@
 
 // The Invoices page body — the org's full mirrored-invoice history, on the console filter
 // standard (lib/query/README.md → "Server-side filters"): a URL-synced zustand store →
-// `normalizeInvoiceQuery` → `qk.invoices(org, q)` → `listInvoices`, which filters by status and
-// paid-date range SERVER-SIDE. Replaces the hand-rolled `useEffect` + `cancelled` flag the
+// `normalizeInvoiceQuery` → the `billing.invoices` GET procedure (#6127), which filters by status
+// and paid-date range SERVER-SIDE. The route prefetches the unfiltered universe AND the URL's
+// filtered view with the same inputs, so the first paint carries rows and facet counts. Replaces the hand-rolled `useEffect` + `cancelled` flag the
 // standard explicitly forbids ("TanStack owns request lifecycle") and the ad-hoc Reset button.
 //
 // The status facet's counts come from a second query on the BASE key — the unfiltered universe
@@ -15,13 +16,13 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CircleDot } from "lucide-react";
-import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { type InvoiceInfo, listInvoices } from "@/app/server/actions/billing";
 import { RegionError } from "@/components/errors/region-error";
+import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
+import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
 import { CountPill } from "@repo/ui/count-pill";
@@ -47,9 +48,8 @@ import {
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { InvoicesTable } from "./invoices-table";
 
+/** The Invoices page: the filter bar over the org's invoice history. */
 export function InvoicesPanel() {
-	const { org } = useParams<{ org: string }>();
-
 	// Filter state lives in the store; the URL mirrors it so a filtered view is shareable.
 	const filters = useInvoiceFilters((s) => s.filters);
 	const set = useInvoiceFilters((s) => s.set);
@@ -66,18 +66,19 @@ export function InvoicesPanel() {
 
 	// The filtered rows. `keepPreviousData` holds the current page on screen while the next
 	// one loads, and `isPlaceholderData` dims it — no skeleton flash on every facet click.
-	const invoices = useQuery({
-		queryKey: qk.invoices(org, query),
-		queryFn: () => listInvoices(query),
-		placeholderData: keepPreviousData,
-	});
+	const invoices = useQuery(
+		orpc.billing.invoices.queryOptions({
+			input: query,
+			placeholderData: keepPreviousData,
+			retry: retryUnlessRefused,
+		}),
+	);
 
 	// The UNFILTERED universe, purely for the facet counts. Same key the page prefetches.
-	const universe = useQuery({
-		queryKey: qk.invoices(org),
-		queryFn: () => listInvoices({}),
-		staleTime: 60_000,
-	});
+	const universe = useQuery(
+		orpc.billing.invoices.queryOptions({ input: {}, staleTime: 60_000, retry: retryUnlessRefused }),
+	);
+	const refusal = invoices.isError ? refusalOf(invoices.error) : null;
 	const counts = useMemo(
 		() => invoiceStatusCounts(universe.data ?? []),
 		[universe.data],
@@ -150,7 +151,9 @@ export function InvoicesPanel() {
 					<FilterBarReset count={activeFilters} onReset={reset} />
 				</FilterBar>
 
-				{invoices.isError ? (
+				{refusal ? (
+					<RegionRefusal refusal={refusal} />
+				) : invoices.isError ? (
 					// A fetch failure must not render as "no invoices yet" — that reads as a fact
 					// about the account rather than about the request.
 					<RegionError

@@ -16,6 +16,13 @@ import { randomUuid } from "@/lib/random-id";
 import { postMessageSchema } from "@/lib/validations/support";
 import { caseKey, supportCaseKeys } from "./case-queries";
 
+/**
+ * The id prefix of the reply this composer patches into the case read before the server answers.
+ * `CaseThread` reads it to recognise the viewer's own send, which scrolls into view wherever they
+ * had scrolled to — so it is one constant, not two copies of a string.
+ */
+export const OPTIMISTIC_ID_PREFIX = "optimistic-";
+
 /** The composer's one field, validated by the same rule the server applies. */
 const replyForm = postMessageSchema.pick({ body: true });
 
@@ -56,7 +63,7 @@ export function CaseComposer({ caseId }: { caseId: string }) {
 				update: (current, variables) => {
 					if (!isCaseRead(current)) return current;
 					const optimistic: PublicMessage = {
-						id: `optimistic-${randomUuid()}`,
+						id: `${OPTIMISTIC_ID_PREFIX}${randomUuid()}`,
 						case_id: caseId,
 						author_type: "customer",
 						author_id: null,
