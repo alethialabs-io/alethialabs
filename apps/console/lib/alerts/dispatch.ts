@@ -11,6 +11,7 @@ import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { alertChannels, alertDeliveries } from "@/lib/db/schema";
 import type { AlertDelivery } from "@/lib/db/schema";
+import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { getChannelSender } from "./channels";
 
 /** Exponential backoff (capped) for attempt N: 1m, 2m, 4m, 8m, 16m, … ≤ 1h. */
@@ -90,7 +91,13 @@ export async function deliverOne(delivery: AlertDelivery): Promise<void> {
 			})
 			.where(eq(alertDeliveries.id, claimed.id));
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		// The ledger's last_error is shown on the Activity panel. A refusal by the outbound-URL guard
+		// is stored as the one fixed sentence; its own message is logged here only.
+		if (err instanceof SsrfError) {
+			console.warn("[alerts] delivery destination refused by the outbound guard:", err.message);
+		}
+		const message =
+			err instanceof SsrfError ? UNREACHABLE_DESTINATION : err instanceof Error ? err.message : String(err);
 		const dead = attempt >= claimed.max_attempts;
 		await db
 			.update(alertDeliveries)

@@ -59,6 +59,13 @@ async function lookupWithTimeout(host: string): Promise<LookupAddress[]> {
 }
 
 /** Error raised when a request is refused by the SSRF guard. */
+/**
+ * What a person is told when this guard refuses a destination — one fixed sentence, whatever the
+ * reason. The guard's own message describes how the destination resolved, which is the server's
+ * business: it is logged where it is caught and never shown or stored for a person to read.
+ */
+export const UNREACHABLE_DESTINATION = "This destination isn't publicly reachable over HTTPS.";
+
 export class SsrfError extends Error {
 	/** @param message Human-readable reason the request was refused. */
 	constructor(message: string) {

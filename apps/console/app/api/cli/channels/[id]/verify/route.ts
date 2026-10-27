@@ -8,7 +8,7 @@ import { getServiceDb } from "@/lib/db";
 import { alertChannels } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
-import { SsrfError } from "@/lib/net/ssrf-guard";
+import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { cliChannelResponse } from "@/lib/validations/cli-contract";
 
 /** Maps a channel row to its client-safe CLI wire shape (never the secret envelope). */
@@ -54,10 +54,7 @@ export async function POST(
 		// returned. The CLI gets the same fixed sentence the console does.
 		if (err instanceof SsrfError) {
 			console.warn("[cli] channel destination refused by the outbound guard:", err.message);
-			return NextResponse.json(
-				{ error: "This destination isn't publicly reachable over HTTPS." },
-				{ status: 400 },
-			);
+			return NextResponse.json({ error: UNREACHABLE_DESTINATION }, { status: 400 });
 		}
 		const message = err instanceof Error ? err.message : "Verification failed.";
 		return NextResponse.json({ error: message }, { status: 400 });
