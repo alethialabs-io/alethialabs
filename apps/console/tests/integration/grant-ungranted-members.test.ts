@@ -56,7 +56,7 @@ const pdp = new PostgresRbacPDP();
 
 /** Can this user view projects in this org, per the real community PDP? */
 async function canView(userId: string, orgId: string): Promise<boolean> {
-	return (await pdp.can({ userId, orgId }, "view", { type: "project" })).allowed;
+	return (await pdp.can({ credential: "session", userId, orgId }, "view", { type: "project" })).allowed;
 }
 
 /** The user's grant rows in one org, as the columns an org-wide member grant is made of. */

@@ -423,7 +423,7 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 		orgId: string,
 		fn: () => Promise<T>,
 	): Promise<T> {
-		const actor: Actor = { userId, orgId };
+		const actor: Actor = { credential: "session", userId, orgId };
 		return runWithActor(actor, fn);
 	}
 

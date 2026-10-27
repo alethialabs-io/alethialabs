@@ -178,7 +178,7 @@ type Body = z.infer<typeof bodySchema>;
 /** Points the stubbed guard at `actor` for the next call. */
 function actingAs(userId: string, orgId: string): void {
 	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId, orgId },
+		actor: { credential: "session", userId, orgId },
 		credential: "session",
 		// Literal, with the credential→values mapping proven in tests/lib/authz/guard.ts.
 		orgScope: orgId === userId ? [orgId] : [orgId, userId],

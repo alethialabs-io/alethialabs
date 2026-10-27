@@ -66,7 +66,7 @@ describe("reauthorize", () => {
 		const result = await reauthorize(SNAP);
 		expect(result).toEqual({
 			ok: true,
-			actor: { userId: USER, orgId: ORG },
+			actor: { userId: USER, orgId: ORG, credential: "session" },
 			caps: { fleetView: false, manageSupport: false },
 		});
 		// The session is read from the SNAPSHOTTED cookie, not from a request scope.
@@ -134,19 +134,19 @@ describe("capabilitiesOf", () => {
 		h.can.mockImplementation(async (_a: unknown, action: string) => ({
 			allowed: action === "view",
 		}));
-		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
+		await expect(capabilitiesOf({ credential: "session", userId: USER, orgId: ORG })).resolves.toEqual({
 			fleetView: true,
 			manageSupport: false,
 		});
-		expect(h.can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "view", { type: "fleet" });
-		expect(h.can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "manage_support", {
+		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view", { type: "fleet" });
+		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "manage_support", {
 			type: "support_case",
 		});
 	});
 
 	it("reads a PDP error as no capability", async () => {
 		h.can.mockRejectedValue(new Error("pdp down"));
-		await expect(capabilitiesOf({ userId: USER, orgId: ORG })).resolves.toEqual({
+		await expect(capabilitiesOf({ credential: "session", userId: USER, orgId: ORG })).resolves.toEqual({
 			fleetView: false,
 			manageSupport: false,
 		});

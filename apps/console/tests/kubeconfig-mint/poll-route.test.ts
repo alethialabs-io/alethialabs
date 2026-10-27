@@ -161,7 +161,7 @@ beforeEach(() => {
 	role = "operator";
 	vi.mocked(authorizeCliQuiet).mockImplementation(async (_req, action) =>
 		roleHolds(role, action)
-			? { actor: { userId: USER, orgId: ORG }, credential: "session", orgScope: [ORG, USER] }
+			? { actor: { credential: "session", userId: USER, orgId: ORG }, credential: "session", orgScope: [ORG, USER] }
 			: { error: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }) },
 	);
 	enforce.mockImplementation(async (_actor: unknown, action: "access_admin" | "access_readonly") => {
@@ -256,7 +256,7 @@ describe("who may collect", () => {
 		const res = await poll();
 		expect(res.status).toBe(403);
 		expect(enforce).toHaveBeenCalledWith(
-			{ userId: USER, orgId: ORG },
+			{ userId: USER, orgId: ORG, credential: "session" },
 			"access_admin",
 			{ type: "cluster", id: CLUSTER },
 		);
@@ -285,7 +285,7 @@ describe("who may collect", () => {
 		row = mint("pending", { tier: "admin" });
 		const res = await poll();
 		expect(res.status).toBe(403);
-		expect(can).toHaveBeenCalledWith({ userId: USER, orgId: ORG }, "access_admin", { type: "cluster", id: CLUSTER });
+		expect(can).toHaveBeenCalledWith({ userId: USER, orgId: ORG, credential: "session" }, "access_admin", { type: "cluster", id: CLUSTER });
 		expect(enforce).not.toHaveBeenCalled();
 	});
 

@@ -59,8 +59,8 @@ import type { OrganizationBilling } from "@/lib/db/schema";
 import { money } from "@repo/format";
 import { OVERVIEW_ALERT_ROWS, readOverviewAlerts, readOverviewUsage } from "@/lib/rpc/procedures/overview";
 
-const orgActor: Actor = { userId: "u1", orgId: "o1" };
-const personalActor: Actor = { userId: "u1", orgId: "u1" };
+const orgActor: Actor = { credential: "session", userId: "u1", orgId: "o1" };
+const personalActor: Actor = { credential: "session", userId: "u1", orgId: "u1" };
 
 /** A live Team billing row for o1. */
 const teamRow: OrganizationBilling = {

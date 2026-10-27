@@ -66,7 +66,7 @@ const ENTITLEMENTS: Entitlements = {
 
 /** The actor `[org]/layout.tsx` resolves for this user on `/{org}` (org scope, not personal). */
 function actorFor(userId: string): Actor {
-	return { userId, orgId: ORG, entitlements: ENTITLEMENTS };
+	return { credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS };
 }
 
 /** The org-wide grants held by `userId`, as `role_id`s (empty ⇒ the PDP denies everything). */

@@ -66,7 +66,7 @@ describe("getLivePlanPrices", () => {
 	});
 
 	it("returns the price map to a signed-in caller", async () => {
-		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "user-1" });
+		vi.mocked(currentActor).mockResolvedValue({ credential: "session", userId: "user-1", orgId: "user-1" });
 		vi.mocked(getAllPlanPrices).mockResolvedValue(PLAN_PRICES);
 		await expect(getLivePlanPrices()).resolves.toBe(PLAN_PRICES);
 	});

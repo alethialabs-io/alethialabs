@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, runners } from "@/lib/db/schema";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { cliRunnerRegistrationResponse } from "@/lib/validations/cli-contract";
 import { createHash, randomBytes } from "crypto";
 import { NextResponse } from "next/server";
@@ -64,15 +65,18 @@ export async function POST(req: Request) {
 		const db = getServiceDb();
 
 		if (cloud_identity_id) {
-			// Scoped by org, not just by id: an unscoped lookup would let a caller bind their runner
-			// to a cloud identity they cannot see.
+			// Scoped like every identity a caller names: an `org` identity of this org, or a person's
+			// own `personal` one (never the minter's, for a service token). An unscoped lookup would
+			// let a caller bind their runner to a cloud identity they cannot see, and the runner's
+			// identity feeds its lifecycle jobs.
 			const [ci] = await db
 				.select({ id: cloudIdentities.id })
 				.from(cloudIdentities)
 				.where(
-					and(
-						eq(cloudIdentities.id, cloud_identity_id),
-						eq(cloudIdentities.org_id, actor.orgId),
+					actorIdentityWhere(
+						cloud_identity_id,
+						actor.orgId,
+						personalIdentityAuthor(actor),
 					),
 				)
 				.limit(1);

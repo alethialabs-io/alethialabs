@@ -57,7 +57,7 @@ const ENTITLEMENTS: Entitlements = {
 	},
 };
 
-const owner: Actor = { userId: OWNER, orgId: ORG, entitlements: ENTITLEMENTS };
+const owner: Actor = { credential: "session", userId: OWNER, orgId: ORG, entitlements: ENTITLEMENTS };
 
 describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 	let savedStripeKey: string | undefined;

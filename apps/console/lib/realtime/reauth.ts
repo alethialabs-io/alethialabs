@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { actorWithCredential } from "@/lib/authz/actor-credential";
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -107,7 +108,7 @@ export async function reauthorize(snapshot: StreamSnapshot): Promise<ReauthResul
 		return { ok: false, reason: "terms" };
 	}
 
-	const actor = await getActiveScope(userId, addressOrgId);
+	const actor = actorWithCredential(await getActiveScope(userId, addressOrgId), "session");
 	if (actor.orgId !== addressOrgId) {
 		const collapsedToPersonal = actor.orgId === userId;
 		const mode = collapsedToPersonal ? tenancyMode() : null;
