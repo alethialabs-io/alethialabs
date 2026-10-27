@@ -25,7 +25,8 @@ import {
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
@@ -3543,9 +3544,13 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
 // Environments (M1) — a project owns N independently-provisionable environments.
 // ============================================================
 
-/** Lists a project's environments (default first, then by creation). */
+/**
+ * Lists a project's environments (default first, then by creation). The Environments page re-reads
+ * this on every live hint, so an allowed read is not recorded or emitted (`authorizeRead`); a refusal
+ * is, once.
+ */
 export async function getProjectEnvironments(projectId: string) {
-	const actor = await authorize("view", { type: "project", id: projectId });
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withActorScope(actor, async (tx) => {
 		const environments = await tx
@@ -3571,6 +3576,9 @@ export async function addEnvironment(
 	projectId: string,
 	input: { name: string; stage: EnvironmentStage; region?: string | null },
 ): Promise<AddEnvironmentResult> {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	// One definition of what an environment name may be, shared with the CLI's `project env add`
@@ -3632,6 +3640,9 @@ export async function duplicateEnvironment(
 	baseEnvironmentId: string,
 	name: string,
 ): Promise<AddEnvironmentResult> {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	const problem = environmentNameProblem(name);
@@ -3709,6 +3720,9 @@ export async function setAutoHeal(
 	environmentId: string,
 	enabled: boolean,
 ) {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, (tx) =>
 		tx
@@ -3742,7 +3756,8 @@ export interface EnvConsistency {
 export async function getEnvConsistency(
 	projectId: string,
 ): Promise<EnvConsistency> {
-	await authorize("view", { type: "project", id: projectId });
+	// A live-refetched read: quiet on allow, recorded once on refusal (see getProjectEnvironments).
+	await authorizeRead("view", { type: "project", id: projectId });
 	const { environments } = await getProjectEnvironments(projectId);
 	const designs = await Promise.all(
 		environments.map(async (e) => {
@@ -3810,6 +3825,9 @@ export async function deleteEnvironment(
 	projectId: string,
 	environmentId: string,
 ) {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
 		const [env] = await tx

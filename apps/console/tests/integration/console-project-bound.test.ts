@@ -15,14 +15,21 @@
 //     (`GET` / `POST` / `DELETE /api/cli/classification/assignments`) — `view` to read, `edit` to
 //     change (lib/classification/resource-project.ts).
 //
+// And the console's environment actions (app/server/actions/projects.ts), which are addressed by a
+// project id the caller supplies: the writes (`addEnvironment`, `duplicateEnvironment`,
+// `setAutoHeal`, `deleteEnvironment`) bind that project to the ADDRESSED organization before the PDP
+// is asked (`assertProjectInActorOrg`), so a project of the caller's personal workspace is not
+// reachable from a team-org address, and a project-level deny refuses them; the read
+// (`getProjectEnvironments`) is refused for a member denied viewing the project.
+//
 // One org, two projects (P and Q). VIEWER and OPERATOR hold their role across the org; VIEW_DENIED is
 // a viewer with an explicit deny on viewing P; EDIT_DENIED is an operator with an explicit deny on
 // editing P. For each surface the claim is: the member with the deny gets what an absent row gets,
 // for P only, and a write does not happen; the same member is served Q; a member without the deny is
 // served P.
 //
-// RECORDING: a refused read (getAgent) and a refused write (assignClassification) each leave exactly
-// ONE `decision = false` activity row naming P. Each counting test acts as a member no other test
+// RECORDING: a refused read (getAgent, getProjectEnvironments) and a refused write
+// (assignClassification, setAutoHeal) each leave exactly ONE `decision = false` activity row naming P. Each counting test acts as a member no other test
 // acts as, because a refusal's row is written fire-and-forget and a shared member's earlier row could
 // land mid-count.
 //
@@ -53,6 +60,13 @@ import {
 	POST as cliAssign,
 } from "@/app/api/cli/classification/assignments/route";
 import { getAgent, listAgents } from "@/app/server/actions/agents";
+import {
+	addEnvironment,
+	deleteEnvironment,
+	duplicateEnvironment,
+	getProjectEnvironments,
+	setAutoHeal,
+} from "@/app/server/actions/projects";
 import {
 	assignClassification,
 	getAssignments,
@@ -91,12 +105,21 @@ const EDIT_DENIED = randomUUID(); // operator, explicitly denied editing P
 // Each recording test acts as a member no other test uses (see the header).
 const RECORD_VIEW = randomUUID(); // viewer, denied viewing P; used only by the agent-recording test
 const RECORD_EDIT = randomUUID(); // operator, denied editing P; used only by the classification-recording test
-const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED, RECORD_VIEW, RECORD_EDIT];
+const RECORD_ENV_VIEW = randomUUID(); // viewer, denied viewing P; used only by the environments-read recording test
+const RECORD_ENV_EDIT = randomUUID(); // operator, denied editing P; used only by the environment-write recording test
+const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED, RECORD_VIEW, RECORD_EDIT, RECORD_ENV_VIEW, RECORD_ENV_EDIT];
 const P = randomUUID();
 const Q = randomUUID();
 const NAME = { [P]: `it-proj-bound-p-${P.slice(0, 8)}`, [Q]: `it-proj-bound-q-${Q.slice(0, 8)}` };
+/**
+ * A project of OPERATOR's PERSONAL workspace (its org id is OPERATOR's user id). OPERATOR is also a
+ * member of ORG, so from ORG's address the RLS owner arm still reaches it.
+ */
+const PERSONAL = randomUUID();
 /** Each project's default environment, a classifiable resource that lives in the project. */
-const ENV = { [P]: "", [Q]: "" };
+const ENV = { [P]: "", [Q]: "", [PERSONAL]: "" };
+/** A second, non-default environment of each project (deletable). */
+const SPARE = { [P]: "", [Q]: "", [PERSONAL]: "" };
 /** Agent identities authored by ADMIN in ORG: one bound to P, one to Q, one to no project. */
 const AGENT = { P: randomUUID(), Q: randomUUID(), NONE: randomUUID() };
 /** A multi-valued dimension of ORG with two values: `seeded` (pre-assigned) and `added`. */
@@ -260,6 +283,8 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			[EDIT_DENIED, "operator"],
 			[RECORD_VIEW, "viewer"],
 			[RECORD_EDIT, "operator"],
+			[RECORD_ENV_VIEW, "viewer"],
+			[RECORD_ENV_EDIT, "operator"],
 		];
 		await db.insert(member).values(roles.map(([userId, role]) => ({ organizationId: ORG, userId, role })));
 		for (const [userId, role] of roles) await ensureMemberGrant(ORG, userId, role);
@@ -281,12 +306,30 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			.values([P, Q].map((id) => ({ child_type: "project", child_id: id, parent_type: "org", parent_id: ORG })));
 		for (const id of [P, Q]) {
 			await getTupleSync().syncHierarchyEdge({ childType: "project", childId: id, parentType: "org", parentId: ORG });
+		}
+		await db.insert(projects).values({
+			id: PERSONAL,
+			user_id: OPERATOR,
+			org_id: OPERATOR,
+			project_name: `it-proj-bound-personal-${PERSONAL.slice(0, 8)}`,
+			slug: `it-proj-bound-personal-${PERSONAL.slice(0, 8)}`,
+			region: "eu-west-1",
+			iac_version: "1.0.0",
+		});
+		for (const id of [P, Q, PERSONAL]) {
+			const author = id === PERSONAL ? OPERATOR : ADMIN;
+			const org = id === PERSONAL ? OPERATOR : ORG;
 			const [env] = await db
 				.insert(projectEnvironments)
-				.values({ project_id: id, user_id: ADMIN, org_id: ORG, name: "production", is_default: true })
+				.values({ project_id: id, user_id: author, org_id: org, name: "production", is_default: true })
 				.returning({ id: projectEnvironments.id });
-			if (!env) throw new Error("environment seed returned no row");
+			const [spare] = await db
+				.insert(projectEnvironments)
+				.values({ project_id: id, user_id: author, org_id: org, name: "staging", is_default: false })
+				.returning({ id: projectEnvironments.id });
+			if (!env || !spare) throw new Error("environment seed returned no row");
 			ENV[id] = env.id;
+			SPARE[id] = spare.id;
 		}
 		await db.insert(agentIdentities).values(
 			(
@@ -327,6 +370,8 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 		await denyOnP(EDIT_DENIED, "project:edit");
 		await denyOnP(RECORD_VIEW, "project:view");
 		await denyOnP(RECORD_EDIT, "project:edit");
+		await denyOnP(RECORD_ENV_VIEW, "project:view");
+		await denyOnP(RECORD_ENV_EDIT, "project:edit");
 	});
 
 	afterAll(async () => {
@@ -335,9 +380,9 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 		await db.delete(classificationValue).where(eq(classificationValue.org_id, ORG));
 		await db.delete(classificationDimension).where(eq(classificationDimension.org_id, ORG));
 		await db.delete(agentIdentities).where(eq(agentIdentities.org_id, ORG));
-		await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, [P, Q]));
+		await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, [P, Q, PERSONAL]));
 		await db.delete(resourceHierarchy).where(eq(resourceHierarchy.parent_id, ORG));
-		await db.delete(projects).where(eq(projects.org_id, ORG));
+		await db.delete(projects).where(inArray(projects.id, [P, Q, PERSONAL]));
 		await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG]));
 		await db.delete(grants).where(eq(grants.org_id, ORG));
 		await db.delete(member).where(eq(member.organizationId, ORG));
@@ -448,6 +493,89 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			expect(await assignedValues(ENV[P] ?? "")).toContain(VALUE.seeded);
 			expect(await cliClear(OPERATOR, "project_environment", ENV[Q] ?? "")).toBe(200);
 			expect(await assignedValues(ENV[Q] ?? "")).not.toContain(VALUE.seeded);
+		});
+	});
+	describe("console environment actions", () => {
+		/** The environment names project `projectId` holds. */
+		async function envNames(projectId: string): Promise<string[]> {
+			const rows = await getServiceDb()
+				.select({ name: projectEnvironments.name })
+				.from(projectEnvironments)
+				.where(eq(projectEnvironments.project_id, projectId));
+			return rows.map((r) => r.name);
+		}
+
+		/** Whether environment `envId` has auto-heal on. */
+		async function autoHeal(envId: string): Promise<boolean | undefined> {
+			const [row] = await getServiceDb()
+				.select({ on: projectEnvironments.auto_heal })
+				.from(projectEnvironments)
+				.where(eq(projectEnvironments.id, envId));
+			return row?.on;
+		}
+
+		/** A fresh environment name, so a test never depends on what another test added. */
+		const fresh = (prefix: string) => `${prefix}-${randomUUID().slice(0, 8)}`;
+
+		it("every write refuses a personal-workspace project from the team org's address as not found, and writes nothing", async () => {
+			const before = await envNames(PERSONAL);
+			await expect(
+				actingAs(OPERATOR, () => addEnvironment(PERSONAL, { name: fresh("x"), stage: "development" })),
+			).rejects.toThrow("Project not found.");
+			await expect(
+				actingAs(OPERATOR, () => duplicateEnvironment(PERSONAL, ENV[PERSONAL] ?? "", fresh("x"))),
+			).rejects.toThrow("Project not found.");
+			await expect(
+				actingAs(OPERATOR, () => setAutoHeal(PERSONAL, ENV[PERSONAL] ?? "", true)),
+			).rejects.toThrow("Project not found.");
+			await expect(
+				actingAs(OPERATOR, () => deleteEnvironment(PERSONAL, SPARE[PERSONAL] ?? "")),
+			).rejects.toThrow("Project not found.");
+			expect(await envNames(PERSONAL)).toEqual(before);
+			expect(await autoHeal(ENV[PERSONAL] ?? "")).toBe(false);
+		});
+
+		it("every write refuses P for the member denied editing P, and writes nothing", async () => {
+			const before = await envNames(P);
+			await expect(
+				actingAs(EDIT_DENIED, () => addEnvironment(P, { name: fresh("x"), stage: "development" })),
+			).rejects.toThrow();
+			await expect(actingAs(EDIT_DENIED, () => duplicateEnvironment(P, ENV[P] ?? "", fresh("x")))).rejects.toThrow();
+			await expect(actingAs(EDIT_DENIED, () => setAutoHeal(P, ENV[P] ?? "", true))).rejects.toThrow();
+			await expect(actingAs(EDIT_DENIED, () => deleteEnvironment(P, SPARE[P] ?? ""))).rejects.toThrow();
+			expect(await envNames(P)).toEqual(before);
+			expect(await autoHeal(ENV[P] ?? "")).toBe(false);
+		});
+
+		it("the same writes go through on Q for that member, and on P for a member without the deny", async () => {
+			const q = fresh("q");
+			expect(await actingAs(EDIT_DENIED, () => addEnvironment(Q, { name: q, stage: "development" }))).toMatchObject({
+				ok: true,
+			});
+			expect(await envNames(Q)).toContain(q);
+			await actingAs(OPERATOR, () => setAutoHeal(P, ENV[P] ?? "", true));
+			expect(await autoHeal(ENV[P] ?? "")).toBe(true);
+			await actingAs(OPERATOR, () => setAutoHeal(P, ENV[P] ?? "", false));
+		});
+
+		it("records a refused write once: exactly one denied edit row naming P", async () => {
+			const refusals = () => refusalsOnP(RECORD_ENV_EDIT, "edit");
+			const before = await refusals();
+			await expect(actingAs(RECORD_ENV_EDIT, () => setAutoHeal(P, ENV[P] ?? "", true))).rejects.toThrow();
+			await settlesAt(refusals, before + 1);
+		});
+
+		it("getProjectEnvironments refuses P for the member denied viewing P, and serves the others", async () => {
+			await expect(actingAs(VIEW_DENIED, () => getProjectEnvironments(P))).rejects.toThrow();
+			expect((await actingAs(VIEW_DENIED, () => getProjectEnvironments(Q))).environments.length).toBeGreaterThan(0);
+			expect((await actingAs(VIEWER, () => getProjectEnvironments(P))).environments.length).toBeGreaterThan(0);
+		});
+
+		it("records a refused read once: exactly one denied view row naming P", async () => {
+			const refusals = () => refusalsOnP(RECORD_ENV_VIEW, "view");
+			const before = await refusals();
+			await expect(actingAs(RECORD_ENV_VIEW, () => getProjectEnvironments(P))).rejects.toThrow();
+			await settlesAt(refusals, before + 1);
 		});
 	});
 });
