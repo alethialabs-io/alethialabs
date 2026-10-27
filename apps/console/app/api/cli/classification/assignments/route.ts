@@ -93,9 +93,6 @@ export async function GET(req: Request) {
 	if ("error" in target) return target.error;
 
 	try {
-		if (!(await mayClassifyResource(actor, target.kind, target.id, "view"))) {
-			return cliJson(cliClassificationAssignmentsResponse, { assignments: [] });
-		}
 		const db = getServiceDb();
 		const assignments = await loadAssignments(
 			db,
