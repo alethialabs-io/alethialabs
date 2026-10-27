@@ -56,6 +56,7 @@ const ORG_B = randomUUID();
 
 /** Org A's actor, entitled to alerting so every action reaches its write. */
 const ACTOR_A: Actor = {
+	credential: "session",
 	userId: ORG_A,
 	orgId: ORG_A,
 	entitlements: { ...COMMUNITY_ENTITLEMENTS, alerting: true },

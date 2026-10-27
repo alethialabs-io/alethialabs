@@ -80,7 +80,7 @@ describe("alerts.settings", () => {
 
 	it("a reader without view_alerts is FORBIDDEN on the wire", async () => {
 		vi.mocked(authorize).mockRejectedValue(new ForbiddenError("view_alerts", { type: "alert" }));
-		const client = createRouterClient(alertsRouter, { context: { actor: { userId: "u", orgId: "o" } } });
+		const client = createRouterClient(alertsRouter, { context: { actor: { credential: "session", userId: "u", orgId: "o" } } });
 		const failure = await client.settings().catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(ORPCError);
 		if (failure instanceof ORPCError) expect(failure.code).toBe("FORBIDDEN");
