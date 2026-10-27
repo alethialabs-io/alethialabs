@@ -174,7 +174,7 @@ function customRolesOf(rendered: unknown): unknown {
 
 describe("the Access pages resolve the entitlement on the server (#5850)", () => {
 	it.each([true, false])("hand the manager customRoles=%s from the actor's entitlements", async (customRoles) => {
-		currentActor.mockResolvedValue({ userId: "u1", orgId: "o1", entitlements: { ...COMMUNITY_ENTITLEMENTS, customRoles } });
+		currentActor.mockResolvedValue({ credential: "session", userId: "u1", orgId: "o1", entitlements: { ...COMMUNITY_ENTITLEMENTS, customRoles } });
 		getAccessGrantsPage.mockResolvedValue(PAGE);
 		const org = await OrgAccessPage({
 			params: Promise.resolve({ org: "acme" }),

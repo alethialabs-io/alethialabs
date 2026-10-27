@@ -82,6 +82,7 @@ function mockDb(queue: unknown[]) {
  *  entitlement, not authorization. */
 function communityActor() {
 	vi.mocked(authorizeQuiet).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 	} as never);
@@ -90,6 +91,7 @@ function communityActor() {
 /** Actor in an org WITH the customRoles entitlement (Enterprise) and the PDP gate satisfied. */
 function enterpriseActor() {
 	vi.mocked(authorizeQuiet).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 		entitlements: { customRoles: true },

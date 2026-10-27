@@ -5,7 +5,7 @@
 // (lib/query/README.md → "Server-side filters").
 //
 // The deviation this file used to record — the org's teams fetched once under `qk.teams(org)`
-// and narrowed HERE, because `getTeams()` took no query — is closed (#4890). `getTeamsPage(q)`
+// and narrowed HERE, because `getTeams()` took no query — is closed (#4890). The teams page read (`members.teams`, formerly `getTeamsPage(q)`)
 // narrows in SQL and counts the size facet over the org's unfiltered teams, so `filterTeams`
 // and `teamsFacetCounts` are gone and this module is the normalize step and nothing else.
 
@@ -31,7 +31,7 @@ export const TEAM_SIZE_OPTIONS = [
 	{ value: "large", label: "6+ members" },
 ] as const;
 
-/** The stable query object placed in `qk.teams`. */
+/** The stable query object that IS the `members.teams` read's input — and so its query key. */
 export interface NormalizedTeamsQuery {
 	search?: string;
 	sizes?: string[];

@@ -2,17 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Access — an inheritance info-note, a stat strip (Grants / Org-wide /
-// Project-scoped), a toolbar (search · scope filter · Add grant), an inline
-// grant builder with a live preview, and the grants table on the shared DataTable
-// (sortable + paginated). The reads are the `members.grants` and `members.grantOptions` GET
+// Settings · Access — an inheritance info-note, a toolbar (count · Add grant), the filter bar
+// (search · scope · roles · effect), an inline grant builder with a live preview, and the grants
+// table on the shared DataTable (sortable + paginated). The reads are the `members.grants` and `members.grantOptions` GET
 // procedures, prefetched by the org route (#6129); the writes are `assignGrant` / `revokeGrant`
 // through `useActionMutation`, and an `access` hint refreshes the list when someone else changes a
 // grant. The page header lives in the settings shell; without the Enterprise `customRoles`
 // entitlement the surface stays visible and shows the upsell.
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert, ShieldOff } from "lucide-react";
+import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   type AccessGrantRow,
@@ -79,6 +78,7 @@ import {
   reachLabel,
   SCOPE_LEVEL,
 } from "./access-filters";
+import { AccessNoAccess } from "./access-no-access";
 import { Combobox } from "./combobox";
 
 /** Every read a grant write shows in: the grants list, the role catalog's grant counts. */
@@ -92,7 +92,7 @@ const SCOPE_OPTIONS = [
 ];
 
 /**
- * The Access surface. When `projectId` is given the grants list, stats, and grant builder are scoped
+ * The Access surface. When `projectId` is given the grants list and the grant builder are scoped
  * to that single project (project-scoped Settings › Access); without it, the full org grants render.
  *
  * `customRoles` is the entitlement as the PAGE resolved it on the server (#5850). The workspace
@@ -133,10 +133,11 @@ export function AccessManager({
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
 
-  // Custom-scoped grants are Enterprise. Without the entitlement the server rejects these
-  // (requireAccessAdmin), so both queries stay disabled and the upsell renders instead.
+  // Custom-scoped grants are Enterprise. Without the entitlement the page body is the upsell, so
+  // both reads stay disabled; a route that already learned the viewer may not read them (forbidden)
+  // does not ask again.
   //
-  // Filtered SERVER-SIDE (#4890): the whole normalized query is the key, `getAccessGrantsPage`
+  // Filtered SERVER-SIDE (#4890): the whole normalized query is the input, `members.grants`
   // narrows in SQL, and the scope/role/effect facets come back counted over the UNFILTERED
   // grants of the same scope — so an option never disappears the moment it is selected.
   const grantsQuery = useAccessGrantsPageQuery(query, entitled && !forbiddenAtRender);
@@ -179,6 +180,9 @@ export function AccessManager({
     () => grantsQuery.data?.rows ?? [],
     [grantsQuery.data],
   );
+  // WHEN the rows were read comes from the payload, never from this renderer, so the server render
+  // and the hydrating client print the same "… ago" (React #418, the members page's #5377 rule).
+  const asOf = grantsQuery.data?.asOf;
   /** Every grant in this scope — what "no grants yet" means, as opposed to "none match". */
   const total = grantsQuery.data?.total ?? 0;
   const counts = useMemo(
@@ -278,7 +282,7 @@ export function AccessManager({
         header: "Granted",
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-            {formatRelative(row.original.createdAt)}
+            {formatRelative(row.original.createdAt, asOf ? new Date(asOf) : undefined)}
           </span>
         ),
       },
@@ -317,7 +321,7 @@ export function AccessManager({
         ),
       },
     ],
-    [resourceLabel, revokingId],
+    [resourceLabel, revokingId, asOf],
   );
 
   return (
@@ -350,12 +354,7 @@ export function AccessManager({
       {!entitled ? (
         <FeatureUpsell feature="access" />
       ) : forbidden ? (
-        <EmptyState
-          className="border border-border bg-surface-sunken"
-          icon={<ShieldOff />}
-          title="No access to grants"
-          description="You don't have permission to view this organization's access grants. Ask an owner or admin for access."
-        />
+        <AccessNoAccess />
       ) : grantsQuery.isPending ? (
         <PeopleListSkeleton facets={projectId ? 2 : 3} columns={6} />
       ) : grantsQuery.isError && grantsQuery.data === undefined ? (

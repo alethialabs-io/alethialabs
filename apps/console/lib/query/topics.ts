@@ -204,7 +204,8 @@ export const TOPIC_KEYS = {
 	// activity log's and the jobs list's names), the invite dialog's taken emails, the teams page,
 	// and the grant builder's principals. Hints come from the member/invitation/team/team_member
 	// triggers (programmables.sql).
-	members: (): QueryKey[] => [orpc.members.key()],
+	// The overview's usage card and the billing summary both show the org's seat count.
+	members: (): QueryKey[] => [orpc.members.key(), orpc.overview.usage.key(), orpc.billing.summary.key()],
 	// A grant, a custom role or its permissions changed: the roles rail and catalog (grant counts),
 	// the access page and the grant builder's roles. Delivered only to `member:view` holders
 	// (lib/realtime/routing.ts), the people those reads answer.

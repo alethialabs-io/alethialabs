@@ -59,8 +59,10 @@ import { typedKeys } from "@/lib/typed-object";
 //
 // TENANCY. Every read resolves its actor from the request ADDRESS (the `query` base binds the actor
 // the route handler or the server caller resolved), and every SQL predicate is on that actor's org.
-// No input names an org, and no id in an input reaches a query un-scoped: the only ids a caller
-// passes are filter values (team names, role names), each matched inside the actor's org.
+// No input names an org, and no id in an input reaches a query un-scoped: the one id a caller passes
+// is `members.grants`' optional `projectId` (the project-scoped Access surface), which narrows the
+// org's own grants and never widens them — the query keeps `org_id = actor.orgId`. Every other input
+// value is a filter (team names, role names), matched inside the actor's org.
 // `tests/integration/rpc-tenancy.shared.ts` proves the address beats the session for every
 // procedure here, and that a non-member of the addressed org is refused.
 
@@ -465,9 +467,14 @@ export async function listRoles(search?: string): Promise<RoleRow[]> {
  * Access surface), matched inside the addressed org. Enumerating grants requires `member:view`,
  * ENFORCED (a denial is recorded) — mirroring the CLI `GET /api/cli/grants` gate.
  */
-export async function readGrantsPage(input: z.infer<typeof grantsPageInput>): Promise<AccessGrantsPage> {
+export async function readGrantsPage(
+	input: z.infer<typeof grantsPageInput>,
+): Promise<AccessGrantsPage & { asOf: string }> {
 	const actor = await authorize("view", { type: "member" });
-	return queryAccessGrantsPage(actor.orgId, input);
+	const page = await queryAccessGrantsPage(actor.orgId, input);
+	// The instant of the read, so "Granted 3 hours ago" is computed against the same clock on the
+	// server render and on the hydrating client (React #418) — the members page's `asOf` rule.
+	return { ...page, asOf: new Date().toISOString() };
 }
 
 /**

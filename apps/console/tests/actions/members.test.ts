@@ -95,10 +95,12 @@ function mockDb(resultSets: unknown[][]) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(currentActor).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 	} as never);
 	vi.mocked(authorize).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 	} as never);

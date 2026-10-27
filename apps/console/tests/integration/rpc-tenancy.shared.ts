@@ -808,7 +808,7 @@ export const FIXTURES: Record<string, Fixture> = {
 			return {
 				...Object(out),
 				asOf: null,
-				members: Array.isArray(members) ? members.map((m: unknown) => ({ ...Object(m), lastActiveAt: null })) : members,
+				members: Array.isArray(members) ? members.map(withoutSynthesizedClock) : members,
 			};
 		},
 		markers: (out) => {
@@ -821,7 +821,7 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "org-scoped",
 		input: undefined,
 		// The personal scope's synthesized owner is "active now".
-		withoutClock: (out) => (Array.isArray(out) ? out.map((m: unknown) => ({ ...Object(m), lastActiveAt: null })) : out),
+		withoutClock: (out) => (Array.isArray(out) ? out.map(withoutSynthesizedClock) : out),
 		markers: (out) => ({ x: Array.isArray(out) && out.length === 3, y: Array.isArray(out) && out.length === 2 }),
 	},
 	"members.gate": {
@@ -877,6 +877,16 @@ export const FIXTURES: Record<string, Fixture> = {
 		markers: (out, s) => ({ x: hasItem(out, "principals", s.teamX), y: hasItem(out, "principals", s.teamY) }),
 	},
 };
+
+/**
+ * A member row with its `lastActiveAt` dropped ONLY when it is the personal scope's SYNTHESIZED
+ * owner (its row id is the user's own id, and its "last active" is the read's own instant). A real
+ * member's last-active comes from their sessions and stays compared.
+ */
+function withoutSynthesizedClock(row: unknown): unknown {
+	const synthesized = field(row, "id") !== undefined && field(row, "id") === field(row, "userId");
+	return synthesized ? { ...Object(row), lastActiveAt: null } : row;
+}
 
 /** A read's output with its clock fields dropped, for fixtures that declare them. */
 function comparable(fixture: Fixture, out: unknown): unknown {

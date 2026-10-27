@@ -42,16 +42,20 @@ export default async function AccessPage({
 	const filtered = accessQueryFromUrl(paramReader(await searchParams));
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	// A refusal is not retried: it answers the same the second time.
+	// A refusal is not retried: it answers the same the second time. The pristine read goes FIRST
+	// and alone: a viewer without `member:view` is refused there, once, and the filtered list and the
+	// builder's options — which would each record the same denial — are not asked at all.
 	const pristine = rpc.members.grants.queryOptions({ input: {}, retry: retryUnlessRefused });
-	await Promise.all([
-		queryClient.prefetchQuery(pristine),
-		queryClient.prefetchQuery(rpc.members.grants.queryOptions({ input: filtered, retry: retryUnlessRefused })),
-		queryClient.prefetchQuery(
-			rpc.members.grantOptions.queryOptions({ input: undefined, retry: retryUnlessRefused }),
-		),
-	]);
+	await queryClient.prefetchQuery(pristine);
 	const forbidden = isForbiddenRead(queryClient.getQueryState(pristine.queryKey)?.error);
+	if (!forbidden) {
+		await Promise.all([
+			queryClient.prefetchQuery(rpc.members.grants.queryOptions({ input: filtered, retry: retryUnlessRefused })),
+			queryClient.prefetchQuery(
+				rpc.members.grantOptions.queryOptions({ input: undefined, retry: retryUnlessRefused }),
+			),
+		]);
+	}
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isPeopleRead })}>

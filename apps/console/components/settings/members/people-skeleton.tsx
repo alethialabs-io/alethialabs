@@ -47,3 +47,24 @@ export function PeopleListSkeleton({
 		</div>
 	);
 }
+
+/**
+ * The loading form of a gated people & access page whose body, for an org without the plan, is the
+ * upsell panel (F021): the toolbar when the page keeps one (Teams keeps its disabled Create team),
+ * and the panel's box — never a filter bar or a table the page will not draw.
+ */
+export function PeopleUpsellSkeleton({
+	toolbar = true,
+	lead = false,
+}: {
+	toolbar?: boolean;
+	lead?: boolean;
+}) {
+	return (
+		<div aria-busy>
+			{lead && <Skeleton className="mb-[18px] h-[74px] w-full rounded-lg" />}
+			{toolbar && <PageToolbarSkeleton className="mb-4" count actions={1} />}
+			<Skeleton aria-hidden className="h-[260px] w-full rounded-lg" />
+		</div>
+	);
+}

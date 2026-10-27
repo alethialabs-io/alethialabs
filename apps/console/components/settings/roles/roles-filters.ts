@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure filter plumbing for Settings · Roles — the console filter standard's "normalize" step
-// (lib/query/README.md → "Server-side filters"). `listRoles(search)` filters custom roles
+// (lib/query/README.md → "Server-side filters"). `members.roles` (`listRoles(search)`) filters custom roles
 // server-side; the four built-ins arrive with the page bootstrap and are narrowed here, which
 // is why `filterBuiltins` exists at all.
 
@@ -28,7 +28,7 @@ export const ROLE_KIND_OPTIONS = [
 	{ value: "custom", label: "Custom" },
 ] as const;
 
-/** The stable query object placed in `qk.roles`. */
+/** The rail's normalized filter state; its `search` is the `members.roles` read's input. */
 export interface NormalizedRolesQuery {
 	search?: string;
 	kinds?: string[];

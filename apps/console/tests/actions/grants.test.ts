@@ -128,6 +128,7 @@ const can = vi.fn().mockResolvedValue({ allowed: true });
 
 /** An actor that passes the Enterprise (customRoles) entitlement gate. */
 const ADMIN_ACTOR = {
+	credential: "session",
 	orgId: "org-1",
 	userId: "user-1",
 	entitlements: { customRoles: true },

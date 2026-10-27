@@ -3495,6 +3495,9 @@ CREATE TRIGGER environment_security_notify_change_insdel
 
 -- member: the role and the lifecycle status are what the table shows (and what a suspension or a
 -- role change writes). Not listed: created_at, and organization_id/user_id (never rewritten).
+-- NOT HINTED: a member's name, email or avatar — those are `user` columns, and `user` has no
+-- trigger; the members table shows the new values on its next read (focus, navigation, any
+-- other members hint), not live.
 CREATE OR REPLACE FUNCTION public.notify_member_change() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN

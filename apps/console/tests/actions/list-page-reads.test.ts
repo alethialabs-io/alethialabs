@@ -67,7 +67,7 @@ import {
 import { queryMembersPage } from "@/lib/queries/members";
 import { queryTeamsPage } from "@/lib/queries/teams";
 
-const ACTOR = { orgId: "org-real", userId: "user-real" };
+const ACTOR = { credential: "session", orgId: "org-real", userId: "user-real" };
 
 /**
  * A query object carrying the fields a hostile client would try to smuggle a tenancy in.

@@ -4,9 +4,10 @@
 
 // WRITES, plus one orphaned read (ADR 0005 D1/D4, #6129). The Access page's reads — the grants page
 // and the builder's options — moved to `lib/rpc/procedures/members.ts` and are served over GET.
-// `assignGrant` and `revokeGrant` are `defineAction`s returning `ActionResult<T>`; every check they
-// made as plain actions (the PDP gate, the entitlement, the org binding, the privilege ceiling, the
-// active-membership refusal) runs in the same order inside them.
+// `assignGrant` and `revokeGrant` are `defineAction`s returning `ActionResult<T>`. The request's
+// SHAPE is now checked first (zod, a `validation` result); after it, every check they made as plain
+// actions (the PDP gate, the entitlement, the org binding, the privilege ceiling, the
+// active-membership refusal) runs in the same order as before.
 
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
@@ -136,7 +137,9 @@ async function writeGrant(input: AssignGrantInput): Promise<void> {
 	// Everything the grant references belongs to THIS org (or is a built-in role): the role, a team
 	// principal, and the scoped resource. Checked before the ceiling, so a role of another org is
 	// refused for what it is rather than evaluated. The `grants_org_binding` trigger is the backstop
-	// for the same predicate; this is what turns it into a named refusal (lib/authz/grant-binding.ts).
+	// for the same predicate; this is what turns it into a named refusal (lib/authz/grant-binding.ts)
+	// — named on the SERVER: the `ForbiddenError` carries the reason, and the client is told only
+	// `forbidden` (defineAction), never which reference was foreign.
 	const unbound = await grantBindingViolation({
 		orgId: actor.orgId,
 		principalType: input.principalType,
