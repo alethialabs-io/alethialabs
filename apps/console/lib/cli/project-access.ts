@@ -69,8 +69,12 @@ export async function cliMayActOnProject(
 	const ref: ResourceRef = { type: "project", id: projectId };
 	const decision = await getPdp().can(actor, action, ref);
 	if (decision.allowed) return true;
-	void enforceDecision;
-	void ForbiddenError;
+	try {
+		enforceDecision(actor, action, ref, decision);
+	} catch (err) {
+		// The refusal is recorded; its throw is the one part not wanted here.
+		if (!(err instanceof ForbiddenError)) throw err;
+	}
 	return false;
 }
 
