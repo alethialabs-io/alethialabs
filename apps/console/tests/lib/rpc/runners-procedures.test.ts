@@ -134,10 +134,10 @@ beforeEach(() => {
 	h.mode = "self-managed";
 	h.jobsForbidden = false;
 	h.wheres = [];
-	vi.mocked(authorize).mockImplementation(async () => ({ userId: USER, orgId: ORG }));
+	vi.mocked(authorize).mockImplementation(async () => ({ credential: "session", userId: USER, orgId: ORG }));
 	vi.mocked(authorizeQuiet).mockImplementation(async (_action, resource) => {
 		if (h.jobsForbidden && resource.type === "job") throw new ForbiddenError("view", { type: "job" });
-		return { userId: USER, orgId: ORG };
+		return { credential: "session", userId: USER, orgId: ORG };
 	});
 });
 
