@@ -19,6 +19,7 @@ import {
 	aiUsageLedger,
 	jobs,
 	projectCluster,
+	projectEnvironments,
 	projects,
 	runners,
 } from "@/lib/db/schema";
@@ -70,10 +71,18 @@ describeIfDb("project-usage queries", () => {
 		projectA = insertedProjects[0].id;
 		projectB = insertedProjects[1].id;
 
-		// Two clusters under A, none under B.
+		// Two clusters under management under A — one per environment, each with a live deployment
+		// (lib/queries/usage-counts.ts `managedClusterPredicate`) — none under B.
+		const envs = await db
+			.insert(projectEnvironments)
+			.values([
+				{ project_id: projectA, user_id: ORG, name: "prod", status: "ACTIVE", is_default: true, last_deployed_at: new Date() },
+				{ project_id: projectA, user_id: ORG, name: "staging", status: "PROVISIONING", last_deployed_at: new Date() },
+			])
+			.returning({ id: projectEnvironments.id });
 		await db.insert(projectCluster).values([
-			{ project_id: projectA },
-			{ project_id: projectA },
+			{ project_id: projectA, environment_id: envs[0].id, status: "ACTIVE" },
+			{ project_id: projectA, environment_id: envs[1].id },
 		]);
 
 		// Project A: a 5-min completed managed job + a 30-min completed managed job on

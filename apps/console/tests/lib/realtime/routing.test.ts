@@ -106,10 +106,19 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support", "usage", "billing"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "usage", "billing", "clusters"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
+	});
+
+	// #6122: project_cluster carries no user_id; its RLS owner arm is the PROJECT's owner, not a column.
+	it("a cluster routes on its org arm only, filtered on its project's view", () => {
+		const cluster: ChangeNotice = { kind: "change", t: "clusters", id: JOB, o: ORG, u: null, p: PROJECT };
+		expect(keysFor(cluster)).toEqual([{ key: `o:${ORG}`, filterProject: PROJECT }]);
+		// Even a notice that carried a user would not open an owner route for it.
+		expect(keysFor({ ...cluster, u: USER })).toEqual([{ key: `o:${ORG}`, filterProject: PROJECT }]);
+		expect(keysFor({ ...cluster, o: null })).toEqual([]);
 	});
 });
 
