@@ -153,3 +153,14 @@ describe("Job detail — Re-run", () => {
 		expect(toastSuccess).toHaveBeenCalledWith("Job re-queued");
 	});
 });
+
+// #6134: the toolbar says which project and environment the job ran for. The breadcrumb cannot (a
+// crumb is an ancestor route, and this route is under `~`) and is hidden below `md` anyway.
+describe("Job detail — project context", () => {
+	it("links the job's project and environment in the toolbar description", () => {
+		renderPage();
+
+		expect(screen.getByRole("link", { name: "payments" })).toHaveAttribute("href", "/acme/payments");
+		expect(screen.getByRole("link", { name: "staging" })).toHaveAttribute("href", "/acme/payments/environments");
+	});
+});
