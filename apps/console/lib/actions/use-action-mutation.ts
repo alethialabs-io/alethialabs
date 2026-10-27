@@ -35,11 +35,21 @@ export interface ActionMutationOptions<T, V> {
 	onValidationError?: (fields: FieldErrors) => void;
 	/** Entitlement refusals open the upgrade surface the caller owns (e.g. `useUpgradeSheet`). */
 	onEntitlement?: (feature: string, message: string) => void;
+	/**
+	 * A domain refusal (`conflict`, `not-found`, `forbidden`) the caller renders IN PLACE — a dialog's
+	 * inline alert beside the button that was pressed, where the person can change their request and
+	 * try again. When given, the refusal is handed here and NOT toasted, so one sentence is not shown
+	 * twice. Omit it and the refusal is toasted like any other failure.
+	 */
+	onRefusal?: (error: RefusalError) => void;
 	/** A success toast, only when the outcome is not otherwise visible on screen. */
 	successMessage?: string | ((data: T) => string);
 	/** Runs after a successful action and its invalidation have been issued. */
 	onSuccess?: (data: T, variables: V) => void;
 }
+
+/** The refusals {@link ActionMutationOptions.onRefusal} can take over from the toast. */
+export type RefusalError = Extract<ActionError, { kind: "conflict" | "not-found" | "forbidden" }>;
 
 /** The snapshot taken before optimistic patches, restored on failure. */
 interface Snapshot {
@@ -55,8 +65,9 @@ interface Snapshot {
  * - applies optional optimistic patches and restores the snapshot on failure;
  * - invalidates every declared key when it settles, so no screen keeps stale data (F036, F040);
  * - routes failures by kind: validation → the form, entitlement → the caller's upgrade surface,
- *   unauthenticated → sign-in, everything else → one toast with a human message (never raw
- *   validator text, F013).
+ *   unauthenticated → sign-in, a refusal → the caller's inline alert when it renders one
+ *   (`onRefusal`), everything else → one toast with a human message (never raw validator text,
+ *   F013).
  */
 export function useActionMutation<T, V>(
 	action: (variables: V) => Promise<ActionResult<T>>,
@@ -134,6 +145,15 @@ function handleFailure<T, V>(
 			return;
 		case "unauthenticated":
 			toSignIn();
+			return;
+		case "conflict":
+		case "not-found":
+		case "forbidden":
+			if (options.onRefusal) {
+				options.onRefusal(error);
+				return;
+			}
+			toast.error(describeActionError(error));
 			return;
 		default:
 			toast.error(describeActionError(error));

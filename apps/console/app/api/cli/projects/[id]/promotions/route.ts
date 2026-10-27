@@ -3,7 +3,8 @@
 
 // GET /api/cli/projects/:id/promotions — the project's environment promotions (source → target),
 // optionally scoped to one target environment. Gated on project `view`; org-scoped via an explicit
-// projects.org_id filter (RLS bypassed here). Mirrors listPromotions (web).
+// projects.org_id filter (RLS bypassed here). Mirrors the web promotions read
+// (lib/rpc/procedures/environments.ts).
 
 import { and, desc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";

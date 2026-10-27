@@ -5,11 +5,10 @@
 // Recent promotions — a compact history row per promotion (source → target, when, status). The
 // in-flight one is flagged Active with a View into the detail overlay.
 
-import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
-import type { PromotionRowView } from "./environments-view";
-import { promoStatus, StatusDot } from "./env-ui";
+import type { PromotionRowView } from "@/lib/rpc/procedures/environments";
+import { promoStatus, RelativeStamp, StatusDot } from "./env-ui";
 
 const IN_FLIGHT = new Set([
 	"PENDING_PLAN",
@@ -46,7 +45,7 @@ export function PromotionsHistory({
 										{envName(p.source_environment_id)} → {envName(p.target_environment_id)}
 									</span>
 									<span className="text-ui-xs text-text-tertiary">
-										{formatRelative(p.created_at)}
+										<RelativeStamp at={p.created_at} />
 									</span>
 									{active && (
 										<span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">

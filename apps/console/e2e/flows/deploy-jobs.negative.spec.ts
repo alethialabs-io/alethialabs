@@ -92,18 +92,21 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		// (tests/components/clusters/clusters-client.test.tsx).
 	});
 
-	test("a single-environment project hides Promote and says why, without claiming to be empty", async ({
+	test("a single-environment project disables Promote and says why, without claiming to be empty", async ({
 		owner,
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${singleEnvProject.slug}/environments`);
-		await expect(
-			owner.page.getByRole("heading", { name: /^Environments/ }),
-		).toBeVisible({ timeout: 25_000 });
-		// Promote only appears when envs.length > 1.
-		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toHaveCount(0);
+		// No in-content page title since #6120 (F010): the breadcrumb names the page, and the page
+		// opens with its toolbar, whose count reads 1 here.
+		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
+		await expect(toolbar).toBeVisible({ timeout: 25_000 });
+		await expect(toolbar).toContainText("1");
+		// Promote stays in the toolbar at every count (#6120, so the route skeleton can reserve the
+		// row exactly) but cannot be pressed with one environment — there is nothing to promote to.
+		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toBeDisabled();
 		// But New Environment is always available — a one-environment project is exactly the one
 		// that needs it.
-		await expect(owner.page.getByRole("button", { name: /New Environment/i })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /New Environment/i })).toBeEnabled();
 		// The note under a POPULATED list, not the empty state. The predicate behind these two used
 		// to be `<= 1`, which asserted "Only one environment" over none at all.
 		await expect(owner.page.getByText(/Only one environment/)).toBeVisible();

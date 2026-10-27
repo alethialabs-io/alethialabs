@@ -8,7 +8,7 @@
 import { Sheet, SheetContent } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
 import { MinusCircle, Pencil, PlusCircle, X, type LucideIcon } from "lucide-react";
-import type { PromotionDetail } from "@/app/server/actions/promotions";
+import type { PromotionDetail } from "@/lib/rpc/procedures/environments";
 import type { ComponentChange } from "@/types/jsonb.types";
 import { Avatar, gateView, pipelineSteps, promoStatus, StatusDot } from "./env-ui";
 
