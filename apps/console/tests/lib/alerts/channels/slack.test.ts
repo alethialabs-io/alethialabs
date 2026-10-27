@@ -3,7 +3,7 @@
 
 // Slack incoming-webhook sender (lib/alerts/channels/slack.ts). Mocked boundary: stub
 // decryptSecret (returns the channel webhook URL) and the SSRF-guarded network sink
-// safeFetch (the sender's only outbound call); assert the Block Kit payload formatting
+// safeDeliver (the sender's only outbound call); assert the Block Kit payload formatting
 // (severity emoji, summary/context/actions blocks), URL resolution, and send()/verify()
 // success + failure throws. (The SSRF guard itself is covered by tests/unit/ssrf-guard.test.ts.)
 
@@ -11,12 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/crypto/secrets", () => ({ decryptSecret: vi.fn() }));
-vi.mock("@/lib/net/ssrf-guard", () => ({ safeFetch: vi.fn() }));
+vi.mock("@/lib/net/ssrf-guard", () => ({ safeDeliver: vi.fn() }));
 
 import { slackSender } from "@/lib/alerts/channels/slack";
 import { TEST_CONTEXT } from "@/lib/alerts/channels/types";
 import { decryptSecret } from "@/lib/crypto/secrets";
-import { safeFetch } from "@/lib/net/ssrf-guard";
+import { safeDeliver } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { AlertEventContext } from "@/types/jsonb.types";
 
@@ -26,13 +26,13 @@ const WEBHOOK = "https://hooks.slack.com/services/T000/B000/xyz";
 const channel = (secret: unknown = { sealed: true }): AlertChannel =>
 	({ id: "ch-1", secret } as never);
 
-/** The mocked outbound sink — the sender POSTs through safeFetch, not global fetch. */
-const fetchMock = vi.mocked(safeFetch);
+/** The mocked outbound sink — the sender POSTs through safeDeliver, not global fetch. */
+const fetchMock = vi.mocked(safeDeliver);
 
-/** Reads the JSON body POSTed to Slack from safeFetch's last call. */
+/** Reads the JSON body POSTed to Slack from safeDeliver's last call. */
 function lastBody(): { text: string; blocks: Array<Record<string, unknown>> } {
 	const call = fetchMock.mock.calls.at(-1);
-	if (!call) throw new Error("safeFetch was not called");
+	if (!call) throw new Error("safeDeliver was not called");
 	return JSON.parse(call[1]?.body as string);
 }
 

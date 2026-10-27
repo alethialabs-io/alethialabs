@@ -49,19 +49,19 @@ import {
 
 // The Alerts hub's three lists — channels, policies, and the delivery ledger — filtered in
 // SQL (the console filter standard's server half). Service path with an explicit `org_id`
-// filter: the service role bypasses RLS, so the org scope is enforced here, exactly as
-// `getAlertsBootstrap()` does.
+// filter: the service role bypasses RLS, so the org scope is enforced HERE, on every query, from
+// the org the caller passes — the actor the read router resolved from the address
+// (lib/rpc/procedures/alerts.ts, #6125).
 //
-// These are SIBLINGS of the bootstrap, not a replacement for it. `getAlertsBootstrap()`
-// stays the RSC page's one-round-trip read on purpose: every mutation on that page reports
-// success through `router.refresh()`, and a `queryFn` closing over the RSC `bootstrap` prop
-// would let TanStack pin the first payload and make those refreshes invisible (#2878).
+// The hub reads these over the `alerts.*` GET procedures; each list's PRISTINE page is also the
+// universe the panels cross-reference against. Writes invalidate the keys and the `alerts` topic
+// does the same for every other tab, so nothing here depends on `router.refresh()`.
 //
-// The DTO mappers live here so the bootstrap and the filtered reads cannot drift into two
-// shapes of the same row. The DTO TYPES stay declared in the action module (components
-// import them from there); that import is type-only, so it is erased — no runtime cycle.
+// The DTO mappers live here so every read of a row (these lists, the overview's Alerts card)
+// returns one shape. The DTO TYPES stay declared in the action module (components import them
+// from there); that import is type-only, so it is erased — no runtime cycle.
 
-// ── DTO mapping (shared with getAlertsBootstrap) ────────────────────────────────
+// ── DTO mapping ─────────────────────────────────────────────────────────────────
 
 /** Maps a channel row to its client-safe DTO (never carries the encrypted secret). */
 export function toChannelDTO(row: typeof alertChannels.$inferSelect): ChannelDTO {

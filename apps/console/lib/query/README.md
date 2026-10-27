@@ -214,14 +214,13 @@ org's QueryClient, so each refetch goes back through the read router (RLS + the 
 | `~/clusters` | clusters | query |
 | `~/` overview, switcher, palette | projects | query |
 | `[project]` | pricing + cloud resources | query |
-| `~/alerts` | channels · policies · deliveries | RSC bootstrap for the page, query per filtered LIST (#4890) |
+| `~/alerts` | settings · channels · policies · deliveries | query over GET (`alerts.*`), prefetched; live on the `alerts` topic (#6125) |
 | settings/* | teams · members · access · roles · sso · activity | RSC + `loading.tsx`; every filtered list is a query |
 | `~/connectors`, `~/new` | (server-rendered already) | RSC + `loading.tsx` |
 
-The alerts row is the one worth reading twice. `getAlertsBootstrap()` is still the route's
-one-round-trip RSC read and still what the panels select and cross-reference against — the
-entitlement, `canManage`, the event catalog, the channel a policy routes to. What moved onto
-the pipeline is the three FILTERED lists. Because their rows now come off the TanStack cache,
-a mutation reporting success through `router.refresh()` has to invalidate `["alerts"]` as
-well: the refresh re-runs the RSC and the cache does not hear it, which is the exact failure
-#2878 refused this conversion over.
+The alerts row is the one worth reading twice. There is no bootstrap any more (#6125): the hub's
+settings (the plan gate, `canManage`, the event catalog) are `alerts.settings`, and the universes
+the panels cross-reference against are the lists' PRISTINE pages — the same keys the panels read
+unfiltered. Every write invalidates `alertsKeys()` from the acting tab, and the `alerts` topic
+invalidates the same keys everywhere else, so nothing on the hub needs `router.refresh()` — the
+failure #2878 refused the first conversion over cannot recur.

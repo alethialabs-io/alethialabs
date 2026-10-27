@@ -35,6 +35,8 @@ describe("isPublicUnicastIp", () => {
 		["::ffff:169.254.169.254", "IPv4-mapped IPv6 metadata"],
 		["::ffff:127.0.0.1", "IPv4-mapped IPv6 loopback"],
 		["2001:db8::1", "IPv6 documentation"],
+		["fec0::1", "IPv6 site-local (deprecated fec0::/10)"],
+		["2001:0:4136:e378:8000:63bf:3fff:fdd2", "Teredo 2001::/32"],
 		["::ffff:0:127.0.0.1", "reserved 0000::/8 remainder (not kernel v4-mapped)"],
 		["not-an-ip", "garbage input"],
 	];

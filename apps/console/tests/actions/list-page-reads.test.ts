@@ -32,6 +32,7 @@ vi.mock("@/lib/crypto/secrets", () => ({
 vi.mock("@/lib/alerts/channels", () => ({ getChannelSender: vi.fn() }));
 vi.mock("@/lib/alerts/rule-cache", () => ({ invalidateOrgRules: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/app/server/actions/projects", () => ({ getProjects: vi.fn(async () => []) }));
 
 vi.mock("@/lib/queries/alerts-lists", () => ({
 	queryAlertChannelsPage: vi.fn(),
@@ -42,11 +43,12 @@ vi.mock("@/lib/queries/access-grants", () => ({ queryAccessGrantsPage: vi.fn() }
 vi.mock("@/lib/queries/members", () => ({ queryMembersPage: vi.fn() }));
 vi.mock("@/lib/queries/teams", () => ({ queryTeamsPage: vi.fn() }));
 
+// The alerts hub's reads moved to GET procedures (#6125); their readers keep the same contract.
 import {
-	getAlertChannelsPage,
-	getAlertDeliveriesPage,
-	getAlertPoliciesPage,
-} from "@/app/server/actions/alerts";
+	readAlertChannelsPage as getAlertChannelsPage,
+	readAlertDeliveriesPage as getAlertDeliveriesPage,
+	readAlertPoliciesPage as getAlertPoliciesPage,
+} from "@/lib/rpc/procedures/alerts";
 import { getAccessGrantsPage } from "@/app/server/actions/grants";
 import { getMembersPage } from "@/app/server/actions/members";
 import { getTeamsPage } from "@/app/server/actions/teams";

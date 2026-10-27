@@ -96,7 +96,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 		const inB = keysFor(jobs({ o: OTHER, p: null })).map((r) => r.key);
 		const streamA = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ fleetView: true, manageSupport: true, viewAlerts: false },
 		);
 		expect(inB.filter((k) => streamA.includes(k))).toEqual([]);
 	});
@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support", "usage", "billing", "clusters"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -148,7 +148,7 @@ describe("keysFor — support cases follow their tiered policy, not owner_all (#
 	const OTHER = "55555555-5555-4555-8555-555555555555";
 	/** Whether a stream with this identity and these capabilities would receive the notice. */
 	const hears = (notice: ChangeNotice, userId: string, orgId: string, manageSupport: boolean) => {
-		const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport });
+		const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport, viewAlerts: false });
 		return keysFor(notice).some((r) => held.includes(r.key));
 	};
 
@@ -200,7 +200,7 @@ describe("keysFor — usage and billing", () => {
 
 	it.each(["usage", "billing"] as const)("%s never reaches another org's stream", (t) => {
 		const OTHER = "55555555-5555-4555-8555-555555555555";
-		const stream = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: true, manageSupport: true });
+		const stream = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: true, manageSupport: true, viewAlerts: false });
 		const routed = keysFor(orgWide(t, { o: OTHER })).map((r) => r.key);
 		expect(routed.filter((k) => stream.includes(k))).toEqual([]);
 	});
@@ -209,7 +209,7 @@ describe("keysFor — usage and billing", () => {
 		expect(keysFor(orgWide("usage", { o: null, u: USER }))).toEqual([
 			{ key: `u:${USER}`, filterProject: null },
 		]);
-		const inAnOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false });
+		const inAnOrg = subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false, viewAlerts: false });
 		expect(inAnOrg).not.toContain(`u:${USER}`);
 	});
 
@@ -222,32 +222,70 @@ describe("keysFor — usage and billing", () => {
 	});
 });
 
+/** An alerts notice with the trigger's shape: the row id and its org — no owner, no project. */
+function alerts(over: Partial<ChangeNotice> = {}): ChangeNotice {
+	return { kind: "change", t: "alerts", id: JOB, o: ORG, u: null, p: null, ...over };
+}
+
+describe("keysFor — alerts reach only members who may view_alerts (#6125)", () => {
+	const MEMBER = "66666666-6666-4666-8666-666666666666";
+	const OTHER = "55555555-5555-4555-8555-555555555555";
+	/** Whether a stream with this identity, holding view_alerts or not, would receive the notice. */
+	const hears = (notice: ChangeNotice, userId: string, orgId: string, viewAlerts: boolean) => {
+		const held = subscriptionKeys({ userId, orgId }, { fleetView: true, manageSupport: true, viewAlerts });
+		return keysFor(notice).some((r) => held.includes(r.key));
+	};
+
+	it("routes to the org's view_alerts key only — never the org-wide o: key, unfiltered", () => {
+		expect(keysFor(alerts())).toEqual([{ key: `oalerts:${ORG}`, filterProject: null }]);
+	});
+
+	it("a member with view_alerts hears it; a member without it does NOT, whatever else they may do", () => {
+		expect(hears(alerts(), MEMBER, ORG, true)).toBe(true);
+		// A delivery can describe a security event: the org arm is not an alerts route.
+		expect(hears(alerts(), MEMBER, ORG, false)).toBe(false);
+	});
+
+	it("an owner/u: field on the notice opens no route of its own", () => {
+		expect(hears(alerts({ u: MEMBER }), MEMBER, ORG, false)).toBe(false);
+	});
+
+	it("nobody in another org hears it, even with view_alerts there", () => {
+		expect(hears(alerts(), MEMBER, OTHER, true)).toBe(false);
+	});
+
+	it("a notice with no org routes nowhere", () => {
+		expect(keysFor(alerts({ o: null }))).toEqual([]);
+	});
+});
+
 describe("subscriptionKeys — what a stream holds", () => {
 	it("a member holds the org key and their own key in that org, and nothing platform-wide", () => {
 		expect(
-			subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false }),
+			subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false, viewAlerts: false }),
 		).toEqual([`o:${ORG}`, `ou:${ORG}:${USER}`]);
 	});
 
-	it("fleet:view adds the platform key; manage_support adds the org's support key", () => {
+	it("fleet:view adds the platform key; manage_support adds the org's support key; view_alerts the alerts key", () => {
 		const keys = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ fleetView: true, manageSupport: true, viewAlerts: true },
 		);
 		expect(keys).toContain(PLATFORM_KEY);
 		expect(keys).toContain(`osupport:${ORG}`);
+		expect(keys).toContain(`oalerts:${ORG}`);
 	});
 
 	it("only the personal scope (orgId === userId) also holds u:", () => {
 		expect(
-			subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false }),
+			subscriptionKeys({ userId: USER, orgId: USER }, { fleetView: false, manageSupport: false, viewAlerts: false }),
 		).toEqual([`o:${USER}`, `ou:${USER}:${USER}`, `u:${USER}`]);
 	});
 
 	it("an org member never holds another org's key", () => {
 		const keys = subscriptionKeys(
 			{ userId: USER, orgId: ORG },
-			{ fleetView: true, manageSupport: true },
+			{ fleetView: true, manageSupport: true, viewAlerts: false },
 		);
 		const other = "55555555-5555-4555-8555-555555555555";
 		expect(keys.some((k) => k.includes(other))).toBe(false);

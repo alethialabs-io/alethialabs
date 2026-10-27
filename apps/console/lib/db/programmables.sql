@@ -2176,6 +2176,113 @@ CREATE TRIGGER support_cases_notify_change_insdel
   AFTER INSERT OR DELETE ON public.support_cases
   FOR EACH ROW EXECUTE FUNCTION public.notify_support_case_change();
 
+-- The console's real-time bus, `alerts` topic (#6125; see emit_change above). A change to what the
+-- Alerts hub or the overview's Alerts card shows → ONE `alethia_change` notice carrying the row id
+-- and its org: identifiers only — never a title, an event key or a channel destination, because a
+-- delivery can describe a SECURITY event (an authz.* denial). lib/realtime/routing.ts delivers it
+-- only to the org's members who may `view_alerts`, the decision every alerts read makes; there is
+-- no RLS arm on these tables (they are read on the service connection under an explicit org_id
+-- predicate), and no owner route.
+CREATE OR REPLACE FUNCTION public.notify_alert_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('alerts', OLD.id, OLD.org_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('alerts', NEW.id, NEW.org_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- alert_rule_channels carries no org_id: it is resolved through the binding's rule, and the notice
+-- names the RULE — the same payload the rule's own trigger sends, so a policy save (the rule update
+-- plus the delete-and-reinsert of its bindings, in one transaction) collapses to one notice:
+-- Postgres delivers identical payloads on one channel once per transaction. A binding removed by its
+-- rule's own cascade finds no rule and emits nothing; the rule's DELETE already did. A binding
+-- removed by its CHANNEL's cascade still finds its rule and notifies it.
+CREATE OR REPLACE FUNCTION public.notify_alert_binding_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_rule uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.rule_id ELSE NEW.rule_id END;
+  v_org uuid;
+BEGIN
+  SELECT org_id INTO v_org FROM public.alert_rules WHERE id = v_rule;
+  IF v_org IS NOT NULL THEN
+    PERFORM public.emit_change('alerts', v_rule, v_org, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The UPDATE column lists are what the console renders of each row. Deliberately NOT listed:
+-- updated_at and created_by everywhere (bookkeeping), org_id (stamped on insert); for deliveries,
+-- next_attempt_at, max_attempts, dedupe_key and sent_at (the sweeper's own state — a send moves
+-- status, which IS listed), and context/event_key/rule_id/channel_id (immutable once written, or
+-- nulled only by a cascade the parent's own trigger reports). A channel's secret is compared only
+-- for presence (`has_secret`): its ciphertext changes with nothing on screen.
+DROP TRIGGER IF EXISTS alert_rules_notify_change_upd ON public.alert_rules;
+CREATE TRIGGER alert_rules_notify_change_upd
+  AFTER UPDATE ON public.alert_rules
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.description, OLD.event_patterns, OLD.match, OLD.severity, OLD.throttle_seconds,
+     OLD.escalate, OLD.recipient, OLD.enabled)
+    IS DISTINCT FROM
+    (NEW.name, NEW.description, NEW.event_patterns, NEW.match, NEW.severity, NEW.throttle_seconds,
+     NEW.escalate, NEW.recipient, NEW.enabled)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_rules_notify_change_insdel ON public.alert_rules;
+CREATE TRIGGER alert_rules_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_rules
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_channels_notify_change_upd ON public.alert_channels;
+CREATE TRIGGER alert_channels_notify_change_upd
+  AFTER UPDATE ON public.alert_channels
+  FOR EACH ROW WHEN (
+    (OLD.type, OLD.name, OLD.config, OLD.secret IS NULL, OLD.enabled, OLD.is_verified,
+     OLD.last_verified_at)
+    IS DISTINCT FROM
+    (NEW.type, NEW.name, NEW.config, NEW.secret IS NULL, NEW.enabled, NEW.is_verified,
+     NEW.last_verified_at)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_channels_notify_change_insdel ON public.alert_channels;
+CREATE TRIGGER alert_channels_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_channels
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_rule_channels_notify_change_upd ON public.alert_rule_channels;
+CREATE TRIGGER alert_rule_channels_notify_change_upd
+  AFTER UPDATE ON public.alert_rule_channels
+  FOR EACH ROW WHEN (
+    (OLD.rule_id, OLD.channel_id, OLD.min_severity) IS DISTINCT FROM
+    (NEW.rule_id, NEW.channel_id, NEW.min_severity)
+  )
+  EXECUTE FUNCTION public.notify_alert_binding_change();
+
+DROP TRIGGER IF EXISTS alert_rule_channels_notify_change_insdel ON public.alert_rule_channels;
+CREATE TRIGGER alert_rule_channels_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_rule_channels
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_binding_change();
+
+-- Deliveries: the ledger shows status, attempts and the last error. A retry moves attempts and
+-- last_error; a send moves status — one notice each, which the browser coalesces.
+DROP TRIGGER IF EXISTS alert_deliveries_notify_change_upd ON public.alert_deliveries;
+CREATE TRIGGER alert_deliveries_notify_change_upd
+  AFTER UPDATE ON public.alert_deliveries
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.attempts, OLD.last_error) IS DISTINCT FROM
+    (NEW.status, NEW.attempts, NEW.last_error)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_deliveries_notify_change_insdel ON public.alert_deliveries;
+CREATE TRIGGER alert_deliveries_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_deliveries
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
+
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
 CREATE POLICY audit_select ON public.audit_log FOR SELECT
