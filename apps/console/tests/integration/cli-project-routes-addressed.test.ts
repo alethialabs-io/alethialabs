@@ -6,10 +6,17 @@
 // A route under `app/api/cli/projects/[id]/` first asks `authorizeCli` the org-wide question (may
 // this caller act on projects in this org at all?) and then, through
 // `resolveCliProjectAuthorized` (lib/cli/project-access.ts), the same action about THE project it
-// resolved. This file drives one read and one write through that second question:
+// resolved. Routes that reach a project another way (by configuration name, by cluster id) ask the
+// same question with the project id they found (`cliMayActOnProject`), and the two lists filter on
+// the projects the caller may view (`cliViewableProjectIds`). This file drives:
 //
-//   - `GET  /api/cli/projects/[id]/cost`          — `view`
-//   - `POST /api/cli/projects/[id]/environments`  — `edit`
+//   - `GET  /api/cli/projects/[id]/cost`                               — `view`
+//   - `POST /api/cli/projects/[id]/environments`                       — `edit`
+//   - `GET  /api/cli/configurations/[name]` and `…/by-project-name/[project_name]` — `view`
+//   - `GET  /api/cli/clusters/[id]`                                    — `view` of its project
+//   - `GET  /api/cli/configurations` and `GET /api/cli/clusters`       — the lists
+//
+// A refusal is recorded: it leaves a `decision = false` activity row naming the project.
 //
 // One org, two projects (P and Q), four members. VIEWER and OPERATOR hold their role across the
 // org; VIEW_DENIED is a viewer with an explicit deny on viewing P; EDIT_DENIED is an operator with an
@@ -26,9 +33,10 @@
 //
 // What this does NOT cover: every other route under `app/api/cli/projects/[id]/`. That they all go
 // through the same helper is held structurally by tests/app/api/cli/project-routes-addressed.test.ts.
+// Nor does it check that an ALLOW writes no second row; the helper's code is the claim there.
 
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ user: "", org: "" }));
@@ -41,6 +49,11 @@ vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	}),
 }));
 
+import { GET as cliCluster } from "@/app/api/cli/clusters/[id]/route";
+import { GET as cliClusters } from "@/app/api/cli/clusters/route";
+import { GET as cliConfigByName } from "@/app/api/cli/configurations/[name]/route";
+import { GET as cliConfigByProjectName } from "@/app/api/cli/configurations/by-project-name/[project_name]/route";
+import { GET as cliConfigurations } from "@/app/api/cli/configurations/route";
 import { GET as cliCost } from "@/app/api/cli/projects/[id]/cost/route";
 import { POST as cliAddEnvironment } from "@/app/api/cli/projects/[id]/environments/route";
 import { ensureMemberGrant } from "@/lib/authz/grants";
@@ -52,6 +65,7 @@ import {
 	grants,
 	member,
 	organization,
+	projectCluster,
 	projectEnvironments,
 	projects,
 	resourceHierarchy,
@@ -69,6 +83,8 @@ const EDIT_DENIED = randomUUID(); // operator, explicitly denied editing P
 const USERS = [ADMIN, VIEWER, VIEW_DENIED, OPERATOR, EDIT_DENIED];
 const P = randomUUID();
 const Q = randomUUID();
+const NAME = { [P]: `it-cli-addressed-p-${P.slice(0, 8)}`, [Q]: `it-cli-addressed-q-${Q.slice(0, 8)}` };
+const CLUSTER = { [P]: "", [Q]: "" };
 
 /** Acts as `userId` in the org for the next CLI call. */
 function actAs(userId: string): void {
@@ -107,6 +123,85 @@ async function environmentNames(projectId: string): Promise<string[]> {
 		.from(projectEnvironments)
 		.where(eq(projectEnvironments.project_id, projectId));
 	return rows.map((r) => r.name);
+}
+
+/** A GET of `path` as `userId` through `route` → status and body. */
+async function getAs<C>(
+	userId: string,
+	route: (req: Request, ctx: C) => Promise<Response>,
+	path: string,
+	ctx: C,
+) {
+	actAs(userId);
+	const res = await route(new Request(`https://console.test${path}`), ctx);
+	return { status: res.status, body: await res.json() };
+}
+
+/** The configuration read by name, as `userId`, through both routes that serve it → statuses. */
+async function configStatuses(userId: string, projectId: string): Promise<number[]> {
+	const name = NAME[projectId] ?? projectId;
+	const byName = await getAs(userId, cliConfigByName, `/api/cli/configurations/${name}`, {
+		params: Promise.resolve({ name }),
+	});
+	const byProjectName = await getAs(
+		userId,
+		cliConfigByProjectName,
+		`/api/cli/configurations/by-project-name/${name}`,
+		{ params: Promise.resolve({ project_name: name }) },
+	);
+	return [byName.status, byProjectName.status];
+}
+
+/** `GET /api/cli/clusters/:id` for project `projectId`'s cluster, as `userId` → status. */
+async function clusterStatus(userId: string, projectId: string): Promise<number> {
+	const id = CLUSTER[projectId] ?? projectId;
+	return (await getAs(userId, cliCluster, `/api/cli/clusters/${id}`, { params: Promise.resolve({ id }) }))
+		.status;
+}
+
+/** The project ids `GET /api/cli/configurations` lists for `userId`. */
+async function listedConfigurations(userId: string): Promise<string[]> {
+	actAs(userId);
+	const res = await cliConfigurations(new Request("https://console.test/api/cli/configurations"));
+	expect(res.status).toBe(200);
+	const body: unknown = await res.json();
+	if (typeof body !== "object" || body === null || !("configurations" in body) || !Array.isArray(body.configurations)) {
+		throw new Error(`unexpected body: ${JSON.stringify(body)}`);
+	}
+	return body.configurations.flatMap((c: unknown) =>
+		typeof c === "object" && c !== null && "id" in c && typeof c.id === "string" ? [c.id] : [],
+	);
+}
+
+/** The cluster ids `GET /api/cli/clusters` lists for `userId`. */
+async function listedClusters(userId: string): Promise<string[]> {
+	actAs(userId);
+	const res = await cliClusters(new Request("https://console.test/api/cli/clusters"));
+	expect(res.status).toBe(200);
+	const body: unknown = await res.json();
+	if (typeof body !== "object" || body === null || !("clusters" in body) || !Array.isArray(body.clusters)) {
+		throw new Error(`unexpected body: ${JSON.stringify(body)}`);
+	}
+	return body.clusters.flatMap((c: unknown) =>
+		typeof c === "object" && c !== null && "id" in c && typeof c.id === "string" ? [c.id] : [],
+	);
+}
+
+/** The refusals recorded for `userId` doing `action` on project P. */
+async function refusalsOnP(userId: string, action: string) {
+	return getServiceDb()
+		.select({ id: authzActivityLog.id })
+		.from(authzActivityLog)
+		.where(
+			and(
+				eq(authzActivityLog.org_id, ORG),
+				eq(authzActivityLog.actor_id, userId),
+				eq(authzActivityLog.action, action),
+				eq(authzActivityLog.resource_type, "project"),
+				eq(authzActivityLog.resource_id, P),
+				eq(authzActivityLog.decision, false),
+			),
+		);
 }
 
 /** Writes an explicit deny of `permissionKey` on project P for `userId`: the row, then its mirror. */
@@ -172,7 +267,8 @@ describeIfDb("CLI project routes check the addressed project", () => {
 				id,
 				user_id: ADMIN,
 				org_id: ORG,
-				project_name: `it-cli-addressed-${id.slice(0, 8)}`,
+				project_name: NAME[id] ?? id,
+				slug: NAME[id] ?? id,
 				region: "eu-west-1",
 				iac_version: "1.0.0",
 			})),
@@ -195,12 +291,26 @@ describeIfDb("CLI project routes check the addressed project", () => {
 				parentId: ORG,
 			});
 		}
+		// What creating a project also gives it: a default environment (a configuration is read
+		// through it), and here a cluster each, so the cluster reads have rows to refuse.
+		for (const id of [P, Q]) {
+			await db
+				.insert(projectEnvironments)
+				.values({ project_id: id, user_id: ADMIN, org_id: ORG, name: "production", is_default: true });
+			const [c] = await db
+				.insert(projectCluster)
+				.values({ project_id: id, cluster_name: `k8s-${id.slice(0, 8)}`, status: "ACTIVE" })
+				.returning({ id: projectCluster.id });
+			if (!c) throw new Error("cluster seed returned no row");
+			CLUSTER[id] = c.id;
+		}
 		await denyOnP(VIEW_DENIED, "project:view");
 		await denyOnP(EDIT_DENIED, "project:edit");
 	});
 
 	afterAll(async () => {
 		const db = getServiceDb();
+		await db.delete(projectCluster).where(inArray(projectCluster.project_id, [P, Q]));
 		await db.delete(projectEnvironments).where(inArray(projectEnvironments.project_id, [P, Q]));
 		await db.delete(resourceHierarchy).where(eq(resourceHierarchy.parent_id, ORG));
 		await db.delete(projects).where(eq(projects.org_id, ORG));
@@ -235,6 +345,13 @@ describeIfDb("CLI project routes check the addressed project", () => {
 			expect(await environmentNames(P)).not.toContain("refused");
 		});
 
+		it("records the refusal: a denied activity row naming P", async () => {
+			// The activity write is fire-and-forget, so it is waited for rather than read once.
+			await vi.waitFor(async () => {
+				expect((await refusalsOnP(EDIT_DENIED, "edit")).length).toBeGreaterThan(0);
+			});
+		});
+
 		it("adds the environment to Q for that member, and to P for a member without the deny", async () => {
 			expect((await addEnvironment(EDIT_DENIED, Q, "allowed-q")).status).toBe(201);
 			expect(await environmentNames(Q)).toContain("allowed-q");
@@ -242,10 +359,36 @@ describeIfDb("CLI project routes check the addressed project", () => {
 			expect(await environmentNames(P)).toContain("allowed-p");
 		});
 
-		it("a deny on editing P leaves viewing P alone", async () => {
+		it("a deny on editing P leaves viewing P alone (the second question asks the route's own action)", async () => {
 			// The second question asks the route's OWN action, not a blanket one: the operator denied
 			// editing P still reads P.
 			expect((await cost(EDIT_DENIED, P)).status).toBe(200);
+		});
+	});
+
+	describe("routes that reach the project another way", () => {
+		it("the configuration read by name answers P as not found for the member denied viewing P", async () => {
+			expect(await configStatuses(VIEW_DENIED, P)).toEqual([404, 404]);
+			expect(await configStatuses(VIEW_DENIED, Q)).toEqual([200, 200]);
+			expect(await configStatuses(VIEWER, P)).toEqual([200, 200]);
+		});
+
+		it("the cluster read by id answers P's cluster as not found for that member", async () => {
+			expect(await clusterStatus(VIEW_DENIED, P)).toBe(404);
+			expect(await clusterStatus(VIEW_DENIED, Q)).toBe(200);
+			expect(await clusterStatus(VIEWER, P)).toBe(200);
+		});
+
+		it("the lists leave P (and P's cluster) out for that member, and keep them for the others", async () => {
+			const configs = await listedConfigurations(VIEW_DENIED);
+			expect(configs).not.toContain(P);
+			expect(configs).toContain(Q);
+			expect(await listedConfigurations(VIEWER)).toEqual(expect.arrayContaining([P, Q]));
+
+			const clusters = await listedClusters(VIEW_DENIED);
+			expect(clusters).not.toContain(CLUSTER[P]);
+			expect(clusters).toContain(CLUSTER[Q]);
+			expect(await listedClusters(VIEWER)).toEqual(expect.arrayContaining([CLUSTER[P], CLUSTER[Q]]));
 		});
 	});
 });
