@@ -77,7 +77,10 @@ export async function cliMayActOnProject(
 ): Promise<boolean> {
 	const ref: ResourceRef = { type: "project", id: projectId };
 	const decision = await getPdp().can(actor, action, ref);
-	if (decision.allowed) return true;
+	if (decision.allowed) {
+		enforceDecision(actor, action, ref, decision);
+		return true;
+	}
 	try {
 		enforceDecision(actor, action, ref, decision);
 	} catch (err) {

@@ -12,8 +12,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
-import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
-import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
+import { resolveCliEnvironment, resolveCliProject } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { environmentDrift, projects } from "@/lib/db/schema";
@@ -30,7 +29,7 @@ export async function GET(
 	const envParam = new URL(req.url).searchParams.get("env");
 
 	try {
-		const project = await resolveCliProjectAuthorized(actor, id, "view");
+		const project = await resolveCliProject(actor.orgId, id);
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
