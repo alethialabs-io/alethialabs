@@ -225,7 +225,7 @@ export async function POST(
 
 	try {
 		const db = getServiceDb();
-		const project = await resolveCliProjectAuthorized(actor, id, "view");
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
