@@ -231,7 +231,7 @@ describe("WidgetGrid", () => {
 		expect(card.style.gridColumn).toBe("1 / span 1");
 	});
 
-	it("#6207: a card renders the payload Query holds for it, so a hint's re-run shows without touching the store", () => {
+	it("#6207: a card renders the payload Query holds for it, so a hint's re-run shows without touching the store", async () => {
 		const pinned = widget({
 			id: "live",
 			kind: "table",
@@ -253,7 +253,8 @@ describe("WidgetGrid", () => {
 				updated_at: new Date("2026-10-27T11:00:00Z"),
 			});
 		});
-		expect(screen.getByText("APPLY")).toBeInTheDocument();
+		// Query notifies its observers on its own scheduler tick, after the act() above returns.
+		expect(await screen.findByText("APPLY")).toBeInTheDocument();
 		expect(screen.queryByText("PLAN")).not.toBeInTheDocument();
 		expect(useWidgetGridStore.getState().widgets[0]?.data).toEqual(pinned.data);
 	});
