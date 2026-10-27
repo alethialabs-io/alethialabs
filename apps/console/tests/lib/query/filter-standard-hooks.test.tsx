@@ -29,11 +29,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 
-// The alerts lists read over the `alerts.*` GET procedures (#6125): the seam is the read router's
-// handler, reached through the same oRPC query utilities the browser uses.
+// The alerts lists (#6125) and the runners grid (#6123) read over GET procedures: the seam is the
+// read router's handler, reached through the same oRPC query utilities the browser uses. ONE mock of
+// the client carries both routers — a second `vi.mock` of the same module would replace the first.
 const getAlertChannelsPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
 const getAlertDeliveriesPage = vi.fn();
+const getRunnersPage = vi.fn();
 vi.mock("@/lib/rpc/client", async () => {
 	const { os, createRouterClient } = await import("@orpc/server");
 	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
@@ -46,6 +48,7 @@ vi.mock("@/lib/rpc/client", async () => {
 			policies: page((input) => getAlertPoliciesPage(input)),
 			deliveries: page((input) => getAlertDeliveriesPage(input)),
 		},
+		runners: { page: page((input) => getRunnersPage(input)) },
 	};
 	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
 });
@@ -54,19 +57,6 @@ const getAccessGrantsPage = vi.fn();
 vi.mock("@/app/server/actions/grants", () => ({
 	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
 }));
-
-// The runners grid reads over the `runners.page` GET procedure (#6123): the seam is the read
-// router's page handler, reached through the same oRPC query utilities the browser uses.
-const getRunnersPage = vi.fn();
-vi.mock("@/lib/rpc/client", async () => {
-	const { os, createRouterClient } = await import("@orpc/server");
-	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
-	const { z } = await import("zod");
-	const router = {
-		runners: { page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => getRunnersPage(input)) },
-	};
-	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
-});
 
 const getTeamsPage = vi.fn();
 vi.mock("@/app/server/actions/teams", () => ({
