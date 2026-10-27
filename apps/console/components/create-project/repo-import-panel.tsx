@@ -5,15 +5,18 @@
 import { ArrowRight, GitBranch, Loader2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { toast } from "sonner";
 
 import type { Repository } from "@/app/server/actions/git/types";
-import { scanRepo } from "@/app/server/actions/scanner";
+import { startRepoScan } from "@/app/server/actions/scanner";
 import { RepositorySelector } from "@/components/repository-selector";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
+import { orpc } from "@/lib/rpc/client";
 import { cn } from "@repo/ui/utils";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
+
+import { useLinkedGitProviders } from "./use-create-project-reads";
 
 interface RepoImportPanelProps {
 	/** Optional wrapper class so the front door can slot the panel into its layout. */
@@ -24,10 +27,15 @@ interface RepoImportPanelProps {
 
 /**
  * The first-class "Import a repository" on-ramp for `~/new`: pick a git repo, queue a scan, then
- * hand off to the scan-review bridge. Reuses {@link RepositorySelector} (git-provider → repo pick)
- * and {@link scanRepo} (queues an ANALYZE_REPO job), then navigates to `?scan=<jobId>` — the page
- * already renders the review via `getScanProposal` → `DesignProjectWorkbench` / `ScanReviewNotice`.
- * No agent involved and no new backend: this exposes the north-star motion as a button.
+ * hand off to the Configure screen at `?scan=<jobId>`, which follows the scan live. Reuses
+ * {@link RepositorySelector} (git-provider → repo pick) and {@link startRepoScan} (queues an
+ * ANALYZE_REPO job). No agent involved: this exposes the north-star motion as a button.
+ *
+ * ONE LAYOUT THROUGH LOAD (F034). The selector is handed the caller's linked providers, which the
+ * route prefetched on the server, so its first render — the server render included — is already the
+ * provider + repository row (or, with nothing linked, the Link panel). It used to render the Link
+ * panel first, swap to a skeleton, then to the row. Only when the prefetch did not land does the
+ * selector read the list itself, from its loading row.
  */
 export function RepoImportPanel({ className, providerAvailability }: RepoImportPanelProps) {
 	const router = useRouter();
@@ -35,7 +43,16 @@ export function RepoImportPanel({ className, providerAvailability }: RepoImportP
 	const [repoUrl, setRepoUrl] = useState<string | undefined>(undefined);
 	// The repo's default branch, passed as the scan ref so the runner clones the right head.
 	const [ref, setRef] = useState<string | undefined>(undefined);
-	const [scanning, setScanning] = useState(false);
+	const linked = useLinkedGitProviders();
+	// The scan through the mutation contract: pending state, a double-submit guard, a readable
+	// refusal (an AI budget or a job quota) instead of a digest. A new job joins the shell's job feed
+	// and the jobs list, so those keys refresh with it.
+	const scan = useActionMutation(startRepoScan, {
+		invalidates: [orpc.workspace.recentJobs.key(), orpc.workspace.jobs.key(), orpc.jobs.page.key()],
+		onSuccess: ({ jobId }) => router.push(`${pathname}?scan=${jobId}`),
+	});
+	// Busy from the click until Configure replaces this screen — a success is a navigation in flight.
+	const scanning = scan.isPending || scan.isSuccess;
 
 	/** Records the picked repo's URL + default branch (the scan ref). */
 	const onRepositorySelect = (repo: Repository) => {
@@ -43,22 +60,10 @@ export function RepoImportPanel({ className, providerAvailability }: RepoImportP
 		setRef(repo.default_branch || undefined);
 	};
 
-	/** Queues the scan and hands off to the `?scan=` review bridge on the same page. */
-	const onScan = async () => {
-		if (!repoUrl) {
-			toast.error("Pick a repository to import.");
-			return;
-		}
-		setScanning(true);
-		try {
-			const { jobId } = await scanRepo(repoUrl, ref ? { ref } : undefined);
-			router.push(`${pathname}?scan=${jobId}`);
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to start the scan.",
-			);
-			setScanning(false);
-		}
+	/** Queues the scan and hands off to the `?scan=` Configure screen on the same page. */
+	const onScan = () => {
+		if (!repoUrl || scanning) return;
+		scan.mutate({ repoUrl, ...(ref ? { ref } : {}) });
 	};
 
 	return (
@@ -82,6 +87,7 @@ export function RepoImportPanel({ className, providerAvailability }: RepoImportP
 						label=""
 						placeholder="Select a repository to import…"
 						providerAvailability={providerAvailability}
+						linkedProviders={linked.data}
 					/>
 					<div className="flex items-center justify-between gap-3">
 						<span className="truncate font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
@@ -93,7 +99,7 @@ export function RepoImportPanel({ className, providerAvailability }: RepoImportP
 						</span>
 						<Button
 							type="button"
-							onClick={() => void onScan()}
+							onClick={onScan}
 							disabled={!repoUrl || scanning}
 						>
 							{scanning ? (

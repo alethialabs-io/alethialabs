@@ -10,6 +10,7 @@
 //  - Transfer on `~/settings/general`: a live button whose only effect was a "coming soon" toast.
 //  - Design with the agent on `~/new`: once clicked it spun forever, even after the agent closed.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,7 +47,12 @@ vi.mock("@/app/server/actions/identities", () => ({
 vi.mock("@/app/server/actions/git/repositories", () => ({
 	fetchRepositoriesByProvider: vi.fn(async () => ({ repositories: [] })),
 }));
-vi.mock("@/app/server/actions/scanner", () => ({ scanRepo: vi.fn() }));
+vi.mock("@/app/server/actions/scanner", () => ({ scanRepo: vi.fn(), startRepoScan: vi.fn() }));
+// The import panel's provider list is a read-router query the route prefetches (#6131). Unseeded
+// here, the selector reads the list itself — through the mocked action above.
+vi.mock("@/components/create-project/use-create-project-reads", () => ({
+	useLinkedGitProviders: () => ({ data: undefined }),
+}));
 vi.mock("@/components/design-project/repository-context", () => ({
 	useRepositoryContext: () => null,
 }));
@@ -142,7 +148,9 @@ describe("CreateProjectForm — Design with the agent", () => {
 	it("comes back once the agent surface closes", async () => {
 		const user = userEvent.setup();
 		render(
-			<CreateProjectForm orgSlug="acme" canCollaborate providerAvailability={NONE} />,
+			<QueryClientProvider client={new QueryClient()}>
+				<CreateProjectForm orgSlug="acme" canCollaborate providerAvailability={NONE} />
+			</QueryClientProvider>,
 		);
 		await user.type(screen.getByRole("textbox"), "An EKS cluster");
 		const launch = screen.getByRole("button", { name: "Design with the agent" });

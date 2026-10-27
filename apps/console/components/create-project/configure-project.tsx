@@ -4,15 +4,14 @@
 
 import { ArrowRight, ChevronLeft, Info, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useState } from "react";
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import {
 	type CreateProjectInput,
+	type CreateProjectResult,
 	tryCreateProject,
 } from "@/app/server/actions/projects";
-import { getScanProposal } from "@/app/server/actions/scanner";
 import {
 	type CloudConnectResult,
 	useCloudConnect,
@@ -20,11 +19,15 @@ import {
 import {
 	DEFAULT_ENVIRONMENT_MATRIX,
 } from "@/components/design-project/placement-selector";
+import type { ActionResult } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
+import { errorDigest } from "@/lib/errors";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref } from "@/lib/routing";
 import { canSlugify, slugify } from "@/lib/utils/slugify";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
+import { orpc } from "@/lib/rpc/client";
 import type { ScanProposal } from "@/lib/scanner/schema";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Button } from "@repo/ui/button";
@@ -43,18 +46,59 @@ import {
 	buildEmptyCreateInput,
 	templateOption,
 } from "./templates";
+import { type ScanResult, useNameAvailability, useScanResult } from "./use-create-project-reads";
 
-/** The scan lifecycle union (mirrors `getScanProposal`). */
-type ScanResult =
-	| { status: "PENDING"; jobStatus: string }
-	| { status: "NEEDS_SETUP"; needsIdentity: boolean }
-	| { status: "READY"; proposal: ScanProposal }
-	| { status: "NOT_FOUND" };
-
-/** What brought the user to Configure. */
+/** What brought the user to Configure. The import's scan is READ here (`useScanResult`), from the
+ * cache the route hydrated — never handed over as a prop that could not follow it. */
 type Source =
-	| { kind: "import"; scanJobId: string; initial: ScanResult }
+	| { kind: "import"; scanJobId: string }
 	| { kind: "scratch"; scratch: ScratchKind };
+
+/** The project a successful create returns. */
+type CreatedProject = Extract<CreateProjectResult, { ok: true }>["project"];
+
+/** What the create mutation is handed: the input, and where the canvas opens (`?attachChart=1` …). */
+interface CreateVariables {
+	input: CreateProjectInput;
+	attach: string;
+}
+
+/**
+ * `tryCreateProject` in the mutation contract's shape (ADR 0005 D4). Its refusals — a name the org
+ * holds or no schema accepts, a stored credential, an unusable cloud account — are sentences written
+ * for the user and all are rendered beside the name field, so they travel as a `validation` error on
+ * `project_name`: `useActionMutation` routes that to the field and NOT to a toast, which is what
+ * stops a duplicate name being reported twice (F035). An unexpected failure is thrown out of a
+ * `"use server"` export as a digest; it becomes the contract's `unexpected`, toasted once with that
+ * digest as its reference.
+ */
+async function createProjectAction({ input }: CreateVariables): Promise<ActionResult<CreatedProject>> {
+	try {
+		const res = await tryCreateProject(input);
+		if (res.ok) return { ok: true, data: res.project };
+		return {
+			ok: false,
+			error: { kind: "validation", message: res.error, fields: { project_name: [res.error] } },
+		};
+	} catch (err) {
+		return { ok: false, error: { kind: "unexpected", ref: errorDigest(err) ?? "unavailable" } };
+	}
+}
+
+/**
+ * Every read a new project changes: the shell's list (switcher, breadcrumbs, palette — F036: the new
+ * project was missing from the switcher until a reload), the setup guide, the usage counts, and the
+ * two reads that answer against the org's project names.
+ */
+function projectsChangedKeys() {
+	return [
+		orpc.workspace.projects.key(),
+		orpc.workspace.setupGuide.key(),
+		orpc.usage.resources.key(),
+		orpc.projects.nameAvailability.key(),
+		orpc.projects.duplicateTargets.key(),
+	];
+}
 
 interface ConfigureProjectProps {
 	orgSlug: string;
@@ -116,11 +160,13 @@ export function ConfigureProject({
 		extraSetup,
 	});
 
-	// Initial name/region/cloud: from a READY proposal, else the first connected cloud (see below).
-	const init = deriveInitial(source, integrations);
-	const [scan, setScan] = useState<ScanResult | null>(
-		source.kind === "import" ? source.initial : null,
+	// The import's scan, live over the `jobs` topic — no poll (#6131). Null for a scratch on-ramp.
+	const { result: scan, retry: retryScan } = useScanResult(
+		source.kind === "import" ? source.scanJobId : null,
 	);
+	// Initial name/region/cloud: from a READY proposal, else the first connected cloud (see below).
+	// The route hydrated the scan, so a scan that was already READY is READY on this first render.
+	const [init] = useState(() => deriveInitial(scan, integrations));
 	const [name, setName] = useState(init.name);
 	const [region, setRegion] = useState(init.region);
 	const [identityId, setIdentityId] = useState<string | null>(init.identityId);
@@ -131,39 +177,33 @@ export function ConfigureProject({
 	// Only read on the `?scratch=template` path; it picks the starter repository and the webhook-CA
 	// marker (#4990: the AI template declares KServe), not the cluster.
 	const [template, setTemplate] = useState<TemplateId>(DEFAULT_TEMPLATE);
-	const [creating, setCreating] = useState(false);
 	// The server's reason for refusing this create, rendered beside the field it is about. NOT form
-	// state — it is what came back, so it is cleared on the next attempt and never edited.
+	// state — it is what came back, so it is cleared when the name changes or on the next attempt.
 	const [refusal, setRefusal] = useState<string | null>(null);
-	const prefilled = useRef(
-		source.kind === "import" && source.initial.status === "READY",
-	);
+	// Whether the proposal has filled name/region/cloud yet — once, the first time it is READY.
+	const [prefilled, setPrefilled] = useState(scan?.status === "READY");
 
-	// Import: poll the scan until it resolves, streaming the proposal into the rail and prefilling
-	// name/region/cloud from it once (setState lives in the poll callback, not the effect body).
-	useEffect(() => {
-		if (source.kind !== "import") return;
-		if (scan?.status !== "PENDING") return;
-		let active = true;
-		const t = setInterval(async () => {
-			const r = await getScanProposal(source.scanJobId);
-			if (!active) return;
-			setScan(r);
-			if (r.status === "READY" && !prefilled.current) {
-				prefilled.current = true;
-				const p = r.proposal;
-				setName((n) => n || p.proposedProject.project.project_name || "");
-				setRegion(p.proposedProject.project.region || DEFAULT_REGION[p.provider]);
-				setIdentityId((id) => id ?? p.identityId);
-				setProvider(p.provider);
-			}
-			if (r.status !== "PENDING") clearInterval(t);
-		}, 2500);
-		return () => {
-			active = false;
-			clearInterval(t);
-		};
-	}, [scan?.status, source]);
+	// The scan finishing while the screen is open: prefill name/region/cloud from the proposal ONCE.
+	// Adjusted during render, not in an effect, so no committed frame shows a READY rail beside an
+	// empty form (React's "storing information from previous renders").
+	if (!prefilled && scan?.status === "READY") {
+		setPrefilled(true);
+		const p = scan.proposal;
+		setName((n) => n || p.proposedProject.project.project_name || "");
+		setRegion(p.proposedProject.project.region || DEFAULT_REGION[p.provider]);
+		setIdentityId((id) => id ?? p.identityId);
+		setProvider(p.provider);
+	}
+
+	const create = useActionMutation(createProjectAction, {
+		invalidates: projectsChangedKeys(),
+		onValidationError: (fields) => setRefusal(fields.project_name?.[0] ?? null),
+		onSuccess: (project, { attach }) =>
+			router.push(`${projectHref(orgSlug, project.slug ?? "")}${attach}`),
+	});
+	// A successful create stays "busy" until the canvas replaces this screen, so the button cannot
+	// be pressed a second time during the navigation (the double-submit guard covers both halves).
+	const creating = create.isPending || create.isSuccess;
 
 	const onCloud = (id: string, prov: CloudProviderSlug) => {
 		setIdentityId(id);
@@ -177,16 +217,34 @@ export function ConfigureProject({
 	const isTemplate = source.kind === "scratch" && source.scratch === "template";
 	const requiresCloud = source.kind === "import" || isTemplate;
 	const needsCloud = requiresCloud && !identityId;
-	const slug = slugify(name, "project");
 
-	/** Show `msg` as this screen's refusal — inline beside the name, and once as a toast. */
+	// The name the field holds passes the three client rules (below) — only such a name is checked
+	// against the org, and only its slug is previewed from the server.
+	const nameIsWellFormed =
+		name.trim().length > 0 && name.length <= PROJECT_NAME_MAX_LENGTH && canSlugify(name);
+	const { availability, checking } = useNameAvailability(name, nameIsWellFormed);
+	// The slug the project will REALLY get — de-duplicated against the org's, as the create does —
+	// once the server has answered for this name; the local derivation until then (F035).
+	const slug = availability?.slug ?? slugify(name, "project");
+	// A name the org already holds, said while typing rather than after Create (F035). The server's
+	// own refusal, when there is one, takes the slot.
+	const taken =
+		refusal === null && availability?.available === false
+			? `A project named "${name.trim()}" already exists in this organization.`
+			: null;
+	const fieldError = refusal ?? taken;
+
+	/**
+	 * Show `msg` as this screen's refusal — inline beside the name, and ONLY there. It used to be a
+	 * toast as well, so one refusal was reported twice (F035); the field is where it can be fixed.
+	 */
 	const refuse = (msg: string) => {
 		setRefusal(msg);
-		toast.error(msg);
 	};
 
 	/** Create the project (DRAFT) from the chosen source + settings, then open its canvas. */
-	const onCreate = async () => {
+	const onCreate = () => {
+		if (creating) return;
 		setRefusal(null);
 		// ALL THREE rules `lib/validations/project-form.schema.ts` states for `project_name` —
 		// `.min(1, "Project name is required")`, `.max(PROJECT_NAME_MAX_LENGTH)` and
@@ -233,72 +291,61 @@ export function ConfigureProject({
 			refuse("Connect and select a cloud account first.");
 			return;
 		}
-		setCreating(true);
 		const defaultEnvironment = {
 			name: "production",
 			stage: "production" as const,
 			region,
 		};
-		try {
-			let input: CreateProjectInput;
-			let attach = "";
-			if (source.kind === "import" && scan?.status === "READY") {
-				const base = scan.proposal.proposedProject;
-				input = {
-					...base,
-					project: {
-						...base.project,
-						project_name: name,
-						region,
-						cloud_identity_id: identityId,
-						environments,
-					},
-				};
-			} else if (source.kind === "scratch" && source.scratch === "template") {
-				// requiresCloud guarantees a cloud for the template path; narrow for buildCreateInput.
-				if (!identityId) throw new Error("A cloud account is required.");
-				input = buildCreateInput({
-					projectName: name,
-					template,
-					provider,
-					cloudIdentityId: identityId,
-					defaultEnvironment,
+		let input: CreateProjectInput;
+		let attach = "";
+		if (source.kind === "import" && scan?.status === "READY") {
+			const base = scan.proposal.proposedProject;
+			input = {
+				...base,
+				project: {
+					...base.project,
+					project_name: name,
+					region,
+					cloud_identity_id: identityId,
 					environments,
-				});
-			} else {
-				input = buildEmptyCreateInput({
-					projectName: name,
-					defaultEnvironment,
-					environments,
-				});
-				if (source.kind === "scratch" && source.scratch === "byo-helm")
-					attach = "?attachChart=1";
-				if (source.kind === "scratch" && source.scratch === "byo-iac")
-					attach = "?attachIac=1";
-			}
-			// `tryCreateProject`, not `createProject`: a refusal thrown out of a `"use server"` export
-			// is redacted to a digest in a production build, so the sentence the action wrote —
-			// "a project named … already exists" — never reached this screen and the create simply
-			// looked broken (#4644). A refusal comes back as a value and is rendered; the `catch`
-			// below is for what remains, an unexpected failure the user cannot act on.
-			const res = await tryCreateProject(input);
-			if (!res.ok) {
-				refuse(res.error);
-				setCreating(false);
+				},
+			};
+		} else if (source.kind === "scratch" && source.scratch === "template") {
+			// requiresCloud guarantees a cloud for the template path; narrow for buildCreateInput.
+			if (!identityId) {
+				refuse("Connect and select a cloud account first.");
 				return;
 			}
-			router.push(`${projectHref(orgSlug, res.project.slug ?? "")}${attach}`);
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : "Failed to create the project.",
-			);
-			setCreating(false);
+			input = buildCreateInput({
+				projectName: name,
+				template,
+				provider,
+				cloudIdentityId: identityId,
+				defaultEnvironment,
+				environments,
+			});
+		} else {
+			input = buildEmptyCreateInput({
+				projectName: name,
+				defaultEnvironment,
+				environments,
+			});
+			if (source.kind === "scratch" && source.scratch === "byo-helm")
+				attach = "?attachChart=1";
+			if (source.kind === "scratch" && source.scratch === "byo-iac")
+				attach = "?attachIac=1";
 		}
+		// `tryCreateProject`, not `createProject`: a refusal thrown out of a `"use server"` export is
+		// redacted to a digest in a production build, so the sentence the action wrote — "a project
+		// named … already exists" — never reached this screen and the create simply looked broken
+		// (#4644). `createProjectAction` returns it as a value; the mutation renders it beside the
+		// name, and toasts only what remains — an unexpected failure the user cannot act on.
+		create.mutate({ input, attach });
 	};
 
 	// ---- source-summary props ----
 	const importRepo =
-		source.kind === "import" && scan?.status === "READY"
+		scan?.status === "READY"
 			? repoLabel(scan.proposal)
 			: source.kind === "import"
 				? "your repository"
@@ -341,24 +388,15 @@ export function ConfigureProject({
 				<SourceSummary
 					mode={source.kind}
 					repo={importRepo}
-					scanning={source.kind === "import" && scan?.status === "PENDING"}
-					proposal={
-						source.kind === "import" && scan?.status === "READY"
-							? scan.proposal
-							: null
-					}
+					scanning={scan?.status === "PENDING"}
+					proposal={scan?.status === "READY" ? scan.proposal : null}
 					scratchLabel={scratchMeta?.label}
 					scratchDesc={scratchMeta?.desc}
 				/>
 
 				{/* right form */}
 				<div className="flex flex-col gap-7">
-					{source.kind === "import" && scan?.status === "NOT_FOUND" && (
-						<Notice>
-							We couldn’t find that scan. Go back and import the repository
-							again.
-						</Notice>
-					)}
+					{scan && <ScanNotice scan={scan} onRetry={retryScan} />}
 
 					<Section n="01" title="Project">
 						{/* The section heading above says "Project", not "Project name", and it labels
@@ -375,25 +413,35 @@ export function ConfigureProject({
 							value={name}
 							autoComplete="off"
 							placeholder="my-project"
-							aria-invalid={refusal !== null}
-							aria-describedby={refusal ? "project_name_error" : undefined}
-							onChange={(e) => setName(e.target.value)}
+							aria-invalid={fieldError !== null}
+							aria-describedby={fieldError ? "project_name_error" : undefined}
+							onChange={(e) => {
+								setName(e.target.value);
+								// The refusal was about the name that was there; this is a new one.
+								setRefusal(null);
+							}}
 						/>
 						{/* The refusal, BESIDE THE FIELD IT IS ABOUT and not only in a toast: a toast is
 						    gone in four seconds and the name that caused it is still in the box. This is the
 						    half of #4644 a `digest` made pointless — the sentence exists, so show it.
 						    `role="alert"` because nothing else on this screen changes when a create is
 						    refused, and `aria-describedby` so the field itself carries the reason. */}
-						{refusal && (
+						{/* A taken name found while typing is a STATUS (announced politely, it is not
+						    the answer to anything the user pressed); a refusal the Create button got
+						    back is an ALERT. One slot, so the field is described by whichever applies. */}
+						{fieldError && (
 							<p
 								id="project_name_error"
-								role="alert"
+								role={refusal ? "alert" : "status"}
 								className="mt-2 text-ui-xs text-destructive"
 							>
-								{refusal}
+								{fieldError}
 							</p>
 						)}
-						<p className="mt-2 font-mono text-ui-xs text-muted-foreground">
+						<p
+							className="mt-2 font-mono text-ui-xs text-muted-foreground"
+							aria-busy={checking || undefined}
+						>
 							{orgSlug}/<span className="text-foreground">{slug}</span>
 						</p>
 					</Section>
@@ -448,7 +496,7 @@ export function ConfigureProject({
 							type="button"
 							className="min-w-44"
 							onClick={onCreate}
-							disabled={creating || needsCloud}
+							disabled={creating || needsCloud || taken !== null}
 						>
 							{creating ? (
 								<Loader2 className="size-4 animate-spin" />
@@ -472,7 +520,7 @@ export function ConfigureProject({
 
 /** Initial form values: from a READY scan proposal, else the first connected cloud identity. */
 function deriveInitial(
-	source: Source,
+	scan: ScanResult | null,
 	integrations: ConnectorWithConnection[],
 ): {
 	name: string;
@@ -480,8 +528,8 @@ function deriveInitial(
 	identityId: string | null;
 	provider: CloudProviderSlug;
 } {
-	if (source.kind === "import" && source.initial.status === "READY") {
-		const p = source.initial.proposal;
+	if (scan?.status === "READY") {
+		const p = scan.proposal;
 		return {
 			name: p.proposedProject.project.project_name || "",
 			region: p.proposedProject.project.region || DEFAULT_REGION[p.provider],
@@ -545,6 +593,36 @@ function Section({
 			{children}
 		</section>
 	);
+}
+
+/**
+ * What the form says about an import's scan when it is not simply running or ready: gone, failed,
+ * or unreadable — three different things, so three different sentences (RUBRIC B4). Running and
+ * ready are the rail's to show.
+ */
+function ScanNotice({ scan, onRetry }: { scan: ScanResult; onRetry: () => void }) {
+	if (scan.status === "NOT_FOUND") {
+		return <Notice>We couldn’t find that scan. Go back and import the repository again.</Notice>;
+	}
+	if (scan.status === "FAILED") {
+		return (
+			<Notice>
+				The scan didn’t finish ({scan.jobStatus.toLowerCase()}). Go back and import the
+				repository again, or start from scratch.
+			</Notice>
+		);
+	}
+	if (scan.status === "ERROR") {
+		return (
+			<Notice>
+				We couldn’t check on the scan.{" "}
+				<button type="button" onClick={onRetry} className="underline underline-offset-2 hover:text-foreground">
+					Try again
+				</button>
+			</Notice>
+		);
+	}
+	return null;
 }
 
 /** A muted inline notice (needs-cloud / errors). */

@@ -333,6 +333,13 @@ const identityOf = (s: Seeded, org: Org) => (org === "x" ? s.identityX : s.ident
 /** The board's environment-scoped input for `org`'s project, on its default environment. */
 const boardInput = (s: Seeded, org: Org) => ({ projectId: projectOf(s, org), environmentId: null });
 
+/**
+ * The display name the suite seeds on `org`'s project (`seedProject` in `beforeAll`). Unlike the slug
+ * it differs per org, so a name-addressed read (#6131's `projects.nameAvailability`) can address
+ * exactly one org's project.
+ */
+const projectNameOf = (s: Seeded, org: Org) => `it-6114-${(org === "x" ? s.orgX : s.orgY).slice(0, 8)}`;
+
 /** A string field of an object output (`out.<field>`), or undefined. */
 function field(out: unknown, name: string): unknown {
 	return typeof out === "object" && out !== null && name in out ? Reflect.get(out, name) : undefined;
@@ -544,6 +551,40 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "by-id",
 		input: (s, org) => ({ projectId: org === "x" ? s.projectX : s.projectY }),
 		reveals: (out, s, org) => listHas(out, org === "x" ? s.projectJobX : s.projectJobY),
+	},
+	// ── #6131: the create flow and the duplicate dialog. ─────────────────────────────────────────
+	"projects.linkedGitProviders": {
+		// The git accounts linked to the CALLER's login (Better Auth's account rows): a property of
+		// the person, so the same at every org address. With no session cookie here it is empty at
+		// both — the claim is only that the address does not change it.
+		kind: "not-org-scoped",
+		reason: "the caller's own linked git accounts, which belong to the person, not to an org",
+		input: undefined,
+	},
+	// The scan reads are addressed by a JOB id and read it under RLS. The seeded jobs carry no repo
+	// digest, so the addressed org's job answers PENDING (and never reaches the model inference) and
+	// the other org's answers NOT_FOUND — the reveal is "this job was found".
+	"projects.scanStatus": {
+		kind: "by-id",
+		input: (s, org) => ({ jobId: jobOf(s, org) }),
+		reveals: (out) => field(out, "status") === "PENDING",
+	},
+	"projects.scanProposal": {
+		kind: "by-id",
+		input: (s, org) => ({ jobId: jobOf(s, org) }),
+		reveals: (out) => field(out, "status") === "PENDING",
+	},
+	// Addressed by a NAME: each org's project carries a distinct one, so "taken" reveals that the
+	// addressed org holds a project of that name — and only the addressed org's name may read taken.
+	"projects.nameAvailability": {
+		kind: "by-id",
+		input: (s, org) => ({ name: projectNameOf(s, org) }),
+		reveals: (out) => field(out, "available") === false,
+	},
+	"projects.duplicateTargets": {
+		kind: "by-id",
+		input: (s, org) => ({ projectId: projectOf(s, org) }),
+		reveals: (out, s, org) => field(out, "projectName") === projectNameOf(s, org),
 	},
 	// ── #6127: billing and usage. The seeded world (see `beforeAll`):
 	//   · both orgs are on Team (#6118's seed); X has AI cap 1111 credits and a paid period from
