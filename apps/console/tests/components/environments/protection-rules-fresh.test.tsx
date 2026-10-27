@@ -26,6 +26,7 @@ vi.mock("@/app/server/actions/protection", () => ({ setProtectionRules: vi.fn() 
 
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
 import { orpc } from "@/lib/rpc/client";
+import type { ProtectionRulesRead } from "@/lib/rpc/procedures/environments";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ENV = "22222222-2222-4222-8222-222222222222";
@@ -34,10 +35,17 @@ const KEY = orpc.environments.protectionRules.queryKey({
 });
 
 /** A stored rules row with the approval gate `on` or off, requiring `minCount` approvals. */
-function rules(on: boolean, minCount: number) {
+function rules(on: boolean, minCount: number): ProtectionRulesRead {
 	return {
 		environmentId: ENV,
 		rules: {
+			id: "33333333-3333-4333-8333-333333333333",
+			project_id: PROJECT,
+			environment_id: ENV,
+			user_id: "44444444-4444-4444-8444-444444444444",
+			org_id: null,
+			created_at: new Date("2026-10-01T00:00:00Z"),
+			updated_at: new Date("2026-10-01T00:00:00Z"),
 			require_predecessor: false,
 			require_verify_pass: false,
 			require_approval: on,
@@ -49,7 +57,7 @@ function rules(on: boolean, minCount: number) {
 }
 
 /** Opens the drawer over a cache that already holds `cached` — an answer from a while ago. */
-function openOver(cached: unknown) {
+function openOver(cached: ProtectionRulesRead) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 	client.setQueryData(KEY, cached);
 	render(

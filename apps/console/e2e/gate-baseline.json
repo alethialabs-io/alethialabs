@@ -358,7 +358,7 @@
 			"flows/deploy-jobs.negative.spec.ts": {
 				"Deploy jobs — negative & empty states › a non-existent job id renders the not-found state with a way back": "passed",
 				"Deploy jobs — negative & empty states › an undeployed project shows the clusters empty state": "passed",
-				"Deploy jobs — negative & empty states › a single-environment project hides Promote and says why, without claiming to be empty": "passed",
+				"Deploy jobs — negative & empty states › a single-environment project disables Promote and says why, without claiming to be empty": "passed",
 				"Deploy jobs — negative & empty states › the New Environment dialog refuses an empty name": "passed",
 				"Deploy jobs — negative & empty states › toggling 'Require approval' reveals the approvals-required input": "passed",
 				"Deploy jobs — negative & empty states › the gates drawer offers the two numeric gates as off-by-default": "passed"
