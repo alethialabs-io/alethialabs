@@ -224,8 +224,11 @@ export function readTools(opts?: { environmentId?: string | null }) {
 			execute: async () => {
 				const clusters = await getClusters();
 				return {
+					// One entry per CLUSTER: a project runs one per environment, so the id is the cluster
+					// row's (the id an @-mention of a cluster carries) and the project's travels beside it.
 					clusters: clusters.map((c) => ({
-						id: c.id,
+						id: c.project_cluster ? c.project_cluster.id : c.id,
+						project_id: c.id,
 						name: c.project_name,
 						region: c.region,
 						environment: c.environment_stage,
