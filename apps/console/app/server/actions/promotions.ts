@@ -12,8 +12,17 @@
 // applyPromotionApproval, finalizePromotionOnDeploy, failPromotionForJob) lives in
 // lib/promotions/lifecycle.ts: in this `"use server"` file each would be a public, unauthorized
 // Server Action. Do not move it back, and do not re-export it from here.
+//
+// THE MUTATION CONTRACT (ADR 0005 D4, #6120). Every export returns `ActionResult<T>` through
+// `defineAction`: a refusal the user can act on is an `ActionRefusal` whose sentence reaches the
+// dialog verbatim, an unexpected failure is a reference id, and the client wraps each in
+// `useActionMutation`. The reads this file used to serve (the promotion list, a promotion's detail,
+// the promote dialog's preview) are GET procedures in `lib/rpc/procedures/environments.ts`.
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { arrayIncludes } from "@/lib/type-guards";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
@@ -24,7 +33,6 @@ import {
 	projectEnvironments,
 	projects,
 	promotionApprovals,
-	user,
 } from "@/lib/db/schema";
 import { projectOrgRefusal } from "@/lib/projects/project-org";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
@@ -41,11 +49,8 @@ import {
 	type PromotionRow,
 	type ProtectionRow,
 } from "@/lib/promotions/lifecycle";
-import type {
-	ApproverSpec,
-	GateResult,
-	PromotionDiff,
-} from "@/types/jsonb.types";
+import { promotionInActorOrg } from "@/lib/promotions/org-binding";
+import type { ApproverSpec } from "@/types/jsonb.types";
 import {
 	getProjectAsFormData,
 	reconcileEnvironmentComponents,
@@ -60,49 +65,60 @@ const STAGE_ORDER: Record<EnvironmentStage, number> = {
 };
 
 /**
- * What {@link promoteEnvironment} answers: the promotion and its PLAN job, or a refusal the user can
- * act on, as a VALUE.
+ * What a queued promotion answers: the promotion and its PLAN job.
  *
- * WHY A VALUE (#5454). Every refusal here used to be THROWN, and the promote dialog toasted
- * `err.message`. In a production build Next replaces a message thrown out of a `"use server"` export
- * with a digest, so "a promotion can only target an equal or higher stage", "already in progress"
- * and every deploy-time gate the PLAN runs (no cloud account linked, the free daily job quota, a job
- * already in flight…) reached the user as noise. "Environment not found for this project" and an
- * authorization failure still throw: neither is something the person in the dialog can fix.
+ * WHY REFUSALS ARE VALUES (#5454). Every refusal here used to be THROWN, and the promote dialog
+ * toasted `err.message`. In a production build Next replaces a message thrown out of a `"use server"`
+ * export with a digest, so "a promotion can only target an equal or higher stage", "already in
+ * progress" and every deploy-time gate the PLAN runs (no cloud account linked, the free daily job
+ * quota, a job already in flight…) reached the user as noise. They are `ActionRefusal`s now, which
+ * `defineAction` returns as `{ ok: false, error: { kind: "conflict", message } }` — the sentence
+ * survives the production build.
  */
-export type PromoteResult =
-	| { ok: true; promotionId: string; planJobId: string }
-	| { ok: false; error: string };
+export interface PromoteQueued {
+	promotionId: string;
+	planJobId: string;
+}
 
 /**
  * Promotes `sourceEnvId`'s structural design onto `targetEnvId`: writes the merged candidate into the
  * target (preserving the target's sizing/placement), records the promotion, and queues a PLAN. Gates
- * are evaluated when the PLAN completes (advancePromotionOnPlan). Returns the promotion + plan job ids,
- * or a refusal (see {@link PromoteResult}).
+ * are evaluated when the PLAN completes (advancePromotionOnPlan). Returns the promotion + plan job ids;
+ * a refusal the user can act on is an `ActionRefusal` (see {@link PromoteQueued}).
  *
  * When the PLAN itself is refused, the promotion is marked FAILED with the reason and the target's
  * previous design is written back. Before #5454 the refusal was thrown after both writes, which left
  * the promotion PENDING_PLAN with no plan job — holding the one-in-flight-per-target slot — and the
  * target already carrying the source's design, so a retry found "no structural changes to promote".
  */
-export async function promoteEnvironment(
+async function promote(
 	projectId: string,
 	sourceEnvId: string,
 	targetEnvId: string,
 	opts?: { includeRemovals?: boolean; runnerId?: string | null },
-): Promise<PromoteResult> {
+): Promise<PromoteQueued> {
+	// The project is bound to the ADDRESSED org before the PDP is asked, as every other entry point
+	// here does (lib/promotions/org-binding.ts): an org-wide `deploy` grant answers for any project
+	// id. A project of the caller's own personal workspace, addressed from a team org, is refused with
+	// a sentence the person can act on; any other org's project reads exactly like an unknown id.
+	const scope = await currentActor();
+	const [project] = await getServiceDb()
+		.select({ org_id: projects.org_id })
+		.from(projects)
+		.where(eq(projects.id, projectId))
+		.limit(1);
+	const orgRefusal = project ? projectOrgRefusal(project.org_id, scope) : null;
+	if (!project || (orgRefusal && project.org_id !== scope.userId))
+		throw new ActionRefusal("not-found", "Project not found.");
+	if (orgRefusal) throw new ActionRefusal("conflict", orgRefusal);
+
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	const owner = actor.userId;
 	if (sourceEnvId === targetEnvId)
-		return { ok: false, error: "Source and target environments must differ." };
+		throw new ActionRefusal("conflict", "Source and target environments must differ.");
 
 	// Validate both environments belong to the project + check stage order and target state.
-	const { source, target, projectOrgId } = await withActorScope(actor, async (tx) => {
-		const [project] = await tx
-			.select({ org_id: projects.org_id })
-			.from(projects)
-			.where(eq(projects.id, projectId))
-			.limit(1);
+	const { source, target } = await withActorScope(actor, async (tx) => {
 		const rows = await tx
 			.select()
 			.from(projectEnvironments)
@@ -115,24 +131,17 @@ export async function promoteEnvironment(
 		return {
 			source: rows.find((r) => r.id === sourceEnvId),
 			target: rows.find((r) => r.id === targetEnvId),
-			projectOrgId: project?.org_id ?? null,
 		};
 	});
-	// The promotion and its jobs belong to the project's org; refuse before anything is written.
-	const orgRefusal = projectOrgRefusal(projectOrgId, actor);
-	if (source && target && orgRefusal) return { ok: false, error: orgRefusal };
 	if (!source || !target)
-		throw new Error("Environment not found for this project");
+		throw new ActionRefusal("not-found", "Environment not found for this project");
 	if (STAGE_ORDER[target.stage] < STAGE_ORDER[source.stage])
-		return {
-			ok: false,
-			error: "A promotion can only target an equal or higher stage.",
-		};
+		throw new ActionRefusal("conflict", "A promotion can only target an equal or higher stage.");
 	if (["QUEUED", "PROVISIONING", "DESTROYING", "DESTROYED"].includes(target.status))
-		return {
-			ok: false,
-			error: `Target environment is ${target.status.toLowerCase()} — try again later.`,
-		};
+		throw new ActionRefusal(
+			"conflict",
+			`Target environment is ${target.status.toLowerCase()} — try again later.`,
+		);
 
 	// Compute the diff + candidate from the two designs.
 	const sourceDesign = (await getProjectAsFormData(projectId, sourceEnvId)).formData;
@@ -140,10 +149,10 @@ export async function promoteEnvironment(
 	const includeRemovals = opts?.includeRemovals ?? false;
 	const diff = diffDesigns(sourceDesign, targetDesign, includeRemovals);
 	if (diffIsEmpty(diff))
-		return {
-			ok: false,
-			error: "No structural changes to promote between these environments.",
-		};
+		throw new ActionRefusal(
+			"conflict",
+			"No structural changes to promote between these environments.",
+		);
 	const merged = mergeChangeset(sourceDesign, targetDesign, includeRemovals);
 	const candidateHash = structuralHash(sourceDesign);
 
@@ -169,10 +178,10 @@ export async function promoteEnvironment(
 		});
 	} catch (err) {
 		if (err instanceof Error && /unique|duplicate|one_active_per_target/i.test(err.message))
-			return {
-				ok: false,
-				error: "A promotion into this environment is already in progress.",
-			};
+			throw new ActionRefusal(
+				"conflict",
+				"A promotion into this environment is already in progress.",
+			);
 		throw err;
 	}
 
@@ -194,10 +203,10 @@ export async function promoteEnvironment(
 				.where(eq(environmentPromotions.id, promotion.id)),
 		);
 		await reconcileEnvironmentComponents(projectId, targetEnvId, targetDesign);
-		return {
-			ok: false,
-			error: `${planned.error} The promotion was stopped and ${target.name} was left as it was.`,
-		};
+		throw new ActionRefusal(
+			"conflict",
+			`${planned.error} The promotion was stopped and ${target.name} was left as it was.`,
+		);
 	}
 	await withActorScope(actor, (tx) =>
 		tx
@@ -206,45 +215,67 @@ export async function promoteEnvironment(
 			.where(eq(environmentPromotions.id, promotion.id)),
 	);
 
-	return { ok: true, promotionId: promotion.id, planJobId: planned.jobId };
+	return { promotionId: promotion.id, planJobId: planned.jobId };
 }
 
-/** Computes (without side effects) the promotable diff from source→target, for the promote dialog. */
-export async function previewPromotion(
-	projectId: string,
-	sourceEnvId: string,
-	targetEnvId: string,
-	includeRemovals = false,
-): Promise<PromotionDiff> {
-	await authorize("view", { type: "project", id: projectId });
-	if (sourceEnvId === targetEnvId)
-		return { changes: [], summary: [], include_removals: includeRemovals };
-	const source = (await getProjectAsFormData(projectId, sourceEnvId)).formData;
-	const target = (await getProjectAsFormData(projectId, targetEnvId)).formData;
-	return diffDesigns(source, target, includeRemovals);
+/** A promotion request, as the promote dialog sends it. */
+const promoteInput = z.object({
+	projectId: z.uuid(),
+	sourceEnvId: z.uuid(),
+	targetEnvId: z.uuid(),
+	includeRemovals: z.boolean().optional(),
+	runnerId: z.string().min(1).max(200).nullable().optional(),
+});
+
+/**
+ * {@link promote} through the mutation contract: refusals come back as values, never as digests.
+ * A `"use server"` file exports only async functions, so the contract is applied inside one.
+ */
+export async function promoteEnvironment(
+	raw: z.input<typeof promoteInput>,
+): Promise<ActionResult<PromoteQueued>> {
+	return defineAction({
+		input: promoteInput,
+		run: ({ input }) =>
+			promote(input.projectId, input.sourceEnvId, input.targetEnvId, {
+				includeRemovals: input.includeRemovals,
+				runnerId: input.runnerId,
+			}),
+	})(raw);
 }
+
+/** A decision on one promotion, addressed by id; the comment is optional. */
+const decisionInput = z.object({
+	promotionId: z.uuid(),
+	comment: z.string().max(2000).optional(),
+});
 
 /** Approves one required slot on a promotion; enqueues the DEPLOY once all gates clear. */
-export async function approvePromotion(
-	promotionId: string,
-	comment?: string,
-): Promise<void> {
+async function approve(promotionId: string, comment?: string): Promise<null> {
 	const { actor, promotion, orgId, rulesRow } = await loadForDecision(promotionId);
 	if (promotion.status !== "PENDING_APPROVAL")
-		throw new Error("This promotion is not awaiting approval");
+		throw new ActionRefusal("conflict", "This promotion is not awaiting approval.");
 	await assertApprover(actor, orgId, rulesRow);
 	// Authorization done → run the shared service-role approval body (claim slot + re-evaluate gates).
 	await applyPromotionApproval(promotionId, actor.userId, comment);
+	return null;
+}
+
+/** {@link approve} through the mutation contract. */
+export async function approvePromotion(
+	raw: z.input<typeof decisionInput>,
+): Promise<ActionResult<null>> {
+	return defineAction({
+		input: decisionInput,
+		run: ({ input }) => approve(input.promotionId, input.comment),
+	})(raw);
 }
 
 /** Rejects a promotion (records the decision + cancels it). */
-export async function rejectPromotion(
-	promotionId: string,
-	comment?: string,
-): Promise<void> {
+async function reject(promotionId: string, comment?: string): Promise<null> {
 	const { actor, promotion, orgId, rulesRow } = await loadForDecision(promotionId);
 	if (promotion.status !== "PENDING_APPROVAL")
-		throw new Error("This promotion is not awaiting approval");
+		throw new ActionRefusal("conflict", "This promotion is not awaiting approval.");
 	await assertApprover(actor, orgId, rulesRow);
 	const db = getServiceDb();
 	const [open] = await db
@@ -271,188 +302,42 @@ export async function rejectPromotion(
 			updated_at: new Date(),
 		})
 		.where(eq(environmentPromotions.id, promotionId));
+	return null;
+}
+
+/** {@link reject} through the mutation contract. */
+export async function rejectPromotion(
+	raw: z.input<typeof decisionInput>,
+): Promise<ActionResult<null>> {
+	return defineAction({
+		input: decisionInput,
+		run: ({ input }) => reject(input.promotionId, input.comment),
+	})(raw);
 }
 
 /** Cancels an in-flight promotion (leaves the written candidate design in place). */
-export async function cancelPromotion(promotionId: string): Promise<void> {
+async function cancel(promotionId: string): Promise<null> {
 	const { promotion } = await loadForDecision(promotionId);
 	if (!arrayIncludes(IN_FLIGHT, promotion.status))
-		throw new Error("Only an in-flight promotion can be cancelled");
+		throw new ActionRefusal("conflict", "Only an in-flight promotion can be cancelled.");
 	await getServiceDb()
 		.update(environmentPromotions)
 		.set({ status: "CANCELLED", completed_at: new Date(), updated_at: new Date() })
 		.where(eq(environmentPromotions.id, promotionId));
+	return null;
 }
 
-/** Lists a project's promotions (optionally scoped to a target env), newest first. */
-export async function listPromotions(projectId: string, envId?: string | null) {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, (tx) =>
-		tx
-			.select()
-			.from(environmentPromotions)
-			.where(
-				envId
-					? and(
-							eq(environmentPromotions.project_id, projectId),
-							eq(environmentPromotions.target_environment_id, envId),
-						)
-					: eq(environmentPromotions.project_id, projectId),
-			)
-			.orderBy(desc(environmentPromotions.created_at)),
-	);
-}
-
-/** A single promotion with its approval slots. */
-export async function getPromotion(promotionId: string) {
-	const { promotion } = await promotionInActorOrg(promotionId, "view");
-	const db = getServiceDb();
-	const approvals = await db
-		.select()
-		.from(promotionApprovals)
-		.where(eq(promotionApprovals.promotion_id, promotionId));
-	return { promotion, approvals };
-}
-
-/** One approval slot, enriched with the approver's display name for the UI. */
-export interface PromotionApprovalSlot {
-	id: string;
-	status: "pending" | "approved" | "rejected";
-	/** Approver display name; null while the slot is still pending. */
-	name: string | null;
-	initials: string | null;
-	requiredRole: string | null;
-	comment: string | null;
-	decidedAt: string | null;
-}
-
-/** A promotion hydrated for the redesigned panel + detail overlay. */
-export interface PromotionDetail {
-	id: string;
-	status: string;
-	sourceName: string;
-	targetName: string;
-	/** Per-gate results from the stored evaluation ([] until the plan has run). */
-	gates: GateResult[];
-	overall: string | null;
-	approvals: PromotionApprovalSlot[];
-	approved: number;
-	required: number;
-	diff: PromotionDiff | null;
-	initiator: string | null;
-	createdAt: string;
-}
-
-/** Two-letter initials from a display name (e.g. "Ivo Karadzhov" → "IK"). */
-function initialsOf(name: string): string {
-	const parts = name.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return "?";
-	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-/**
- * A promotion hydrated for the UI — gate results (from the stored evaluation), approval slots with
- * the approver's name, the source/target env names, the diff, and the initiator. Gates on project
- * `view`. Used by the active-promotion panel and the detail overlay.
- */
-export async function getPromotionDetail(
-	promotionId: string,
-): Promise<PromotionDetail> {
-	const { promotion } = await promotionInActorOrg(promotionId, "view");
-	const db = getServiceDb();
-
-	const [envs, approvalRows] = await Promise.all([
-		db
-			.select({ id: projectEnvironments.id, name: projectEnvironments.name })
-			.from(projectEnvironments)
-			.where(
-				inArray(projectEnvironments.id, [
-					promotion.source_environment_id,
-					promotion.target_environment_id,
-				]),
-			),
-		db
-			.select({
-				id: promotionApprovals.id,
-				status: promotionApprovals.status,
-				required_role: promotionApprovals.required_role,
-				comment: promotionApprovals.comment,
-				decided_at: promotionApprovals.decided_at,
-				approver_name: user.name,
-				approver_email: user.email,
-			})
-			.from(promotionApprovals)
-			.leftJoin(user, eq(user.id, promotionApprovals.decided_by))
-			.where(eq(promotionApprovals.promotion_id, promotionId)),
-	]);
-	const nameOf = (id: string) => envs.find((e) => e.id === id)?.name ?? "—";
-
-	const [initiator] = promotion.user_id
-		? await db
-				.select({ name: user.name, email: user.email })
-				.from(user)
-				.where(eq(user.id, promotion.user_id))
-				.limit(1)
-		: [];
-
-	const approvals: PromotionApprovalSlot[] = approvalRows.map((a) => {
-		const display = a.approver_name || a.approver_email || null;
-		return {
-			id: a.id,
-			status: a.status,
-			name: display,
-			initials: display ? initialsOf(display) : null,
-			requiredRole: a.required_role,
-			comment: a.comment,
-			decidedAt: a.decided_at ? a.decided_at.toISOString() : null,
-		};
-	});
-
-	return {
-		id: promotion.id,
-		status: promotion.status,
-		sourceName: nameOf(promotion.source_environment_id),
-		targetName: nameOf(promotion.target_environment_id),
-		gates: promotion.gate_evaluations?.results ?? [],
-		overall: promotion.gate_evaluations?.overall ?? null,
-		approvals,
-		approved: approvals.filter((a) => a.status === "approved").length,
-		required: approvals.length,
-		diff: promotion.diff_summary ?? null,
-		initiator: initiator?.name || initiator?.email || null,
-		createdAt: promotion.created_at.toISOString(),
-	};
+/** {@link cancel} through the mutation contract. */
+export async function cancelPromotion(
+	raw: z.input<typeof decisionInput>,
+): Promise<ActionResult<null>> {
+	return defineAction({
+		input: decisionInput,
+		run: ({ input }) => cancel(input.promotionId),
+	})(raw);
 }
 
 // --- internals ------------------------------------------------------------------------------------
-
-/**
- * Resolves a promotion WITHIN the addressed organization, then authorizes the caller for its project.
- *
- * The promotion is read on the service role, so the org predicate here is the tenancy wall: the
- * project's `org_id` must be the actor's org. A promotion of any other organization is reported
- * exactly like an id that does not exist, and the PDP is never asked about its project — an org-wide
- * grant matches any project id, so asking it would answer for a project this org does not own.
- * The project's org is the source of truth (`environment_promotions.org_id` is nullable).
- */
-async function promotionInActorOrg(
-	promotionId: string,
-	action: "view" | "deploy",
-): Promise<{ actor: Actor; promotion: PromotionRow; orgId: string }> {
-	const scope = await currentActor();
-	const [row] = await getServiceDb()
-		.select({ promotion: environmentPromotions, orgId: projects.org_id })
-		.from(environmentPromotions)
-		.innerJoin(projects, eq(projects.id, environmentPromotions.project_id))
-		.where(and(eq(environmentPromotions.id, promotionId), eq(projects.org_id, scope.orgId)))
-		.limit(1);
-	if (!row?.orgId) throw new Error("Promotion not found");
-	const actor = await authorize(action, { type: "project", id: row.promotion.project_id });
-	// `authorize` resolves the actor again; it must be the same organization the row was bound to.
-	if (actor.orgId !== row.orgId) throw new Error("Promotion not found");
-	return { actor, promotion: row.promotion, orgId: row.orgId };
-}
 
 /**
  * Loads a promotion of the actor's organization + its target env's rules for a decision action
@@ -494,5 +379,7 @@ async function assertApprover(
 			.limit(1);
 		if (m && (m.role === spec.role || m.role === "owner" || m.role === "admin")) return;
 	}
-	throw new Error("You are not an approver for this environment");
+	// A refusal with its sentence, not a bare permission error: the person can see the promotion and
+	// may deploy, so "you don't have permission" would not tell them it is the approver list.
+	throw new ActionRefusal("conflict", "You are not an approver for this environment.");
 }

@@ -8,6 +8,10 @@
 // called the throwing `planProject` inside itself. Each case asserts the refusal RESOLVES as
 // `{ ok: false, error }`; against origin/dev every one fails, because the action rejects.
 //
+// Since #6120 the action is on the mutation contract (ADR 0005 D4): it takes one object, validates
+// it (the ids are UUIDs), and a refusal is `{ ok: false, error: { kind: "conflict", message } }` —
+// the same sentence, as a typed `ActionResult` the dialog renders inline.
+//
 // The plan-refusal case pins the second half of the defect: the refusal arrived AFTER the
 // promotion row and the target's new design were both written, so the promotion sat PENDING_PLAN
 // with no plan job (holding the target's one-in-flight slot) and the target already carried the
@@ -18,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(async () => ({ orgId: "org-1", userId: "u1" })),
+	currentActor: vi.fn(async () => ({ orgId: "org-1", userId: "u1" })),
 }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withActorScope: vi.fn() }));
 vi.mock("@/lib/promotions/lifecycle", () => ({
@@ -57,7 +62,8 @@ import {
 	reconcileEnvironmentComponents,
 	tryPlanProject,
 } from "@/app/server/actions/projects";
-import { withActorScope } from "@/lib/db";
+import { authorize } from "@/lib/authz/guard";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { diffIsEmpty } from "@/lib/promotions/diff";
 
@@ -68,8 +74,27 @@ interface EnvRow {
 	status: string;
 }
 
-const DEV: EnvRow = { id: "env-dev", name: "development", stage: "development", status: "ACTIVE" };
-const PROD: EnvRow = { id: "env-prod", name: "production", stage: "production", status: "ACTIVE" };
+const P1 = "11111111-1111-4111-8111-111111111111";
+const ENV_DEV = "22222222-2222-4222-8222-222222222222";
+const ENV_PROD = "33333333-3333-4333-8333-333333333333";
+const ENV_GONE = "44444444-4444-4444-8444-444444444444";
+
+const DEV: EnvRow = { id: ENV_DEV, name: "development", stage: "development", status: "ACTIVE" };
+const PROD: EnvRow = { id: ENV_PROD, name: "production", stage: "production", status: "ACTIVE" };
+
+/** Calls the action the way the promote dialog does: one object, project + pair (+ options). */
+function promote(
+	sourceEnvId: string,
+	targetEnvId: string,
+	opts: { includeRemovals?: boolean; runnerId?: string | null } = {},
+) {
+	return promoteEnvironment({ projectId: P1, sourceEnvId, targetEnvId, ...opts });
+}
+
+/** A refusal the user can act on, as the contract returns it. */
+function refusal(message: string) {
+	return { ok: false, error: { kind: "conflict", message } };
+}
 
 /** Every `.set(...)` the action issued on the promotion row, in order. */
 let updates: Record<string, unknown>[] = [];
@@ -81,6 +106,15 @@ let insertFails: Error | null = null;
  * then the promotion insert and recorded updates.
  */
 function mockScope(envs: EnvRow[], projectOrg: string | null = "org-1") {
+	// The org binding's project lookup, on the service role, BEFORE the PDP (null: no such project).
+	const service = {
+		select: () => ({
+			from: () => ({
+				where: () => ({ limit: async () => (projectOrg === null ? [] : [{ org_id: projectOrg }]) }),
+			}),
+		}),
+	};
+	vi.mocked(getServiceDb).mockReturnValue(service as never);
 	const tx = {
 		select: () => ({
 			from: (table: unknown) =>
@@ -120,46 +154,41 @@ beforeEach(() => {
 describe("promoteEnvironment — a refusal is a value", () => {
 	it("refuses a project of the personal workspace from a team org, before anything is written", async () => {
 		mockScope([DEV, PROD], "u1");
-		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
-			ok: false,
-			error: "This project belongs to your personal workspace — switch to it to run this.",
-		});
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal("This project belongs to your personal workspace — switch to it to run this."));
 		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
 		expect(tryPlanProject).not.toHaveBeenCalled();
 	});
 
-	it("refuses a promotion to a lower stage", async () => {
-		await expect(promoteEnvironment("p1", "env-prod", "env-dev")).resolves.toEqual({
+	it("another organization's project reads like an unknown one — before the PDP is asked", async () => {
+		mockScope([DEV, PROD], "org-2");
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual({
 			ok: false,
-			error: "A promotion can only target an equal or higher stage.",
+			error: { kind: "not-found", message: "Project not found." },
 		});
+		expect(authorize).not.toHaveBeenCalled();
+		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
+	});
+
+	it("refuses a promotion to a lower stage", async () => {
+		await expect(promote(ENV_PROD, ENV_DEV)).resolves.toEqual(refusal("A promotion can only target an equal or higher stage."));
 		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
 	});
 
 	it("refuses a target that is busy, naming its state", async () => {
 		mockScope([DEV, { ...PROD, status: "PROVISIONING" }]);
-		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
-			ok: false,
-			error: "Target environment is provisioning — try again later.",
-		});
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal("Target environment is provisioning — try again later."));
 	});
 
 	it("refuses when there is nothing structural to promote", async () => {
 		vi.mocked(diffIsEmpty).mockReturnValue(true);
-		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
-			ok: false,
-			error: "No structural changes to promote between these environments.",
-		});
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal("No structural changes to promote between these environments."));
 	});
 
 	it("refuses a second promotion into a target that already has one in flight", async () => {
 		insertFails = new Error(
 			'duplicate key value violates unique constraint "environment_promotions_one_active_per_target"',
 		);
-		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
-			ok: false,
-			error: "A promotion into this environment is already in progress.",
-		});
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal("A promotion into this environment is already in progress."));
 		expect(reconcileEnvironmentComponents).not.toHaveBeenCalled();
 	});
 
@@ -167,12 +196,9 @@ describe("promoteEnvironment — a refusal is a value", () => {
 		const gate = "No cloud account linked to this project. Go to Connectors to connect.";
 		vi.mocked(tryPlanProject).mockResolvedValue({ ok: false, error: gate });
 
-		await expect(promoteEnvironment("p1", "env-dev", "env-prod")).resolves.toEqual({
-			ok: false,
-			error: `${gate} The promotion was stopped and production was left as it was.`,
-		});
+		await expect(promote(ENV_DEV, ENV_PROD)).resolves.toEqual(refusal(`${gate} The promotion was stopped and production was left as it was.`));
 
-		expect(tryPlanProject).toHaveBeenCalledWith("p1", null, "env-prod");
+		expect(tryPlanProject).toHaveBeenCalledWith(P1, null, ENV_PROD);
 		// The promotion no longer holds the target's in-flight slot, and says why.
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toMatchObject({
@@ -181,8 +207,8 @@ describe("promoteEnvironment — a refusal is a value", () => {
 		});
 		// First the candidate, then the target's own previous design.
 		expect(vi.mocked(reconcileEnvironmentComponents).mock.calls).toEqual([
-			["p1", "env-prod", { design: "merged" }],
-			["p1", "env-prod", { design: "env-prod" }],
+			[P1, ENV_PROD, { design: "merged" }],
+			[P1, ENV_PROD, { design: ENV_PROD }],
 		]);
 	});
 });
@@ -190,17 +216,25 @@ describe("promoteEnvironment — a refusal is a value", () => {
 describe("promoteEnvironment — the queued path", () => {
 	it("answers ok with the promotion and its plan job, and records the plan job", async () => {
 		await expect(
-			promoteEnvironment("p1", "env-dev", "env-prod", { runnerId: "r-1" }),
-		).resolves.toEqual({ ok: true, promotionId: "promo-1", planJobId: "job-1" });
-		expect(tryPlanProject).toHaveBeenCalledWith("p1", "r-1", "env-prod");
+			promote(ENV_DEV, ENV_PROD, { runnerId: "r-1" }),
+		).resolves.toEqual({ ok: true, data: { promotionId: "promo-1", planJobId: "job-1" } });
+		expect(tryPlanProject).toHaveBeenCalledWith(P1, "r-1", ENV_PROD);
 		expect(updates).toEqual([expect.objectContaining({ plan_job_id: "job-1" })]);
 		expect(reconcileEnvironmentComponents).toHaveBeenCalledTimes(1);
 	});
 
-	it("an environment outside the project still throws — it is not advice", async () => {
+	it("an environment outside the project is not-found — not a conflict the dialog offers to fix", async () => {
 		mockScope([DEV]);
-		await expect(promoteEnvironment("p1", "env-dev", "env-gone")).rejects.toThrow(
-			"Environment not found for this project",
-		);
+		await expect(promote(ENV_DEV, ENV_GONE)).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Environment not found for this project" },
+		});
+	});
+
+	it("refuses an input that is not a pair of ids before anything is read", async () => {
+		await expect(
+			promoteEnvironment({ projectId: P1, sourceEnvId: "env-dev", targetEnvId: ENV_PROD }),
+		).resolves.toMatchObject({ ok: false, error: { kind: "validation" } });
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });

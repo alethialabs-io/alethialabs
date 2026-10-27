@@ -80,6 +80,8 @@ vi.mock("@/lib/rpc/client", () => {
 				fleet: proc("runners.fleet"),
 				fleetEconomics: proc("runners.fleetEconomics"),
 			},
+			// The Environments page's reads ride the environments and jobs topics (#6120).
+			environments: { key: () => ["environments-orpc"], overview: { key: () => ["environments-orpc", "overview"] } },
 		},
 	};
 });

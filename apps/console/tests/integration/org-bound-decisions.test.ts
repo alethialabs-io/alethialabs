@@ -10,10 +10,13 @@
 // (the positive control in each block) goes through. Rows are seeded on the service connection and
 // the actions run under an injected actor (the runWithActor seam the MCP server uses).
 //
-// Covered: promotion decisions and reads (approve / reject / cancel / getPromotion /
-// getPromotionDetail), alert policy updates (every other alert write: alerts-org-bound.test.ts),
-// classification assignment, and the classification
-// values the promotion gate engine reads for an environment.
+// Covered: promotion decisions and reads (approve / reject / cancel, and the promotion detail read
+// the Environments page serves — `readPromotionDetail`, #6120), alert policy updates (every other
+// alert write: alerts-org-bound.test.ts), classification assignment, and the classification values
+// the promotion gate engine reads for an environment.
+//
+// The decisions return `ActionResult` (#6120, ADR 0005 D4): another organization's promotion is
+// `{ ok: false, error: { kind: "not-found" } }` — a value, as an unknown id is — not a throw.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -51,8 +54,6 @@ import { assignClassification } from "@/app/server/actions/classification/assign
 import {
 	approvePromotion,
 	cancelPromotion,
-	getPromotion,
-	getPromotionDetail,
 	rejectPromotion,
 } from "@/app/server/actions/promotions";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -72,6 +73,7 @@ import {
 	promotionApprovals,
 } from "@/lib/db/schema";
 import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
+import { readPromotionDetail } from "@/lib/rpc/procedures/environments";
 import { describeIfDb } from "./db";
 
 // Two organizations. The ids are user ids too, so each is its owner's personal org — the
@@ -86,6 +88,9 @@ const ACTOR_A: Actor = {
 	orgId: ORG_A,
 	entitlements: { ...COMMUNITY_ENTITLEMENTS, alerting: true },
 };
+
+/** What a decision answers for another organization's promotion — exactly an unknown id's answer. */
+const NOT_FOUND = { ok: false, error: { kind: "not-found", message: "Promotion not found" } };
 
 /** Runs `fn` as org A's actor. */
 function asA<T>(fn: () => Promise<T>): Promise<T> {
@@ -177,7 +182,7 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 	describe("promotions", () => {
 		it("approve: another organization's promotion is not found, its slot stays pending", async () => {
 			const b = await seedPendingPromotion(ORG_B);
-			await expect(asA(() => approvePromotion(b.promotionId))).rejects.toThrow("Promotion not found");
+			expect(await asA(() => approvePromotion({ promotionId: b.promotionId }))).toEqual(NOT_FOUND);
 			expect(await stateOf(b.promotionId)).toEqual({
 				status: "PENDING_APPROVAL",
 				error: null,
@@ -191,16 +196,18 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 			const a = await seedPendingPromotion(ORG_A);
 			// No plan job is seeded, so the gate re-evaluation after the claim stops here — which is
 			// past the slot write this control is about.
-			await expect(asA(() => approvePromotion(a.promotionId))).rejects.toThrow(
-				"Promotion plan job not found",
-			);
+			// That failure is not a refusal the user can act on, so it is an `unexpected` result.
+			expect(await asA(() => approvePromotion({ promotionId: a.promotionId }))).toMatchObject({
+				ok: false,
+				error: { kind: "unexpected" },
+			});
 			expect((await stateOf(a.promotionId)).slots).toEqual([{ status: "approved", by: ORG_A }]);
 		});
 
 		it("reject: another organization's promotion is not found and stays pending", async () => {
 			const b = await seedPendingPromotion(ORG_B);
-			await expect(asA(() => rejectPromotion(b.promotionId, "no"))).rejects.toThrow(
-				"Promotion not found",
+			expect(await asA(() => rejectPromotion({ promotionId: b.promotionId, comment: "no" }))).toEqual(
+				NOT_FOUND,
 			);
 			expect(await stateOf(b.promotionId)).toEqual({
 				status: "PENDING_APPROVAL",
@@ -211,7 +218,10 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 
 		it("reject (control): the org's own promotion is rejected", async () => {
 			const a = await seedPendingPromotion(ORG_A);
-			await asA(() => rejectPromotion(a.promotionId, "no"));
+			expect(await asA(() => rejectPromotion({ promotionId: a.promotionId, comment: "no" }))).toEqual({
+				ok: true,
+				data: null,
+			});
 			expect(await stateOf(a.promotionId)).toEqual({
 				status: "CANCELLED",
 				error: "Rejected: no",
@@ -221,32 +231,33 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 
 		it("cancel: another organization's promotion is not found and stays in flight", async () => {
 			const b = await seedPendingPromotion(ORG_B);
-			await expect(asA(() => cancelPromotion(b.promotionId))).rejects.toThrow("Promotion not found");
+			expect(await asA(() => cancelPromotion({ promotionId: b.promotionId }))).toEqual(NOT_FOUND);
 			expect((await stateOf(b.promotionId)).status).toBe("PENDING_APPROVAL");
 		});
 
 		it("cancel (control): the org's own promotion is cancelled", async () => {
 			const a = await seedPendingPromotion(ORG_A);
-			await asA(() => cancelPromotion(a.promotionId));
+			expect(await asA(() => cancelPromotion({ promotionId: a.promotionId }))).toEqual({
+				ok: true,
+				data: null,
+			});
 			expect((await stateOf(a.promotionId)).status).toBe("CANCELLED");
 		});
 
 		it("reads: another organization's promotion is not found, exactly like an unknown id", async () => {
 			const b = await seedPendingPromotion(ORG_B);
-			await expect(asA(() => getPromotion(b.promotionId))).rejects.toThrow("Promotion not found");
-			await expect(asA(() => getPromotionDetail(b.promotionId))).rejects.toThrow(
+			await expect(asA(() => readPromotionDetail(b.promotionId))).rejects.toThrow(
 				"Promotion not found",
 			);
-			await expect(asA(() => getPromotion(randomUUID()))).rejects.toThrow("Promotion not found");
+			await expect(asA(() => readPromotionDetail(randomUUID()))).rejects.toThrow(
+				"Promotion not found",
+			);
 			expect(pdpCalls.ids).not.toContain(b.projectId);
 		});
 
 		it("reads (control): the org's own promotion is returned", async () => {
 			const a = await seedPendingPromotion(ORG_A);
-			const { promotion, approvals } = await asA(() => getPromotion(a.promotionId));
-			expect(promotion.id).toBe(a.promotionId);
-			expect(approvals).toHaveLength(1);
-			const detail = await asA(() => getPromotionDetail(a.promotionId));
+			const detail = await asA(() => readPromotionDetail(a.promotionId));
 			expect(detail).toMatchObject({ id: a.promotionId, targetName: "prod", required: 1 });
 		});
 	});

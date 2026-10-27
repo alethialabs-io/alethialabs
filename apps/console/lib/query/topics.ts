@@ -74,7 +74,9 @@ export const TOPIC_KEYS = {
 	// counts runner minutes and jobs in flight (#6118), and the usage pages' runner minutes and
 	// concurrency (#6127). The board's environment status carries the
 	// in-flight job, the last PLAN's cost and the drift a job wrote; its Activity card is the
-	// environment's job history; a held destroy waits on jobs (#6119).
+	// environment's job history; a held destroy waits on jobs (#6119). The Environments page's read:
+	// a promotion advances when its PLAN or DEPLOY job ends, and a reconcile badge (drift, deploy
+	// pending) moves with a drift scan or a deploy — all of them jobs (#6120).
 	jobs: (): QueryKey[] => [
 		orpc.jobs.page.key(),
 		orpc.jobs.detail.key(),
@@ -98,11 +100,15 @@ export const TOPIC_KEYS = {
 		orpc.runners.list.key(),
 		orpc.runners.page.key(),
 		orpc.runners.fleet.key(),
+		orpc.environments.overview.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
 	// clusters grid (#6122) shows each cluster's environment lifecycle and its data services too.
+	// Every read of the Environments page — the page itself, a protection-rules drawer, a promote
+	// preview — which a promotion, an approval slot or a protection rule changing also hints (#6120).
 	environments: (): QueryKey[] => [
+		orpc.environments.key(),
 		orpc.workspace.environments.key(),
 		orpc.canvas.environmentStatus.key(),
 		orpc.canvas.chartWorkloads.key(),

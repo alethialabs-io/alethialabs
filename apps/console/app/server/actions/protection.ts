@@ -2,13 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Per-environment protection rules (Phase 2). Read/write the toggleable gates that guard promotions
+// Per-environment protection rules (Phase 2). Writes the toggleable gates that guard promotions
 // into an environment. Evaluated by lib/promotions/gates.ts when a promotion's PLAN completes.
+//
+// The reads moved to GET procedures (#6120, ADR 0005 D1): one environment's rules and the project's
+// summaries are `lib/rpc/procedures/environments.ts`. The write returns `ActionResult` through
+// `defineAction` (ADR 0005 D4), so the rules editor shows a refusal's sentence and its field errors.
 
-import { and, eq } from "drizzle-orm";
-import { authorize } from "@/lib/authz/guard";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
+import { authorize, currentActor } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { environmentProtectionRules } from "@/lib/db/schema";
+import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 // Lives outside this module on purpose: every export of a `"use server"` file is a callable server
 // action, so a security helper exported from here to make it testable would widen the RPC surface.
 import { assertEnvInProject } from "@/lib/promotions/env-ownership";
@@ -26,27 +34,6 @@ export interface ProtectionRulesInput {
 	cost_delta_threshold: number | null;
 }
 
-/** The target env's protection rules, or null when none are set (fully permissive). */
-export async function getProtectionRules(projectId: string, envId: string) {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		await assertEnvInProject(tx, projectId, envId);
-		const [row] = await tx
-			.select()
-			.from(environmentProtectionRules)
-			.where(
-				and(
-					eq(environmentProtectionRules.environment_id, envId),
-					// Belt and braces alongside assertEnvInProject: the row carries project_id, so
-					// the read is scoped by the same id the caller was authorized against.
-					eq(environmentProtectionRules.project_id, projectId),
-				),
-			)
-			.limit(1);
-		return row ?? null;
-	});
-}
-
 /** One environment's protection-rule summary (for the env-card "gates into this env" chips). */
 export interface ProtectionSummary {
 	require_predecessor: boolean;
@@ -57,38 +44,17 @@ export interface ProtectionSummary {
 	cost_delta_threshold: number | null;
 }
 
-/** All of a project's environments' protection rules, keyed by environment_id (unset → absent). */
-export async function listProtectionRules(
-	projectId: string,
-): Promise<Record<string, ProtectionSummary>> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select()
-			.from(environmentProtectionRules)
-			.where(eq(environmentProtectionRules.project_id, projectId));
-		return Object.fromEntries(
-			rows.map((r) => [
-				r.environment_id,
-				{
-					require_predecessor: r.require_predecessor,
-					require_verify_pass: r.require_verify_pass,
-					require_approval: r.require_approval,
-					min_count: r.approvers?.min_count ?? null,
-					soak_minutes: r.soak_minutes,
-					cost_delta_threshold: r.cost_delta_threshold,
-				},
-			]),
-		);
-	});
-}
-
-/** Upserts an environment's protection rules (one row per env). */
-export async function setProtectionRules(
+/**
+ * Upserts an environment's protection rules (one row per env). The project is bound to the addressed
+ * organization before the PDP is asked (an org-wide grant answers `edit` for any project id), and the
+ * environment to the project inside the write.
+ */
+async function writeProtectionRules(
 	projectId: string,
 	envId: string,
 	input: ProtectionRulesInput,
-) {
+): Promise<null> {
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	const fields = {
@@ -130,7 +96,35 @@ export async function setProtectionRules(
 		// A foreign environment is already refused above; this is the second wall. If `setWhere`
 		// filtered the update out, `.returning()` is empty — surface that instead of handing back
 		// `undefined` as though nothing had been asked for.
-		if (!row) throw new Error("Unknown environment for this project");
-		return row;
+		if (!row) throw new ActionRefusal("not-found", "Unknown environment for this project");
+		return null;
 	});
+}
+
+/** The rules editor's request: the environment, and its gates as the form validated them. */
+const rulesInput = z.object({
+	projectId: z.uuid(),
+	environmentId: z.uuid(),
+	rules: z.object({
+		require_predecessor: z.boolean(),
+		require_verify_pass: z.boolean(),
+		require_approval: z.boolean(),
+		approvers: z.object({
+			user_ids: z.array(z.string().min(1).max(200)).max(50),
+			role: z.string().min(1).max(100).nullable(),
+			min_count: z.number().int().min(1, "At least one approval").max(10, "At most ten approvals"),
+		}),
+		soak_minutes: z.number().int().min(0, "Minutes can't be negative").max(525_600).nullable(),
+		cost_delta_threshold: z.number().min(0, "The threshold can't be negative").max(1_000_000_000).nullable(),
+	}),
+});
+
+/** {@link writeProtectionRules} through the mutation contract. */
+export async function setProtectionRules(
+	raw: z.input<typeof rulesInput>,
+): Promise<ActionResult<null>> {
+	return defineAction({
+		input: rulesInput,
+		run: ({ input }) => writeProtectionRules(input.projectId, input.environmentId, input.rules),
+	})(raw);
 }
