@@ -35,7 +35,7 @@ export async function POST(
 	}
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		const result = await runWithActor(actor, () =>

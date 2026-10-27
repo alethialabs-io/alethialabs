@@ -50,6 +50,23 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { describeIfDb } from "./db";
 
+// The projects the caller may view: every project of the caller's org. This file is about the
+// org boundary and the walk; a project-scoped deny hiding its clusters is driven against the real
+// PDP in tests/integration/cli-project-routes-addressed.test.ts.
+vi.mock("@/lib/cli/project-access", async () => {
+	const { eq } = await import("drizzle-orm");
+	const { getServiceDb } = await import("@/lib/db");
+	const { projects } = await import("@/lib/db/schema");
+	return {
+		cliViewableProjectIds: async (actor: { orgId: string }) =>
+			(
+				await getServiceDb()
+					.select({ id: projects.id })
+					.from(projects)
+					.where(eq(projects.org_id, actor.orgId))
+			).map((r) => r.id),
+	};
+});
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),

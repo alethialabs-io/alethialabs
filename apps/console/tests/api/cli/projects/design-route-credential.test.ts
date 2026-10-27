@@ -16,6 +16,13 @@ vi.mock("@/app/server/actions/staged-changes", () => ({ stageChanges: vi.fn() })
 vi.mock("@/lib/authz/actor-context", () => ({
 	runWithActor: vi.fn((_actor: unknown, fn: () => unknown) => fn()),
 }));
+// The addressed-project check (lib/cli/project-access.ts) asks the PDP about the resolved project;
+// this file is not about that decision, so it allows.
+// tests/integration/cli-project-routes-addressed.test.ts drives the real one.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/cli/resolve-project", () => ({
 	resolveCliProject: vi.fn(),

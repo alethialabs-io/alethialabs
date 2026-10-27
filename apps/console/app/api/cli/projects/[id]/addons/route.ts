@@ -14,6 +14,7 @@ import { getAddOn } from "@/lib/addons/catalog";
 import { storedAddonSettings } from "@/lib/cli/addon-catalog";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -23,7 +24,6 @@ import {
 } from "@/lib/cli/paging";
 import {
 	resolveCliEnvironment,
-	resolveCliProject,
 	resolveCliWriteEnvironment,
 	resolveDefaultEnvironmentId,
 } from "@/lib/cli/resolve-project";
@@ -59,7 +59,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -202,7 +202,7 @@ export async function POST(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -262,7 +262,7 @@ export async function DELETE(
 	}
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
