@@ -48,6 +48,7 @@ import path from "node:path";
 import type { Browser, BrowserContext, Page, Request, Route } from "@playwright/test";
 import { errorStateSignature } from "./error-state";
 import { awaitReady, isLoadingRead } from "./inert";
+import { repoRoot } from "./manifest";
 
 /** The viewport every B measurement is taken at. B2's score is a fraction of it. */
 export const B_VIEWPORT = { width: 1280, height: 900 } as const;
@@ -735,7 +736,9 @@ export function structurallyShell(key: string, chainEntries: readonly string[], 
  *     bundle while only `~/jobs/[id]` calls it, and the reference-only rule called it "shell"
  *     (#6180's third review); or
  *   · every route under those shells made it (the intersection; over every route when fewer than
- *     three share the chain).
+ *     three share the chain); or
+ *   · it is a read-router procedure one of the route's LAYOUTS reads (`layoutRpcReads`) — a read-router
+ *     read has no manifest entry, and a layout's prefetch is the shell's by construction.
  *
  * Everything else is the page's. `readsByRoute` should already hold a COLD load of every route
  * (`behaviour.spec.ts` phase 1), so a shell read that fires only on a fresh context has been seen on
@@ -747,6 +750,7 @@ export function shellClassifier(
 	readsByRoute: ReadonlyMap<string, readonly string[]>,
 	entries: ReadonlyMap<string, string> = new Map(),
 	workers: (key: string) => ReadonlySet<string> | null = workersOf,
+	layoutReads: ReadonlySet<string> = new Set(),
 ): (key: string) => boolean {
 	const chain = chains.get(route);
 	const peers = [...readsByRoute.keys()].filter((r) => chains.get(r) === chain);
@@ -759,7 +763,32 @@ export function shellClassifier(
 		for (const k of [...common]) if (!reads.has(k)) common.delete(k);
 	}
 	const observedElsewhere = (key: string) => [...readsByRoute].some(([r, ks]) => r !== route && ks.includes(key));
-	return (key) => common.has(key) || (chainEntries.length > 0 && structurallyShell(key, chainEntries, workers) && observedElsewhere(key));
+	return (key) =>
+		layoutReads.has(key) || common.has(key) || (chainEntries.length > 0 && structurallyShell(key, chainEntries, workers) && observedElsewhere(key));
+}
+
+/** A read-router call in source: `rpc.workspace.context`, `orpc.jobs.page`, `serverOrpc().x.y`. */
+const RPC_CALL = /\b(?:rpc|orpc|serverOrpc\(\))\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\b/g;
+
+/**
+ * The read-router procedures a route's LAYOUTS read (`rpc <namespace>/<procedure>`), from their source.
+ *
+ * A read-router read has no server-reference manifest entry, so the structural half of the
+ * classifier cannot see it, and a shell read the layout prefetches is made by the client only when it
+ * goes stale — on the stale refetch, on every route, after phase 1 has run. Read off the layout that
+ * prefetches it, it is the shell's by construction: `[org]/layout.tsx` seeds `workspace.*` for the
+ * shell (#6114). Without this, B4 PASSed the support routes on nothing but failed `workspace.*`
+ * refetches (the import of run 40474520273, before this rule). Raises on an unreadable layout.
+ *
+ * @param layoutFiles repo-relative layout files, as the route manifest lists them
+ */
+export function layoutRpcReads(layoutFiles: readonly string[]): Set<string> {
+	const out = new Set<string>();
+	for (const rel of layoutFiles) {
+		const src = readFileSync(path.join(repoRoot(), rel), "utf8");
+		for (const m of src.matchAll(RPC_CALL)) out.add(`rpc ${m[1]}/${m[2]}`);
+	}
+	return out;
 }
 
 /** The route's reads that `shellClassifier` assigns to the shell — the evidence B5 records. */
@@ -769,8 +798,9 @@ export function shellReadsFor(
 	readsByRoute: ReadonlyMap<string, readonly string[]>,
 	entries: ReadonlyMap<string, string> = new Map(),
 	workers: (key: string) => ReadonlySet<string> | null = workersOf,
+	layoutReads: ReadonlySet<string> = new Set(),
 ): string[] {
-	const isShell = shellClassifier(route, chains, readsByRoute, entries, workers);
+	const isShell = shellClassifier(route, chains, readsByRoute, entries, workers, layoutReads);
 	return [...new Set(readsByRoute.get(route) ?? [])].filter(isShell).sort();
 }
 
@@ -1188,6 +1218,7 @@ export const B_CONTROL_MODES = [
 	"swap-bars",
 	"action-page-read",
 	"cold-shell",
+	"layout-rpc-refetch",
 ] as const;
 
 /**
@@ -1214,13 +1245,16 @@ const FIXTURE_WORKERS = workersFromManifest({
 	},
 });
 
+/** The read-router procedure the fixture's LAYOUT prefetches — the `workspace.*` shape (#6114). */
+const FIXTURE_LAYOUT_READS: ReadonlySet<string> = new Set(["rpc fixture/layoutread"]);
+
 /** The fixture's shell classifier, given what its page was seen making — the peer only ever makes `fx-shell`. */
 function fixtureClassifier(reads: readonly string[]): (key: string) => boolean {
 	const readsByRoute = new Map<string, readonly string[]>([
 		[FIXTURE_ROUTE, reads],
 		[FIXTURE_PEER, ["action fx-shell"]],
 	]);
-	return shellClassifier(FIXTURE_ROUTE, FIXTURE_CHAINS, readsByRoute, FIXTURE_ENTRY_MAP, FIXTURE_WORKERS);
+	return shellClassifier(FIXTURE_ROUTE, FIXTURE_CHAINS, readsByRoute, FIXTURE_ENTRY_MAP, FIXTURE_WORKERS, FIXTURE_LAYOUT_READS);
 }
 
 /** One fixture mode. */
@@ -1254,6 +1288,10 @@ if (MODE === "cold-shell") {
 	// The shell read fires only on a COLD context — the first visit, before this origin's storage holds
 	// anything — the way a real shell read can fire on a fresh session and not on a warm one.
 	if (!localStorage.getItem('fx-warm')) { localStorage.setItem('fx-warm', '1'); shellRead().then(function () {}, function () {}); }
+}
+if (MODE === "layout-rpc-refetch") {
+	// A layout-prefetched read the client makes only when it goes stale: nothing in the page reads.
+	setTimeout(function () { read('layoutread').then(function () {}, function () {}); }, 30000);
 }
 if (MODE === "action-page-read") {
 	shellRead().then(function () {}, function () {});
@@ -1322,7 +1360,7 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
-	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell") return { a: rows, b: none, staticCopy: none };
+	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell" || mode === "layout-rpc-refetch") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
 	if (mode === "client-fetch" || mode === "endless-skeleton" || mode === "region-error" || mode === "empty-after-hydration") {
@@ -1450,6 +1488,8 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 		const coldShell = await measure("cold-shell");
 		expectVerdict("B3", "cold-shell", coldShell.b3, "NOT MEASURED", "no-page-reads");
 		expectVerdict("B4", "cold-shell", coldShell.b4, "NOT MEASURED", "no-page-reads");
+		// Only a LAYOUT's read-router prefetch failed, on the stale refetch: no read of the page's own.
+		expectVerdict("B4", "layout-rpc-refetch", (await measure("layout-rpc-refetch")).b4, "NOT MEASURED", "no-page-reads");
 
 		const b5 = async (mode: BControlMode) => {
 			const url = controlUrl(mode);

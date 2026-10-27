@@ -69,6 +69,7 @@ import {
 	manifestConsistencyProblems,
 	manifestKnowsWorkers,
 	shellClassifier,
+	layoutRpcReads,
 	B5_READ_CAP,
 	type BControlResult,
 	type BVerdict,
@@ -341,7 +342,7 @@ function shellOf(route: RouteRecord): (key: string) => boolean {
 	const chains = new Map(manifest.routes.map((r) => [r.route, r.shellChain.join(" > ")]));
 	const readsByRoute = new Map(Object.entries(s.routes).map(([r, v]) => [r, v.reads]));
 	const entries = new Map(manifest.routes.map((r) => [r.route, pageEntry(r.file)]));
-	return shellClassifier(route.route, chains, readsByRoute, entries);
+	return shellClassifier(route.route, chains, readsByRoute, entries, undefined, layoutRpcReads(route.layoutChain));
 }
 
 /** B3–B5's NOT MEASURED reason when the manifest does not describe the run. */

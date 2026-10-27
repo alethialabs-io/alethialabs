@@ -479,7 +479,11 @@ the jobs slice on exactly those two, which is how they were found.
 **One classifier tells the page's reads from the shell's, for B3, B4 and B5 alike** (`shellClassifier`).
 It classifies the KEY, whichever load made it: a read is the shell's when the build's server-reference
 manifest places it in every page under the route's shells AND another route was seen making it in any
-load — or when every route under those shells made it. Classifying only the reads of a route's warm
+load — or when every route under those shells made it — or, for a READ-ROUTER read (which has no
+manifest entry), when one of the route's layouts reads that procedure: `[org]/layout.tsx` seeds
+`workspace.*` for the shell (#6114), and the client makes those reads only when they go stale, on B4's
+refetch, on every route. Before this rule B4 PASSed the support routes on failed `workspace.*` refetches
+alone (found importing run 40474520273, which was not imported). Classifying only the reads of a route's warm
 answered load let the shell reads its COLD B3 and B4 loads made count as the page's: B4 PASSed five
 `~/support*` routes on nothing but a failed shell action (#6180's fourth review). Phase 1 therefore
 loads every route twice — answered, and cold in a context of its own — so a shell read only a fresh

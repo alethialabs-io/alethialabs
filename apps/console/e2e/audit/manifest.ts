@@ -51,6 +51,8 @@ export interface RouteRecord {
 	hasMetadata: boolean;
 	shell: string | null;
 	shellChain: string[];
+	/** Repo-relative layout files above the page, outermost first — family B reads their prefetches. */
+	layoutChain: string[];
 }
 
 export interface RouteManifest {
@@ -95,6 +97,8 @@ function isRouteManifest(value: unknown): value is RouteManifest {
 			Array.isArray(r.params) &&
 			"urlSegments" in r &&
 			Array.isArray(r.urlSegments) &&
+			"layoutChain" in r &&
+			Array.isArray(r.layoutChain) &&
 			"boundaries" in r &&
 			typeof r.boundaries === "object" &&
 			r.boundaries !== null &&

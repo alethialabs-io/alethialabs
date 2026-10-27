@@ -16,7 +16,7 @@
 // The hit test does not.
 
 import { expect, test, type Page } from "@playwright/test";
-import { manifestConsistencyProblems, readKey, shellClassifier, shellReadsFor, workersFromManifest } from "./behaviour";
+import { layoutRpcReads, manifestConsistencyProblems, readKey, shellClassifier, shellReadsFor, workersFromManifest } from "./behaviour";
 import { errorStateSignature, rendersRegionError, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
 import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
@@ -846,4 +846,14 @@ test("the shell classifier needs a referenced-everywhere read to be OBSERVED els
 	const coldOnly = new Map([["/a", ["action getJob"]], ["/b", ["action poll"]]]);
 	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action poll")).toBe(true);
 	expect(shellClassifier("/a", chains, coldOnly, entries, workers)("action getJob")).toBe(false);
+});
+
+// A read-router read has no manifest entry; the shell's are the ones its LAYOUTS read. Derived from the
+// real `[org]/layout.tsx`, so a layout that stops seeding the shell over the router is a red line here.
+test("the [org] layout's read-router prefetches are the shell's reads", () => {
+	const reads = layoutRpcReads(["apps/console/app/(private)/[org]/layout.tsx"]);
+	expect(reads.has("rpc workspace/context"), [...reads].join(", ")).toBe(true);
+	const isShell = shellClassifier("/a", new Map([["/a", "S"]]), new Map([["/a", []]]), new Map(), () => null, reads);
+	expect(isShell("rpc workspace/context")).toBe(true);
+	expect(isShell("rpc jobs/detail")).toBe(false);
 });
