@@ -75,7 +75,7 @@ async function emitted(op: () => Promise<unknown>): Promise<Notice[]> {
 function hears(notice: Notice, orgId: string, memberView: boolean): boolean {
 	if (notice.t !== "members" && notice.t !== "access") return false;
 	const change: ChangeNotice = { kind: "change", t: notice.t, id: notice.id, o: notice.o, u: notice.u, p: notice.p };
-	const held = subscriptionKeys({ userId: MATE, orgId }, { fleetView: false, manageSupport: false, viewAlerts: false, memberView });
+	const held = subscriptionKeys({ userId: MATE, orgId }, { platformView: false, manageSupport: false, viewAlerts: false, memberView });
 	return keysFor(change).some((route) => held.includes(route.key));
 }
 

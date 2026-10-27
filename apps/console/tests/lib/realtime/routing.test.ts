@@ -418,7 +418,7 @@ describe("keysFor — people & access (#6129)", () => {
 
 	/** Whether a stream of `orgId`, holding `member:view` or not, hears the notice. */
 	const hears = (notice: ChangeNotice, orgId: string, memberView: boolean) => {
-		const held = subscriptionKeys({ userId: USER, orgId }, { fleetView: false, manageSupport: false, viewAlerts: false, memberView });
+		const held = subscriptionKeys({ userId: USER, orgId }, { platformView: false, manageSupport: false, viewAlerts: false, memberView });
 		return keysFor(notice).some((r) => held.includes(r.key));
 	};
 
@@ -434,7 +434,7 @@ describe("keysFor — people & access (#6129)", () => {
 	});
 
 	it("a stream that never asked the member:view question does not hold the access key", () => {
-		expect(subscriptionKeys({ userId: USER, orgId: ORG }, { fleetView: false, manageSupport: false, viewAlerts: false })).not.toContain(
+		expect(subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false, viewAlerts: false })).not.toContain(
 			`oaccess:${ORG}`,
 		);
 	});
