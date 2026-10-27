@@ -1002,6 +1002,18 @@ export interface DriftPosture {
 	scanned_at?: string;
 }
 
+// The headline totals of a PLAN job's stored Infracost breakdown
+// (`execution_metadata.cost_breakdown`) — the top-level fields of the Go `infracost.CostBreakdown`
+// (packages/core/infracost/types.go). Infracost emits every amount as a decimal STRING. The diff is
+// the plan's monthly cost CHANGE; the total is the monthly cost after it. The job detail page's
+// result block reads only these (the per-resource ranking is lib/plan/parse-cost.ts's).
+export interface InfracostBreakdownTotals {
+	currency?: string;
+	totalMonthlyCost?: string;
+	pastTotalMonthlyCost?: string;
+	diffTotalMonthlyCost?: string;
+}
+
 // ── Verification gate (elench) ───────────────────────────────────────────────
 // Mirrors the Go `verify.Report` (packages/core/verify/types.go). The deterministic
 // policy gate runs between `tofu plan` and `tofu apply`; `not_evaluable` means the
