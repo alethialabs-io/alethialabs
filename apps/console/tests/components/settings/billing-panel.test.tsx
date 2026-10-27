@@ -6,9 +6,10 @@
 //   · error ≠ empty: a failed saved-cards read says so, where it used to render "No saved cards";
 //   · a member without the billing permission gets one note and the billing-admin reads are never
 //     made (they used to be made, refused, toasted, and left a skeleton up forever);
-//   · cancel/resume go through the mutation contract.
+//   · cancel/resume go through the mutation contract;
+//   · the AI tier is one linked row; the AI card lives on Usage only (#6133).
 
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActionResult } from "@/lib/actions/result";
@@ -144,11 +145,33 @@ describe("BillingPanel", () => {
 		expect(screen.queryByText("Couldn't load plan history")).toBeNull();
 	});
 
-	it("renders the AI plan & usage card as on dev (which page owns which half is #6133's)", async () => {
+	// #6133, design decision A: Usage owns all of AI. Billing states the tier as ONE row on the plan
+	// card and links to the Usage page's AI section; the AI card (meters, credits, spend limits) and
+	// the cloud-spend note are not on this page.
+	it("states the AI tier as one plan-card row linking to Usage — never the AI card itself", async () => {
 		reads.summary.mockResolvedValue(summary());
 		renderWithReads(<BillingPanel />);
-		expect(await screen.findByText("Current session")).toBeInTheDocument();
-		expect(screen.getByText("Spend limits")).toBeInTheDocument();
+		const row = await screen.findByTestId("billing-ai-plan-row");
+		expect(await within(row).findByText("AI Plus")).toBeInTheDocument();
+		expect(within(row).getByRole("link", { name: /usage & limits/i })).toHaveAttribute(
+			"href",
+			"/acme/~/usage#ai",
+		);
+		expect(screen.queryByText("AI plan & usage")).toBeNull();
+		expect(screen.queryByText("Current session")).toBeNull();
+		expect(screen.queryByText("Weekly limit")).toBeNull();
+		expect(screen.queryByText("Spend limits")).toBeNull();
+		expect(screen.queryByRole("button", { name: /upgrade ai plan/i })).toBeNull();
+		expect(screen.queryByText(/billed separately/i)).toBeNull();
+	});
+
+	it("a failed AI read says so in the row and keeps the link to Usage", async () => {
+		reads.summary.mockResolvedValue(summary());
+		reads.ai.mockRejectedValue(failed());
+		renderWithReads(<BillingPanel />);
+		const row = await screen.findByTestId("billing-ai-plan-row");
+		expect(await within(row).findByText("Couldn't load the AI plan")).toBeInTheDocument();
+		expect(within(row).getByRole("link", { name: /usage & limits/i })).toBeInTheDocument();
 	});
 
 	it("cancelling goes through the dialog and the mutation contract, and confirms", async () => {
