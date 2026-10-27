@@ -24,6 +24,7 @@ import { ConnectorRow } from "@/components/connectors/connector-row";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
 import { ConnectorsFilterBar } from "@/components/connectors/connectors-filter-bar";
 import {
+	CONNECTOR_SEARCH_MAX,
 	DEFAULT_CONNECTOR_FILTERS,
 	GROUP_META,
 	normalizeConnectorQuery,
@@ -322,8 +323,8 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 			<EmptyState
 				className="border"
 				icon={<ShieldOff />}
-				title="You can't see connectors here"
-				description="Your role in this workspace does not include the connectors board. Ask an owner for access."
+				title="Sign in again to see connectors"
+				description="Your session can no longer read this workspace. Sign in again; if you still cannot see connectors, ask an owner to check your membership."
 			/>
 		) : (
 			<RegionError
@@ -363,6 +364,12 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 						</>
 					}
 				/>
+
+				{filters.search.trim().length > CONNECTOR_SEARCH_MAX && (
+					<p role="status" className="-mt-4 text-ui-sm text-text-tertiary">
+						Search uses the first {CONNECTOR_SEARCH_MAX} characters.
+					</p>
+				)}
 
 				{/* Dim while a new filter's answer is resolving — keepPreviousData keeps the previous
 				    rows on screen instead of flashing a skeleton. */}
