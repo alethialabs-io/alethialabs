@@ -46,6 +46,21 @@ import { orpc } from "@/lib/rpc/client";
  */
 export const DESTROY_HOLD_KEY = ["canvas-destroy-hold"] as const;
 
+/**
+ * The query-key prefix of the agent grid's live widgets (`components/agent/widgets/live-refresh.ts`,
+ * #6207). A widget's key is `[...AGENT_WIDGET_KEY, topic, owner, widgetId]`, where `topic` is its
+ * source tool's registry topic, so a hint on that topic reaches exactly the widgets fed by it. The
+ * widget query has no fetcher of its own: re-running a source tool is a write (it persists the new
+ * snapshot), so the grid watches these keys for invalidation and runs the refresh itself. Declared
+ * here, not with the grid, so this map imports no component (#6119).
+ */
+export const AGENT_WIDGET_KEY = ["agent-widget"] as const;
+
+/** The key prefix of the agent widgets whose source data a `topic` hint announces. */
+export function agentWidgetKey(topic: Topic): QueryKey {
+	return [...AGENT_WIDGET_KEY, topic];
+}
+
 /** The jobs procedures a `jobs` hint deliberately does NOT refresh, each with its live source. */
 export const JOBS_NOT_ON_TOPIC = {
 	logsHead: "new log lines arrive on the job's own log stream (/api/stream/jobs/[id])",
@@ -76,6 +91,8 @@ export const TOPIC_KEYS = {
 		[...DESTROY_HOLD_KEY],
 		orpc.usage.org.key(),
 		orpc.usage.project.key(),
+		// The agent grid's jobs, runner-usage and drift-posture widgets (#6207).
+		agentWidgetKey("jobs"),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
@@ -92,14 +109,17 @@ export const TOPIC_KEYS = {
 		orpc.workspace.projects.key(),
 		orpc.workspace.setupGuide.key(),
 		orpc.usage.resources.key(),
+		agentWidgetKey("projects"),
 	],
-	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management.
+	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management;
+	// the agent grid's clusters widget re-runs its source on the same hint (#6207).
 	clusters: (): QueryKey[] => [
 		orpc.usage.resources.key(),
 		orpc.usage.projectResources.key(),
 		orpc.clusters.key(),
+		agentWidgetKey("clusters"),
 	],
-	runners: (): QueryKey[] => [],
+	runners: (): QueryKey[] => [agentWidgetKey("runners")],
 	fleet: (): QueryKey[] => [],
 	// Catalog add-ons and BYO charts are both `project_addons` rows; an installed add-on is a node on
 	// the board, so its health also shows through the environment status (#6119).
@@ -121,6 +141,7 @@ export const TOPIC_KEYS = {
 		orpc.usage.overTime.key(),
 		orpc.usage.projectAi.key(),
 		orpc.usage.projectOverTime.key(),
+		agentWidgetKey("usage"),
 	],
 	billing: (): QueryKey[] => [
 		orpc.billing.summary.key(),
@@ -132,5 +153,6 @@ export const TOPIC_KEYS = {
 		orpc.usage.ai.key(),
 		// The overview's usage card shows the plan and the AI budgets a billing change moves.
 		orpc.overview.usage.key(),
+		agentWidgetKey("billing"),
 	],
 } satisfies Record<Topic, () => QueryKey[]>;
