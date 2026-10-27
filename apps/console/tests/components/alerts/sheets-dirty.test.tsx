@@ -72,7 +72,11 @@ function renderPolicySheet() {
 }
 
 describe("the policy sheet tracks dirty state", () => {
-	beforeEach(() => createPolicy.mockReset());
+	// Braces, not an expression body: a function returned from beforeEach is run as a teardown, and the
+	// mock returned by mockReset() would be CALLED after every test, leaking a call into the next.
+	beforeEach(() => {
+		createPolicy.mockReset();
+	});
 
 	it("submitting a pristine sheet names what is missing, inline, and sends nothing", async () => {
 		const user = userEvent.setup();
@@ -126,7 +130,11 @@ describe("the policy sheet tracks dirty state", () => {
 });
 
 describe("the policy sheet never loses a server validation message", () => {
-	beforeEach(() => createPolicy.mockReset());
+	// Braces, not an expression body: a function returned from beforeEach is run as a teardown, and the
+	// mock returned by mockReset() would be CALLED after every test, leaking a call into the next.
+	beforeEach(() => {
+		createPolicy.mockReset();
+	});
 
 	it("a message naming no field on the sheet is shown under the form, and the sheet stays open", async () => {
 		createPolicy.mockResolvedValue({
@@ -140,8 +148,8 @@ describe("the policy sheet never loses a server validation message", () => {
 		await user.click(screen.getByRole("button", { name: "bind a channel" }));
 		await user.click(screen.getByRole("button", { name: "Create policy" }));
 		expect(await screen.findByText("Recipient is too long.")).toBeInTheDocument();
-		// The server was asked (the message is its answer, not a client check).
-		expect(createPolicy).toHaveBeenCalled();
+		// The server was asked exactly once (the message is its answer, not a client check).
+		expect(createPolicy).toHaveBeenCalledTimes(1);
 		expect(onOpenChange).not.toHaveBeenCalled();
 	});
 });
