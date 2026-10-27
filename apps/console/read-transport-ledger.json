@@ -1,6 +1,5 @@
 {
 	"reads": [
-		"app/(private)/[org]/~/evidence/page.tsx :: getOrgEvidence",
 		"app/(private)/[org]/~/settings/classification/page.tsx :: listDimensions",
 		"app/(private)/[org]/~/settings/members/page.tsx :: getMembersPage",
 		"app/(private)/[org]/~/settings/roles/page.tsx :: listRoles",
@@ -17,7 +16,6 @@
 		"lib/query/use-classification-query.ts :: getAssignments",
 		"lib/query/use-classification-query.ts :: getAssignmentsForKind",
 		"lib/query/use-classification-query.ts :: listDimensions",
-		"lib/query/use-evidence-query.ts :: getOrgEvidence",
 		"lib/query/use-members-query.ts :: getMembersPage",
 		"lib/query/use-roles-query.ts :: listRoles",
 		"lib/query/use-sso-query.ts :: listSsoProviders",

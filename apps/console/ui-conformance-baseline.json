@@ -23,7 +23,7 @@
 		"notInstrumented": 1,
 		"findings": 22,
 		"findingFiles": 14,
-		"liveNotMeasured": 83
+		"liveNotMeasured": 82
 	},
 	"ledgers": {
 		"baseline": 15,
@@ -690,15 +690,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 14,
+			"pass": 15,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 2,
+			"notMeasured": 1,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 2
+				"the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 1
 			},
 			"score": 1
 		},
@@ -1999,10 +1999,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2025,11 +2025,11 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
+				"pass": 37,
 				"fail": 1,
 				"na": 2,
-				"notMeasured": 4,
-				"score": 0.973
+				"notMeasured": 3,
+				"score": 0.9737
 			}
 		},
 		{
@@ -7154,8 +7154,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
-			"verdict": "NOT MEASURED",
-			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
+			"verdict": "PASS",
+			"detail": "queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",

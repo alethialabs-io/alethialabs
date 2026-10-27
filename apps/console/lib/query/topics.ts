@@ -104,12 +104,17 @@ export const TOPIC_KEYS = {
 		// The create flow's scan (#6131): whether an ANALYZE_REPO job has written its digest. NOT
 		// `projects.scanProposal`, which runs a model inference on every read (see its JSDoc).
 		orpc.projects.scanStatus.key(),
+		// Evidence (#6126): a PLAN/DEPLOY's verdict and signed receipt, and a recorded waiver, are
+		// jobs columns (execution_metadata, verify_override).
+		orpc.evidence.key(),
 	],
 	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
 	// clusters grid (#6122) shows each cluster's environment lifecycle and its data services too.
 	// Every read of the Environments page — the page itself, a protection-rules drawer, a promote
 	// preview — which a promotion, an approval slot or a protection rule changing also hints (#6120).
+	// Evidence lists every environment, with its drift and security posture — `environment_drift`
+	// and `environment_security` notify on this topic too (#6126).
 	environments: (): QueryKey[] => [
 		orpc.environments.key(),
 		orpc.workspace.environments.key(),
@@ -118,9 +123,11 @@ export const TOPIC_KEYS = {
 		orpc.canvas.iacSource.key(),
 		[...DESTROY_HOLD_KEY],
 		orpc.clusters.key(),
+		orpc.evidence.key(),
 	],
 	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
 	// (switcher, breadcrumbs, palette), the setup guide, usage, and the project's Settings → General.
+	// Evidence groups its rows under each project's name (#6126).
 	projects: (): QueryKey[] => [
 		orpc.workspace.projects.key(),
 		orpc.workspace.setupGuide.key(),
@@ -131,6 +138,7 @@ export const TOPIC_KEYS = {
 		// answer against the org's project names (#6131).
 		orpc.projects.nameAvailability.key(),
 		orpc.projects.duplicateTargets.key(),
+		orpc.evidence.key(),
 	],
 	// The Usage counts (#6127) and the clusters grid (#6122) both read the clusters under management;
 	// the agent grid's clusters widget re-runs its source on the same hint (#6207).
