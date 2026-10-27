@@ -6,9 +6,11 @@ import { Menu } from "lucide-react";
 import { DownloadCliButton } from "@/components/download-cli-button";
 import { EnvSwitcher } from "@/components/env-switcher";
 import { HeaderBreadcrumbs } from "@/components/header-breadcrumbs";
+import { OrgAvatar } from "@/components/org/org-avatar";
 import { SetupGuideButton } from "@/components/onboarding/setup-guide";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { SHELL_HEADER } from "@/components/shell/shell-metrics";
+import { useActiveWorkspaceOrg } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
 import { AskAiButton } from "./ask-ai-button";
 
@@ -43,8 +45,20 @@ import { AskAiButton } from "./ask-ai-button";
  *
  * The breadcrumb keeps `empty:hidden`, so the bare org overview still reserves no space: an
  * empty middle track is zero wide.
+ *
+ * ── THE MENU BUTTON CARRIES THE ORG (#6135, F028) ────────────────────────────────────────────
+ *
+ * Below `lg` the org switcher lives only in the drawer, so the closed mobile header used to say
+ * nothing about WHICH organization the page is in. The hamburger now shows the org's avatar with a
+ * small menu glyph, and its accessible name says both what it does and where you are. It costs no
+ * width at 400px, where this row already holds six controls; switching stays in the drawer.
+ *
+ * The org comes from the workspace context the `[org]` layout seeds (#6114), so the server render
+ * already names it. Until that context is there the button is the bare menu icon named "Open
+ * navigation" — never a guessed "Personal" avatar for a tenant the page is not on.
  */
 export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
+	const org = useActiveWorkspaceOrg();
 	return (
 		<header className={`grid ${SHELL_HEADER} shrink-0 grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)] items-center gap-1 border-b bg-background px-2 sm:px-4`}>
 			<div className="flex items-center gap-1">
@@ -53,9 +67,18 @@ export function Topbar({ onOpenSidebar }: { onOpenSidebar: () => void }) {
 					size="icon"
 					className="h-9 w-9 shrink-0 lg:hidden"
 					onClick={onOpenSidebar}
-					aria-label="Open navigation"
+					aria-label={org ? `Open navigation — ${org.name}` : "Open navigation"}
 				>
-					<Menu className="h-5 w-5" />
+					{org ? (
+						// `aria-hidden`: the button's name already says the org, and a logo `<img>`
+						// carries the org name as its `alt` — announced twice otherwise.
+						<span aria-hidden className="relative" data-slot="menu-org-avatar">
+							<OrgAvatar name={org.name} logo={org.logo} size={24} className="rounded-full" />
+							<Menu className="absolute -right-1 -bottom-1 size-3 rounded-sm bg-background" />
+						</span>
+					) : (
+						<Menu className="h-5 w-5" />
+					)}
 				</Button>
 
 				<ProjectSwitcher />
