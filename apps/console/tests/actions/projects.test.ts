@@ -3883,7 +3883,9 @@ describe("environment writes bind the project to the addressed organization firs
 
 	it.each(writes)("%s refuses before the PDP is asked or anything is written", async (_name, call) => {
 		const { insertSpy, updateSpy, deleteSpy } = setupDb({});
-		vi.mocked(assertProjectInActorOrg).mockRejectedValueOnce(new Error("Project not found."));
+		// Not `…Once`: a write that skipped the binding would leave a queued once-value for the NEXT
+		// test to consume. `beforeEach` resets this default.
+		vi.mocked(assertProjectInActorOrg).mockRejectedValue(new Error("Project not found."));
 		await expect(call()).rejects.toThrow("Project not found.");
 		expect(assertProjectInActorOrg).toHaveBeenCalledWith(expect.objectContaining({ orgId: "org-1" }), "p1");
 		expect(authorize).not.toHaveBeenCalled();
