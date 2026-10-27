@@ -53,11 +53,12 @@ export function fakeOrpc(
 					if (typeof prop !== "string" || prop === "then") return undefined;
 					const path = segments.join(".");
 					if (prop === "key") return () => [segments];
+					// A procedure with no input is called with no argument (`queryOptions()`), as on oRPC.
 					if (prop === "queryKey") {
-						return ({ input }: { input: unknown }) => [segments, { input, type: "query" }];
+						return ({ input }: { input?: unknown } = {}) => [segments, { input, type: "query" }];
 					}
 					if (prop === "queryOptions") {
-						return ({ input, ...rest }: { input: unknown } & Passthrough) => ({
+						return ({ input, ...rest }: { input?: unknown } & Passthrough = {}) => ({
 							queryKey: [segments, { input, type: "query" }],
 							queryFn: () => read(path, input),
 							...rest,

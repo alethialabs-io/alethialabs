@@ -82,7 +82,7 @@ function job(over: Partial<ChangeNotice> = {}): ChangeNotice {
 	return { kind: "change", t: "jobs", id: JOB, o: ORG, u: OTHER_USER, p: PROJECT, ...over };
 }
 
-const NO_CAPS = { fleetView: false, manageSupport: false };
+const NO_CAPS = { fleetView: false, manageSupport: false, viewAlerts: false };
 const member: Actor = { credential: "session", userId: USER, orgId: ORG };
 const memberKeys = subscriptionKeys(member, NO_CAPS);
 

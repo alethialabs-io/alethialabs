@@ -18,15 +18,26 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AlertsBootstrap, PolicyDTO } from "@/app/server/actions/alerts";
+import type { PolicyDTO } from "@/app/server/actions/alerts";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
-const togglePolicy = vi.fn(async () => {});
+const togglePolicy = vi.fn(async (input: { id: string; enabled: boolean }) => ({
+	ok: true as const,
+	data: { id: input.id },
+}));
 
 vi.mock("@/app/server/actions/alerts", () => ({
-	togglePolicy: (...a: unknown[]) => togglePolicy(...(a as [])),
-	deletePolicy: vi.fn(async () => {}),
-	updatePolicy: vi.fn(async () => {}),
+	togglePolicy: (input: { id: string; enabled: boolean }) => togglePolicy(input),
+	deletePolicy: vi.fn(async () => ({ ok: true, data: { id: "p-1" } })),
+	updatePolicy: vi.fn(async () => ({ ok: true, data: { id: "p-1" } })),
+	createPolicy: vi.fn(async () => ({ ok: true, data: { id: "p-2" } })),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 vi.mock("@/lib/stores/use-alerts-section", () => ({
 	useAlertsSection: (sel: (s: unknown) => unknown) =>
 		sel({ selectedPolicyId: "p-1", setSelectedPolicyId: vi.fn() }),
@@ -63,32 +74,37 @@ function policy(over: Partial<PolicyDTO> & { id: string }): PolicyDTO {
 
 const p1 = policy({ id: "p-1" });
 
-const bootstrap = {
+const hub: AlertsHub = {
 	channels: [],
 	policies: [p1],
-	deliveries: [],
 	categories: [],
-	stats: {},
+	conditionOptions: { projects: [], jobTypes: [], resourceTypes: [], actions: [] },
 	alerting: true,
 	advancedAlerting: false,
 	canManage: true,
-} as unknown as AlertsBootstrap;
+	encryptionConfigured: true,
+	policiesKnown: true,
+};
 
-const view = {
-	rows: [p1],
-	facets: { status: [], kinds: [], channels: [] },
-	activeCount: 0,
-} as unknown as Parameters<typeof PoliciesPanel>[0]["view"];
+/** An answered policies view over `rows`. */
+function viewOf(rows: PolicyDTO[]): Parameters<typeof PoliciesPanel>[0]["view"] {
+	return {
+		rows,
+		count: rows.length,
+		total: rows.length,
+		facets: { status: [], kinds: [], channels: [] },
+		stale: false,
+		busy: false,
+		state: "ready",
+		refreshFailed: false,
+		retry: () => {},
+	};
+}
 
 function renderPanel() {
-	return render(
-		<PoliciesPanel
-			bootstrap={bootstrap}
-			view={view}
-			onChanged={() => {}}
-			onOpenChannel={() => {}}
-		/>,
-	);
+	return render(<PoliciesPanel hub={hub} view={viewOf([p1])} onOpenChannel={() => {}} />, {
+		wrapper: queryWrapper(),
+	});
 }
 
 describe("alerts policy: disabling asks first", () => {
@@ -109,7 +125,32 @@ describe("alerts policy: disabling asks first", () => {
 		expect(togglePolicy).not.toHaveBeenCalled();
 
 		await user.click(screen.getByRole("button", { name: /^disable$/i }));
-		await waitFor(() => expect(togglePolicy).toHaveBeenCalledWith("p-1", false));
+		await waitFor(() => expect(togglePolicy).toHaveBeenCalledWith({ id: "p-1", enabled: false }));
+		// The dialog closes once the write has answered, not on the click.
+		await waitFor(() => expect(screen.queryByText(/disable this policy\?/i)).not.toBeInTheDocument());
+	});
+
+	it("while the disable is in flight the dialog stays, says so, and cannot be confirmed twice", async () => {
+		const user = userEvent.setup();
+		let finish: (v: { ok: true; data: { id: string } }) => void = () => {};
+		togglePolicy.mockImplementationOnce(
+			() => new Promise((resolve) => {
+				finish = resolve;
+			}),
+		);
+		renderPanel();
+
+		await user.click(screen.getByRole("switch", { name: /enabled/i }));
+		await user.click(await screen.findByRole("button", { name: /^disable$/i }));
+
+		const pending = await screen.findByRole("button", { name: /disabling/i });
+		expect(pending).toBeDisabled();
+		expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
+		await user.click(pending);
+		expect(togglePolicy).toHaveBeenCalledTimes(1);
+
+		finish({ ok: true, data: { id: "p-1" } });
+		await waitFor(() => expect(screen.queryByText(/disable this policy\?/i)).not.toBeInTheDocument());
 	});
 
 	it("cancelling the confirmation leaves the policy alone", async () => {
@@ -128,7 +169,7 @@ describe("alerts policy: disabling asks first", () => {
 		expect(togglePolicy).not.toHaveBeenCalled();
 		// The SWITCH too, not just the mutation. The switch reads correctly only because it is
 		// CONTROLLED (`checked={policy.enabled}`); the day someone adds an optimistic local
-		// `enabled` — the obvious fix for the lag between confirm and the `onChanged()` refetch —
+		// `enabled` — the obvious fix for the lag between confirm and the invalidation's refetch —
 		// cancelling would leave a switch reading OFF for a policy that is still ON, and a test
 		// asserting only `togglePolicy` would stay green through it. Mutated both ways: flipping
 		// this to `.not.toBeChecked()` fails exactly this test and nothing else.
@@ -139,28 +180,14 @@ describe("alerts policy: disabling asks first", () => {
 	// BOTH directions would pass the first test and put a dialog in front of a harmless action.
 	it("turning a policy back ON stays a bare click, with no confirmation", async () => {
 		const user = userEvent.setup();
-		render(
-			<PoliciesPanel
-				bootstrap={
-					{ ...bootstrap, policies: [policy({ id: "p-1", enabled: false })] } as AlertsBootstrap
-				}
-				view={
-					{
-						rows: [policy({ id: "p-1", enabled: false })],
-						facets: { status: [], kinds: [], channels: [] },
-						activeCount: 0,
-					} as unknown as Parameters<
-						typeof PoliciesPanel
-					>[0]["view"]
-				}
-				onChanged={() => {}}
-				onOpenChannel={() => {}}
-			/>,
-		);
+		const off = policy({ id: "p-1", enabled: false });
+		render(<PoliciesPanel hub={{ ...hub, policies: [off] }} view={viewOf([off])} onOpenChannel={() => {}} />, {
+			wrapper: queryWrapper(),
+		});
 
 		await user.click(screen.getByRole("switch", { name: /enabled/i }));
 
-		await waitFor(() => expect(togglePolicy).toHaveBeenCalledWith("p-1", true));
+		await waitFor(() => expect(togglePolicy).toHaveBeenCalledWith({ id: "p-1", enabled: true }));
 		expect(screen.queryByText(/disable this policy\?/i)).not.toBeInTheDocument();
 	});
 });

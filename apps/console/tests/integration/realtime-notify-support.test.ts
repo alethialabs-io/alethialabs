@@ -130,7 +130,7 @@ function publicReply(caseId: string, author: "customer" | "staff", authorId: str
 /** Whether a change stream with this identity would receive `notice` (the bus matches on these keys). */
 function hears(notice: Notice, userId: string, orgId: string, manageSupport: boolean): boolean {
 	const change: ChangeNotice = { kind: "change", t: "support", id: notice.id, o: notice.o, u: notice.u, p: notice.p };
-	const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport });
+	const held = subscriptionKeys({ userId, orgId }, { fleetView: false, manageSupport, viewAlerts: false });
 	return keysFor(change).some((route) => held.includes(route.key));
 }
 
