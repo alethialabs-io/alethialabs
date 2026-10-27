@@ -365,11 +365,12 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 					}
 				/>
 
-				{filters.search.trim().length > CONNECTOR_SEARCH_MAX && (
-					<p role="status" className="-mt-4 text-ui-sm text-text-tertiary">
-						Search uses the first {CONNECTOR_SEARCH_MAX} characters.
-					</p>
-				)}
+				{/* Always mounted, so a screen reader announces the hint when its text appears. */}
+				<p role="status" className="-mt-4 text-ui-sm text-text-tertiary empty:hidden">
+					{filters.search.trim().length > CONNECTOR_SEARCH_MAX
+						? `Search uses the first ${CONNECTOR_SEARCH_MAX} characters.`
+						: ""}
+				</p>
 
 				{/* Dim while a new filter's answer is resolving — keepPreviousData keeps the previous
 				    rows on screen instead of flashing a skeleton. */}

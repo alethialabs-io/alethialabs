@@ -96,7 +96,8 @@ describe("ConnectorsPage — the four renders of its read", () => {
 	it("refused: its own state, distinct from the failure", () => {
 		board.state = { ...settled, isError: true, error: new ORPCError("FORBIDDEN", { defined: true }) };
 		renderBoard();
-		expect(screen.getByText("You can't see connectors here")).toBeInTheDocument();
+		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expect(screen.queryByRole("alert")).toBeNull();
 		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 	});
 

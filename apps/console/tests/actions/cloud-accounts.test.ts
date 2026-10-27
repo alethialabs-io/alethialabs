@@ -67,11 +67,11 @@ import {
 	verifyCloudAccount,
 } from "@/app/server/actions/identities";
 import { authorize, authorizeQuiet } from "@/lib/authz/guard";
-import { ForbiddenError } from "@/lib/authz/types";
+import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import * as conn from "@/lib/cloud-providers/connections";
 
 const ID = "11111111-1111-4111-8111-111111111111";
-const actor = { userId: "user-1", orgId: "org-1", credential: "session" };
+const actor: Actor = { userId: "user-1", orgId: "org-1", credential: "session" };
 const verified: conn.ConnectionResult = {
 	identityId: ID,
 	verified: true,
@@ -84,8 +84,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	h.rows = [{ id: ID, provider: "aws" }];
 	h.where = [];
-	vi.mocked(authorize).mockResolvedValue(actor as never);
-	vi.mocked(authorizeQuiet).mockResolvedValue(actor as never);
+	vi.mocked(authorize).mockResolvedValue(actor);
+	vi.mocked(authorizeQuiet).mockResolvedValue(actor);
 });
 
 describe("connectCloudAccount", () => {
