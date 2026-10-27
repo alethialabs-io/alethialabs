@@ -3550,7 +3550,7 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
  * is, once.
  */
 export async function getProjectEnvironments(projectId: string) {
-	const actor = await authorize("view", { type: "project", id: projectId });
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withActorScope(actor, async (tx) => {
 		const environments = await tx
@@ -3720,6 +3720,9 @@ export async function setAutoHeal(
 	environmentId: string,
 	enabled: boolean,
 ) {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, (tx) =>
 		tx

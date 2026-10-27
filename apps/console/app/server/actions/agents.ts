@@ -62,7 +62,7 @@ export async function createAgent(input: CreateAgentInput): Promise<AgentIdentit
  */
 export async function listAgents(): Promise<AgentIdentity[]> {
 	const actor = await currentActor();
-	void (await cliProjectBoundVisibleWhere(actor, agentIdentities.project_id));
+	const projectVisible = await cliProjectBoundVisibleWhere(actor, agentIdentities.project_id);
 	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) =>
 		tx
 			.select()
@@ -73,6 +73,7 @@ export async function listAgents(): Promise<AgentIdentity[]> {
 						eq(agentIdentities.user_id, actor.userId), // authz-scope-ok: agent_identities has no set_org_id trigger and a nullable org_id, so the user_id arm (a globally-unique id → no cross-tenant match) scopes the actor's OWN rows; the org_id arm scopes Teams. Both keys are the caller's.
 						eq(agentIdentities.org_id, actor.orgId),
 					),
+					projectVisible,
 				),
 			)
 			.orderBy(desc(agentIdentities.created_at)),
@@ -107,7 +108,6 @@ export async function getAgent(id: string): Promise<AgentIdentity | null> {
 			.limit(1);
 		return row ?? null;
 	});
-	void cliMayViewProjectBoundRow;
-	if (!agent) return null;
+	if (!agent || !(await cliMayViewProjectBoundRow(actor, agent.project_id))) return null;
 	return agent;
 }

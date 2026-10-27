@@ -129,7 +129,8 @@ export async function assignClassification(input: AssignInput): Promise<void> {
 	// and the resource id is a bare uuid, so nothing else ties the two together. One that lives in a
 	// project the caller may not edit is answered the same way (the refusal is recorded).
 	if (
-		!(await classifiableResourceInOrg(data.resource_kind, data.resource_id, actor))
+		!(await classifiableResourceInOrg(data.resource_kind, data.resource_id, actor)) ||
+		!(await mayClassifyResource(actor, data.resource_kind, data.resource_id, "edit"))
 	)
 		throw new Error("Resource not found");
 
