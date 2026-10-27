@@ -10,6 +10,7 @@
 import { and, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { cliMayViewProjectBoundRow } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
@@ -44,7 +45,7 @@ export async function GET(
 				),
 			)
 			.limit(1);
-		if (!a) {
+		if (!a || !(await cliMayViewProjectBoundRow(actor, a.project_id))) {
 			return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 		}
 

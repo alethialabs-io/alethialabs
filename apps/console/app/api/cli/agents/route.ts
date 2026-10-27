@@ -39,7 +39,7 @@ export async function GET(req: Request) {
 								eq(agentIdentities.org_id, actor.orgId),
 							)
 						: eq(agentIdentities.org_id, actor.orgId),
-					void projectVisible,
+					projectVisible,
 				),
 			)
 			.orderBy(desc(agentIdentities.created_at));
