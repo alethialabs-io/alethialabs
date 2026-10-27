@@ -208,6 +208,11 @@ function current(): BehaviourState {
 }
 
 test.beforeAll(async ({ browser }, testInfo) => {
+	// The hook runs the positive control (some twenty fixture measurements, each several loads) and a
+	// signup before any route; the project's 180s per-test budget is not a budget for that, and the
+	// hook timing out fails every test in the file without a single verdict. Measured: the control
+	// alone took ~190s on a laptop once the cold-load and layout-read fixtures landed.
+	testInfo.setTimeout(600_000);
 	baseURL = testInfo.project.use.baseURL;
 	browserRef = browser;
 	state = await restoreState();
