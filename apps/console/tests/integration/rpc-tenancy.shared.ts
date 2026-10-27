@@ -509,8 +509,9 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
 		reveals: (out) => Array.isArray(field(out, "jobs")),
 	},
-	// #6124: the connectors board lists the cloud accounts the address's org shares (plus the
-	// caller's own personal ones). Each org's seeded identity is the marker.
+	// #6124: the connectors board lists the cloud accounts homed in the address's org — the ones it
+	// shares, and the caller's own personal ones created there (never one homed in another org).
+	// Each org's seeded identity is the marker.
 	"connectors.board": {
 		kind: "org-scoped",
 		input: {},
