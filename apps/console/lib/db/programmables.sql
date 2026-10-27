@@ -3162,3 +3162,65 @@ DROP TRIGGER IF EXISTS project_addons_notify_change_insdel ON public.project_add
 CREATE TRIGGER project_addons_notify_change_insdel
   AFTER INSERT OR DELETE ON public.project_addons
   FOR EACH ROW EXECUTE FUNCTION public.notify_component_change('addons');
+
+-- ── The general-settings topics (#6128): `organization` and `projects`. ────────────────────────
+-- Reuses emit_change() from the real-time block near the top. Same contract as the jobs triggers:
+-- identifiers only, and an UPDATE fires only when a column the console renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts):
+--   · organization → the org arm `o:<org id>`, unfiltered. Every member reads the org's name, slug,
+--     logo and General settings (the switcher, the breadcrumb, Settings → General).
+--   · projects → the org arm `o:<org_id>`, filtered through the PDP's `view` on the project itself.
+--     Both arms of the projects RLS policy are on `org_id` (`org_id = current_org OR org_id =
+--     current_owner`, the owner_all loop above), and a personal-scope stream's org IS its user, so
+--     the org arm reaches the personal scope too; `user_id` (the creator) is not an RLS arm.
+
+-- The organization row: what the console renders of it. Not listed: createdAt, updatedAt. No
+-- INSERT/DELETE trigger: a new org has no stream open on it yet, and a deleted org's streams are
+-- revoked (the membership is gone), so neither has anyone to tell.
+CREATE OR REPLACE FUNCTION public.notify_organization_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('organization', NEW.id, NEW.id, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS organization_notify_change_upd ON public.organization;
+CREATE TRIGGER organization_notify_change_upd
+  AFTER UPDATE ON public.organization
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.slug, OLD.logo, OLD.metadata)
+    IS DISTINCT FROM
+    (NEW.name, NEW.slug, NEW.logo, NEW.metadata)
+  )
+  EXECUTE FUNCTION public.notify_organization_change();
+
+-- A project row: the switcher, breadcrumbs, palette, project list and Settings → General render its
+-- name and slug; the project list its region, cloud account and cost estimate. `p` is the project's
+-- own id, so the PDP filter asks about the row itself. Not listed: iac_version,
+-- webhook_ca_consumers, created_at, updated_at, and org_id/user_id (backfill-only writes).
+CREATE OR REPLACE FUNCTION public.notify_project_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('projects', OLD.id, OLD.org_id, OLD.user_id, OLD.id);
+  ELSE
+    PERFORM public.emit_change('projects', NEW.id, NEW.org_id, NEW.user_id, NEW.id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS projects_notify_change_upd ON public.projects;
+CREATE TRIGGER projects_notify_change_upd
+  AFTER UPDATE ON public.projects
+  FOR EACH ROW WHEN (
+    (OLD.project_name, OLD.slug, OLD.region, OLD.cloud_identity_id, OLD.estimated_monthly_cost)
+    IS DISTINCT FROM
+    (NEW.project_name, NEW.slug, NEW.region, NEW.cloud_identity_id, NEW.estimated_monthly_cost)
+  )
+  EXECUTE FUNCTION public.notify_project_change();
+
+DROP TRIGGER IF EXISTS projects_notify_change_insdel ON public.projects;
+CREATE TRIGGER projects_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.projects
+  FOR EACH ROW EXECUTE FUNCTION public.notify_project_change();

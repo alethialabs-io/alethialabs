@@ -281,12 +281,22 @@ test.describe("RBAC — member permission denials", () => {
 	test("a member cannot delete the organization", async ({ member }) => {
 		await member.page.goto(`/${member.orgSlug}/~/settings/general`);
 		await expect(member.page.getByRole("heading", { name: "Danger zone" })).toBeVisible({ timeout: 30_000 });
-		await member.page.getByRole("button", { name: /^Delete organization$/ }).click();
-		const dialog = member.page.getByRole("alertdialog");
-		const refused = orgEndpoint(member.page, "delete");
-		await dialog.getByRole("button", { name: /delete organization/i }).click();
-		const response = await refused;
+		// #6128: the page knows the role, so the control is disabled and says why, instead of opening a
+		// confirm whose request is then refused.
+		const del = member.page.getByRole("button", { name: /^Delete organization$/ });
+		await expect(del).toBeDisabled();
+		await expect(del).toHaveAccessibleDescription("Only the organization's owner can delete it");
+
+		// The SERVER still refuses, whatever the page shows: the endpoint itself, called as the member
+		// (cookies from the persona's session, the app's own origin so the refusal is the role check
+		// and not the origin check).
+		expect(member.orgId, "the member persona records its org id").toBeTruthy();
+		const response = await member.page.request.post("/api/auth/organization/delete", {
+			data: { organizationId: member.orgId },
+			headers: { origin: new URL(member.page.url()).origin },
+		});
 		expect(response.status(), "only an owner may delete the organization").toBeGreaterThanOrEqual(400);
+		expect(response.status(), "refused, not broken").toBeLessThan(500);
 
 		// The org survives — the member is still inside it, not bounced to a dashboard.
 		await expect(member.page).not.toHaveURL(/\/dashboard$/);
