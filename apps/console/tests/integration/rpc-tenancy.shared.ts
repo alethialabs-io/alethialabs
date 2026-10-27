@@ -628,6 +628,38 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasCluster(out, s.clusterX), y: hasCluster(out, s.clusterY) }),
 	},
+	// General settings (#6128).
+	"settings.org": {
+		// The org's own row: its slug is the marker (seeded as `it-6113-<first 8 of its id>`). The
+		// personal scope — community's answer for every org address — is `{ scope: "personal" }`.
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => {
+			const settings: unknown =
+				typeof out === "object" && out !== null && "settings" in out ? out.settings : undefined;
+			const slug = stringField(settings, "slug");
+			return { x: slug === `it-6113-${s.orgX.slice(0, 8)}`, y: slug === `it-6113-${s.orgY.slice(0, 8)}` };
+		},
+	},
+	"settings.preview": {
+		// Same slug in each org; the answer names the ADDRESSED org's project. `null` in community.
+		kind: "org-scoped",
+		input: { project: PROJECT_SLUG },
+		markers: (out, s) => ({
+			x: stringField(out, "projectId") === s.projectX,
+			y: stringField(out, "projectId") === s.projectY,
+		}),
+	},
+	"settings.project": {
+		// The same slug names a project in each org; the answer must be the ADDRESSED org's project.
+		// `null` (no such project here) is community's answer: the personal scope holds neither.
+		kind: "org-scoped",
+		input: { project: PROJECT_SLUG },
+		markers: (out, s) => ({
+			x: stringField(out, "id") === s.projectX,
+			y: stringField(out, "id") === s.projectY,
+		}),
+	},
 };
 
 /** The input a fixture sends when it addresses `org` (an org-wide read sends the same either way). */
