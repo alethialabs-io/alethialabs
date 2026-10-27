@@ -32,6 +32,10 @@
 // Hobby orgs get an inline "Upgrade to Pro" (UpgradeOrgSheet); subscription/payment management
 // still lives on the Billing page.
 //
+// This page OWNS all of AI (#6133, design decision A): the tier, the meters, Upgrade AI plan, Buy
+// credits and the admin spend limits, next to the runner hard cap above. The Billing page states the
+// AI tier as one row on its plan card and links here, to `#ai`; it never renders the AI card.
+//
 // ── Data (#6127, ADR 0005) ───────────────────────────────────────────────────────────────────────
 // Every read is a GET procedure the route PREFETCHES on the server (`~/usage/page.tsx`), so the
 // first paint carries the numbers and the browser fetches nothing on mount. Each section owns its
@@ -67,6 +71,7 @@ import {
 } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { globalHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { BillingSummary } from "@/lib/rpc/procedures/billing";
 import type { UsageReport } from "@/lib/rpc/procedures/usage";
@@ -189,7 +194,7 @@ function UsageReportView({ summary }: { summary: BillingSummary }) {
 						// reason this comment once gave — base-ui putting `role="button"` on the
 						// anchor — is gone: `@repo/ui/button` announces an href as a link, #5444.)
 						<Link
-							href={`/${orgSlug}/settings/billing`}
+							href={globalHref(orgSlug, "settings/billing")}
 							className="inline-flex items-center gap-1 text-ui-sm text-text-secondary transition-colors hover:text-text-primary"
 						>
 							Manage billing
@@ -203,8 +208,11 @@ function UsageReportView({ summary }: { summary: BillingSummary }) {
 			<UsageOverTimeSection />
 			<ResourcesSection />
 
-			{/* 4 · AI plan & usage — standalone metered product (daily/weekly % + top-ups). */}
-			<AiUsageSection />
+			{/* 4 · AI plan & usage — standalone metered product (daily/weekly % + top-ups). Its only
+			    home (#6133); `#ai` is what the Billing page's AI-tier row links to. */}
+			<div id="ai" className="scroll-mt-4">
+				<AiUsageSection />
+			</div>
 
 			<UpgradeOrgSheet
 				open={upgradeOpen}
