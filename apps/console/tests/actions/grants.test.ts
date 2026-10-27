@@ -800,14 +800,14 @@ describe("assignGrant refuses a reference outside the actor's org", () => {
 			vi.mocked(grantBindingViolation).mockResolvedValueOnce(reason);
 			// The reason is the server's (logged with the PDP's denial); the client is told only that
 			// the grant was refused — it never learns which of the three references was foreign.
-			expect(refusal(await assignGrant({
-					principalType: "user",
-					principalId: "u-1",
-					effect: "allow",
-					roleId: "role-x",
-					resourceType: "org",
-				}),
-				"forbidden")?.message).toMatch();
+			const result = await assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: "role-x",
+				resourceType: "org",
+			});
+			expect(refusal(result)?.kind).toBe("forbidden");
 		}
 		expect(insertSpy).not.toHaveBeenCalled();
 		expect(can).not.toHaveBeenCalled();
