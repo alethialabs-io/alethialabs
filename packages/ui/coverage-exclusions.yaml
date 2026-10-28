@@ -78,6 +78,12 @@ tier_separation:
     issue: "#6117"
     reason: PageToolbarSkeleton draws its action placeholders with a real Skeleton, and the page-toolbar suite counts them.
 
+  - path: src/table.tsx
+    suite: [tests/table.test.tsx]
+    symbols: [Table, TableBody, TableCell, TableHead, TableHeader, TableRow]
+    issue: "#2649"
+    reason: The table suite mounts a real colgroup table and asserts every row's children are cells, as many as the header and the colgroup declare, with the row's hover clamp drawn by its first cell rather than a row pseudo-element (#6237).
+
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
   # No suite of their own. Each is executed because a component that IS tested renders it, which is
@@ -359,10 +365,10 @@ baseline:
     reason: The switch is named by no suite in this package.
 
   - path: src/table.tsx
-    symbols: [Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow]
+    symbols: [TableCaption, TableFooter]
     issue: "#2649"
-    state: no-test
-    reason: The table primitive the shared surface requires instead of a grid div — the one whose header row a screen reader depends on — is named by no suite in this package.
+    state: untested-export
+    reason: The table's caption and footer are rendered by no suite in this package; the table suite (#6237) mounts only the header, body, row and cell.
 
   - path: src/tabs.tsx
     symbols: [Tabs, TabsContent, TabsList, TabsTrigger, tabsListVariants]
