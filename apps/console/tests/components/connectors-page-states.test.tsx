@@ -185,9 +185,8 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 		internal = await wireError(500, "Internal");
 	});
 
-	/** Asserts the refused render: its own state, no region error, and no retry. */
-	function expectRefused() {
-		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+	/** Asserts the rest of the refused render: no region error, and no retry. */
+	function expectNoRegionErrorOrRetry() {
 		expect(screen.queryByText("Couldn't load connectors")).toBeNull();
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
@@ -196,13 +195,15 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 	it("a plain 401 (session expired) renders the refused state, not the region error", () => {
 		board.state = { ...settled, isError: true, error: unauthorized };
 		renderBoard();
-		expectRefused();
+		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expectNoRegionErrorOrRetry();
 	});
 
 	it("a plain 403 renders the refused state", () => {
 		board.state = { ...settled, isError: true, error: forbidden };
 		renderBoard();
-		expectRefused();
+		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expectNoRegionErrorOrRetry();
 	});
 
 	it("a plain 500 is still a region error with a retry", () => {
@@ -216,7 +217,8 @@ describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
 	it("a typed FORBIDDEN is still refused", () => {
 		board.state = { ...settled, isError: true, error: new ORPCError("FORBIDDEN", { defined: true }) };
 		renderBoard();
-		expectRefused();
+		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expectNoRegionErrorOrRetry();
 	});
 
 	it("a REFUSED refresh behind the board keeps the cards and offers no retry that cannot work", () => {
