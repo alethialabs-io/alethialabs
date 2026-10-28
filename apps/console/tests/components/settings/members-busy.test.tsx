@@ -31,8 +31,18 @@ const { getMembersPage } = vi.hoisted(() => ({
 	getMembersPage: vi.fn<(query: unknown) => Promise<MembersPage>>(),
 }));
 
+// The members reads go over GET since #6129 (`members.page`, `members.gate`); the fake read client
+// serves them, with the same spy behind the page read.
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({
+			"members.page": async (input) => getMembersPage(input),
+			"members.gate": async () => ({ canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "Inviting members is available on the Pro plan." }),
+		}).orpc,
+	};
+});
 vi.mock("@/app/server/actions/members", () => ({
-	getMembersPage,
 	setMemberSuspended: vi.fn(),
 }));
 vi.mock("@/app/server/actions/billing", () => ({
@@ -99,11 +109,16 @@ function pageOf(members: MemberRow[], invitations: InvitationRow[]): MembersPage
 const PRISTINE = pageOf(["a", "b", "c", "d", "e"].map(member), [invite("p")]);
 const PENDING = pageOf([], [invite("p")]);
 
+/** The browser's key for the `members.page` read of `input`. */
+function pageKey(input: unknown): readonly unknown[] {
+	return [["members", "page"], { input, type: "query" }];
+}
+
 /** A client seeded the way the route's prefetch seeds it: the pristine key, and optionally the link's key. */
 function seededClient(withFiltered: boolean): QueryClient {
 	const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000, retry: false } } });
-	qc.setQueryData(["members", "acme", {}], PRISTINE);
-	if (withFiltered) qc.setQueryData(["members", "acme", { statuses: ["pending"] }], PENDING);
+	qc.setQueryData(pageKey({}), PRISTINE);
+	if (withFiltered) qc.setQueryData(pageKey({ statuses: ["pending"] }), PENDING);
 	return qc;
 }
 

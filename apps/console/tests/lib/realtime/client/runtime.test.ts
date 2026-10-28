@@ -29,6 +29,8 @@ vi.mock("@/lib/rpc/client", () => {
 			support: { key: () => ["support-orpc"] },
 			// The Alerts hub's reads (#6125).
 			alerts: { key: () => ["alerts-orpc"] },
+			// The people & access reads, which the members and access topics invalidate (#6129).
+			members: { key: () => ["members-orpc"] },
 			// The shell's reads the topic map also reaches (#6114).
 			workspace: {
 				setupGuide: { key: () => ["ws-setup-guide"] },

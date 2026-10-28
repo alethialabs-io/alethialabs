@@ -14,7 +14,7 @@ import {
 	or,
 } from "drizzle-orm";
 import { z } from "zod";
-import { listRoles } from "@/app/server/actions/roles";
+import { listRoles } from "@/lib/rpc/procedures/members";
 import { getTeams } from "@/app/server/actions/teams";
 import { requireOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";

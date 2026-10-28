@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { RolesSkeleton } from "@/components/settings/roles/roles-skeleton";
 
-/** Instant skeleton for the settings/roles route: its toolbar (count, copy, one action), then the panel. */
+/** Instant skeleton for the settings/roles route: the page's own toolbar, filter bar and master/detail. */
 export default function RolesLoading() {
-	return (
-		<div>
-			<PageToolbarSkeleton className="mb-4" count actions={1} />
-			<PanelSkeleton lines={5} />
-		</div>
-	);
+	return <RolesSkeleton />;
 }

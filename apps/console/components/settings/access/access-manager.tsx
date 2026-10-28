@@ -2,28 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Access — an inheritance info-note, a stat strip (Grants / Org-wide /
-// Project-scoped), a toolbar (search · scope filter · Add grant), an inline
-// grant builder with a live preview, and the grants table on the shared DataTable
-// (sortable + paginated). Wired to grants.ts (getAccessGrantsPage / getGrantOptions /
-// assignGrant / revokeGrant). The page header lives in the settings shell; without the
-// Enterprise `customRoles` entitlement the surface stays visible and shows the upsell.
+// Settings · Access — an inheritance info-note, a toolbar (count · Add grant), the filter bar
+// (search · scope · roles · effect), an inline grant builder with a live preview, and the grants
+// table on the shared DataTable (sortable + paginated). The reads are the `members.grants` and `members.grantOptions` GET
+// procedures, prefetched by the org route (#6129); the writes are `assignGrant` / `revokeGrant`
+// through `useActionMutation`, and an `access` hint refreshes the list when someone else changes a
+// grant. The page header lives in the settings shell; without the Enterprise `customRoles`
+// entitlement the surface stays visible and shows the upsell.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert } from "lucide-react";
-import { useParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { useMemo, useState } from "react";
 import {
   type AccessGrantRow,
   assignGrant,
-  getGrantOptions,
   type GrantOptions,
   revokeGrant,
 } from "@/app/server/actions/grants";
+import { RegionError } from "@/components/errors/region-error";
+import { isForbiddenRead } from "@/components/settings/members/people-reads";
+import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { roleDisplayName } from "@/lib/authz/registry";
-import { useAccessGrantsPageQuery } from "@/lib/query/use-access-grants-query";
+import {
+  useAccessGrantsPageQuery,
+  useGrantOptionsQuery,
+} from "@/lib/query/use-access-grants-query";
+import { orpc } from "@/lib/rpc/client";
 import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
@@ -61,7 +66,6 @@ import { FilterSearch } from "@repo/ui/filter-search";
 import { formatRelative } from "@repo/format";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { userInitials } from "@/lib/user-display";
@@ -74,7 +78,11 @@ import {
   reachLabel,
   SCOPE_LEVEL,
 } from "./access-filters";
+import { AccessNoAccess } from "./access-no-access";
 import { Combobox } from "./combobox";
+
+/** Every read a grant write shows in: the grants list, the role catalog's grant counts. */
+const GRANT_READS = [orpc.members.key()];
 
 const SCOPE_OPTIONS = [
   { value: "org", label: "Entire organization" },
@@ -84,7 +92,7 @@ const SCOPE_OPTIONS = [
 ];
 
 /**
- * The Access surface. When `projectId` is given the grants list, stats, and grant builder are scoped
+ * The Access surface. When `projectId` is given the grants list and the grant builder are scoped
  * to that single project (project-scoped Settings › Access); without it, the full org grants render.
  *
  * `customRoles` is the entitlement as the PAGE resolved it on the server (#5850). The workspace
@@ -97,10 +105,15 @@ const SCOPE_OPTIONS = [
 export function AccessManager({
   projectId,
   customRoles = false,
-}: { projectId?: string; customRoles?: boolean } = {}) {
-  const entitled = useEntitlement("customRoles") || customRoles;
-  const { org } = useParams<{ org: string }>();
-  const qc = useQueryClient();
+  forbidden: forbiddenAtRender = false,
+}: {
+  projectId?: string;
+  customRoles?: boolean;
+  /** The route's prefetch was refused (`member:view`): the no-access render from the first paint. */
+  forbidden?: boolean;
+} = {}) {
+  const storeEntitled = useEntitlement("customRoles");
+  const entitled = customRoles || storeEntitled === true;
 
   // Filter state: the store is the source of truth, the URL mirrors it (shareable views),
   // and the free text is DEBOUNCED — this surface had none, so every keystroke re-ran the
@@ -120,13 +133,14 @@ export function AccessManager({
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
 
-  // Custom-scoped grants are Enterprise. Without the entitlement the server rejects these
-  // (requireAccessAdmin), so both queries stay disabled and the upsell renders instead.
+  // Custom-scoped grants are Enterprise. Without the entitlement the page body is the upsell, so
+  // both reads stay disabled; a route that already learned the viewer may not read them (forbidden)
+  // does not ask again.
   //
-  // Filtered SERVER-SIDE (#4890): the whole normalized query is the key, `getAccessGrantsPage`
+  // Filtered SERVER-SIDE (#4890): the whole normalized query is the input, `members.grants`
   // narrows in SQL, and the scope/role/effect facets come back counted over the UNFILTERED
   // grants of the same scope — so an option never disappears the moment it is selected.
-  const grantsQuery = useAccessGrantsPageQuery(query, entitled);
+  const grantsQuery = useAccessGrantsPageQuery(query, entitled && !forbiddenAtRender);
   // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
   // been read into the store, before the first answer, while the rows are the previous query's
   // placeholder, and while a typed search is still inside its debounce — the jobs, runners,
@@ -137,18 +151,11 @@ export function AccessManager({
     grantsQuery.isPending ||
     grantsQuery.isPlaceholderData ||
     filters.search !== search;
-  const optionsQuery = useQuery({
-    queryKey: ["access", "grant-options", org] as const,
-    queryFn: () => getGrantOptions(),
-    enabled: entitled,
-    staleTime: 60_000,
-  });
+  const optionsQuery = useGrantOptionsQuery(entitled && !forbiddenAtRender);
   const options: GrantOptions | null = optionsQuery.data ?? null;
-
-  const invalidate = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["access", "grants", org] });
-    void qc.invalidateQueries({ queryKey: ["access", "grant-options", org] });
-  }, [qc, org]);
+  // Forbidden is its own render (B4): the route's prefetch said so, or a live refetch did (a
+  // viewer whose `member:view` went away while the page was open).
+  const forbidden = forbiddenAtRender || isForbiddenRead(grantsQuery.error);
 
   // Resolve a scoped resource id → a friendly label via the option lists.
   const resourceLabel = useMemo(() => {
@@ -162,21 +169,20 @@ export function AccessManager({
       id ? (map.get(`${type}:${id}`) ?? `${id.slice(0, 8)}…`) : "—";
   }, [options]);
 
-  const revoke = async (g: AccessGrantRow) => {
-    try {
-      await revokeGrant(g.id);
-      toast.success("Access revoked");
-      setDeleting(null);
-      invalidate();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't revoke access");
-    }
-  };
+  const revocation = useActionMutation(revokeGrant, {
+    invalidates: GRANT_READS,
+    successMessage: "Access revoked",
+  });
+  /** The grant a revoke is in flight for: its row menu is closed until it settles. */
+  const revokingId = revocation.isPending ? revocation.variables?.id : undefined;
 
   const filtered = useMemo(
     () => grantsQuery.data?.rows ?? [],
     [grantsQuery.data],
   );
+  // WHEN the rows were read comes from the payload, never from this renderer, so the server render
+  // and the hydrating client print the same "… ago" (React #418, the members page's #5377 rule).
+  const asOf = grantsQuery.data?.asOf;
   /** Every grant in this scope — what "no grants yet" means, as opposed to "none match". */
   const total = grantsQuery.data?.total ?? 0;
   const counts = useMemo(
@@ -276,7 +282,7 @@ export function AccessManager({
         header: "Granted",
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-            {formatRelative(row.original.createdAt)}
+            {formatRelative(row.original.createdAt, asOf ? new Date(asOf) : undefined)}
           </span>
         ),
       },
@@ -288,12 +294,15 @@ export function AccessManager({
           <div className="text-right">
             <DropdownMenu>
               <DropdownMenuTrigger
+                disabled={revokingId === row.original.id}
                 render={
                   <Button
                     variant="ghost"
                     size="icon"
                     className="size-7"
                     aria-label="Manage grant"
+                    aria-busy={revokingId === row.original.id || undefined}
+                    disabled={revokingId === row.original.id}
                   >
                     <MoreHorizontal size={16} />
                   </Button>
@@ -312,7 +321,7 @@ export function AccessManager({
         ),
       },
     ],
-    [resourceLabel],
+    [resourceLabel, revokingId, asOf],
   );
 
   return (
@@ -344,11 +353,16 @@ export function AccessManager({
 
       {!entitled ? (
         <FeatureUpsell feature="access" />
+      ) : forbidden ? (
+        <AccessNoAccess />
       ) : grantsQuery.isPending ? (
-        <div className="space-y-3" aria-busy>
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
+        <PeopleListSkeleton facets={projectId ? 2 : 3} columns={6} />
+      ) : grantsQuery.isError && grantsQuery.data === undefined ? (
+        <RegionError
+          title="Couldn't load access grants"
+          description="The grant list didn't load. No access was changed."
+          onRetry={() => void grantsQuery.refetch()}
+        />
       ) : (
         <div aria-busy={busy}>
           <PageToolbar
@@ -425,10 +439,7 @@ export function AccessManager({
               resourceLabel={resourceLabel}
               projectId={projectId}
               onCancel={() => setCreating(false)}
-              onGranted={() => {
-                setCreating(false);
-                invalidate();
-              }}
+              onGranted={() => setCreating(false)}
             />
           )}
 
@@ -480,7 +491,10 @@ export function AccessManager({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleting && void revoke(deleting)}
+              onClick={() => {
+                if (deleting) revocation.mutate({ id: deleting.id });
+                setDeleting(null);
+              }}
               variant="destructive"
             >
               Revoke access
@@ -514,7 +528,11 @@ function GrantBuilder({
   const [permissionKey, setPermissionKey] = useState("");
   const [scopeType, setScopeType] = useState(projectId ? "project" : "org");
   const [resourceId, setResourceId] = useState(projectId ?? "");
-  const [saving, setSaving] = useState(false);
+  const grant = useActionMutation(assignGrant, {
+    invalidates: GRANT_READS,
+    successMessage: "Access granted",
+    onSuccess: () => onGranted(),
+  });
 
   const principalOpts = options.principals.map((p) => ({
     value: p.id,
@@ -561,27 +579,18 @@ function GrantBuilder({
     resourceLabel,
   ]);
 
-  async function submit() {
-    if (!valid) return;
-    setSaving(true);
-    try {
-      const principal = options.principals.find((p) => p.id === principalId);
-      await assignGrant({
-        principalType: principal?.type ?? "user",
-        principalId,
-        effect,
-        roleId: mode === "role" ? roleId : null,
-        permissionKey: mode === "permission" ? permissionKey : null,
-        resourceType: scopeType === "org" ? "org" : scopeType,
-        resourceId: scopeType === "org" ? null : resourceId,
-      });
-      toast.success("Access granted");
-      onGranted();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't grant access");
-    } finally {
-      setSaving(false);
-    }
+  function submit() {
+    if (!valid || grant.isPending) return;
+    const principal = options.principals.find((p) => p.id === principalId);
+    grant.mutate({
+      principalType: principal?.type ?? "user",
+      principalId,
+      effect,
+      roleId: mode === "role" ? roleId : null,
+      permissionKey: mode === "permission" ? permissionKey : null,
+      resourceType: scopeType === "org" ? "org" : scopeType,
+      resourceId: scopeType === "org" ? null : resourceId,
+    });
   }
 
   return (
@@ -702,10 +711,10 @@ function GrantBuilder({
         </Button>
         <Button
           size="sm"
-          disabled={!valid || saving}
-          onClick={() => void submit()}
+          disabled={!valid || grant.isPending}
+          onClick={submit}
         >
-          {saving ? "Adding…" : "Add grant"}
+          {grant.isPending ? "Adding…" : "Add grant"}
         </Button>
       </div>
     </div>
