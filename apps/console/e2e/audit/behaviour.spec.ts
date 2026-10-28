@@ -108,7 +108,12 @@ const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly Predica
 /** A predicate whose floor differs from {@link MIN_MEASURED}, each with its reason. */
 const MIN_MEASURED_FOR: Partial<Record<(typeof B_IDS)[number], number>> = {
 	// #6124: connectors prefetches its only page read, so it left B3's measurable set; a route meeting B1 cannot be held on load.
-	B3: 9,
+	// #6129: SSO/classification/activity prefetch their page reads; a route meeting B1 cannot be held on load. `/[org]/[project]/architecture` flips PASS/NOT MEASURED between runs (#6318).
+	B3: 6,
+	// #6129: SSO/classification/activity prefetch their page reads and hydrate them, so a failure load
+	// asks the browser for none of them (NOT MEASURED `not-intercepted` / `no-page-reads`): 4 routes left
+	// B5's measurable set, which measured 9 on every run of #6316.
+	B5: 9,
 };
 
 /**

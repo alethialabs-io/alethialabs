@@ -273,7 +273,7 @@ async function downloadableClusters(actor: Actor, clusters: ClusterData[]): Prom
  * The classification chips of every cluster, in one batched read. Chips need `org:view`; without it
  * the clusters still render, chipless. It labels exactly the clusters `readClusters` returns, and
  * that list already leaves out the clusters of projects the viewer may not view — the same narrowing
- * the chips' own read (app/server/actions/classification/assignments.ts `getAssignmentsForKind`,
+ * the chips' own read (`classification.assignmentsForKind`, lib/rpc/procedures/classification.ts,
  * through `classifiedIdsViewable`) applies — so it asks no second visibility question.
  */
 async function clusterChips(actor: Actor, clusters: ClusterData[]): Promise<Map<string, AssignedValue[]>> {

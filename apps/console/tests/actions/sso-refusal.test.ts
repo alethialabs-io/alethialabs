@@ -6,10 +6,12 @@
 // Every SSO mutation goes through `callAuth`, which dispatches the plugin's endpoint and, on a
 // non-2xx, used to `throw new Error(<the plugin's message>)` out of a `"use server"` export. A
 // production build replaces a thrown message with a digest, so "the TXT record is not there yet" or
-// "issuer must be a URL" reached the SSO form as noise. Now RETURNED: any 4xx (a 401/403 from the
-// session / access / entitlement middleware included), and any non-500 5xx carrying a better-auth
-// `code` — the plugin's 502 `DOMAIN_VERIFICATION_FAILED` for a TXT record not visible yet. Still
-// THROWN: a 500, and a 5xx with no `code`. On the old code every `resolves` below was a rejection.
+// "issuer must be a URL" reached the SSO form as noise. Since #6129 every mutation is a
+// `defineAction` returning `ActionResult`: the plugin's sentence is a `conflict` refusal, shown
+// verbatim — any 4xx (a 401/403 from the session / access / entitlement middleware included), and
+// any non-500 5xx carrying a better-auth `code` (the plugin's 502 `DOMAIN_VERIFICATION_FAILED` for a
+// TXT record not visible yet). A 500, and a 5xx with no `code`, is the server failing: an
+// `unexpected` result whose text never reaches the browser.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,7 +32,7 @@ vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 // `ownedProvider`'s read: one OIDC provider row belonging to the actor's org.
 vi.mock("@/lib/db", () => {
 	const row = {
-		id: "sp-1",
+		id: "5f0c1f3a-2b1e-4c6d-9a8b-7c6d5e4f3a2b",
 		providerId: "okta",
 		domain: "acme.com",
 		issuer: "https://acme.okta.com",
@@ -55,12 +57,19 @@ import {
 	verifySsoDomain,
 } from "@/app/server/actions/sso";
 
+const ID = "5f0c1f3a-2b1e-4c6d-9a8b-7c6d5e4f3a2b";
+
 /** A better-auth JSON answer with `status` — built per call, since a Response body reads once. */
 function answer(status: number, body: unknown): Response {
 	return new Response(JSON.stringify(body), {
 		status,
 		headers: { "content-type": "application/json" },
 	});
+}
+
+/** The refusal result the page shows verbatim. */
+function refused(message: string) {
+	return { ok: false, error: { kind: "conflict", message } };
 }
 
 const NOT_VERIFIED = "Unable to verify domain ownership for acme.com. Try again later";
@@ -72,9 +81,9 @@ beforeEach(() => {
 describe("SSO mutations — a plugin refusal is a value", () => {
 	it("returns the IdP update refusal for the edit form to show", async () => {
 		handler.mockImplementation(async () => answer(400, { message: "issuer must be a valid URL" }));
-		await expect(
-			updateSsoProvider("sp-1", { issuer: "not a url" }),
-		).resolves.toEqual({ ok: false, error: "issuer must be a valid URL" });
+		await expect(updateSsoProvider({ id: ID, issuer: "not a url" })).resolves.toEqual(
+			refused("issuer must be a valid URL"),
+		);
 	});
 
 	it("returns the domain-verification refusal — the commonest answer before DNS propagates", async () => {
@@ -82,68 +91,64 @@ describe("SSO mutations — a plugin refusal is a value", () => {
 		handler.mockImplementation(async () =>
 			answer(502, { code: "DOMAIN_VERIFICATION_FAILED", message: NOT_VERIFIED }),
 		);
-		await expect(verifySsoDomain("sp-1")).resolves.toEqual({
-			ok: false,
-			error: NOT_VERIFIED,
-		});
+		await expect(verifySsoDomain({ id: ID })).resolves.toEqual(refused(NOT_VERIFIED));
 	});
 
 	it("returns delete and token-mint refusals too", async () => {
 		handler.mockImplementation(async () => answer(404, { message: "Provider not found" }));
-		await expect(deleteSsoProvider("sp-1")).resolves.toEqual({
-			ok: false,
-			error: "Provider not found",
-		});
-		await expect(requestSsoDomainVerification("sp-1")).resolves.toEqual({
-			ok: false,
-			error: "Provider not found",
-		});
+		await expect(deleteSsoProvider({ id: ID })).resolves.toEqual(refused("Provider not found"));
+		await expect(requestSsoDomainVerification({ id: ID })).resolves.toEqual(refused("Provider not found"));
 	});
 
 	it("returns a 401/403 from the middleware in front of the plugin as a refusal too", async () => {
 		// `checkProviderAccess` answers a caller who is not an admin of the provider's org with a 403
 		// FORBIDDEN. The 401 below borrows the plugin's own UNAUTHORIZED sentence for an unverified
 		// domain to stand for any 401 shape; `callAuth` judges the status and the body, not the path.
-		// Both are returned like any other 4xx — not thrown.
 		handler.mockImplementation(async () =>
 			answer(403, { code: "FORBIDDEN", message: "You don't have access to this provider" }),
 		);
-		await expect(deleteSsoProvider("sp-1")).resolves.toEqual({
-			ok: false,
-			error: "You don't have access to this provider",
-		});
+		await expect(deleteSsoProvider({ id: ID })).resolves.toEqual(refused("You don't have access to this provider"));
 		handler.mockImplementation(async () =>
 			answer(401, { code: "UNAUTHORIZED", message: "Provider domain has not been verified" }),
 		);
-		await expect(updateSsoProvider("sp-1", { issuer: "https://x" })).resolves.toEqual({
-			ok: false,
-			error: "Provider domain has not been verified",
-		});
+		await expect(updateSsoProvider({ id: ID, issuer: "https://x" })).resolves.toEqual(
+			refused("Provider domain has not been verified"),
+		);
 	});
 
-	it("still THROWS a server failure — a 500, or a bare 5xx no plugin authored", async () => {
+	it("answers a server failure — a 500, or a bare 5xx no plugin authored — as unexpected, with no server text", async () => {
 		handler.mockImplementation(async () =>
 			answer(500, { code: "DOMAIN_VERIFICATION_FAILED", message: "relation sso_provider does not exist" }),
 		);
-		await expect(updateSsoProvider("sp-1", { issuer: "https://x" })).rejects.toThrow(
-			"relation sso_provider does not exist",
-		);
+		const failed = await updateSsoProvider({ id: ID, issuer: "https://x" });
+		expect(failed).toMatchObject({ ok: false, error: { kind: "unexpected" } });
+		expect(JSON.stringify(failed)).not.toContain("relation sso_provider");
 		handler.mockImplementation(async () => new Response("upstream timed out", { status: 504 }));
-		await expect(verifySsoDomain("sp-1")).rejects.toThrow("upstream timed out");
+		const timedOut = await verifySsoDomain({ id: ID });
+		expect(timedOut).toMatchObject({ ok: false, error: { kind: "unexpected" } });
+		expect(JSON.stringify(timedOut)).not.toContain("upstream timed out");
 	});
 
-	it("answers success with ok: true, and the minted record", async () => {
-		handler.mockImplementation(async () => answer(200, {}));
-		await expect(updateSsoProvider("sp-1", { domain: "acme.io" })).resolves.toEqual({
-			ok: true,
+	it("refuses a malformed provider id before calling the plugin", async () => {
+		await expect(deleteSsoProvider({ id: "sp-1" })).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "validation" },
 		});
-		await expect(verifySsoDomain("sp-1")).resolves.toEqual({ ok: true, verified: true });
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it("answers success with the result, and the minted record", async () => {
+		handler.mockImplementation(async () => answer(200, {}));
+		await expect(updateSsoProvider({ id: ID, domain: "acme.io" })).resolves.toEqual({
+			ok: true,
+			data: { updated: true },
+		});
+		await expect(verifySsoDomain({ id: ID })).resolves.toEqual({ ok: true, data: { verified: true } });
 
 		handler.mockImplementation(async () => answer(200, { domainVerificationToken: "tok-1" }));
-		await expect(requestSsoDomainVerification("sp-1")).resolves.toEqual({
+		await expect(requestSsoDomainVerification({ id: ID })).resolves.toEqual({
 			ok: true,
-			record: "_alethia-sso-okta",
-			token: "tok-1",
+			data: { record: "_alethia-sso-okta", token: "tok-1" },
 		});
 	});
 });

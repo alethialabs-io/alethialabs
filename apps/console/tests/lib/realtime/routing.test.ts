@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters", "projects", "organization", "runners", "fleet", "members", "access", "connectors"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters", "projects", "organization", "runners", "fleet", "members", "access", "connectors", "classification", "activity"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -448,6 +448,56 @@ describe("keysFor — people & access (#6129)", () => {
 	it("a row whose org the trigger could not resolve (a cascade, a built-in role) routes nowhere", () => {
 		expect(keysFor(people("members", { o: null }))).toEqual([]);
 		expect(keysFor(people("access", { o: null }))).toEqual([]);
+	});
+});
+
+describe("keysFor — classification and the Activity log (#6129)", () => {
+	/** A notice as the classification / activity-log triggers send it. */
+	const notice = (t: "classification" | "activity", over: Partial<ChangeNotice> = {}): ChangeNotice => ({
+		kind: "change",
+		t,
+		id: t === "activity" ? null : JOB,
+		o: ORG,
+		u: null,
+		p: null,
+		...over,
+	});
+
+	/** Whether a stream of `orgId`, holding `view_activity` or not, hears the notice. */
+	const hears = (n: ChangeNotice, orgId: string, viewActivity: boolean) => {
+		const held = subscriptionKeys(
+			{ userId: USER, orgId },
+			{ platformView: false, manageSupport: false, viewAlerts: false, memberView: false, viewActivity },
+		);
+		return keysFor(n).some((r) => held.includes(r.key));
+	};
+
+	it("classification routes to the org arm, unfiltered — every member reads the taxonomy", () => {
+		expect(keysFor(notice("classification"))).toEqual([{ key: `o:${ORG}`, filterProject: null }]);
+		expect(hears(notice("classification"), ORG, false)).toBe(true);
+	});
+
+	it("activity routes ONLY to the org's view_activity key — a member without it hears nothing", () => {
+		expect(keysFor(notice("activity"))).toEqual([{ key: `oactivity:${ORG}`, filterProject: null }]);
+		expect(hears(notice("activity"), ORG, true)).toBe(true);
+		expect(hears(notice("activity"), ORG, false)).toBe(false);
+	});
+
+	it("a stream that never asked the view_activity question does not hold the activity key", () => {
+		expect(subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false, viewAlerts: false })).not.toContain(
+			`oactivity:${ORG}`,
+		);
+	});
+
+	it("neither reaches another org's stream, view_activity or not", () => {
+		const other = "55555555-5555-4555-8555-555555555555";
+		expect(hears(notice("classification"), other, true)).toBe(false);
+		expect(hears(notice("activity"), other, true)).toBe(false);
+	});
+
+	it("a row with no org routes nowhere", () => {
+		expect(keysFor(notice("classification", { o: null }))).toEqual([]);
+		expect(keysFor(notice("activity", { o: null }))).toEqual([]);
 	});
 });
 

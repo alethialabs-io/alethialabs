@@ -34,9 +34,6 @@ export const qk = {
 		["cloud-resources", identityId] as const,
 	roles: (org: string, search?: string) =>
 		search ? (["roles", org, search] as const) : (["roles", org] as const),
-	/** Activity log, parameterized by the normalized filter query (sans cursor — the
-	 * cursor is the infinite query's pageParam, never part of the key). */
-	activity: (org: string, query: unknown) => ["activity", org, query] as const,
 	/**
 	 * Org member rows.
 	 *
@@ -49,19 +46,6 @@ export const qk = {
 	 */
 	members: (org: string, query?: unknown) =>
 		query ? (["members", org, query] as const) : (["members", org] as const),
-	ssoProviders: (org: string, filter?: unknown) =>
-		filter
-			? (["sso", "providers", org, filter] as const)
-			: (["sso", "providers", org] as const),
-	classificationDimensions: (search?: string) =>
-		search
-			? (["classification", "dimensions", search] as const)
-			: (["classification", "dimensions"] as const),
-	classificationAssignments: (kind: string, id: string) =>
-		["classification", "assignments", kind, id] as const,
-	classificationAssignmentsForKind: (kind: string, ids: string[]) =>
-		["classification", "assignments-batch", kind, ids] as const,
-	classificationCanEdit: () => ["classification", "can-edit"] as const,
 
 	// ── Surfaces joining the filter standard (#2871 seams) ──────────────────────────────
 	//
@@ -72,7 +56,7 @@ export const qk = {
 	//
 	// All take the NORMALIZED filter object (the `normalize*Query()` step), never raw component
 	// state — an unsorted array or a stray whitespace fragments the cache into keys that never
-	// hit. `unknown` mirrors `jobsPage`/`activity`: the key factory does not need the shape, and
+	// hit. `unknown` mirrors `jobsPage`: the key factory does not need the shape, and
 	// typing it here would drag every page's query type into this module.
 	connectors: (org: string, query?: unknown) =>
 		query ? (["connectors", org, query] as const) : (["connectors", org] as const),

@@ -2880,8 +2880,8 @@ GRANT EXECUTE ON FUNCTION public.gc_authz_activity_log(INTERVAL, INTEGER) TO ale
 
 -- ── authz_activity_log: tenant-scoped RLS + GC-aware append-only WORM ─────────────────────────────
 -- The PDP governance/audit log is written on every enforce() and read by the Activity viewer /
--- CLI. All three real paths — recordActivity (lib/authz/activity.ts), getActivityLog
--- (app/server/actions/activity.ts), and gc_authz_activity_log (via the reconcile loop) — run under
+-- CLI. All three real paths — recordActivity (lib/authz/activity.ts), readActivityPage
+-- (lib/rpc/procedures/activity.ts), and gc_authz_activity_log (via the reconcile loop) — run under
 -- the BYPASSRLS service role (getServiceDb), so this table previously had NO tenant RLS and the app
 -- role held the blanket GRANT (SELECT/INSERT/UPDATE/DELETE) at the top of this file. Two gaps closed:
 --
@@ -3643,6 +3643,129 @@ DROP TRIGGER IF EXISTS role_permission_notify_change_insdel ON public.role_permi
 CREATE TRIGGER role_permission_notify_change_insdel
   AFTER INSERT OR DELETE ON public.role_permission
   FOR EACH ROW EXECUTE FUNCTION public.notify_role_permission_change();
+
+-- sso_provider (#6129): the SSO page's list — a provider registered, edited, verified or removed.
+-- Read under `member:view` (lib/rpc/procedures/sso.ts), so it rides the `access` topic and reaches
+-- only `oaccess:<org>` holders. The columns the page shows: its id, domain and issuer, its configs
+-- (protocol, client id, sign-on URL, certificate fingerprint) and its verification state. An
+-- instance-wide provider (organization_id NULL) has no org and routes nowhere.
+CREATE OR REPLACE FUNCTION public.notify_sso_provider_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('access', OLD.id, OLD.organization_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('access', NEW.id, NEW.organization_id, NULL, NULL);
+    -- A provider moved to another org (no path does this today) is gone from the old org's list.
+    IF TG_OP = 'UPDATE' AND OLD.organization_id IS DISTINCT FROM NEW.organization_id THEN
+      PERFORM public.emit_change('access', OLD.id, OLD.organization_id, NULL, NULL);
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS sso_provider_notify_change_upd ON public.sso_provider;
+CREATE TRIGGER sso_provider_notify_change_upd
+  AFTER UPDATE ON public.sso_provider
+  FOR EACH ROW WHEN (
+    (OLD.provider_id, OLD.domain, OLD.issuer, OLD.oidc_config, OLD.saml_config, OLD.domain_verified,
+     OLD.organization_id)
+    IS DISTINCT FROM
+    (NEW.provider_id, NEW.domain, NEW.issuer, NEW.oidc_config, NEW.saml_config, NEW.domain_verified,
+     NEW.organization_id)
+  )
+  EXECUTE FUNCTION public.notify_sso_provider_change();
+
+DROP TRIGGER IF EXISTS sso_provider_notify_change_insdel ON public.sso_provider;
+CREATE TRIGGER sso_provider_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.sso_provider
+  FOR EACH ROW EXECUTE FUNCTION public.notify_sso_provider_change();
+
+-- ── classification (#6129): dimensions, values and assignments. ──────────────────────────────
+-- ROUTING (lib/realtime/routing.ts): the org arm `o:<org>`, unfiltered — the taxonomy is org-wide
+-- and every member reads it (`classification.*` answer `org:view`). Every hint names a DIMENSION
+-- (a value's or an assignment's parent), never the resource an assignment pins: the hint says the
+-- taxonomy or its usage moved, which the settings page's counts already show every member, and a
+-- chip on a project the viewer may not see is re-read through `classification.assignments`, which
+-- still answers it with nothing. `u`/`p` are sent NULL. All three tables carry `org_id`.
+CREATE OR REPLACE FUNCTION public.notify_classification_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- PL/pgSQL resolves a row field when the statement RUNS, so `dimension_id` is read only on the
+  -- two child tables that have it.
+  IF TG_TABLE_NAME = 'classification_dimension' THEN
+    IF TG_OP = 'DELETE' THEN
+      PERFORM public.emit_change('classification', OLD.id, OLD.org_id, NULL, NULL);
+    ELSE
+      PERFORM public.emit_change('classification', NEW.id, NEW.org_id, NULL, NULL);
+    END IF;
+  ELSIF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('classification', OLD.dimension_id, OLD.org_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('classification', NEW.dimension_id, NEW.org_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- classification_dimension: every column the manager renders. Not listed: created_by, created_at,
+-- updated_at.
+DROP TRIGGER IF EXISTS classification_dimension_notify_change_upd ON public.classification_dimension;
+CREATE TRIGGER classification_dimension_notify_change_upd
+  AFTER UPDATE ON public.classification_dimension
+  FOR EACH ROW WHEN (
+    (OLD.key, OLD.label, OLD.description, OLD.multi, OLD.applies_to, OLD.position)
+    IS DISTINCT FROM
+    (NEW.key, NEW.label, NEW.description, NEW.multi, NEW.applies_to, NEW.position)
+  )
+  EXECUTE FUNCTION public.notify_classification_change();
+
+DROP TRIGGER IF EXISTS classification_dimension_notify_change_insdel ON public.classification_dimension;
+CREATE TRIGGER classification_dimension_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.classification_dimension
+  FOR EACH ROW EXECUTE FUNCTION public.notify_classification_change();
+
+-- classification_value: every column a value row and a chip render. Not listed: created_at.
+DROP TRIGGER IF EXISTS classification_value_notify_change_upd ON public.classification_value;
+CREATE TRIGGER classification_value_notify_change_upd
+  AFTER UPDATE ON public.classification_value
+  FOR EACH ROW WHEN (
+    (OLD.value, OLD.label, OLD.color, OLD.enforcement, OLD.position)
+    IS DISTINCT FROM
+    (NEW.value, NEW.label, NEW.color, NEW.enforcement, NEW.position)
+  )
+  EXECUTE FUNCTION public.notify_classification_change();
+
+DROP TRIGGER IF EXISTS classification_value_notify_change_insdel ON public.classification_value;
+CREATE TRIGGER classification_value_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.classification_value
+  FOR EACH ROW EXECUTE FUNCTION public.notify_classification_change();
+
+-- classification_assignment: written as insert and delete only (a single-valued swap deletes the
+-- prior row, then inserts), so there is no UPDATE trigger. A cascade from a deleted dimension or
+-- value fires here too; identical notices inside one transaction are delivered once (NOTIFY
+-- de-duplicates them), and the client coalesces the rest.
+DROP TRIGGER IF EXISTS classification_assignment_notify_change_insdel ON public.classification_assignment;
+CREATE TRIGGER classification_assignment_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.classification_assignment
+  FOR EACH ROW EXECUTE FUNCTION public.notify_classification_change();
+
+-- ── activity (#6129): a recorded entry in the org's Activity log. ────────────────────────────
+-- authz_activity_log is append-only (authz_activity_log_worm, above): an INSERT is the only change
+-- a reader can see appear, and the retention GC's prune removes rows older than any window the feed
+-- offers, so only INSERT is hinted. ROUTING: the org's `oactivity:<org>` key, held only by a stream
+-- whose actor may `view_activity` — what `activity.page` answers — never the org arm. The row's id
+-- is a bigint, not a uuid, so the hint carries none (`id` NULL).
+CREATE OR REPLACE FUNCTION public.notify_activity_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('activity', NULL, NEW.org_id, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS authz_activity_log_notify_change_ins ON public.authz_activity_log;
+CREATE TRIGGER authz_activity_log_notify_change_ins
+  AFTER INSERT ON public.authz_activity_log
+  FOR EACH ROW EXECUTE FUNCTION public.notify_activity_change();
 
 -- ── connectors: cloud_identities + connector_credentials (#6124) ──────────────────────────────
 -- The credential-shaped notifier. Both tables carry `scoped_all` (above): an `org` row is the org's,

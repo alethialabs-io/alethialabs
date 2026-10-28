@@ -94,6 +94,11 @@ vi.mock("@/lib/rpc/client", () => {
 			environments: { key: () => ["environments-orpc"], overview: { key: () => ["environments-orpc", "overview"] } },
 			// The Evidence page's read (#6126), which the jobs, environments and projects topics invalidate.
 			evidence: proc("evidence"),
+			// #6129 part 2: the SSO reads ride the access topic; classification and the Activity feed
+			// have topics of their own.
+			sso: proc("sso"),
+			classification: proc("classification"),
+			activity: { page: proc("activity.page") },
 		},
 	};
 });
