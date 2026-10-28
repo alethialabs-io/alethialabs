@@ -131,7 +131,7 @@ const LINK_REFUSED_ALERT_RAISED = " We have raised an alert.";
 /** §5.5's `released(refunded)` clause, for an ended subscription a hold refunded in full. */
 const LINK_REFUSED_REFUNDED =
 	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you.";
-const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the free plan.";
+const LINK_REFUSED_FREE_PLAN = " A team already created for it stays on the Hobby plan.";
 
 /** What is known of an ended subscription's money: refunded by a hold, never charged, or not proven either. */
 export type EndedSetupRead = "refunded" | "not_charged" | "unconfirmed";

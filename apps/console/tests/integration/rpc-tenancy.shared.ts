@@ -671,6 +671,11 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "the AI tiers' price list is the same for every org",
 		input: undefined,
 	},
+	"billing.salesOpen": {
+		kind: "not-org-scoped",
+		reason: "whether Pro is on sale anywhere is a property of the product, the same for every org",
+		input: undefined,
+	},
 	"usage.org": {
 		kind: "org-scoped",
 		input: undefined,

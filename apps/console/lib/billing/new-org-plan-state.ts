@@ -132,7 +132,7 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Confirming",
 		tier: "pending",
 		sentence:
-			"Your payment is being confirmed. Your team is on the free plan until it is; the Pro plan switches on if it completes.",
+			"Your payment is being confirmed. Your team is on the Hobby plan until it is; the Pro plan switches on if it completes.",
 		toast:
 			"Your organization is ready. Its payment is being confirmed, and the Pro plan switches on if it completes.",
 	},
@@ -140,7 +140,7 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Unconfirmed",
 		tier: "pending",
 		sentence:
-			"We couldn't confirm the payment yet. Your team is on the free plan until we can; the Pro plan switches on once the payment is confirmed, and Billing will show it.",
+			"We couldn't confirm the payment yet. Your team is on the Hobby plan until we can; the Pro plan switches on once the payment is confirmed, and Billing will show it.",
 		toast:
 			"Your organization is ready, but we couldn't confirm its payment yet. The Pro plan switches on once it is confirmed.",
 	},
@@ -148,7 +148,7 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Action needed",
 		tier: "pending",
 		sentence:
-			"The payment did not complete — the card may have been declined, or your bank may need you to confirm it. Your team is on the free plan until it is paid.",
+			"The payment did not complete — the card may have been declined, or your bank may need you to confirm it. Your team is on the Hobby plan until it is paid.",
 		toast:
 			"Your organization is ready, but its payment did not complete, so the Pro plan is not on yet.",
 	},
@@ -156,9 +156,9 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Not charged",
 		tier: "idle",
 		sentence:
-			"The payment did not complete, so you were not charged. Your team is on the free plan; you can upgrade it from Billing.",
+			"The payment did not complete, so you were not charged. Your team is on the Hobby plan; you can upgrade it from Billing.",
 		toast:
-			"Your organization is ready on the free plan. The payment did not complete, so you were not charged.",
+			"Your organization is ready on the Hobby plan. The payment did not complete, so you were not charged.",
 	},
 	not_active: {
 		label: "Not active",

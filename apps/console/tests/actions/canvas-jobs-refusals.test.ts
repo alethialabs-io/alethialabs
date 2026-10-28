@@ -76,7 +76,7 @@ const DEPLOY = [
 ];
 const PLAN = [{ metadata: { plan_result: { resource_changes: [] } } }];
 const QUOTA =
-	"Free plan allows 25 provisioning jobs per day. You've hit the limit — it clears over the next 24 hours, or upgrade to remove it.";
+	"The Hobby plan allows 25 provisioning jobs per day. You've hit the limit — it clears over the next 24 hours, or upgrade to remove it.";
 
 beforeEach(() => {
 	vi.clearAllMocks();

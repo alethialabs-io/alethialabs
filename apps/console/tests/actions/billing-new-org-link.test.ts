@@ -727,7 +727,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		setup();
 
 		const clause = await refusedClause();
-		expect(clause).toMatch(/^This checkout was closed, and we could not confirm whether its payment went through.* We have raised an alert\. A team already created for it stays on the free plan\.$/);
+		expect(clause).toMatch(/^This checkout was closed, and we could not confirm whether its payment went through.* We have raised an alert\. A team already created for it stays on the Hobby plan\.$/);
 		expect(world.stripe.refunds.create).not.toHaveBeenCalled();
 		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 		expect(emitAlertEvent).toHaveBeenCalledWith("org-platform", "system.platform.payment_needs_support", expect.objectContaining({ resource_id: "sub_x" }));
@@ -740,7 +740,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		setup();
 
 		expect(await refusedClause()).toBe(
-			"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.",
+			"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the Hobby plan.",
 		);
 		expect(emitAlertEvent).not.toHaveBeenCalled();
 	});
@@ -751,7 +751,7 @@ describe("§5.6 — an ended X with no open hold", () => {
 		seedHold({ state: "released", release_reason: "refunded", released_at: new Date() });
 
 		expect(await refusedClause()).toBe(
-			"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the free plan.",
+			"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you. A team already created for it stays on the Hobby plan.",
 		);
 		expect(emitAlertEvent).not.toHaveBeenCalled();
 		expect(world.state.setups.get("sub_x")?.closed_reason).toBe("ended");
@@ -1092,11 +1092,11 @@ describe("§5.6 'When a hold ends' — an adoption re-links a setup that has an 
 // link would refuse it with and under the link's alert rule. The expected sentences are LITERALS (C106's
 // rule): read from the module under test, they could not see the two copies drift.
 const NOT_CHARGED_CLAUSE =
-	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan.";
+	"This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the Hobby plan.";
 const UNCONFIRMED_CLAUSE =
 	"This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at support@alethialabs.io with the time of the payment.";
 const ALERT_SENTENCE = " We have raised an alert.";
-const FREE_PLAN_SENTENCE = " A team already created for it stays on the free plan.";
+const FREE_PLAN_SENTENCE = " A team already created for it stays on the Hobby plan.";
 /** What `alertPaymentNeedsSupport` puts before the detail for `context: "setup_closed"`. */
 const SETUP_CLOSED_SUMMARY = "a create-a-team subscription whose unfinished setup was closed because the subscription ended: ";
 

@@ -12,8 +12,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { currentActor, authorize, authorizeQuiet, authorizeRead, isStripeConfigured, getAllAiPrices, getOrgBilling } =
+const { currentActor, authorize, authorizeQuiet, authorizeRead, isStripeConfigured, getAllAiPrices, getOrgBilling, paidSalesOpen } =
 	vi.hoisted(() => ({
+		paidSalesOpen: vi.fn(() => false),
 		currentActor: vi.fn(),
 		authorize: vi.fn(),
 		authorizeQuiet: vi.fn(),
@@ -23,7 +24,7 @@ const { currentActor, authorize, authorizeQuiet, authorizeRead, isStripeConfigur
 		getOrgBilling: vi.fn(),
 	}));
 vi.mock("@/lib/authz/guard", () => ({ currentActor, authorize, authorizeQuiet, authorizeRead }));
-vi.mock("@/lib/billing/eligibility", () => ({ hasAcceptedCurrentDocuments: async () => true }));
+vi.mock("@/lib/billing/eligibility", () => ({ hasAcceptedCurrentDocuments: async () => true, paidSalesOpen }));
 vi.mock("@/lib/billing/config", () => ({ isStripeConfigured, aiPaidTiersEnabled: () => false }));
 vi.mock("@/lib/billing/pricing", () => ({ getAllAiPrices, getPlanPrice: vi.fn() }));
 // A PARTIAL mock: with the enterprise module built (CI), `loadEnterprise` reads other exports of
@@ -63,6 +64,7 @@ async function codeOf(res: Response): Promise<unknown> {
 beforeEach(() => {
 	vi.clearAllMocks();
 	isStripeConfigured.mockReturnValue(false);
+	paidSalesOpen.mockReturnValue(false);
 	currentActor.mockResolvedValue(ACME);
 	authorize.mockResolvedValue(ACME);
 	authorizeQuiet.mockResolvedValue(ACME);
@@ -82,6 +84,25 @@ describe("billing.liveAiPrices", () => {
 		const res = await get("billing/liveAiPrices");
 		expect(res.status).toBe(200);
 		expect(getAllAiPrices).toHaveBeenCalledTimes(1);
+	});
+});
+
+// #6132 (F030): the upgrade sheet's first question. Signed-in only, like every read; the answer is
+// the eligibility module's, so the sheet and the gate read the market through one function.
+describe("billing.salesOpen", () => {
+	it("refuses an anonymous caller without answering", async () => {
+		currentActor.mockRejectedValue(new UnauthorizedError());
+		const res = await get("billing/salesOpen");
+		expect(res.status).toBe(401);
+		expect(paidSalesOpen).not.toHaveBeenCalled();
+	});
+
+	it.each([false, true])("answers a member with { open: %s } from paidSalesOpen", async (open) => {
+		paidSalesOpen.mockReturnValue(open);
+		const res = await get("billing/salesOpen");
+		expect(res.status).toBe(200);
+		const body: unknown = await res.json();
+		expect(body).toMatchObject({ json: { open } });
 	});
 });
 

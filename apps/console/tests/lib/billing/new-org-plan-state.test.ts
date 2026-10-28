@@ -59,7 +59,7 @@ describe("NEW_ORG_PLAN_COPY", () => {
 	it("confirming (a payment still in flight, which can fail) claims nothing about the outcome", () => {
 		const { sentence, toast } = NEW_ORG_PLAN_COPY.confirming;
 		expect(sentence).toBe(
-			"Your payment is being confirmed. Your team is on the free plan until it is; the Pro plan switches on if it completes.",
+			"Your payment is being confirmed. Your team is on the Hobby plan until it is; the Pro plan switches on if it completes.",
 		);
 		expect(`${sentence} ${toast}`).not.toMatch(/went through|succeeded|in a moment|nothing more/);
 	});
@@ -104,6 +104,16 @@ describe("NEW_ORG_PLAN_COPY", () => {
 			const { toast, sentence } = NEW_ORG_PLAN_COPY[state];
 			expect(`${toast} ${sentence}`).not.toMatch(/charged (again|twice)/i);
 			expect(/not charged/i.test(`${toast} ${sentence}`)).toBe(state === "not_charged");
+		}
+	});
+});
+
+// #6132 (F032, D2-A): every sentence that names the free tier calls it Hobby.
+describe("the new-org plan copy names the free tier Hobby", () => {
+	it("never says 'free plan'", async () => {
+		const { NEW_ORG_PLAN_COPY } = await import("@/lib/billing/new-org-plan-state");
+		for (const copy of Object.values(NEW_ORG_PLAN_COPY)) {
+			expect(`${copy.sentence} ${copy.toast}`).not.toMatch(/free plan/i);
 		}
 	});
 });
