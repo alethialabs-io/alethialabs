@@ -39,9 +39,12 @@
 //   `resolveCliProject` from @/lib/cli/resolve-project, or a namespace import of that module. Only
 //   lib/cli/project-access.ts may do either, besides the files in the exemption ledger.
 // - PROJECT-BOUND ROWS UNDER ORG-LEVEL AUTHORIZATION: a route that authorizes something other than
-//   the org-wide project permission (e.g. org `view`) but returns rows that may name a project is
-//   OUTSIDE the derived rule above. Those found so far are pinned by hand in PROJECT_BOUND_READS —
-//   NOT derived, so a new such route is not caught until it is added there.
+//   the org-wide project permission (e.g. org `view`) but reads or changes rows that may name a
+//   project is OUTSIDE the derived rule above. Those found so far are pinned by hand in
+//   PROJECT_BOUND_HANDLERS — NOT derived, so a new such route is not caught until it is added there.
+//   For a pinned handler this checks that a project-bound helper is CALLED, not that its answer is
+//   used: a handler that computes the predicate and drops it is green here. The integration files
+//   (cli-project-routes-addressed, console-project-bound) drive the answers.
 // - EXEMPT: a closed, handler-keyed ledger with a reason each, checked in both directions — an entry
 //   whose handler no longer exists, or that now goes through a helper, is red.
 
@@ -68,12 +71,18 @@ const EXEMPT: Record<string, string> = {
 const DIRECT_IMPORT_EXEMPT: Record<string, string> = {};
 
 /**
- * Handlers that authorize at org level yet return rows naming a project, and must therefore ask about
- * that project themselves. Hand-written (see the header): a pin, not a derivation.
+ * Handlers that authorize at org level yet read or change rows naming a project, and must therefore
+ * ask about that project themselves. Hand-written (see the header): a pin, not a derivation.
  */
-const PROJECT_BOUND_READS = ["app/api/cli/agents/route.ts GET", "app/api/cli/agents/[id]/route.ts GET"];
+const PROJECT_BOUND_HANDLERS = [
+	"app/api/cli/agents/route.ts GET",
+	"app/api/cli/agents/[id]/route.ts GET",
+	"app/api/cli/classification/assignments/route.ts GET",
+	"app/api/cli/classification/assignments/route.ts POST",
+	"app/api/cli/classification/assignments/route.ts DELETE",
+];
 /** The helpers that answer for a row which may name a project. */
-const PROJECT_BOUND_HELPERS = ["cliMayViewProjectBoundRow", "cliProjectBoundVisibleWhere"];
+const PROJECT_BOUND_HELPERS = ["cliMayViewProjectBoundRow", "cliProjectBoundVisibleWhere", "mayClassifyResource"];
 
 /** The calls that answer the addressed-project question with an action argument. */
 const PER_PROJECT_HELPERS = ["resolveCliProjectAuthorized", "resolveByoScope", "cliMayActOnProject"];
@@ -106,9 +115,10 @@ function cliRoutes(): string[] {
 /**
  * `source` without its comments, so a helper's name in a comment does not count as a call.
  *
- * TEXTUAL, NOT A TOKENIZER, and the error runs in the UNSAFE direction: a `/*` or a `//` inside a
- * string literal starts a "comment" here, and stripping it can remove the `authorizeCli(` trigger as
- * well as a helper call — which leaves the handler unread, a false green, not a false red. A `//`
+ * TEXTUAL, NOT A TOKENIZER, so it can err either way, and the dangerous way is a false green: a `/*`
+ * or a `//` inside a string literal starts a "comment" here. Stripping that removes the
+ * `authorizeCli(` trigger as well as a helper call leaves the handler unread (a false green);
+ * stripping that removes only a helper call reports a finding that is not there (a false red). A `//`
  * right after `:` (a URL scheme) is left alone, which covers the strings these routes actually
  * carry; any other string holding `//` or `/*` before a handler's authorization is not covered.
  */
@@ -185,6 +195,8 @@ describe("CLI project routes ask about the addressed project", () => {
 		expect(typeof mod.cliProjectBoundVisibleWhere).toBe("function");
 		const byo = await import("@/lib/cli/byo-write");
 		expect(typeof byo.resolveByoScope).toBe("function");
+		const classification = await import("@/lib/classification/resource-project");
+		expect(typeof classification.mayClassifyResource).toBe("function");
 	});
 
 	it("finds the routes and their handlers (a walk that read nothing cannot pass)", () => {
@@ -225,14 +237,14 @@ describe("CLI project routes ask about the addressed project", () => {
 		expect(findings).toEqual([]);
 	});
 
-	it("every pinned project-bound read asks about the project its rows name", () => {
+	it("every pinned project-bound handler asks about the project its rows name", () => {
 		const byKey = new Map(allHandlers().map(([key, , body]) => [key, body]));
-		const findings = PROJECT_BOUND_READS.flatMap((key) => {
+		const findings = PROJECT_BOUND_HANDLERS.flatMap((key) => {
 			const body = byKey.get(key);
 			if (body === undefined) return [`${key}: no such handler (the pin outlived its route)`];
 			return PROJECT_BOUND_HELPERS.some((name) => new RegExp(`\\b${name}\\(`).test(body))
 				? []
-				: [`${key}: returns project-bound rows without cliMayViewProjectBoundRow / cliProjectBoundVisibleWhere`];
+				: [`${key}: touches project-bound rows without ${PROJECT_BOUND_HELPERS.join(" / ")}`];
 		});
 		expect(findings).toEqual([]);
 	});

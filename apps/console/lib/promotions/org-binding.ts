@@ -5,7 +5,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { ActionRefusal } from "@/lib/actions/result";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import { environmentPromotions, projects } from "@/lib/db/schema";
@@ -48,6 +48,10 @@ export async function assertProjectInActorOrg(actor: Actor, projectId: string): 
  * exactly like an id that does not exist, and the PDP is never asked about its project — an org-wide
  * grant matches any project id, so asking it would answer for a project this org does not own.
  * The project's org is the source of truth (`environment_promotions.org_id` is nullable).
+ *
+ * `view` is asked with `authorizeRead` — quiet when allowed, recorded once when refused — because the
+ * Environments overview reads the in-flight promotion on every live refresh. `deploy` is a write and
+ * keeps `authorize`, which records the allowed decision too.
  */
 export async function promotionInActorOrg(
 	promotionId: string,
@@ -61,7 +65,11 @@ export async function promotionInActorOrg(
 		.where(and(eq(environmentPromotions.id, promotionId), eq(projects.org_id, scope.orgId)))
 		.limit(1);
 	if (!row?.orgId) throw new ActionRefusal("not-found", PROMOTION_NOT_FOUND);
-	const actor = await authorize(action, { type: "project", id: row.promotion.project_id });
+	const projectId = row.promotion.project_id;
+	const actor =
+		action === "view"
+			? await authorizeRead("view", { type: "project", id: projectId })
+			: await authorize(action, { type: "project", id: projectId });
 	// `authorize` resolves the actor again; it must be the same organization the row was bound to.
 	if (actor.orgId !== row.orgId) throw new ActionRefusal("not-found", PROMOTION_NOT_FOUND);
 	return { actor, promotion: row.promotion, orgId: row.orgId };

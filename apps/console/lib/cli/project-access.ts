@@ -21,7 +21,15 @@
 // project permission must also call one of these with the same action, except the handlers in its
 // exemption ledger (each with its reason), and no file but this one may import `resolveCliProject`.
 // A route that reads project-owned rows WITHOUT that org-wide project authorization is outside the
-// test's reach — it has to apply these by hand.
+// derived rule — it has to apply these by hand, and the ones found so far are pinned by hand in that
+// test's PROJECT_BOUND_HANDLERS: the agent reads, through {@link cliMayViewProjectBoundRow} and
+// {@link cliProjectBoundVisibleWhere}, and classification on a project-owned resource, through
+// `mayClassifyResource` (lib/classification/resource-project.ts, which asks
+// {@link cliMayActOnProject}).
+//
+// NOT ONLY THE CLI. Nothing here reads the request: every helper takes an `Actor`, so the console's
+// server actions that answer the same question (`listAgents` / `getAgent`, the classification
+// assignment actions) call these too, and the two surfaces cannot drift apart.
 
 import { type AnyColumn, and, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
