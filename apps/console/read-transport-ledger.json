@@ -1,14 +1,3 @@
 {
-	"reads": [
-		"app/(private)/[org]/~/settings/classification/page.tsx :: listDimensions",
-		"app/(private)/[org]/~/settings/sso/page.tsx :: listSsoProviders",
-		"components/classification/dimension-detail.tsx :: getDimensionResourceBreakdown",
-		"components/classification/value-drill-drawer.tsx :: getValueResourceBreakdown",
-		"lib/query/use-activity-query.ts :: getActivityLog",
-		"lib/query/use-classification-query.ts :: canEditClassification",
-		"lib/query/use-classification-query.ts :: getAssignments",
-		"lib/query/use-classification-query.ts :: getAssignmentsForKind",
-		"lib/query/use-classification-query.ts :: listDimensions",
-		"lib/query/use-sso-query.ts :: listSsoProviders"
-	]
+	"reads": []
 }

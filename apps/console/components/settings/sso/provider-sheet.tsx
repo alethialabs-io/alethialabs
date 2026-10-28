@@ -6,22 +6,26 @@
 // → Domain & mapping → Review) with a persistent footer submit. Registration goes through
 // @better-auth/sso's own /api/auth/sso/register endpoint; edits go through the updateSsoProvider
 // server action (which merges into the stored config, so an untouched secret is preserved).
+//
+// #6129: both writes go through `useActionMutation` — pending state that disables the submit (the
+// double-submit guard), field errors under their fields, the plugin's refusal shown in the form
+// beside the values it is about (#5445), and every `sso.*` read invalidated. The sheet TRACKS DIRTY
+// STATE: an edit with no change cannot be saved, and closing it with unsaved changes asks first.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { KeyRound } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
-import { toast } from "sonner";
-import {
-	type SsoProviderRow,
-	updateSsoProvider,
-} from "@/app/server/actions/sso";
+import { type SsoProviderRow, updateSsoProvider } from "@/app/server/actions/sso";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import {
 	AccordionForm,
 	type FormSectionDef,
 } from "@/components/forms/accordion-form";
-import { useInvalidateSso } from "@/lib/query/use-sso-query";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { authActionError } from "@/components/settings/members/auth-action";
+import type { ActionResult, FieldErrors } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { ssoReadKeys } from "@/lib/query/use-sso-query";
 import {
 	type SsoProviderInput,
 	ssoProviderSchema,
@@ -46,7 +50,8 @@ interface ProviderSheetProps {
 	/** The provider being edited, or null to register a new one. */
 	provider: SsoProviderRow | null;
 	canManage: boolean;
-	onSaved: () => void;
+	/** The ADDRESSED org (the page's bootstrap): a new provider is registered for this org. */
+	orgId: string;
 }
 
 const BLANK: SsoProviderInput = {
@@ -62,6 +67,17 @@ const BLANK: SsoProviderInput = {
 	mappingName: "",
 };
 
+/** The form's fields a server validation message can be placed under. */
+const SSO_FIELDS = [
+	"providerId",
+	"domain",
+	"issuer",
+	"clientId",
+	"clientSecret",
+	"entryPoint",
+	"cert",
+] as const satisfies readonly (keyof SsoProviderInput)[];
+
 /** Drops empty strings so we never persist a blank mapping override. */
 function mappingOf(v: SsoProviderInput): Record<string, string> | undefined {
 	const m: Record<string, string> = {};
@@ -70,17 +86,61 @@ function mappingOf(v: SsoProviderInput): Record<string, string> | undefined {
 	return Object.keys(m).length > 0 ? m : undefined;
 }
 
+/** The plugin's own message in a refused registration's body, when it wrote one. */
+function messageOf(data: unknown): string | undefined {
+	return typeof data === "object" && data !== null && "message" in data && typeof data.message === "string"
+		? data.message
+		: undefined;
+}
+
+/**
+ * Registers a provider through @better-auth/sso's own endpoint (it mints the domain-verification
+ * token and enforces the Enterprise entitlement via the ee/ guard), answering in the console's
+ * `ActionResult` shape so the registration rides `useActionMutation` like the edit does. A 4xx
+ * carries the plugin's sentence; a 5xx or a dropped connection is `unexpected`.
+ */
+export async function registerSsoProvider(
+	values: SsoProviderInput,
+	orgId: string,
+): Promise<ActionResult<{ registered: true }>> {
+	const base = { providerId: values.providerId, issuer: values.issuer, domain: values.domain, organizationId: orgId };
+	const body =
+		values.type === "oidc"
+			? {
+					...base,
+					oidcConfig: { clientId: values.clientId, clientSecret: values.clientSecret, mapping: mappingOf(values) },
+				}
+			: {
+					...base,
+					samlConfig: { entryPoint: values.entryPoint, cert: values.cert, mapping: mappingOf(values) },
+				};
+	try {
+		const res = await fetch("/api/auth/sso/register", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (res.ok) return { ok: true, data: { registered: true } };
+		const data: unknown = await res.json().catch(() => null);
+		return {
+			ok: false,
+			error: authActionError({ status: res.status, message: messageOf(data) ?? "Couldn't register the provider" }),
+		};
+	} catch {
+		return { ok: false, error: { kind: "unexpected", ref: "sso-register-network" } };
+	}
+}
+
 export function ProviderSheet({
 	open,
 	onOpenChange,
 	provider,
 	canManage,
-	onSaved,
+	orgId,
 }: ProviderSheetProps) {
-	const invalidate = useInvalidateSso();
-	const activeOrgId = useWorkspaceStore((s) => s.activeOrgId);
 	const [openSection, setOpenSection] = useState("protocol");
-	const [saving, setSaving] = useState(false);
+	// Asked when the sheet is closed with unsaved changes: discard them, or keep editing.
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const isEdit = provider != null;
 	const mode = isEdit ? "edit" : "create";
 
@@ -121,84 +181,65 @@ export function ProviderSheet({
 	/** The IdP plugin's refusal of the last save or registration, shown above the footer. */
 	const serverError = errors.root?.server?.message;
 
-	async function onSubmit(v: SsoProviderInput) {
-		setSaving(true);
-		form.clearErrors("root.server");
-		try {
-			if (isEdit) {
-				const res = await updateSsoProvider(provider.id, {
-					domain: v.domain,
-					issuer: v.issuer,
-					clientId: v.clientId || undefined,
-					clientSecret: v.clientSecret || undefined,
-					entryPoint: v.entryPoint || undefined,
-					cert: v.cert || undefined,
-					mapping: mappingOf(v),
-				});
-				// The plugin's refusal, RETURNED (#5445). It used to be thrown out of the action and a
-				// production build reduced it to a digest; it now stays in the form that caused it.
-				if (!res.ok) {
-					form.setError("root.server", { message: res.error });
-					return;
-				}
-				toast.success("Provider updated");
-			} else {
-				// Registration is @better-auth/sso's own endpoint (it mints the domain-verification
-				// token and enforces the Enterprise entitlement via the ee/ guard).
-				const body =
-					v.type === "oidc"
-						? {
-								providerId: v.providerId,
-								issuer: v.issuer,
-								domain: v.domain,
-								organizationId: activeOrgId,
-								oidcConfig: {
-									clientId: v.clientId,
-									clientSecret: v.clientSecret,
-									mapping: mappingOf(v),
-								},
-							}
-						: {
-								providerId: v.providerId,
-								issuer: v.issuer,
-								domain: v.domain,
-								organizationId: activeOrgId,
-								samlConfig: {
-									entryPoint: v.entryPoint,
-									cert: v.cert,
-									mapping: mappingOf(v),
-								},
-							};
-				const res = await fetch("/api/auth/sso/register", {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify(body),
-				});
-				if (!res.ok) {
-					const data: unknown = await res.json().catch(() => null);
-					const message =
-						typeof data === "object" &&
-						data !== null &&
-						"message" in data &&
-						typeof data.message === "string"
-							? data.message
-							: "Couldn't register the provider";
-					// Shown in the form, beside the fields it is about — not a toast that is gone
-					// before an admin has read which value the IdP refused (#5445).
-					form.setError("root.server", { message });
-					return;
-				}
-				toast.success("Provider registered — verify its domain to enable sign-in");
-			}
-			invalidate();
-			onSaved();
-			onOpenChange(false);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't save the provider");
-		} finally {
-			setSaving(false);
-		}
+	/** The edit (the server action) or the registration (the plugin's endpoint) for these values. */
+	function saveProvider(v: SsoProviderInput): Promise<ActionResult<unknown>> {
+		if (!provider) return registerSsoProvider(v, orgId);
+		return updateSsoProvider({
+			id: provider.id,
+			domain: v.domain || undefined,
+			issuer: v.issuer || undefined,
+			clientId: v.clientId || undefined,
+			clientSecret: v.clientSecret || undefined,
+			entryPoint: v.entryPoint || undefined,
+			cert: v.cert || undefined,
+			mapping: mappingOf(v),
+		});
 	}
+
+	const save = useActionMutation(saveProvider, {
+		invalidates: ssoReadKeys(),
+		successMessage: () =>
+			isEdit ? "Provider updated" : "Provider registered — verify its domain to enable sign-in",
+		// The plugin's refusal stays in the form that caused it, beside the values it is about —
+		// not a toast that is gone before an admin has read which value the IdP refused (#5445).
+		onRefusal: (error) => form.setError("root.server", { message: error.message }),
+		onValidationError: (fields: FieldErrors) => {
+			let placed = false;
+			for (const name of SSO_FIELDS) {
+				const message = fields[name]?.[0];
+				if (message) {
+					form.setError(name, { type: "server", message });
+					placed = true;
+				}
+			}
+			if (!placed) {
+				const first = Object.values(fields).find((m) => m && m.length > 0)?.[0];
+				form.setError("root.server", { message: first ?? "Check the highlighted fields." });
+			}
+		},
+		onSuccess: () => {
+			form.reset(form.getValues());
+			onOpenChange(false);
+		},
+	});
+	const saving = save.isPending;
+
+	function onSubmit(v: SsoProviderInput) {
+		if (save.isPending) return;
+		form.clearErrors("root.server");
+		save.mutate(v);
+	}
+
+	const dirty = form.formState.isDirty;
+	/** Closing asks first when there is something to lose; a pristine sheet just closes. */
+	function requestOpenChange(next: boolean) {
+		if (!next && dirty && !save.isPending) {
+			setConfirmDiscard(true);
+			return;
+		}
+		onOpenChange(next);
+	}
+
 
 	const sections: FormSectionDef<SsoProviderInput>[] = [
 		{
@@ -381,7 +422,8 @@ export function ProviderSheet({
 	];
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<>
+		<Sheet open={open} onOpenChange={requestOpenChange}>
 			<SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
 				<SheetHeader className="gap-3 border-b border-border/60 p-5">
 					<div className="flex items-center gap-3">
@@ -421,14 +463,15 @@ export function ProviderSheet({
 							type="button"
 							variant="ghost"
 							size="sm"
-							onClick={() => onOpenChange(false)}
+							onClick={() => requestOpenChange(false)}
 						>
 							Cancel
 						</Button>
 						<Button
 							type="button"
 							size="sm"
-							disabled={!canManage || saving}
+							// An edit with nothing changed has nothing to save; a registration always does.
+							disabled={!canManage || saving || (isEdit && !dirty)}
 							onClick={() => void form.handleSubmit(onSubmit)()}
 						>
 							{saving
@@ -441,6 +484,22 @@ export function ProviderSheet({
 				</FormProvider>
 			</SheetContent>
 		</Sheet>
+		<ConfirmDialog
+			open={confirmDiscard}
+			onOpenChange={setConfirmDiscard}
+			title="Discard your changes?"
+			description={
+				isEdit
+					? "The changes to this provider are not saved. Closing the editor drops them."
+					: "This provider is not registered yet. Closing the editor drops what you entered."
+			}
+			confirmLabel="Discard changes"
+			onConfirm={() => {
+				form.reset();
+				onOpenChange(false);
+			}}
+		/>
+		</>
 	);
 }
 

@@ -81,6 +81,12 @@ export interface StreamCapabilities {
 	 * question gets the stream without the key, so the default fails closed.
 	 */
 	memberView?: boolean;
+	/**
+	 * `can(actor, 'view_activity', {type: 'activity'})` — receives `activity` hints (a recorded entry
+	 * in the org's Activity log), which only `view_activity` holders can read (#6129). ABSENT IS NO,
+	 * as for `memberView`.
+	 */
+	viewActivity?: boolean;
 }
 
 /** The subscriber side of {@link Route}: who the stream is. */
@@ -116,7 +122,8 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 
 /**
  * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `alerts`, `usage`,
- * `billing`, `clusters`, `projects`, `organization`, `runners`, `fleet`, `members` and `access` have producers; every
+ * `billing`, `clusters`, `projects`, `organization`, `runners`, `fleet`, `members`, `access`,
+ * `classification` and `activity` have producers; every
  * other topic is declared and routes NOWHERE until its lane adds both its trigger and its row here —
  * a topic that routed before its RLS arms were written down would be a guess about who may read it.
  */
@@ -161,6 +168,20 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		// nowhere.
 		case "access":
 			return notice.o ? [{ key: orgAccessKey(notice.o), filterProject: null }] : [];
+		// #6129: classification_dimension, classification_value and classification_assignment. The
+		// taxonomy is org-wide and every member reads it (`classification.*` answer `org:view`), so the
+		// org arm is unfiltered. An assignment's hint names its DIMENSION, never the resource it pins,
+		// so it says only that the taxonomy's usage moved — what the settings page's counts already
+		// show every member — and a chip on a project the viewer may not see is re-read through
+		// `classification.assignments`, which still answers it with nothing (#6281).
+		case "classification":
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
+		// #6129: authz_activity_log. Reading the log requires `activity:view_activity` (`activity.page`),
+		// so a hint goes to the org's `oactivity:` key, held only by a stream whose actor may view it
+		// (subscriptionKeys) — never to the org arm, where an operator would learn that something was
+		// recorded. The row's id is a bigint, not a uuid, so the hint carries none.
+		case "activity":
+			return notice.o ? [{ key: orgActivityKey(notice.o), filterProject: null }] : [];
 		case "jobs": {
 			const routes: Route[] = [];
 			// The org arm. A job with no project is visible to the whole org by RLS, so it is unfiltered;
@@ -278,6 +299,11 @@ function orgAccessKey(orgId: string): string {
 	return `oaccess:${orgId}`;
 }
 
+/** The routing key of an org's Activity log: `activity:view_activity`. */
+function orgActivityKey(orgId: string): string {
+	return `oactivity:${orgId}`;
+}
+
 /** The routing key of platform-wide rows: managed runners and the fleet. */
 export const PLATFORM_KEY = "platform";
 
@@ -296,6 +322,7 @@ export function subscriptionKeys(
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
 	if (caps.viewAlerts) keys.push(orgAlertsKey(actor.orgId));
 	if (caps.memberView === true) keys.push(orgAccessKey(actor.orgId));
+	if (caps.viewActivity === true) keys.push(orgActivityKey(actor.orgId));
 	return keys;
 }
 

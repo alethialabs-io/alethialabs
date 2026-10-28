@@ -70,6 +70,9 @@ import {
 	alertDeliveries,
 	alertRules,
 	authzActivityLog,
+	classificationAssignment,
+	classificationDimension,
+	classificationValue,
 	cloudIdentities,
 	cloudRegions,
 	grants,
@@ -84,6 +87,7 @@ import {
 	projects,
 	runners,
 	role,
+	ssoProvider,
 	supportCases,
 	team,
 	user,
@@ -146,6 +150,17 @@ export interface Seeded {
 	teamY: string;
 	roleX: string;
 	roleY: string;
+	/** #6129 part 2: one SSO provider per org (W registers it). */
+	ssoX: string;
+	ssoY: string;
+	/** One classification dimension per org, one value on it, and that value pinned to the org's project. */
+	dimensionX: string;
+	dimensionY: string;
+	valueX: string;
+	valueY: string;
+	/** The resource id of one recorded Activity-log entry per org (W's), which marks whose log answered. */
+	activityX: string;
+	activityY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -350,6 +365,20 @@ function listsEnvironment(out: unknown, environmentId: string): boolean {
 
 /** The seeded project of `org`. */
 const projectOf = (s: Seeded, org: Org) => (org === "x" ? s.projectX : s.projectY);
+/** The seeded classification dimension of `org`. */
+const dimensionOf = (s: Seeded, org: Org) => (org === "x" ? s.dimensionX : s.dimensionY);
+/** The seeded classification value of `org` (pinned to `org`'s project). */
+const valueOf = (s: Seeded, org: Org) => (org === "x" ? s.valueX : s.valueY);
+
+/** Whether an Activity page (`{ rows: [{ resourceId }] }`) carries the entry recorded on `resourceId`. */
+function logsResource(out: unknown, resourceId: string): boolean {
+	return hasElement(field(out, "rows"), "resourceId", resourceId);
+}
+
+/** Whether a non-empty array output answered (a chip list or a breakdown with at least one entry). */
+function nonEmpty(out: unknown): boolean {
+	return Array.isArray(out) && out.length > 0;
+}
 /** The seeded default environment of `org`'s project. */
 const envOf = (s: Seeded, org: Org) => (org === "x" ? s.envX : s.envY);
 /** The seeded cloud identity of `org`. */
@@ -897,6 +926,61 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "principals", s.teamX), y: hasItem(out, "principals", s.teamY) }),
 	},
+	// #6129 part 2: SSO, classification and the Activity log. U (a viewer) holds `member:view`,
+	// `org:view` and `activity:view_activity` in both orgs, and neither `member:manage_members` nor
+	// `org:edit` nor `activity:export_activity`.
+	"sso.bootstrap": {
+		// The bootstrap names the org it answers for: registration targets THAT org, never the session's.
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: field(out, "orgId") === s.orgX, y: field(out, "orgId") === s.orgY }),
+	},
+	"sso.providers": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasElement(out, "id", s.ssoX), y: hasElement(out, "id", s.ssoY) }),
+	},
+	"activity.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: logsResource(out, s.activityX), y: logsResource(out, s.activityY) }),
+	},
+	"activity.permissions": {
+		kind: "not-org-scoped",
+		reason: "U is a viewer in both orgs and both are on the same live plan, so the decisions and the export entitlement are identical",
+		input: undefined,
+	},
+	"classification.dimensions": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasElement(out, "id", s.dimensionX), y: hasElement(out, "id", s.dimensionY) }),
+	},
+	"classification.canEdit": {
+		kind: "not-org-scoped",
+		reason: "U is a viewer in both orgs, so `org:edit` is refused at either address",
+		input: undefined,
+	},
+	"classification.assignments": {
+		// Addressed by a resource: the chips on each org's project. The #6281 project check still runs.
+		kind: "by-id",
+		input: (s, org) => ({ kind: "project", resourceId: projectOf(s, org) }),
+		reveals: (out, s, org) => hasElement(out, "value_id", valueOf(s, org)),
+	},
+	"classification.assignmentsForKind": {
+		kind: "by-id",
+		input: (s, org) => ({ kind: "project", resourceIds: [projectOf(s, org)] }),
+		reveals: (out, s, org) => nonEmpty(field(out, projectOf(s, org))),
+	},
+	"classification.valueBreakdown": {
+		kind: "by-id",
+		input: (s, org) => ({ valueId: valueOf(s, org) }),
+		reveals: (out) => nonEmpty(out),
+	},
+	"classification.dimensionBreakdown": {
+		kind: "by-id",
+		input: (s, org) => ({ dimensionId: dimensionOf(s, org) }),
+		reveals: (out) => nonEmpty(out),
+	},
 };
 
 /**
@@ -1021,6 +1105,14 @@ export async function runRpcTenancySuite(opts: {
 		teamY: "",
 		roleX: "",
 		roleY: "",
+		ssoX: "",
+		ssoY: "",
+		dimensionX: "",
+		dimensionY: "",
+		valueX: "",
+		valueY: "",
+		activityX: randomUUID(),
+		activityY: randomUUID(),
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -1276,6 +1368,48 @@ export async function runRpcTenancySuite(opts: {
 			};
 			({ team: seeded.teamX, role: seeded.roleX } = await seedPeople(ORG_X, "x"));
 			({ team: seeded.teamY, role: seeded.roleY } = await seedPeople(ORG_Y, "y"));
+			// #6129 part 2's markers: an SSO provider, a classification dimension with one value pinned
+			// to the org's project, and one recorded Activity-log entry — each W's, in each org.
+			const seedSettings = async (orgId: string, org: Org): Promise<{ sso: string; dimension: string; value: string }> => {
+				const [sp] = await db
+					.insert(ssoProvider)
+					.values({
+						issuer: `https://it-6129-${org}.example.test`,
+						domain: `it-6129-${org}-${orgId.slice(0, 8)}.example.test`,
+						providerId: `it-6129-${org}-${orgId.slice(0, 8)}`,
+						oidcConfig: JSON.stringify({ clientId: `it-6129-${org}` }),
+						userId: W,
+						organizationId: orgId,
+					})
+					.returning({ id: ssoProvider.id });
+				const [d] = await db
+					.insert(classificationDimension)
+					.values({ org_id: orgId, created_by: W, key: `it-6129-${org}`, label: `It 6129 ${org}` })
+					.returning({ id: classificationDimension.id });
+				const [v] = await db
+					.insert(classificationValue)
+					.values({ org_id: orgId, dimension_id: d.id, value: `v-${org}`, label: `V ${org}` })
+					.returning({ id: classificationValue.id });
+				await db.insert(classificationAssignment).values({
+					org_id: orgId,
+					dimension_id: d.id,
+					value_id: v.id,
+					resource_kind: "project",
+					resource_id: org === "x" ? seeded.projectX : seeded.projectY,
+					assigned_by: W,
+				});
+				await db.insert(authzActivityLog).values({
+					org_id: orgId,
+					actor_id: W,
+					action: "edit",
+					resource_type: "project",
+					resource_id: org === "x" ? seeded.activityX : seeded.activityY,
+					decision: true,
+				});
+				return { sso: sp.id, dimension: d.id, value: v.id };
+			};
+			({ sso: seeded.ssoX, dimension: seeded.dimensionX, value: seeded.valueX } = await seedSettings(ORG_X, "x"));
+			({ sso: seeded.ssoY, dimension: seeded.dimensionY, value: seeded.valueY } = await seedSettings(ORG_Y, "y"));
 			// #6127's markers, on the billing records #6118 seeded above (both on a live Team plan): an AI
 			// cap and a distinct paid period per org; then one invoice per org and one more project in X.
 			// U's `manage_billing` in X is granted per read (`billingAdminInX`), never suite-wide.
@@ -1342,6 +1476,9 @@ export async function runRpcTenancySuite(opts: {
 			await purgeAuthzActivityLog(inArray(authzActivityLog.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(grants).where(inArray(grants.org_id, [ORG_X, ORG_Y, ...USERS]));
 			await db.delete(team).where(inArray(team.organizationId, [ORG_X, ORG_Y]));
+			// Values and assignments cascade with their dimension.
+			await db.delete(classificationDimension).where(inArray(classificationDimension.org_id, [ORG_X, ORG_Y]));
+			await db.delete(ssoProvider).where(inArray(ssoProvider.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(role).where(inArray(role.organization_id, [ORG_X, ORG_Y]));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(organization).where(inArray(organization.id, [ORG_X, ORG_Y]));

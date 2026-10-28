@@ -953,7 +953,10 @@ export function keysOnQuery(file, text) {
 	// caller's normalized object arriving as a parameter (the README's division of labour); outside
 	// it, provenance is read exactly as above — the input's roots must include a binding from this
 	// module's own `normalize*Query(`. `{ input }` shorthand is the identifier `input`.
-	for (const m of text.matchAll(/\.queryOptions\(\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)) {
+	// `infiniteOptions` is the same key (#6129, the Activity feed): `[path, { input: input(first
+	// page param), type: "infinite" }]`, its `input` a function of the cursor whose body carries the
+	// normalized query — so its roots are read exactly as a plain input's.
+	for (const m of text.matchAll(/\.(?:queryOptions|infiniteOptions)\(\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)) {
 		const field = /\binput\b\s*(?::\s*([^,}]+))?/.exec(m[1]);
 		if (!field) continue;
 		if (hop) return true;
@@ -1534,6 +1537,24 @@ export function positiveControl() {
 	drive(
 		"...and still fires when the read-router input is NOT the normalized query",
 		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "orpc.widgets.page.queryOptions({ input: {} })") },
+		(v) => v.F3.verdict === "FAIL",
+	);
+	drive(
+		"F3 accepts a read-router INFINITE key whose cursor input carries the normalized query (#6129)",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("qk.widgets(org, q)", "orpc.widgets.page.infiniteOptions({ input: (c) => ({ ...q, cursor: c }), initialPageParam: null })"),
+		},
+		(v) => v.F3.verdict === "PASS",
+	);
+	drive(
+		"...and still fires when the infinite input is NOT the normalized query",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("qk.widgets(org, q)", "orpc.widgets.page.infiniteOptions({ input: (c) => ({ cursor: c }), initialPageParam: null })"),
+		},
 		(v) => v.F3.verdict === "FAIL",
 	);
 	drive(

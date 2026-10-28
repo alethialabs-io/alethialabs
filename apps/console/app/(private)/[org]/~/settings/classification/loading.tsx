@@ -6,36 +6,38 @@ import { Skeleton } from "@repo/ui/skeleton";
 /**
  * Instant skeleton for Settings · Classification, while the page prefetches the org's taxonomy.
  *
- * Without this file the route fell back THREE segments to `[org]/loading.tsx` — the org overview's
- * card grid, at a width (`max-w-[1360px]`) that was not even this page's. Mirrors what the manager
- * actually renders: the search + count toolbar, then one panel per dimension.
+ * In the manager's own shape (#6129, B2): the toolbar (the search box, the dimension count, the docs
+ * affordance and New dimension on the right), then the master/detail — the dimension rail
+ * (`lg:grid-cols-[296px_1fr]`, as the manager lays it out) and the selected dimension's detail
+ * pane. It used to draw a stack of per-dimension panels, a layout this page does not have.
  */
 export default function ClassificationLoading() {
 	return (
-		<div>
-			{/* Toolbar — search box, the match count, and the docs affordance on the right. */}
-			<div className="mb-4 flex items-center gap-2.5">
+		<div aria-busy>
+			<div aria-hidden className="mb-4 flex items-center gap-2.5">
 				<Skeleton className="h-9 w-[240px] rounded-sm" />
 				<Skeleton className="h-3 w-24" />
 				<div className="flex-1" />
 				<Skeleton className="size-9 rounded-sm" />
+				<Skeleton className="h-8 w-32 rounded-md" />
 			</div>
-
-			{/* Dimension panels — header row + a few value chips each. */}
-			<div className="space-y-3">
-				{[1, 2, 3, 4].map((i) => (
-					<div key={i} className="rounded-md border border-border/40 p-4">
-						<div className="mb-3 flex items-center gap-2.5">
-							<Skeleton className="h-4 w-40" />
-							<Skeleton className="h-4 w-16 rounded-full" />
-						</div>
-						<div className="flex flex-wrap gap-2">
-							{[1, 2, 3, 4, 5].map((v) => (
-								<Skeleton key={v} className="h-6 w-20 rounded-full" />
-							))}
-						</div>
+			<div aria-hidden className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
+				<div className="space-y-1.5 rounded-lg border p-2">
+					{[1, 2, 3, 4].map((i) => (
+						<Skeleton key={i} className="h-12 w-full rounded-md" />
+					))}
+				</div>
+				<div className="rounded-lg border">
+					<div className="space-y-2 p-5">
+						<Skeleton className="h-5 w-40" />
+						<Skeleton className="h-3 w-64" />
 					</div>
-				))}
+					<div className="space-y-2 border-t p-5">
+						{[1, 2, 3, 4].map((i) => (
+							<Skeleton key={i} className="h-9 w-full" />
+						))}
+					</div>
+				</div>
 			</div>
 		</div>
 	);

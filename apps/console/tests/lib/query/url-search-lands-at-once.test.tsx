@@ -53,15 +53,15 @@ vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	rpc.handlers["evidence.page"] = () => new Promise(() => {});
 	rpc.handlers["support.cases"] = () => new Promise(() => {});
+	// The Activity feed's pages and the SSO bootstrap are GET reads since #6129.
+	rpc.handlers["activity.page"] = () => new Promise(() => {});
+	rpc.handlers["sso.bootstrap"] = () => new Promise(() => {});
 	return { orpc: fakeOrpc(rpc.handlers, rpc.calls).orpc };
 });
 
 /** Every input `evidence.page` was asked for, in order. */
 const evidenceAsked = () => rpc.calls.filter((c) => c.path === "evidence.page").map((c) => c.input);
-vi.mock("@/app/server/actions/activity", () => ({
-	getActivityLog: vi.fn(() => new Promise(() => {})),
-	getActivityExportCsv: vi.fn(),
-}));
+vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(() => new Promise(() => {})) }));
 
 /** Every search `useRolesQuery` / `useSsoProvidersQuery` was called with, in render order. */
@@ -94,9 +94,9 @@ vi.mock("@/lib/query/use-roles-query", () => ({
 vi.mock("@/lib/query/use-sso-query", () => ({
 	useSsoProvidersQuery: (filter?: { search?: string }) => {
 		asked.sso.push(filter?.search);
-		return { data: [], isFetching: false, isPlaceholderData: false };
+		return { data: [], isFetching: false, isPlaceholderData: false, isPending: false, isError: false, error: null };
 	},
-	useInvalidateSso: () => vi.fn(),
+	ssoReadKeys: () => [],
 }));
 vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
 vi.mock("@/app/server/actions/connectors", () => ({
@@ -129,7 +129,6 @@ vi.mock("@/components/settings/sso/provider-sheet", () => ({ ProviderSheet: () =
 vi.mock("@/components/classification/classification-chips", () => ({ ClassificationChips: () => null }));
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
-import { getActivityLog } from "@/app/server/actions/activity";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
@@ -217,7 +216,9 @@ describe("ActivityLog — ~/settings/activity?search=…", () => {
 		renderWithClient(<ActivityLog />);
 		await settleWithoutTime();
 
-		const searches = vi.mocked(getActivityLog).mock.calls.map(([q]) => q?.search);
+		const searches = rpc.calls
+			.filter((c) => c.path === "activity.page")
+			.map((c) => (typeof c.input === "object" && c.input !== null && "search" in c.input ? c.input.search : undefined));
 		expect(searches).toContain("deploy");
 	});
 });
@@ -265,7 +266,13 @@ describe("RolesManager — ~/settings/roles?search=…", () => {
 });
 
 describe("SsoManager — ~/settings/sso?search=…", () => {
-	const bootstrap: SsoBootstrap = { sso: true, canManage: false, slug: "acme", origin: "https://console.example" };
+	const bootstrap: SsoBootstrap = {
+		sso: true,
+		canManage: false,
+		orgId: "org-acme",
+		slug: "acme",
+		origin: "https://console.example",
+	};
 
 	it("asks for the link's search before any debounce has elapsed", async () => {
 		currentSearch = "search=okta";

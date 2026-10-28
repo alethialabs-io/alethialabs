@@ -6,8 +6,11 @@
 // their allowed values) and see how it is actually used. A master/detail: the dimension rail
 // selects, the detail edits values (drag-reorder, usage drill). Search is server-side.
 // Read-only without `org:edit`. The section title lives in the settings sidebar, so this page
-// leads straight into a toolbar (no in-page header). Reads/writes via the classification server
-// actions through TanStack Query (shared cache with every picker).
+// leads straight into a toolbar (no in-page header). Reads are the `classification.*` GET
+// procedures (the route prefetches the taxonomy, the edit decision and the first dimension's
+// coverage, so the page paints with them); every write goes through `useActionMutation` — pending
+// state, one toast policy, and every classification read invalidated (#6129). A change another
+// member makes arrives as a `classification` hint (lib/query/topics.ts) — no poll, no reload.
 
 import {
 	AlertDialog,
@@ -24,10 +27,8 @@ import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 import { TooltipProvider } from "@repo/ui/tooltip";
-import { useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Plus } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import type {
 	DimensionDTO,
 	ValueDTO,
@@ -40,13 +41,18 @@ import {
 	reorderValues,
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
+import { RegionError } from "@/components/errors/region-error";
 import { SettingsSearch } from "@/components/settings/settings-ui";
-import { qk } from "@/lib/query/keys";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
+	classificationReadKeys,
+	dimensionsInput,
 	useCanEditClassification,
 	useDimensionsQuery,
 } from "@/lib/query/use-classification-query";
+import { orpc } from "@/lib/rpc/client";
+import { readRefusalOf } from "@/lib/rpc/refusal";
 import {
 	CLASSIFICATION_TEMPLATES,
 	type ClassificationTemplate,
@@ -58,6 +64,7 @@ import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { DimensionRail } from "./dimension-rail";
 import { ValueDrillDrawer } from "./value-drill-drawer";
 import { ValueEditor } from "./value-editor";
+import { ClassificationNoAccess } from "./classification-no-access";
 
 type Sheet =
 	| { mode: "create"; templateKey?: string }
@@ -67,15 +74,42 @@ type DeleteTarget =
 	| { kind: "dimension" | "value"; id: string; title: string; message: string }
 	| null;
 
+/** Reorders a cached taxonomy by `ids` (an optimistic patch; `ids` is the full new order). */
+function reorderedDims(current: unknown, ids: string[]): unknown {
+	if (!isTaxonomy(current)) return current;
+	return [...current].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+}
+
+/** Narrows a cached value to the taxonomy the reorder patches read (every entry has an id). */
+function isTaxonomy(value: unknown): value is DimensionDTO[] {
+	return (
+		Array.isArray(value) &&
+		value.every((d: unknown) => typeof d === "object" && d !== null && "id" in d && "values" in d && Array.isArray(d.values))
+	);
+}
+
+/** Reorders one dimension's cached values by `ids` (an optimistic patch). */
+function reorderedValues(current: unknown, dimId: string, ids: string[]): unknown {
+	if (!isTaxonomy(current)) return current;
+	return current.map((d) =>
+		d.id === dimId
+			? { ...d, values: [...d.values].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)) }
+			: d,
+	);
+}
+
 /** The Settings · Classification page body. */
 export function ClassificationManager() {
-	const qc = useQueryClient();
 	const [searchInput, setSearchInput] = useState("");
 	const search = useDebouncedValue(searchInput.trim());
 	const searching = search.length > 0;
 
-	const { data: dimensions, isPending, isFetching } = useDimensionsQuery(search);
+	const dimensionsQuery = useDimensionsQuery(search);
+	const { data: dimensions, isPending, isFetching } = dimensionsQuery;
 	const { data: canEdit = false } = useCanEditClassification();
+	// The unsearched taxonomy's key: what a reorder patches optimistically (reordering is only
+	// offered while not searching).
+	const baseKey = orpc.classification.dimensions.queryKey({ input: dimensionsInput() });
 
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [sheet, setSheet] = useState<Sheet>(null);
@@ -89,100 +123,82 @@ export function ClassificationManager() {
 		dimensionLabel: string;
 	} | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
-	const [deleting, setDeleting] = useState(false);
-
-	/** Invalidate every dimensions query (base + any search-keyed) after a mutation. */
-	const refresh = () =>
-		qc.invalidateQueries({ queryKey: ["classification", "dimensions"] });
 
 	const dims = dimensions ?? [];
 	const selectedDim = dims.find((d) => d.id === selectedId) ?? dims[0] ?? null;
 	const reorderable = canEdit && !searching;
 
-	/** Optimistically reorder cached dimensions, then persist. */
+	// Every write below goes through the mutation contract: pending while in flight, one toast
+	// policy (a refusal's sentence verbatim, never raw server text), a reorder's optimistic patch
+	// rolled back if refused, and every classification read invalidated when it settles.
+	const reorderDims = useActionMutation(reorderDimensions, {
+		invalidates: classificationReadKeys(),
+		optimistic: [{ key: baseKey, update: (current, v) => reorderedDims(current, v.ids) }],
+	});
+	const reorderVals = useActionMutation(
+		(v: { dimId: string; ids: string[] }) => reorderValues({ ids: v.ids }),
+		{
+			invalidates: classificationReadKeys(),
+			optimistic: [{ key: baseKey, update: (current, v) => reorderedValues(current, v.dimId, v.ids) }],
+		},
+	);
+	const addValue = useActionMutation(createValue, { invalidates: classificationReadKeys() });
+	const toggleMulti = useActionMutation(updateDimension, { invalidates: classificationReadKeys() });
+	const removal = useActionMutation(
+		(target: NonNullable<DeleteTarget>) =>
+			target.kind === "dimension" ? deleteDimension({ id: target.id }) : deleteValue({ id: target.id }),
+		{
+			invalidates: classificationReadKeys(),
+			successMessage: "Deleted.",
+			onSuccess: () => setDeleteTarget(null),
+		},
+	);
+	const deleting = removal.isPending;
+
+	/** Optimistically reorder cached dimensions, then persist. One reorder at a time. */
 	const onReorderDims = (ids: string[]) => {
-		qc.setQueryData<DimensionDTO[]>(qk.classificationDimensions(), (old) =>
-			old ? [...old].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)) : old,
-		);
-		reorderDimensions(ids)
-			.then(refresh)
-			.catch((e) => {
-				refresh();
-				toast.error(e instanceof Error ? e.message : "Couldn't reorder.");
-			});
+		if (!reorderDims.isPending) reorderDims.mutate({ ids });
 	};
 
-	/** Optimistically reorder a dimension's cached values, then persist. */
+	/** Optimistically reorder a dimension's cached values, then persist. One reorder at a time. */
 	const onReorderVals = (dimId: string, ids: string[]) => {
-		qc.setQueryData<DimensionDTO[]>(qk.classificationDimensions(), (old) =>
-			old?.map((d) =>
-				d.id === dimId
-					? {
-							...d,
-							values: [...d.values].sort(
-								(a, b) => ids.indexOf(a.id) - ids.indexOf(b.id),
-							),
-						}
-					: d,
-			),
-		);
-		reorderValues(ids)
-			.then(refresh)
-			.catch((e) => {
-				refresh();
-				toast.error(e instanceof Error ? e.message : "Couldn't reorder.");
-			});
+		if (!reorderVals.isPending) reorderVals.mutate({ dimId, ids });
 	};
 
 	/** Quick-add a value to a dimension (awaited so the row can show pending). */
 	const onAddValue = async (dim: DimensionDTO, label: string) => {
-		try {
-			await createValue(dim.id, {
-				value: slugifyOrEmpty(label),
-				label,
-				position: dim.values.length,
-			});
-			refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't add value.");
-		}
+		if (addValue.isPending) return;
+		// A refusal is already toasted by the contract; the row only needs to know it settled.
+		await addValue
+			.mutateAsync({ dimensionId: dim.id, value: slugifyOrEmpty(label), label, position: dim.values.length })
+			.catch(() => undefined);
 	};
 
 	/** Flip a dimension's single/multi mode (awaited so the switch can show pending). */
 	const onToggleMulti = async (dim: DimensionDTO) => {
-		try {
-			await updateDimension(dim.id, {
+		if (toggleMulti.isPending) return;
+		await toggleMulti
+			.mutateAsync({
+				id: dim.id,
 				key: dim.key,
 				label: dim.label,
 				description: dim.description ?? undefined,
 				multi: !dim.multi,
+				applies_to: dim.appliesTo,
 				position: dim.position,
-			});
-			refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't update.");
-		}
+			})
+			.catch(() => undefined);
 	};
 
 	/** Confirm-and-delete the pending dimension or value, with a pending state. */
-	const confirmDelete = async () => {
-		if (!deleteTarget || deleting) return;
-		setDeleting(true);
-		try {
-			if (deleteTarget.kind === "dimension") {
-				await deleteDimension(deleteTarget.id);
-			} else {
-				await deleteValue(deleteTarget.id);
-			}
-			toast.success("Deleted.");
-			setDeleteTarget(null);
-			refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't delete.");
-		} finally {
-			setDeleting(false);
-		}
+	const confirmDelete = () => {
+		if (!deleteTarget || removal.isPending) return;
+		removal.mutate(deleteTarget);
 	};
+
+	// Refused (no `org:view` — a viewer whose access went away while the page was open): the
+	// no-access render, never the blank slate and never a failure (B4).
+	if (readRefusalOf(dimensionsQuery.error) === "forbidden") return <ClassificationNoAccess />;
 
 	return (
 		<TooltipProvider delayDuration={200}>
@@ -228,7 +244,14 @@ export function ClassificationManager() {
 				)}
 			</div>
 
-			{isPending ? (
+			{dimensionsQuery.isError && dimensions === undefined ? (
+				// A failed read is not an empty taxonomy (B4): the blank slate below is an ANSWER.
+				<RegionError
+					title="Couldn't load the classification taxonomy"
+					description="Something went wrong reading this organization's dimensions and values."
+					onRetry={() => void dimensionsQuery.refetch()}
+				/>
+			) : isPending ? (
 				<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
 					<Skeleton className="h-64 w-full rounded-lg" />
 					<Skeleton className="h-80 w-full rounded-lg" />
@@ -306,7 +329,6 @@ export function ClassificationManager() {
 				onOpenChange={(o) => !o && setSheet(null)}
 				dimension={sheet?.mode === "edit" ? sheet.dimension : undefined}
 				initialTemplateKey={sheet?.mode === "create" ? sheet.templateKey : undefined}
-				onSaved={refresh}
 			/>
 			{valueEditor && (
 				<ValueEditor
@@ -315,7 +337,6 @@ export function ClassificationManager() {
 					dimensionId={valueEditor.dimensionId}
 					dimensionLabel={valueEditor.dimensionLabel}
 					value={valueEditor.value}
-					onSaved={refresh}
 				/>
 			)}
 			<ValueDrillDrawer
@@ -338,6 +359,7 @@ export function ClassificationManager() {
 						<AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(e) => {
+								// Stay open while the delete is in flight; `onSuccess` closes it.
 								e.preventDefault();
 								confirmDelete();
 							}}

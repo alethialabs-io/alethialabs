@@ -181,7 +181,11 @@ describe("the Access pages resolve the entitlement on the server (#5850)", () =>
 			searchParams: Promise.resolve({}),
 		});
 		expect(customRolesOf(org)).toBe(customRoles);
-		const project = await ProjectAccessPage({ params: Promise.resolve({ org: "acme", project: "proj" }) });
+		// The project page prefetches the project's grants too since #6129 (B1), so it reads the link.
+		const project = await ProjectAccessPage({
+			params: Promise.resolve({ org: "acme", project: "proj" }),
+			searchParams: Promise.resolve({}),
+		});
 		expect(customRolesOf(project)).toBe(customRoles);
 	});
 });
