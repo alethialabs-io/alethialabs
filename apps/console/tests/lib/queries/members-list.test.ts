@@ -36,8 +36,21 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { exists, ilike, inArray, isNull } from "drizzle-orm";
+import { exists, ilike, inArray, isNull, SQL, sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { MEMBER_ROW_STATUSES, queryMembersPage } from "@/lib/queries/members";
+
+/** Renders a recorded drizzle fragment the way the service db does (`casing: "snake_case"`). */
+const dialect = new PgDialect({ casing: "snake_case" });
+
+/** The ORDER BY a recorded chain was given, rendered to SQL text (undefined = never ordered). */
+function orderByOf(chain: { argsOf(method: string): unknown[] | undefined }): string | undefined {
+	const args = chain.argsOf("orderBy");
+	if (!args) return undefined;
+	const fragments = args.filter((a): a is SQL => a instanceof SQL);
+	expect(fragments).toHaveLength(args.length);
+	return dialect.sqlToQuery(sql.join(fragments, sql`, `)).sql;
+}
 
 const JOINED = new Date("2026-01-05T09:00:00.000Z");
 const INVITED = new Date("2026-08-20T09:00:00.000Z");
@@ -364,6 +377,49 @@ describe("queryMembersPage", () => {
 		const page = await queryMembersPage("org-1", "viewer-1");
 		expect(page.members[0].lastActiveAt).toBeNull();
 		expect(page.members[0].teams).toEqual([]);
+	});
+
+	it("orders member rows totally: displayed name, then email, then the primary key", async () => {
+		// Creation order: rows(members), rows(invites), facet(members), facet(invites), facet(teams).
+		const chains = seed([], [], [{ role: "admin", status: "active" }]);
+		await queryMembersPage("org-1", "viewer-1");
+		// The table pages members-then-invitations 20 at a time on the client, so an unordered
+		// read can move a row onto another page — or off every page — between two reads. The last
+		// key is the primary key, which is what makes the order TOTAL rather than "usually".
+		expect(orderByOf(chains[0])).toBe(
+			'lower(coalesce("user"."name", "user"."email")) asc, "user"."email" asc, "member"."id" asc',
+		);
+	});
+
+	it("orders pending invitations totally: email, then oldest first, then the primary key", async () => {
+		const chains = seed([], [], [{ role: "admin", status: "active" }]);
+		await queryMembersPage("org-1", "viewer-1");
+		expect(orderByOf(chains[1])).toBe(
+			'lower("invitation"."email") asc, "invitation"."created_at" asc, "invitation"."id" asc',
+		);
+	});
+
+	it("keeps the order on a filtered read, so a filter change cannot reshuffle the pages", async () => {
+		const chains = seed([], [], [{ role: "admin", status: "active" }]);
+		await queryMembersPage("org-1", "viewer-1", { search: "ada", roles: ["viewer"] });
+		expect(orderByOf(chains[0])).toMatch(/"member"\."id" asc$/);
+		expect(orderByOf(chains[1])).toMatch(/"invitation"\."id" asc$/);
+	});
+
+	it("returns rows in the order the database gave them — no client-side re-sort to disagree with SQL", async () => {
+		seed(
+			[
+				memberRow({ id: "m-b", userId: "u-b", name: "beth" }),
+				memberRow({ id: "m-a", userId: "u-a", name: "Ada" }),
+			],
+			[inviteRow({ id: "i-z", email: "zed@x.io" }), inviteRow({ id: "i-a", email: "amy@x.io" })],
+			[{ role: "admin", status: "active" }],
+		);
+		const page = await queryMembersPage("org-1", "viewer-1");
+		// The mock returns them "unsorted" on purpose: the ORDER BY is the one source of order,
+		// and a second sort in memory (with JS collation) could disagree with Postgres's.
+		expect(page.members.map((m) => m.id)).toEqual(["m-b", "m-a"]);
+		expect(page.invitations.map((i) => i.id)).toEqual(["i-z", "i-a"]);
 	});
 
 	it("exposes the three row statuses the facet renders", () => {
