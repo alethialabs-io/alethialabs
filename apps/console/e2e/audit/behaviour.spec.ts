@@ -108,7 +108,8 @@ const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly Predica
 /** A predicate whose floor differs from {@link MIN_MEASURED}, each with its reason. */
 const MIN_MEASURED_FOR: Partial<Record<(typeof B_IDS)[number], number>> = {
 	// #6124: connectors prefetches its only page read, so it left B3's measurable set; a route meeting B1 cannot be held on load.
-	B3: 9,
+	// #6129: SSO/classification/activity prefetch their page reads; a route meeting B1 cannot be held on load.
+	B3: 7,
 };
 
 /**
