@@ -14,10 +14,24 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-// The list's PDP gate is the authz suite's subject; here every check is allowed, so what is compared
-// is which ROWS the two readers take.
+// The list's PDP gate is the authz suite's subject; here every check is allowed — and every project
+// of the addressed org is viewable — so what is compared is which ROWS the two readers take. That a
+// project-scoped deny narrows the list is tests/integration/console-project-bound.test.ts's subject.
 vi.mock("@/lib/authz", () => ({
-	getPdp: () => ({ enforce: async () => undefined, can: async () => ({ allowed: true }) }),
+	getPdp: () => ({
+		enforce: async () => undefined,
+		can: async () => ({ allowed: true }),
+		listAccessible: async (actor: { orgId: string }) => {
+			const { getServiceDb } = await import("@/lib/db");
+			const { projects } = await import("@/lib/db/schema");
+			const { eq } = await import("drizzle-orm");
+			const rows = await getServiceDb()
+				.select({ id: projects.id })
+				.from(projects)
+				.where(eq(projects.org_id, actor.orgId));
+			return rows.map((r) => r.id);
+		},
+	}),
 }));
 
 import { getServiceDb } from "@/lib/db";
