@@ -276,7 +276,7 @@ describe("Canvas Destroy", () => {
 		await user.click(screen.getByRole("button", { name: "Destroy environment" }));
 
 		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Destroy queued"));
-		for (const key of shown) expect(client.getQueryState(key)?.isInvalidated, JSON.stringify(key)).toBe(true);
+		expect(shown.filter((key) => !client.getQueryState(key)?.isInvalidated)).toEqual([]);
 		expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
 	});
 });
