@@ -28,14 +28,25 @@
 //   2. phase 1, every route: the answered load — the render every other load is compared with, and
 //      the reads the shell classifier needs from EVERY route before it can classify any one;
 //   3. phase 2, every route: the held loads (B1, B3), the forced-failure load (B4) and the skeleton swap
-//      (B2), classified by `shellReadsFor` — a read is the shell's only when the build places it in
-//      every page under the route's shells AND another route was seen making it (`getJob` is
-//      referenced by the AppShell bundle and called by `~/jobs/[id]` alone); then phase 3, B5, with the
-//      SAME classifier over the union of every load's reads;
-//   4. the calibration: the jobs slice, ADR 0005's reference page, must PASS B1, B3, B4 and B5 and
+//      (B2). B1 and B2 are judged here; B3's and B4's LOADS are taken here and kept, unjudged;
+//   4. phase 3, every route: B3 and B4 are JUDGED, then B5 is measured, all through one classifier
+//      (`shellReadsFor`) over the union of every load's reads — a read is the shell's only when the
+//      build places it in every page under the route's shells AND another route was seen making it
+//      (`getJob` is referenced by the AppShell bundle and called by `~/jobs/[id]` alone). Phase 2
+//      grows that union route by route, so a verdict judged THERE depended on where the route sat in
+//      the manifest: `[project]/architecture`, the first `[project]` route, made a project-shell
+//      action no other route had been seen making YET, so it was judged the page's read; by phase 3
+//      the same action read as the shell's. Whether it fired on that load was timing, so B3 there
+//      flipped between PASS, `answered-empty` and `no-page-reads` from run to run (#6318). Judged in
+//      phase 3, every route sees the same, finished evidence. (The B3 load itself still lets through
+//      only what phase 2 already knows is the shell's; a shell read it held is dropped from the held
+//      set when it is judged.);
+//   5. the calibration: the jobs slice, ADR 0005's reference page, must PASS B1, B3, B4 and B5 and
 //      be MEASURED on B2 — whose FAIL there is a real finding, see `REFERENCE_EXPECTED`;
-//   5. the floor: every predicate must have produced a PASS or a FAIL on enough routes that its
-//      column is a measurement — a column of NOT MEASURED must not read as a clean board.
+//   6. the floor: a column of NOT MEASURED must not read as a clean board. B1, B2 and B4 must each
+//      have scored `MIN_MEASURED` routes. B3 and B5 are floored by WITNESS instead (`behaviour.ts` →
+//      `loadReadFloorProblems`), because the set they can measure shrinks with every route that
+//      moves its first-paint read onto the server prefetch, which is the migration ADR 0005 asks for.
 //
 // The audit project sets `fullyParallel: false`, which is what makes the order real.
 //
@@ -45,8 +56,9 @@
 // scoreboard through `--import-live`, where `audit-report.mjs` holds every B FAIL to a per-route
 // ledger with an owner (`BEHAVIOUR_LEDGER`, the two-ledger rule) — checked in both directions there.
 // What fails a test here is the INSTRUMENT: a red positive control, a reference page that does not
-// pass, a predicate that measured too few routes. Per-route findings ride the ledger, not the
-// release gate's per-test ratchet, so a lane that fixes a page moves one ledger line in its own PR.
+// pass, a predicate that measured too few routes, or a route that read on load and was not scored.
+// Per-route findings ride the ledger, not the release gate's per-test ratchet, so a lane that fixes a
+// page moves one ledger line in its own PR.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -60,6 +72,7 @@ import {
 	judgeB3,
 	judgeB4,
 	judgeB5,
+	loadReadFloorProblems,
 	loadAnswered,
 	loadFailed,
 	loadHeld,
@@ -72,7 +85,11 @@ import {
 	layoutRpcReads,
 	B5_READ_CAP,
 	type BControlResult,
+	type BFloorRecord,
 	type BVerdict,
+	type FailedPhase,
+	type HeldLoad,
+	type LoadReadPredicate,
 	type OneFailure,
 	type RegionSnapshot,
 } from "./behaviour";
@@ -98,23 +115,35 @@ const STATE_TTL_MS = 3 * 60 * 60_000;
 const REFERENCE_ROUTE = "/[org]/~/jobs";
 
 /**
- * The fewest routes a predicate must have scored (PASS or FAIL) for its column to count. The
- * manifest has 36 real pages; a predicate under this answered for less than a third of them.
+ * The fewest routes B1, B2 and B4 must each have scored (PASS or FAIL) for the column to count. The
+ * manifest has 36 real pages; a predicate under this answered for less than a third of them. None of
+ * the three loses routes as pages move their first-paint reads onto the server: B1 PASSes them, B2
+ * swaps the skeleton whatever the page reads, and B4 fails a prefetched page's reads on the stale
+ * refetch. B3 and B5 do lose them, and are floored by witness instead (`LOAD_READ_FLOORED`).
  */
 const MIN_MEASURED = 10;
 
 const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly PredicateId[];
 
-/** A predicate whose floor differs from {@link MIN_MEASURED}, each with its reason. */
-const MIN_MEASURED_FOR: Partial<Record<(typeof B_IDS)[number], number>> = {
-	// #6124: connectors prefetches its only page read, so it left B3's measurable set; a route meeting B1 cannot be held on load.
-	// #6129: SSO/classification/activity prefetch their page reads; a route meeting B1 cannot be held on load. `/[org]/[project]/architecture` flips PASS/NOT MEASURED between runs (#6318).
-	B3: 6,
-	// #6129: SSO/classification/activity prefetch their page reads and hydrate them, so a failure load
-	// asks the browser for none of them (NOT MEASURED `not-intercepted` / `no-page-reads`): 4 routes left
-	// B5's measurable set, which measured 9 on every run of #6316.
-	B5: 9,
-};
+/**
+ * The predicates that can only measure a route making a read of its own ON LOAD, whose measurable
+ * set therefore shrinks with every correct prefetch migration. A count floor over them had to be
+ * lowered by hand each time (B3 10→9→7→6, B5 10→9) — #6318. They are held to `loadReadFloorProblems`:
+ * every route an independent load saw read on load is scored, every other gap names its route, and
+ * each shell's control route (`LOAD_READ_CONTROLS`) is witnessed and scored.
+ */
+const LOAD_READ_FLOORED: readonly LoadReadPredicate[] = ["B3", "B5"];
+
+/**
+ * The controls for the B3/B5 floor: in EACH shell, a real route that makes a read of its own on load
+ * by design, so a scan that stops seeing reads cannot satisfy "every route that read was scored" by
+ * seeing none — and a fault confined to one shell (the classifier giving `[project]`-shell page reads
+ * to the shell, say) cannot hide by dropping that shell's routes from the witness and the verdicts
+ * at once. Both jobs lists read `members.list` from the client on load. Should one ever prefetch it,
+ * the floor goes red naming it, and the fix is to name another route of that shell that reads on
+ * load — one decision, not one per migration.
+ */
+const LOAD_READ_CONTROLS: readonly string[] = [REFERENCE_ROUTE, "/[org]/[project]/jobs"];
 
 /**
  * The routes whose page the hosted product renders differently from the release gate's SELF-MANAGED
@@ -150,6 +179,11 @@ interface RouteState {
 	reads: string[];
 	settled: boolean;
 	answered: RegionSnapshot;
+	/**
+	 * Phase 2's B3 and B4 loads, kept for phase 3 to judge against the finished classifier — or why
+	 * they were not taken. Absent when phase 2 never reached the route.
+	 */
+	phase2?: { pageHeld: HeldLoad; failed: FailedPhase[] } | { error: string };
 }
 
 /** Everything this spec persists. */
@@ -427,28 +461,33 @@ test.describe("phase 2 · B1–B4 on every route, in a seeded organisation of it
 			}
 			const mine = s.routes[route.route];
 			if (!mine) {
-				for (const id of ["B1", "B3", "B4"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: "phase-one-missing — the answered load of this route did not complete" });
+				report.notMeasured({ route: route.route, url, predicate: "B1", reason: "phase-one-missing — the answered load of this route did not complete" });
 			} else {
 				const a = { snapshot: mine.answered, settled: mine.settled, reads: mine.reads };
+				// Only what the B3 load lets through: the verdicts are judged in phase 3, against the
+				// classifier every route's loads have finished feeding (see THE ORDER, step 4).
 				const isShell = shellOf(route);
 				// A route whose measurement THROWS records NOT MEASURED with the error and the test goes on:
-				// one flaky load is a gap in one cell, and the floor test is what turns a systemic one red.
-				await measured(route, url, ["B1", "B3", "B4"], async () => {
+				// one flaky load is a gap in one cell. The floor test decides what a gap costs: one off the
+				// count for B1, B2 and B4; for B3 and B5 a gap is never excused (`loadReadFloorProblems`).
+				try {
 					// B1 holds EVERY read: its subject is the server render.
 					const held = await loadHeld(context(), url);
 					put(route, url, "B1", judgeB1(a, held));
 					// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
 					const pageHeld = await loadHeld(context(), url, isShell);
-					put(route, url, "B3", judgeB3(a, pageHeld));
 					const failed = await loadFailed(isolatedContext, url);
-					put(route, url, "B4", judgeB4(a, failed, (key) => !isShell(key)));
 					// A route's read set is the UNION of every load made of it, so one cold load that happened
 					// not to fire a read cannot turn B5's verdict for that route into NOT MEASURED.
 					const reads = new Set(mine.reads);
 					for (const k of [...held.held, ...pageHeld.held, ...failed.flatMap((p) => p.failedKeys)]) reads.add(k);
-					s.routes[route.route] = { ...mine, reads: [...reads] };
-					saveState();
-				});
+					s.routes[route.route] = { ...mine, reads: [...reads], phase2: { pageHeld, failed } };
+				} catch (err) {
+					const reason = instrumentError(err);
+					report.notMeasured({ route: route.route, url, predicate: "B1", reason });
+					s.routes[route.route] = { ...mine, phase2: { error: reason } };
+				}
+				saveState();
 			}
 			const loading = route.boundaries.loading?.file ?? null;
 			if (loading === null) {
@@ -478,7 +517,7 @@ test.describe("phase 2 · B1–B4 on every route, in a seeded organisation of it
 	}
 });
 
-test.describe("phase 3 · B5, each of a page's own reads failed alone", () => {
+test.describe("phase 3 · B3 and B4 judged, then B5, each of a page's own reads failed alone", () => {
 	for (const route of manifest.routes) {
 		test(route.route, async () => {
 			const s = current();
@@ -489,10 +528,27 @@ test.describe("phase 3 · B5, each of a page's own reads failed alone", () => {
 			}
 			const mine = s.routes[route.route];
 			if (!mine) {
-				report.notMeasured({ route: route.route, url, predicate: "B5", reason: "phase-one-missing — phase 1 recorded no reads for this route" });
+				for (const id of ["B3", "B4", "B5"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: "phase-one-missing — phase 1 recorded no reads for this route" });
 				return;
 			}
+			// Phase 2 has run for every route, and nothing from here on adds a read, so this classifier
+			// is the same for every route whatever order they ran in.
 			const isShell = shellOf(route);
+			const a = { snapshot: mine.answered, settled: mine.settled, reads: mine.reads };
+			const p2 = mine.phase2;
+			if (p2 === undefined) {
+				for (const id of ["B3", "B4"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: "phase-two-missing — phase 2 kept no B3/B4 load for this route" });
+			} else if ("error" in p2) {
+				for (const id of ["B3", "B4"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: p2.error });
+			} else {
+				// The B3 load let through what phase 2 knew to be the shell's; a read it held that the
+				// finished classifier calls the shell's was never the page's to hold, so it leaves the held
+				// set. The SNAPSHOT is not corrected by that: it was taken with the shell read still held,
+				// and a held shell action can stall hydration. Filtering decides only whether the route had
+				// a read of its own held (`no-page-reads` when none); it does not re-take the render.
+				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: p2.pageHeld.held.filter((k) => !isShell(k)) }));
+				put(route, url, "B4", judgeB4(a, p2.failed, (key) => !isShell(key)));
+			}
 			const shell = mine.reads.filter(isShell);
 			const pageReads = mine.reads.filter((k) => !isShell(k));
 			const failures: OneFailure[] = [];
@@ -500,19 +556,19 @@ test.describe("phase 3 · B5, each of a page's own reads failed alone", () => {
 				if (mine.settled && pageReads.length >= 1 && pageReads.length <= B5_READ_CAP) {
 					for (const key of pageReads) failures.push({ key, ...(await loadWithOneFailure(context(), url, key)) });
 				}
-				put(route, url, "B5", judgeB5({ snapshot: mine.answered, settled: mine.settled, reads: mine.reads }, pageReads, shell, failures));
+				put(route, url, "B5", judgeB5(a, pageReads, shell, failures));
 			});
 		});
 	}
 });
 
 /** Every B record this run wrote, across every worker — the file, not one worker's buffer. */
-function writtenRecords(): { route: string; predicate: string; verdict: string; reason?: string }[] {
+function writtenRecords(): BFloorRecord[] {
 	const file = report.write(current().ctx.orgSlug, ARTIFACT);
 	const body: unknown = JSON.parse(readFileSync(file, "utf8"));
 	if (typeof body !== "object" || body === null || !("records" in body) || !Array.isArray(body.records)) return [];
 	return body.records.filter(
-		(r: unknown): r is { route: string; predicate: string; verdict: string; reason?: string } =>
+		(r: unknown): r is BFloorRecord =>
 			typeof r === "object" && r !== null && "route" in r && typeof r.route === "string" && "predicate" in r && typeof r.predicate === "string" && "verdict" in r && typeof r.verdict === "string",
 	);
 }
@@ -549,7 +605,16 @@ test("the jobs slice — ADR 0005's reference page — answers B1–B5 as calibr
 test("every B predicate scored enough routes to be a measurement", () => {
 	const records = writtenRecords();
 	for (const id of B_IDS) {
+		if (LOAD_READ_FLOORED.some((p) => p === id)) continue;
 		const scored = records.filter((r) => r.predicate === id && (r.verdict === "PASS" || r.verdict === "FAIL")).length;
-		expect(scored, `${id} produced a PASS or a FAIL on ${scored} route(s); a column of NOT MEASURED must not read as a clean board`).toBeGreaterThanOrEqual(MIN_MEASURED_FOR[id] ?? MIN_MEASURED);
+		expect(scored, `${id} produced a PASS or a FAIL on ${scored} route(s); a column of NOT MEASURED must not read as a clean board`).toBeGreaterThanOrEqual(MIN_MEASURED);
 	}
+});
+
+// B3 and B5 by WITNESS (#6318): no count to lower when a route starts prefetching — such a route
+// stops reading on load, so B4's cold load stops witnessing it and its `no-page-reads` is legitimate.
+test("B3 and B5 scored every route that made a read of its own on load", () => {
+	const records = writtenRecords();
+	const problems = LOAD_READ_FLOORED.flatMap((id) => loadReadFloorProblems(records, id, LOAD_READ_CONTROLS));
+	expect(problems, "a route that read on load and was not scored is the instrument measuring less than it saw").toEqual([]);
 });
