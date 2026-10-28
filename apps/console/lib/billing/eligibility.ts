@@ -25,6 +25,7 @@
 
 import { and, eq } from "drizzle-orm";
 import {
+	anyPaidMarketOpen,
 	type PayerCapacity,
 	paidMarketEnabled,
 } from "@repo/legal/commerce";
@@ -146,6 +147,23 @@ export function testModeMarketOpen(
 }
 
 /**
+ * Whether Pro is on sale to ANYONE right now — the one question the upgrade sheet asks before it
+ * shows the payer declaration (#6132, F030). With no cell open it opens on "Pro isn't on sale yet"
+ * instead of a form whose every answer ends in `market_closed`.
+ *
+ * It reads the market through the SAME two inputs `assertPaidConversionAllowed` does — the cell
+ * list and `testModeMarketOpen` — so the release gate, whose console carries the waiver, still sees
+ * the declaration form and drives the real checkout. It is a global answer, not a per-payer one:
+ * once any cell opens, a payer outside it walks the form and gets the gate's per-country refusal,
+ * which remains the authority.
+ */
+export function paidSalesOpen(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+	return anyPaidMarketOpen() || testModeMarketOpen(env);
+}
+
+/**
  * Refuses the sale unless every commercial precondition holds. Throws
  * PaidConversionNotAllowedError; returns nothing on success, so a caller cannot accidentally use a
  * truthy return as "allowed" while ignoring a rejection.
@@ -188,7 +206,7 @@ export async function assertPaidConversionAllowed(
 		throw new PaidConversionNotAllowedError(
 			"market_closed",
 			"Alethia is not yet able to sell to customers in this country in this capacity. " +
-				"Community remains free and unlimited in time. " +
+				"Hobby stays free, with no time limit. " +
 				"Contact sales@alethialabs.io and we will tell you when it opens.",
 		);
 	}

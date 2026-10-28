@@ -43,7 +43,7 @@ test.describe("Billing — empty & entitlement-gated (Hobby)", () => {
 		});
 		// The entry only appears once the (best-effort) plan-history fetch resolves.
 		await expect(owner.page.getByText("Organization created")).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByText("started on the Free plan.")).toBeVisible();
+		await expect(owner.page.getByText("started on the Hobby plan.")).toBeVisible();
 		await expect(owner.page.getByText("No plan history yet.")).toHaveCount(0);
 	});
 

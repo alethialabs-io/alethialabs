@@ -11,6 +11,7 @@ import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { isStripeConfigured } from "@/lib/billing/config";
+import { paidSalesOpen } from "@/lib/billing/eligibility";
 import { listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf } from "@/lib/billing/payment-methods";
 import { getAllAiPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
@@ -426,7 +427,7 @@ export async function getPlanHistory(): Promise<PlanHistoryEntry[]> {
 		{
 			when: org.createdAt.toISOString(),
 			title: "Organization created",
-			detail: `${org.name} started on the Free plan.`,
+			detail: `${org.name} started on the Hobby plan.`,
 			current: false,
 		},
 	];
@@ -461,6 +462,18 @@ async function readLiveAiPrices(): Promise<LiveAiPriceMap> {
 	return getAllAiPrices();
 }
 
+// ── Is Pro on sale ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether Pro is on sale anywhere — the upgrade sheet's first question (#6132, F030). The answer is
+ * the same for every org (the market is a property of the product, not the tenant); it is a read
+ * procedure so the sheet asks it over GET like every other read, signed-in only because the route
+ * handler resolved the actor before this runs.
+ */
+function readSalesOpen(): { open: boolean } {
+	return { open: paidSalesOpen() };
+}
+
 // ── Inputs + router ───────────────────────────────────────────────────────────────────────────────
 
 /** The invoices list's filters, as the page builds them (`normalizeInvoiceQuery`). */
@@ -479,4 +492,5 @@ export const billingRouter = {
 	transactions: query.handler(() => listTransactions()),
 	planHistory: query.handler(() => getPlanHistory()),
 	liveAiPrices: query.handler(() => readLiveAiPrices()),
+	salesOpen: query.handler(() => readSalesOpen()),
 };

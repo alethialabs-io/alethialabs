@@ -336,8 +336,8 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 				title="Cancel this subscription?"
 				description={
 					summary.currentPeriodEnd
-						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization drops to the free plan. You can resume any time before then.`
-						: `${meta.name} stays active until the end of the current billing period, then this organization drops to the free plan. You can resume any time before then.`
+						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization moves to the Hobby plan. You can resume any time before then.`
+						: `${meta.name} stays active until the end of the current billing period, then this organization moves to the Hobby plan. You can resume any time before then.`
 				}
 				confirmLabel="Confirm cancellation"
 				onConfirm={() => cancel.mutate({})}
