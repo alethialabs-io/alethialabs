@@ -61,7 +61,7 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 	const [draft, setDraft] = useState<Overlay | null>(null);
 	// Why the server refused the overlay (a field it would not take), said under the Save button.
 	const [refusal, setRefusal] = useState<string | null>(null);
-	// One Save is one write (the changed parts only), on the mutation contract: pending while in
+	// One Save is one action (the changed parts only, written in turn), on the mutation contract: pending while in
 	// flight, the refusal said here, and the board's charts and described workloads re-read after.
 	const saveOverlay = useActionMutation(saveChartWorkloadOverlayAction, {
 		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],

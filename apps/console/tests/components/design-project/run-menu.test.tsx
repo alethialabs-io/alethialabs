@@ -187,6 +187,11 @@ describe("a queued job shows on the board at once", () => {
     await user.click(screen.getByText("Audit"));
 
     await waitFor(() => expect(screen.getByRole("button", { name: /run/i })).toBeDisabled());
+    // Press again — the trigger, then the item if the menu opened at all — while the first is in flight.
+    await user.click(screen.getByRole("button", { name: /run/i }));
+    await openTrigger(user);
+    const again = screen.queryByText("Audit");
+    if (again) await user.click(again);
     expect(queueEnvironmentAudit).toHaveBeenCalledTimes(1);
     settle({ ok: true, data: { jobId: "job-1" } });
     await waitFor(() => expect(screen.getByRole("button", { name: /run/i })).toBeEnabled());

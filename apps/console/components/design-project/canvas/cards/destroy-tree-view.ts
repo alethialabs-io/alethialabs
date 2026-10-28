@@ -21,8 +21,18 @@ export interface DestroyEnvironmentControl {
 	projectName: string | null;
 	/** Reads the active environment's destroy tree. Must be referentially stable across renders. */
 	loadTree: () => Promise<DestroyTreeNode[]>;
-	/** Queues the destroy; `cascade` also queues every live tenant, tenants first. */
-	destroy: (options: { cascade: boolean }) => Promise<void>;
+	/**
+	 * Queues the destroy of `environmentId` — the environment the tree just read names, never one
+	 * resolved again on the way (a stale id must not fall back onto the default environment).
+	 * `cascade` also queues every live tenant, tenants first.
+	 */
+	destroy: (options: DestroyOptions) => Promise<void>;
+}
+
+/** What a confirmed destroy asks for: the environment the tree named, and whether to cascade. */
+export interface DestroyOptions {
+	cascade: boolean;
+	environmentId: string;
 }
 
 /** A tree split into the environments placed on the cluster and the environment destroyed last. */

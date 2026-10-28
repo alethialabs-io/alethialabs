@@ -48,6 +48,7 @@ import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
 import { ActivityStatusLine } from "./cards/activity-status-line";
 import { CanvasMoreMenu } from "./canvas-more-menu";
+import type { DestroyOptions } from "./cards/destroy-tree-view";
 import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
@@ -252,17 +253,21 @@ function CanvasInner({
 
 	const destroyIsPending = destroyEnv.isPending;
 	const mutateDestroy = destroyEnv.mutateAsync;
-	/** Edit mode: tear down the active environment — with `cascade`, every tenant on its cluster too. */
+	/**
+	 * Edit mode: tear down the environment the destroy tree named — with `cascade`, every tenant on
+	 * its cluster too. The id comes from the tree the dialog showed, never from the board's own
+	 * (possibly stale) environment, so what is destroyed is what was confirmed.
+	 */
 	const handleDestroyEnvironment = useCallback(
-		async ({ cascade }: { cascade: boolean }) => {
+		async ({ cascade, environmentId: target }: DestroyOptions) => {
 			if (!projectId || destroyIsPending) return;
 			try {
-				await mutateDestroy({ projectId, environmentId: environmentId ?? null, cascade });
+				await mutateDestroy({ projectId, environmentId: target, cascade });
 			} catch {
 				// Already said by the mutation: a refusal ("destroy the children first") in one toast.
 			}
 		},
-		[projectId, environmentId, destroyIsPending, mutateDestroy],
+		[projectId, destroyIsPending, mutateDestroy],
 	);
 
 	const destroyEnvironment = useMemo(
@@ -477,13 +482,14 @@ function CanvasInner({
 		mutateDeploy({ projectId, environmentId: environmentId ?? null, design: parsed.data });
 	}, [projectId, environmentId, handleSave, deployIsPending, mutateDeploy]);
 
+	const discardIsPending = discardStaged.isPending;
 	const mutateDiscard = discardStaged.mutate;
-	/** Edit mode: clear the active environment's staged changes (the Discard action). */
+	/** Edit mode: clear the active environment's staged changes (the Discard action) — once. */
 	const handleDiscardStaged = useCallback(() => {
-		if (!projectId) return;
+		if (!projectId || discardIsPending) return;
 		// The canvas store has already reverted; this clears the durable staged rows behind it.
 		mutateDiscard({ projectId, environmentId: environmentId ?? null });
-	}, [projectId, environmentId, mutateDiscard]);
+	}, [projectId, environmentId, discardIsPending, mutateDiscard]);
 
 	// ⌘K is bound TWICE on this page: here (the canvas's own command menu) and by the shell's global
 	// palette (`components/shell/command-palette.tsx`, a `document` listener). Both used to fire, so
@@ -692,6 +698,7 @@ function CanvasInner({
 				deploying={deploying}
 				deployLabel={projectId ? "Deploy" : "Create project"}
 				onDiscard={projectId ? handleDiscardStaged : undefined}
+				discarding={discardStaged.isPending}
 				onSave={projectId ? handleSaveDesign : undefined}
 				saving={saving}
 			/>

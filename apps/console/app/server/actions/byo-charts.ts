@@ -517,8 +517,10 @@ const workloadOverlayInput = z.object({
 });
 
 /**
- * Saves the parts of a described workload's overlay that changed — one write for the panel's one
- * Save. Bindings first: they infer and merge value-paths for a new binding, so an explicit
+ * Saves the parts of a described workload's overlay that changed — one ACTION for the panel's one
+ * Save, which runs up to three setters in turn, each in its own transaction. It is NOT atomic: a
+ * refusal part-way (the workload is gone) leaves the parts before it saved, and the panel shows the
+ * refusal. Bindings first: they infer and merge value-paths for a new binding, so an explicit
  * value-path override in the same save must run after them to win.
  */
 export async function saveChartWorkloadOverlayAction(raw: z.input<typeof workloadOverlayInput>) {

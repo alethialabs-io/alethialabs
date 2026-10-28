@@ -1210,10 +1210,13 @@ function emptyBag(): CapabilityBag {
  * `view`, not `destroy`: it reveals nothing the environment list does not, and showing someone what
  * a destroy WOULD do must not require being allowed to do it.
  *
- * A named environment is read EXACTLY — never the project's default in its place, which would show
- * one environment's tree above another's Destroy — and only inside the actor's org: the PDP's answer
- * for an org-wide role does not bind the project id it was asked about, so the row is joined to its
- * project's org. A null environment means the project's default one.
+ * A named environment is read EXACTLY — never the project's default in its place — and only inside
+ * the actor's org: the PDP's answer for an org-wide role does not bind the project id it was asked
+ * about, so the row is joined to its project's org. A null environment means the project's default.
+ *
+ * The board's Destroy (`destroyEnvironmentAction`) resolves its target through THIS read too and
+ * queues the destroy on the environment it returns, so the tree the dialog shows and the environment
+ * the destroy takes cannot disagree: a stale id is a not-found for both, never the default.
  */
 export async function readDestroyTree(
 	projectId: string,

@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
 	tryPlanProject: vi.fn(),
 	tryQueueDriftDetection: vi.fn(),
 	tryCreateProject: vi.fn(),
+	readDestroyTree: vi.fn(),
 }));
 vi.mock("@/app/server/actions/resolve", () => ({
 	resolveActiveEnvironmentId: m.resolveActiveEnvironmentId,
@@ -28,6 +29,7 @@ vi.mock("@/app/server/actions/staged-changes", () => ({
 	applyStagedChanges: m.applyStagedChanges,
 	discardStagedChanges: m.discardStagedChanges,
 }));
+vi.mock("@/lib/rpc/procedures/canvas", () => ({ readDestroyTree: m.readDestroyTree }));
 vi.mock("@/app/server/actions/projects", () => ({
 	tryProvisionProject: m.tryProvisionProject,
 	tryDestroyProject: m.tryDestroyProject,
@@ -35,10 +37,11 @@ vi.mock("@/app/server/actions/projects", () => ({
 	tryQueueDriftDetection: m.tryQueueDriftDetection,
 	tryCreateProject: m.tryCreateProject,
 }));
-// The design schema is the project form's own subject; here any object is a design.
+// The design schema is the project form's own subject (tests/validations); here it passes the
+// design through untouched, so the fixture below arrives at the domain function as it was sent.
 vi.mock("@/lib/validations/project-form.schema", async () => {
 	const { z } = await import("zod");
-	return { projectFormSchema: z.object({ project: z.object({ project_name: z.string() }) }) };
+	return { projectFormSchema: z.object({}).passthrough() };
 });
 
 import {
@@ -50,14 +53,13 @@ import {
 	planEnvironmentAction,
 	saveDesignAction,
 } from "@/app/server/actions/canvas-writes";
-import { UsageLimitError } from "@/lib/billing/usage-guard";
+import { buildDefaultFormValues } from "@/components/design-project/source-project";
 import { NO_DEFAULT_ENVIRONMENT } from "@/lib/canvas/write-refusals";
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
 const ENV = "22222222-2222-4222-8222-222222222222";
-// Typed as the action's real input (the mocked schema accepts it); the full project form is not
-// this file's subject.
-const DESIGN = { project: { project_name: "shop" } } as never;
+/** The design a board sends: the canvas's own default form, typed as the action's real input. */
+const DESIGN: Parameters<typeof deployDesignAction>[0]["design"] = buildDefaultFormValues();
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -142,13 +144,42 @@ describe("saveDesignAction / discardStagedDesignAction", () => {
 });
 
 describe("destroyEnvironmentAction", () => {
-	it("queues the destroy on the resolved environment and answers how many were queued", async () => {
+	beforeEach(() => {
+		m.readDestroyTree.mockResolvedValue({ environmentId: ENV, tree: [] });
+	});
+
+	it("queues the destroy on exactly the environment the destroy tree names", async () => {
 		m.tryDestroyProject.mockResolvedValue({ ok: true, jobId: "a", jobs: [{ jobId: "b" }, { jobId: "a" }] });
 
 		const result = await destroyEnvironmentAction({ projectId: PROJECT, environmentId: ENV, cascade: true });
 
 		expect(result).toEqual({ ok: true, data: { environmentId: ENV, queued: 2 } });
+		expect(m.readDestroyTree).toHaveBeenCalledWith(PROJECT, ENV);
 		expect(m.tryDestroyProject).toHaveBeenCalledWith(PROJECT, ENV, null, { cascade: true });
+		// Never through the resolver that falls back onto the project's default environment.
+		expect(m.resolveActiveEnvironmentId).not.toHaveBeenCalled();
+	});
+
+	it("a stale environment id destroys nothing — least of all the default environment", async () => {
+		const { ActionRefusal } = await import("@/lib/actions/result");
+		m.readDestroyTree.mockRejectedValue(new ActionRefusal("not-found", "Environment not found."));
+
+		const result = await destroyEnvironmentAction({ projectId: PROJECT, environmentId: ENV, cascade: false });
+
+		expect(result).toEqual({ ok: false, error: { kind: "not-found", message: "Environment not found." } });
+		expect(m.tryDestroyProject).not.toHaveBeenCalled();
+		expect(m.resolveActiveEnvironmentId).not.toHaveBeenCalled();
+	});
+
+	it("refuses a destroy that names no environment", async () => {
+		const result = await destroyEnvironmentAction({
+			projectId: PROJECT,
+			// @ts-expect-error — the input requires a named environment; null is the fallback it refuses.
+			environmentId: null,
+			cascade: false,
+		});
+		expect(!result.ok && result.error.kind).toBe("validation");
+		expect(m.tryDestroyProject).not.toHaveBeenCalled();
 	});
 
 	it("answers the orphaned-tenants refusal as a conflict naming them", async () => {
@@ -178,16 +209,14 @@ describe("the Run menu's Plan and Detect drift", () => {
 		expect(m.tryQueueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
 	});
 
-	it("an upgradable job cap is an entitlement refusal; a hard one is a conflict", async () => {
-		m.tryPlanProject.mockRejectedValueOnce(new UsageLimitError("Free plan: 20 jobs a day.", true));
+	it("answers a returned job-cap refusal as a conflict with its sentence", async () => {
+		// `try*Project` RETURNS the job cap (UsageLimitError → `{ ok: false }`, #5445), so on these
+		// actions it is a conflict; the entitlement path is the BYO scans' (byo-charts-scan.test.ts).
+		const reason = "The Hobby plan allows 25 provisioning jobs per day.";
+		m.tryPlanProject.mockResolvedValue({ ok: false, error: reason });
 		expect(await planEnvironmentAction({ projectId: PROJECT, environmentId: ENV })).toEqual({
 			ok: false,
-			error: { kind: "entitlement", message: "Free plan: 20 jobs a day.", feature: "jobQuota" },
-		});
-		m.tryPlanProject.mockRejectedValueOnce(new UsageLimitError("Usage cap reached.", false));
-		expect(await planEnvironmentAction({ projectId: PROJECT, environmentId: ENV })).toEqual({
-			ok: false,
-			error: { kind: "conflict", message: "Usage cap reached." },
+			error: { kind: "conflict", message: reason },
 		});
 	});
 });

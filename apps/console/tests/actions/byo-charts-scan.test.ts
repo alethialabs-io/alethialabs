@@ -31,6 +31,8 @@ import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectAddons, projectHelmRegistries } from "@/lib/db/schema";
 import { ProjectOrgRefusalError, refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
 
 type Rows = unknown[];
 
@@ -269,6 +271,26 @@ describe("the BYO chart actions — the mutation contract", () => {
 		await expect(scanByoChartAction(target)).resolves.toEqual({
 			ok: false,
 			error: { kind: "conflict", message: reason },
+		});
+	});
+
+	it("answers an upgradable job cap as an entitlement refusal, and a hard cap as a conflict", async () => {
+		// The BYO scans THROW the cap (assertJobQuotaAllowed), unlike `try*Project`, which returns it —
+		// so this is the board's real entitlement path.
+		setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(
+			new UsageLimitError("Free plan: 25 jobs a day.", true),
+		);
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "entitlement", message: "Free plan: 25 jobs a day.", feature: "jobQuota" },
+		});
+		vi.mocked(assertJobQuotaAllowed).mockRejectedValueOnce(
+			new UsageLimitError("Usage cap reached.", false),
+		);
+		await expect(scanByoChartAction(target)).resolves.toEqual({
+			ok: false,
+			error: { kind: "conflict", message: "Usage cap reached." },
 		});
 	});
 

@@ -100,9 +100,16 @@ vi.mock("@/components/design-project/canvas/cards/workspace-rail", () => ({
 	WorkspaceRail: ({
 		destroyEnvironment,
 	}: {
-		destroyEnvironment?: { destroy: (o: { cascade: boolean }) => Promise<void> };
+		destroyEnvironment?: {
+			destroy: (o: { cascade: boolean; environmentId: string }) => Promise<void>;
+		};
 	}) => (
-		<button type="button" onClick={() => void destroyEnvironment?.destroy({ cascade: false })}>
+		// The real dialog hands over the environment its destroy tree named (TREE_ENV), which is NOT
+		// necessarily the board's own environment id.
+		<button
+			type="button"
+			onClick={() => void destroyEnvironment?.destroy({ cascade: false, environmentId: TREE_ENV })}
+		>
 			Destroy environment
 		</button>
 	),
@@ -154,14 +161,16 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 }));
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
+/** The environment the destroy tree named — what the dialog hands the destroy. */
+const TREE_ENV = "env-from-tree";
 const NO_ACCOUNT = "Connect a cloud account for this project before deploying.";
 const TENANTS = "This cluster still hosts 2 environments — destroy them first, or cascade.";
 
 /** The canvas in edit mode, on one project's environment. */
-function renderCanvas() {
-	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderCanvas(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
 	return render(
 		<QueryClientProvider client={client}>
 			<DesignProjectCanvas
@@ -230,14 +239,14 @@ describe("Canvas Destroy", () => {
 		await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith(TENANTS));
 		expect(destroyEnvironment).toHaveBeenCalledWith({
 			projectId: "proj-1",
-			environmentId: "env-1",
+			environmentId: TREE_ENV,
 			cascade: false,
 		});
 		expect(toastSuccess).not.toHaveBeenCalled();
 	});
 
 	it("says how many environments were queued when it is accepted", async () => {
-		destroyEnvironment.mockResolvedValue({ ok: true, data: { environmentId: "env-1", queued: 2 } });
+		destroyEnvironment.mockResolvedValue({ ok: true, data: { environmentId: TREE_ENV, queued: 2 } });
 		const user = userEvent.setup();
 		renderCanvas();
 
@@ -247,6 +256,28 @@ describe("Canvas Destroy", () => {
 			expect(toastSuccess).toHaveBeenCalledWith("Destroy queued for 2 environments"),
 		);
 		expect(toastError).not.toHaveBeenCalled();
+	});
+
+	it("invalidates every read that shows the destroyed environment, and nothing else", async () => {
+		destroyEnvironment.mockResolvedValue({ ok: true, data: { environmentId: TREE_ENV, queued: 1 } });
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const shown = [
+			[["canvas", "environmentStatus"], { input: {}, type: "query" }],
+			[["canvas", "environmentJobs"], { input: {}, type: "query" }],
+			[["environments", "overview"], { input: {}, type: "query" }],
+			[["workspace", "environments"], { input: {}, type: "query" }],
+			[...DESTROY_HOLD_KEY, "job-1"],
+		];
+		const unrelated = [["canvas", "addons"], { input: {}, type: "query" }];
+		for (const key of [...shown, unrelated]) client.setQueryData(key, {});
+		const user = userEvent.setup();
+		renderCanvas(client);
+
+		await user.click(screen.getByRole("button", { name: "Destroy environment" }));
+
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Destroy queued"));
+		for (const key of shown) expect(client.getQueryState(key)?.isInvalidated, JSON.stringify(key)).toBe(true);
+		expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
 	});
 });
 

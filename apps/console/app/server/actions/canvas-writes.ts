@@ -20,6 +20,7 @@ import { z } from "zod";
 import { tryCreateProject, tryDestroyProject, tryPlanProject, tryProvisionProject, tryQueueDriftDetection } from "@/app/server/actions/projects";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { applyStagedChanges, discardStagedChanges } from "@/app/server/actions/staged-changes";
+import { readDestroyTree } from "@/lib/rpc/procedures/canvas";
 import { defineAction } from "@/lib/actions/define-action";
 import { refusingCanvasWrite, returnedRefusalAsConflict } from "@/lib/canvas/write-refusals";
 import { projectFormSchema } from "@/lib/validations/project-form.schema";
@@ -86,19 +87,23 @@ export async function discardStagedDesignAction(raw: z.input<typeof environmentI
 	})(raw);
 }
 
-const destroyInput = environmentInput.extend({ cascade: z.boolean() });
+/** A destroy names its environment: there is no "the default" to fall back onto. */
+const destroyInput = z.object({ projectId: uuid, environmentId: uuid, cascade: z.boolean() });
 
 /**
- * Queues the environment's DESTROY — with `cascade`, every live tenant on the cluster it owns too,
- * tenants first. A destroy that would orphan tenants without `cascade` is a `conflict` naming them.
- * Answers how many environments were queued.
+ * Queues the DESTROY of exactly the named environment — with `cascade`, every live tenant on the
+ * cluster it owns too, tenants first. The target is resolved through the same read the dialog's
+ * destroy tree came from (`readDestroyTree`: exact, inside the actor's org), NOT through
+ * `resolveActiveEnvironmentId`, which falls back to the project's default environment — so a stale
+ * id is a `not-found` and destroys nothing. A destroy that would orphan tenants without `cascade` is
+ * a `conflict` naming them. Answers the environment and how many environments were queued.
  */
 export async function destroyEnvironmentAction(raw: z.input<typeof destroyInput>) {
 	return defineAction({
 		input: destroyInput,
 		run: async ({ input }) => {
-			const environmentId = await refusingCanvasWrite(() =>
-				resolveActiveEnvironmentId(input.projectId, input.environmentId),
+			const { environmentId } = await refusingCanvasWrite(() =>
+				readDestroyTree(input.projectId, input.environmentId),
 			);
 			const { jobs } = await returnedRefusalAsConflict(() =>
 				tryDestroyProject(input.projectId, environmentId, null, { cascade: input.cascade }),
