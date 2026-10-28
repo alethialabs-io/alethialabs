@@ -21,7 +21,7 @@ import {
 	VerifySection,
 } from "@/components/connectors/connection-ui";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { FieldHelp } from "@repo/ui/field-help";
@@ -62,7 +62,7 @@ const awsRoleSchema = z.object({
 type AwsRoleFormValues = z.infer<typeof awsRoleSchema>;
 
 interface AwsConnectionProps {
-	onComplete: (roleArn: string) => Promise<VerifyOutcome>;
+	onComplete: (roleArn: string) => ReturnType<ConnectSave>;
 }
 
 export function AwsConnection({ onComplete }: AwsConnectionProps) {

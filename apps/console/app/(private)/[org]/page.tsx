@@ -3,7 +3,7 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { queryProjects, type ProjectListQuery } from "@/app/server/actions/projects";
-import { getConnectedCloudProviders } from "@/app/server/actions/connectors";
+import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 import { isOverviewRead } from "@/components/overview/overview-reads";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
@@ -75,7 +75,7 @@ export default async function OrgOverviewRoute({
 	const [{ projects, facets }, allProjects, connectedProviders] = await Promise.all([
 		queryProjects({ q: state.q, clouds: state.clouds, repos: state.repos, sort }),
 		queryClient.fetchQuery(rpc.workspace.projects.queryOptions()),
-		getConnectedCloudProviders(),
+		readConnectedCloudProviders(),
 		// `retry: false`: the console's default `retry: 1` would hold the first byte ~1 s on a refusal
 		// or a transient failure, and the card retries in the browser anyway. Not part of the key.
 		queryClient.prefetchQuery(rpc.overview.usage.queryOptions({ retry: false })),
