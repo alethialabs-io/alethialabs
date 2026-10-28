@@ -60,9 +60,6 @@
     "components/plan/use-plan.ts": [
       "files"
     ],
-    "components/settings/settings-card.tsx": [
-      "files"
-    ],
     "components/settings/upgrade/use-current-plan.ts": [
       "files"
     ]
