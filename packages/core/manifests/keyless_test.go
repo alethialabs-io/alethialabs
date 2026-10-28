@@ -45,9 +45,8 @@ func envValue(env []types.ServiceEnvVar, name string) (string, bool) {
 // username resolves to the IAM identity output, and no ExternalSecret secretKeyRef is emitted.
 func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
 	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "gcp",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Provider:  "gcp",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		Outputs: map[string]string{
 			"cloud_sql_connection_name": "proj:us-central1:orders",
 			"cloud_sql_iam_user":        "orders-app@proj.iam",
@@ -110,10 +109,9 @@ func TestKeyless_GCP_CloudSQLProxy(t *testing.T) {
 // with no password. Replaces the db-token + pgbouncer pair, which could never authenticate.
 func TestKeyless_Azure_AuthProxy(t *testing.T) {
 	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "azure",
-		KeylessDBAuth: true,
-		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Provider:    "azure",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases:   []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		Outputs: map[string]string{
 			"azure_db_fqdn":      "orders.postgres.database.azure.com",
 			"azure_db_aad_user":  "orders-app",
@@ -180,34 +178,13 @@ func TestKeyless_Azure_AuthProxy(t *testing.T) {
 	}
 }
 
-// TestKeyless_FlagOff_KeepsPasswordPath: with the dark flag off, an iam_auth database still uses the
-// unchanged ExternalSecret/password path — no regression, no sidecars.
-func TestKeyless_FlagOff_KeepsPasswordPath(t *testing.T) {
-	apps, _, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "gcp",
-		KeylessDBAuth: false, // flag OFF
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-		Outputs:       map[string]string{"cloud_sql_ip": "10.0.0.5", "cloud_sql_connection_name": "p:r:i"},
-	})
-	a := apps[0]
-	if len(a.Sidecars) != 0 {
-		t.Errorf("flag off → no sidecars, got %+v", a.Sidecars)
-	}
-	if len(a.SecretEnv) != 2 {
-		t.Errorf("flag off → password path (username+password secretKeyRef), got %+v", a.SecretEnv)
-	}
-	if v, _ := envValue(a.Env, "DATABASE_HOST"); v != "10.0.0.5" {
-		t.Errorf("flag off → real endpoint, got %q", v)
-	}
-}
-
-// TestKeyless_IamAuthFalse_KeepsPasswordPath: flag on but the bound db is password-auth → unchanged.
+// TestKeyless_IamAuthFalse_KeepsPasswordPath: the bound db is password-auth → the unchanged
+// ExternalSecret/password path, no sidecars. Since #1513 this is the ONLY route to the password path.
 func TestKeyless_IamAuthFalse_KeepsPasswordPath(t *testing.T) {
 	apps, _, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "gcp",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(false)}},
-		Outputs:       map[string]string{"cloud_sql_ip": "10.0.0.5"},
+		Provider:  "gcp",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(false)}},
+		Outputs:   map[string]string{"cloud_sql_ip": "10.0.0.5"},
 	})
 	a := apps[0]
 	if len(a.Sidecars) != 0 || len(a.SecretEnv) != 2 {
@@ -220,10 +197,9 @@ func TestKeyless_IamAuthFalse_KeepsPasswordPath(t *testing.T) {
 // token is region-signed, unlike Entra's).
 func TestKeyless_AWS_RDSIAMAuthProxy(t *testing.T) {
 	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "aws",
-		KeylessDBAuth: true,
-		RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Provider:    "aws",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Databases:   []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		Outputs: map[string]string{
 			"rds_cluster_endpoint":  "orders.abc.rds.amazonaws.com",
 			"aws_region":            "eu-central-1",
@@ -285,10 +261,9 @@ func TestKeyless_ExcludedCloudNeverSilentlyDowngrades(t *testing.T) {
 	for _, provider := range []string{"alibaba", "hetzner"} {
 		t.Run(provider, func(t *testing.T) {
 			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-				Provider:      provider,
-				KeylessDBAuth: true,
-				Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-				Outputs:       map[string]string{},
+				Provider:  provider,
+				Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+				Outputs:   map[string]string{},
 			})
 			a := apps[0]
 			if len(a.Sidecars) != 0 {
@@ -365,10 +340,9 @@ func TestKeylessCellsTotal(t *testing.T) {
 // omits the WHOLE binding (no 127.0.0.1 pointed at an absent proxy) and reports it — fail-closed.
 func TestKeyless_MissingConnectionName_FailsClosed(t *testing.T) {
 	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "gcp",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-		Outputs:       map[string]string{"cloud_sql_iam_user": "orders-app@proj.iam"}, // no connection name
+		Provider:  "gcp",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Outputs:   map[string]string{"cloud_sql_iam_user": "orders-app@proj.iam"}, // no connection name
 	})
 	a := apps[0]
 	if len(a.Sidecars) != 0 {
@@ -496,9 +470,8 @@ func TestKeylessCells_PerCloudPerEngine(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.provider+"/"+tc.engine, func(t *testing.T) {
 			apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-				Provider:      tc.provider,
-				KeylessDBAuth: true,
-				RunnerImage:   "ghcr.io/alethialabs-io/runner:1.2.3",
+				Provider:    tc.provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
 				Databases: []types.ProjectDatabaseConfig{
 					{Name: "orders-db", EngineFamily: tc.engine, IamAuth: boolPtr(true)},
 				},
@@ -602,9 +575,8 @@ func findKeylessDecision(ds []KeylessBindingDecision, target string) (KeylessBin
 // unnoticed (#1500).
 func TestKeylessDecision_WiredIsRecorded(t *testing.T) {
 	_, skipped, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "gcp",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Provider:  "gcp",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		Outputs: map[string]string{
 			"cloud_sql_connection_name": "proj:us-central1:orders",
 			"cloud_sql_iam_user":        "orders-app@proj.iam",
@@ -639,9 +611,8 @@ func TestKeylessDecision_WiredIsRecorded(t *testing.T) {
 // toggle, because both read the cell table.
 func TestKeylessDecision_FailedClosedCarriesTheCellReason(t *testing.T) {
 	_, skipped, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "hetzner",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+		Provider:  "hetzner",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 	})
 	if len(skipped) == 0 {
 		t.Fatal("an excluded cell must still report the binding as unresolved")
@@ -663,10 +634,9 @@ func TestKeylessDecision_FailedClosedCarriesTheCellReason(t *testing.T) {
 // make the list unreadable as "every database that asked for keyless".
 func TestKeylessDecision_PasswordBindingRecordsNothing(t *testing.T) {
 	_, _, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "aws",
-		KeylessDBAuth: true,
-		Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db"}}, // no IamAuth
-		Outputs:       map[string]string{"rds_endpoint": "db.example.com"},
+		Provider:  "aws",
+		Databases: []types.ProjectDatabaseConfig{{Name: "orders-db"}}, // no IamAuth
+		Outputs:   map[string]string{"rds_endpoint": "db.example.com"},
 	})
 	if len(decisions) != 0 {
 		t.Errorf("a password-auth database produced keyless decisions: %+v", decisions)

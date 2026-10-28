@@ -68,9 +68,8 @@ func TestRenderedServiceManifestsPassVerify(t *testing.T) {
 // pinned runner image, so the whole keyless pod is now gate-clean.
 func TestRenderedKeylessManifestsPassVerify(t *testing.T) {
 	apps, skipped, _ := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-		Provider:      "azure",
-		KeylessDBAuth: true,
-		RunnerImage:   "ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+		Provider:    "azure",
+		RunnerImage: "ghcr.io/alethialabs-io/runner@sha256:9c1e0b2a3d4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
 		Databases: []types.ProjectDatabaseConfig{
 			{Name: "orders-db", EngineFamily: engineMySQL, IamAuth: boolPtr(true)},
 		},
