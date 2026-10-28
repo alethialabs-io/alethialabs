@@ -712,6 +712,129 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 	return { verdict: blanked.length > 0 ? "FAIL" : "PASS", evidence };
 }
 
+// ── the floor under B3 and B5 (#6318) ───────────────────────────────────────────────────────────
+//
+// B3 and B5 can only measure a route that makes a read of its OWN on load, and ADR 0005 moves every
+// first-paint read onto the server prefetch, so the set they can measure shrinks with every correct
+// migration. A floor that COUNTED their PASS/FAIL cells (`MIN_MEASURED_FOR`, 10→9→7→6 on B3 and
+// 10→9 on B5) had to be lowered by hand each time, and a floor every correct change lowers no longer
+// tells a migration from an instrument that stopped measuring.
+//
+// So the floor asks a question a migration cannot change the answer to: did the instrument score
+// every route that an INDEPENDENT load saw make a read of its own on load? The witness is B4's cold
+// load — a different load, in a context of its own, that fails every read and records which of them
+// were the page's. A route it saw read on load must be scored (or be its own empty state, which is
+// a fact about the page). A route it did not see read is legitimately `no-page-reads`. Any other
+// NOT MEASURED — a thrown load, a missing phase, a withheld predicate, an unrecognised reason — is
+// the instrument's and fails. And because "every witnessed route was scored" is vacuously true when
+// nothing was witnessed, a CONTROL route that reads on load by design must be witnessed and scored.
+//
+// The boundary, stated: the witness and the verdict are classified by the SAME shell classifier, so
+// a classifier that wrongly calls a page's read the shell's moves a route out of both at once and is
+// invisible here. That is the fixture control's job (`shell-only`, `cold-shell`, `action-page-read`,
+// `client-fetch`) and the classifier's self-tests', not this floor's.
+
+/** A written B record, as the floor reads it. */
+export interface BFloorRecord {
+	route: string;
+	predicate: string;
+	verdict: string;
+	reason?: string;
+	evidence?: unknown;
+}
+
+/** The predicates whose measurable set shrinks as routes prefetch, and so are floored by witness. */
+export type LoadReadPredicate = "B3" | "B5";
+
+/**
+ * The NOT MEASURED reasons that describe the ROUTE rather than the instrument, per predicate. Every
+ * other reason fails the floor. `no-page-reads` and `not-intercepted` additionally fail on a route
+ * the witness saw make a read of its own on load (`LOAD_READ_EXCUSES`).
+ */
+const ROUTE_REASONS: Record<LoadReadPredicate, readonly string[]> = {
+	B3: ["no-page-reads", "answered-empty"],
+	B5: ["no-page-reads", "not-intercepted", "over-read-budget"],
+};
+
+/** The reasons that mean "this route made no read of its own to measure" — false on a witnessed route. */
+const LOAD_READ_EXCUSES: Record<LoadReadPredicate, readonly string[]> = {
+	B3: ["no-page-reads"],
+	B5: ["no-page-reads", "not-intercepted"],
+};
+
+/** A NOT MEASURED reason's leading token (`no-page-reads — …` → `no-page-reads`). */
+function reasonToken(reason: string | undefined): string {
+	return (reason ?? "").trim().split(/\s/)[0] ?? "";
+}
+
+/**
+ * The page reads B4's COLD load failed on `record`, or an empty list when the record carries none
+ * — a B4 that was not measured witnesses nothing, and the B3/B5 cells it would have excused fail.
+ */
+function coldPageReads(record: BFloorRecord): string[] {
+	const ev = record.evidence;
+	if (typeof ev !== "object" || ev === null || !("phases" in ev) || !Array.isArray(ev.phases)) return [];
+	const phases: unknown[] = ev.phases;
+	const out: string[] = [];
+	for (const p of phases) {
+		if (typeof p !== "object" || p === null || !("phase" in p) || p.phase !== "cold load") continue;
+		if (!("pageReadsFailed" in p) || !Array.isArray(p.pageReadsFailed)) continue;
+		const keys: unknown[] = p.pageReadsFailed;
+		for (const k of keys) if (typeof k === "string") out.push(k);
+	}
+	return out;
+}
+
+/**
+ * The routes an independent load saw make a read of their own ON LOAD, with those reads: B4's cold
+ * phase failed at least one read the shell classifier gave the page.
+ */
+export function readsOnLoad(records: readonly BFloorRecord[]): Map<string, string[]> {
+	const out = new Map<string, string[]>();
+	for (const r of records) {
+		if (r.predicate !== "B4") continue;
+		const reads = coldPageReads(r);
+		if (reads.length > 0) out.set(r.route, reads);
+	}
+	return out;
+}
+
+/**
+ * Everything wrong with `predicate`'s column as a measurement, against the load witness. Empty when
+ * every route that made a read of its own on load was scored, every other NOT MEASURED names a fact
+ * about its route, and `control` — a route that reads on load by design — was both witnessed and scored.
+ */
+export function loadReadFloorProblems(records: readonly BFloorRecord[], predicate: LoadReadPredicate, control: string): string[] {
+	const problems: string[] = [];
+	const witnessed = readsOnLoad(records);
+	const mine = new Map(records.filter((r) => r.predicate === predicate).map((r) => [r.route, r]));
+	const accepted = ROUTE_REASONS[predicate];
+	const excuses = LOAD_READ_EXCUSES[predicate];
+	for (const [route, r] of mine) {
+		if (r.verdict !== "NOT MEASURED") continue;
+		const token = reasonToken(r.reason);
+		if (!accepted.includes(token)) {
+			problems.push(`${predicate} on ${route} is NOT MEASURED for a reason that is the instrument's, not the route's: ${(r.reason ?? "(no reason)").slice(0, 160)}`);
+			continue;
+		}
+		const reads = witnessed.get(route);
+		if (reads && excuses.includes(token)) {
+			problems.push(`${predicate} on ${route} read \`${token}\`, but B4's cold load saw it make ${reads.length} read(s) of its own on load (${reads.slice(0, 3).join(", ")}) — the ${predicate} load did not see what another load did`);
+		}
+	}
+	for (const route of witnessed.keys()) {
+		if (!mine.has(route)) problems.push(`${predicate} has no record for ${route}, which B4's cold load saw make a read of its own on load`);
+	}
+	const c = mine.get(control);
+	if (!witnessed.has(control)) {
+		problems.push(`the control route ${control} was not seen making a read of its own on load — either the witness stopped seeing reads, or the control stopped reading on load and needs replacing with a route that does`);
+	}
+	if (c?.verdict !== "PASS" && c?.verdict !== "FAIL") {
+		problems.push(`${predicate} did not score the control route ${control} (${c ? `${c.verdict}${c.reason ? ` — ${c.reason.slice(0, 120)}` : ""}` : "no record"})`);
+	}
+	return problems;
+}
+
 /** The reads every route under the same shells makes — the shell's, not the page's. */
 /**
  * Whether the build says a server action belongs to the shells: every page entry under the route's
