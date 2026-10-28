@@ -8,7 +8,7 @@
 // into a parameterized TanStack Query key.
 
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 /** The shape every page filter store exposes: the filters plus three mutators. */
 export interface FilterStoreState<F extends Record<string, unknown>> {
@@ -21,19 +21,35 @@ export interface FilterStoreState<F extends Record<string, unknown>> {
 	reset: () => void;
 }
 
+/** Storage that holds nothing: what a store passed `persist: false` reads and writes. */
+const NO_STORAGE: StateStorage = {
+	getItem: () => null,
+	setItem: () => undefined,
+	removeItem: () => undefined,
+};
+
 /**
  * Create a sessionStorage-persisted zustand store for one page's filter state.
  * `name` must be unique per page (it is the storage key); bump `version` to
  * invalidate previously persisted shapes when the filter set changes.
+ *
+ * `persist: false` keeps the store in memory only, so the URL is its only memory across
+ * loads (#6320). That is for a page whose route prefetches the first page from the link's
+ * filters: a selection remembered in the session is state the server cannot see, so it made the
+ * browser's first query key differ from the prefetched one and the first paint changed after
+ * hydration (B1). The store is still built here, so it keeps the factory's set/patch/reset.
  */
 export function createFilterStore<F extends Record<string, unknown>>({
 	name,
 	defaults,
 	version = 1,
+	persist: persisted = true,
 }: {
 	name: string;
 	defaults: F;
 	version?: number;
+	/** `false`: never written to, nor rehydrated from, sessionStorage. */
+	persist?: boolean;
 }) {
 	return create<FilterStoreState<F>>()(
 		persist(
@@ -47,7 +63,7 @@ export function createFilterStore<F extends Record<string, unknown>>({
 			}),
 			{
 				name,
-				storage: createJSONStorage(() => sessionStorage),
+				storage: createJSONStorage(() => (persisted ? sessionStorage : NO_STORAGE)),
 				version,
 				// Persist only the data — the mutators are re-created on load.
 				partialize: (s) => ({ filters: s.filters }),
