@@ -93,8 +93,6 @@ import {
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
 import {
-	buildDestroyTree,
-	type DestroyTreeNode,
 	FabricHasLiveTenantsError,
 	readLiveFabricTenants,
 } from "@/lib/queries/destroy-tree";
@@ -2985,31 +2983,6 @@ export async function destroyProject(
 	notifyScaler();
 	const own = queued[queued.length - 1];
 	return { jobId: own.jobId, jobs: queued };
-}
-
-/**
- * The DESTROY TREE of an environment (#5249): the environment plus every live tenant placed on the
- * Fabric it owns, in the order a cascade destroys them — tenants first, the owner last. A
- * non-dedicated environment's tree is itself alone. Read by `alethia project destroy --cascade`
- * (which prints it before confirming) and, as a follow-up, the canvas destroy confirmation.
- *
- * `view`, not `destroy`: it reveals nothing the environment list does not, and showing someone what
- * a destroy WOULD do must not require being allowed to do it.
- */
-export async function getDestroyTree(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<{ tree: DestroyTreeNode[] }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
-		const { environment } = await resolveTargetEnvironment(
-			tx,
-			projectId,
-			environmentId,
-		);
-		const tenants = await readLiveFabricTenants(tx, environment);
-		return { tree: buildDestroyTree(environment, tenants) };
-	});
 }
 
 // ============================================================

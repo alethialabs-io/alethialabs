@@ -6,6 +6,7 @@
 // catalog + install state — with no poll: an ArgoCD health flip is an `addons` hint on the org's
 // change stream (lib/query/topics.ts), not a 15 s refetch. And an enable/disable invalidates every
 // key that shows an add-on: the catalog AND the environment status (an installed add-on is a node).
+// The writes are on the mutation contract (#6119): each action answers an `ActionResult`.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -16,17 +17,21 @@ import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 const h = vi.hoisted(() => {
 	const handlers: Record<string, FakeHandler> = {};
 	const calls: FakeCall[] = [];
-	const ok: { ok: true } = { ok: true };
-	return { handlers, calls, enableAddon: vi.fn(async () => ok) };
+	return {
+		handlers,
+		calls,
+		enableAddon: vi.fn(async () => ({ ok: true as const, data: { addonId: "grafana" } })),
+	};
 });
 vi.mock("@/lib/rpc/client", async () => {
 	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
 	return { orpc: fakeOrpc(h.handlers, h.calls).orpc };
 });
 vi.mock("@/app/server/actions/addons", () => ({
-	enableAddon: h.enableAddon,
-	disableAddon: vi.fn(),
+	enableAddonAction: h.enableAddon,
+	disableAddonAction: vi.fn(),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 
 import { useAddonsQuery, useEnableAddon } from "@/lib/query/use-addons-query";
 
@@ -81,5 +86,23 @@ describe("useEnableAddon", () => {
 		expect(qc.getQueryState(addons)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(status)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(other)?.isInvalidated).toBe(false);
+	});
+});
+
+describe("useEnableAddon — a refusal", () => {
+	it("is handed to the caller's onRefusal and still invalidates (the write may have landed)", async () => {
+		h.enableAddon.mockResolvedValueOnce({
+			ok: false,
+			error: { kind: "not-found", message: "Unknown add-on: nope" },
+		} as never);
+		const addons = [["canvas", "addons"], { input: { projectId: "p", environmentId: null }, type: "query" }];
+		qc.setQueryData(addons, {});
+		const onRefusal = vi.fn();
+		const { result } = renderHook(() => useEnableAddon({ onRefusal }), { wrapper });
+		await act(async () => {
+			await result.current.mutateAsync({ projectId: "p", addonId: "nope" }).catch(() => undefined);
+		});
+		expect(onRefusal).toHaveBeenCalledWith({ kind: "not-found", message: "Unknown add-on: nope" });
+		expect(qc.getQueryState(addons)?.isInvalidated).toBe(true);
 	});
 });

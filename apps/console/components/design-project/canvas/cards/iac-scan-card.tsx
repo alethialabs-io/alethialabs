@@ -13,11 +13,12 @@
 // Sheet: the findings read beside the external cards they are about.
 
 import { Boxes, Layers, Loader2, Package, RotateCw, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import { scanIacSource } from "@/app/server/actions/byo-iac";
+import { scanIacSourceAction } from "@/app/server/actions/byo-iac";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { SheetCard } from "./sheet-card";
@@ -120,6 +121,14 @@ export function IacScanCard() {
 	const closeCard = useCanvasStore((s) => s.closeCard);
 	const ctx = useIacSourceCanvas();
 	const source = ctx?.source ?? null;
+	// The rescan, on the mutation contract. No follow-up refetches: the scan's progress and its
+	// verdict are writes to the source's row, which arrive on the org's change stream and re-read the
+	// source (lib/query/topics.ts) — the two timed re-reads this used to fire guessed at when the
+	// runner would be done.
+	const scan = useActionMutation(scanIacSourceAction, {
+		invalidates: [orpc.canvas.iacSource.key()],
+		successMessage: "Scanning module…",
+	});
 
 	if (!ctx || !source) {
 		return (
@@ -132,17 +141,10 @@ export function IacScanCard() {
 		);
 	}
 
-	/** Queue a (re)scan and nudge the source refresh as the runner finishes (best-effort, no socket). */
-	const rescan = async () => {
-		try {
-			await scanIacSource({ projectId: ctx.projectId, environmentId: ctx.environmentId });
-			toast.message("Scanning module…");
-			ctx.refresh();
-			setTimeout(ctx.refresh, 4000);
-			setTimeout(ctx.refresh, 10000);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
-		}
+	/** Queue a (re)scan — once: a press while one is being queued is dropped. */
+	const rescan = () => {
+		if (scan.isPending) return;
+		scan.mutate({ projectId: ctx.projectId, environmentId: ctx.environmentId });
 	};
 
 	return (
@@ -152,7 +154,7 @@ export function IacScanCard() {
 			scanRef={source.ref ?? "HEAD"}
 			scanStatus={source.scanStatus}
 			report={source.scanReport}
-			scanning={source.scanStatus === "scanning"}
+			scanning={source.scanStatus === "scanning" || scan.isPending}
 			onRescan={rescan}
 			onClose={closeCard}
 		/>

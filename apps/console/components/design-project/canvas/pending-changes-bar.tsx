@@ -22,6 +22,8 @@ interface PendingChangesBarProps {
   deployLabel?: string;
   /** Clear durable server-side staged changes (edit mode), alongside the client revert. */
   onDiscard?: () => void;
+  /** A discard is in flight: the bar's three buttons wait for it, so nothing races it. */
+  discarding?: boolean;
   /** Persist the design WITHOUT provisioning (edit mode). Absent in the create flow, where the
    * primary button already creates without deploying. */
   onSave?: () => void;
@@ -50,6 +52,7 @@ export function PendingChangesBar({
   deploying,
   deployLabel = "Deploy",
   onDiscard,
+  discarding,
   onSave,
   saving,
 }: PendingChangesBarProps) {
@@ -60,6 +63,7 @@ export function PendingChangesBar({
 
   /** Revert the canvas to baseline and clear any durable server-side staged changes. */
   const handleDiscard = () => {
+    if (discarding) return;
     discardChanges();
     onDiscard?.();
   };
@@ -151,7 +155,9 @@ export function PendingChangesBar({
           size="sm"
           className="h-8 text-xs"
           onClick={() => setConfirmDiscard(true)}
+          disabled={discarding || deploying || saving}
         >
+          {discarding && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
           Discard
         </Button>
         {onSave && (
@@ -161,7 +167,7 @@ export function PendingChangesBar({
             size="sm"
             className="h-8 text-xs"
             onClick={onSave}
-            disabled={saving || deploying}
+            disabled={saving || deploying || discarding}
             title="Persist the design without provisioning (⌘S)"
           >
             {saving ? (
@@ -177,7 +183,7 @@ export function PendingChangesBar({
           size="sm"
           className="h-8 text-xs"
           onClick={onDeploy}
-          disabled={deploying || saving}
+          disabled={deploying || saving || discarding}
         >
           {deploying ? (
             <>

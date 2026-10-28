@@ -27,9 +27,10 @@ import {
 	ShieldQuestion,
 	X,
 } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
-import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { detachIacSourceAction, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-canvas-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -67,13 +68,19 @@ function shortSha(sha: string | null): string {
 export function IacNode({ source }: { source: IacSourceState }) {
 	const ctx = useIacSourceCanvas();
 	const openCard = useCanvasStore((s) => s.openCard);
-	const [detaching, setDetaching] = useState(false);
+	// Pending while in flight, and held after it lands: the card leaves the board when the source read
+	// settles, and until then a second press would detach a source that is already gone.
+	const detachSource = useActionMutation(detachIacSourceAction, {
+		invalidates: [orpc.canvas.iacSource.key(), orpc.canvas.environmentStatus.key()],
+		successMessage: "IaC source detached — this environment falls back to the built-in template.",
+	});
+	const detaching = detachSource.isPending || detachSource.isSuccess;
 	// Detaching is not undoable from this card — the environment silently reverts to the built-in
 	// template and the module's `external` cards leave the board — so the click OPENS a confirm
 	// rather than firing the server action (#4281).
 	const [confirmDetach, setConfirmDetach] = useState(false);
 
-	// `detachIacSource` REFUSES a detach that would drop the handle to live BYO infra
+	// `detachIacSourceAction` REFUSES a detach that would drop the handle to live BYO infra
 	// (app/server/actions/byo-iac.ts): a source with a deployed commit, or an environment whose
 	// status means template state exists or is in flight. The card can see the first of those —
 	// it already renders it as DEPLOYED — so the trigger is gated on it rather than offering a
@@ -86,17 +93,9 @@ export function IacNode({ source }: { source: IacSourceState }) {
 	const pinned = shortSha(source.commitSha);
 	const deployed = shortSha(source.deployedCommitSha);
 
-	const detach = async () => {
-		if (!ctx) return;
-		setDetaching(true);
-		try {
-			await detachIacSource({ projectId: ctx.projectId, environmentId: ctx.environmentId });
-			toast.success("IaC source detached — this environment falls back to the built-in template.");
-			ctx.refresh();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not detach the IaC source.");
-			setDetaching(false);
-		}
+	const detach = () => {
+		if (!ctx || detaching) return;
+		detachSource.mutate({ projectId: ctx.projectId, environmentId: ctx.environmentId });
 	};
 
 	return (
@@ -189,9 +188,7 @@ export function IacNode({ source }: { source: IacSourceState }) {
 				title="Detach this IaC source?"
 				description="This environment falls back to the built-in template and the module's resources leave the board. The module itself is untouched, and the next deploy applies the template rather than your module. Detaching is refused while the environment holds live infrastructure — destroy it first."
 				confirmLabel="Detach source"
-				onConfirm={() => {
-					void detach();
-				}}
+				onConfirm={detach}
 			/>
 		</div>
 	);

@@ -12,16 +12,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-	createProject,
-	getDestroyTree,
-	tryDestroyProject,
-	tryProvisionProject,
-} from "@/app/server/actions/projects";
-import {
-	applyStagedChanges,
-	discardStagedChanges,
-} from "@/app/server/actions/staged-changes";
-import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
+	createProjectFromDesignAction,
+	deployDesignAction,
+	destroyEnvironmentAction,
+	discardStagedDesignAction,
+	saveDesignAction,
+} from "@/app/server/actions/canvas-writes";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
@@ -34,6 +30,8 @@ import { useAddonsQuery } from "@/lib/query/use-addons-query";
 import { arrangeBoard } from "@/lib/canvas/arrange";
 import { draftScope } from "@/lib/canvas/design-revision";
 import { environmentStatusInput } from "@/lib/query/use-environment-status-query";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
 import {
@@ -50,6 +48,7 @@ import { projectFormSchema } from "@/lib/validations/project-form.schema";
 import { SourceReposCard } from "../source-repos-card";
 import { ActivityStatusLine } from "./cards/activity-status-line";
 import { CanvasMoreMenu } from "./canvas-more-menu";
+import type { DestroyOptions } from "./cards/destroy-tree-view";
 import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
@@ -163,8 +162,6 @@ function CanvasInner({
 	);
 	const openPanel = useElenchStore((s) => s.openPanel);
 	const [shortcutsOpen, setShortcutsOpen] = useState(false);
-	const [deploying, setDeploying] = useState(false);
-	const [saving, setSaving] = useState(false);
 	const selectedIds = useCanvasStore((s) => s.selectedIds);
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const undo = useCanvasStore((s) => s.undo);
@@ -192,40 +189,85 @@ function CanvasInner({
 	// documented on the hook.
 	useCardDeepLink(searchParams, openCard);
 
+	// ── The board's writes, on the mutation contract (ADR 0005 §D4, #6119) ──────────────────────
+	//
+	// Each is one `useActionMutation`: pending while in flight (the triggers bind it, and each handler
+	// below drops a press that races one in flight), every refusal routed by kind, a confirmation
+	// only where the outcome is not already on screen, and every key that shows the changed data
+	// invalidated when it settles. A deploy, a destroy and a save all move the environment's status
+	// and its job history; a destroy also moves the environments list and what a held destroy waits on.
+	const environmentKeys = [orpc.canvas.environmentStatus.key(), orpc.canvas.environmentJobs.key()];
+	const saveDesign = useActionMutation(saveDesignAction, {
+		invalidates: [orpc.canvas.environmentStatus.key()],
+		successMessage: "Design saved",
+		// The pending-changes bar diffs against the baseline; committing it is what clears the bar.
+		onSuccess: () => useCanvasStore.getState().commitBaseline(),
+	});
+	const deployDesign = useActionMutation(deployDesignAction, {
+		invalidates: environmentKeys,
+		successMessage: "Deploy queued",
+		onSuccess: (data) => {
+			track("deploy_queued", { environmentId: data.environmentId });
+			useCanvasStore.getState().commitBaseline();
+		},
+	});
+	const discardStaged = useActionMutation(discardStagedDesignAction, {
+		invalidates: [orpc.canvas.environmentStatus.key()],
+	});
+	const destroyEnv = useActionMutation(destroyEnvironmentAction, {
+		invalidates: [
+			...environmentKeys,
+			[...DESTROY_HOLD_KEY],
+			orpc.environments.key(),
+			orpc.workspace.environments.key(),
+		],
+		successMessage: (data) =>
+			data.queued > 1 ? `Destroy queued for ${data.queued} environments` : "Destroy queued",
+	});
+	const createFromDesign = useActionMutation(createProjectFromDesignAction, {
+		invalidates: [orpc.workspace.projects.key()],
+		successMessage: "Project created!",
+		onSuccess: (data) => {
+			useCanvasStore.getState().reset();
+			router.push(data.slug ? projectHref(orgSlug, data.slug) : orgHref(orgSlug));
+		},
+	});
+	const deploying = deployDesign.isPending || createFromDesign.isPending;
+	const saving = saveDesign.isPending;
+
 	/**
-	 * Edit mode: read the active environment's destroy tree (#5261). The Environment settings card
-	 * reads it BEFORE it offers to destroy — a production build redacts the server's refusal text, so
-	 * the tenants it names are only ever seen by asking first.
+	 * Edit mode: read the active environment's destroy tree (#5261) — the `canvas.destroyTree` GET
+	 * procedure, always fresh: the Environment settings card reads it BEFORE it offers to destroy, so
+	 * the tenants it names are seen first, and an answer from before a tenant moved would be a wrong one.
 	 */
 	const loadDestroyTree = useCallback(async () => {
 		if (!projectId) return [];
-		const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
-		const { tree } = await getDestroyTree(projectId, activeEnvId);
+		const { tree } = await queryClient.fetchQuery({
+			...orpc.canvas.destroyTree.queryOptions({
+				input: environmentStatusInput(projectId, environmentId),
+			}),
+			staleTime: 0,
+		});
 		return tree;
-	}, [projectId, environmentId]);
+	}, [queryClient, projectId, environmentId]);
 
-	/** Edit mode: tear down the active environment — with `cascade`, every tenant on its cluster too. */
+	const destroyIsPending = destroyEnv.isPending;
+	const mutateDestroy = destroyEnv.mutateAsync;
+	/**
+	 * Edit mode: tear down the environment the destroy tree named — with `cascade`, every tenant on
+	 * its cluster too. The id comes from the tree the dialog showed, never from the board's own
+	 * (possibly stale) environment, so what is destroyed is what was confirmed.
+	 */
 	const handleDestroyEnvironment = useCallback(
-		async ({ cascade }: { cascade: boolean }) => {
-			if (!projectId) return;
+		async ({ cascade, environmentId: target }: DestroyOptions) => {
+			if (!projectId || destroyIsPending) return;
 			try {
-				const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
-				const res = await tryDestroyProject(projectId, activeEnvId, null, { cascade });
-				if (!res.ok) {
-					// Returned, not thrown (#5445): a production build reduced a thrown refusal to a digest.
-					toast.error(res.error);
-					return;
-				}
-				toast.success(
-					res.jobs.length > 1
-						? `Destroy queued for ${res.jobs.length} environments`
-						: "Destroy queued",
-				);
-			} catch (e) {
-				toast.error(e instanceof Error ? e.message : "Failed to destroy");
+				await mutateDestroy({ projectId, environmentId: target, cascade });
+			} catch {
+				// Already said by the mutation: a refusal ("destroy the children first") in one toast.
 			}
 		},
-		[projectId, environmentId],
+		[projectId, destroyIsPending, mutateDestroy],
 	);
 
 	const destroyEnvironment = useMemo(
@@ -267,13 +309,6 @@ function CanvasInner({
 		if (chartWorkloads) setChartWorkloadNodes(chartWorkloads);
 	}, [chartWorkloads, setChartWorkloadNodes, seed]);
 
-	// A chart attach / detach / rescan (or the overlay editor) refreshes the chart nodes and their
-	// described workloads together.
-	const refreshByo = useCallback(() => {
-		void queryClient.invalidateQueries({ queryKey: orpc.canvas.byoCharts.key() });
-		void queryClient.invalidateQueries({ queryKey: orpc.canvas.chartWorkloads.key() });
-	}, [queryClient]);
-
 	// Installed marketplace add-ons become NODES. They were configured in a sheet and explicitly not
 	// graph nodes, so an installed Grafana was invisible on the architecture — even though it's an
 	// ArgoCD Application whose health and sync are already in the database. Out-of-band like charts:
@@ -308,15 +343,12 @@ function CanvasInner({
 	}, [envStatus.iac, setIacNodes, setIacOutputs, seed]);
 
 	// BYO IaC source is single-per-env: the module's provenance card, from `canvas.iacSource`. Only in
-	// edit mode with the feature on; attach / detach / rescan invalidate it.
+	// edit mode with the feature on; attach / detach / rescan invalidate it (their mutations' keys).
 	const iacSourceQuery = useQuery({
 		...orpc.canvas.iacSource.queryOptions({ input: envInput }),
 		enabled: !!projectId && !!byoIacEnabled,
 	});
 	const iacSource = iacSourceQuery.data?.source ?? null;
-	const refreshIacSource = useCallback(() => {
-		void queryClient.invalidateQueries({ queryKey: orpc.canvas.iacSource.key() });
-	}, [queryClient]);
 
 	// While an ENABLED IaC source governs this env, the component graph isn't the source of truth —
 	// so there is nothing to add to it: the Add palette and ⌘K component-add are disabled.
@@ -376,6 +408,8 @@ function CanvasInner({
 		return buildShortcuts(isMac, !projectId);
 	}, [projectId]);
 
+	const createIsPending = createFromDesign.isPending;
+	const mutateCreate = createFromDesign.mutate;
 	/**
 	 * Create flow ONLY: turn the canvas into a new project.
 	 *
@@ -385,8 +419,8 @@ function CanvasInner({
 	 * that are already written. The guard below is defence in depth: before it existed, ⌘S on an
 	 * existing project ran this handler and FORKED it into a duplicate.
 	 */
-	const handleSave = useCallback(async () => {
-		if (projectId) return;
+	const handleSave = useCallback(() => {
+		if (projectId || createIsPending) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
@@ -396,26 +430,19 @@ function CanvasInner({
 			);
 			return;
 		}
-		try {
-			const { project } = await createProject(parsed.data);
-			toast.success("Project created!");
-			useCanvasStore.getState().reset();
-			router.push(
-				project.slug ? projectHref(orgSlug, project.slug) : orgHref(orgSlug),
-			);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to create project");
-		}
-	}, [router, orgSlug, projectId]);
+		mutateCreate({ design: parsed.data });
+	}, [projectId, createIsPending, mutateCreate]);
 
+	const saveIsPending = saveDesign.isPending;
+	const mutateSave = saveDesign.mutate;
 	/**
 	 * Edit mode: persist the desired config to the live project WITHOUT provisioning. There was no
 	 * such path — the pending-changes bar's only verb was Deploy, so a design you were not ready to
-	 * provision had nowhere to go but the tab's sessionStorage draft. `applyStagedChanges` writes the
+	 * provision had nowhere to go but the tab's sessionStorage draft. `saveDesignAction` writes the
 	 * live design tables and the durable staged rows; `commitBaseline` clears the bar.
 	 */
-	const handleSaveDesign = useCallback(async () => {
-		if (!projectId) return;
+	const handleSaveDesign = useCallback(() => {
+		if (!projectId || saveIsPending) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
@@ -425,23 +452,24 @@ function CanvasInner({
 			);
 			return;
 		}
-		setSaving(true);
-		try {
-			const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
-			await applyStagedChanges(projectId, activeEnvId, parsed.data);
-			useCanvasStore.getState().commitBaseline();
-			toast.success("Design saved");
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to save");
-		} finally {
-			setSaving(false);
-		}
-	}, [projectId, environmentId]);
+		mutateSave({ projectId, environmentId: environmentId ?? null, design: parsed.data });
+	}, [projectId, environmentId, saveIsPending, mutateSave]);
 
-	/** Edit mode: persist the desired config to the live project, then provision the
-	 * active environment. Falls back to create when there's no projectId. */
-	const handleDeploy = useCallback(async () => {
-		if (!projectId) return handleSave();
+	const deployIsPending = deployDesign.isPending;
+	const mutateDeploy = deployDesign.mutate;
+	/**
+	 * Edit mode: persist the desired config to the live project, then provision the active
+	 * environment (config is environment-scoped; the server re-resolves the environment, so a stale
+	 * or absent id still lands on the project's default). Falls back to create when there's no
+	 * projectId. A refused deploy leaves the design saved and the baseline uncommitted: nothing
+	 * deployed, and the refusal's sentence says how to fix it (#5445).
+	 */
+	const handleDeploy = useCallback(() => {
+		if (!projectId) {
+			handleSave();
+			return;
+		}
+		if (deployIsPending) return;
 		const nodes = useCanvasStore.getState().nodes;
 		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
@@ -451,45 +479,17 @@ function CanvasInner({
 			);
 			return;
 		}
-		setDeploying(true);
-		try {
-			// Persist + provision the ACTIVE environment (config is environment-scoped). Re-resolve
-			// through the server so a stale/absent id still lands on the project's default env.
-			const activeEnvId = await resolveActiveEnvironmentId(
-				projectId,
-				environmentId,
-			);
-			await applyStagedChanges(projectId, activeEnvId, parsed.data);
-			const res = await tryProvisionProject(projectId, undefined, undefined, activeEnvId);
-			if (!res.ok) {
-				// The design is saved (applyStagedChanges above); only the deploy was refused, and the
-				// sentence says how to fix it (#5445). The baseline is NOT committed: nothing deployed.
-				toast.error(res.error);
-				return;
-			}
-			track("deploy_queued", { environmentId: activeEnvId });
-			useCanvasStore.getState().commitBaseline();
-			toast.success("Deploy queued");
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to deploy");
-		} finally {
-			setDeploying(false);
-		}
-	}, [projectId, environmentId, handleSave]);
+		mutateDeploy({ projectId, environmentId: environmentId ?? null, design: parsed.data });
+	}, [projectId, environmentId, handleSave, deployIsPending, mutateDeploy]);
 
-	/** Edit mode: clear the active environment's staged changes (the Discard action). */
-	const handleDiscardStaged = useCallback(async () => {
-		if (!projectId) return;
-		try {
-			const activeEnvId = await resolveActiveEnvironmentId(
-				projectId,
-				environmentId,
-			);
-			await discardStagedChanges(projectId, activeEnvId);
-		} catch {
-			// non-fatal — the canvas store already reverted; the durable rows just persist.
-		}
-	}, [projectId, environmentId]);
+	const discardIsPending = discardStaged.isPending;
+	const mutateDiscard = discardStaged.mutate;
+	/** Edit mode: clear the active environment's staged changes (the Discard action) — once. */
+	const handleDiscardStaged = useCallback(() => {
+		if (!projectId || discardIsPending) return;
+		// The canvas store has already reverted; this clears the durable staged rows behind it.
+		mutateDiscard({ projectId, environmentId: environmentId ?? null });
+	}, [projectId, environmentId, discardIsPending, mutateDiscard]);
 
 	// ⌘K is bound TWICE on this page: here (the canvas's own command menu) and by the shell's global
 	// palette (`components/shell/command-palette.tsx`, a `document` listener). Both used to fire, so
@@ -515,8 +515,8 @@ function CanvasInner({
 				// Swallowed in BOTH modes so the browser's own Save-page dialog never lands on the
 				// canvas. Create flow: create the project. Edit mode: save the design without deploying.
 				e.preventDefault();
-				if (projectId) void handleSaveDesign();
-				else void handleSave();
+				if (projectId) handleSaveDesign();
+				else handleSave();
 				return;
 			}
 			if (mod && e.key.toLowerCase() === "z") {
@@ -668,20 +668,7 @@ function CanvasInner({
 				{/* Every job type the platform can run — PLAN / AUDIT / DETECT_DRIFT / PROBE_CLUSTER —
 				    all of which existed server-side and none of which the board could ask for. */}
 				{projectId && environmentId && (
-					<RunMenu
-						projectId={projectId}
-						environmentId={environmentId}
-						onQueued={() => {
-							// The rail and the node statuses both key off the environment; this tab shows its
-							// own job at once (read-your-own-writes), other tabs hear the `jobs` hint.
-							void queryClient.invalidateQueries({
-								queryKey: orpc.canvas.environmentJobs.key(),
-							});
-							void queryClient.invalidateQueries({
-								queryKey: orpc.canvas.environmentStatus.key(),
-							});
-						}}
-					/>
+					<RunMenu projectId={projectId} environmentId={environmentId} />
 				)}
 				{/* Adding components is meaningless while an IaC source governs the env (replace mode). */}
 				{!iacGoverned && (
@@ -710,8 +697,9 @@ function CanvasInner({
 				onDeploy={projectId ? handleDeploy : handleSave}
 				deploying={deploying}
 				deployLabel={projectId ? "Deploy" : "Create project"}
-				onDiscard={projectId ? () => void handleDiscardStaged() : undefined}
-				onSave={projectId ? () => void handleSaveDesign() : undefined}
+				onDiscard={projectId ? handleDiscardStaged : undefined}
+				discarding={discardStaged.isPending}
+				onSave={projectId ? handleSaveDesign : undefined}
 				saving={saving}
 			/>
 
@@ -760,7 +748,6 @@ function CanvasInner({
 					onOpenChange={setByoDialogOpen}
 					projectId={projectId}
 					environmentId={environmentId ?? null}
-					onAttached={refreshByo}
 				/>
 			)}
 			{projectId && byoIacEnabled && (
@@ -769,7 +756,6 @@ function CanvasInner({
 					onOpenChange={setIacDialogOpen}
 					projectId={projectId}
 					environmentId={environmentId ?? null}
-					onAttached={refreshIacSource}
 				/>
 			)}
 
@@ -797,14 +783,13 @@ function CanvasInner({
 	);
 
 	// Chart + IaC nodes (rendered propless: chart nodes by React Flow, the IaC overlay by the board)
-	// reach the project/env + their refresh via context.
+	// reach the project/env (and the attached IaC source) via context.
 	const withByoContext = (content: React.ReactNode) =>
 		projectId ? (
 			<ByoChartCanvasProvider
 				value={{
 					projectId,
 					environmentId: environmentId ?? null,
-					refresh: refreshByo,
 				}}
 			>
 				<IacSourceCanvasProvider
@@ -812,7 +797,6 @@ function CanvasInner({
 						projectId,
 						environmentId: environmentId ?? null,
 						source: iacSource,
-						refresh: refreshIacSource,
 					}}
 				>
 					{content}

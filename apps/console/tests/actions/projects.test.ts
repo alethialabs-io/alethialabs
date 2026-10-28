@@ -81,7 +81,6 @@ import {
 	destroyProject,
 	duplicateProjectForProvider,
 	getProject,
-	getDestroyTree,
 	getEnvConsistency,
 	getProjectAsFormData,
 	getProjectEnvironments,
@@ -2811,90 +2810,8 @@ describe("destroyProject — a Fabric owner with live tenants (#5249)", () => {
 	});
 });
 
-describe("getDestroyTree (#5249)", () => {
-	afterEach(() => {
-		vi.mocked(readLiveFabricTenants).mockImplementation(async () => []);
-	});
-
-	it("returns the tenants first and the owner last, with the owner waiting on each tenant by name and status", async () => {
-		setupDb({
-			select: snapshotSelect(
-				new Map<unknown, RowsResolver>([
-					[
-						projectEnvironments,
-						[
-							{
-								id: "env-prod",
-								project_id: "p1",
-								name: "prod",
-								status: "QUEUED",
-								fabric_id: "fab-1",
-								placement_mode: "dedicated",
-							},
-						],
-					],
-				]),
-			),
-		});
-		const t = (id: string, name: string, placement: "namespace" | "vcluster", status: "ACTIVE" | "FAILED") =>
-			({ id, name, project_id: "p1", fabric_id: "fab-1", placement_mode: placement, status }) satisfies DestroyTreeSubject;
-		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
-			t("env-staging", "staging", "vcluster", "ACTIVE"),
-			t("env-dev1", "dev-1", "namespace", "FAILED"),
-		]);
-
-		const { tree } = await getDestroyTree("p1", "env-prod");
-
-		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
-		expect(tree.map((n) => n.name)).toEqual(["dev-1", "staging", "prod"]);
-		expect(tree[2]).toEqual({
-			environment_id: "env-prod",
-			name: "prod",
-			placement_mode: "dedicated",
-			status: "QUEUED",
-			owns_fabric: true,
-			// A FAILED tenant is named here — the owner's QUEUED destroy is waiting on it, visibly.
-			waiting_on: [
-				{ name: "dev-1", status: "FAILED" },
-				{ name: "staging", status: "ACTIVE" },
-			],
-		});
-		expect(tree[0]).toMatchObject({ owns_fabric: false, waiting_on: [] });
-	});
-
-	it("a non-dedicated environment's tree is itself alone, owning nothing", async () => {
-		setupDb({
-			select: snapshotSelect(
-				new Map<unknown, RowsResolver>([
-					[
-						projectEnvironments,
-						[
-							{
-								id: "env-dev1",
-								project_id: "p1",
-								name: "dev-1",
-								status: "ACTIVE",
-								fabric_id: "fab-1",
-								placement_mode: "namespace",
-							},
-						],
-					],
-				]),
-			),
-		});
-		const { tree } = await getDestroyTree("p1", "env-dev1");
-		expect(tree).toEqual([
-			{
-				environment_id: "env-dev1",
-				name: "dev-1",
-				placement_mode: "namespace",
-				status: "ACTIVE",
-				owns_fabric: false,
-				waiting_on: [],
-			},
-		]);
-	});
-});
+// getDestroyTree moved to the canvas's GET procedures as readDestroyTree (#6119):
+// tests/lib/rpc/canvas-destroy-tree.test.ts.
 
 // ============================================================
 // deleteProject

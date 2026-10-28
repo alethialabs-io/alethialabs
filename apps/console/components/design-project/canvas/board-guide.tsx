@@ -29,12 +29,19 @@ export function useDesignIsEmpty(): boolean {
 /**
  * What a blank board says (F037): it is empty, and the one next step is adding a component. Laid
  * over the middle of the board without blocking it — the pane still pans and right-clicks around it.
+ *
+ * The guide's own name (`data-slot="board-guide"`) sits on the OVERLAY, never on the EmptyState:
+ * `@repo/ui/empty` marks its region `data-slot="empty"`, and a `data-slot` passed to it replaces that
+ * mark — which is how the board read as a hand-rolled empty region to the audit (T5) while rendering
+ * the shared component.
  */
 export function BoardGuide({ onAdd }: { onAdd: () => void }) {
 	return (
-		<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+		<div
+			data-slot="board-guide"
+			className="pointer-events-none absolute inset-0 flex items-center justify-center"
+		>
 			<EmptyState
-				data-slot="board-guide"
 				className="pointer-events-auto max-w-md flex-none"
 				icon={<Boxes aria-hidden />}
 				title="Nothing designed yet"
