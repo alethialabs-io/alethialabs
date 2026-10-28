@@ -17,7 +17,9 @@
  * refreshes database reads only; `billing` (the billing record and its invoices, rare) also
  * refreshes the Stripe-backed plan card (#6127).
  * `members` (members, invitations, teams and team membership) and `access` (grants, custom roles
- * and their permissions) have trigger producers too (#6129).
+ * and their permissions, and the org's SSO providers) have trigger producers too (#6129), and so do
+ * `classification` (dimensions, values and assignments) and `activity` (a recorded entry in the
+ * org's Activity log).
  */
 export const TOPICS = [
 	"jobs",
@@ -35,6 +37,8 @@ export const TOPICS = [
 	"members",
 	"access",
 	"connectors",
+	"classification",
+	"activity",
 ] as const;
 
 /** One topic of {@link TOPICS}. */

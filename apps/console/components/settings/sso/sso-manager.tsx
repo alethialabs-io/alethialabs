@@ -8,9 +8,9 @@
 // fake SCIM card (which advertised a /scim/v2 URL that never existed) are gone — SCIM is an honest
 // "talk to us" note instead.
 
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, KeyRound, Pencil, Plus, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
 import {
 	deleteSsoProvider,
 	requestSsoDomainVerification,
@@ -20,8 +20,13 @@ import {
 	testSsoProvider,
 	verifySsoDomain,
 } from "@/app/server/actions/sso";
+import { RegionError } from "@/components/errors/region-error";
+import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { legalUrl } from "@/lib/legal";
-import { useInvalidateSso, useSsoProvidersQuery } from "@/lib/query/use-sso-query";
+import { ssoReadKeys, useSsoProvidersQuery } from "@/lib/query/use-sso-query";
+import { orpc } from "@/lib/rpc/client";
+import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
@@ -54,14 +59,24 @@ import {
 	ssoFacetCounts,
 } from "./sso-filters";
 import { ProviderSheet } from "./provider-sheet";
+import { SsoNoAccess } from "./sso-no-access";
 
-export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
-	const { canManage, slug, origin } = bootstrap;
-	const invalidate = useInvalidateSso();
+/**
+ * The SSO page body (#6129). `bootstrap` is the route's server answer; the same read stays live
+ * here (`sso.bootstrap`, hydrated by the route), so a permission change while the page is open
+ * re-decides what the admin may press. Every read and write goes through the read router and the
+ * mutation contract; a provider another admin registers, edits, verifies or removes arrives as an
+ * `access` hint (lib/query/topics.ts) — no poll.
+ */
+export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) {
+	const bootQuery = useQuery(
+		orpc.sso.bootstrap.queryOptions({ input: undefined, retry: retryUnlessRefused }),
+	);
+	const bootstrap = bootQuery.data ?? initial;
+	const { canManage, slug, origin, orgId } = bootstrap;
 
 	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
-	// and the free text is debounced before it can reach a query key. Eleven `useState` calls
-	// collapse to one store plus the four that hold selection / dialog state, not filters.
+	// and the free text is debounced before it can reach a query key.
 	const filters = useSsoFilters((s) => s.filters);
 	const set = useSsoFilters((s) => s.set);
 	const reset = useSsoFilters((s) => s.reset);
@@ -78,52 +93,51 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const [editing, setEditing] = useState<SsoProviderRow | null>(null);
 	const [deleting, setDeleting] = useState<SsoProviderRow | null>(null);
 
-	// Filtered SERVER-SIDE by `listSsoProviders`. `isPlaceholderData` is the other half of the
-	// hook's `keepPreviousData` (lib/query/README.md, step 5): the rows stay while the next
-	// query loads, and the dim below says they are the PREVIOUS filter's answer. Keeping them
-	// without saying so renders a stale list as a current one.
-	const {
-		data: providers = [],
-		isFetching,
-		isPlaceholderData,
-	} = useSsoProvidersQuery(query);
-	// The UNFILTERED universe, purely for the facet counts — the base key, which the page
-	// prefetches. An option whose count came from the current result would disappear the
-	// moment you selected it, which is exactly what the standard forbids.
+	// Filtered SERVER-SIDE by `sso.providers`. `isPlaceholderData` is the other half of the hook's
+	// `keepPreviousData` (lib/query/README.md, step 5): the rows stay while the next query loads,
+	// and the dim below says they are the PREVIOUS filter's answer.
+	const providersQuery = useSsoProvidersQuery(query);
+	const providers = providersQuery.data;
+	// The UNFILTERED universe, purely for the facet counts — the pristine key, which the route
+	// prefetches. An option whose count came from the current result would disappear the moment
+	// you selected it, which is exactly what the standard forbids.
 	const { data: universe = [] } = useSsoProvidersQuery();
 	const counts = useMemo(() => ssoFacetCounts(universe), [universe]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_SSO_FILTERS);
+	// The list is BUSY while what it shows may not answer the URL and the bar (#4980, #5494).
+	const busy =
+		!urlRead ||
+		providersQuery.isPending ||
+		providersQuery.isPlaceholderData ||
+		filters.search !== search;
 
-	const selected =
-		providers.find((p) => p.id === selectedId) ?? providers[0] ?? null;
+	const rows = providers ?? [];
+	const selected = rows.find((p) => p.id === selectedId) ?? rows[0] ?? null;
+
+	const removal = useActionMutation(deleteSsoProvider, {
+		invalidates: ssoReadKeys(),
+		successMessage: "Provider removed",
+		onSuccess: () => {
+			setDeleting(null);
+			setSelectedId(null);
+		},
+	});
 
 	function connect() {
 		setEditing(null);
 		setSheetOpen(true);
 	}
 
-	async function confirmDelete(p: SsoProviderRow) {
-		try {
-			// A plugin refusal is RETURNED (#5445) so its sentence survives a production build.
-			const res = await deleteSsoProvider(p.id);
-			if (!res.ok) {
-				toast.error(res.error);
-				return;
-			}
-			toast.success("Provider removed");
-			setDeleting(null);
-			setSelectedId(null);
-			invalidate();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't remove the provider");
-		}
-	}
+	// Refused while the page is open (a viewer whose `member:view` went away): the no-access render,
+	// never an empty list or a failure.
+	const refused = readRefusalOf(bootQuery.error) === "forbidden" || readRefusalOf(providersQuery.error) === "forbidden";
+	if (refused) return <SsoNoAccess />;
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-4" aria-busy={busy}>
 			<PageToolbar
 				description="Identity providers your members can sign in through."
-				count={providers.length}
+				count={providers ? providers.length : null}
 				actions={
 					<Button size="sm" disabled={!canManage} onClick={connect}>
 						<Plus size={13} />
@@ -133,7 +147,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 			/>
 
 			<FilterBar
-				end={isFetching ? <Spinner className="size-3.5 text-text-tertiary" /> : undefined}
+				end={providersQuery.isFetching ? <Spinner className="size-3.5 text-text-tertiary" /> : undefined}
 			>
 				<FilterSearch
 					value={filters.search}
@@ -170,7 +184,17 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 				<FilterBarReset count={activeFilters} onReset={reset} />
 			</FilterBar>
 
-			{providers.length === 0 ? (
+			{providersQuery.isError && providers === undefined ? (
+				// A failed read is not an empty list (B4).
+				<RegionError
+					title="Couldn't load identity providers"
+					description="Something went wrong reading this organization's SSO providers."
+					onRetry={() => void providersQuery.refetch()}
+				/>
+			) : providers === undefined ? (
+				// Pending, never empty: the empty state below is only ever an ANSWER (B3).
+				<PanelSkeleton lines={5} />
+			) : providers.length === 0 ? (
 				<EmptyState
 					className="border border-border bg-surface"
 					icon={<KeyRound />}
@@ -201,7 +225,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 				<div
 					className={cn(
 						"grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]",
-						isPlaceholderData && "opacity-60 transition-opacity",
+						providersQuery.isPlaceholderData && "opacity-60 transition-opacity",
 					)}
 				>
 					<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
@@ -244,12 +268,12 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 							origin={origin}
 							slug={slug}
 							canManage={canManage}
+							removing={removal.isPending && removal.variables?.id === selected.id}
 							onEdit={() => {
 								setEditing(selected);
 								setSheetOpen(true);
 							}}
 							onDelete={() => setDeleting(selected)}
-							onChanged={invalidate}
 						/>
 					)}
 				</div>
@@ -279,12 +303,12 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 				onOpenChange={setSheetOpen}
 				provider={editing}
 				canManage={canManage}
-				onSaved={invalidate}
+				orgId={orgId}
 			/>
 
 			<AlertDialog
 				open={deleting !== null}
-				onOpenChange={(o) => !o && setDeleting(null)}
+				onOpenChange={(o) => !o && !removal.isPending && setDeleting(null)}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -296,12 +320,17 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogCancel disabled={removal.isPending}>Cancel</AlertDialogCancel>
 						<AlertDialogAction
-							onClick={() => deleting && void confirmDelete(deleting)}
+							disabled={removal.isPending}
+							onClick={(e) => {
+								// Stay open while the removal is in flight; `onSuccess` closes it.
+								e.preventDefault();
+								if (deleting && !removal.isPending) removal.mutate({ id: deleting.id });
+							}}
 							variant="destructive"
 						>
-							Remove provider
+							{removal.isPending ? "Removing…" : "Remove provider"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -323,72 +352,48 @@ function KvRow({ label, value }: { label: string; value: string }) {
 	);
 }
 
+/**
+ * One provider's detail: the connection test, domain verification and the SP details. Each action
+ * is a `useActionMutation` — pending while in flight, and every control disabled while any of them
+ * runs (the double-submit guard). Verifying changes the provider, so it invalidates the SSO reads;
+ * the test and the token mint change nothing the page shows.
+ */
 function ProviderDetail({
 	provider: p,
 	origin,
 	slug,
 	canManage,
+	removing,
 	onEdit,
 	onDelete,
-	onChanged,
 }: {
 	provider: SsoProviderRow;
 	origin: string;
 	slug: string;
 	canManage: boolean;
+	/** A removal of this provider is in flight. */
+	removing: boolean;
 	onEdit: () => void;
 	onDelete: () => void;
-	onChanged: () => void;
 }) {
 	const [test, setTest] = useState<SsoTestResult | null>(null);
-	const [busy, setBusy] = useState<"test" | "token" | "verify" | null>(null);
 	const [dns, setDns] = useState<{ record: string; token: string } | null>(null);
 
-	async function runTest() {
-		setBusy("test");
-		try {
-			setTest(await testSsoProvider(p.id));
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Test failed");
-		} finally {
-			setBusy(null);
-		}
-	}
-
-	async function getToken() {
-		setBusy("token");
-		try {
-			const res = await requestSsoDomainVerification(p.id);
-			if (!res.ok) {
-				toast.error(res.error);
-				return;
-			}
-			setDns({ record: res.record, token: res.token });
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't mint a token");
-		} finally {
-			setBusy(null);
-		}
-	}
-
-	async function verify() {
-		setBusy("verify");
-		try {
-			// The commonest answer here is a refusal — the TXT record is not visible yet — and it is
-			// the one sentence the admin needs. RETURNED (#5445): thrown, it reached them as a digest.
-			const res = await verifySsoDomain(p.id);
-			if (!res.ok) {
-				toast.error(res.error);
-				return;
-			}
-			toast.success("Domain verified — SSO sign-in is now enabled");
-			onChanged();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't verify the domain yet");
-		} finally {
-			setBusy(null);
-		}
-	}
+	const testing = useActionMutation(testSsoProvider, {
+		invalidates: [],
+		onSuccess: (result) => setTest(result),
+	});
+	const minting = useActionMutation(requestSsoDomainVerification, {
+		invalidates: [],
+		onSuccess: (token) => setDns(token),
+	});
+	// The commonest answer here is a refusal — the TXT record is not visible yet — and it is the one
+	// sentence the admin needs; the mutation contract shows it verbatim (#5445).
+	const verifying = useActionMutation(verifySsoDomain, {
+		invalidates: ssoReadKeys(),
+		successMessage: "Domain verified — SSO sign-in is now enabled",
+	});
+	const busy = testing.isPending || minting.isPending || verifying.isPending || removing;
 
 	return (
 		<div className="space-y-4">
@@ -419,16 +424,16 @@ function ProviderDetail({
 						<Button
 							variant="outline"
 							size="sm"
-							disabled={!canManage || busy !== null}
-							onClick={() => void runTest()}
+							disabled={!canManage || busy}
+							onClick={() => testing.mutate({ id: p.id })}
 						>
-							{busy === "test" ? "Testing…" : "Test connection"}
+							{testing.isPending ? "Testing…" : "Test connection"}
 						</Button>
 						<Button
 							variant="outline"
 							size="sm"
 							aria-label="Edit provider"
-							disabled={!canManage}
+							disabled={!canManage || busy}
 							onClick={onEdit}
 						>
 							<Pencil size={13} />
@@ -437,7 +442,7 @@ function ProviderDetail({
 							variant="outline"
 							size="sm"
 							aria-label="Remove provider"
-							disabled={!canManage}
+							disabled={!canManage || busy}
 							onClick={onDelete}
 						>
 							<Trash2 size={13} />
@@ -487,17 +492,17 @@ function ProviderDetail({
 						<Button
 							variant="outline"
 							size="sm"
-							disabled={!canManage || busy !== null}
-							onClick={() => void getToken()}
+							disabled={!canManage || busy}
+							onClick={() => minting.mutate({ id: p.id })}
 						>
-							{busy === "token" ? "…" : dns ? "Re-issue record" : "Show DNS record"}
+							{minting.isPending ? "Issuing…" : dns ? "Re-issue record" : "Show DNS record"}
 						</Button>
 						<Button
 							size="sm"
-							disabled={!canManage || busy !== null}
-							onClick={() => void verify()}
+							disabled={!canManage || busy}
+							onClick={() => verifying.mutate({ id: p.id })}
 						>
-							{busy === "verify" ? "Verifying…" : "Verify domain"}
+							{verifying.isPending ? "Verifying…" : "Verify domain"}
 						</Button>
 					</div>
 				</div>

@@ -5,7 +5,8 @@
 // Popover to set/clear a resource's classification values. One section per dimension:
 // single-valued dimensions behave like a radio (picking a value swaps the prior one;
 // picking the selected value clears it), multi-valued like checkboxes. Writes through the
-// server actions with optimistic TanStack Query updates (see use-classification-query).
+// mutation contract with optimistic TanStack Query updates (see use-classification-query); while a
+// write is in flight every value is disabled, so a double click cannot send two (#6129).
 
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
@@ -28,18 +29,23 @@ import {
 function ValueRow({
   label,
   selected,
+  disabled,
   onSelect,
 }: {
   label: string;
   selected: boolean;
+  /** A write for this resource is in flight. */
+  disabled: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onSelect}
+      disabled={disabled}
+      aria-pressed={selected}
       className={cn(
-        "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/60",
+        "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/60 disabled:cursor-wait",
         selected ? "text-foreground" : "text-muted-foreground",
       )}
     >
@@ -81,6 +87,7 @@ export function ClassificationPicker({
     (d) => d.appliesTo.length === 0 || d.appliesTo.includes(kind),
   );
   const { assign, unassign } = useAssignmentMutations(kind, id, dimensions);
+  const writing = assign.isPending || unassign.isPending;
 
   const selectedValueIds = new Set(
     (assignmentsQuery.data ?? []).map((a) => a.value_id),
@@ -88,6 +95,7 @@ export function ClassificationPicker({
 
   /** Toggles a value: clears it if already set, else assigns (single-valued swaps). */
   function toggle(dimension: DimensionDTO, valueId: string) {
+    if (writing) return;
     if (selectedValueIds.has(valueId)) {
       unassign.mutate(valueId);
     } else {
@@ -153,6 +161,7 @@ export function ClassificationPicker({
                       key={value.id}
                       label={value.label}
                       selected={selectedValueIds.has(value.id)}
+                      disabled={writing}
                       onSelect={() => toggle(dimension, value.id)}
                     />
                   ))

@@ -10,13 +10,13 @@
 // destroyProject when POST /api/jobs queues it.
 
 import { NextResponse } from "next/server";
-import { getDestroyTree } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { ForbiddenError } from "@/lib/authz/types";
 import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
+import { readDestroyTree } from "@/lib/rpc/procedures/canvas";
 import { cliDestroyTreeResponse } from "@/lib/validations/cli-contract";
 
 /** Returns the destroy tree of the project's `?env=` environment (default: its default env). */
@@ -41,9 +41,10 @@ export async function GET(
 		);
 		if (!target.ok) return cliEnvironmentError(target);
 
-		// The action authorizes `view` on THIS project through the PDP, under the CLI caller.
+		// The read authorizes `view` on THIS project through the PDP, under the CLI caller — the same
+		// read the console's board asks before its Destroy (`canvas.destroyTree`).
 		const { tree } = await runWithActor(actor, () =>
-			getDestroyTree(project.id, target.id),
+			readDestroyTree(project.id, target.id),
 		);
 		return cliJson(cliDestroyTreeResponse, { tree });
 	} catch (err: unknown) {

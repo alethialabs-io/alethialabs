@@ -68,7 +68,7 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 			return false;
 		}
 	};
-	const [platformView, manageSupport, viewAlerts, memberView] = await Promise.all([
+	const [platformView, manageSupport, viewAlerts, memberView, viewActivity] = await Promise.all([
 		// `platform` carries managed runners and warm pools. The stream hears them exactly when the reads
 		// show them (lib/rpc/procedures/runners.ts): on a self-managed deployment, to an actor who may
 		// `view` runners — the pool cards and the managed rows are both read on that permission. On the
@@ -77,8 +77,11 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 		ask(pdp.can(actor, "manage_support", { type: "support_case" })),
 		ask(pdp.can(actor, "view_alerts", { type: "alert" })),
 		ask(pdp.can(actor, "view", { type: "member" })),
+		// The Activity log's hints go to `view_activity` holders only (#6129) — what `activity.page`
+		// answers. `can()` records nothing, so asking adds no row to the log it is about.
+		ask(pdp.can(actor, "view_activity", { type: "activity" })),
 	]);
-	return { platformView, manageSupport, viewAlerts, memberView };
+	return { platformView, manageSupport, viewAlerts, memberView, viewActivity };
 }
 
 /** Is `userId` an ACTIVE member of `orgId`? */

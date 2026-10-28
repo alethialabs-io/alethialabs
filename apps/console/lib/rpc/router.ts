@@ -3,9 +3,11 @@
 
 import "server-only";
 
+import { activityRouter } from "@/lib/rpc/procedures/activity";
 import { alertsRouter } from "@/lib/rpc/procedures/alerts";
 import { billingRouter } from "@/lib/rpc/procedures/billing";
 import { canvasRouter } from "@/lib/rpc/procedures/canvas";
+import { classificationRouter } from "@/lib/rpc/procedures/classification";
 import { clustersRouter } from "@/lib/rpc/procedures/clusters";
 import { connectorsRouter } from "@/lib/rpc/procedures/connectors";
 import { environmentsRouter } from "@/lib/rpc/procedures/environments";
@@ -16,6 +18,7 @@ import { overviewRouter } from "@/lib/rpc/procedures/overview";
 import { projectsRouter } from "@/lib/rpc/procedures/projects";
 import { runnersRouter } from "@/lib/rpc/procedures/runners";
 import { settingsRouter } from "@/lib/rpc/procedures/settings";
+import { ssoRouter } from "@/lib/rpc/procedures/sso";
 import { supportRouter } from "@/lib/rpc/procedures/support";
 import { usageRouter } from "@/lib/rpc/procedures/usage";
 import { workspaceRouter } from "@/lib/rpc/procedures/workspace";
@@ -25,9 +28,11 @@ import { workspaceRouter } from "@/lib/rpc/procedures/workspace";
  * one board lane, so lanes add procedures without ever editing this file (stress test R10).
  */
 export const router = {
+	activity: activityRouter,
 	alerts: alertsRouter,
 	billing: billingRouter,
 	canvas: canvasRouter,
+	classification: classificationRouter,
 	clusters: clustersRouter,
 	connectors: connectorsRouter,
 	environments: environmentsRouter,
@@ -38,6 +43,7 @@ export const router = {
 	projects: projectsRouter,
 	runners: runnersRouter,
 	settings: settingsRouter,
+	sso: ssoRouter,
 	support: supportRouter,
 	usage: usageRouter,
 	workspace: workspaceRouter,

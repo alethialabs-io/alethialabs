@@ -3,7 +3,8 @@
 
 // GET /api/cli/classification/dimensions — the org's classification taxonomy (dimensions +
 // values + applies_to) for the CLI. Gated on org `view`; org-scoped via the service DB with an
-// explicit org_id filter (RLS is bypassed on this path). Mirrors listDimensions (web).
+// explicit org_id filter (RLS is bypassed on this path). Mirrors the web's `classification.dimensions`
+// read (lib/rpc/procedures/classification.ts).
 
 import { asc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";

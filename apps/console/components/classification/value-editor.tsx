@@ -3,8 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Create/edit a classification value — label + slug (auto-derived from the label until edited).
-// react-hook-form + the shared valueInputSchema; wires createValue / updateValue. Grayscale: no
-// color accent (the design system carries no hue).
+// react-hook-form + the shared valueInputSchema; wires createValue / updateValue through
+// `useActionMutation` (#6129): pending disables Save (the double-submit guard), a server field
+// refusal (a slug the dimension already has) lands under its field, and every classification read is
+// invalidated. An edit with nothing changed cannot be saved. Grayscale: no color accent (the design
+// system carries no hue).
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
@@ -21,19 +24,21 @@ import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createValue,
 	updateValue,
 } from "@/app/server/actions/classification/dimensions";
+import type { ActionResult, FieldErrors } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { classificationReadKeys } from "@/lib/query/use-classification-query";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
 
 /**
  * The value editor dialog. Pass an existing `value` to edit, or omit it to create one on
- * `dimensionId`. Calls `onSaved` after a successful write.
+ * `dimensionId`. Closes itself after a successful write.
  */
 export function ValueEditor({
 	dimensionId,
@@ -41,14 +46,12 @@ export function ValueEditor({
 	value,
 	open,
 	onOpenChange,
-	onSaved,
 }: {
 	dimensionId: string;
 	dimensionLabel: string;
 	value?: ValueDTO;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onSaved: () => void;
 }) {
 	const isEdit = Boolean(value);
 	// Each switch is named by its visible row title, by reference (#4352). The title's `<span>`
@@ -95,22 +98,28 @@ export function ValueEditor({
 		);
 	};
 
-	const onSubmit = async (data: ValueInput) => {
-		try {
-			const payload = { ...data, value: data.value || slugifyOrEmpty(data.label) };
-			if (value) {
-				await updateValue(value.id, payload);
-				toast.success("Value updated.");
-			} else {
-				await createValue(dimensionId, payload);
-				toast.success("Value added.");
+	/** The edit or the create for these values. */
+	function saveValue(payload: ValueInput): Promise<ActionResult<unknown>> {
+		return value ? updateValue({ ...payload, id: value.id }) : createValue({ ...payload, dimensionId });
+	}
+
+	const save = useActionMutation(saveValue, {
+		invalidates: classificationReadKeys(),
+		successMessage: () => (isEdit ? "Value updated." : "Value added."),
+		onValidationError: (fields: FieldErrors) => {
+			for (const name of ["value", "label", "color"] as const) {
+				const message = fields[name]?.[0];
+				if (message) form.setError(name, { type: "server", message });
 			}
-			onOpenChange(false);
-			onSaved();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't save the value.");
-		}
+		},
+		onSuccess: () => onOpenChange(false),
+	});
+
+	const onSubmit = (data: ValueInput) => {
+		if (save.isPending) return;
+		save.mutate({ ...data, value: data.value || slugifyOrEmpty(data.label) });
 	};
+	const dirty = form.formState.isDirty;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -136,12 +145,15 @@ export function ValueEditor({
 								placeholder="Production"
 								{...form.register("label")}
 								onChange={(e) => {
-									form.setValue("label", e.target.value);
+									form.setValue("label", e.target.value, { shouldDirty: true });
 									if (!isEdit && !form.formState.dirtyFields.value) {
 										form.setValue("value", slugifyOrEmpty(e.target.value));
 									}
 								}}
 							/>
+							{form.formState.errors.label?.message && (
+								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
+							)}
 						</div>
 						<div className="flex-1">
 							<label htmlFor={slugFieldId} className="mb-1.5 block text-xs font-medium">
@@ -153,6 +165,9 @@ export function ValueEditor({
 								className="font-mono text-xs"
 								{...form.register("value")}
 							/>
+							{form.formState.errors.value?.message && (
+								<p className="mt-1 text-ui-xs text-destructive">{form.formState.errors.value.message}</p>
+							)}
 						</div>
 					</div>
 
@@ -242,8 +257,9 @@ export function ValueEditor({
 						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={form.formState.isSubmitting || !label}>
-							{form.formState.isSubmitting ? <Spinner /> : <Check className="size-3.5" />}
+						{/* An edit with nothing changed has nothing to save; a new value always does. */}
+						<Button type="submit" disabled={save.isPending || !label || (isEdit && !dirty)}>
+							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
 							Save value
 						</Button>
 					</DialogFooter>

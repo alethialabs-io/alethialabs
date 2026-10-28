@@ -6473,7 +6473,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6929,7 +6929,7 @@
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -7153,7 +7153,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -8057,7 +8057,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -11701,7 +11701,7 @@
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",

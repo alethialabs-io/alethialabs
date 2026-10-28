@@ -53,10 +53,8 @@ vi.mock("@/app/server/actions/jobs", () => ({
 	rerunJob: vi.fn(),
 }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: () => new Promise(() => {}) }));
-vi.mock("@/app/server/actions/activity", () => ({
-	getActivityLog: () => new Promise(() => {}),
-	getActivityExportCsv: vi.fn(),
-}));
+// The feed's pages are the `activity.page` GET read since #6129; only the export is still an action.
+vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 
 /**
  * What the projects query holds right now: nothing on the server (no fetch runs there); the org's

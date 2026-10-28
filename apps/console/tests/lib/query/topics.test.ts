@@ -63,6 +63,42 @@ describe("TOPIC_KEYS", () => {
 		expect(client.getQueryState(org)?.isInvalidated).toBe(false);
 	});
 
+	it("#6129: classification invalidates every classification read — the taxonomy, a resource's chips, the batched lists", async () => {
+		const client = new QueryClient();
+		const taxonomy: unknown[] = [...orpc.classification.dimensions.queryKey({ input: {} })];
+		const chips: unknown[] = [
+			...orpc.classification.assignments.queryKey({
+				input: { kind: "project", resourceId: "5f0c1f3a-2b1e-4c6d-9a8b-7c6d5e4f3a2b" },
+			}),
+		];
+		const batch: unknown[] = [...orpc.classification.assignmentsForKind.queryKey({ input: { kind: "runner", resourceIds: [] } })];
+		const members: unknown[] = [...orpc.members.list.queryKey()];
+		for (const key of [taxonomy, chips, batch, members]) client.setQueryData(key, []);
+		for (const queryKey of TOPIC_KEYS.classification()) await client.invalidateQueries({ queryKey });
+		for (const key of [taxonomy, chips, batch]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(members)?.isInvalidated).toBe(false);
+	});
+
+	it("#6129: activity invalidates the feed's pages but not the permission read — a recorded entry changes no one's access", async () => {
+		const client = new QueryClient();
+		const feed: unknown[] = [["activity", "page"], { input: {}, type: "infinite" }];
+		const permissions: unknown[] = [...orpc.activity.permissions.queryKey()];
+		client.setQueryData(feed, { pages: [], pageParams: [] });
+		client.setQueryData(permissions, { canView: true, canExport: false, exportEntitled: false });
+		for (const queryKey of TOPIC_KEYS.activity()) await client.invalidateQueries({ queryKey });
+		expect(client.getQueryState(feed)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(permissions)?.isInvalidated).toBe(false);
+	});
+
+	it("#6129: access also invalidates the SSO reads — a provider's row rides the access topic", async () => {
+		const client = new QueryClient();
+		const providers: unknown[] = [...orpc.sso.providers.queryKey({ input: {} })];
+		const bootstrap: unknown[] = [...orpc.sso.bootstrap.queryKey()];
+		for (const key of [providers, bootstrap]) client.setQueryData(key, null);
+		for (const queryKey of TOPIC_KEYS.access()) await client.invalidateQueries({ queryKey });
+		for (const key of [providers, bootstrap]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+	});
+
 	it("lists exactly the topics the wire can carry (lib/realtime/topics.ts), empty until a lane moves its reads", () => {
 		expect(Object.keys(TOPIC_KEYS).sort()).toEqual([...TOPICS].sort());
 	});

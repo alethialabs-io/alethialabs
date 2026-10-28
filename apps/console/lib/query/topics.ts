@@ -207,10 +207,19 @@ export const TOPIC_KEYS = {
 	// The overview's usage card and the billing summary both show the org's seat count.
 	members: (): QueryKey[] => [orpc.members.key(), orpc.overview.usage.key(), orpc.billing.summary.key()],
 	// A grant, a custom role or its permissions changed: the roles rail and catalog (grant counts),
-	// the access page and the grant builder's roles. Delivered only to `member:view` holders
+	// the access page and the grant builder's roles. An SSO provider was registered, edited, verified
+	// or removed (`sso_provider`'s trigger): the SSO page's list, and its bootstrap — whose manage
+	// decision a grant change can move (#6129). Delivered only to `member:view` holders
 	// (lib/realtime/routing.ts), the people those reads answer.
-	access: (): QueryKey[] => [orpc.members.key()],
+	access: (): QueryKey[] => [orpc.members.key(), orpc.sso.key()],
 	// A cloud account or an api_key credential changed — a sweep moved its health, another member
 	// connected or removed one (#6124). The board, and the setup guide's "connect a cloud" step.
 	connectors: (): QueryKey[] => [orpc.connectors.key(), orpc.workspace.setupGuide.key()],
+	// A dimension, a value or an assignment changed (#6129): the settings page's taxonomy, its usage
+	// counts and breakdowns, and every picker's and list's chips — all `classification.*` reads.
+	classification: (): QueryKey[] => [orpc.classification.key()],
+	// An entry was recorded in the org's Activity log (#6129): the feed's pages. Delivered only to
+	// `view_activity` holders (lib/realtime/routing.ts). The permission read is NOT refreshed by it —
+	// a recorded entry never changes who may read the log.
+	activity: (): QueryKey[] => [orpc.activity.page.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

@@ -372,6 +372,7 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 		it("assigning to another organization's environment is refused and writes nothing", async () => {
 			const b = await seedProject(ORG_B);
 			const v = await seedEnforcingValue(ORG_A, 5);
+			// A `defineAction` since #6129: the refusal is a result, answered as an unknown resource is.
 			await expect(
 				asA(() =>
 					assignClassification({
@@ -380,7 +381,7 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 						resource_id: b.targetEnvId,
 					}),
 				),
-			).rejects.toThrow("Resource not found");
+			).resolves.toEqual({ ok: false, error: { kind: "not-found", message: "Resource not found" } });
 			const rows = await getServiceDb()
 				.select()
 				.from(classificationAssignment)
@@ -391,13 +392,15 @@ describeIfDb("actions addressed by id resolve the row within the addressed organ
 		it("(control) assigning to the org's own environment is recorded", async () => {
 			const a = await seedProject(ORG_A);
 			const v = await seedEnforcingValue(ORG_A, 2);
-			await asA(() =>
-				assignClassification({
-					value_id: v.valueId,
-					resource_kind: "project_environment",
-					resource_id: a.targetEnvId,
-				}),
-			);
+			await expect(
+				asA(() =>
+					assignClassification({
+						value_id: v.valueId,
+						resource_kind: "project_environment",
+						resource_id: a.targetEnvId,
+					}),
+				),
+			).resolves.toEqual({ ok: true, data: { assigned: true } });
 			const rows = await getServiceDb()
 				.select({ org: classificationAssignment.org_id })
 				.from(classificationAssignment)
