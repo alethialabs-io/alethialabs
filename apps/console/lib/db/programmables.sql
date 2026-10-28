@@ -218,7 +218,8 @@ CREATE TRIGGER invoice_notify_change_insdel
 -- pickers, a managed pool's version/location tallies). Deliberately NOT listed, so the runner's own
 -- high-frequency writes stay SILENT (ADR 0005 §10 R5):
 --   · last_heartbeat — runner_heartbeat, runner_present and claim_next_job stamp it every few seconds
---     and SET status = 'ONLINE' on a runner that is already ONLINE (no change, so no notice);
+--     and SET status = 'ONLINE' on a runner that is already ONLINE (no change, so no notice); all
+--     three leave a DRAINING runner DRAINING, so a draining runner's heartbeats are silent too;
 --     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
 --     runner really reports something new — which is then exactly one notice;
 --   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
@@ -914,8 +915,14 @@ BEGIN
     END IF;
     -- supported_providers is image-driven: keep it in sync with what the runner
     -- reports (NULL = unset = claims any provider).
+    -- A DRAINING runner stays DRAINING (#6233), exactly as runner_present and claim_next_job
+    -- leave it: a heartbeat proves liveness, not that the drain was called off. Writing ONLINE
+    -- here made a draining runner flap DRAINING → ONLINE → DRAINING, and every flap is a status
+    -- change the runners change trigger reports. Only the drain completing (the sweep or
+    -- runner_lost → OFFLINE) moves it out; the next heartbeat then brings it back ONLINE.
     UPDATE public.runners
-    SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
+    SET last_heartbeat = now(),
+        status = CASE WHEN status = 'DRAINING' THEN status ELSE 'ONLINE'::public.runner_status END,
         version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id),
         supported_providers = COALESCE(p_providers, supported_providers)
     WHERE id = p_runner_id AND token_hash = p_runner_token_hash;

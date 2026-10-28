@@ -380,7 +380,9 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 				</p>
 
 				{/* A refresh failed behind a board already on screen (a live update, a refocus): the
-				    cards stay — they are the last good answer — and this line says they may be stale. */}
+				    cards stay — they are the last good answer — and this line says they may be stale.
+				    A REFUSED refresh (the session ended, access was withdrawn) answers the same on every
+				    retry, so it says so and offers no "Try again" that cannot work. */}
 				{board.isError && board.data !== undefined && (
 					<div
 						data-slot="connectors-stale"
@@ -389,11 +391,15 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 					>
 						<span className="flex items-center gap-2">
 							<CircleAlert className="size-3.5 shrink-0" aria-hidden />
-							{"Couldn't refresh — showing earlier data"}
+							{isRefused(board.error)
+								? "Sign in again to refresh — showing earlier data"
+								: "Couldn't refresh — showing earlier data"}
 						</span>
-						<Button variant="ghost" size="xs" onClick={() => void board.refetch()}>
-							Try again
-						</Button>
+						{!isRefused(board.error) && (
+							<Button variant="ghost" size="xs" onClick={() => void board.refetch()}>
+								Try again
+							</Button>
+						)}
 					</div>
 				)}
 
