@@ -105,6 +105,12 @@ const MIN_MEASURED = 10;
 
 const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly PredicateId[];
 
+/** A predicate whose floor differs from {@link MIN_MEASURED}, each with its reason. */
+const MIN_MEASURED_FOR: Partial<Record<(typeof B_IDS)[number], number>> = {
+	// #6124: connectors prefetches its only page read, so it left B3's measurable set; a route meeting B1 cannot be held on load.
+	B3: 9,
+};
+
 /**
  * The routes whose page the hosted product renders differently from the release gate's SELF-MANAGED
  * console, so their skeleton is a hosted question:
@@ -539,6 +545,6 @@ test("every B predicate scored enough routes to be a measurement", () => {
 	const records = writtenRecords();
 	for (const id of B_IDS) {
 		const scored = records.filter((r) => r.predicate === id && (r.verdict === "PASS" || r.verdict === "FAIL")).length;
-		expect(scored, `${id} produced a PASS or a FAIL on ${scored} route(s); a column of NOT MEASURED must not read as a clean board`).toBeGreaterThanOrEqual(MIN_MEASURED);
+		expect(scored, `${id} produced a PASS or a FAIL on ${scored} route(s); a column of NOT MEASURED must not read as a clean board`).toBeGreaterThanOrEqual(MIN_MEASURED_FOR[id] ?? MIN_MEASURED);
 	}
 });
