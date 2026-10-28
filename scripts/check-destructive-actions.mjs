@@ -29,16 +29,15 @@
 //
 // ── THE FLOOR, AND WHAT IT PROTECTS AGAINST ─────────────────────────────────────────────────────
 //
-// `SITE_FLOOR` refuses a run that finds fewer than 27 call sites. It is NOT a quality bar and it
-// is not "we expect 27 destructive controls". It exists because every rule above is of the shape
+// `SITE_FLOOR` refuses a run that finds fewer than 30 call sites. It is NOT a quality bar and it
+// is not "we expect 30 destructive controls". It exists because every rule above is of the shape
 // "for each site found…", and a scan that finds nothing satisfies all of them vacuously. The
 // import-shape regex, the scan roots and the verb table are each one refactor away from matching
 // zero — `apps/console/app` moving under a `src/`, imports switching to a barrel file, the
 // codebase adopting `use server` inline — and in every one of those cases this guard would go
-// green while measuring nothing. It is far above zero and tracks the census: when a lane really
-// removes or merges controls, it lowers the floor to the measured count with the reason beside the
-// constant (see SITE_FLOOR). If it fires for any other reason, the answer is to find out what
-// stopped matching, NOT to lower it.
+// green while measuring nothing. 30 sits below today's census with room for a lane to legitimately
+// delete a handful of controls, and far above zero. If it ever fires, the answer is to find out
+// what stopped matching, NOT to lower it.
 //
 // ── OMISSIONS, STATED RATHER THAN INFERRED ──────────────────────────────────────────────────────
 //
@@ -114,12 +113,8 @@ export const SCAN_ROOTS = ["apps/console/components", "apps/console/app", "apps/
  */
 export const SCAN_EXCLUDE = ["apps/console/app/api", "apps/console/app/server"];
 
-/**
- * See "THE FLOOR" above. Lower this only after finding out what stopped matching.
- * 30 → 27 (#6124): nothing stopped matching — the connectors board's four per-cloud disconnect
- * calls became one `disconnectCloudAccount`, taking dev's 30 real sites to 27.
- */
-export const SITE_FLOOR = 27;
+/** See "THE FLOOR" above. Lower this only after finding out what stopped matching. */
+export const SITE_FLOOR = 30;
 
 const SCAN_EXT = new Set([".tsx", ".ts"]);
 
