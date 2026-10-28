@@ -19,7 +19,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Controller, useForm, type FieldPath } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -29,6 +28,7 @@ import {
 	Package,
 	TriangleAlert,
 } from "lucide-react";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -44,7 +44,9 @@ import { cn } from "@repo/ui/utils";
 import { RepositorySelector } from "@/components/repository-selector";
 import { RadioCardGroup } from "@/components/design-project/canvas/inspector/radio-card-group";
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
-import { attachByoChart } from "@/app/server/actions/byo-charts";
+import { attachByoChartAction } from "@/app/server/actions/byo-charts";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import {
 	helmRegistryServesHost,
 	isSelectableHelmRegistry,
@@ -132,6 +134,20 @@ const STEP_FIELDS: Record<string, FieldPath<ByoChartFormValues>[]> = {
 	"Chart path": ["chartPath"],
 };
 
+/** The form fields a server field refusal can name (the action's input keys that are also form fields). */
+const SERVER_FIELDS: ReadonlySet<string> = new Set<FieldPath<ByoChartFormValues>>([
+	"repoUrl",
+	"chartPath",
+	"ref",
+	"namespace",
+	"valuesYaml",
+]);
+
+/** Narrows a server field key to one of this form's fields. */
+function isServerField(key: string): key is FieldPath<ByoChartFormValues> {
+	return SERVER_FIELDS.has(key);
+}
+
 /** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
 export function ByoChartDialog({
 	open,
@@ -166,6 +182,28 @@ export function ByoChartDialog({
 
 	// The wizard step lives in plain component state (not a schema field).
 	const [step, setStep] = useState(0);
+	// Why the attach was refused, said in the dialog beside Attach — the Review step shows none of the
+	// earlier steps' fields, so a field the server refused is ALSO summarised here.
+	const [refusal, setRefusal] = useState<string | null>(null);
+
+	// The attach, on the mutation contract: pending while in flight (the double-submit guard), each
+	// refusal routed into the dialog, and the board's chart nodes and their described workloads
+	// re-read when it settles.
+	const attach = useActionMutation(attachByoChartAction, {
+		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
+		onValidationError: (fields) => {
+			const messages: string[] = [];
+			for (const [key, list] of Object.entries(fields)) {
+				const message = list?.[0];
+				if (!message) continue;
+				messages.push(message);
+				if (isServerField(key)) form.setError(key, { type: "server", message });
+			}
+			setRefusal(messages.join(" ") || "Check the chart's details.");
+		},
+		onRefusal: (error) => setRefusal(error.message),
+		successMessage: (data) => `Chart "${data.id}" attached — deploys on the next sync.`,
+	});
 
 	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
 	// (which differ per source) are rebuilt when it changes.
@@ -191,6 +229,7 @@ export function ByoChartDialog({
 			if (!next) {
 				reset();
 				setStep(0);
+				setRefusal(null);
 			}
 			onOpenChange(next);
 		},
@@ -219,8 +258,10 @@ export function ByoChartDialog({
 
 	const onSubmit = useCallback(
 		async (values: ByoChartFormValues) => {
+			if (attach.isPending) return;
+			setRefusal(null);
 			try {
-				const res = await attachByoChart({
+				const res = await attach.mutateAsync({
 					projectId,
 					environmentId,
 					id: effectiveName,
@@ -231,14 +272,14 @@ export function ByoChartDialog({
 					namespace: effectiveNs,
 					valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
 				});
-				toast.success(`Chart "${res.id}" attached — deploys on the next sync.`);
 				onAttached?.(res.id);
 				close(false);
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : "Could not attach the chart.");
+			} catch {
+				// Already said: in the dialog for a refusal or a field, in one toast for anything else.
 			}
 		},
 		[
+			attach,
 			projectId,
 			environmentId,
 			effectiveName,
@@ -449,13 +490,19 @@ export function ByoChartDialog({
 					)}
 				</div>
 
+				{refusal && (
+					<Alert variant="destructive">
+						<AlertDescription>{refusal}</AlertDescription>
+					</Alert>
+				)}
+
 				<div className="flex items-center justify-between">
 					<Button
 						type="button"
 						variant="ghost"
 						size="sm"
 						onClick={() => (step === 0 ? close(false) : setStep((s) => s - 1))}
-						disabled={isSubmitting}
+						disabled={isSubmitting || attach.isPending}
 					>
 						{step === 0 ? (
 							"Cancel"
@@ -474,9 +521,9 @@ export function ByoChartDialog({
 							type="button"
 							size="sm"
 							onClick={handleSubmit(onSubmit)}
-							disabled={isSubmitting}
+							disabled={isSubmitting || attach.isPending}
 						>
-							{isSubmitting ? (
+							{isSubmitting || attach.isPending ? (
 								<Loader2 className="h-3.5 w-3.5 animate-spin" />
 							) : (
 								<Check className="h-3.5 w-3.5" />

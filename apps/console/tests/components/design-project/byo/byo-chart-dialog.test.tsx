@@ -7,6 +7,7 @@
 // version defaulting to `*` rather than the git-flavoured HEAD. The git branch must keep working
 // unchanged. The heavy RepositorySelector is stubbed; its auth/fetch internals aren't under test.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,10 +18,17 @@ import {
 	STARTER_CHART_REPO_URL,
 } from "@/components/design-project/byo/byo-chart-dialog";
 
+// The attach is on the mutation contract (#6119): the dialog hands `attachByoChartAction` to
+// `useActionMutation`, which answers an `ActionResult`. `attachByoChart` below is that action's mock.
 const { attachByoChart } = vi.hoisted(() => ({ attachByoChart: vi.fn() }));
 vi.mock("@/app/server/actions/byo-charts", () => ({
-	attachByoChart: (input: unknown) => attachByoChart(input),
+	attachByoChartAction: (input: unknown) => attachByoChart(input),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 
 // The stub forwards `placeholder` on purpose: the real selector renders it as the empty trigger's
 // label, so it is the example the user actually reads, and a stub that dropped it would make the
@@ -51,19 +59,22 @@ vi.mock("sonner", () => ({ toast }));
 
 beforeEach(() => {
 	attachByoChart.mockReset();
-	attachByoChart.mockResolvedValue({ ok: true, id: "payments" });
+	attachByoChart.mockResolvedValue({ ok: true, data: { id: "payments" } });
 	toast.success.mockReset();
 	toast.error.mockReset();
 });
 
 function renderDialog() {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
-		<ByoChartDialog
-			open
-			onOpenChange={() => {}}
-			projectId="proj-1"
-			environmentId="env-1"
-		/>,
+		<QueryClientProvider client={client}>
+			<ByoChartDialog
+				open
+				onOpenChange={() => {}}
+				projectId="proj-1"
+				environmentId="env-1"
+			/>
+		</QueryClientProvider>,
 	);
 }
 
@@ -384,4 +395,59 @@ describe.runIf(LIVE)("ByoChartDialog — the worked example, fetched for real", 
 		});
 		expect(tags.status).toBe(200);
 	}, 30_000);
+});
+
+// ── THE ATTACH IS ON THE MUTATION CONTRACT (#6119) ────────────────────────────────────────────────
+//
+// A refusal ("Bring-your-own Helm charts are not enabled", an environment that is gone) is said IN
+// the dialog, beside Attach, and the dialog stays open with what was typed; the success sentence is
+// the mutation's confirmation. Against the old dialog the refusal case fails: it toasted the thrown
+// message, which a production build had already replaced with a digest.
+
+/** Walks the OCI branch to the Review step and presses Attach. */
+async function attachOci(user: ReturnType<typeof userEvent.setup>) {
+	await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
+	await user.click(next());
+	await user.type(screen.getByLabelText(/chart reference/i), "oci://ghcr.io/acme/payments");
+	await user.click(next());
+	await user.click(next());
+	await user.click(screen.getByRole("button", { name: /attach chart/i }));
+}
+
+describe("ByoChartDialog — the attach's outcomes", () => {
+	it("says a refusal inside the dialog and toasts nothing", async () => {
+		const refusal = "Bring-your-own Helm charts are not enabled on this instance.";
+		attachByoChart.mockResolvedValue({ ok: false, error: { kind: "conflict", message: refusal } });
+		const user = userEvent.setup();
+		renderDialog();
+		await attachOci(user);
+
+		expect(await screen.findByText(refusal)).toBeInTheDocument();
+		expect(toast.error).not.toHaveBeenCalled();
+		expect(toast.success).not.toHaveBeenCalled();
+		// Still open, still on Review: the person can go back and change the request.
+		expect(screen.getByRole("button", { name: /attach chart/i })).toBeEnabled();
+	});
+
+	it("confirms a landed attach with the chart's name", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+		await attachOci(user);
+
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith('Chart "payments" attached — deploys on the next sync.'),
+		);
+	});
+
+	it("holds Attach disabled while the attach is in flight", async () => {
+		let settle: (v: unknown) => void = () => {};
+		attachByoChart.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+		const user = userEvent.setup();
+		renderDialog();
+		await attachOci(user);
+
+		await waitFor(() => expect(screen.getByRole("button", { name: /attach chart/i })).toBeDisabled());
+		expect(attachByoChart).toHaveBeenCalledTimes(1);
+		settle({ ok: true, data: { id: "payments" } });
+	});
 });

@@ -16,6 +16,10 @@
 //     no way to say "audit what I have".
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal } from "@/lib/actions/result";
+import { returnedRefusalAsConflict } from "@/lib/canvas/write-refusals";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { signedJob } from "@/lib/db/signed-job";
@@ -82,7 +86,7 @@ async function assertEnvInOrg(
 			),
 		)
 		.limit(1);
-	if (!env) throw new Error("Environment not found.");
+	if (!env) throw new ActionRefusal("not-found", "Environment not found.");
 }
 
 /**
@@ -266,6 +270,43 @@ export async function queueEnvironmentAudit(
 
 	notifyScaler();
 	return { ok: true, jobId };
+}
+
+// ── The console's mutation contract (ADR 0005 §D4, #6119) ───────────────────────────────────────
+//
+// The Run menu calls these, through `useActionMutation`: each runs the function above and answers an
+// `ActionResult` — a returned refusal ("a probe is already running") as a `conflict` whose sentence
+// is shown verbatim, an environment outside the actor's org as `not-found`.
+
+const environmentJobInput = z.object({
+	projectId: z.string().uuid(),
+	environmentId: z.string().uuid(),
+});
+
+/** Queues a cluster probe of the environment; answers the queued job. */
+export async function queueClusterProbeAction(raw: z.input<typeof environmentJobInput>) {
+	return defineAction({
+		input: environmentJobInput,
+		run: async ({ input }) => {
+			const { jobId } = await returnedRefusalAsConflict(() =>
+				queueClusterProbe(input.projectId, input.environmentId),
+			);
+			return { jobId };
+		},
+	})(raw);
+}
+
+/** Queues an audit of the environment's latest plan; answers the queued job. */
+export async function queueEnvironmentAuditAction(raw: z.input<typeof environmentJobInput>) {
+	return defineAction({
+		input: environmentJobInput,
+		run: async ({ input }) => {
+			const { jobId } = await returnedRefusalAsConflict(() =>
+				queueEnvironmentAudit(input.projectId, input.environmentId),
+			);
+			return { jobId };
+		},
+	})(raw);
 }
 
 /** One row in the canvas's activity rail. */

@@ -3,7 +3,7 @@
 
 // The console's reading of an environment's DESTROY TREE (#5261, from #5249/#5259).
 //
-// The tree comes from `getDestroyTree` and is READ BEFORE the destroy is queued, never parsed out
+// The tree comes from `canvas.destroyTree` and is READ BEFORE the destroy is queued, never parsed out
 // of a refusal: a production build redacts a server action's error text, so the
 // `FabricHasLiveTenantsError` that names the tenants reaches the browser as a digest. Asking first
 // is the only way the user ever sees the list.

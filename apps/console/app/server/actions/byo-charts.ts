@@ -13,6 +13,10 @@
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
 import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, FieldRefusal } from "@/lib/actions/result";
+import { refusingCanvasWrite } from "@/lib/canvas/write-refusals";
 import { signedJob } from "@/lib/db/signed-job";
 import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
@@ -54,7 +58,8 @@ import type {
 /** Throws if the feature is disabled — every mutating BYO action calls this first. */
 function assertByoHelmEnabled(): void {
 	if (!isByoHelmEnabled()) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"Bring-your-own Helm charts are not enabled on this instance (set ALETHIA_BYO_HELM_ENABLED=true).",
 		);
 	}
@@ -104,7 +109,8 @@ export async function attachByoChart(
 
 	const valuesYaml = parsed.valuesYaml?.trim() ? parsed.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
-		throw new Error("Advanced values must be valid YAML describing a mapping (key: value).");
+		const refusal = "Advanced values must be valid YAML describing a mapping (key: value).";
+		throw new FieldRefusal({ valuesYaml: [refusal] }, refusal);
 	}
 
 	const envId = await resolveActiveEnvironmentId(parsed.projectId, parsed.environmentId);
@@ -223,10 +229,13 @@ async function updateChartWorkloadOverlay(
 				and(
 					eq(projectChartWorkloads.id, workloadId),
 					eq(projectChartWorkloads.project_id, projectId),
+					// Bound to the actor's org as well as the project: the PDP's answer for an org-wide
+					// role does not bind the project id it was asked about.
+					eq(projectChartWorkloads.org_id, actor.orgId),
 				),
 			)
 			.returning({ id: projectChartWorkloads.id });
-		if (!row) throw new Error("Chart workload not found");
+		if (!row) throw new ActionRefusal("not-found", "Chart workload not found");
 	});
 }
 
@@ -288,10 +297,11 @@ export async function setChartWorkloadBindings(input: {
 				and(
 					eq(projectChartWorkloads.id, input.workloadId),
 					eq(projectChartWorkloads.project_id, input.projectId),
+					eq(projectChartWorkloads.org_id, actor.orgId),
 				),
 			)
 			.limit(1);
-		if (!row) throw new Error("Chart workload not found");
+		if (!row) throw new ActionRefusal("not-found", "Chart workload not found");
 		const inferred = inferValuePaths({
 			rendered: row.rendered,
 			config: row.config,
@@ -317,6 +327,9 @@ export async function setChartWorkloadBindings(input: {
 	});
 	return { ok: true };
 }
+
+/** The refusal for scanning a chart that is not attached to the environment. */
+const CHART_NOT_ATTACHED = "Chart not found (attach it before scanning).";
 
 /** Reports whether a chart_repo value addresses an OCI registry rather than a git repository. */
 function isOciChartRepo(chartRepo: string): boolean {
@@ -365,12 +378,12 @@ export async function scanByoChart(input: {
 			)
 			.limit(1);
 		if (!row || !row.chart_repo) {
-			throw new Error("Chart not found (attach it before scanning).");
+			throw new ActionRefusal("not-found", CHART_NOT_ATTACHED);
 		}
 		const isOci = isOciChartRepo(row.chart_repo);
 		// A git chart needs a directory inside the repo; an OCI chart's repository path IS the chart.
 		if (!isOci && !row.chart_path) {
-			throw new Error("Chart not found (attach it before scanning).");
+			throw new ActionRefusal("not-found", CHART_NOT_ATTACHED);
 		}
 
 		// The environment's connected chart repos — non-secret provider config only. The runner
@@ -445,3 +458,81 @@ export async function scanByoChart(input: {
 // The CHART_SCAN write-back (finalizeChartScan) lives in lib/addons/chart-scan-finalize.ts: it is the
 // job-status route's service-role seam, and as an export of this `"use server"` file it was a public
 // Server Action (#5219).
+
+// ── The console's mutation contract (ADR 0005 §D4, #6119) ───────────────────────────────────────
+//
+// The Architecture board calls these, through `useActionMutation`, never the functions above
+// directly: each parses its input, runs the SAME function the CLI routes call (so every flag,
+// authorize, environment-resolution and org check above is the one that runs), and answers an
+// `ActionResult` whose refusals the board renders by kind. Each is a plain async function whose body
+// builds its contract inline, so the action-boundary guard can follow it to `authorize`.
+
+const uuid = z.string().uuid();
+
+const chartTargetInput = z.object({
+	projectId: uuid,
+	environmentId: uuid.nullable().optional(),
+	id: z.string().trim().min(1).max(128),
+});
+
+/** Attaches (or reconfigures) a BYO chart and queues its first scan; answers the chart's id. */
+export async function attachByoChartAction(raw: z.input<typeof byoChartAttachSchema>) {
+	return defineAction({
+		input: byoChartAttachSchema,
+		run: async ({ input }) => {
+			const { id } = await refusingCanvasWrite(() => attachByoChart(input));
+			return { id };
+		},
+	})(raw);
+}
+
+/** Detaches a BYO chart (pruned on the next Deploy); answers the chart's id. */
+export async function detachByoChartAction(raw: z.input<typeof chartTargetInput>) {
+	return defineAction({
+		input: chartTargetInput,
+		run: async ({ input }) => {
+			await refusingCanvasWrite(() => detachByoChart(input));
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** Queues a safety scan of an attached BYO chart; answers the queued job. */
+export async function scanByoChartAction(raw: z.input<typeof chartTargetInput>) {
+	return defineAction({
+		input: chartTargetInput,
+		run: async ({ input }) => {
+			const { jobId } = await refusingCanvasWrite(() => scanByoChart(input));
+			return { jobId };
+		},
+	})(raw);
+}
+
+const workloadOverlayInput = z.object({
+	projectId: uuid,
+	workloadId: uuid,
+	bindings: chartWorkloadBindingsSchema.optional(),
+	config: chartWorkloadConfigSchema.optional(),
+	valuePaths: chartWorkloadValuePathsSchema.optional(),
+});
+
+/**
+ * Saves the parts of a described workload's overlay that changed — one write for the panel's one
+ * Save. Bindings first: they infer and merge value-paths for a new binding, so an explicit
+ * value-path override in the same save must run after them to win.
+ */
+export async function saveChartWorkloadOverlayAction(raw: z.input<typeof workloadOverlayInput>) {
+	return defineAction({
+		input: workloadOverlayInput,
+		run: async ({ input }) => {
+			const target = { projectId: input.projectId, workloadId: input.workloadId };
+			const { bindings, config, valuePaths } = input;
+			await refusingCanvasWrite(async () => {
+				if (bindings) await setChartWorkloadBindings({ ...target, bindings });
+				if (config) await setChartWorkloadConfig({ ...target, config });
+				if (valuePaths) await setChartWorkloadValuePaths({ ...target, valuePaths });
+			});
+			return { workloadId: input.workloadId };
+		},
+	})(raw);
+}

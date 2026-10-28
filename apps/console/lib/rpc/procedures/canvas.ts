@@ -14,6 +14,8 @@ import "server-only";
 //   · readProjectChartWorkloads  ← app/server/actions/byo-charts.ts getProjectChartWorkloads
 //   · readEnvironmentJobs        ← app/server/actions/canvas-jobs.ts getEnvironmentJobs
 //   · readIdentityCapabilities   ← app/server/actions/capabilities.ts (deleted)
+//   · readDestroyTree            ← app/server/actions/projects.ts getDestroyTree (deleted; the CLI's
+//                                  destroy-tree route reads it from here too)
 // Their authorization is unchanged: each still asks the PDP first and then bounds its rows by the
 // actor's org (or runs under RLS). The actor is the one the read router bound for the request's
 // ADDRESS (`lib/rpc/base.ts`), never the session's org.
@@ -43,6 +45,7 @@ import type {
 	CapabilityBag,
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { ActionRefusal } from "@/lib/actions/result";
+import { NO_DEFAULT_ENVIRONMENT } from "@/lib/canvas/write-refusals";
 import { ADDON_CATALOG } from "@/lib/addons/catalog";
 import { redactAddonSecrets } from "@/lib/addons/secrets";
 import { authorize } from "@/lib/authz/guard";
@@ -57,6 +60,11 @@ import { attributeDrift, kindForResourceType, type DriftTarget } from "@/lib/can
 import { buildIacInventory, parsePlanInventory } from "@/lib/canvas/iac-inventory";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { getServiceDb, withActorScope } from "@/lib/db";
+import {
+	buildDestroyTree,
+	type DestroyTreeNode,
+	readLiveFabricTenants,
+} from "@/lib/queries/destroy-tree";
 import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import {
 	cloudIdentities,
@@ -99,8 +107,6 @@ import {
 import { query } from "@/lib/rpc/base";
 import type { DriftDetail } from "@/types/jsonb.types";
 
-/** What `resolveActiveEnvironmentId` throws when the project has no environment the actor can see. */
-const NO_DEFAULT_ENVIRONMENT = "Project has no default environment";
 
 /**
  * The active environment of a project, as `resolveActiveEnvironmentId` resolves it — but a project
@@ -1193,6 +1199,55 @@ function emptyBag(): CapabilityBag {
 	};
 }
 
+// ── The destroy tree: what destroying the environment destroys (#5249, #5261) ─────────────────
+
+/**
+ * The DESTROY TREE of an environment: the environment plus every live tenant placed on the Fabric it
+ * owns, in the order a cascade destroys them — tenants first, the owner last. A non-dedicated
+ * environment's tree is itself alone. Read by the board's Destroy (which asks BEFORE it offers to
+ * destroy, so the tenants it names are seen first) and by `alethia project destroy --cascade`.
+ *
+ * `view`, not `destroy`: it reveals nothing the environment list does not, and showing someone what
+ * a destroy WOULD do must not require being allowed to do it.
+ *
+ * A named environment is read EXACTLY — never the project's default in its place, which would show
+ * one environment's tree above another's Destroy — and only inside the actor's org: the PDP's answer
+ * for an org-wide role does not bind the project id it was asked about, so the row is joined to its
+ * project's org. A null environment means the project's default one.
+ */
+export async function readDestroyTree(
+	projectId: string,
+	environmentId: string | null | undefined,
+): Promise<{ environmentId: string; tree: DestroyTreeNode[] }> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withActorScope(actor, async (tx) => {
+		const [target] = await tx
+			.select({
+				id: projectEnvironments.id,
+				name: projectEnvironments.name,
+				project_id: projectEnvironments.project_id,
+				fabric_id: projectEnvironments.fabric_id,
+				placement_mode: projectEnvironments.placement_mode,
+				status: projectEnvironments.status,
+			})
+			.from(projectEnvironments)
+			.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
+			.where(
+				and(
+					eq(projectEnvironments.project_id, projectId),
+					eq(projects.org_id, actor.orgId),
+					environmentId
+						? eq(projectEnvironments.id, environmentId)
+						: eq(projectEnvironments.is_default, true),
+				),
+			)
+			.limit(1);
+		if (!target) throw new ActionRefusal("not-found", "Environment not found.");
+		const tenants = await readLiveFabricTenants(tx, target);
+		return { environmentId: target.id, tree: buildDestroyTree(target, tenants) };
+	});
+}
+
 // ── The procedures ─────────────────────────────────────────────────────────────────────────────
 
 /** A project and one of its environments; a null environment means the project's default one. */
@@ -1252,6 +1307,10 @@ export const canvasRouter = {
 				before: input.before,
 			}),
 		),
+	/** What destroying the environment destroys: its live tenants first, the environment last. */
+	destroyTree: query
+		.input(environmentInput)
+		.handler(({ input }) => readDestroyTree(input.projectId, input.environmentId)),
 	/** The capability bag a canvas node's pickers resolve against, for one identity and region. */
 	capabilities: query
 		.input(

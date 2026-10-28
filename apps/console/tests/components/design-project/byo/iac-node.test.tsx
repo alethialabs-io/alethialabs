@@ -3,9 +3,11 @@
 
 // Component tests for the read-only external-IaC node: it renders the module coords (repo · ref ·
 // path), the pinned + deployed commit short-shas, the deployed indicator, and a scan-status chip
-// that opens the findings card on the workspace rail. The server actions (detach/scan) are mocked.
+// that opens the findings card on the workspace rail. The detach action is mocked; it is on the
+// mutation contract (#6119), so the node renders inside a query client.
 
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IacNode } from "@/components/design-project/byo/iac-node";
@@ -13,14 +15,22 @@ import {
 	IacSourceCanvasProvider,
 	type IacSourceCanvasContextValue,
 } from "@/components/design-project/byo/iac-source-canvas-context";
-import { detachIacSource, type IacSourceState } from "@/app/server/actions/byo-iac";
+import { detachIacSourceAction, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 vi.mock("@/app/server/actions/byo-iac", () => ({
-	detachIacSource: vi.fn().mockResolvedValue({ ok: true }),
-	scanIacSource: vi.fn().mockResolvedValue({ ok: true, jobId: "job-1" }),
+	detachIacSourceAction: vi.fn().mockResolvedValue({ ok: true, data: { projectId: "proj-1" } }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() } }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
+const { toast } = vi.hoisted(() => ({
+	toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
+}));
+vi.mock("sonner", () => ({ toast }));
+const detachIacSource = vi.mocked(detachIacSourceAction);
 
 /** A fully-populated attached source (scanned + deployed). */
 function makeSource(overrides: Partial<IacSourceState> = {}): IacSourceState {
@@ -51,18 +61,23 @@ function renderNode(source: IacSourceState) {
 		projectId: "proj-1",
 		environmentId: "env-1",
 		source,
-		refresh: vi.fn(),
 	};
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return render(
-		<IacSourceCanvasProvider value={ctx}>
-			<IacNode source={source} />
-		</IacSourceCanvasProvider>,
+		<QueryClientProvider client={client}>
+			<IacSourceCanvasProvider value={ctx}>
+				<IacNode source={source} />
+			</IacSourceCanvasProvider>
+		</QueryClientProvider>,
 	);
 }
 
 describe("IacNode", () => {
 	beforeEach(() => {
-		vi.mocked(detachIacSource).mockClear();
+		detachIacSource.mockClear();
+		detachIacSource.mockResolvedValue({ ok: true, data: { projectId: "proj-1" } });
+		toast.success.mockClear();
+		toast.error.mockClear();
 	});
 
 	it("renders repo, ref, path and the pinned + deployed short-shas", () => {
@@ -131,10 +146,33 @@ describe("IacNode", () => {
 		renderNode(makeSource({ deployedCommitSha: null }));
 		await user.click(screen.getByTitle("Detach IaC source"));
 		await user.click(screen.getByRole("button", { name: "Detach source" }));
-		expect(detachIacSource).toHaveBeenCalledWith({
-			projectId: "proj-1",
-			environmentId: "env-1",
-		});
+		await waitFor(() =>
+			expect(detachIacSource).toHaveBeenCalledWith({
+				projectId: "proj-1",
+				environmentId: "env-1",
+			}),
+		);
+		// The mutation's confirmation, and the trigger held while the card waits to leave the board.
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith(
+				"IaC source detached — this environment falls back to the built-in template.",
+			),
+		);
+		expect(screen.getByTitle("Detach IaC source")).toBeDisabled();
+	});
+
+	it("toasts the refusal's sentence when the server refuses the detach", async () => {
+		const refusal =
+			"This environment has infrastructure deployed from its IaC source — destroy it before detaching.";
+		detachIacSource.mockResolvedValue({ ok: false, error: { kind: "conflict", message: refusal } });
+		const user = userEvent.setup();
+		renderNode(makeSource({ deployedCommitSha: null }));
+		await user.click(screen.getByTitle("Detach IaC source"));
+		await user.click(screen.getByRole("button", { name: "Detach source" }));
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith(refusal));
+		expect(toast.success).not.toHaveBeenCalled();
+		// Not held: the source is still attached, so the person may try again.
+		expect(screen.getByTitle("Detach IaC source")).toBeEnabled();
 	});
 
 	// `detachIacSource` throws — and deletes nothing — once a deploy has applied the module. Offering

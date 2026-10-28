@@ -94,7 +94,7 @@ allow:
   # reason; an empty reason is refused.
   - mutation: discardChanges
     surface: apps/console/lib/stores/use-canvas-store.ts
-    reason: the client-side half of canvas.discard-staged; the server half (discardStagedChanges) is the registered mutation
+    reason: the client-side half of canvas.discard-staged; the server half (discardStagedDesignAction) is the registered mutation
 
   - mutation: cancelJob
     surface: apps/console/lib/query/use-jobs-query.ts
@@ -178,7 +178,7 @@ controls:
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    mutation: tryDestroyProject
+    mutation: destroyEnvironmentAction
     # The ⋯ menu's button is named "More" (`aria-label`); its item docks the Environment settings
     # card on the rail, which holds the danger zone (#4775 — it used to sit on the project node's
     # inspector, and the project node is not rendered on the board).
@@ -193,10 +193,10 @@ controls:
     prod-qa: open-cancel
 
   # The SAME Destroy button, on an environment that owns a cluster other environments are placed on
-  # (#5261). Clicking it reads `getDestroyTree` first, so the dialog it opens is a different one: it
+  # (#5261). Clicking it reads `canvas.destroyTree` first, so the dialog it opens is a different one: it
   # lists every environment the cascade takes, tenants first and the owner last, and its two buttons
   # are "Destroy children first" (the way out — it cancels and explains the order) and "Destroy all
-  # <n> environments" (`tryDestroyProject` with `cascade: true`, disabled until the project name is
+  # <n> environments" (`destroyEnvironmentAction` with `cascade: true`, disabled until the project name is
   # typed). There is no button named Cancel, so `cancel_action` names the way out for the spec.
   - id: env.destroy.cascade
     route: /[org]/[project]/architecture
@@ -204,7 +204,7 @@ controls:
     # canvas/cards/destroy-environment-dialog.tsx.
     surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    mutation: tryDestroyProject
+    mutation: destroyEnvironmentAction
     reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
     confirm: confirm-dialog
@@ -221,7 +221,7 @@ controls:
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/pending-changes-bar.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    mutation: discardStagedChanges
+    mutation: discardStagedDesignAction
     reach: [{ open: "add a node so the pending-changes bar renders" }]
     control: { role: button, name: "Discard" }
     confirm: confirm-dialog
@@ -256,7 +256,7 @@ controls:
   - id: byo.chart.detach
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/nodes/chart-node.tsx
-    mutation: detachByoChart
+    mutation: detachByoChartAction
     control: { role: button, name: "Detach chart" }
     confirm: confirm-dialog
     confirm_action: "Detach"
@@ -270,7 +270,7 @@ controls:
   - id: byo.iac.detach
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/byo/iac-node.tsx
-    mutation: detachIacSource
+    mutation: detachIacSourceAction
     control: { role: button, name: "Detach IaC source" }
     confirm: confirm-dialog
     confirm_action: "Detach source"

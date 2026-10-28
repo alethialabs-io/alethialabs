@@ -5,27 +5,41 @@
 // have runner-side executors, and two of them already run on a SCHEDULE — and the canvas offered
 // exactly two jobs: Deploy and Destroy. These tests pin the Run menu that closes that gap, and the
 // rule that matters most: when a job can't be queued, the REASON is shown, never swallowed.
+//
+// #6119: every item is on the mutation contract. Each action answers an `ActionResult`; a refusal is
+// a `conflict` whose sentence is shown verbatim (never a digest, #5445/#5454), a queued job
+// invalidates the environment's status and job history, and the trigger is held while one is queued.
 
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RunMenu } from "@/components/design-project/canvas/run-menu";
+import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 const queueEnvironmentAudit = vi.fn();
 const queueClusterProbe = vi.fn();
-const tryPlanProject = vi.fn();
-const tryQueueDriftDetection = vi.fn();
+const planEnvironment = vi.fn();
+const detectDrift = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
+const h = vi.hoisted(() => ({
+  handlers: {} as Record<string, FakeHandler>,
+  calls: [] as FakeCall[],
+}));
 
 vi.mock("@/app/server/actions/canvas-jobs", () => ({
-  queueEnvironmentAudit: (...a: unknown[]) => queueEnvironmentAudit(...a),
-  queueClusterProbe: (...a: unknown[]) => queueClusterProbe(...a),
+  queueEnvironmentAuditAction: (...a: unknown[]) => queueEnvironmentAudit(...a),
+  queueClusterProbeAction: (...a: unknown[]) => queueClusterProbe(...a),
 }));
-vi.mock("@/app/server/actions/projects", () => ({
-  tryPlanProject: (...a: unknown[]) => tryPlanProject(...a),
-  tryQueueDriftDetection: (...a: unknown[]) => tryQueueDriftDetection(...a),
+vi.mock("@/app/server/actions/canvas-writes", () => ({
+  planEnvironmentAction: (...a: unknown[]) => planEnvironment(...a),
+  detectDriftAction: (...a: unknown[]) => detectDrift(...a),
 }));
+vi.mock("@/lib/rpc/client", async () => {
+  const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+  return { orpc: fakeOrpc(h.handlers, h.calls).orpc };
+});
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("sonner", () => ({
   toast: {
     success: (...a: unknown[]) => toastSuccess(...a),
@@ -33,8 +47,16 @@ vi.mock("sonner", () => ({
   },
 }));
 
+import { RunMenu } from "@/components/design-project/canvas/run-menu";
+
 const PROJECT = "proj-1";
 const ENV = "env-1";
+const TARGET = { projectId: PROJECT, environmentId: ENV };
+
+/** A refused job, as the action answers it. */
+const refused = (message: string) => ({ ok: false, error: { kind: "conflict", message } });
+
+let client: QueryClient;
 
 // base-ui menus open on keyboard/pointer interaction. jsdom can't drive base-ui's pointer-open path
 // (it dispatches no working PointerEvent to Floating UI), so open via keyboard — the menu items then
@@ -47,17 +69,22 @@ async function openTrigger(user: ReturnType<typeof userEvent.setup>) {
 
 async function openMenu() {
   const user = userEvent.setup();
-  render(<RunMenu projectId={PROJECT} environmentId={ENV} />);
+  render(
+    <QueryClientProvider client={client}>
+      <RunMenu projectId={PROJECT} environmentId={ENV} />
+    </QueryClientProvider>,
+  );
   await openTrigger(user);
   return user;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  queueEnvironmentAudit.mockResolvedValue({ ok: true, jobId: "job-1" });
-  queueClusterProbe.mockResolvedValue({ ok: true, jobId: "job-2" });
-  tryPlanProject.mockResolvedValue({ ok: true, jobId: "job-3" });
-  tryQueueDriftDetection.mockResolvedValue({ ok: true, jobId: "job-4" });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queueEnvironmentAudit.mockResolvedValue({ ok: true, data: { jobId: "job-1" } });
+  queueClusterProbe.mockResolvedValue({ ok: true, data: { jobId: "job-2" } });
+  planEnvironment.mockResolvedValue({ ok: true, data: { jobId: "job-3" } });
+  detectDrift.mockResolvedValue({ ok: true, data: { jobId: "job-4" } });
 });
 
 describe("every job the platform can run is reachable from the board", () => {
@@ -74,152 +101,94 @@ describe("every job the platform can run is reachable from the board", () => {
     const user = await openMenu();
     await user.click(screen.getByText("Audit"));
 
-    expect(queueEnvironmentAudit).toHaveBeenCalledWith(PROJECT, ENV);
-    expect(toastSuccess).toHaveBeenCalledWith("Audit queued");
+    await waitFor(() => expect(queueEnvironmentAudit).toHaveBeenCalledWith(TARGET));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Audit queued"));
   });
 
   it("queues a PROBE_CLUSTER", async () => {
     const user = await openMenu();
     await user.click(screen.getByText("Probe cluster"));
 
-    expect(queueClusterProbe).toHaveBeenCalledWith(PROJECT, ENV);
+    await waitFor(() => expect(queueClusterProbe).toHaveBeenCalledWith(TARGET));
   });
 
   it("queues a DETECT_DRIFT", async () => {
     const user = await openMenu();
     await user.click(screen.getByText("Detect drift"));
 
-    expect(tryQueueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
+    await waitFor(() => expect(detectDrift).toHaveBeenCalledWith(TARGET));
   });
 
   it("queues a PLAN scoped to the environment on the board, not the project's default", async () => {
     const user = await openMenu();
     await user.click(screen.getByText("Plan"));
 
-    expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, null, ENV);
+    await waitFor(() => expect(planEnvironment).toHaveBeenCalledWith(TARGET));
   });
 });
 
 // The actions refuse for HONEST reasons — "run a plan first", "already running", "never deployed".
 // Those messages are the answer, and swallowing them would leave the user staring at a menu that
-// silently did nothing. Since #5454 audit and probe RETURN them, like Plan and drift below: thrown,
-// a production build replaced each sentence with a digest before the toast could show it.
+// silently did nothing. Each arrives as a `conflict` and is toasted verbatim.
 describe("a refusal explains itself", () => {
-  it("surfaces why an audit can't run yet", async () => {
-    queueEnvironmentAudit.mockResolvedValue({
-      ok: false,
-      error: "Run a plan first — there's nothing to audit yet.",
-    });
-    const user = await openMenu();
-    await user.click(screen.getByText("Audit"));
-
-    expect(toastError).toHaveBeenCalledWith(
-      "Run a plan first — there's nothing to audit yet.",
-    );
-    expect(toastSuccess).not.toHaveBeenCalled();
-  });
-
-  it("surfaces why a probe can't run on an undeployed environment", async () => {
-    queueClusterProbe.mockResolvedValue({
-      ok: false,
-      error:
-        "This environment has never been deployed, so there's no cluster to probe.",
-    });
-    const user = await openMenu();
-    await user.click(screen.getByText("Probe cluster"));
-
-    expect(toastError).toHaveBeenCalledWith(
+  it.each([
+    ["Audit", queueEnvironmentAudit, "Run a plan first — there's nothing to audit yet."],
+    [
+      "Probe cluster",
+      queueClusterProbe,
       "This environment has never been deployed, so there's no cluster to probe.",
-    );
+    ],
+    ["Probe cluster", queueClusterProbe, "A cluster probe is already running for this environment."],
+    ["Plan", planEnvironment, "No cloud account linked to this project. Go to Connectors to connect."],
+    [
+      "Detect drift",
+      detectDrift,
+      "Environment is not in a valid state for this operation — a job may already be in progress.",
+    ],
+  ])("%s: toasts the refusal's sentence and does not say it was queued", async (item, action, reason) => {
+    action.mockResolvedValue(refused(reason));
+    const user = await openMenu();
+    await user.click(screen.getByText(item));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(reason));
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("surfaces a duplicate-job refusal rather than queueing a second one", async () => {
-    queueClusterProbe.mockResolvedValue({
-      ok: false,
-      error: "A cluster probe is already running for this environment.",
-    });
+  it("does not say it was queued, nor leak the text, when the action fails unexpectedly", async () => {
+    queueClusterProbe.mockResolvedValue({ ok: false, error: { kind: "unexpected", ref: "ab12cd34" } });
     const user = await openMenu();
     await user.click(screen.getByText("Probe cluster"));
 
-    expect(toastError).toHaveBeenCalledWith(
-      "A cluster probe is already running for this environment.",
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Something went wrong on our side. Reference: ab12cd34"),
     );
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 
-// #5445 — Plan and Detect drift RETURN their refusals. Thrown (as they were), a production build
-// replaced the sentence with a digest before this menu's toast could show it — the "honest reasons"
-// above reached the user as noise. Against the old menu these fail: it toasted "Plan queued".
-describe("a RETURNED refusal explains itself too", () => {
-  it("toasts the gate's sentence for a refused plan, and does not say it was queued", async () => {
-    const reason =
-      "No cloud account linked to this project. Go to Connectors to connect.";
-    tryPlanProject.mockResolvedValue({ ok: false, error: reason });
-    const onQueued = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-    );
-    await openTrigger(user);
-    await user.click(screen.getByText("Plan"));
-
-    expect(toastError).toHaveBeenCalledWith(reason);
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(onQueued).not.toHaveBeenCalled();
-  });
-
-  it("toasts the in-flight conflict for a refused drift check", async () => {
-    const reason =
-      "Environment is not in a valid state for this operation — a job may already be in progress.";
-    tryQueueDriftDetection.mockResolvedValue({ ok: false, error: reason });
+describe("a queued job shows on the board at once", () => {
+  it("invalidates the environment's job history and status, and nothing else", async () => {
+    const jobs = [["canvas", "environmentJobs"], { input: TARGET, type: "query" }];
+    const status = [["canvas", "environmentStatus"], { input: TARGET, type: "query" }];
+    const other = [["canvas", "addons"], { input: TARGET, type: "query" }];
+    for (const key of [jobs, status, other]) client.setQueryData(key, {});
     const user = await openMenu();
-    await user.click(screen.getByText("Detect drift"));
-
-    expect(toastError).toHaveBeenCalledWith(reason);
-    expect(toastSuccess).not.toHaveBeenCalled();
-  });
-});
-
-describe("the caller is told when a job lands", () => {
-  it("notifies so the activity rail and node statuses refresh immediately", async () => {
-    const onQueued = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-    );
-    await openTrigger(user);
     await user.click(screen.getByText("Audit"));
 
-    expect(onQueued).toHaveBeenCalled();
+    await waitFor(() => expect(client.getQueryState(jobs)?.isInvalidated).toBe(true));
+    expect(client.getQueryState(status)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
   });
 
-  it("does not notify when the job was refused", async () => {
-    queueEnvironmentAudit.mockResolvedValue({ ok: false, error: "nope" });
-    const onQueued = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-    );
-    await openTrigger(user);
+  it("holds the trigger while a job is being queued — the double-submit guard", async () => {
+    let settle: (v: unknown) => void = () => {};
+    queueEnvironmentAudit.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    const user = await openMenu();
     await user.click(screen.getByText("Audit"));
 
-    expect(onQueued).not.toHaveBeenCalled();
-  });
-
-  it("does not notify, and does not say it was queued, when the action throws", async () => {
-    queueClusterProbe.mockRejectedValue(new Error("boom"));
-    const onQueued = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
-    );
-    await openTrigger(user);
-    await user.click(screen.getByText("Probe cluster"));
-
-    expect(toastError).toHaveBeenCalledWith("boom");
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(onQueued).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: /run/i })).toBeDisabled());
+    expect(queueEnvironmentAudit).toHaveBeenCalledTimes(1);
+    settle({ ok: true, data: { jobId: "job-1" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /run/i })).toBeEnabled());
   });
 });

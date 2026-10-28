@@ -17,15 +17,12 @@
 
 import { useEffect, useState } from "react";
 import { Package, Plus, X } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import {
-	setChartWorkloadBindings,
-	setChartWorkloadConfig,
-	setChartWorkloadValuePaths,
-} from "@/app/server/actions/byo-charts";
+import { saveChartWorkloadOverlayAction } from "@/app/server/actions/byo-charts";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
 import type {
 	ChartValuePathMap,
@@ -62,7 +59,18 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 	const openInspector = useCanvasStore((s) => s.openInspector);
 	const ctx = useByoChartCanvas();
 	const [draft, setDraft] = useState<Overlay | null>(null);
-	const [saving, setSaving] = useState(false);
+	// Why the server refused the overlay (a field it would not take), said under the Save button.
+	const [refusal, setRefusal] = useState<string | null>(null);
+	// One Save is one write (the changed parts only), on the mutation contract: pending while in
+	// flight, the refusal said here, and the board's charts and described workloads re-read after.
+	const saveOverlay = useActionMutation(saveChartWorkloadOverlayAction, {
+		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
+		onValidationError: (fields) =>
+			setRefusal(Object.values(fields).flatMap((m) => m ?? []).join(" ") || "Check the overlay."),
+		onRefusal: (error) => setRefusal(error.message),
+		successMessage: "Workload overlay saved.",
+	});
+	const saving = saveOverlay.isPending;
 
 	// Seed (and re-seed on a different node) the editable draft from the persisted overlay. Keyed on
 	// nodeId only, so a background re-scan refresh never clobbers in-flight unsaved edits.
@@ -86,32 +94,19 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 	const setEnv = (next: ServiceEnvVar[]) =>
 		setDraft({ ...draft, config: { ...draft.config, env: next } });
 
-	const save = async () => {
-		if (!ctx) return;
+	/** Save only the parts of the overlay that changed — once: a press while saving is dropped. */
+	const save = () => {
+		if (!ctx || saving) return;
 		const base = overlayOf(config);
-		const pid = ctx.projectId;
-		const wid = config.id;
-		setSaving(true);
-		try {
-			// Persist only the parts that changed, via Lane 2's (#664) granular setters. Bindings first:
-			// setChartWorkloadBindings infers + merges value-paths for new bindings, so the explicit
-			// value-path override must run after it to win.
-			if (JSON.stringify(draft.bindings) !== JSON.stringify(base.bindings)) {
-				await setChartWorkloadBindings({ projectId: pid, workloadId: wid, bindings: draft.bindings });
-			}
-			if (JSON.stringify(draft.config) !== JSON.stringify(base.config)) {
-				await setChartWorkloadConfig({ projectId: pid, workloadId: wid, config: draft.config });
-			}
-			if (JSON.stringify(draft.valuePaths) !== JSON.stringify(base.valuePaths)) {
-				await setChartWorkloadValuePaths({ projectId: pid, workloadId: wid, valuePaths: draft.valuePaths });
-			}
-			toast.success("Workload overlay saved.");
-			ctx.refresh();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not save the overlay.");
-		} finally {
-			setSaving(false);
-		}
+		const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+		setRefusal(null);
+		saveOverlay.mutate({
+			projectId: ctx.projectId,
+			workloadId: config.id,
+			...(changed(draft.bindings, base.bindings) ? { bindings: draft.bindings } : {}),
+			...(changed(draft.config, base.config) ? { config: draft.config } : {}),
+			...(changed(draft.valuePaths, base.valuePaths) ? { valuePaths: draft.valuePaths } : {}),
+		});
 	};
 
 	return (
@@ -247,6 +242,12 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 					<PathEditor rows={pathRows} onChange={setPathRows} />
 				</section>
 			</div>
+
+			{refusal && (
+				<p role="alert" className="border-t border-border px-4 pt-3 text-ui-xs text-destructive">
+					{refusal}
+				</p>
+			)}
 
 			{/* Commit bar — the overlay is out-of-band, so it never enters the Pending Changes diff; it's
 			    saved straight to the row. */}

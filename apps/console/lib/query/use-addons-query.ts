@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
-	useMutation,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import {
-	disableAddon,
-	enableAddon,
+	disableAddonAction,
+	enableAddonAction,
 	type ProjectAddonsView,
 } from "@/app/server/actions/addons";
+import {
+	type ActionMutationOptions,
+	useActionMutation,
+} from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { environmentStatusInput } from "./use-environment-status-query";
 
@@ -38,33 +37,39 @@ export function useAddonsQuery(
 }
 
 /**
- * Invalidates every key that shows an add-on's install state: the catalog itself, and the
- * environment status (an installed add-on is a node on the board, with its health and sync).
+ * Every key that shows an add-on's install state: the catalog itself, and the environment status
+ * (an installed add-on is a node on the board, with its health and sync).
  */
-function useInvalidateAddons() {
-	const qc = useQueryClient();
-	return () =>
-		Promise.all([
-			qc.invalidateQueries({ queryKey: orpc.canvas.addons.key() }),
-			qc.invalidateQueries({ queryKey: orpc.canvas.environmentStatus.key() }),
-		]);
+function addonKeys() {
+	return [orpc.canvas.addons.key(), orpc.canvas.environmentStatus.key()];
 }
 
-/** Enables or reconfigures an add-on (writes a PENDING row applied on the next deploy). */
-export function useEnableAddon() {
-	const invalidate = useInvalidateAddons();
-	return useMutation({
-		mutationFn: (input: Parameters<typeof enableAddon>[0]) => enableAddon(input),
-		onSuccess: () => invalidate(),
-	});
+/** What a caller of the add-on writes may hand the mutation: where refusals and field errors go. */
+type AddonWriteOptions<T, V> = Pick<
+	ActionMutationOptions<T, V>,
+	"onRefusal" | "onValidationError" | "successMessage" | "onSuccess"
+>;
+
+/**
+ * Enables or reconfigures an add-on (writes a PENDING row applied on the next deploy), on the
+ * mutation contract: pending while in flight, refusals and field errors routed by kind, and every
+ * key that shows the add-on invalidated when it settles.
+ */
+export function useEnableAddon(
+	options: AddonWriteOptions<
+		{ addonId: string },
+		Parameters<typeof enableAddonAction>[0]
+	> = {},
+) {
+	return useActionMutation(enableAddonAction, { ...options, invalidates: addonKeys() });
 }
 
-/** Disables an add-on (removes it from the environment). */
-export function useDisableAddon() {
-	const invalidate = useInvalidateAddons();
-	return useMutation({
-		mutationFn: (input: Parameters<typeof disableAddon>[0]) =>
-			disableAddon(input),
-		onSuccess: () => invalidate(),
-	});
+/** Disables an add-on (removes it from the environment), on the mutation contract. */
+export function useDisableAddon(
+	options: AddonWriteOptions<
+		{ addonId: string },
+		Parameters<typeof disableAddonAction>[0]
+	> = {},
+) {
+	return useActionMutation(disableAddonAction, { ...options, invalidates: addonKeys() });
 }

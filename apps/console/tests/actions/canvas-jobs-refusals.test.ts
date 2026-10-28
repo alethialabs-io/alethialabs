@@ -24,7 +24,9 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
 import {
 	queueClusterProbe,
+	queueClusterProbeAction,
 	queueEnvironmentAudit,
+	queueEnvironmentAuditAction,
 } from "@/app/server/actions/canvas-jobs";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
@@ -184,5 +186,48 @@ describe("what is not a refusal still throws", () => {
 		await expect(queueClusterProbe("p1", "e1")).rejects.toThrow(
 			"connection terminated",
 		);
+	});
+});
+
+// #6119: the Run menu calls the `…Action` forms through `useActionMutation`. A returned refusal is a
+// `conflict` carrying the same sentence; an environment outside the actor's org is `not-found`.
+describe("the Run menu's actions — the mutation contract", () => {
+	const TARGET = {
+		projectId: "11111111-1111-4111-8111-111111111111",
+		environmentId: "22222222-2222-4222-8222-222222222222",
+	};
+
+	it("answers the queued job", async () => {
+		mockReads([ENV_OK, PLAN, []]);
+		await expect(queueEnvironmentAuditAction(TARGET)).resolves.toEqual({
+			ok: true,
+			data: { jobId: "job-9" },
+		});
+	});
+
+	it("answers a returned refusal as a conflict with its sentence", async () => {
+		mockReads([ENV_OK, DEPLOY, [{ id: "job-1" }]]);
+		await expect(queueClusterProbeAction(TARGET)).resolves.toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message: "A cluster probe is already running for this environment.",
+			},
+		});
+	});
+
+	it("answers an environment outside the actor's org as not-found", async () => {
+		mockReads([[]]);
+		await expect(queueClusterProbeAction(TARGET)).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Environment not found." },
+		});
+	});
+
+	it("refuses a malformed id before anything is read", async () => {
+		const result = await queueEnvironmentAuditAction({ ...TARGET, environmentId: "e1" });
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error.kind).toBe("validation");
+		expect(getServiceDb).not.toHaveBeenCalled();
 	});
 });
