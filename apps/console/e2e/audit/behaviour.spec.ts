@@ -110,6 +110,10 @@ const MIN_MEASURED_FOR: Partial<Record<(typeof B_IDS)[number], number>> = {
 	// #6124: connectors prefetches its only page read, so it left B3's measurable set; a route meeting B1 cannot be held on load.
 	// #6129: SSO/classification/activity prefetch their page reads; a route meeting B1 cannot be held on load.
 	B3: 7,
+	// #6129: SSO/classification/activity prefetch their page reads and hydrate them, so a failure load
+	// asks the browser for none of them (NOT MEASURED `not-intercepted` / `no-page-reads`): 4 routes left
+	// B5's measurable set, which measured 9 on every run of #6316.
+	B5: 9,
 };
 
 /**
