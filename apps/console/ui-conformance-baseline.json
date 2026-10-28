@@ -7155,7 +7155,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",
