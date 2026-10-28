@@ -541,11 +541,11 @@ test.describe("phase 3 · B3 and B4 judged, then B5, each of a page's own reads 
 			} else {
 				// The B3 load let through what phase 2 knew to be the shell's; a read it held that the
 				// finished classifier calls the shell's was never the page's to hold.
-				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: p2.pageHeld.held.filter((k) => !isShell(k)) }));
+				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: [] /* MUTATION #6318: B3 sees no read */ }));
 				put(route, url, "B4", judgeB4(a, p2.failed, (key) => !isShell(key)));
 			}
 			const shell = mine.reads.filter(isShell);
-			const pageReads = mine.reads.filter((k) => !isShell(k));
+			const pageReads: string[] = []; // MUTATION #6318: B5 sees no read
 			const failures: OneFailure[] = [];
 			await measured(route, url, ["B5"], async () => {
 				if (mine.settled && pageReads.length >= 1 && pageReads.length <= B5_READ_CAP) {
