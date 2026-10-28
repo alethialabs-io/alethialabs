@@ -66,7 +66,7 @@ import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { cn } from "@repo/ui/utils";
 import { authClient } from "@/lib/auth/client";
 import { track, captureException } from "@/lib/analytics/track";
-import { BookOpen, Loader2, SearchX, ShieldOff, Unplug } from "lucide-react";
+import { BookOpen, CircleAlert, Loader2, SearchX, ShieldOff, Unplug } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -378,6 +378,24 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 						? `Search uses the first ${CONNECTOR_SEARCH_MAX} characters.`
 						: ""}
 				</p>
+
+				{/* A refresh failed behind a board already on screen (a live update, a refocus): the
+				    cards stay — they are the last good answer — and this line says they may be stale. */}
+				{board.isError && board.data !== undefined && (
+					<div
+						data-slot="connectors-stale"
+						role="status"
+						className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-4 py-1.5 text-ui-sm text-text-secondary"
+					>
+						<span className="flex items-center gap-2">
+							<CircleAlert className="size-3.5 shrink-0" aria-hidden />
+							{"Couldn't refresh — showing earlier data"}
+						</span>
+						<Button variant="ghost" size="xs" onClick={() => void board.refetch()}>
+							Try again
+						</Button>
+					</div>
+				)}
 
 				{/* Dim while a new filter's answer is resolving — keepPreviousData keeps the previous
 				    rows on screen instead of flashing a skeleton. */}

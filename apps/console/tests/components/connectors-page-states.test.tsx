@@ -101,6 +101,28 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 	});
 
+	it("a failed REFRESH keeps the board and says it may be stale — not blank, not the region error", () => {
+		const refetch = vi.fn();
+		board.state = {
+			...settled,
+			isError: true,
+			error: new Error("boom"),
+			refetch,
+			data: {
+				integrations: [datadog],
+				view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
+				canManage: false,
+				platformConfigured: {},
+			},
+		};
+		renderBoard();
+		expect(screen.getAllByText("Datadog").length).toBeGreaterThan(0);
+		expect(screen.getByText("Couldn't refresh — showing earlier data")).toBeInTheDocument();
+		expect(screen.queryByText("Couldn't load connectors")).toBeNull();
+		screen.getByRole("button", { name: "Try again" }).click();
+		expect(refetch).toHaveBeenCalled();
+	});
+
 	it("data: the board, with no timer and no route refresh", () => {
 		const setInterval = vi.spyOn(globalThis, "setInterval");
 		board.state = {
