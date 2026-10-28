@@ -17,7 +17,7 @@ import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
 import { useClusterK8sVersion } from "@/components/design-project/canvas/use-cluster-k8s-version";
@@ -52,6 +52,7 @@ import {
   useDisableAddon,
   useEnableAddon,
 } from "@/lib/query/use-addons-query";
+import type { FieldErrors } from "@/lib/actions/result";
 import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 
 /** Reserved RHF field names (kept distinct from add-on knob keys). */
@@ -111,6 +112,23 @@ function initialValues(item: AddonMarketItem): FormShape {
     out[f.key] = seedField(f, item.install?.values?.[f.key]);
   }
   return out;
+}
+
+/** Whether the add-on is already installed on the environment (Save vs Enable). */
+function isInstalledItem(item: AddonMarketItem): boolean {
+  return item.install !== null;
+}
+
+/**
+ * Maps the server's field refusals (keyed by the action's input — `values.<knob>`, `valuesYaml`,
+ * `version`) onto this form's field names, so each sentence lands under the box that caused it.
+ * A key with no field of its own (`values`, or anything unknown) is the form's.
+ */
+function formFieldOf(key: string): string | null {
+  if (key === "valuesYaml") return "_valuesYaml";
+  if (key === "version") return "_version";
+  if (key.startsWith("values.")) return key.slice("values.".length);
+  return null;
 }
 
 /**
@@ -193,14 +211,38 @@ export function AddonConfigForm({
   provider: CloudProviderSlug | null;
   onDone: () => void;
 }) {
-  const enable = useEnableAddon();
-  const disable = useDisableAddon();
   // Remove is not undoable and its effect lands on the next Deploy — the chart is uninstalled and
   // whatever it owns in the cluster goes with it — so the click OPENS a confirm rather than firing
   // the mutation (#4281).
   const [confirmRemove, setConfirmRemove] = useState(false);
   const form = useForm<FormShape>({
     values: initialValues(item),
+  });
+  // A refusal the person can act on (an unknown add-on, a removed environment, a field the server
+  // refused that has no box here) is said INSIDE the card, beside the button that was pressed —
+  // not in a toast that is gone while the value that caused it is still on screen.
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const onValidationError = (fields: FieldErrors) => {
+    const unplaced: string[] = [];
+    for (const [key, messages] of Object.entries(fields)) {
+      const message = messages?.[0];
+      if (!message) continue;
+      const field = formFieldOf(key);
+      if (field) form.setError(field, { type: "server", message });
+      else unplaced.push(message);
+    }
+    setRefusal(unplaced.length > 0 ? unplaced.join(" ") : null);
+  };
+  const enable = useEnableAddon({
+    onValidationError,
+    onRefusal: (error) => setRefusal(error.message),
+    successMessage: isInstalledItem(item)
+      ? `${item.name} updated — Deploy to apply`
+      : `${item.name} enabled — Deploy to install`,
+  });
+  const disable = useDisableAddon({
+    onRefusal: (error) => setRefusal(error.message),
+    successMessage: `${item.name} removed`,
   });
   const mode = form.watch("_mode");
   // The env's Kubernetes version as it will DEPLOY — above the early return, since hooks must run in
@@ -212,10 +254,14 @@ export function AddonConfigForm({
   // Silent when the add-on's recorded window fits — same calm rule as the canvas chip (#1222).
   const addonVerdict = addonCompat(item.id, k8s.version, k8s.reason);
   const compat = addonVerdict.status === "pass" ? null : addonVerdict;
-  const isInstalled = item.install !== null;
+  const isInstalled = isInstalledItem(item);
 
   const onSubmit = form.handleSubmit(async (values) => {
+    // The double-submit guard: the Save button is disabled while pending, and a second submit (Enter
+    // in a field) that races it is dropped here.
+    if (enable.isPending) return;
     const { _mode, _valuesYaml, _version, ...knobs } = values;
+    setRefusal(null);
     try {
       await enable.mutateAsync({
         projectId,
@@ -228,29 +274,26 @@ export function AddonConfigForm({
         // clearing it is the user saying "use the catalog default again".
         version: _version === "" ? null : _version,
       });
-      toast.success(
-        isInstalled
-          ? `${item.name} updated — Deploy to apply`
-          : `${item.name} enabled — Deploy to install`,
-      );
       onDone();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save add-on");
+    } catch {
+      // Already said: `useActionMutation` put a field error under its field, a refusal in the card's
+      // alert, or anything else in one toast. The card stays open with what was typed.
     }
   });
 
   /** Remove the add-on from this environment (reconciled away on the next Deploy). */
   const onRemove = async () => {
+    if (disable.isPending) return;
+    setRefusal(null);
     try {
       await disable.mutateAsync({
         projectId,
         environmentId,
         addonId: item.id,
       });
-      toast.success(`${item.name} removed`);
       onDone();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to remove add-on");
+    } catch {
+      // Already said by the mutation (see onSubmit).
     }
   };
 
@@ -413,7 +456,11 @@ export function AddonConfigForm({
               Cancel
             </Button>
           )}
-          <Button type="submit" form="addon-config-form" disabled={enable.isPending}>
+          <Button
+            type="submit"
+            form="addon-config-form"
+            disabled={enable.isPending || disable.isPending}
+          >
             {enable.isPending
               ? "Saving…"
               : isInstalled
@@ -470,6 +517,12 @@ export function AddonConfigForm({
             </div>
           )}
         </div>
+
+        {refusal && (
+          <Alert variant="destructive" role="alert">
+            <AlertDescription>{refusal}</AlertDescription>
+          </Alert>
+        )}
 
         <form id="addon-config-form" onSubmit={onSubmit} className="space-y-5">
             {/* Delivery mode */}

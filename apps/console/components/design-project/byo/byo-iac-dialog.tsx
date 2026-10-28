@@ -5,15 +5,15 @@
 // Bring-your-own IaC (E3) — the four-step attach flow (repository → path/ref → variables → review)
 // opened from the canvas ⌘K "Sources" group. Step 0 reuses the production RepositorySelector (the
 // same git-provider auth / repo fetch the BYO Helm flow uses); the remaining steps collect the
-// root-module path + git ref and the non-secret tfvars, then Review calls attachIacSource — which
+// root-module path + git ref and the non-secret tfvars, then Review calls attachIacSourceAction — which
 // pins a single project_iac_sources row per environment (v1 replace mode) and auto-queues the
 // IAC_SCAN so provisioning can unlock. Mirrors ByoChartDialog; react-hook-form + zod throughout.
 
 import { useCallback, useState } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Boxes, Check, Loader2, Plus, Trash2 } from "lucide-react";
+import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import {
@@ -34,7 +34,9 @@ import {
 } from "@repo/ui/select";
 import { cn } from "@repo/ui/utils";
 import { RepositorySelector } from "@/components/repository-selector";
-import { attachIacSource } from "@/app/server/actions/byo-iac";
+import { attachIacSourceAction } from "@/app/server/actions/byo-iac";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import {
 	IAC_VAR_KINDS,
 	iacSourceFormSchema,
@@ -79,6 +81,23 @@ export function ByoIacDialog({
 
 	// The wizard step lives in plain component state (not a schema field).
 	const [step, setStep] = useState(0);
+	// Why the attach was refused ("detach it before attaching another", "destroy the environment
+	// first"), said in the dialog beside Attach.
+	const [refusal, setRefusal] = useState<string | null>(null);
+
+	// The attach, on the mutation contract: pending while in flight (the double-submit guard), the
+	// refusal said in the dialog, and the source card plus the module's cards on the board (they ride
+	// on the environment status) re-read when it settles.
+	const attach = useActionMutation(attachIacSourceAction, {
+		invalidates: [orpc.canvas.iacSource.key(), orpc.canvas.environmentStatus.key()],
+		onValidationError: (fieldErrors) =>
+			setRefusal(
+				Object.values(fieldErrors).flatMap((m) => m ?? []).join(" ") ||
+					"Check the module's details.",
+			),
+		onRefusal: (error) => setRefusal(error.message),
+		successMessage: "IaC source attached — scanning the module now.",
+	});
 
 	const repoUrl = watch("repo_url");
 	const path = watch("path");
@@ -89,6 +108,7 @@ export function ByoIacDialog({
 			if (!next) {
 				reset();
 				setStep(0);
+				setRefusal(null);
 			}
 			onOpenChange(next);
 		},
@@ -108,8 +128,10 @@ export function ByoIacDialog({
 
 	const onSubmit = useCallback(
 		async (values: IacSourceFormValues) => {
+			if (attach.isPending) return;
+			setRefusal(null);
 			try {
-				await attachIacSource({
+				await attach.mutateAsync({
 					projectId,
 					environmentId,
 					repoUrl: values.repo_url.trim(),
@@ -117,15 +139,14 @@ export function ByoIacDialog({
 					path: values.path?.trim() ?? "",
 					varValues: toIacVarValues(values.variables),
 				});
-				// attachIacSource auto-queues the IAC_SCAN (best-effort) — no explicit scan call needed.
-				toast.success("IaC source attached — scanning the module now.");
+				// The attach auto-queues the IAC_SCAN (best-effort) — no explicit scan call needed.
 				onAttached?.();
 				close(false);
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : "Could not attach the IaC source.");
+			} catch {
+				// Already said: in the dialog for a refusal, in one toast for anything else.
 			}
 		},
-		[projectId, environmentId, onAttached, close],
+		[attach, projectId, environmentId, onAttached, close],
 	);
 
 	const effectiveRef = ref?.trim() || "HEAD";
@@ -339,6 +360,12 @@ export function ByoIacDialog({
 						)}
 					</div>
 
+					{refusal && (
+						<Alert variant="destructive">
+							<AlertDescription>{refusal}</AlertDescription>
+						</Alert>
+					)}
+
 					<div className="flex items-center justify-between">
 						<Button
 							type="button"
@@ -347,7 +374,7 @@ export function ByoIacDialog({
 							onClick={() =>
 								step === 0 ? close(false) : setStep((s) => s - 1)
 							}
-							disabled={isSubmitting}
+							disabled={isSubmitting || attach.isPending}
 						>
 							{step === 0 ? (
 								"Cancel"
@@ -362,8 +389,8 @@ export function ByoIacDialog({
 								Next <ArrowRight className="h-3.5 w-3.5" />
 							</Button>
 						) : (
-							<Button type="submit" size="sm" disabled={isSubmitting}>
-								{isSubmitting ? (
+							<Button type="submit" size="sm" disabled={isSubmitting || attach.isPending}>
+								{isSubmitting || attach.isPending ? (
 									<Loader2 className="h-3.5 w-3.5 animate-spin" />
 								) : (
 									<Check className="h-3.5 w-3.5" />

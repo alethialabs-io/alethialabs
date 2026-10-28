@@ -502,6 +502,12 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: boardInput,
 		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
 	},
+	// The board's Destroy reads its tree first; the tree names the environment it was read for.
+	"canvas.destroyTree": {
+		kind: "by-id",
+		input: boardInput,
+		reveals: (out, s, org) => field(out, "environmentId") === envOf(s, org),
+	},
 	"canvas.environmentJobs": {
 		// The seeded environments have no jobs, so the reveal is that the read ANSWERED (a page) —
 		// another org's environment is refused before any row is read.

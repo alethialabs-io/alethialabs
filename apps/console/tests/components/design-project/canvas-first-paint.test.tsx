@@ -18,26 +18,31 @@ import userEvent from "@testing-library/user-event";
 import { createContext, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const tryProvisionProject = vi.fn();
-const tryDestroyProject = vi.fn();
-const applyStagedChanges = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 const track = vi.fn();
 
-vi.mock("@/app/server/actions/projects", () => ({
-	createProject: vi.fn(),
-	getDestroyTree: vi.fn(async () => ({ tree: [] })),
-	tryDestroyProject: (...a: unknown[]) => tryDestroyProject(...a),
-	tryProvisionProject: (...a: unknown[]) => tryProvisionProject(...a),
+// The board's writes are not this file's subject (canvas-deploy-destroy-refusal.test.tsx drives them
+// through the real mutation contract), so the actions and the contract's hook are inert here.
+vi.mock("@/app/server/actions/canvas-writes", () => ({
+	createProjectFromDesignAction: vi.fn(),
+	deployDesignAction: vi.fn(),
+	destroyEnvironmentAction: vi.fn(),
+	discardStagedDesignAction: vi.fn(),
+	saveDesignAction: vi.fn(),
 }));
-vi.mock("@/app/server/actions/staged-changes", () => ({
-	applyStagedChanges: (...a: unknown[]) => applyStagedChanges(...a),
-	discardStagedChanges: vi.fn(),
+vi.mock("@/lib/actions/use-action-mutation", () => ({
+	useActionMutation: () => ({
+		mutate: vi.fn(),
+		mutateAsync: vi.fn(),
+		isPending: false,
+		isSuccess: false,
+	}),
 }));
-vi.mock("@/app/server/actions/resolve", () => ({
-	resolveActiveEnvironmentId: vi.fn(async () => "env-1"),
-}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 vi.mock("sonner", () => ({
 	toast: {
 		error: (...a: unknown[]) => toastError(...a),
@@ -219,6 +224,18 @@ describe("a blank board (F037)", () => {
 		expect(screen.queryByTestId("node-palette")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /add a component/i }));
 		expect(screen.getByTestId("node-palette")).toBeInTheDocument();
+	});
+
+	// T5 (the UI conformance audit) reads an empty region as the shared component only when it is
+	// inside `[data-slot="empty"]`. The guide used to pass its own `data-slot` to `EmptyState`, which
+	// REPLACED that mark — so the board read as a hand-rolled empty region while rendering the shared
+	// one. The guide's name now sits on its overlay, and the title sits inside the shared region.
+	it("renders its message inside the shared empty-state region", () => {
+		seed(design());
+		renderCanvas();
+		const title = screen.getByText(/nothing designed yet/i);
+		expect(title.closest('[data-slot="empty"]')).not.toBeNull();
+		expect(title.closest('[data-slot="board-guide"]')).not.toBeNull();
 	});
 
 	it("does not show the guide once something is designed", () => {
