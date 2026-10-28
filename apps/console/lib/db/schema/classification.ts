@@ -6,9 +6,10 @@
 // (dev/staging/prod) × assignments that pin a value to a concrete resource. A dimension
 // may be single- or multi-valued per resource (`multi`); the single-value rule is enforced
 // in the server layer (a partial unique index can't reference the parent's `multi`), while
-// the DB blocks exact duplicate assignments. Org-scoped (org_id is the RLS blast wall,
-// filled by the set_org_id_from_created_by trigger in programmables.sql); the PDP authorizes
-// mutations in the server actions.
+// the DB blocks exact duplicate assignments. Org-scoped (org_id is the RLS blast wall; the
+// server actions set it explicitly, and the classification_set_org_id trigger on
+// classification_dimension in programmables.sql only fills a NULL one from created_by); the PDP authorizes mutations in the
+// server actions.
 
 import {
 	index,
