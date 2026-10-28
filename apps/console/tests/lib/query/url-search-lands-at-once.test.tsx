@@ -18,13 +18,13 @@
 // on the client (support cases, connectors), that the non-matching row is not on screen.
 //
 // Mutation check (done when this was written): dropping `{ urlRead }` from each surface's
-// `useDebouncedValue` call fails that surface's test, and dropping `enabled: urlRead` from
-// `useEvidenceQuery` fails the evidence "first fetch" test with `{}` as the first fetch. The
-// keystroke test passes either way — it is there so the fix cannot become "stop debouncing".
+// `useDebouncedValue` call fails that surface's test. The keystroke test passes either way — it is
+// there so the fix cannot become "stop debouncing".
 //
-// The evidence hook is held to more than that: it must not fetch at all before the link is read,
-// because its route prefetches the LINK's key and nothing else, so the first fetch it makes is the
-// filtered one.
+// The evidence hook is held to more than that: its route prefetches the LINK's key and nothing else,
+// so before the link is read into the store the hook asks for the link's own filters (#6126) — its
+// first read is the filtered one, and it never asks for the unfiltered roll-up. Mutation check
+// (#6126): making the hook read the store before `urlRead` fails the "first fetch" test with `{}`.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
@@ -35,6 +35,7 @@ import type { RoleRow, RolesBootstrap } from "@/app/server/actions/roles";
 import type { SsoBootstrap } from "@/app/server/actions/sso";
 import type { CaseListItem } from "@/lib/queries/support";
 import { orpc } from "@/lib/rpc/client";
+import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 /** The query string the "pasted link" carries; each test sets it before rendering. */
 let currentSearch = "";
@@ -46,7 +47,18 @@ vi.mock("next/navigation", () => ({
 }));
 
 // ── Data seams. Every fetch stays in flight; what is asserted is what each was ASKED. ──────────
-vi.mock("@/app/server/actions/evidence", () => ({ getOrgEvidence: vi.fn(() => new Promise(() => {})) }));
+// The read router: every procedure answers with a promise that never settles, and `rpc.calls` logs
+// what each was asked (the evidence page reads `evidence.page` over GET since #6126).
+const rpc = vi.hoisted(() => ({ handlers: {} as Record<string, FakeHandler>, calls: [] as FakeCall[] }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	rpc.handlers["evidence.page"] = () => new Promise(() => {});
+	rpc.handlers["support.cases"] = () => new Promise(() => {});
+	return { orpc: fakeOrpc(rpc.handlers, rpc.calls).orpc };
+});
+
+/** Every input `evidence.page` was asked for, in order. */
+const evidenceAsked = () => rpc.calls.filter((c) => c.path === "evidence.page").map((c) => c.input);
 vi.mock("@/app/server/actions/activity", () => ({
 	getActivityLog: vi.fn(() => new Promise(() => {})),
 	getActivityExportCsv: vi.fn(),
@@ -102,7 +114,6 @@ vi.mock("@/components/classification/classification-chips", () => ({ Classificat
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
 import { getActivityLog } from "@/app/server/actions/activity";
-import { getOrgEvidence } from "@/app/server/actions/evidence";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
@@ -137,6 +148,7 @@ beforeEach(() => {
 	sessionStorage.clear();
 	asked.roles.length = 0;
 	asked.sso.length = 0;
+	rpc.calls.length = 0;
 	useEvidenceFilters.getState().reset();
 	useActivityFilters.getState().reset();
 	useRolesFilters.getState().reset();
@@ -163,7 +175,7 @@ describe("useEvidenceQuery — ~/evidence?search=…", () => {
 		renderWithClient(<EvidenceHarness />);
 		await settleWithoutTime();
 
-		const calls = vi.mocked(getOrgEvidence).mock.calls.map(([q]) => q);
+		const calls = evidenceAsked();
 		expect(calls[0], "the first fetch is the link's filtered key").toEqual({ search: "payments" });
 		expect(calls).not.toContainEqual({});
 	});
@@ -172,14 +184,14 @@ describe("useEvidenceQuery — ~/evidence?search=…", () => {
 		currentSearch = "search=payments";
 		renderWithClient(<EvidenceHarness />);
 		await settleWithoutTime();
-		vi.mocked(getOrgEvidence).mockClear();
+		rpc.calls.length = 0;
 
 		act(() => useEvidenceFilters.getState().set("search", "paymentsx"));
 		await settleWithoutTime();
-		expect(getOrgEvidence, "a keystroke waits out the debounce").not.toHaveBeenCalled();
+		expect(evidenceAsked(), "a keystroke waits out the debounce").toEqual([]);
 
 		await act(async () => vi.advanceTimersByTime(300));
-		expect(vi.mocked(getOrgEvidence).mock.calls.map(([q]) => q)).toEqual([{ search: "paymentsx" }]);
+		expect(evidenceAsked()).toEqual([{ search: "paymentsx" }]);
 	});
 });
 

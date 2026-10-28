@@ -24,6 +24,9 @@
 //     (`readActiveRunnerJobs`, lib/rpc/procedures/runners.ts, #6123);
 //   · the CLI: `GET /api/jobs`, `GET /api/cli/jobs/[id]`, `GET /api/cli/jobs/[id]/logs` and
 //     `POST /api/cli/jobs/[id]/cancel`.
+//   · the Evidence page's read (lib/rpc/procedures/evidence.ts, #6126) uses the same project set
+//     (`viewableProjectIds`) for its verdicts and waivers; its org-level arm is narrower — a waiver
+//     shows org-wide only when its job has neither a project nor an environment.
 // The cancel both surfaces share (lib/jobs/cancel.ts) reads through the same predicate.
 // Reads that are NOT on this list do not apply it. Adding a jobs read means adding it here.
 //
