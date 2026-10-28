@@ -81,20 +81,24 @@ describeIfDb("runner_heartbeat on a DRAINING runner (#6233)", () => {
 	beforeAll(async () => {
 		listener = postgres(process.env.ALETHIA_DATABASE_URL ?? "", { max: 1 });
 		await listener.listen("alethia_change", (payload) => heard.push(JSON.parse(payload)));
-		const [r] = await db()
-			.insert(runners)
-			.values({
-				user_id: USER,
-				org_id: USER,
-				name: `it-6233-${USER.slice(0, 8)}`,
-				operator: "self",
-				provisioning: "registered",
-				status: "DRAINING",
-				token_hash: TOKEN_HASH,
-				last_heartbeat: sql`now() - interval '20 seconds'`,
-			})
-			.returning({ id: runners.id });
-		runnerId = r.id;
+		// Seeded inside emitted() so the registration's own notice is drained here and cannot be
+		// mistaken for one the first heartbeat emitted.
+		await emitted(async () => {
+			const [r] = await db()
+				.insert(runners)
+				.values({
+					user_id: USER,
+					org_id: USER,
+					name: `it-6233-${USER.slice(0, 8)}`,
+					operator: "self",
+					provisioning: "registered",
+					status: "DRAINING",
+					token_hash: TOKEN_HASH,
+					last_heartbeat: sql`now() - interval '20 seconds'`,
+				})
+				.returning({ id: runners.id });
+			runnerId = r.id;
+		});
 	});
 
 	afterAll(async () => {
@@ -123,7 +127,7 @@ describeIfDb("runner_heartbeat on a DRAINING runner (#6233)", () => {
 			.update(runners)
 			.set({ last_heartbeat: sql`now() - interval '10 minutes'` })
 			.where(eq(runners.id, runnerId));
-		await db().execute(sql`select * from sweep_offline_runners()`);
+		expect(await emitted(() => db().execute(sql`select * from sweep_offline_runners()`))).toEqual([selfNotice()]);
 		expect((await current()).status).toBe("OFFLINE");
 		expect(await emitted(() => heartbeat())).toEqual([selfNotice()]);
 		expect((await current()).status).toBe("ONLINE");
