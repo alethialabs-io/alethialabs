@@ -13,8 +13,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
+	authorizeRead: vi.fn(),
 	currentActor: vi.fn(),
 }));
+// The org binding reads the projects table on the service role; its own behaviour is integration-
+// tested (tests/integration/console-project-bound.test.ts). Here it is a seam whose ORDER is asserted.
+vi.mock("@/lib/promotions/org-binding", () => ({ assertProjectInActorOrg: vi.fn() }));
 vi.mock("@/lib/db", () => ({
 	withActorScope: vi.fn(),
 	withScope: vi.fn(),
@@ -78,6 +82,7 @@ import {
 	duplicateProjectForProvider,
 	getProject,
 	getDestroyTree,
+	getEnvConsistency,
 	getProjectAsFormData,
 	getProjectEnvironments,
 	getProjects,
@@ -85,6 +90,7 @@ import {
 	planProject,
 	reconcileEnvironmentComponents,
 	provisionProject,
+	setAutoHeal,
 	tryCreateProject,
 	tryDuplicateProjectForProvider,
 	updateProjectDesign,
@@ -93,7 +99,8 @@ import {
 import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
@@ -335,6 +342,12 @@ beforeEach(() => {
 		orgId: "org-1",
 		credential: "session",
 	} as never);
+	vi.mocked(authorizeRead).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+		credential: "session",
+	} as never);
+	vi.mocked(assertProjectInActorOrg).mockResolvedValue(undefined);
 	vi.mocked(currentActor).mockResolvedValue({
 		userId: "user-1",
 		orgId: "org-1",
@@ -3664,12 +3677,24 @@ describe("getProjectEnvironments", () => {
 			]),
 		});
 		const r = await getProjectEnvironments("p1");
-		expect(authorize).toHaveBeenCalledWith("view", {
+		// The read variant: quiet on allow, recorded on refusal (a live-refetched read).
+		expect(authorizeRead).toHaveBeenCalledWith("view", {
 			type: "project",
 			id: "p1",
 		});
+		expect(authorize).not.toHaveBeenCalled();
 		expect(r.environments).toHaveLength(2);
 		expect(r.environments[1]).toMatchObject({ id: "env-2", name: "staging" });
+	});
+});
+
+describe("getEnvConsistency", () => {
+	it("uses the read check for itself and for the list it reads, never the recording one", async () => {
+		setupDb({ select: new Map([[projectEnvironments, []]]) });
+		const r = await getEnvConsistency("p1");
+		expect(r).toEqual({ envs: [], rows: [] });
+		expect(authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 });
 
@@ -3851,6 +3876,28 @@ describe("duplicateEnvironment — refusals are values (#5445)", () => {
 			error: 'This project already has an environment named "prod". Choose another name.',
 		});
 		expect(insertSpy).not.toHaveBeenCalledWith(projectEnvironments);
+	});
+});
+
+describe("environment writes bind the project to the addressed organization first", () => {
+	const writes: [string, () => Promise<unknown>][] = [
+		["addEnvironment", () => addEnvironment("p1", { name: "qa", stage: "development" })],
+		["duplicateEnvironment", () => duplicateEnvironment("p1", "env-1", "qa")],
+		["setAutoHeal", () => setAutoHeal("p1", "env-1", true)],
+		["deleteEnvironment", () => deleteEnvironment("p1", "env-2")],
+	];
+
+	it.each(writes)("%s refuses before the PDP is asked or anything is written", async (_name, call) => {
+		const { insertSpy, updateSpy, deleteSpy } = setupDb({});
+		// Not `…Once`: a write that skipped the binding would leave a queued once-value for the NEXT
+		// test to consume. `beforeEach` resets this default.
+		vi.mocked(assertProjectInActorOrg).mockRejectedValue(new Error("Project not found."));
+		await expect(call()).rejects.toThrow("Project not found.");
+		expect(assertProjectInActorOrg).toHaveBeenCalledWith(expect.objectContaining({ orgId: "org-1" }), "p1");
+		expect(authorize).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(updateSpy).not.toHaveBeenCalled();
+		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 });
 

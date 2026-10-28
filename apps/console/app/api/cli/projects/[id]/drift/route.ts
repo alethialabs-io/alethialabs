@@ -5,9 +5,10 @@
 // scoped to one environment). Gated on `view` of THE ADDRESSED PROJECT, not only the org-wide
 // project permission: a reader with a scoped deny on a project is refused its drift here exactly as
 // the Evidence page leaves it out, and the refusal reads as "not found" so it does not confirm the
-// project exists (resolveCliProjectAuthorized, which also records the refusal). Org-scoped via the service DB with an explicit projects.org_id filter (RLS is
-// bypassed on this path — the predicate IS the tenancy wall). Mirrors getLatestDriftPosture (web),
-// which can't be called here because it authorizes via the session cookie.
+// project exists (resolveCliProjectAuthorized, which also records the refusal). Org-scoped via the
+// service DB with an explicit projects.org_id filter (RLS is bypassed on this path — the predicate IS
+// the tenancy wall). Mirrors getLatestDriftPosture (web), which can't be called here because it
+// authorizes via the session cookie.
 
 import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
