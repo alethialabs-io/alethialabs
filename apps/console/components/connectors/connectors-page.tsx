@@ -2,44 +2,43 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	disconnectAwsIdentity,
-	renameCloudIdentity,
-	reverifyCloudIdentity,
-} from "@/app/(private)/dashboard/providers/actions";
-import { isEnumMember } from "@/lib/coerce";
 import { asGitProvider } from "@/lib/connectors/git-providers";
-import { disconnectAzureIdentity } from "@/app/(private)/dashboard/providers/azure-actions";
-import { disconnectGcpIdentity } from "@/app/(private)/dashboard/providers/gcp-actions";
-import { disconnectExtraCloud } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
-import { deleteProviderToken } from "@/app/server/actions/identities";
+import {
+	deleteProviderToken,
+	disconnectCloudAccount,
+	renameCloudAccount,
+	verifyCloudAccount,
+} from "@/app/server/actions/identities";
 import {
 	deleteConnectorCredential,
-	getConnectorsWithStatus,
 	type ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
+import type { ActionResult } from "@/lib/actions/result";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { RegionError } from "@/components/errors/region-error";
+import { connectorKeys, isRefused } from "@/components/connectors/connectors-board";
+import { useConnectorsQuery } from "@/lib/query/use-connectors-query";
+import { ConnectorsSkeleton } from "@/components/connectors/connectors-skeleton";
 import { ConnectorCard } from "@/components/connectors/connector-card";
 import { ConnectorRow } from "@/components/connectors/connector-row";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
 import { ConnectorsFilterBar } from "@/components/connectors/connectors-filter-bar";
 import {
+	CONNECTOR_SEARCH_MAX,
 	DEFAULT_CONNECTOR_FILTERS,
 	GROUP_META,
-	buildConnectorsView,
 	normalizeConnectorQuery,
-	seedConnectorsQuery,
 } from "@/components/connectors/connectors-query";
 import { ApiKeyConnection } from "@/components/connectors/api-key-connection";
 import {
 	ConnectSheetHeader,
-	EXTRA_CLOUDS,
 	useCloudConnect,
 } from "@/components/cloud-connect/use-cloud-connect";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { connectRoute } from "@/lib/connectors/helpers";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { qk } from "@/lib/query/keys";
 import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import {
 	AlertDialog,
@@ -67,10 +66,9 @@ import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { cn } from "@repo/ui/utils";
 import { authClient } from "@/lib/auth/client";
 import { track, captureException } from "@/lib/analytics/track";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Loader2, SearchX, Unplug } from "lucide-react";
+import { BookOpen, Loader2, SearchX, ShieldOff, Unplug } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -92,37 +90,58 @@ function describeAuthError(e: unknown): string {
 
 interface ConnectorsPageProps {
 	orgSlug: string;
-	canManage: boolean;
-	integrations: ConnectorWithConnection[];
-	awsSetup: { identityId: string } | null;
-	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
-	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
-	/** Per-slug: does this instance have the platform creds the cloud's probe needs. */
-	platformConfigured?: Record<string, boolean>;
 }
 
-export function ConnectorsPage({
-	orgSlug,
-	canManage,
-	integrations,
-	awsSetup: awsSetupProp,
-	gcpSetup: gcpSetupProp,
-	azureSetup: azureSetupProp,
-	extraSetup: extraSetupProp,
-	platformConfigured,
-}: ConnectorsPageProps) {
+/** What the disconnect dialog is about to remove: a whole connector, or one of a cloud's accounts. */
+interface DisconnectTarget {
+	integration: ConnectorWithConnection;
+	identityId?: string;
+}
+
+/**
+ * Removes what `target` names, through the one action that owns it. ONE dialog dispatches to
+ * three actions: a git link (`deleteProviderToken`), an api_key credential
+ * (`deleteConnectorCredential`), or a cloud account (`disconnectCloudAccount`, whose provider is
+ * the stored row's). A connector none of them owns is refused here rather than reported done.
+ */
+function disconnectConnector(target: DisconnectTarget): Promise<ActionResult<unknown>> {
+	const { integration, identityId } = target;
+	if (integration.category === "git") {
+		return deleteProviderToken({ provider: asGitProvider(integration.slug) });
+	}
+	if (integration.category === "cloud") {
+		const cloudId = identityId ?? integration.connection_details?.cloud_identity_id;
+		if (!cloudId) {
+			return Promise.resolve({
+				ok: false,
+				error: { kind: "not-found", message: `${integration.name} has no account to disconnect.` },
+			});
+		}
+		return disconnectCloudAccount({ identityId: cloudId });
+	}
+	if (integration.auth_method === "api_key") {
+		return deleteConnectorCredential({ slug: integration.slug });
+	}
+	return Promise.resolve({
+		ok: false,
+		error: {
+			kind: "conflict",
+			message: `No disconnect path for ${integration.slug}. This is a bug — please report it.`,
+		},
+	});
+}
+
+export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	const router = useRouter();
-	const queryClient = useQueryClient();
 	const searchParams = useSearchParams();
+	const hydrated = useHydrated();
 
 	const [viewMode, setViewMode] = useState<ViewMode>("card");
 	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 
 	// ── The console filter standard (lib/query/README.md → "Server-side filters") ──────────
-	// store → URL sync → debounce → normalize → key. The bar used to be a Radix <Select>
-	// plus a raw <Input>, both banned; neither survived a navigation or a shared link.
+	// store → URL sync → debounce → normalize → the read's input (its key).
 	const filters = useConnectorFilters((s) => s.filters);
 	const patchFilters = useConnectorFilters((s) => s.patch);
 	const resetFilters = useConnectorFilters((s) => s.reset);
@@ -144,78 +163,48 @@ export function ConnectorsPage({
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only deep link
 	}, []);
 
-	// The board's rows + facet counts. The key carries the NORMALIZED query so two equivalent
-	// filter states share one cache entry.
-	//
-	// NOTE (follow-up, out of this lane's scope): `getConnectorsWithStatus()` takes no
-	// arguments, so the selection and the facet tally run in the queryFn rather than in SQL.
-	// `selectConnectors`/`buildConnectorFacets` are pure and take the same normalized query the
-	// action would, so moving them server-side is a signature change in
-	// `app/server/actions/connectors.ts` and nothing here.
-	const { data: view, isPlaceholderData } = useQuery({
-		queryKey: qk.connectors(orgSlug, query),
-		queryFn: async () =>
-			buildConnectorsView(
-				await getConnectorsWithStatus(),
-				query,
-				platformConfigured ?? {},
-			),
-		placeholderData: keepPreviousData,
-		staleTime: 30_000,
-		// The catalog is already on the wire as this RSC's props, and the selection over it is
-		// pure — so every filter state's first answer is seeded from them (#4939, F8). See
-		// `seedConnectorsQuery` for why seeding only the pristine key broke a pasted link.
-		...seedConnectorsQuery(integrations, query, platformConfigured ?? {}),
-	});
+	// The board for this filter: prefetched by the route for the link's filter, live through the
+	// `connectors` topic (no poll). The selection and the facet counts are the server's.
+	const board = useConnectorsQuery(query);
+	const integrations = useMemo(() => board.data?.integrations ?? [], [board.data]);
+	const canManage = board.data?.canManage ?? false;
+	const platformConfigured = useMemo(
+		() => board.data?.platformConfigured ?? {},
+		[board.data],
+	);
 
-	/** Re-read the board after a mutation: the RSC props AND every cached connectors key. */
-	const refreshBoard = useCallback(() => {
-		router.refresh();
-		void queryClient.invalidateQueries({ queryKey: qk.connectors(orgSlug) });
-	}, [router, queryClient, orgSlug]);
-
-	// Passive refresh: pick up sweep-driven connection-status changes (connected → degraded/
-	// disconnected, or backfilled inventory) without a manual reload, while the tab is visible.
-	useEffect(() => {
-		const id = setInterval(() => {
-			if (document.visibilityState === "visible") refreshBoard();
-		}, 30_000);
-		return () => clearInterval(id);
-	}, [refreshBoard]);
-
-	// Connect/disconnect flows OUTSIDE this file (the cloud-connect sheets) refresh the route
-	// rather than this query. New props are the signal that they did, so the cached views are
-	// re-read too — otherwise a freshly connected cloud kept reading "Not connected".
-	const lastIntegrationsRef = useRef(integrations);
-	useEffect(() => {
-		if (lastIntegrationsRef.current === integrations) return;
-		lastIntegrationsRef.current = integrations;
-		void queryClient.invalidateQueries({ queryKey: qk.connectors(orgSlug) });
-	}, [integrations, orgSlug, queryClient]);
-
-	// Cloud connect flow (AWS/GCP/Azure/extra) — shared with the create-project cloud picker.
-	// Seeded from the RSC props, which are the freshest copy of the catalog on the page.
-	const cloudConnect = useCloudConnect({
-		integrations,
-		awsSetup: awsSetupProp,
-		gcpSetup: gcpSetupProp,
-		azureSetup: azureSetupProp,
-		extraSetup: extraSetupProp,
-	});
+	// Cloud connect flow (AWS/GCP/Azure/extra) — shared with the create-project cloud picker. Its
+	// saves invalidate the board themselves, so the route is not refreshed when a sheet closes.
+	const cloudConnect = useCloudConnect({ integrations, refreshRouteOnClose: false });
 
 	const [apiKeySlug, setApiKeySlug] = useState<string | null>(null);
-	const [disconnectTarget, setDisconnectTarget] = useState<{
-		integration: ConnectorWithConnection;
-		identityId?: string;
-	} | null>(null);
-	const [isDisconnecting, setIsDisconnecting] = useState(false);
+	const [disconnectTarget, setDisconnectTarget] = useState<DisconnectTarget | null>(null);
 	const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
 
-	const rows = view?.rows ?? [];
-	const facets = view?.facets ?? { groups: [], health: [], vendors: [] };
+	// ── Writes (ADR 0005 D4): each invalidates every key that shows what it changed ───────────
+	const reverify = useActionMutation(verifyCloudAccount, {
+		invalidates: connectorKeys(),
+		onSuccess: (result) => {
+			if (result.verified) toast.success("Verified.");
+			else toast.error(`Verification failed${result.error ? `: ${result.error}` : "."}`);
+		},
+	});
+	const rename = useActionMutation(renameCloudAccount, {
+		invalidates: connectorKeys(),
+		successMessage: "Account renamed.",
+	});
+	const disconnect = useActionMutation(disconnectConnector, {
+		invalidates: connectorKeys(),
+		successMessage: (_data) =>
+			disconnectTarget ? `Disconnected ${disconnectTarget.integration.name}.` : "Disconnected.",
+		onSuccess: () => setDisconnectTarget(null),
+	});
 
-	// The selected connector is derived from the live list (by slug) so the manage
-	// sheet reflects fresh data after a refresh (disconnect / rename / add).
+	const rows = board.data?.view.rows ?? [];
+	const facets = board.data?.view.facets ?? { groups: [], health: [], vendors: [] };
+
+	// The selected connector is derived from the live list (by slug) so the manage sheet reflects
+	// fresh data after any change (disconnect / rename / add — or one another member made).
 	const selectedIntegration = useMemo(
 		() => integrations.find((i) => i.slug === selectedSlug) ?? null,
 		[integrations, selectedSlug],
@@ -278,11 +267,12 @@ export function ConnectorsPage({
 		}
 	};
 
-	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet once,
-	// then clears the param so a refresh doesn't reopen it. handleConnect routes by category.
+	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet
+	// once, then clears the param so a refresh doesn't reopen it. Waits for the board, which says
+	// whether the viewer may connect and what the connector is.
 	const connectHandledRef = useRef(false);
 	useEffect(() => {
-		if (connectHandledRef.current || !canManage) return;
+		if (connectHandledRef.current || !board.data || !canManage) return;
 		const slug = searchParams.get("connect");
 		if (!slug) return;
 		connectHandledRef.current = true;
@@ -295,103 +285,57 @@ export function ConnectorsPage({
 		}
 		// handleConnect is intentionally excluded — the ref makes this run once.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [searchParams, integrations, canManage, orgSlug, router]);
+	}, [searchParams, integrations, board.data, canManage, orgSlug, router]);
 
 	const openManage = (integration: ConnectorWithConnection) => {
 		setSelectedSlug(integration.slug);
 		setDetailOpen(true);
 	};
 
-	/** Re-runs a failed cloud verification with the stored credentials (no re-entry). */
-	const handleReverify = async (integration: ConnectorWithConnection) => {
-		if (!integration.reverify_identity_id) return;
+	/** Re-runs a failed cloud verification with the stored configuration (no re-entry). */
+	const handleReverify = (integration: ConnectorWithConnection) => {
+		const identityId = integration.reverify_identity_id;
+		if (!identityId || reverify.isPending) return;
 		setConnectingSlug(integration.slug);
-		try {
-			await reverifyCloudIdentity(integration.reverify_identity_id);
-			toast.success(`Re-verifying ${integration.name}…`);
-			refreshBoard();
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : `Failed to re-verify ${integration.name}`,
-			);
-		} finally {
-			setConnectingSlug(null);
-		}
+		reverify.mutate({ identityId }, { onSettled: () => setConnectingSlug(null) });
 	};
 
 	/** Re-verifies one specific cloud account from the manage sheet (a provider can hold several, and
-	 *  only some of them may be broken). */
+	 *  only some of them may be broken). Settles either way; a failure was already reported. */
 	const handleReverifyAccount = async (identityId: string) => {
-		try {
-			await reverifyCloudIdentity(identityId);
-			toast.success("Re-verifying…");
-			refreshBoard();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to re-verify");
-		}
+		await reverify.mutateAsync({ identityId }).catch(() => undefined);
 	};
 
-	/** Renames a cloud account, then refreshes so the sheet shows the new name. */
+	/** Renames a cloud account. Rejects on failure so the sheet keeps the name being edited. */
 	const handleRename = async (identityId: string, name: string) => {
-		try {
-			await renameCloudIdentity(identityId, name);
-			toast.success("Account renamed.");
-			refreshBoard();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to rename");
-		}
+		await rename.mutateAsync({ identityId, name });
 	};
 
-	const confirmDisconnect = async () => {
-		if (!disconnectTarget) return;
-		const { integration, identityId } = disconnectTarget;
-		setIsDisconnecting(true);
-		try {
-			const cloudId =
-				identityId ?? integration.connection_details?.cloud_identity_id;
-			if (integration.category === "git") {
-				const result = await deleteProviderToken(
-					asGitProvider(integration.slug),
-				);
-				if (result.error) throw new Error(result.error);
-			} else if (integration.slug === "aws") {
-				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectAwsIdentity(cloudId);
-			} else if (integration.slug === "gcp") {
-				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectGcpIdentity(cloudId);
-			} else if (integration.slug === "azure") {
-				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectAzureIdentity(cloudId);
-			} else if (isEnumMember(integration.slug, EXTRA_CLOUDS)) {
-				if (!cloudId) throw new Error("Missing identity ID");
-				await disconnectExtraCloud(cloudId, integration.slug);
-			} else if (integration.auth_method === "api_key") {
-				const result = await deleteConnectorCredential(integration.slug);
-				if (!result.ok) throw new Error(result.error);
-			} else {
-				// No branch matched — a new connector slug that nothing above handles. Fail loudly rather
-				// than falling through to the success toast below having done nothing.
-				throw new Error(
-					`No disconnect path for ${integration.slug}. This is a bug — please report it.`,
-				);
-			}
-			toast.success(`Disconnected ${integration.name}.`);
-			setDisconnectTarget(null);
-			refreshBoard();
-		} catch (err) {
-			console.error("Disconnect error:", err);
-			// Surface the real reason. A ForbiddenError and a provider mismatch used to render as the
-			// same opaque string, which made a failed disconnect impossible to act on.
-			toast.error(
-				err instanceof Error
-					? err.message
-					: `Failed to disconnect ${integration.name}`,
-			);
-		} finally {
-			setIsDisconnecting(false);
-		}
+	/** Confirms the dialog: one disconnect at a time (the button is disabled while it runs). */
+	const confirmDisconnect = () => {
+		if (!disconnectTarget || disconnect.isPending) return;
+		disconnect.mutate(disconnectTarget);
 	};
+
+	// ── The four renders a read can have: pending, refused, failed, data ─────────────────────
+	// A failed read is never shown as an empty board, nor as a skeleton that never ends.
+	if (board.isPending) return <ConnectorsSkeleton />;
+	if (board.isError && board.data === undefined) {
+		return isRefused(board.error) ? (
+			<EmptyState
+				className="border"
+				icon={<ShieldOff />}
+				title="Sign in again to see connectors"
+				description="Your session can no longer read this workspace. Sign in again; if you still cannot see connectors, ask an owner to check your membership."
+			/>
+		) : (
+			<RegionError
+				title="Couldn't load connectors"
+				description="The connector list did not load. Your connections are unchanged."
+				onRetry={() => void board.refetch()}
+			/>
+		);
+	}
 
 	return (
 		<>
@@ -404,28 +348,40 @@ export function ConnectorsPage({
 					count={rows.length}
 				/>
 
-				<ConnectorsFilterBar
-					facets={facets}
-					end={
-						<>
-							<ViewToggle value={viewMode} onChange={setViewMode} />
-							<a
-								href="/docs/concepts/connectors"
-								target="_blank"
-								rel="noopener noreferrer"
-								title="What are connectors?"
-								className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
-							>
-								<BookOpen className="size-4" />
-								<span className="sr-only">What are connectors?</span>
-							</a>
-						</>
-					}
-				/>
+				{/* Disabled until React has hydrated: before that, a keystroke lands in server HTML that
+				    hydration then resets — the search the user typed (or a facet they opened) would be
+				    silently dropped. Native `disabled` on the fieldset covers every control in the bar. */}
+				<fieldset disabled={!hydrated} className="m-0 min-w-0 border-0 p-0">
+					<ConnectorsFilterBar
+						facets={facets}
+						end={
+							<>
+								<ViewToggle value={viewMode} onChange={setViewMode} />
+								<a
+									href="/docs/concepts/connectors"
+									target="_blank"
+									rel="noopener noreferrer"
+									title="What are connectors?"
+									className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
+								>
+									<BookOpen className="size-4" />
+									<span className="sr-only">What are connectors?</span>
+								</a>
+							</>
+						}
+					/>
+				</fieldset>
 
-				{/* Dim while a newly-keyed view is still resolving — keepPreviousData keeps the
-				    previous rows on screen instead of flashing a skeleton. */}
-				<div className={cn("space-y-6", isPlaceholderData && "opacity-60")}>
+				{/* Always mounted, so a screen reader announces the hint when its text appears. */}
+				<p role="status" className="-mt-4 text-ui-sm text-text-tertiary empty:hidden">
+					{filters.search.trim().length > CONNECTOR_SEARCH_MAX
+						? `Search uses the first ${CONNECTOR_SEARCH_MAX} characters.`
+						: ""}
+				</p>
+
+				{/* Dim while a new filter's answer is resolving — keepPreviousData keeps the previous
+				    rows on screen instead of flashing a skeleton. */}
+				<div className={cn("space-y-6", board.isPlaceholderData && "opacity-60")}>
 					{GROUP_META.map((group) => {
 						const items = rows.filter((i) => i.group === group.id);
 						if (items.length === 0) return null;
@@ -463,7 +419,7 @@ export function ConnectorsPage({
 												integration={integration}
 												canManage={canManage}
 												platformConfigured={
-													platformConfigured?.[integration.slug] ?? true
+													platformConfigured[integration.slug] ?? true
 												}
 												isConnecting={
 													connectingSlug === integration.slug ||
@@ -493,7 +449,7 @@ export function ConnectorsPage({
 														integration={integration}
 														canManage={canManage}
 														platformConfigured={
-															platformConfigured?.[integration.slug] ?? true
+															platformConfigured[integration.slug] ?? true
 														}
 														isConnecting={
 															connectingSlug === integration.slug ||
@@ -517,7 +473,7 @@ export function ConnectorsPage({
 							className="border"
 							icon={<SearchX />}
 							title="No connectors match"
-							description={`None of the ${view?.total ?? integrations.length} connectors in the catalog match these filters.`}
+							description={`None of the ${board.data?.view.total ?? 0} connectors in the catalog match these filters.`}
 							action={
 								<Button variant="outline" onClick={resetFilters}>
 									Reset filters
@@ -534,9 +490,7 @@ export function ConnectorsPage({
 				onOpenChange={setDetailOpen}
 				canManage={canManage}
 				platformConfigured={
-					selectedIntegration
-						? (platformConfigured?.[selectedIntegration.slug] ?? true)
-						: true
+					selectedIntegration ? (platformConfigured[selectedIntegration.slug] ?? true) : true
 				}
 				isConnecting={
 					selectedIntegration
@@ -564,10 +518,7 @@ export function ConnectorsPage({
 			<Sheet
 				open={!!apiKeySlug}
 				onOpenChange={(open) => {
-					if (!open) {
-						setApiKeySlug(null);
-						refreshBoard();
-					}
+					if (!open) setApiKeySlug(null);
 				}}
 			>
 				<SheetContent
@@ -600,7 +551,9 @@ export function ConnectorsPage({
 			{/* Disconnect confirmation */}
 			<AlertDialog
 				open={!!disconnectTarget}
-				onOpenChange={(open) => !open && setDisconnectTarget(null)}
+				onOpenChange={(open) => {
+					if (!open && !disconnect.isPending) setDisconnectTarget(null);
+				}}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -616,14 +569,19 @@ export function ConnectorsPage({
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={isDisconnecting}>
+						<AlertDialogCancel disabled={disconnect.isPending}>
 							Cancel
 						</AlertDialogCancel>
 						<AlertDialogAction
-							onClick={confirmDisconnect}
-							disabled={isDisconnecting}
+							onClick={(event) => {
+								// Keep the dialog open until the action answers: it closes on success, and on a
+								// refusal it stays with the toast so the user can cancel or retry.
+								event.preventDefault();
+								confirmDisconnect();
+							}}
+							disabled={disconnect.isPending}
 						>
-							{isDisconnecting ? (
+							{disconnect.isPending ? (
 								<Loader2 className="mr-1.5 size-3.5 animate-spin" />
 							) : (
 								<Unplug className="mr-1.5 size-3.5" />

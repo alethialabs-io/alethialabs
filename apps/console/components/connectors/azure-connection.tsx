@@ -22,7 +22,7 @@ import {
 	VerifySection,
 } from "@/components/connectors/connection-ui";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { connectorAssetUrl } from "@/components/connectors/connector-assets";
@@ -69,7 +69,7 @@ interface AzureConnectionProps {
 		tenantId: string,
 		clientId: string,
 		subscriptionId: string,
-	) => Promise<VerifyOutcome>;
+	) => ReturnType<ConnectSave>;
 }
 
 export function AzureConnection({ onComplete }: AzureConnectionProps) {

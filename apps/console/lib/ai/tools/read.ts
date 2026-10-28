@@ -11,7 +11,7 @@ import {
 } from "@/app/server/actions/billing";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getLatestDriftPosture } from "@/app/server/actions/drift";
 import { getJobs } from "@/app/server/actions/jobs";
 import { readJob, readPlanResult } from "@/lib/rpc/procedures/jobs";
@@ -265,7 +265,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 				"List pluggable provider connectors (dns/secrets/registry/observability/git/cloud) and whether the user has connected each. PDP-gated read.",
 			inputSchema: z.object({}),
 			execute: async () => {
-				const connectors = await getConnectorsWithStatus();
+				const connectors = await readConnectorsWithStatus();
 				return {
 					connectors: connectors.map((c) => ({
 						slug: c.slug,

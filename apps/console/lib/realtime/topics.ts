@@ -34,6 +34,7 @@ export const TOPICS = [
 	"organization",
 	"members",
 	"access",
+	"connectors",
 ] as const;
 
 /** One topic of {@link TOPICS}. */
