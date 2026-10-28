@@ -15,8 +15,25 @@ import type { Query } from "@tanstack/react-query";
  * filter the page would serialize those a second time.
  */
 export function isPeopleRead(query: Pick<Query, "queryKey" | "state">): boolean {
-	const [path] = query.queryKey;
-	return query.state.status === "success" && Array.isArray(path) && path[0] === "members";
+	return settledReadOf("members")(query);
+}
+
+/**
+ * The `dehydrate` filter for a page whose reads live under one or more read-router domains — the
+ * SSO page (`sso`), Classification (`classification`), Activity (`activity`, plus the `members.list`
+ * it names actors with). Settled reads only: a refusal is decided on the server and rendered there,
+ * and a failure is re-asked by the browser rather than shipped as a cached error.
+ */
+export function settledReadOf(...domains: string[]): (query: Pick<Query, "queryKey" | "state">) => boolean {
+	return (query) => {
+		const [path] = query.queryKey;
+		return (
+			query.state.status === "success" &&
+			Array.isArray(path) &&
+			typeof path[0] === "string" &&
+			domains.includes(path[0])
+		);
+	};
 }
 
 /** Whether a read failed with one of the read router's typed refusals. */

@@ -2,70 +2,39 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Activity-log data hook — the console filter standard's fetch half (#578), in its
-// cursor-paginated form: the NORMALIZED filter query lives in the key (equal filters hit
-// the cache), the id-descending cursor is the infinite query's pageParam (never in the
-// key), and keepPreviousData keeps the previous rows on screen (dimmed) while a filter
-// change refetches. Replaces the page's raw `useEffect` + `cancelled`-flag chain.
+// Activity-log data hook — the console filter standard's fetch half (#578), in its cursor-paginated
+// form, over the `activity.page` GET procedure (#6129, ADR 0005 D1): the NORMALIZED filter query is
+// the input (equal filters hit the cache), the id-descending cursor is the infinite query's
+// pageParam (never in the key), and keepPreviousData keeps the previous rows on screen (dimmed)
+// while a filter change refetches. The route prefetches the first page under the same key
+// (`prefetchActivityFeed`), so the feed paints with rows. Live: an `activity` hint (a row was
+// recorded) invalidates it (lib/query/topics.ts).
 
-import {
-	type InfiniteData,
-	keepPreviousData,
-	useInfiniteQuery,
-	useQuery,
-} from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import {
-	type ActivityPage,
-	getActivityLog,
-	type ActivityQuery,
-} from "@/app/server/actions/activity";
-import { qk } from "@/lib/query/keys";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import type { ActivityQuery } from "@/app/server/actions/activity";
+import { normalizeActivityQuery } from "@/lib/query/activity-query";
 import { orpc } from "@/lib/rpc/client";
-
-/** Stable, cache-friendly copy of an ActivityQuery: arrays sorted, empties dropped,
- * cursor excluded (it's the pageParam). Pure — exported for tests. */
-export function normalizeActivityQuery(query: ActivityQuery): ActivityQuery {
-	const sorted = (xs?: string[]) => (xs && xs.length ? [...xs].sort() : undefined);
-	return {
-		...(query.projectId ? { projectId: query.projectId } : {}),
-		...(query.from ? { from: query.from } : {}),
-		...(query.to ? { to: query.to } : {}),
-		...(query.search?.trim() ? { search: query.search.trim() } : {}),
-		...(sorted(query.actorIds) ? { actorIds: sorted(query.actorIds) } : {}),
-		...(sorted(query.resourceTypes)
-			? { resourceTypes: sorted(query.resourceTypes) }
-			: {}),
-		...(sorted(query.resourceIds) ? { resourceIds: sorted(query.resourceIds) } : {}),
-		...(query.decision != null ? { decision: query.decision } : {}),
-	};
-}
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 
 /**
  * Cursor-paginated activity rows for the current filters. `data.pages` accumulate as
  * `fetchNextPage` walks the id-descending cursor; a filter change swaps the key and
  * `keepPreviousData` holds the old rows (dim with `isPlaceholderData`) until page one
- * of the new result lands.
+ * of the new result lands. A refusal (no `view_activity`) is never retried.
  */
 export function useActivityQuery(query: ActivityQuery) {
-	const params = useParams<{ org: string }>();
-	const org = params.org;
-	// Explicit generics pin the page-param type to the cursor (number | null) so `initialPageParam:
-	// null` needs no assertion — inference alone would fix it to `null` and clash with getNextPageParam.
-	return useInfiniteQuery<
-		ActivityPage,
-		Error,
-		InfiniteData<ActivityPage, number | null>,
-		ReturnType<typeof qk.activity>,
-		number | null
-	>({
-		queryKey: qk.activity(org, query),
-		queryFn: ({ pageParam }) =>
-			getActivityLog(pageParam == null ? query : { ...query, cursor: pageParam }),
-		initialPageParam: null,
-		getNextPageParam: (last) => last.nextCursor,
-		placeholderData: keepPreviousData,
-	});
+	// Normalized HERE, at the key: the step is idempotent, so a caller that already normalized (the
+	// feed, the route's prefetch) gets the identical key, and one that did not cannot fragment the cache.
+	const input = normalizeActivityQuery(query);
+	return useInfiniteQuery(
+		orpc.activity.page.infiniteOptions({
+			input: (cursor: number | null) => (cursor == null ? input : { ...input, cursor }),
+			initialPageParam: null,
+			getNextPageParam: (last) => last.nextCursor,
+			placeholderData: keepPreviousData,
+			retry: retryUnlessRefused,
+		}),
+	);
 }
 
 /**

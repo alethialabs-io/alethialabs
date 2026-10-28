@@ -98,6 +98,21 @@ function scan() {
 	return entries.sort();
 }
 
+/**
+ * How many console files import at least one CALLABLE identifier from a server-action module — the
+ * population the matcher reads. Every write in the console is still a server action (ADR 0005 D4),
+ * so this is never legitimately zero; a zero means the walk or the import pattern went blind.
+ */
+function actionImportingFiles() {
+	let n = 0;
+	for (const dir of SCAN_DIRS) {
+		for (const file of walk(join(CONSOLE, dir))) {
+			if (actionImports(readFileSync(file, "utf8")).size > 0) n++;
+		}
+	}
+	return n;
+}
+
 /** Fixtures for the matcher: each must be classified as stated, or the instrument is blind. */
 function selfTest() {
 	const cases = [
@@ -115,9 +130,16 @@ function selfTest() {
 			console.error(`✗ self-test: expected ${JSON.stringify(want)}, got ${JSON.stringify(got)} for:\n${src}`);
 		}
 	}
-	if (scan().length === 0) {
+	// THE BLINDNESS PROBE asks about the population the matcher reads, not about what it finds. It
+	// used to fail on zero action-backed READS — a sound question while reads remained, and a wrong one
+	// once the programme finished: #6129 moved the last ten onto the read router, which is the state
+	// this ratchet exists to reach, and a probe that fails on its goal can only be "fixed" by putting
+	// a read back. The console's WRITES are still server actions (ADR 0005 D4), so a scan that sees
+	// no file importing one is the walk or the import pattern gone blind — and the fixtures above keep
+	// the queryFn half honest.
+	if (actionImportingFiles() === 0) {
 		failed++;
-		console.error("✗ self-test: the console scan found ZERO action-backed reads — the instrument is blind or the ledger is obsolete.");
+		console.error("✗ self-test: the console scan found ZERO files importing a server action — the walk or the import pattern is blind.");
 	}
 	if (failed) process.exit(1);
 	console.log(`✓ check-read-transport self-test: ${cases.length} fixtures classified correctly.`);

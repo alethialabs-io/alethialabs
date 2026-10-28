@@ -2,42 +2,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import {
-	keepPreviousData,
-	useMutation,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
-import { listDimensions } from "@/app/server/actions/classification/dimensions";
+// Classification reads and the chip writes (#6129, ADR 0005 D1/D4). Every read is a
+// `classification.*` GET procedure (lib/rpc/procedures/classification.ts); the settings route
+// prefetches the taxonomy and the edit decision, so the manager paints with them. The chip writes go
+// through `useActionMutation` with an optimistic patch. Live: a `classification` hint (a dimension,
+// a value or an assignment changed — their triggers in programmables.sql) invalidates
+// `orpc.classification.key()` (lib/query/topics.ts), so a chip another member pins shows here
+// without a reload.
+
+import { keepPreviousData, type QueryKey, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
 	assignClassification,
-	canEditClassification,
-	getAssignments,
-	getAssignmentsForKind,
 	unassignClassification,
 } from "@/app/server/actions/classification/assignments";
+import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { AssignedValue } from "@/lib/queries/classification";
-import { qk } from "./keys";
+import { orpc } from "@/lib/rpc/client";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
+
+/** Every classification read's key prefix — what a classification write invalidates. */
+export function classificationReadKeys(): QueryKey[] {
+	return [orpc.classification.key()];
+}
+
+/** The taxonomy read's input for a search: `{}` (the shared base every picker reuses) when blank. */
+export function dimensionsInput(search?: string): { search?: string } {
+	const q = search?.trim();
+	return q ? { search: q } : {};
+}
 
 /**
- * The org's classification taxonomy (dimensions + values). Shared by the settings manager
- * and every picker; org-scoped server-side so the key isn't org-slugged. Pass `search` to
- * filter server-side (the settings manager) — previous results are kept while the next query
- * loads so the list doesn't flash, and `isFetching` drives the in-flight indicator. With no
- * `search` the key is the shared base every picker reuses.
+ * The org's classification taxonomy (dimensions + values). Shared by the settings manager and
+ * every picker. Pass `search` to filter server-side (the settings manager) — previous results are
+ * kept while the next query loads so the list doesn't flash, and `isFetching` drives the in-flight
+ * indicator. With no `search` the key is the shared base every picker reuses.
  */
-export function useDimensionsQuery(
-	search?: string,
-): UseQueryResult<DimensionDTO[]> {
-	const q = search?.trim() || undefined;
-	return useQuery({
-		queryKey: qk.classificationDimensions(q),
-		queryFn: () => listDimensions(q),
-		placeholderData: keepPreviousData,
-	});
+export function useDimensionsQuery(search?: string): UseQueryResult<DimensionDTO[]> {
+	return useQuery(
+		orpc.classification.dimensions.queryOptions({
+			input: dimensionsInput(search),
+			placeholderData: keepPreviousData,
+			retry: retryUnlessRefused,
+		}),
+	);
 }
 
 /**
@@ -46,11 +55,12 @@ export function useDimensionsQuery(
  * dedupe to a single request.
  */
 export function useCanEditClassification(): UseQueryResult<boolean> {
-	return useQuery({
-		queryKey: qk.classificationCanEdit(),
-		queryFn: () => canEditClassification(),
-		staleTime: 5 * 60_000,
-	});
+	return useQuery(orpc.classification.canEdit.queryOptions({ input: undefined, staleTime: 5 * 60_000 }));
+}
+
+/** The key of one resource's chips. */
+function assignmentsKey(kind: ResourceKind, resourceId: string): QueryKey {
+	return orpc.classification.assignments.queryKey({ input: { kind, resourceId } });
 }
 
 /**
@@ -63,14 +73,15 @@ export function useAssignmentsQuery(
 	resourceId: string,
 	initialData?: AssignedValue[],
 ): UseQueryResult<AssignedValue[]> {
-	return useQuery({
-		queryKey: qk.classificationAssignments(kind, resourceId),
-		queryFn: () => getAssignments(kind, resourceId),
-		initialData,
-		// Mark seeded data fresh so a batch-hydrated list of N rows costs zero per-row
-		// fetches (each row trusts its slice until the 30s staleTime elapses).
-		initialDataUpdatedAt: initialData ? Date.now() : undefined,
-	});
+	return useQuery(
+		orpc.classification.assignments.queryOptions({
+			input: { kind, resourceId },
+			initialData,
+			// Mark seeded data fresh so a batch-hydrated list of N rows costs zero per-row
+			// fetches (each row trusts its slice until the staleTime elapses).
+			initialDataUpdatedAt: initialData ? Date.now() : undefined,
+		}),
+	);
 }
 
 /**
@@ -82,25 +93,24 @@ export function useAssignmentsForKind(
 	kind: ResourceKind,
 	resourceIds: string[],
 ): UseQueryResult<Record<string, AssignedValue[]>> {
-	return useQuery({
-		queryKey: qk.classificationAssignmentsForKind(kind, resourceIds),
-		queryFn: () => getAssignmentsForKind(kind, resourceIds),
-		enabled: resourceIds.length > 0,
-	});
+	return useQuery(
+		orpc.classification.assignmentsForKind.queryOptions({
+			input: { kind, resourceIds },
+			enabled: resourceIds.length > 0,
+		}),
+	);
 }
 
 /**
- * Assign/clear mutations for a resource's chips, with optimistic cache updates: the chip
- * appears/disappears immediately and rolls back on error. Single-valued swaps are resolved
- * server-side, so we refetch on settle to reconcile the exact server state.
+ * Assign/clear mutations for a resource's chips, through the mutation contract: the chip
+ * appears/disappears immediately (an optimistic patch, rolled back on a refusal), the call is
+ * pending while in flight (bind it to the controls' `disabled`), and every classification read is
+ * invalidated when it settles — this resource's chips, the batched list hydration, the taxonomy's
+ * usage counts and the breakdowns. Single-valued swaps are resolved server-side; the refetch
+ * reconciles the exact server state.
  */
-export function useAssignmentMutations(
-	kind: ResourceKind,
-	resourceId: string,
-	dimensions: DimensionDTO[],
-) {
-	const qc = useQueryClient();
-	const key = qk.classificationAssignments(kind, resourceId);
+export function useAssignmentMutations(kind: ResourceKind, resourceId: string, dimensions: DimensionDTO[]) {
+	const key = assignmentsKey(kind, resourceId);
 
 	/** Builds the AssignedValue chip for a value id from the loaded taxonomy. */
 	function chipFor(valueId: string): AssignedValue | null {
@@ -124,53 +134,46 @@ export function useAssignmentMutations(
 		return null;
 	}
 
-	const assign = useMutation({
-		mutationFn: (valueId: string) =>
-			assignClassification({
-				value_id: valueId,
-				resource_kind: kind,
-				resource_id: resourceId,
-			}),
-		onMutate: async (valueId: string) => {
-			await qc.cancelQueries({ queryKey: key });
-			const prev = qc.getQueryData<AssignedValue[]>(key) ?? [];
-			const chip = chipFor(valueId);
-			if (chip) {
-				// Single-valued dimensions replace their existing chip; multi appends.
-				const next = chip.multi
-					? [...prev, chip]
-					: [...prev.filter((c) => c.dimension_id !== chip.dimension_id), chip];
-				qc.setQueryData<AssignedValue[]>(key, next);
-			}
-			return { prev };
-		},
-		onError: (_e, _v, ctx) => {
-			if (ctx?.prev) qc.setQueryData(key, ctx.prev);
-		},
-		onSettled: () => qc.invalidateQueries({ queryKey: key }),
-	});
+	/** The chips currently cached for this resource (none when the cache holds something else). */
+	function chipsOf(current: unknown): AssignedValue[] {
+		return Array.isArray(current) ? current : [];
+	}
 
-	const unassign = useMutation({
-		mutationFn: (valueId: string) =>
-			unassignClassification({
-				value_id: valueId,
-				resource_kind: kind,
-				resource_id: resourceId,
-			}),
-		onMutate: async (valueId: string) => {
-			await qc.cancelQueries({ queryKey: key });
-			const prev = qc.getQueryData<AssignedValue[]>(key) ?? [];
-			qc.setQueryData<AssignedValue[]>(
-				key,
-				prev.filter((c) => c.value_id !== valueId),
-			);
-			return { prev };
+	const assign = useActionMutation(
+		(valueId: string) =>
+			assignClassification({ value_id: valueId, resource_kind: kind, resource_id: resourceId }),
+		{
+			invalidates: classificationReadKeys(),
+			optimistic: [
+				{
+					key,
+					update: (current, valueId) => {
+						const prev = chipsOf(current);
+						const chip = chipFor(valueId);
+						if (!chip) return prev;
+						// Single-valued dimensions replace their existing chip; multi appends.
+						return chip.multi
+							? [...prev, chip]
+							: [...prev.filter((c) => c.dimension_id !== chip.dimension_id), chip];
+					},
+				},
+			],
 		},
-		onError: (_e, _v, ctx) => {
-			if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+	);
+
+	const unassign = useActionMutation(
+		(valueId: string) =>
+			unassignClassification({ value_id: valueId, resource_kind: kind, resource_id: resourceId }),
+		{
+			invalidates: classificationReadKeys(),
+			optimistic: [
+				{
+					key,
+					update: (current, valueId) => chipsOf(current).filter((c) => c.value_id !== valueId),
+				},
+			],
 		},
-		onSettled: () => qc.invalidateQueries({ queryKey: key }),
-	});
+	);
 
 	return { assign, unassign };
 }

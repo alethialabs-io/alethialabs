@@ -10,7 +10,8 @@
 // an empty pair means "the default preset window", resolved once at mount.
 
 import type { ActivityQuery } from "@/app/server/actions/activity";
-import { normalizeActivityQuery } from "@/lib/query/use-activity-query";
+import { normalizeActivityQuery } from "@/lib/query/activity-query";
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 import type { DateRange } from "@repo/ui/range";
 
 /**
@@ -108,4 +109,30 @@ export function activityQueryFrom({
 		resourceIds,
 		search,
 	});
+}
+
+/** A default window as it travels from the route to the feed: two ISO instants. */
+export interface ActivityWindow {
+	from: string;
+	to: string;
+}
+
+/**
+ * The first page's query for a URL, against the default window the ROUTE resolved — the
+ * `activity.page` input the feed settles on once `useFilterUrlSync` has read the link (#4999's rule,
+ * #6129). The default window is resolved once, on the server, and handed to the feed, because a
+ * window resolved separately in the browser lands a few milliseconds later: a different key, so the
+ * prefetched page would never be read.
+ */
+export function activityQueryFromUrl(
+	params: ParamReader,
+	defaultWindow: ActivityWindow,
+	pinnedProjectId?: string,
+): ActivityQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_ACTIVITY_FILTERS);
+	const range = activityRange(filters, {
+		from: new Date(defaultWindow.from),
+		to: new Date(defaultWindow.to),
+	});
+	return activityQueryFrom({ filters, range, search: filters.search, pinnedProjectId });
 }

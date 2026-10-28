@@ -13,8 +13,8 @@
 //   - the console's cluster list, `readClusterList` / `readClusters` (lib/rpc/procedures/clusters.ts),
 //     gated on the org-wide `project:view` — it keeps only the clusters of projects the caller may
 //     view, and what the page counts is that list's length;
-//   - classification on a project-owned resource, in the console (`getAssignments`,
-//     `getAssignmentsForKind`, `assignClassification`, `unassignClassification`) and the CLI
+//   - classification on a project-owned resource, in the console (`classification.assignments`,
+//     `classification.assignmentsForKind`, `assignClassification`, `unassignClassification`) and the CLI
 //     (`GET` / `POST` / `DELETE /api/cli/classification/assignments`) — `view` to read, `edit` to
 //     change (lib/classification/resource-project.ts).
 //
@@ -73,10 +73,14 @@ import {
 } from "@/app/server/actions/projects";
 import {
 	assignClassification,
-	getAssignments,
-	getAssignmentsForKind,
 	unassignClassification,
 } from "@/app/server/actions/classification/assignments";
+// The chip reads are the `classification.assignments` / `.assignmentsForKind` GET procedures since
+// #6129; their bodies — and the #6281 project check — moved to the procedure module unchanged.
+import {
+	readAssignments as getAssignments,
+	readAssignmentsForKind as getAssignmentsForKind,
+} from "@/lib/rpc/procedures/classification";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { readClusterList, readClusters } from "@/lib/rpc/procedures/clusters";
 import { ensureMemberGrant } from "@/lib/authz/grants";
@@ -459,18 +463,23 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 				resource_kind: kind,
 				resource_id: id,
 			});
-			await expect(actingAs(EDIT_DENIED, () => assignClassification(input("project", P)))).rejects.toThrow(
-				"Resource not found",
-			);
+			// A `defineAction` since #6129: the refusal is a result, answered as an unknown resource is.
+			const notFound = { ok: false, error: { kind: "not-found", message: "Resource not found" } };
+			await expect(actingAs(EDIT_DENIED, () => assignClassification(input("project", P)))).resolves.toEqual(notFound);
 			await expect(
 				actingAs(EDIT_DENIED, () => assignClassification(input("project_environment", ENV[P] ?? ""))),
-			).rejects.toThrow("Resource not found");
+			).resolves.toEqual(notFound);
 			expect(await assignedValues(P)).not.toContain(VALUE.added);
 			expect(await assignedValues(ENV[P] ?? "")).not.toContain(VALUE.added);
 			// The same member is served Q; a member without the deny is served P.
-			await actingAs(EDIT_DENIED, () => assignClassification(input("project", Q)));
+			await expect(actingAs(EDIT_DENIED, () => assignClassification(input("project", Q)))).resolves.toEqual({
+				ok: true,
+				data: { assigned: true },
+			});
 			expect(await assignedValues(Q)).toContain(VALUE.added);
-			await actingAs(OPERATOR, () => assignClassification(input("project_environment", ENV[P] ?? "")));
+			await expect(
+				actingAs(OPERATOR, () => assignClassification(input("project_environment", ENV[P] ?? ""))),
+			).resolves.toEqual({ ok: true, data: { assigned: true } });
 			expect(await assignedValues(ENV[P] ?? "")).toContain(VALUE.added);
 		});
 
@@ -481,7 +490,7 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 				actingAs(RECORD_EDIT, () =>
 					assignClassification({ value_id: VALUE.added, resource_kind: "project", resource_id: P }),
 				),
-			).rejects.toThrow("Resource not found");
+			).resolves.toMatchObject({ ok: false, error: { kind: "not-found" } });
 			await settlesAt(refusals, before + 1);
 		});
 
@@ -490,8 +499,9 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 				actingAs(EDIT_DENIED, () =>
 					unassignClassification({ value_id: VALUE.seeded, resource_kind: "project", resource_id: id }),
 				);
-			await expect(unassign(randomUUID())).resolves.toBeUndefined();
-			await expect(unassign(P)).resolves.toBeUndefined();
+			// The same answer for both: done, nothing cleared (a `defineAction` result since #6129).
+			await expect(unassign(randomUUID())).resolves.toEqual({ ok: true, data: null });
+			await expect(unassign(P)).resolves.toEqual({ ok: true, data: null });
 			expect(await assignedValues(P)).toContain(VALUE.seeded);
 		});
 

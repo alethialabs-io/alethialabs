@@ -2,17 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// The Activity log's one WRITE-SHAPED action, plus the feed's types (ADR 0005 D1/D4, #6129). The
+// feed's reads — the log page and the caller's permissions — moved to `lib/rpc/procedures/
+// activity.ts` and are served over GET. The CSV export stays an action: it is not a page read, and
+// an allowed `export_activity` is RECORDED in the log (it is not READ_ONLY), so it is a write to the
+// log as much as a read of it. It is a `defineAction` returning `ActionResult<string>`.
+
 import { desc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { getPdp } from "@/lib/authz";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { authzActivityLog, user } from "@/lib/db/schema";
-import {
-	type ActivityFacets,
-	activitySelect,
-	queryActivityPage,
-} from "@/lib/queries/activity";
+import { type ActivityFacets, activitySelect } from "@/lib/queries/activity";
 
 export interface ActivityRow {
 	id: string;
@@ -39,11 +44,11 @@ export interface ActivityPage {
 	facets: ActivityFacets | null;
 }
 
-/** Filters + cursor for {@link getActivityLog}; all fields optional (omitted = no filter). */
+/** Filters + cursor for the `activity.page` read; all fields optional (omitted = no filter). */
 export interface ActivityQuery {
 	/** Last row `id` seen — fetches strictly-older rows. Omit/null for the first page. */
 	cursor?: number | null;
-	/** Page size (rows returned); defaults to {@link PAGE_SIZE}. */
+	/** Page size (rows returned); defaults to the read's page size (50). */
 	limit?: number;
 	/** SCOPE, not a filter: a project's own Activity page pins the feed to this project id. The
 	 *  facet counts see it; they never see any of the filters below. */
@@ -63,46 +68,11 @@ export interface ActivityQuery {
 	search?: string;
 }
 
-// The viewer pages the log a screenful at a time (cursor by id); export dumps a larger cap.
-const PAGE_SIZE = 50;
+// Export dumps a larger cap than the feed's page.
 const EXPORT_LIMIT = 10_000;
 
-/**
- * A filtered, cursor-paginated page of the active org's Activity log — every recorded action +
- * denial — newest first (by insertion id), with the filter bar's facet counts on the first page.
- * Community-real (the PDP writes it). Scoped by `org_id`; all filtering happens in
- * `queryActivityPage` (lib/queries/activity.ts) so paging stays correct across pages.
- *
- * Gated on `activity:view_activity`, the same permission `app/api/cli/activity/route.ts`
- * enforces (#3932) — before this, any org member read the whole log here while the CLI refused
- * them. A successful `view_activity` is not recorded (READ_ONLY in lib/authz/activity.ts), so
- * paging the feed does not write rows into the log it is reading; a denial is recorded.
- */
-export async function getActivityLog(query: ActivityQuery = {}): Promise<ActivityPage> {
-	const actor = await authorize("view_activity", { type: "activity" });
-	return queryActivityPage(actor.orgId, query, PAGE_SIZE);
-}
-
-/** What the caller may do with the Activity log: read it, and export it. */
-export interface ActivityPermissions {
-	canView: boolean;
-	canExport: boolean;
-}
-
-/**
- * The caller's `activity:view_activity` / `activity:export_activity` decisions, for the Activity
- * pages to decide what to render (#3932). Uses `can()`, so asking records nothing; the actions
- * above enforce the same permissions themselves, so this is presentation, not the gate.
- */
-export async function getActivityPermissions(): Promise<ActivityPermissions> {
-	const actor = await currentActor();
-	const pdp = getPdp();
-	const [view, exp] = await Promise.all([
-		pdp.can(actor, "view_activity", { type: "activity" }),
-		pdp.can(actor, "export_activity", { type: "activity" }),
-	]);
-	return { canView: view.allowed, canExport: exp.allowed };
-}
+/** The export takes no arguments; the org is the request's address. */
+const exportInput = z.object({});
 
 /** Escapes a value as a CSV cell (always quoted, doubled inner quotes). */
 function csvCell(value: string | boolean | null): string {
@@ -111,47 +81,45 @@ function csvCell(value: string | boolean | null): string {
 }
 
 /**
- * Exports the org's Activity log as CSV. Enforces the `activityExport` entitlement
- * server-side (not just in the UI) — community/unlicensed callers are rejected — AND the
- * `activity:export_activity` permission (#3932), which the entitlement alone never checked.
+ * Exports the addressed org's Activity log as CSV. Enforces the `activityExport` entitlement
+ * server-side (not just in the UI) — community/unlicensed callers get an `entitlement` refusal —
+ * AND the `activity:export_activity` permission (#3932), which the entitlement alone never checked
+ * (a `forbidden` result).
  *
- * The entitlement is checked FIRST so an unlicensed call is refused without touching the PDP:
- * an allowed `export_activity` is recorded in the Activity log (it is not READ_ONLY), and a row
- * saying "exported the activity log" must not be written for an export that was then refused.
+ * The entitlement is checked FIRST so an unlicensed call is refused without touching the PDP: an
+ * allowed `export_activity` is recorded in the Activity log (it is not READ_ONLY), and a row saying
+ * "exported the activity log" must not be written for an export that was then refused.
  */
-export async function getActivityExportCsv(): Promise<string> {
-	const actor = await currentActor();
-	if (!getEntitlements(actor).activityExport) {
-		throw new Error("Activity export requires an Enterprise license.");
-	}
-	await getPdp().enforce(actor, "export_activity", { type: "activity" });
-	const rows = await getServiceDb()
-		.select(activitySelect())
-		.from(authzActivityLog)
-		.leftJoin(user, eq(authzActivityLog.actor_id, user.id))
-		.where(eq(authzActivityLog.org_id, actor.orgId))
-		.orderBy(desc(authzActivityLog.id))
-		.limit(EXPORT_LIMIT);
+export async function getActivityExportCsv(raw: z.input<typeof exportInput> = {}): Promise<ActionResult<string>> {
+	return defineAction({
+		input: exportInput,
+		run: async () => {
+			const actor = await currentActor();
+			if (!getEntitlements(actor).activityExport) {
+				throw new ActionRefusal("entitlement", "Activity export requires an Enterprise license.", "activityExport");
+			}
+			await getPdp().enforce(actor, "export_activity", { type: "activity" });
+			const rows = await getServiceDb()
+				.select(activitySelect())
+				.from(authzActivityLog)
+				.leftJoin(user, eq(authzActivityLog.actor_id, user.id))
+				.where(eq(authzActivityLog.org_id, actor.orgId))
+				.orderBy(desc(authzActivityLog.id))
+				.limit(EXPORT_LIMIT);
 
-	const header = [
-		"time",
-		"actor",
-		"action",
-		"resource_type",
-		"resource_id",
-		"decision",
-		"reason",
-	].join(",");
-	const lines = rows.map((r) =>
-		[
-			csvCell(r.ts.toISOString()),
-			csvCell(r.actorEmail ?? r.actorId),
-			csvCell(r.action),
-			csvCell(r.resourceType),
-			csvCell(r.resourceId),
-			csvCell(r.decision ? "allow" : "deny"),
-			csvCell(r.reason),
-		].join(","),
-	);
-	return [header, ...lines].join("\n");
+			const header = ["time", "actor", "action", "resource_type", "resource_id", "decision", "reason"].join(",");
+			const lines = rows.map((r) =>
+				[
+					csvCell(r.ts.toISOString()),
+					csvCell(r.actorEmail ?? r.actorId),
+					csvCell(r.action),
+					csvCell(r.resourceType),
+					csvCell(r.resourceId),
+					csvCell(r.decision ? "allow" : "deny"),
+					csvCell(r.reason),
+				].join(","),
+			);
+			return [header, ...lines].join("\n");
+		},
+	})(raw);
 }
