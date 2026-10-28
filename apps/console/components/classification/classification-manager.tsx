@@ -76,16 +76,22 @@ type DeleteTarget =
 
 /** Reorders a cached taxonomy by `ids` (an optimistic patch; `ids` is the full new order). */
 function reorderedDims(current: unknown, ids: string[]): unknown {
-	if (!Array.isArray(current)) return current;
-	const dims: DimensionDTO[] = current;
-	return [...dims].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+	if (!isTaxonomy(current)) return current;
+	return [...current].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+}
+
+/** Narrows a cached value to the taxonomy the reorder patches read (every entry has an id). */
+function isTaxonomy(value: unknown): value is DimensionDTO[] {
+	return (
+		Array.isArray(value) &&
+		value.every((d: unknown) => typeof d === "object" && d !== null && "id" in d && "values" in d && Array.isArray(d.values))
+	);
 }
 
 /** Reorders one dimension's cached values by `ids` (an optimistic patch). */
 function reorderedValues(current: unknown, dimId: string, ids: string[]): unknown {
-	if (!Array.isArray(current)) return current;
-	const dims: DimensionDTO[] = current;
-	return dims.map((d) =>
+	if (!isTaxonomy(current)) return current;
+	return current.map((d) =>
 		d.id === dimId
 			? { ...d, values: [...d.values].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)) }
 			: d,

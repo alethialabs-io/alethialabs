@@ -67,12 +67,15 @@ export function activityRange(
 	filters: ActivityFilters,
 	fallback: DateRange,
 ): DateRange {
-	if (!filters.from || !filters.to) return fallback;
+	return explicitRange(filters) ?? fallback;
+}
+
+/** The window the viewer picked (both bounds present and valid), or null for the default one. */
+function explicitRange(filters: ActivityFilters): DateRange | null {
+	if (!filters.from || !filters.to) return null;
 	const from = new Date(filters.from);
 	const to = new Date(filters.to);
-	return Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())
-		? fallback
-		: { from, to };
+	return Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) ? null : { from, to };
 }
 
 /**
@@ -99,10 +102,16 @@ export function activityQueryFrom({
 	// `resourceIds` filter would leave the server unable to tell the two apart.
 	const resourceIds =
 		!pinnedProjectId && filters.projectIds.length ? filters.projectIds : undefined;
+	// THE DEFAULT WINDOW IS OPEN-ENDED (#6129). The default preset ("Last 7 days") means "from a
+	// week ago until now", and now keeps moving: a `to` frozen at the instant the page resolved it
+	// would make the server answer `ts <= that instant` forever, so a live `activity` hint would
+	// refetch the very same rows and a new entry would never appear. Only a range the viewer PICKED
+	// carries its `to`. The key stays stable either way: the default `from` is resolved once.
+	const picked = explicitRange(filters) !== null;
 	return normalizeActivityQuery({
 		projectId: pinnedProjectId,
 		from: range.from.toISOString(),
-		to: range.to.toISOString(),
+		to: picked ? range.to.toISOString() : undefined,
 		actorIds: filters.actorIds,
 		resourceTypes,
 		decision,
@@ -111,7 +120,11 @@ export function activityQueryFrom({
 	});
 }
 
-/** A default window as it travels from the route to the feed: two ISO instants. */
+/**
+ * A default window as it travels from the route to the feed: two ISO instants. Only `from` reaches
+ * the query (the default window is open-ended, see `activityQueryFrom`); `to` is what the range
+ * controls display.
+ */
 export interface ActivityWindow {
 	from: string;
 	to: string;

@@ -136,7 +136,8 @@ export function useAssignmentMutations(kind: ResourceKind, resourceId: string, d
 
 	/** The chips currently cached for this resource (none when the cache holds something else). */
 	function chipsOf(current: unknown): AssignedValue[] {
-		return Array.isArray(current) ? current : [];
+		if (!Array.isArray(current)) return [];
+		return current.filter(isAssignedValue);
 	}
 
 	const assign = useActionMutation(
@@ -176,4 +177,16 @@ export function useAssignmentMutations(kind: ResourceKind, resourceId: string, d
 	);
 
 	return { assign, unassign };
+}
+
+/** Narrows a cached value to a chip: the fields the optimistic patches read and write. */
+function isAssignedValue(value: unknown): value is AssignedValue {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"value_id" in value &&
+		typeof value.value_id === "string" &&
+		"dimension_id" in value &&
+		typeof value.dimension_id === "string"
+	);
 }

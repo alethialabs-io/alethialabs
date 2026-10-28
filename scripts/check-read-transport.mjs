@@ -99,18 +99,21 @@ function scan() {
 }
 
 /**
- * How many console files import at least one CALLABLE identifier from a server-action module — the
- * population the matcher reads. Every write in the console is still a server action (ADR 0005 D4),
- * so this is never legitimately zero; a zero means the walk or the import pattern went blind.
+ * The two populations the matcher reads, counted over the walked tree: files importing a callable
+ * from a server-action module, and `queryFn:` sites. A finding needs both in one file, so the probe
+ * asks for each: either at zero is the walk, the import pattern or the queryFn pattern gone blind.
  */
-function actionImportingFiles() {
-	let n = 0;
+function population() {
+	let importing = 0;
+	let queryFnSites = 0;
 	for (const dir of SCAN_DIRS) {
 		for (const file of walk(join(CONSOLE, dir))) {
-			if (actionImports(readFileSync(file, "utf8")).size > 0) n++;
+			const source = readFileSync(file, "utf8");
+			if (actionImports(source).size > 0) importing++;
+			queryFnSites += [...source.matchAll(/queryFn\s*:/g)].length;
 		}
 	}
-	return n;
+	return { importing, queryFnSites };
 }
 
 /** Fixtures for the matcher: each must be classified as stated, or the instrument is blind. */
@@ -137,9 +140,16 @@ function selfTest() {
 	// a read back. The console's WRITES are still server actions (ADR 0005 D4), so a scan that sees
 	// no file importing one is the walk or the import pattern gone blind — and the fixtures above keep
 	// the queryFn half honest.
-	if (actionImportingFiles() === 0) {
+	const { importing, queryFnSites } = population();
+	if (importing === 0) {
 		failed++;
 		console.error("✗ self-test: the console scan found ZERO files importing a server action — the walk or the import pattern is blind.");
+	}
+	// The console still has `queryFn:` sites (local reads, the agent grid, the legacy `qk` hooks); a
+	// scan that finds none is reading the wrong tree or a broken pattern, not a finished programme.
+	if (queryFnSites === 0) {
+		failed++;
+		console.error("✗ self-test: the console scan found ZERO `queryFn:` sites — the walk or the queryFn pattern is blind.");
 	}
 	if (failed) process.exit(1);
 	console.log(`✓ check-read-transport self-test: ${cases.length} fixtures classified correctly.`);

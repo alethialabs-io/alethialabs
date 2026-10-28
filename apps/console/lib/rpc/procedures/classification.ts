@@ -156,6 +156,9 @@ export async function readAssignmentsForKind(
 	return Object.fromEntries(map);
 }
 
+/** The most row ids one `assignmentsForKind` read takes (see its input). */
+const MAX_BATCH_IDS = 10_000;
+
 /** A row id the classification tables address (every kind's id is a uuid). */
 const rowId = z.string().uuid();
 
@@ -169,7 +172,12 @@ export const classificationRouter = {
 		.input(z.object({ kind: resourceKindSchema, resourceId: rowId }))
 		.handler(({ input }) => readAssignments(input.kind, input.resourceId)),
 	assignmentsForKind: query
-		.input(z.object({ kind: resourceKindSchema, resourceIds: z.array(rowId).max(1000) }))
+		// The bound is generous on purpose: a list hydrates the chips of EVERY row it shows in this one
+		// read, and the action it replaced had no bound, so a tight one would silently drop the chips of
+		// a long list. 10 000 ids sit far under Postgres's 65 535 bind parameters for the `IN` lists
+		// below; an input past it is refused (BAD_REQUEST), never truncated. Past ~2 KB of ids the
+		// browser client sends the read as a POST to the same route (`fallbackMethod`, lib/rpc/client.ts).
+		.input(z.object({ kind: resourceKindSchema, resourceIds: z.array(rowId).max(MAX_BATCH_IDS) }))
 		.handler(({ input }) => readAssignmentsForKind(input.kind, input.resourceIds)),
 	valueBreakdown: query
 		.input(z.object({ valueId: rowId }))

@@ -85,6 +85,11 @@ describe("ProviderSheet — a refused save", () => {
 		expect(updateSsoProvider).toHaveBeenCalledWith(
 			expect.objectContaining({ id: PROVIDER.id, issuer: "https://acme.okta.com/oauth2" }),
 		);
+		// An untouched optional field (the secret, the SAML fields, a blank mapping) is OMITTED, never
+		// sent as "" — the action refuses an empty string, and an omitted secret keeps the stored one.
+		const sent: unknown = updateSsoProvider.mock.calls[0]?.[0];
+		expect(Object.values(Object(sent))).not.toContain("");
+		expect(sent).toMatchObject({ clientSecret: undefined, cert: undefined, entryPoint: undefined, mapping: undefined });
 		expect(toastSuccess).not.toHaveBeenCalled();
 		expect(toastError).not.toHaveBeenCalled();
 		expect(onOpenChange).not.toHaveBeenCalledWith(false);
