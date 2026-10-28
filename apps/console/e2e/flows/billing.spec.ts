@@ -185,7 +185,6 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
 async function declareOrganizationPayer(page: import("@playwright/test").Page): Promise<void> {
 	const dialog = page.getByRole("dialog", { name: "Upgrade to Pro" });
 	await dialog.getByRole("radio", { name: /An organization/ }).check({ timeout: 30_000 });
-	await dialog.getByPlaceholder("Director").fill("Director");
 	await dialog.getByRole("button", { name: "Select a country" }).click();
 	// The country list is a popover portalled outside the sheet, so it is located on the page. Its
 	// search is named by cmdk's `label` ("Search country", #5803), so it is asked for by role.
@@ -193,6 +192,15 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	// Not `exact`: each row's flag carries the country's name as an SVG title, so the option's
 	// accessible name can read it twice. The search above has already narrowed the list to one.
 	await page.getByRole("option", { name: /Germany/ }).first().click();
+	// F033 (#6132): the authority is typed IMMEDIATELY after the pick, key by key, as a person does —
+	// while the country list is still animating out over this field. Typing here used to land on the
+	// country trigger (focus returned to it when the close finished) and the field stayed empty.
+	const authority = dialog.getByPlaceholder("Director");
+	await authority.click();
+	await page.keyboard.type("Director");
+	await expect(authority, "typing right after choosing a country reached the authority field").toHaveValue(
+		"Director",
+	);
 	const submit = dialog.getByRole("button", { name: /Continue to payment/ });
 	await submit.click();
 	await expect(submit, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeHidden({

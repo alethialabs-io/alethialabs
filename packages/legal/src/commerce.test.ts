@@ -6,6 +6,7 @@ import {
 	CONSUMER_ADR,
 	CONSUMER_PAYMENT_OBLIGATION_LABEL,
 	PAID_MARKETS,
+	anyPaidMarketOpen,
 	orderButtonLabel,
 	paidMarketEnabled,
 	paidMarketEvidence,
@@ -26,6 +27,12 @@ describe("paid markets", () => {
 	it("refuses everything while no cell is open", () => {
 		expect(paidMarketEnabled("BG", "consumer")).toBe(false);
 		expect(paidMarketEnabled("DE", "organization")).toBe(false);
+	});
+
+	// "Is anything on sale anywhere" agrees with the list it reads: open exactly when a cell exists.
+	it("reports a market open anywhere exactly when a cell is open", () => {
+		expect(anyPaidMarketOpen()).toBe(PAID_MARKETS.length > 0);
+		if (!LEGAL_ENTITY.vatRegistered) expect(anyPaidMarketOpen()).toBe(false);
 	});
 
 	// Fail-closed on the inputs too, not only on the list: a missing country must never fall back to

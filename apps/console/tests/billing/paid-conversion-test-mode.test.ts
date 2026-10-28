@@ -34,6 +34,7 @@ import {
 	type PaidConversionContext,
 	PaidConversionNotAllowedError,
 	type PaidConversionRefusal,
+	paidSalesOpen,
 	TEST_MODE_MARKET_FLAG,
 	testModeMarketOpen,
 } from "@/lib/billing/eligibility";
@@ -155,5 +156,44 @@ describe("only the MARKET check is waived", () => {
 		expect(await verdict({ ...DECLARED, billingCountry: null })).toBe(
 			"billing_country_missing",
 		);
+	});
+});
+
+// #6132 (F030): "is Pro on sale anywhere" — the upgrade sheet's first question — must agree with the
+// gate in every cell, or the sheet would show the release gate "not on sale" while the gate itself
+// would sell (losing the checkout leg), or show a customer a form the gate always refuses.
+describe("paidSalesOpen agrees with the gate in every flag × key-mode cell", () => {
+	it.each([
+		[TEST_KEY, "1"],
+		[TEST_KEY, undefined],
+		[LIVE_KEY, "1"],
+		[LIVE_KEY, undefined],
+		[undefined, "1"],
+	])("key %s, flag %s", async (key, flag) => {
+		setEnv(key, flag);
+		expect(paidSalesOpen()).toBe((await verdict()) === "allowed");
+	});
+
+	it("is open only for a test key with the flag while no cell is open", () => {
+		setEnv(TEST_KEY, "1");
+		expect(paidSalesOpen()).toBe(true);
+		setEnv(LIVE_KEY, "1");
+		expect(paidSalesOpen()).toBe(false);
+	});
+});
+
+// #6132 (F032, D2-A): the hosted free tier is "Hobby" everywhere; "Community" names only the
+// open-source edition, so the refusal a customer reads must not call their plan by it.
+describe("the market_closed refusal names the free tier Hobby", () => {
+	it("says Hobby, never Community", async () => {
+		setEnv(LIVE_KEY, undefined);
+		try {
+			await assertPaidConversionAllowed(DECLARED);
+			throw new Error("expected a market_closed refusal");
+		} catch (err) {
+			if (!(err instanceof PaidConversionNotAllowedError)) throw err;
+			expect(err.message).toContain("Hobby stays free, with no time limit.");
+			expect(err.message).not.toMatch(/Community/);
+		}
 	});
 });
