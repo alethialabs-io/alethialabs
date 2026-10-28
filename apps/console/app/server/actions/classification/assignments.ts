@@ -6,11 +6,15 @@
 // gates on `org:view`; assigning/clearing on `org:edit`. Single-valued dimensions replace any
 // prior value transactionally (a partial unique index can't reference the parent's `multi`),
 // while the DB's (kind, id, value) unique blocks exact duplicates. All via withScope (RLS wall).
+// A resource that lives in a project (the project, its environments, its clusters) also asks the
+// same action about that project (lib/classification/resource-project.ts): its chips are read only
+// by a member who may view the project, and changed only by one who may edit it.
 
 import { and, eq } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { classifiableResourceInOrg } from "@/lib/classification/resource-org";
+import { classifiedIdsViewable, mayClassifyResource } from "@/lib/classification/resource-project";
 import { withScope } from "@/lib/db";
 import {
 	classificationAssignment,
@@ -75,12 +79,17 @@ export async function getDimensionResourceBreakdown(
 	);
 }
 
-/** Lists the classification chips assigned to a single resource. */
+/**
+ * Lists the classification chips assigned to a single resource. A resource whose project the caller
+ * may not view answers with no chips — what an unknown resource answers — and the refusal is
+ * recorded.
+ */
 export async function getAssignments(
 	kind: ResourceKind,
 	resourceId: string,
 ): Promise<AssignedValue[]> {
 	const actor = await authorize("view", { type: "org" });
+	if (!(await mayClassifyResource(actor, kind, resourceId, "view"))) return [];
 	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		listAssignmentsFor(tx, kind, resourceId),
 	);
@@ -89,7 +98,8 @@ export async function getAssignments(
 /**
  * Batched hydration for list views: the chips for MANY resources of one kind in a single
  * round-trip, keyed by resource_id (ids with no assignments are omitted). Seed each row's
- * per-resource query cache with this so a list of N rows costs one query, not N.
+ * per-resource query cache with this so a list of N rows costs one query, not N. Ids whose project
+ * the caller may not view are left out, like ids with no assignments.
  */
 export async function getAssignmentsForKind(
 	kind: ResourceKind,
@@ -97,9 +107,11 @@ export async function getAssignmentsForKind(
 ): Promise<Record<string, AssignedValue[]>> {
 	if (resourceIds.length === 0) return {};
 	const actor = await authorize("view", { type: "org" });
+	const viewable = await classifiedIdsViewable(actor, kind, resourceIds);
+	if (viewable.length === 0) return {};
 	const map = await withScope(
 		{ ownerId: actor.userId, orgId: actor.orgId },
-		(tx) => assignmentsForKind(tx, kind, resourceIds),
+		(tx) => assignmentsForKind(tx, kind, viewable),
 	);
 	return Object.fromEntries(map);
 }
@@ -114,8 +126,12 @@ export async function assignClassification(input: AssignInput): Promise<void> {
 	const actor = await authorize("edit", { type: "org" });
 	const data = assignInputSchema.parse(input);
 	// The resource must be this organization's: the assignment's RLS wall is its dimension's org,
-	// and the resource id is a bare uuid, so nothing else ties the two together.
-	if (!(await classifiableResourceInOrg(data.resource_kind, data.resource_id, actor)))
+	// and the resource id is a bare uuid, so nothing else ties the two together. One that lives in a
+	// project the caller may not edit is answered the same way (the refusal is recorded).
+	if (
+		!(await classifiableResourceInOrg(data.resource_kind, data.resource_id, actor)) ||
+		!(await mayClassifyResource(actor, data.resource_kind, data.resource_id, "edit"))
+	)
 		throw new Error("Resource not found");
 
 	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
@@ -169,12 +185,17 @@ export async function assignClassification(input: AssignInput): Promise<void> {
 	});
 }
 
-/** Clears a single value assignment from a resource. */
+/**
+ * Clears a single value assignment from a resource. A resource that lives in a project the caller
+ * may not edit is answered as an unknown resource is — nothing is cleared, nothing is thrown — and
+ * the refusal is recorded.
+ */
 export async function unassignClassification(
 	input: UnassignInput,
 ): Promise<void> {
 	const actor = await authorize("edit", { type: "org" });
 	const data = unassignInputSchema.parse(input);
+	if (!(await mayClassifyResource(actor, data.resource_kind, data.resource_id, "edit"))) return;
 	await withScope({ ownerId: actor.userId, orgId: actor.orgId }, (tx) =>
 		tx
 			.delete(classificationAssignment)
