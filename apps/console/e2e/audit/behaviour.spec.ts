@@ -546,11 +546,11 @@ test.describe("phase 3 · B3 and B4 judged, then B5, each of a page's own reads 
 				// set. The SNAPSHOT is not corrected by that: it was taken with the shell read still held,
 				// and a held shell action can stall hydration. Filtering decides only whether the route had
 				// a read of its own held (`no-page-reads` when none); it does not re-take the render.
-				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: [] /* MUTATION #6318: B3 sees no read */ }));
+				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: p2.pageHeld.held.filter((k) => !isShell(k)) }));
 				put(route, url, "B4", judgeB4(a, p2.failed, (key) => !isShell(key)));
 			}
 			const shell = mine.reads.filter(isShell);
-			const pageReads: string[] = []; // MUTATION #6318: B5 sees no read
+			const pageReads = mine.reads.filter((k) => !isShell(k));
 			const failures: OneFailure[] = [];
 			await measured(route, url, ["B5"], async () => {
 				if (mine.settled && pageReads.length >= 1 && pageReads.length <= B5_READ_CAP) {
