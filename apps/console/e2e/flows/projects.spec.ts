@@ -444,10 +444,11 @@ test.describe("Projects — Environments view", () => {
 		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/environments`, {
 			waitUntil: "domcontentloaded",
 		});
-		await expect(owner.page.getByRole("heading", { name: /^environments$/i })).toBeVisible({
+		// No in-content page title since #6120 (F010); the environment's own link is the first thing
+		// this test is about, so it is what the page is waited on.
+		await expect(owner.page.getByRole("link", { name: "production" })).toBeVisible({
 			timeout: 15_000,
 		});
-		await expect(owner.page.getByRole("link", { name: "production" })).toBeVisible();
 		await expect(owner.page.getByText(/^default$/i).first()).toBeVisible();
 		// The default env is undeletable, and `environment-card.tsx` renders NO delete button for
 		// it. This assertion used to be `/delete production/i`, a name no control on this page has

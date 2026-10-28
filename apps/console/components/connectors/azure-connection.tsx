@@ -22,7 +22,7 @@ import {
 	VerifySection,
 } from "@/components/connectors/connection-ui";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { connectorAssetUrl } from "@/components/connectors/connector-assets";
@@ -69,7 +69,7 @@ interface AzureConnectionProps {
 		tenantId: string,
 		clientId: string,
 		subscriptionId: string,
-	) => Promise<VerifyOutcome>;
+	) => ReturnType<ConnectSave>;
 }
 
 export function AzureConnection({ onComplete }: AzureConnectionProps) {
@@ -102,8 +102,10 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		await run(() => onComplete(data.tenantId, data.clientId, data.subscriptionId));
 	};
 
-	// True when "Paste all" found nothing on the clipboard — a quiet inline hint (no toast).
-	const [pasteMissed, setPasteMissed] = useState(false);
+	// What "Paste all" last found — a quiet inline hint (no toast). `unreadable` is a page that may
+	// not read the clipboard at all: `navigator.clipboard` is undefined outside a secure context
+	// (a self-host over plain HTTP), and a paste into a field still works there.
+	const [pasteHint, setPasteHint] = useState<"none" | "missed" | "unreadable">("none");
 
 	/** Fills the GUID fields from a pasted block; returns how many were set. */
 	const fillFromText = (text: string): number => {
@@ -121,10 +123,15 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 
 	/** "Paste all" — read the clipboard and fill every field at once (best-effort). */
 	const handlePasteAll = async () => {
+		const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+		if (!clipboard?.readText) {
+			setPasteHint("unreadable");
+			return;
+		}
 		try {
-			setPasteMissed(fillFromText(await navigator.clipboard.readText()) < 1);
+			setPasteHint(fillFromText(await clipboard.readText()) < 1 ? "missed" : "none");
 		} catch {
-			setPasteMissed(true);
+			setPasteHint("missed");
 		}
 	};
 
@@ -138,7 +145,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 		if (found >= 2) {
 			e.preventDefault();
 			fillFromText(text);
-			setPasteMissed(false);
+			setPasteHint("none");
 		}
 	};
 
@@ -304,9 +311,11 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 					<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 						<div className="flex items-center justify-between gap-2">
 							<p className="text-ui-xs text-muted-foreground">
-								{pasteMissed
-									? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
-									: "Paste all at once — we'll split them across the fields."}
+								{pasteHint === "unreadable"
+									? "This page cannot read the clipboard. Paste the script output into any field and we'll split it."
+									: pasteHint === "missed"
+										? "No IDs found on the clipboard — paste the script output, or fill the fields manually."
+										: "Paste all at once — we'll split them across the fields."}
 							</p>
 							<Button
 								type="button"

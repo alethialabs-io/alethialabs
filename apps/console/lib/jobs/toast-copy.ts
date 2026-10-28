@@ -5,7 +5,7 @@
 // React, so the driver stays thin and this stays unit-testable. Labels reuse the job-type
 // catalog in ./format so the wording never drifts from the jobs table / overview card.
 
-import type { JobWithMeta } from "@/app/server/actions/jobs";
+import type { ShellJob } from "@/lib/rpc/procedures/workspace";
 import type { ProvisionJobStatus, ProvisionJobType } from "@/lib/db/schema";
 import { JOB_TYPES } from "./format";
 
@@ -52,7 +52,7 @@ const GERUND: Partial<Record<ProvisionJobType, string>> = {
 
 /** Builds the title + optional description for a job's toast in a given phase. */
 export function jobToastContent(
-	job: JobWithMeta,
+	job: ShellJob,
 	phase: ToastPhase,
 ): { title: string; description?: string } {
 	const label = JOB_TYPES[job.job_type]?.label ?? job.job_type;

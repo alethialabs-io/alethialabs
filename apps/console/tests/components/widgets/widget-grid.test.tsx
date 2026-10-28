@@ -7,9 +7,12 @@
 // empty-state hint). Pointer drag math is exercised indirectly via the pure layout
 // tests; keyboard move commit/revert is covered on the card.
 
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { widgetQueryKey } from "@/components/agent/widgets/live-refresh";
 import { WidgetGrid } from "@/components/agent/widgets/widget-grid";
 import type { ThreadWidget } from "@/lib/db/schema";
 import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
@@ -19,7 +22,16 @@ vi.mock("@/app/server/actions/widgets", () => ({
 	pinWidget: vi.fn(),
 	updateWidget: vi.fn(async () => {}),
 	deleteWidget: vi.fn(async () => {}),
+	refreshWidgetSource: vi.fn(async () => null),
 }));
+
+/** The org's QueryClient for the render — a widget's payload lives there (#6207). */
+let queryClient = new QueryClient();
+
+/** Renders inside the QueryClient the grid reads its widgets' payloads from. */
+function render(ui: ReactElement) {
+	return rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 import { pinWidget, updateWidget } from "@/app/server/actions/widgets";
 
@@ -68,6 +80,7 @@ function mockPinEcho() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	queryClient = new QueryClient();
 	useWidgetGridStore.setState({
 		threadId: "t1",
 		widgets: [],
@@ -216,5 +229,33 @@ describe("WidgetGrid", () => {
 		expect(vi.mocked(updateWidget)).not.toHaveBeenCalled();
 		const card = screen.getByRole("group", { name: "Movable" });
 		expect(card.style.gridColumn).toBe("1 / span 1");
+	});
+
+	it("#6207: a card renders the payload Query holds for it, so a hint's re-run shows without touching the store", async () => {
+		const pinned = widget({
+			id: "live",
+			kind: "table",
+			title: "Jobs",
+			source: { tool: "list_jobs", args: null },
+			data: { output: { jobs: [{ id: "j1", type: "PLAN", project: "api", provider: "aws", status: "done" }] } },
+			mode: "live",
+			colspan: 3,
+			rowspan: 2,
+			updated_at: new Date("2026-10-27T10:00:00Z"),
+		});
+		useWidgetGridStore.setState({ widgets: [pinned] });
+		render(<WidgetGrid />);
+		expect(screen.getByText("PLAN")).toBeInTheDocument();
+		act(() => {
+			queryClient.setQueryData(widgetQueryKey(pinned), {
+				...pinned,
+				data: { output: { jobs: [{ id: "j2", type: "APPLY", project: "api", provider: "aws", status: "running" }] } },
+				updated_at: new Date("2026-10-27T11:00:00Z"),
+			});
+		});
+		// Query notifies its observers on its own scheduler tick, after the act() above returns.
+		expect(await screen.findByText("APPLY")).toBeInTheDocument();
+		expect(screen.queryByText("PLAN")).not.toBeInTheDocument();
+		expect(useWidgetGridStore.getState().widgets[0]?.data).toEqual(pinned.data);
 	});
 });

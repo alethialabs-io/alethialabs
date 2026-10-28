@@ -474,14 +474,13 @@ func TestOrgSelect_GrantsFormAsksNoResourceForTheOrgKind(t *testing.T) {
 	}
 }
 
-// TestOrgSelect_GrantsFormTypesTheIDForAKindItCannotList pins the fallback arm, and it is a real
-// arm rather than a defensive one: the server accepts kinds grantResourceScope has no list for
-// (GRANT_RESOURCE_TYPES in apps/console/lib/validations/grants.ts), so a kind with no arm has to
-// stay askable — a form that could only offer what it can list would REMOVE a grant the server
-// accepts.
+// TestOrgSelect_GrantsFormTypesTheIDForAKindItCannotList pins the fallback arm: a kind
+// grantResourceScope has no list for stays askable as a typed id, and the server — not this form —
+// decides whether it is accepted (GRANT_RESOURCE_TYPES in apps/console/lib/validations/grants.ts).
 //
-// `connector` is that shape today: an instance type in apps/console/lib/authz/fga-hierarchy.ts, and
-// so in the server's accepted set, that neither list knows about.
+// `connector` is the kind with no list used here: an instance type in
+// apps/console/lib/authz/fga-hierarchy.ts that neither list knows about. The server refuses it as a
+// grant scope; what is pinned is that the form asks rather than refusing on the server's behalf.
 func TestOrgSelect_GrantsFormTypesTheIDForAKindItCannotList(t *testing.T) {
 	orgFormInteractive(t)
 	if _, ok := grantResourceScope(orgSelectGrantsClient(), "connector"); ok {

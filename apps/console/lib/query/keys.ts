@@ -7,34 +7,16 @@
  * invalidation precise. Resource keys are scoped by org slug so switching orgs never
  * serves another org's cached rows.
  */
-import type { NormalizedEvidenceQuery } from "@/components/evidence/evidence-query";
-
 export const qk = {
 	jobs: (org: string) => ["jobs", org] as const,
 	/** The jobs PAGE, parameterized by the normalized filter query (normalizeJobsQuery).
 	 * Distinct from the shared unfiltered `jobs` cache, which palette/breadcrumbs/
-	 * overview/runners/plan all consume. */
+	 * overview/plan all consume. */
 	jobsPage: (org: string, query: unknown) => ["jobs", org, "page", query] as const,
-	/** Evidence roll-up, parameterized by the normalized filter query
-	 * (normalizeEvidenceQuery — stable object, so equal filters hit the cache). */
-	evidence: (org: string, query: NormalizedEvidenceQuery) =>
-		["evidence", org, query] as const,
 	job: (org: string, id: string) => ["jobs", org, "detail", id] as const,
 	jobStatus: (org: string, id: string) =>
 		["jobs", org, "detail", id, "status"] as const,
-	/** The UNFILTERED runner universe (`fetchRunnersData`) — the add-runner dialog's read. */
-	runners: (org: string) => ["runners", org] as const,
-	/**
-	 * The runners GRID's filtered page, parameterized by the normalized filter query.
-	 *
-	 * A second name rather than an optional argument on `runners` above, because the two
-	 * carry different payloads — `RunnersData` (runners + the latest release) against a
-	 * `RunnersPage` (rows + counts + facets). `["runners", org]` still invalidates both.
-	 */
-	runnersPage: (org: string, query: unknown) =>
-		["runners", org, "page", query] as const,
 	clusters: (org: string) => ["clusters", org] as const,
-	fleet: (org: string) => ["fleet", org] as const,
 	addons: (projectId: string, environmentId?: string | null) =>
 		["addons", projectId, environmentId ?? "default"] as const,
 	environmentStatus: (projectId: string, environmentId?: string | null) =>
@@ -50,9 +32,6 @@ export const qk = {
 	pricing: (region: string) => ["pricing", region] as const,
 	cloudResources: (identityId: string) =>
 		["cloud-resources", identityId] as const,
-	supportCases: (filter: "all" | "active" | "resolved" = "all") =>
-		["support", "cases", filter] as const,
-	supportCase: (id: string) => ["support", "case", id] as const,
 	roles: (org: string, search?: string) =>
 		search ? (["roles", org, search] as const) : (["roles", org] as const),
 	/** Activity log, parameterized by the normalized filter query (sans cursor — the
@@ -95,14 +74,6 @@ export const qk = {
 	// state — an unsorted array or a stray whitespace fragments the cache into keys that never
 	// hit. `unknown` mirrors `jobsPage`/`activity`: the key factory does not need the shape, and
 	// typing it here would drag every page's query type into this module.
-	alertChannels: (org: string, query?: unknown) =>
-		query ? (["alerts", "channels", org, query] as const) : (["alerts", "channels", org] as const),
-	alertPolicies: (org: string, query?: unknown) =>
-		query ? (["alerts", "policies", org, query] as const) : (["alerts", "policies", org] as const),
-	alertDeliveries: (org: string, query?: unknown) =>
-		query
-			? (["alerts", "deliveries", org, query] as const)
-			: (["alerts", "deliveries", org] as const),
 	connectors: (org: string, query?: unknown) =>
 		query ? (["connectors", org, query] as const) : (["connectors", org] as const),
 	teams: (org: string, query?: unknown) =>

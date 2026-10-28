@@ -509,6 +509,66 @@ SH
 	[ "$fails" = "$before" ] &&
 		ok "push_tree's status is the rsync's: a failed push stops the watch chain, a failed touch does not"
 
+	# A2. push_tree does not ship local junk, and still ships untracked source (#6110).
+	#
+	# Driven through a REAL rsync into a local directory — the stub only drops `-e ssh` and swaps
+	# the remote destination — so what is asserted is what rsync actually copied under push_tree's
+	# filters, not how the argument list happens to be spelled.
+	if command -v rsync >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+		src="$TMP/push-src"
+		dst="$TMP/push-dst"
+		mkdir -p "$src/apps/console" "$src/.github" "$src/.pnpm-store/v3" "$src/.codex-run-base/x" \
+			"$src/.newcache" "$src/newpkg" "$dst"
+		echo tracked >"$src/apps/console/page.ts"
+		echo tracked >"$src/.github/ci.yml"
+		git -C "$src" init -q
+		git -C "$src" add apps .github
+		echo store >"$src/.pnpm-store/v3/blob"
+		echo base >"$src/.codex-run-base/x/copy"
+		echo cache >"$src/.newcache/c"
+		echo new >"$src/apps/console/new-untracked.ts"
+		echo new >"$src/.github/new-untracked.yml"
+		echo new >"$src/newpkg/index.ts"
+		cat >"$TMP/drive-excl.sh" <<'SH'
+set -euo pipefail
+ROOT="$1"; DST="$2"; REMOTE=/opt/alethia
+require_box() { printf '1.2.3.4'; }
+slug() { printf 's1'; }
+ssh_box() { :; }
+rsync() {
+	local a=() skip=0 x
+	for x in "$@"; do
+		if [ "$skip" = 1 ]; then skip=0; continue; fi
+		[ "$x" = "-e" ] && { skip=1; continue; }
+		a+=("$x")
+	done
+	unset 'a[${#a[@]}-1]'
+	command rsync "${a[@]}" "$DST/"
+}
+. "$3"
+push_tree
+SH
+		bash "$TMP/drive-excl.sh" "$src" "$dst" "$TMP/push_tree.sh" >/dev/null 2>&1 ||
+			bad "push_tree failed against a local rsync"
+		before="$fails"
+		for junk in .pnpm-store .codex-run-base .newcache; do
+			[ -e "$dst/$junk" ] && bad "push_tree shipped $junk/ — local junk reaches the box"
+		done
+		for want in apps/console/page.ts apps/console/new-untracked.ts .github/ci.yml \
+			.github/new-untracked.yml newpkg/index.ts; do
+			[ -e "$dst/$want" ] || bad "push_tree withheld $want — the working tree must ship, untracked source included"
+		done
+		# The static half must hold where git cannot be asked.
+		for junk in .pnpm-store .codex-run-base; do
+			grep -Fq -- "--exclude=/$junk" "$TMP/push_tree.sh" ||
+				bad "push_tree's static exclude list does not name /$junk"
+		done
+		[ "$fails" = "$before" ] &&
+			ok "push_tree excludes .pnpm-store, .codex-run-base and untracked top-level dot-dirs, and still ships untracked source"
+	else
+		bad "rsync and git are required to drive push_tree's excludes"
+	fi
+
 	# B. ssh_box RETURNS on an unreachable box; it does not exit the caller's shell.
 	#
 	# `exit` inside a function ends the shell, so `|| true` cannot catch it — it never returns to
@@ -543,6 +603,432 @@ SH
 	*SSH-RAN*) bad "ssh ran with an empty ip — require_box's failure did not stop it" ;;
 	*NOT-EMPTY*) bad "read_registry returned content from an unreachable box" ;;
 	esac
+
+	# C. An EXISTING env's .env is reconciled, not left behind (#6111).
+	#
+	# The `dev` env predated ALETHIA_SANDBOX=1, and `test -f … || cat >` meant no env:up would ever
+	# give it the key: sign-in codes went nowhere and nothing was red. dotenv_reconcile runs ON THE
+	# BOX as text shipped by `declare -f`, so it is driven here the same way — under `sh`, not the
+	# bash that defined it.
+	for f in dotenv_template dotenv_secret_keys dotenv_required_keys dotenv_reconcile env_dotenv_gaps \
+		dotenv_edition edition_row edition_rows edition_pin_note; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/dotenv.sh"
+		grep -q "^$f() {" "$TMP/dotenv.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	cat >"$TMP/drive-dotenv.sh" <<'SH'
+set -euo pipefail
+. "$1"; shift
+file="$1" fresh="$2"
+render() { dotenv_template s1 3100 8400 db_s1 https://s1.example NEWSECRET1 NEWSECRET2 NEWSECRET3 \
+	NEWSECRET4 NEWOIDC NEWRECEIPT NEWSNAPSHOT NEWBOOTSTRAP "${EDITION:-enterprise}"; }
+# shellcheck disable=SC2046
+render | sh -c "$(declare -f dotenv_reconcile); dotenv_reconcile \"\$@\"" sh "$file" "$fresh" $(dotenv_secret_keys)
+SH
+	# An env as `dev` was: minted before ALETHIA_SANDBOX, ALETHIA_LICENSE_ACTIVE and ALETHIA_EDITION
+	# (#6158 — it ran `auto`, the one mode prod never runs), one value edited
+	# by hand, no trailing newline. Its secrets must come through byte-for-byte.
+	legacy() { # <file> [drop-key]
+		dotenv_render_old >"$1.full"
+		grep -v -e '^ALETHIA_SANDBOX=' -e '^ALETHIA_LICENSE_ACTIVE=' -e '^ALETHIA_EDITION=' ${2:+-e "^$2="} "$1.full" |
+			sed 's/^ALETHIA_DB_PORT=5433$/ALETHIA_DB_PORT=6543/' >"$1.tmp"
+		printf '%s' "$(cat "$1.tmp")" >"$1"
+		rm -f "$1.full" "$1.tmp"
+	}
+	dotenv_render_old() {
+		bash -c '. "$1"; dotenv_template s1 3100 8400 db_s1 https://s1.example OLDSECRET1 OLDSECRET2 \
+			OLDSECRET3 OLDSECRET4 OLDOIDC OLDRECEIPT OLDSNAPSHOT OLDBOOTSTRAP' _ "$TMP/dotenv.sh"
+	}
+	before="$fails"
+	dv="$TMP/dotenv-case"
+	mkdir -p "$dv"
+
+	# C1. No file: the whole render, as before.
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/new.env" "" 2>&1)" || bad "a first mint failed: $out"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/new.env" || bad "a first mint did not write ALETHIA_SANDBOX=1"
+	grep -qx 'BETTER_AUTH_SECRET=NEWSECRET1' "$dv/new.env" || bad "a first mint did not write its secrets"
+	grep -qx 'ALETHIA_EDITION=enterprise' "$dv/new.env" ||
+		bad "a first mint left ALETHIA_EDITION unpinned (auto) — prod pins enterprise (#6158)"
+	# C1b. A community-pinned mint pins community, and nothing else.
+	out="$(EDITION=community bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/comm.env" "" 2>&1)" ||
+		bad "a community mint failed: $out"
+	grep -qx 'ALETHIA_EDITION=community' "$dv/comm.env" || bad "env:up --community did not pin community"
+	[ "$(grep -c '^ALETHIA_EDITION=' "$dv/comm.env")" = 1 ] || bad "a community mint wrote more than one edition"
+
+	# C2. The `dev` shape: the static keys are appended, nothing present is touched.
+	legacy "$dv/old.env"
+	cp "$dv/old.env" "$dv/old.orig"
+	rc=0
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/old.env" "" 2>&1)" || rc=$?
+	[ "$rc" = 0 ] || bad "reconciling static keys returned $rc: $out"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/old.env" ||
+		bad "an env minted before ALETHIA_SANDBOX still lacks it after env:up — #6111 unfixed"
+	grep -qx 'ALETHIA_LICENSE_ACTIVE=false' "$dv/old.env" || bad "ALETHIA_LICENSE_ACTIVE was not reconciled"
+	grep -qx 'ALETHIA_EDITION=enterprise' "$dv/old.env" ||
+		bad "an env minted before the edition pin is still unpinned after env:up — #6158 unfixed"
+	# The original bytes are a PREFIX of the result: appended, never rewritten. The missing
+	# trailing newline must not glue the first new key onto the last old line.
+	head -c "$(wc -c <"$dv/old.orig")" "$dv/old.env" | cmp -s - "$dv/old.orig" ||
+		bad "reconciling REWROTE the existing .env instead of appending to it"
+	grep -q 'NEWSECRET\|NEWOIDC\|NEWRECEIPT\|NEWSNAPSHOT\|NEWBOOTSTRAP' "$dv/old.env" &&
+		bad "reconciling replaced or duplicated a secret the env already had"
+	grep -qx 'ALETHIA_DB_PORT=6543' "$dv/old.env" || bad "a hand-edited value did not survive"
+	[ "$(grep -c '^ALETHIA_DB_PORT=' "$dv/old.env")" = 1 ] || bad "a present key was appended a second time"
+	case "$out" in
+	*OLD[A-Z]*[0-9A-Z]* | *NEW[A-Z]*[0-9A-Z]*) bad "reconcile printed a VALUE: $out" ;;
+	esac
+	case "$out" in
+	*"added: ALETHIA_SANDBOX ALETHIA_LICENSE_ACTIVE ALETHIA_EDITION"*) ;;
+	*) bad "reconcile did not name the keys it added: $out" ;;
+	esac
+	# Idempotent: a second env:up adds nothing.
+	cp "$dv/old.env" "$dv/old.once"
+	bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/old.env" "" >/dev/null 2>&1 || bad "a second reconcile failed"
+	cmp -s "$dv/old.env" "$dv/old.once" || bad "a second env:up changed an already-reconciled .env"
+
+	# C2b. A hand-pinned community env is the pin, not drift: a default env:up keeps it.
+	legacy "$dv/pin.env"
+	printf '\nALETHIA_EDITION=community\n' >>"$dv/pin.env"
+	bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/pin.env" "" >/dev/null 2>&1 || bad "reconciling a pinned env failed"
+	[ "$(grep '^ALETHIA_EDITION=' "$dv/pin.env")" = "ALETHIA_EDITION=community" ] ||
+		bad "env:up overrode or duplicated a community pin: $(grep '^ALETHIA_EDITION=' "$dv/pin.env" | tr '\n' ' ')"
+
+	# C3. A missing SECRET is refused with status 3 and its name — not minted into a live env —
+	# while the static keys still land.
+	legacy "$dv/sec.env" BETTER_AUTH_SECRET
+	rc=0
+	out="$(bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/sec.env" "" 2>&1)" || rc=$?
+	[ "$rc" = 3 ] || bad "a missing secret returned $rc, not the refusal (3)"
+	case "$out" in
+	*"secret-missing: BETTER_AUTH_SECRET"*) ;;
+	*) bad "the refusal does not name the missing secret: $out" ;;
+	esac
+	case "$out" in
+	*OLD[A-Z]*[0-9A-Z]* | *NEW[A-Z]*[0-9A-Z]*) bad "the refusal printed a VALUE: $out" ;;
+	esac
+	grep -q '^BETTER_AUTH_SECRET=' "$dv/sec.env" && bad "a secret was minted into a LIVE env without --fresh"
+	grep -qx 'ALETHIA_SANDBOX=1' "$dv/sec.env" || bad "a missing secret blocked the static keys as well"
+
+	# C4. Under --fresh (the database is about to be dropped) the missing secret is minted.
+	rc=0
+	bash "$TMP/drive-dotenv.sh" "$TMP/dotenv.sh" "$dv/sec.env" fresh >/dev/null 2>&1 || rc=$?
+	[ "$rc" = 0 ] || bad "env:up --fresh still refused a missing secret (status $rc)"
+	grep -qx 'BETTER_AUTH_SECRET=NEWSECRET1' "$dv/sec.env" || bad "--fresh did not mint the missing secret"
+	grep -qx 'CLI_JWT_SECRET=OLDSECRET2' "$dv/sec.env" || bad "--fresh rotated a secret that was present"
+
+	# C5. The secret classification is DERIVED from the template; pin that it says the right thing.
+	secrets="$(bash -c '. "$1"; dotenv_secret_keys' _ "$TMP/dotenv.sh" | tr '\n' ' ')"
+	for k in BETTER_AUTH_SECRET ALETHIA_OIDC_SIGNING_KEY ALETHIA_APP_DATABASE_URL ALETHIA_CRED_ENCRYPTION_KEY; do
+		case " $secrets" in *" $k "*) ;; *) bad "$k is not classified as a minted secret" ;; esac
+	done
+	for k in ALETHIA_SANDBOX ALETHIA_DEPLOYMENT_MODE ALETHIA_LICENSE_ACTIVE ALETHIA_RUNNER_OPERATOR ALETHIA_EDITION; do
+		case " $secrets" in *" $k "*) bad "$k is classified as a secret, so env:up would refuse it" ;; esac
+	done
+
+	# C6. env:status names an env whose .env lacks a key — through a stubbed box.
+	box="$TMP/box"
+	mkdir -p "$box/envs/stale" "$box/envs/fine" "$box/envs/pinned"
+	legacy "$box/envs/stale/.env"
+	dotenv_render_old >"$box/envs/fine/.env"
+	# A pin written the way people hand-write one: quoted, CRLF — every dotenv loader reads `community`.
+	dotenv_render_old | grep -v '^ALETHIA_EDITION=' >"$box/envs/pinned/.env"
+	printf 'ALETHIA_EDITION="community"\r\n' >>"$box/envs/pinned/.env"
+	cat >"$TMP/drive-gaps.sh" <<'SH'
+set -euo pipefail
+. "$1"
+REMOTE="$2"
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"stale":{},"fine":{},"gone":{},"pinned":{}}' ;; *) sh -c "$1" ;; esac; }
+env_dotenv_gaps
+SH
+	out="$(bash "$TMP/drive-gaps.sh" "$TMP/dotenv.sh" "$box" 2>&1)" || bad "env_dotenv_gaps failed: $out"
+	printf '%s\n' "$out" | grep -qx 'stale missing:ALETHIA_SANDBOX,ALETHIA_LICENSE_ACTIVE,ALETHIA_EDITION unset' ||
+		bad "env:status does not flag an env missing ALETHIA_SANDBOX and its edition pin: $out"
+	printf '%s\n' "$out" | grep -qx 'fine ok enterprise' || bad "env:status flags a complete .env: $out"
+	printf '%s\n' "$out" | grep -qx 'pinned ok community' || bad "env:status misreads a quoted CRLF community pin: $out"
+	printf '%s\n' "$out" | grep -qx 'gone no-file no-file' || bad "env:status is silent about an env with no .env: $out"
+	gaps="$out"
+
+	# C7. The edition row: the PIN held against the MEASURED scope (#6158). Each pair that looks
+	# fine alone and is a defect together must say MISMATCH; a `?` scope must not be compared.
+	erow() { # <pin> <scope> <expected substring>
+		local got
+		got="$(bash -c '. "$1"; edition_row "$2" "$3"' _ "$TMP/dotenv.sh" "$1" "$2")"
+		case "$got" in
+		*"$3"*) ;;
+		*) bad "edition_row '$1' '$2' → '$got', want '$3'" ;;
+		esac
+	}
+	erow enterprise enterprise "enterprise (pinned, matches scope)"
+	erow community community-pinned "community (pinned, matches scope)"
+	erow community enterprise "MISMATCH pinned community, console serving enterprise"
+	erow enterprise COMMUNITY "MISMATCH pinned enterprise, console serving community"
+	erow enterprise community-pinned "MISMATCH pinned enterprise, console serving community"
+	erow unset enterprise "UNPINNED (unset) — prod pins enterprise; run pnpm env:up"
+	# A PRESENT auto line is never rewritten by env:up, so "run env:up" would be a remedy that does nothing.
+	erow auto enterprise "UNPINNED (auto) — env:up never rewrites a present line"
+	case "$(bash -c '. "$1"; edition_row auto enterprise' _ "$TMP/dotenv.sh")" in
+	*"run pnpm env:up on that branch"*) bad "edition_row tells an env with a literal auto line to re-run env:up, which never rewrites it" ;;
+	esac
+	erow other enterprise "is not community, enterprise or auto"
+	erow enterprise "?-no-answer" "not compared"
+	erow no-file enterprise "?-no-.env"
+	erow "" enterprise "?-not-checked"
+	# …and joined to the right env through env_status's own plumbing.
+	rows="$(bash -c '. "$1"; edition_rows "$2" "$3"' _ "$TMP/dotenv.sh" \
+		"$(printf 'pinned enterprise\nfine enterprise\nstale ?-no-answer\n')" "$gaps")"
+	printf '%s\n' "$rows" | grep -q "^pinned	⚠ MISMATCH pinned community, console serving enterprise" ||
+		bad "env:status does not report a community pin served as enterprise: $rows"
+	printf '%s\n' "$rows" | grep -q "^fine	enterprise (pinned, matches scope)" || bad "a matching env is not reported as matching: $rows"
+	printf '%s\n' "$rows" | grep -q "^stale	⚠ UNPINNED (unset)" || bad "an unpinned env is not flagged: $rows"
+
+	# C8. env:up --community on an env already pinned enterprise is REFUSED, not silently ignored.
+	note() { bash -c 'die() { echo "DIED: $1"; exit 9; }; . "$1"; edition_pin_note s1 "$2" "$3"' _ "$TMP/dotenv.sh" "$1" "$2"; }
+	rc=0
+	out="$(note community enterprise 2>&1)" || rc=$?
+	[ "$rc" = 9 ] || bad "env:up --community on an enterprise-pinned env did not refuse (rc $rc): $out"
+	rc=0
+	out="$(note enterprise community 2>&1)" || rc=$?
+	[ "$rc" = 0 ] || bad "a default env:up refused a deliberately community-pinned env (rc $rc): $out"
+	case "$out" in *"stays pinned ALETHIA_EDITION=community"*) ;; *) bad "keeping a community pin was silent: $out" ;; esac
+	rc=0
+	out="$(note enterprise enterprise 2>&1)" || rc=$?
+	[ "$rc" = 0 ] && [ -z "$out" ] || bad "a matching pin was not silent (rc $rc): $out"
+
+
+	# C9. ONE reading of the pin. env:status prints a `scope` row (env-mode.sh's scope_probe reads
+	# the .env) and an `edition` row (dotenv_edition reads it); if the two parsers normalise
+	# differently they disagree about the same line and MISMATCH reports the parsers, not the env.
+	# scope_probe is driven for real with curl stubbed to 404, where its verdict turns on the pin.
+	mode_sh="$ROOT/scripts/box/env-mode.sh"
+	for f in scope_verdict scope_probe; do
+		sed -n "/^$f() {/,/^}$/p" "$mode_sh" >>"$TMP/scope.sh"
+		grep -q "^$f() {" "$TMP/scope.sh" || bad "could not lift $f() out of $mode_sh"
+	done
+	pv="$TMP/parity"
+	mkdir -p "$pv"
+	i=0
+	for line in 'ALETHIA_EDITION=community' 'ALETHIA_EDITION="community"' "ALETHIA_EDITION='community'" \
+		'ALETHIA_EDITION=  community  ' 'ALETHIA_EDITION=comm unity' 'ALETHIA_EDITION=enterprise' \
+		'export ALETHIA_EDITION=community' 'ALETHIA_EDITION=' 'ALETHIA_EDITION="\x27community\x27"' \
+		'# ALETHIA_EDITION=community' 'ALETHIA_EDITION=Community' 'ALETHIA_EDITION="community' \
+		'ALETHIA_EDITION=comm\runity' 'ALETHIA_EDITION=Enterprise' 'ALETHIA_EDITION=ee' \
+		'ALETHIA_EDITION=auto' "ALETHIA_EDITION=' enterprise'"; do
+		i=$((i + 1))
+		printf 'X=1\n%b\r\n' "$line" >"$pv/$i.env"
+		pin="$(sh -c "$(bash -c '. "$1"; declare -f dotenv_edition' _ "$TMP/dotenv.sh"); dotenv_edition \"\$1\"" sh "$pv/$i.env")"
+		verdict="$(bash -c 'curl() { printf 404; }; sleep() { :; }; . "$1"; scope_probe 1 "$2" 1 1' _ "$TMP/scope.sh" "$pv/$i.env")"
+		verdict="${verdict%% *}"
+		case "$pin:$verdict" in
+		community:community | enterprise:DEFECT | unset:DEFECT | auto:DEFECT | other:DEFECT) ;;
+		*) bad "the two pin readers disagree on '$line': dotenv_edition=$pin, scope_probe=$verdict" ;;
+		esac
+		# …and at a 5xx (#6171), where the pin decides WHICH answer a broken console gets: `other` on
+		# the edition row must be exactly the invalid-pin DEFECT on the scope row. At 404 every
+		# non-community pin is DEFECT alike, so this is the only status that separates `other`
+		# from `enterprise`, `auto` and `unset`.
+		v5="$(bash -c 'curl() { printf 500; }; sleep() { :; }; . "$1"; scope_probe 1 "$2" 1 1' _ "$TMP/scope.sh" "$pv/$i.env")"
+		case "${v5%% *}" in
+		DEFECT) case "$v5" in *"is not a valid edition"*) v5=invalid ;; *) v5=ee ;; esac ;;
+		*) v5="${v5%% *}" ;;
+		esac
+		case "$pin:$v5" in
+		community:unknown | enterprise:ee | unset:unknown | auto:unknown | other:invalid) ;;
+		*) bad "the two pin readers disagree at a 5xx on '$line': dotenv_edition=$pin, scope_probe=$v5" ;;
+		esac
+	done
+
+	# C10. The CALL SITES, not just the parts: --community must reach the template, and the read-back
+	# must run. Each of these is one deleted word away from an env:up that pins enterprise while
+	# telling its caller it pinned community.
+	for f in up_flags usage_error mint_env; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/callsites.sh"
+		grep -q "^$f() {" "$TMP/callsites.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	flags() { bash -c '. "$1"; shift; up_flags "$@"; echo "$UP_EDITION"' _ "$TMP/callsites.sh" "$@"; }
+	[ "$(flags --community)" = community ] || bad "env:up --community does not set the community edition"
+	[ "$(flags --fresh --community --seed)" = community ] || bad "--community is lost among other flags"
+	[ "$(flags)" = enterprise ] || bad "a plain env:up does not default to enterprise"
+	cat >"$TMP/drive-mint.sh" <<'SH'
+set -euo pipefail
+. "$1"; . "$2"
+REMOTE=/opt/alethia
+# Upper-case on purpose: mint_env declares `local pinned`, which would shadow a stub's variable.
+MINT_LOG="$3"; REQUESTED="$4"; PIN_ANSWER="$5"
+die() { echo "DIED: $1" >>"$MINT_LOG"; exit 9; }
+# `openssl base64` is the READ end of `openssl genpkey | openssl base64 -A` in mint_env: a stub that
+# exits without reading lets the writer die of SIGPIPE, and under pipefail + errexit that kills the
+# driver with 141 — a race, seen under macOS bash 3.2, that reads as a mint_env defect.
+openssl() { if [ "$1" = base64 ]; then cat >/dev/null; fi; echo X; }
+ed25519_raw_b64() { echo X; }
+env_fqdn() { echo s1.example; }
+ssh_box() {
+	case "$1" in
+	*dotenv_reconcile*) cat >>"$MINT_LOG"; return 0 ;;
+	*dotenv_edition*) echo "$PIN_ANSWER"; return 0 ;;
+	esac
+}
+mint_env s1 3100 8400 db_s1 "" "$REQUESTED"
+echo DONE >>"$MINT_LOG"
+SH
+	ml="$TMP/mint.log"
+	: >"$ml"
+	bash "$TMP/drive-mint.sh" "$TMP/dotenv.sh" "$TMP/callsites.sh" "$ml" community community >/dev/null 2>&1 ||
+		bad "mint_env --community failed against a community pin"
+	grep -qx 'ALETHIA_EDITION=community' "$ml" || bad "mint_env did not hand --community to the template it ships"
+	: >"$ml"
+	rc=0
+	bash "$TMP/drive-mint.sh" "$TMP/dotenv.sh" "$TMP/callsites.sh" "$ml" community enterprise >/dev/null 2>&1 || rc=$?
+	[ "$rc" = 9 ] && grep -q '^DIED: .*already pinned' "$ml" ||
+		bad "mint_env did not refuse --community on an enterprise-pinned env — is edition_pin_note still called? (rc $rc)"
+	# cmd_up is not driven (it is all ssh); its two edition lines are pinned by text instead.
+	up_body="$(sed -n '/^cmd_up() {/,/^}$/p' "$env_sh")"
+	printf '%s\n' "$up_body" | grep -qx '  edition="\$UP_EDITION"' || bad "cmd_up does not read UP_EDITION"
+	printf '%s\n' "$up_body" | grep -qx '  mint_env "\$slug_" "\$cport" "\$sport" "\$db" "\$fresh" "\$edition"' ||
+		bad "cmd_up does not pass the edition to mint_env"
+
+	# D. A DEFECT is described as the fault it IS (#6166). env-mode.sh gives a 404 (serving
+	# community) and a 5xx under the enterprise pin (ee did not load; every auth call fails) the
+	# same verdict word, and env.sh described both as COMMUNITY in four places. Each place is
+	# driven here for BOTH statuses, with only ssh_box stubbed — the probe's answer is the input.
+	d_before="$fails"
+	for f in scope_defect_label scope_headline scope_remedy measure_scope env_scopes cmd_test \
+		restart_env_console restore_live_envs; do
+		sed -n "/^$f() {/,/^}$/p" "$env_sh" >>"$TMP/defect.sh"
+		grep -q "^$f() {" "$TMP/defect.sh" || bad "could not lift $f() out of $env_sh"
+	done
+	d404='DEFECT 404 the organization plugin is absent'
+	d500='DEFECT 500 ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load'
+	# #6171. The why scope_verdict writes for a pin parseAlethiaEdition rejects, read off the REAL
+	# scope_verdict (lifted for C9 above) rather than hand-typed, so a reworded phrase cannot leave
+	# this fixture matching while env.sh no longer does.
+	d500i="$(bash -c '. "$1"; v=$(scope_verdict 503 Enterprise); echo "${v%% *} 503 ${v#* }"' _ "$TMP/scope.sh")"
+	case "$d500i" in
+	"DEFECT 503 ALETHIA_EDITION=Enterprise is not a valid edition"*) ;;
+	*) bad "scope_verdict no longer writes the invalid-pin DEFECT env.sh keys on: $d500i" ;;
+	esac
+
+	# D1. env_scopes — its probe body runs ON THE BOX as text, so it is run here under `sh`, against
+	# a fixture env-mode.sh that answers per port with the line the real probe prints.
+	sbox="$TMP/scopebox"
+	mkdir -p "$sbox/bin"
+	cat >"$sbox/bin/env-mode.sh" <<SH
+#!/bin/sh
+# scope_probe — present, so env_scopes asks it rather than reporting a stale script.
+case "\$2" in
+3101) echo "$d404" ;;
+3102) echo "$d500" ;;
+3104) echo "$d500i" ;;
+*) echo "enterprise 422 the organization plugin is registered" ;;
+esac
+SH
+	chmod +x "$sbox/bin/env-mode.sh"
+	cat >"$TMP/drive-scopes.sh" <<'SH'
+set -euo pipefail
+. "$1"
+REMOTE="$2"
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"c":{"consolePort":3101},"e":{"consolePort":3102},"ok":{"consolePort":3103},"i":{"consolePort":3104}}' ;; *) sh -c "$1" ;; esac; }
+env_scopes
+SH
+	out="$(bash "$TMP/drive-scopes.sh" "$TMP/defect.sh" "$sbox" 2>&1)" || bad "env_scopes failed: $out"
+	printf '%s\n' "$out" | grep -qx 'c COMMUNITY' || bad "env:status does not label a 404 DEFECT COMMUNITY: $out"
+	printf '%s\n' "$out" | grep -qx 'e EE-NOT-LOADED' || bad "env:status labels a pinned-enterprise 5xx DEFECT as something else: $out"
+	printf '%s\n' "$out" | grep -qx 'ok enterprise' || bad "env:status mislabels an enterprise console: $out"
+	printf '%s\n' "$out" | grep -qx 'i INVALID-PIN' || bad "env:status labels an invalid-pin 5xx DEFECT as something else: $out"
+	# …and the edition row it feeds does not call that measured scope "not measured".
+	erow enterprise EE-NOT-LOADED "pinned enterprise, but the console cannot load the enterprise edition"
+
+	# D2. env:test's refusal: both DEFECTs are refused (die), each in its own words.
+	cat >"$TMP/drive-test.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia; ANSWER="$2"
+need() { :; }; slug() { echo s1; }; env_fqdn() { echo s1.example; }; push_tree() { :; }; build_ee() { :; }
+die() { echo "DIED: $1"; exit 9; }
+ssh_box() { case "$1" in *env-registry.sh*) echo '{"s1":{"consolePort":3101}}' ;; *--scope*) echo "$ANSWER" ;; *) echo "UNEXPECTED: $1"; return 1 ;; esac; }
+cmd_test
+echo "NOT-REFUSED"
+SH
+	t404="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d404" 2>&1)"
+	case "$t404" in
+	*"DIED: 's1' is serving COMMUNITY entitlements — the organization plugin is absent"*"upgrade_required"*"pnpm env:up"*) ;;
+	*) bad "env:test does not refuse a 404 DEFECT as COMMUNITY: $t404" ;;
+	esac
+	t500="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d500" 2>&1)"
+	case "$t500" in
+	*COMMUNITY* | *upgrade_required* | *NOT-REFUSED*) bad "env:test describes a pinned-enterprise 5xx as COMMUNITY, or does not refuse it: $t500" ;;
+	*"DIED: 's1' cannot load the enterprise edition its .env pins"*"answers 500"*"pnpm env:logs"*) ;;
+	*) bad "env:test does not name the enterprise load failure for a 5xx DEFECT: $t500" ;;
+	esac
+	t500i="$(bash "$TMP/drive-test.sh" "$TMP/defect.sh" "$d500i" 2>&1)"
+	case "$t500i" in
+	*COMMUNITY* | *upgrade_required* | *NOT-REFUSED* | *"enterprise edition its .env pins"* | *env:logs*)
+		bad "env:test describes an invalid-pin 5xx as another DEFECT, or does not refuse it: $t500i" ;;
+	*"DIED: 's1' has an ALETHIA_EDITION pin the console rejects"*"answers 503"*"ALETHIA_EDITION=Enterprise is not a valid edition"*"fix the pin in that env's .env"*"then pnpm env:up"*) ;;
+	*) bad "env:test does not name an invalid pin, with its remedy, for that 5xx DEFECT: $t500i" ;;
+	esac
+
+	# D3. The restart after a run, and the restore after a reboot: exit 3 is "up, in the wrong
+	# scope" for BOTH, so the line under it must ask which.
+	cat >"$TMP/drive-restart.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia; ANSWER="$2"
+env_rss_mb() { echo 100; }
+ssh_box() {
+	case "$1" in
+	*env-registry.sh*) echo '{"s1":{"consolePort":3101,"storagePort":8400,"database":"db_s1"}}' ;;
+	*has-session*) return 1 ;;
+	*--scope*) echo "$ANSWER" ;;
+	*keep*) echo "boot output"; return 3 ;;
+	*) return 0 ;;
+	esac
+}
+restart_env_console s1
+echo "=== restore"
+restore_live_envs
+SH
+	r404="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d404" 2>&1)"
+	r500="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d500" 2>&1)"
+	r500i="$(bash "$TMP/drive-restart.sh" "$TMP/defect.sh" "$d500i" 2>&1)"
+	case "$r404" in
+	*"the console is back, but it is serving COMMUNITY entitlements"*"=== restore"*"s1 is back, but it is serving COMMUNITY entitlements"*"must run: pnpm env:up"*) ;;
+	*) bad "restart/restore do not report a 404 DEFECT as COMMUNITY: $r404" ;;
+	esac
+	case "$r500" in
+	*COMMUNITY*) bad "restart/restore describe a pinned-enterprise 5xx as COMMUNITY: $r500" ;;
+	*"the console is back, but it cannot load the enterprise edition"*"pnpm env:logs"*"=== restore"*"s1 is back, but it cannot load the enterprise edition"*"must run: pnpm env:logs"*) ;;
+	*) bad "restart/restore do not name the enterprise load failure for a 5xx DEFECT: $r500" ;;
+	esac
+	case "$r500i" in
+	*COMMUNITY* | *env:logs* | *"enterprise edition its .env pins"*) bad "restart/restore describe an invalid-pin 5xx as another DEFECT: $r500i" ;;
+	*"the console is back, but it has an ALETHIA_EDITION pin the console rejects"*"fix the pin in that env's .env"*"=== restore"*"s1 is back, but it has an ALETHIA_EDITION pin the console rejects"*"must run: fix the pin in that env's .env"*) ;;
+	*) bad "restart/restore do not name an invalid pin for that 5xx DEFECT: $r500i" ;;
+	esac
+	# D4. The restore restarts EVERY env, not the first. ssh forwards its stdin to the remote command,
+	# so an ssh_box inside the slug loop that inherits the loop's stdin swallows the rest of the list.
+	# The stub READS stdin on every call, the way ssh does.
+	cat >"$TMP/drive-restore-all.sh" <<'SH'
+. "$1"
+REMOTE=/opt/alethia
+ssh_box() {
+	cat >/dev/null
+	case "$1" in
+	*env-registry.sh*) echo '{"a":{"consolePort":3101,"storagePort":8400,"database":"db_a"},"b":{"consolePort":3102,"storagePort":8401,"database":"db_b"},"c":{"consolePort":3103,"storagePort":8402,"database":"db_c"}}' ;;
+	*has-session*) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+restore_live_envs </dev/null
+SH
+	ra="$(bash "$TMP/drive-restore-all.sh" "$TMP/defect.sh" 2>&1)"
+	for e in a b c; do
+		printf '%s\n' "$ra" | grep -q "^    $e — restarting" || bad "restore_live_envs never reached env '$e' — an ssh in its loop swallowed the slug list: $ra"
+	done
+
+	[ "$fails" = "$d_before" ] &&
+		ok "a 404 DEFECT reads COMMUNITY, a pinned-enterprise 5xx DEFECT reads EE-NOT-LOADED and an invalid-pin 5xx DEFECT reads INVALID-PIN in env:test, env:status, the restart and the restore — and all three are still refused"
+
+	[ "$fails" = "$before" ] &&
+		ok "an existing .env gains the keys it predates, keeps every value it has, refuses a missing secret without --fresh, and env:status names the gap"
+	[ "$fails" = "$before" ] &&
+		ok "every env pins ALETHIA_EDITION (enterprise, or community when asked), a pin is never overridden, and env:status reports a pin the console is not serving"
 
 	[ "$fails" = 0 ] || echo "functions($env_sh): $fails failed" >&2
 	exit "$fails"
@@ -697,10 +1183,130 @@ inside && /^  fi$/ { next }
 inside && /^\}$/ { inside = 0 }
 AWK
 
+# #6110, both halves and the over-reach. The static list gone (the rule would still cover the
+# fixture, so only the source check can see it); the rule gone (a new `.cache/` ships again); and
+# the rule widened to every untracked top-level directory, which withholds new source.
+mutate_fn static-junk-excludes-dropped <<'AWK'
+/^    --exclude=\/\.pnpm-store --exclude=\/\.codex-run-base$/ { next }
+{ print }
+AWK
+mutate_fn dot-dir-rule-dropped <<'AWK'
+/^    excludes\+=\("--exclude=\/\$entry"\)$/ { next }
+{ print }
+AWK
+mutate_fn rule-widened-to-every-untracked-dir <<'AWK'
+{ sub(/^      \.\*\/\) entry=/, "      */) entry="); print }
+AWK
+
 # ssh_box exiting instead of returning: `|| true` can never catch it, and inside `$( )` the
 # containment turns a CAUGHT failure into an uncaught assignment status that errexit acts on.
 mutate_fn ssh-box-exits-instead-of-returning <<'AWK'
 { sub(/ip="\$\(require_box\)" \|\| return \$\?/, "ip=\"$(require_box)\" || exit $?"); print }
+AWK
+
+# #6111, the defect verbatim and its two nearest misses. Write-once restored (an existing .env is
+# left alone); a missing secret minted into a live env; and env:status reporting every env as ok.
+mutate_fn dotenv-write-once-again <<'AWK'
+/^dotenv_reconcile\(\) \{/ { inside = 1 }
+{ print }
+inside && /^  _new="\$\(cat\)"$/ { print "  return 0"; inside = 0 }
+AWK
+mutate_fn dotenv-secret-minted-into-a-live-env <<'AWK'
+{ sub(/^      \[ "\$_s" = "\$_k" \] && _is_secret=1$/, "      :"); print }
+AWK
+mutate_fn status-never-reports-a-gap <<'AWK'
+{ sub(/\|\| m="\$m\$\{m:\+,\}\$k"$/, "|| :"); print }
+AWK
+
+# #6158: the pin dropped from the template (every env runs auto again); a pin read back as unset
+# whatever it says; the mismatch never reported; and --community silently ignored on a pinned env.
+mutate_fn edition-pin-dropped-from-template <<'AWK'
+/^ALETHIA_EDITION=\$edition$/ { next }
+{ print }
+AWK
+mutate_fn edition-never-read-back <<'AWK'
+{ sub(/^  enterprise \| community \| auto\) echo "\$_e" ;;$/, "  enterprise | community | auto) echo unset ;;"); print }
+AWK
+mutate_fn edition-mismatch-never-reported <<'AWK'
+{ sub(/^  if \[ "\$pin" = "\$served" \]; then$/, "  if :; then"); print }
+AWK
+# The call sites (A3 on #6160): --community parsed as enterprise; mint_env rendering without it;
+# the read-back dropped; cmd_up not passing it on.
+mutate_fn community-flag-parsed-as-enterprise <<'AWK'
+{ sub(/^    --community\) edition="community" ;;$/, "    --community) edition=\"enterprise\" ;;"); print }
+AWK
+mutate_fn mint-renders-without-the-edition <<'AWK'
+{ sub(/"\$snapshot_key" "\$bootstrap_token" "\$edition" \|$/, "\"$snapshot_key\" \"$bootstrap_token\" |"); print }
+AWK
+mutate_fn pin-note-never-called <<'AWK'
+/^  edition_pin_note "\$slug_" "\$edition" "\$pinned"$/ { next }
+{ print }
+AWK
+mutate_fn cmd-up-drops-the-edition <<'AWK'
+{ sub(/"\$db" "\$fresh" "\$edition"$/, "\"$db\" \"$fresh\""); print }
+AWK
+mutate_fn pin-reader-strips-inner-spaces <<'AWK'
+{ sub(/tr -d '\\r' \|$/, "tr -d '\\r ' |"); print }
+AWK
+mutate_fn community-request-silently-ignored <<'AWK'
+/^edition_pin_note\(\) \{/ { inside = 1 }
+inside && /^  if \[ "\$requested" = community \]; then$/ { sub(/community/, "nobody") }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+
+# #6166: each site that described a pinned-enterprise 5xx DEFECT as COMMUNITY, put back the way it
+# shipped — plus the shared label collapsing to one word, and the remedy losing the log.
+mutate_fn status-labels-every-defect-community <<'AWK'
+{ sub(/^    DEFECT\)     echo "\$s \$\(scope_defect_label "\$v"\)" ;;$/, "    DEFECT)     echo \"$s COMMUNITY\" ;;"); print }
+AWK
+mutate_fn defect-label-ignores-the-status <<'AWK'
+/^  5\[0-9\]\[0-9\]:\*\) echo EE-NOT-LOADED ;;$/ { next }
+{ print }
+AWK
+mutate_fn env-test-refuses-a-5xx-in-community-words <<'AWK'
+/^cmd_test\(\) \{/ { inside = 1 }
+inside && /^    EE-NOT-LOADED\)$/ { sub(/EE-NOT-LOADED/, "EE-NEVER") }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+mutate_fn restore-says-community-again <<'AWK'
+{ sub(/is back, but it \$\(scope_headline "\$scope_"\) \(see above\)/, "is back but serving COMMUNITY entitlements (see above)"); print }
+AWK
+mutate_fn restart-says-community-again <<'AWK'
+{ sub(/the console is back, but it \$\(scope_headline "\$scope_"\)\./, "the console is back, but it came up serving COMMUNITY entitlements."); print }
+AWK
+mutate_fn edition-row-calls-ee-not-loaded-unmeasured <<'AWK'
+/^  EE-NOT-LOADED\) echo "⚠ pinned/ { next }
+{ print }
+AWK
+# The restore loop fed by a pipe on stdin again, so the first ssh in it eats the remaining slugs.
+mutate_fn restore-loop-reads-stdin-again <<'AWK'
+{ sub(/^  while read -r sl <&3; do$/, "  printf '%s\\n' \"$slugs\" | while read -r sl; do"); sub(/^  done 3< <\(printf '%s\\n' "\$slugs"\) <\/dev\/null$/, "  done"); print }
+AWK
+# #6171: an invalid pin folded back into the ee-load fault (by the label, and by env:test's arm);
+# its remedy losing the .env line; and dotenv_edition accepting a mis-cased pin the console rejects,
+# which C9 can only see at a 5xx — at a 404 `enterprise` and `other` are both DEFECT.
+mutate_fn invalid-pin-labelled-ee-not-loaded <<'AWK'
+/^  5\[0-9\]\[0-9\]:\*"is not a valid edition"\*\) echo INVALID-PIN ;;$/ { next }
+{ print }
+AWK
+mutate_fn env-test-refuses-an-invalid-pin-in-ee-words <<'AWK'
+/^cmd_test\(\) \{/ { inside = 1 }
+inside && /^    INVALID-PIN\)$/ { sub(/INVALID-PIN/, "INVALID-NEVER") }
+{ print }
+inside && /^\}$/ { inside = 0 }
+AWK
+mutate_fn invalid-pin-remedy-drops-the-env-line <<'AWK'
+{ sub(/^  DEFECT:INVALID-PIN\) echo "fix the pin in that env's .env \(community, enterprise or auto — exactly\), then pnpm env:up" ;;$/, "  DEFECT:INVALID-PIN) echo \"pnpm env:up\" ;;"); print }
+AWK
+mutate_fn pin-reader-accepts-a-mis-cased-pin <<'AWK'
+/^  enterprise \| community \| auto\) echo "\$_e" ;;$/ { print "  Enterprise) echo enterprise ;;" }
+{ print }
+AWK
+mutate_fn remedy-drops-the-log <<'AWK'
+/^  DEFECT:EE-NOT-LOADED\) echo "pnpm env:logs/ { next }
+{ print }
 AWK
 
 # ── 9. and it must NOT fire on a legal reflow ─────────────────────────────────────────────────

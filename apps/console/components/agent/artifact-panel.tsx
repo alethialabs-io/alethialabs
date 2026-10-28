@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { getRegionPrices } from "@/app/server/actions/pricing";
 import { getGitopsDeployStatus } from "@/app/server/actions/gitops-status";
-import { getPlanResult } from "@/app/server/actions/jobs";
+import { rpcClient } from "@/lib/rpc/client";
 import { getProject } from "@/app/server/actions/projects";
 import { DeployPane } from "@/components/agent/deploy-pane";
 import { BuildPane } from "@/components/agent/build-pane";
@@ -131,7 +131,7 @@ export function ArtifactPanel() {
 				if (!cancelled) setPlan(null);
 				return;
 			}
-			const r = await getPlanResult(jobId);
+			const r = await rpcClient.jobs.planResult({ id: jobId });
 			if (cancelled) return;
 			const meta = r.execution_metadata;
 			setPlan({

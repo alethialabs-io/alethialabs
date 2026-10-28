@@ -64,10 +64,9 @@ async function membersReady(session: {
 	await expect(facetTrigger(session.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 }
 
-// On a Pro org the "Invite member" button is remounted when `canInvite` resolves async
-// (getCollaborationAccess): the UpgradeDialog trigger is swapped for the real InviteMemberDialog
-// trigger, and a click that lands mid-swap is dropped (or opens the upsell first). Retry-open until
-// the real "Invite members" dialog is up — Escape closes any upsell that briefly opened.
+// Retry-open the invite dialog until its "Invite members" heading is up. The gate is prefetched
+// with the page now (#6129), so the trigger no longer swaps after hydration; the retry stays for a
+// click that lands while the table is still hydrating.
 async function openInviteDialog(page: import("@playwright/test").Page) {
 	const dialog = page.getByRole("dialog");
 	const heading = dialog.getByRole("heading", { name: "Invite members" });
@@ -146,13 +145,14 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await expect(owner.page.getByRole("button", { name: ROW_MENU })).toHaveCount(0);
 	});
 
-	test("Invite member is gated → opens the Pro upgrade dialog", async ({ owner }) => {
+	test("Invite member is gated → disabled, and says it needs the Pro plan", async ({ owner }) => {
+		// F017 (#6129): a gated primary action is the SAME button, disabled, with its reason on it
+		// (`DisabledReason`: tooltip on hover and focus, `aria-describedby` for a screen reader) —
+		// not an enabled control that opens an upgrade modal.
 		await membersReady(owner);
-		await owner.page.getByRole("button", { name: /invite member/i }).click();
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog).toBeVisible();
-		await expect(dialog.getByText("Invite team members")).toBeVisible();
-		await expect(dialog.getByRole("button", { name: /upgrade to pro/i })).toBeVisible();
+		const invite = owner.page.getByRole("button", { name: /invite member/i });
+		await expect(invite).toBeDisabled();
+		await expect(invite).toHaveAccessibleDescription(/available on the Pro plan/i);
 	});
 
 	test("the Status facet carries the figures the stat strip used to (Pending = 0)", async ({
@@ -364,17 +364,20 @@ test.describe("RBAC — Teams (Enterprise gate)", () => {
 		await expect(
 			owner.page.getByRole("heading", { name: "Create and manage teams" }),
 		).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByText("Available on the Enterprise plan.")).toBeVisible();
+		// EXACT: the disabled Create team button carries its own (hidden) reason, "Teams are available
+		// on the Enterprise plan." (#6129, `DisabledReason`), which a substring match also finds.
+		await expect(owner.page.getByText("Available on the Enterprise plan.", { exact: true })).toBeVisible();
 	});
 
-	test("Hobby: Create team opens the Enterprise upgrade dialog (Contact Sales)", async ({
+	test("Hobby: Create team is disabled and says it needs the Enterprise plan", async ({
 		owner,
 	}) => {
+		// F017 (#6129): disabled with its reason, the upsell panel (Contact Sales) is the page body.
 		await owner.page.goto(teamsUrl(owner.orgSlug));
-		await owner.page.getByRole("button", { name: /create team/i }).click();
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog).toBeVisible();
-		await expect(dialog.getByRole("link", { name: /contact sales/i })).toBeVisible();
+		const create = owner.page.getByRole("button", { name: /create team/i });
+		await expect(create).toBeDisabled({ timeout: 30_000 });
+		await expect(create).toHaveAccessibleDescription(/available on the Enterprise plan/i);
+		await expect(owner.page.getByRole("link", { name: /contact sales/i })).toBeVisible();
 	});
 
 	test("Pro: teams is still Enterprise-gated (upsell present)", async ({ team }) => {
@@ -385,14 +388,11 @@ test.describe("RBAC — Teams (Enterprise gate)", () => {
 		).toBeVisible({ timeout: 30_000 });
 	});
 
-	test("Pro: Create team also opens the Enterprise upgrade dialog", async ({ team }) => {
+	test("Pro: Create team is also disabled with the Enterprise reason", async ({ team }) => {
 		await team.page.goto(teamsUrl(team.orgSlug));
-		await expect(team.page.getByRole("button", { name: /create team/i })).toBeVisible({
-			timeout: 30_000,
-		});
-		await team.page.getByRole("button", { name: /create team/i }).click();
-		const dialog = team.page.getByRole("dialog");
-		await expect(dialog.getByRole("link", { name: /contact sales/i })).toBeVisible();
+		const create = team.page.getByRole("button", { name: /create team/i });
+		await expect(create).toBeDisabled({ timeout: 30_000 });
+		await expect(create).toHaveAccessibleDescription(/available on the Enterprise plan/i);
 	});
 });
 

@@ -66,7 +66,7 @@ const ENTITLEMENTS: Entitlements = {
 
 /** Builds an injected actor bound to the test org with the Enterprise entitlement. */
 function actorFor(userId: string): Actor {
-	return { userId, orgId: ORG, entitlements: ENTITLEMENTS };
+	return { credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS };
 }
 
 /** Seeds one org-wide role grant (principal → built-in role, resource_id NULL = org-wide). */
@@ -164,58 +164,48 @@ describeIfDb("custom-role server actions — real PDP gate (P1 escalation fix)",
 	// role to include a billing permission — the exact 3-call exploit createRole([]) →
 	// assignGrant(self) → updateRole([billing]). These lock the ceiling on BOTH create + update.
 	it("DENIES an admin rewriting a role to add a permission it lacks (billing) — the escalation exploit", async () => {
-		await expect(
-			runWithActor(actorFor(ADMIN), () =>
-				updateRole(customRoleId, "Escalate", ["org:view", "billing:manage_billing"]),
-			),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await runWithActor(actorFor(ADMIN), () =>
+				updateRole({ id: customRoleId, name: "Escalate", permissionKeys: ["org:view", "billing:manage_billing"] }),
+			)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		// The role's keys are UNCHANGED — no billing leaked in.
 		expect(await permKeysOf(customRoleId)).toEqual(["org:view", "project:view"]);
 	});
 
 	it("DENIES an admin CREATING a role with a permission it lacks (billing)", async () => {
-		await expect(
-			runWithActor(actorFor(ADMIN), () => createRole("Escalate", ["billing:manage_billing"])),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await runWithActor(actorFor(ADMIN), () => createRole({ name: "Escalate", permissionKeys: ["billing:manage_billing"] }))).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 	});
 
 	it("ALLOWS an admin to rewrite a role within its own ceiling (no billing)", async () => {
 		await runWithActor(actorFor(ADMIN), () =>
-			updateRole(customRoleId, "Auditor+", ["project:view", "runner:view"]),
+			updateRole({ id: customRoleId, name: "Auditor+", permissionKeys: ["project:view", "runner:view"] }),
 		);
 		expect(await permKeysOf(customRoleId)).toEqual(["project:view", "runner:view"]);
 	});
 
 	it("ALLOWS an owner to rewrite a role to include billing (holds * → within ceiling)", async () => {
 		await runWithActor(actorFor(OWNER), () =>
-			updateRole(customRoleId, "OwnerEdit", ["billing:manage_billing"]),
+			updateRole({ id: customRoleId, name: "OwnerEdit", permissionKeys: ["billing:manage_billing"] }),
 		);
 		expect(await permKeysOf(customRoleId)).toEqual(["billing:manage_billing"]);
 	});
 
 	it("DENIES an operator rewriting a role's permission set — throws, keys UNCHANGED", async () => {
-		await expect(
-			runWithActor(actorFor(OPERATOR), () =>
+		expect(await runWithActor(actorFor(OPERATOR), () =>
 				// The escalation: rewrite the role to hold EVERY permission.
-				updateRole(customRoleId, "Pwned", ["org:view", "org:manage_billing", "member:manage_members"]),
-			),
-		).rejects.toBeInstanceOf(ForbiddenError);
+				updateRole({ id: customRoleId, name: "Pwned", permissionKeys: ["org:view", "org:manage_billing", "member:manage_members"] }),
+			)).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 
 		// The role's permissions must be exactly what we seeded — no escalation landed.
 		expect(await permKeysOf(customRoleId)).toEqual(["org:view", "project:view"]);
 	});
 
 	it("DENIES an operator deleting a role — throws, the role survives", async () => {
-		await expect(
-			runWithActor(actorFor(OPERATOR), () => deleteRole(customRoleId)),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await runWithActor(actorFor(OPERATOR), () => deleteRole({ id: customRoleId }))).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(await roleExists(customRoleId)).toBe(true);
 	});
 
 	it("DENIES an operator creating a role — throws, no role added", async () => {
-		await expect(
-			runWithActor(actorFor(OPERATOR), () => createRole("Sneaky", ["org:view"])),
-		).rejects.toBeInstanceOf(ForbiddenError);
+		expect(await runWithActor(actorFor(OPERATOR), () => createRole({ name: "Sneaky", permissionKeys: ["org:view"] }))).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		// Only the seeded custom role exists in the org.
 		const rows = await getServiceDb()
 			.select({ id: role.id })
@@ -226,13 +216,13 @@ describeIfDb("custom-role server actions — real PDP gate (P1 escalation fix)",
 
 	it("ALLOWS an owner to rewrite a role's permissions", async () => {
 		await runWithActor(actorFor(OWNER), () =>
-			updateRole(customRoleId, "Renamed", ["runner:view"]),
+			updateRole({ id: customRoleId, name: "Renamed", permissionKeys: ["runner:view"] }),
 		);
 		expect(await permKeysOf(customRoleId)).toEqual(["runner:view"]);
 	});
 
 	it("ALLOWS an owner to delete a role", async () => {
-		await runWithActor(actorFor(OWNER), () => deleteRole(customRoleId));
+		await runWithActor(actorFor(OWNER), () => deleteRole({ id: customRoleId }));
 		expect(await roleExists(customRoleId)).toBe(false);
 	});
 });

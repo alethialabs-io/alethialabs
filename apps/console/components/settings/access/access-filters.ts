@@ -7,13 +7,14 @@
 // The deviation this file used to record — the org-scoped universe fetched once under
 // `qk.accessGrants(org, {projectId})` and the remaining axes applied HERE, because
 // `listAccessGrants(projectId?)` took no other filter — is closed (#4890).
-// `getAccessGrantsPage(q)` narrows in SQL and counts the scope/role/effect facets over the
+// the grants page read (`members.grants`, formerly `getAccessGrantsPage(q)`) narrows in SQL and counts the scope/role/effect facets over the
 // UNFILTERED grants of the same scope, so `filterGrants` and `accessFacetCounts` are gone and
 // this module is the normalize step, the display vocabulary, and nothing else.
 
 import { roleDisplayName } from "@/lib/authz/registry";
 import type { AccessGrantQuery } from "@/lib/queries/access-grants";
 import type { FacetOption } from "@/lib/queries/facets";
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 
 /** The Access grants list's filter state (a type alias, for the store's `Record` constraint). */
 export type AccessFilters = {
@@ -71,7 +72,7 @@ export function grantRoleLabel(key: string): string {
 }
 
 /**
- * The stable query object placed in `qk.accessGrants` AND handed to `getAccessGrantsPage()`.
+ * The stable query object that IS the `members.grants` read's input — and so its query key.
  *
  * An ALIAS of the builder's own query type rather than a second declaration of the same five
  * fields: the key and the server read take the identical object, and two shapes that must agree
@@ -114,4 +115,13 @@ export function facetCounts(options: FacetOption[]): Record<string, number> {
 	const counts: Record<string, number> = {};
 	for (const o of options) counts[o.value] = o.count;
 	return counts;
+}
+
+/**
+ * The grants list's query for a URL — the `members.grants` input the list settles on once
+ * `useFilterUrlSync` has read the link, so the route can prefetch it (#4999's rule, #6129).
+ */
+export function accessQueryFromUrl(params: ParamReader, projectId?: string): NormalizedAccessQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_ACCESS_FILTERS);
+	return normalizeAccessQuery(filters, filters.search, projectId);
 }

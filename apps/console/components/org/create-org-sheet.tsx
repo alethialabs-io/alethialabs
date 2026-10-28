@@ -27,7 +27,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { type UseFormReturn, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -85,6 +85,7 @@ import { orgHost } from "@/lib/org-url";
 import {
 	ORG_SLUG_RESERVED_CODE,
 	ORG_SLUG_RESERVED_MESSAGE,
+	globalHref,
 	RESERVED_SLUGS,
 } from "@/lib/routing";
 import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
@@ -192,6 +193,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [declaring, setDeclaring] = useState(false);
 	/** The gate's own sentence when it refused this declaration, shown on the declaration step. */
 	const [refusal, setRefusal] = useState<string | null>(null);
+	// A refusal is about the declaration that produced it; an edit to any declared fact drops it (F031).
+	const clearRefusal = useCallback(() => setRefusal(null), []);
 	const [createdSlug, setCreatedSlug] = useState("");
 	/**
 	 * The id of the org this sheet created (paid or trial). Invites NAME it: better-auth's
@@ -1027,6 +1030,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								<PayerDeclarationForm
 									busy={busy}
 									refusal={refusal}
+									onEdit={clearRefusal}
 									submitLabel="Finish setup"
 									onBack={() => handleOpenChange(false)}
 									onDeclare={(d) => void finishRecovered(d)}
@@ -1036,6 +1040,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 							<PayerDeclarationForm
 								busy={declaring}
 								refusal={refusal}
+								onEdit={clearRefusal}
 								submitLabel="Continue to payment"
 								onBack={() => setView("name")}
 								onDeclare={(d) => void handleDeclare(d)}
@@ -1132,7 +1137,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 						onAddPayment={() => {
 							handleOpenChange(false);
 							router.push(
-								createdSlug ? `/${createdSlug}/settings/billing` : "/dashboard",
+								createdSlug ? globalHref(createdSlug, "settings/billing") : "/dashboard",
 							);
 						}}
 					/>

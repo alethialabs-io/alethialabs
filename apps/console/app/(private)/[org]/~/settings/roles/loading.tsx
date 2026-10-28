@@ -1,14 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { HeaderSkeleton, PanelSkeleton } from "@/components/skeletons/page-skeletons";
+import { RolesSkeleton } from "@/components/settings/roles/roles-skeleton";
 
-/** Instant skeleton for the settings/roles route. */
+/** Instant skeleton for the settings/roles route: the page's own toolbar, filter bar and master/detail. */
 export default function RolesLoading() {
-	return (
-		<div className="space-y-6">
-			<HeaderSkeleton />
-			<PanelSkeleton lines={5} />
-		</div>
-	);
+	return <RolesSkeleton />;
 }

@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for the custom-role actions: stub the actor, a queue-based thenable
+// Mocked-boundary tests for the custom-role actions (each a `defineAction` since #6129, so every
+// refusal is asserted as its typed `ActionResult`) and the custom-role read (`listCustomRoles`, now
+// in lib/rpc/procedures/members.ts): stub the actor, a queue-based thenable
 // drizzle chain (each awaited terminal/.returning() shifts the next seeded result-set), and the
 // side-effect deps (alerts, activity, tuple-sync). The entitlement math (getEntitlements) and the
 // permission registry/`sanitize` stay REAL, so we assert the Enterprise gate, key sanitisation,
@@ -21,18 +23,19 @@ vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ getTupleSync: vi.fn() }));
 
-import {
-	createRole,
-	deleteRole,
-	listCustomRoles,
-	updateRole,
-} from "@/app/server/actions/roles";
+import { createRole, deleteRole, updateRole } from "@/app/server/actions/roles";
+import { listCustomRoles } from "@/lib/rpc/procedures/members";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { recordActivity } from "@/lib/authz/activity";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
+
+/** Role ids as the actions now require them: uuids. */
+const R1 = "00000000-0000-4000-8000-0000000000b1";
+const R2 = "00000000-0000-4000-8000-0000000000b2";
+const RX = "00000000-0000-4000-8000-0000000000bf";
 
 /**
  * A drizzle-ish chain where every builder returns the chain and each awaited terminal
@@ -79,6 +82,7 @@ function mockDb(queue: unknown[]) {
  *  entitlement, not authorization. */
 function communityActor() {
 	vi.mocked(authorizeQuiet).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 	} as never);
@@ -87,6 +91,7 @@ function communityActor() {
 /** Actor in an org WITH the customRoles entitlement (Enterprise) and the PDP gate satisfied. */
 function enterpriseActor() {
 	vi.mocked(authorizeQuiet).mockResolvedValue({
+		credential: "session",
 		orgId: "org-1",
 		userId: "user-1",
 		entitlements: { customRoles: true },
@@ -111,26 +116,26 @@ describe("PDP gate (authorizeQuiet) — a member without manage_members is block
 				new ForbiddenError("manage_members", { type: "member" }, "no_grant"),
 			);
 
-	it("createRole rejects (ForbiddenError) and never inserts", async () => {
+	it("createRole answers forbidden and never inserts", async () => {
 		const { insertTables } = mockDb([]);
 		deny();
-		await expect(createRole("Eng", ["org:view"])).rejects.toThrow(ForbiddenError);
+		expect(await createRole({ name: "Eng", permissionKeys: ["org:view"] })).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(insertTables).toHaveLength(0);
 	});
 
-	it("updateRole rejects (ForbiddenError) and never writes", async () => {
+	it("updateRole answers forbidden and never writes", async () => {
 		const { insertTables, deleteTables, setSpy } = mockDb([]);
 		deny();
-		await expect(updateRole("r-1", "Eng", ["org:view"])).rejects.toThrow(ForbiddenError);
+		expect(await updateRole({ id: R1, name: "Eng", permissionKeys: ["org:view"] })).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(insertTables).toHaveLength(0);
 		expect(deleteTables).toHaveLength(0);
 		expect(setSpy).not.toHaveBeenCalled();
 	});
 
-	it("deleteRole rejects (ForbiddenError) and never deletes", async () => {
+	it("deleteRole answers forbidden and never deletes", async () => {
 		const { deleteTables } = mockDb([]);
 		deny();
-		await expect(deleteRole("r-1")).rejects.toThrow(ForbiddenError);
+		expect(await deleteRole({ id: R1 })).toMatchObject({ ok: false, error: { kind: "forbidden" } });
 		expect(deleteTables).toHaveLength(0);
 	});
 });
@@ -146,19 +151,19 @@ describe("listCustomRoles", () => {
 		communityActor();
 		mockDb([
 			[
-				{ id: "r-1", name: "Eng" },
-				{ id: "r-2", name: "Ops" },
+				{ id: R1, name: "Eng" },
+				{ id: R2, name: "Ops" },
 			],
 			[
-				{ roleId: "r-1", key: "org:view" },
-				{ roleId: "r-1", key: "project:create" },
-				{ roleId: "r-2", key: "runner:view" },
+				{ roleId: R1, key: "org:view" },
+				{ roleId: R1, key: "project:create" },
+				{ roleId: R2, key: "runner:view" },
 			],
 		]);
 		const roles = await listCustomRoles();
 		expect(roles).toEqual([
-			{ id: "r-1", name: "Eng", permissionKeys: ["org:view", "project:create"] },
-			{ id: "r-2", name: "Ops", permissionKeys: ["runner:view"] },
+			{ id: R1, name: "Eng", permissionKeys: ["org:view", "project:create"] },
+			{ id: R2, name: "Ops", permissionKeys: ["runner:view"] },
 		]);
 	});
 
@@ -170,31 +175,28 @@ describe("listCustomRoles", () => {
 });
 
 describe("createRole", () => {
-	it("throws when the org lacks the customRoles entitlement", async () => {
+	it("answers entitlement when the org lacks the customRoles entitlement", async () => {
 		communityActor();
-		await expect(createRole("Eng", ["org:view"])).rejects.toThrow(
-			/Enterprise license/,
-		);
+		expect(await createRole({ name: "Eng", permissionKeys: ["org:view"] })).toMatchObject({ ok: false, error: { kind: "entitlement" } });
 	});
 
 	it("creates the role, persists sanitised keys, and emits side-effects", async () => {
 		enterpriseActor();
 		const { insertTables, valuesCalls } = mockDb([
-			[{ id: "r-1", name: "Eng" }], // role insert .returning()
+			[{ id: R1, name: "Eng" }], // role insert .returning()
 			[], // rolePermission insert
 		]);
 
-		const result = await createRole("Eng", [
+		const result = await createRole({ name: "Eng", permissionKeys: [
 			"org:view",
 			"org:view", // duplicate → de-duped
 			"project:create",
 			"bogus:nope", // unknown → dropped
-		]);
+		] });
 
 		expect(result).toEqual({
-			id: "r-1",
-			name: "Eng",
-			permissionKeys: ["org:view", "project:create"],
+			ok: true,
+			data: { id: R1, name: "Eng", permissionKeys: ["org:view", "project:create"] },
 		});
 		// First insert is the role row with the active org + non-builtin flag.
 		expect(valuesCalls[0]).toEqual({
@@ -205,46 +207,45 @@ describe("createRole", () => {
 		});
 		// Second insert is one rolePermission row per sanitised key.
 		expect(valuesCalls[1]).toEqual([
-			{ role_id: "r-1", permission_key: "org:view" },
-			{ role_id: "r-1", permission_key: "project:create" },
+			{ role_id: R1, permission_key: "org:view" },
+			{ role_id: R1, permission_key: "project:create" },
 		]);
 		expect(insertTables).toHaveLength(2);
 
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
 			"authz.role.create",
-			expect.objectContaining({ action: "create", resource_id: "r-1" }),
+			expect.objectContaining({ action: "create", resource_id: R1 }),
 		);
 		expect(recordActivity).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "org-1" }),
 			"create",
-			{ type: "role", id: "r-1" },
+			{ type: "role", id: R1 },
 		);
 	});
 
 	it("skips the permission insert when no valid keys remain", async () => {
 		enterpriseActor();
-		const { valuesCalls } = mockDb([[{ id: "r-1", name: "Eng" }]]);
-		const result = await createRole("Eng", ["bogus:nope", "also:bad"]);
-		expect(result.permissionKeys).toEqual([]);
+		const { valuesCalls } = mockDb([[{ id: R1, name: "Eng" }]]);
+		const result = await createRole({ name: "Eng", permissionKeys: ["bogus:nope", "also:bad"] });
+		expect(result.ok && result.data.permissionKeys).toEqual([]);
 		expect(valuesCalls).toHaveLength(1); // only the role row, no rolePermission insert
 	});
 });
 
 describe("updateRole", () => {
-	it("throws when the org lacks the customRoles entitlement", async () => {
+	it("answers entitlement when the org lacks the customRoles entitlement", async () => {
 		communityActor();
-		await expect(updateRole("r-1", "Eng", [])).rejects.toThrow(
-			/Enterprise license/,
-		);
+		expect(await updateRole({ id: R1, name: "Eng", permissionKeys: [] })).toMatchObject({ ok: false, error: { kind: "entitlement" } });
 	});
 
-	it("throws when the role isn't an editable org role", async () => {
+	it("answers not-found when the role isn't an editable org role", async () => {
 		enterpriseActor();
 		mockDb([[]]); // target lookup → none
-		await expect(updateRole("r-x", "Eng", ["org:view"])).rejects.toThrow(
-			/Role not found/,
-		);
+		expect(await updateRole({ id: RX, name: "Eng", permissionKeys: ["org:view"] })).toMatchObject({
+			ok: false,
+			error: { kind: "not-found" },
+		});
 	});
 
 	it("renames, replaces permissions, resyncs tuples, and emits side-effects", async () => {
@@ -252,59 +253,59 @@ describe("updateRole", () => {
 		const resyncRole = vi.fn(() => Promise.resolve());
 		vi.mocked(getTupleSync).mockReturnValue({ resyncRole } as never);
 		const { setSpy, valuesCalls, deleteTables } = mockDb([
-			[{ id: "r-1" }], // target lookup
+			[{ id: R1 }], // target lookup
 			[], // update
 			[], // delete rolePermission
 			[], // insert rolePermission
 		]);
 
-		await updateRole("r-1", "Renamed", ["org:view", "junk:key"]);
+		await updateRole({ id: R1, name: "Renamed", permissionKeys: ["org:view", "junk:key"] });
 
 		expect(setSpy).toHaveBeenCalledWith({ name: "Renamed", description: null });
 		expect(deleteTables).toHaveLength(1); // old permissions cleared
-		expect(valuesCalls[0]).toEqual([{ role_id: "r-1", permission_key: "org:view" }]);
-		expect(resyncRole).toHaveBeenCalledWith("r-1");
+		expect(valuesCalls[0]).toEqual([{ role_id: R1, permission_key: "org:view" }]);
+		expect(resyncRole).toHaveBeenCalledWith(R1);
 
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
 			"authz.role.edit",
-			expect.objectContaining({ action: "edit", resource_id: "r-1", severity: "warning" }),
+			expect.objectContaining({ action: "edit", resource_id: R1, severity: "warning" }),
 		);
 		expect(recordActivity).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "org-1" }),
 			"edit",
-			{ type: "role", id: "r-1" },
+			{ type: "role", id: R1 },
 		);
 	});
 
 	it("does not re-insert permissions when none survive sanitisation", async () => {
 		enterpriseActor();
-		const { valuesCalls } = mockDb([[{ id: "r-1" }], [], []]);
-		await updateRole("r-1", "Renamed", ["junk:key"]);
+		const { valuesCalls } = mockDb([[{ id: R1 }], [], []]);
+		await updateRole({ id: R1, name: "Renamed", permissionKeys: ["junk:key"] });
 		expect(valuesCalls).toHaveLength(0); // delete happened, but no insert
 	});
 });
 
 describe("deleteRole", () => {
-	it("throws when the org lacks the customRoles entitlement", async () => {
+	it("answers entitlement when the org lacks the customRoles entitlement", async () => {
 		communityActor();
-		await expect(deleteRole("r-1")).rejects.toThrow(/Enterprise license/);
+		expect(await deleteRole({ id: R1 })).toMatchObject({ ok: false, error: { kind: "entitlement" } });
 	});
 
 	it("deletes the org's role and emits the destroy side-effects", async () => {
 		enterpriseActor();
 		const { deleteTables } = mockDb([[]]);
-		await deleteRole("r-1");
+		await deleteRole({ id: R1 });
 		expect(deleteTables).toHaveLength(1);
 		expect(emitAlertEventSafe).toHaveBeenCalledWith(
 			"org-1",
 			"authz.role.delete",
-			expect.objectContaining({ action: "delete", resource_id: "r-1", severity: "warning" }),
+			expect.objectContaining({ action: "delete", resource_id: R1, severity: "warning" }),
 		);
 		expect(recordActivity).toHaveBeenCalledWith(
 			expect.objectContaining({ orgId: "org-1" }),
 			"destroy",
-			{ type: "role", id: "r-1" },
+			{ type: "role", id: R1 },
 		);
 	});
 });

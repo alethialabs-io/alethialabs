@@ -109,6 +109,7 @@ import {
 	writeAdoptedRelinkState,
 	writeHoldState,
 } from "./store";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
 
 /** How often the in-process sweeper ticks (§5.4). */
 export const SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -437,6 +438,7 @@ export async function linkSetupToOrg(input: {
 		linked = await getPurchaseStripe().subscriptions.update(sub.id, {
 			metadata: { created_by: userId, organization_id: orgId },
 		});
+		forgetSubscription(sub.id); // the plan card's cached read of it is now stale (lib/billing/subscription-cache.ts)
 	}
 
 	// An "ignored" sync beside a row naming X itself is #5549's rank guard keeping a later state (C76),

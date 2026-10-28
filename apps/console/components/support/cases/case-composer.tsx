@@ -2,107 +2,122 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { SendHorizontal } from "lucide-react";
-import { useState } from "react";
+import { Loader2, SendHorizontal } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { postCaseMessage } from "@/app/server/actions/support";
-import type { SupportCaseStatus } from "@/lib/db/schema/enums";
-import { qk } from "@/lib/query/keys";
+import { FieldMessage } from "@/components/support/field-message";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { CaseWithThread, PublicMessage } from "@/lib/queries/support";
+import { randomUuid } from "@/lib/random-id";
+import { postMessageSchema } from "@/lib/validations/support";
+import { caseKey, supportCaseKeys } from "./case-queries";
 
 /**
- * The reply composer for a case thread. On send it optimistically appends the customer's
- * message to the `["support","case",id]` cache (so the bubble shows immediately), calls the
- * `postCaseMessage` server action, and invalidates the case query on settle to reconcile
- * with server truth. Disabled once the case is `closed`.
+ * The id prefix of the reply this composer patches into the case read before the server answers.
+ * `CaseThread` reads it to recognise the viewer's own send, which scrolls into view wherever they
+ * had scrolled to — so it is one constant, not two copies of a string.
  */
-export function CaseComposer({
-	caseId,
-	caseStatus,
-}: {
-	caseId: string;
-	caseStatus: SupportCaseStatus;
-}) {
-	const [body, setBody] = useState("");
-	const queryClient = useQueryClient();
-	const isClosed = caseStatus === "closed";
+export const OPTIMISTIC_ID_PREFIX = "optimistic-";
 
-	const mutation = useMutation({
-		mutationFn: (text: string) =>
-			postCaseMessage({ caseId, body: text }),
-		onMutate: async (text: string) => {
-			const key = qk.supportCase(caseId);
-			await queryClient.cancelQueries({ queryKey: key });
-			const previous = queryClient.getQueryData<CaseWithThread | null>(key);
-			const optimistic: PublicMessage = {
-				id: `optimistic-${crypto.randomUUID()}`,
-				case_id: caseId,
-				author_type: "customer",
-				author_id: null,
-				author_name: null,
-				body: text,
-				created_at: new Date(),
-			};
-			queryClient.setQueryData<CaseWithThread | null>(key, (current) =>
-				current
-					? { ...current, messages: [...current.messages, optimistic] }
-					: current,
-			);
-			return { previous };
+/** The composer's one field, validated by the same rule the server applies. */
+const replyForm = postMessageSchema.pick({ body: true });
+
+type ReplyForm = z.input<typeof replyForm>;
+
+/** True when `value` is a cached case read (what the optimistic patch may append to). */
+function isCaseRead(value: unknown): value is CaseWithThread {
+	return typeof value === "object" && value !== null && "messages" in value && Array.isArray(value.messages);
+}
+
+/**
+ * The reply composer for an OPEN, PENDING or RESOLVED case (a closed case shows a closed notice
+ * instead — `CaseDetail`). A react-hook-form form over the server's own rule, through the mutation
+ * contract: the reply appears in the thread at once (an optimistic patch of the case read, rolled
+ * back if the action fails), Send is disabled while it is in flight (the double-submit guard), a
+ * validation refusal lands under the field rather than in a toast, and on settle every key that
+ * shows the case is invalidated — the thread, the "My cases" buckets and the bell.
+ */
+export function CaseComposer({ caseId }: { caseId: string }) {
+	const form = useForm<ReplyForm>({
+		resolver: zodResolver(replyForm),
+		defaultValues: { body: "" },
+	});
+	const {
+		register,
+		handleSubmit,
+		reset,
+		setError,
+		watch,
+		formState: { errors },
+	} = form;
+
+	const send = useActionMutation(postCaseMessage, {
+		invalidates: supportCaseKeys(),
+		optimistic: [
+			{
+				key: caseKey(caseId),
+				update: (current, variables) => {
+					if (!isCaseRead(current)) return current;
+					const optimistic: PublicMessage = {
+						id: `${OPTIMISTIC_ID_PREFIX}${randomUuid()}`,
+						case_id: caseId,
+						author_type: "customer",
+						author_id: null,
+						author_name: null,
+						body: variables.body,
+						created_at: new Date(),
+					};
+					return { ...current, messages: [...current.messages, optimistic] };
+				},
+			},
+		],
+		onValidationError: (fields) => {
+			const message = fields.body?.[0] ?? fields._form?.[0];
+			if (message) setError("body", { message });
 		},
-		onError: (_err, _text, context) => {
-			// Roll back the optimistic append on failure.
-			if (context?.previous !== undefined) {
-				queryClient.setQueryData(qk.supportCase(caseId), context.previous);
-			}
-		},
-		onSettled: () => {
-			void queryClient.invalidateQueries({
-				queryKey: qk.supportCase(caseId),
-			});
-		},
+		onSuccess: () => reset({ body: "" }),
 	});
 
-	/** Sends the trimmed reply, clearing the input immediately for the optimistic bubble. */
-	function handleSend() {
-		const text = body.trim();
-		if (!text || mutation.isPending || isClosed) return;
-		setBody("");
-		mutation.mutate(text);
-	}
+	const onSubmit = handleSubmit((values) => {
+		if (send.isPending) return;
+		send.mutate({ caseId, body: values.body.trim() });
+	});
+
+	const body = watch("body");
+	const messageId = `case-reply-message-${caseId}`;
 
 	return (
-		<div className="space-y-2">
+		<form className="space-y-1" onSubmit={onSubmit} noValidate>
 			<Textarea
 				aria-label="Reply"
-				value={body}
-				onChange={(e) => setBody(e.target.value)}
+				aria-invalid={errors.body ? true : undefined}
+				aria-describedby={messageId}
+				placeholder="Write a reply… (⌘/Ctrl + Enter to send)"
+				className="min-h-24 resize-y"
 				onKeyDown={(e) => {
 					if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 						e.preventDefault();
-						handleSend();
+						void onSubmit();
 					}
 				}}
-				disabled={isClosed}
-				placeholder={
-					isClosed
-						? "This case is closed."
-						: "Write a reply… (⌘/Ctrl + Enter to send)"
-				}
-				className="min-h-24 resize-y"
+				{...register("body")}
 			/>
-			<div className="flex justify-end">
+			<div className="flex items-start justify-between gap-4">
+				<FieldMessage id={messageId} message={errors.body?.message} />
 				<Button
+					type="submit"
 					size="sm"
-					onClick={handleSend}
-					disabled={isClosed || mutation.isPending || body.trim().length === 0}
+					className="shrink-0"
+					disabled={send.isPending || body.trim().length === 0}
 				>
-					<SendHorizontal className="size-4" />
+					{send.isPending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
 					Send
 				</Button>
 			</div>
-		</div>
+		</form>
 	);
 }

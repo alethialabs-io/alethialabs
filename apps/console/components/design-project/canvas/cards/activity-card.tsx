@@ -2,21 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	type InfiniteData,
-	useInfiniteQuery,
-} from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
+import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
-import {
-	type EnvironmentJobsPage,
-	getEnvironmentJobs,
-} from "@/app/server/actions/canvas-jobs";
+import { RegionError } from "@/components/errors/region-error";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
-import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
 import { orgHref } from "@/lib/routing";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -33,7 +28,9 @@ const PAGE = 20;
  * This replaces a floating list pinned to the board's top-left corner that showed the newest
  * eight jobs with no scroll, no paging and no route to the rest: an environment's history ended
  * wherever the list did, over the cards it was about. Here it pages on a keyset cursor and
- * follows the environment — polling fast while a job runs, a slow heartbeat once it settles.
+ * follows the environment: the read is the `canvas.environmentJobs` GET procedure, and a job that is
+ * queued, starts or finishes is a `jobs` hint on the org's change stream that invalidates it
+ * (`lib/query/topics.ts`) — it used to poll every 4 s while a job ran and every 30 s otherwise.
  */
 export function ActivityCard({
 	projectId,
@@ -46,23 +43,18 @@ export function ActivityCard({
 	const orgSlug = useActiveOrgSlug();
 	const env = useEnvironmentStatus();
 
-	const query = useInfiniteQuery<
-		EnvironmentJobsPage,
-		Error,
-		InfiniteData<EnvironmentJobsPage, string | null>,
-		ReturnType<typeof qk.environmentJobs>,
-		string | null
-	>({
-		queryKey: qk.environmentJobs(projectId, environmentId),
-		queryFn: ({ pageParam }) =>
-			getEnvironmentJobs(projectId, environmentId, {
+	const query = useInfiniteQuery(
+		orpc.canvas.environmentJobs.infiniteOptions({
+			input: (before: string | null) => ({
+				projectId,
+				environmentId,
 				limit: PAGE,
-				before: pageParam ?? undefined,
+				before: before ?? undefined,
 			}),
-		initialPageParam: null,
-		getNextPageParam: (last) => last.nextCursor,
-		refetchInterval: env.activeJob ? 4_000 : 30_000,
-	});
+			initialPageParam: null,
+			getNextPageParam: (last) => last.nextCursor,
+		}),
+	);
 
 	const jobs = query.data?.pages.flatMap((p) => p.jobs) ?? [];
 
@@ -92,16 +84,18 @@ export function ActivityCard({
 			onClose={closeCard}
 		>
 			{query.isPending ? (
-				<p className="text-xs text-muted-foreground">Loading…</p>
-			) : query.isError ? (
-				<EmptyState
-					title="Could not load the activity"
-					description={query.error.message}
-					action={
-						<Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-							Retry
-						</Button>
-					}
+				<ul className="space-y-1" aria-busy="true" aria-label="Loading the activity">
+					{[0, 1, 2, 3].map((i) => (
+						<li key={i}>
+							<Skeleton className="h-7 w-full rounded-none" />
+						</li>
+					))}
+				</ul>
+			) : query.isError && query.data === undefined ? (
+				<RegionError
+					title="Couldn't load the activity"
+					description="This environment's job history did not load."
+					onRetry={() => void query.refetch()}
 				/>
 			) : jobs.length === 0 ? (
 				<EmptyState

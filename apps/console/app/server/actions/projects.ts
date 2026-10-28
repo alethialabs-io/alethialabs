@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { projectOrgRefusal } from "@/lib/projects/project-org";
 import { createHash } from "node:crypto";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -14,13 +15,21 @@ import {
 } from "@/lib/cloud-providers/credential-knobs";
 import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
 import {
+	assertDesignIdentitiesUsable,
+	CloudIdentityRefusedError,
+} from "@/lib/cloud-providers/design-identities";
+import {
 	PROJECT_NAME_MAX_LENGTH,
 	helmRegistryProviderConfigSchema,
-	pickFreeProjectName,
+	deriveDuplicateName,
 	projectSchema,
 } from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import type { Actor } from "@/lib/authz/types";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
 import { insertServiceBindings } from "@/lib/db/service-bindings-sync";
@@ -779,6 +788,12 @@ export async function createProject(data: CreateProjectInput) {
 	const project_name = data.project.project_name.trim();
 
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
+		// Before any row is written: every cloud identity the design names must be one this caller
+		// may use (an org identity, or a person's own personal one).
+		await assertDesignIdentitiesUsable(tx, data, {
+			orgId,
+			personalAuthorId: personalIdentityAuthor(actor),
+		});
 		// M1: environment_stage is no longer a project column — it seeds the default env.
 		const { environment_stage, ...projectFields } = data.project;
 
@@ -864,6 +879,11 @@ export async function tryCreateProject(
 		if (err instanceof CredentialKnobRefusedError) {
 			return { ok: false, error: err.message };
 		}
+		// A cloud account the caller may not use. The message names where in the design, never
+		// whether the id exists.
+		if (err instanceof CloudIdentityRefusedError) {
+			return { ok: false, error: err.message };
+		}
 		if (isProjectNameTaken(err)) {
 			return {
 				ok: false,
@@ -903,6 +923,14 @@ export async function updateProjectDesign(
 		// recognised against: a credential in provider_config is refused unless it is already stored,
 		// unchanged, in this project (#5565). This action is also the CLI design route's write path.
 		await assertDesignStoresNoNewCredentials(tx, projectId, data);
+		// Same position, same reason: every cloud identity the design names must be one this caller
+		// may use, unless the project already stores it (so an existing binding stays editable).
+		// Under a CLI service token `personalIdentityAuthor` is undefined, so only org identities pass.
+		await assertDesignIdentitiesUsable(tx, data, {
+			orgId: actor.orgId,
+			personalAuthorId: personalIdentityAuthor(actor),
+			existing: { projectId, environmentId },
+		});
 		await tx
 			.update(projects)
 			.set(projectFields)
@@ -1142,8 +1170,7 @@ export async function reconcileEnvironmentComponents(
 // ============================================================
 
 async function buildConfigSnapshot(
-	owner: string,
-	orgId: string,
+	actor: Actor,
 	projectId: string,
 	environmentId?: string | null,
 	jobKind: "plan" | "deploy" | "destroy" | "drift" = "deploy",
@@ -1152,6 +1179,8 @@ async function buildConfigSnapshot(
 	// (community assumption), so under a real multi-member org an ORG-scoped cloud_identity
 	// (`scope='org'`, `org_id = actor.orgId ≠ userId`) is invisible → the identity lookup below
 	// throws the misleading "Cloud account is not verified". Same fix as createProject.
+	const owner = actor.userId;
+	const orgId = actor.orgId;
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		const [project] = await tx
 			.select()
@@ -1159,6 +1188,10 @@ async function buildConfigSnapshot(
 			.where(eq(projects.id, projectId))
 			.limit(1);
 		if (!project) notFound(); // stale/deleted id → 404, not a captured error
+		// The job is filed under the project's org (the database refuses any other), while quota,
+		// audit and idempotency are the actor's org's: so the work runs where the project lives.
+		const orgRefusal = projectOrgRefusal(project.org_id, { userId: owner, orgId });
+		if (orgRefusal) throw new JobRefusalError(orgRefusal);
 
 		// M1: resolve which environment this job provisions (the given one, else the
 		// project's default). Its `name` feeds the frozen snapshot `environment_stage`
@@ -1177,13 +1210,34 @@ async function buildConfigSnapshot(
 			);
 		}
 
+		// The identity this job will carry, and the claim route will hand the runner, must be one the
+		// ACTOR may use: an org identity, or a person's own personal one. Explicit rather than left to
+		// RLS, because under a CLI service token the scope's owner is the token's MINTER and RLS
+		// would admit the minter's personal identities. This also covers a project bound before the
+		// design write checked identities.
+		const personalAuthorId = personalIdentityAuthor(actor);
 		const [identity] = await tx
 			.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
 			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, project.cloud_identity_id))
+			.where(actorIdentityWhere(project.cloud_identity_id, orgId, personalAuthorId))
 			.limit(1);
 
 		if (!identity) {
+			// A service token whose minter could use this identity is told why; anyone else gets the
+			// sentence a missing identity always got. The second read is RLS-scoped, so it names
+			// nothing the scope could not already see.
+			if (personalAuthorId === undefined) {
+				const [personal] = await tx
+					.select({ id: cloudIdentities.id })
+					.from(cloudIdentities)
+					.where(eq(cloudIdentities.id, project.cloud_identity_id))
+					.limit(1);
+				if (personal) {
+					throw new JobRefusalError(
+						"This project uses a personal cloud account, and a service token can use only the organization's shared cloud accounts. Run it as a signed-in member, or link an organization cloud account to the project.",
+					);
+				}
+			}
 			throw new JobRefusalError(
 				"Cloud account is not verified. Go to Connectors to verify.",
 			);
@@ -2413,8 +2467,7 @@ export async function planProject(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			environmentId,
 			"plan",
@@ -2488,8 +2541,7 @@ export async function buildProject(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 		"deploy",
@@ -2596,8 +2648,7 @@ export async function provisionProject(
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			environmentId,
 			"deploy",
@@ -2731,8 +2782,7 @@ export async function queueDriftDetection(
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 	);
@@ -2819,8 +2869,7 @@ export async function destroyProject(
 	const owner = actor.userId;
 	const scope = { ownerId: owner, orgId: actor.orgId };
 	const target = await buildConfigSnapshot(
-		owner,
-		actor.orgId,
+		actor,
 		projectId,
 		environmentId,
 		"destroy",
@@ -2865,8 +2914,7 @@ export async function destroyProject(
 	for (const t of tenants) {
 		if (tenantDestroysInFlight.has(t.id)) continue;
 		const snap = await buildConfigSnapshot(
-			owner,
-			actor.orgId,
+			actor,
 			projectId,
 			t.id,
 			"destroy",
@@ -3238,33 +3286,6 @@ export type DuplicateProjectResult =
 	| ProjectRefusal;
 
 /**
- * The name a cross-cloud clone gets when the user does not choose one.
- *
- * ` (${targetProvider})` is 6–10 characters and `pickFreeProjectName` adds up to " N" more, all of
- * it against `PROJECT_NAME_MAX_LENGTH` (100) — which `createProject` has ENFORCED since #4738.
- * Before that the column was an unbounded `text()` and an over-long derived name simply persisted;
- * now it throws, so a project whose own name is within the suffix of the cap became impossible to
- * duplicate at all (aws/gcp: 95 chars, azure: 93, alibaba/hetzner: 91 — two fewer each once a
- * collision adds " 2"). That is why the dialog needs a name FIELD and not just a better default:
- * no derivation can shorten a name the user has not been asked about.
- *
- * Kept as one function with exactly one caller-visible behaviour so the default shown in the dialog
- * and the default the action falls back to cannot drift into two answers.
- *
- * @param sourceName the source project's display name
- * @param targetProvider the cloud being duplicated onto
- * @param takenNames every project name already in the org
- * @returns a name the org does not hold — which may exceed the cap, and is not checked here
- */
-function deriveDuplicateName(
-	sourceName: string,
-	targetProvider: CloudProviderSlug,
-	takenNames: string[],
-): string {
-	return pickFreeProjectName(`${sourceName} (${targetProvider})`, takenNames);
-}
-
-/**
  * Duplicates a project config for a different cloud provider, mapping provider-specific values.
  *
  * THROWS on a refusal, like `createProject` does — see its JSDoc for why, and use
@@ -3417,88 +3438,17 @@ export async function tryDuplicateProjectForProvider(
 	}
 }
 
-/**
- * The infrastructure categories a project's default environment currently provisions — used by the
- * cross-cloud duplicate dialog to preview which managed services will be translated (cluster → GKE,
- * Aurora → Cloud SQL, …). `network` + `cluster` are always present; the rest are listed only when
- * the design actually has one. Purely a read of the design (no provisioned state).
- */
-export type DuplicateCategory =
-	| "network"
-	| "cluster"
-	| "dns"
-	| "databases"
-	| "caches"
-	| "nosql"
-	| "queues"
-	| "topics"
-	| "secrets";
-
-/**
- * Source provider, the service categories present, and the per-target default NAME, for the
- * cross-cloud duplicate preview.
- *
- * `suggestedNames` is what pre-fills the dialog's name field, and it is keyed by target cloud
- * because the suffix NAMES that cloud — a field still reading " (aws)" after the user switched the
- * target to GCP is a wrong default, not a stale one. It is computed HERE, by the same
- * `deriveDuplicateName` the action falls back to, rather than in the client: a second derivation in
- * the dialog would be a second source of truth, and the client has no business reading the org's
- * project names to de-duplicate against. Only the source project's own name reaches the client, in
- * five pre-composed strings.
- *
- * It is a SUGGESTION and nothing here checks it against `PROJECT_NAME_MAX_LENGTH`: when the source
- * name is long enough the suggestion is over the cap and the form says so on the first render —
- * which is the honest reading, because that is precisely the project #4738 made un-duplicatable and
- * the field the user must now shorten.
- */
-export async function getProjectDuplicateSummary(projectId: string): Promise<{
-	provider: CloudProviderSlug;
-	projectName: string;
-	categories: DuplicateCategory[];
-	suggestedNames: Record<CloudProviderSlug, string>;
-}> {
-	const { formData, provider } = await getProjectAsFormData(projectId);
-	const categories: DuplicateCategory[] = ["network", "cluster"];
-	if (formData.dns?.enabled) categories.push("dns");
-	if (formData.databases?.length) categories.push("databases");
-	if (formData.caches?.length) categories.push("caches");
-	if (formData.nosql_tables?.length) categories.push("nosql");
-	if (formData.queues?.length) categories.push("queues");
-	if (formData.topics?.length) categories.push("topics");
-	if (formData.secrets?.length) categories.push("secrets");
-
-	const actor = await currentActor();
-	const takenNames = await withActorScope(actor, async (tx) => {
-		const names = await tx
-			.select({ project_name: projects.project_name })
-			.from(projects)
-			.where(eq(projects.org_id, actor.orgId));
-		return names.map((n) => n.project_name);
-	});
-	const sourceName = formData.project.project_name;
-	// A literal annotated `Record<CloudProviderSlug, string>` rather than a fold over
-	// `CLOUD_PROVIDER_SLUGS`: the annotation is checked in BOTH directions, so a cloud added to the
-	// slug union fails to compile here until it is given a suggestion, and one removed fails too. A
-	// fold would need an `as` on its seed to type an accumulator that is briefly incomplete — and
-	// that cast is exactly the thing that would let a missing key through silently.
-	const suggestedNames: Record<CloudProviderSlug, string> = {
-		aws: deriveDuplicateName(sourceName, "aws", takenNames),
-		gcp: deriveDuplicateName(sourceName, "gcp", takenNames),
-		azure: deriveDuplicateName(sourceName, "azure", takenNames),
-		hetzner: deriveDuplicateName(sourceName, "hetzner", takenNames),
-		alibaba: deriveDuplicateName(sourceName, "alibaba", takenNames),
-	};
-
-	return { provider, projectName: sourceName, categories, suggestedNames };
-}
-
 // ============================================================
 // Environments (M1) — a project owns N independently-provisionable environments.
 // ============================================================
 
-/** Lists a project's environments (default first, then by creation). */
+/**
+ * Lists a project's environments (default first, then by creation). The Environments page re-reads
+ * this on every live hint, so an allowed read is not recorded or emitted (`authorizeRead`); a refusal
+ * is, once.
+ */
 export async function getProjectEnvironments(projectId: string) {
-	const actor = await authorize("view", { type: "project", id: projectId });
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withActorScope(actor, async (tx) => {
 		const environments = await tx
@@ -3524,6 +3474,9 @@ export async function addEnvironment(
 	projectId: string,
 	input: { name: string; stage: EnvironmentStage; region?: string | null },
 ): Promise<AddEnvironmentResult> {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	// One definition of what an environment name may be, shared with the CLI's `project env add`
@@ -3585,6 +3538,9 @@ export async function duplicateEnvironment(
 	baseEnvironmentId: string,
 	name: string,
 ): Promise<AddEnvironmentResult> {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	const problem = environmentNameProblem(name);
@@ -3662,6 +3618,9 @@ export async function setAutoHeal(
 	environmentId: string,
 	enabled: boolean,
 ) {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, (tx) =>
 		tx
@@ -3695,7 +3654,8 @@ export interface EnvConsistency {
 export async function getEnvConsistency(
 	projectId: string,
 ): Promise<EnvConsistency> {
-	await authorize("view", { type: "project", id: projectId });
+	// A live-refetched read: quiet on allow, recorded once on refusal (see getProjectEnvironments).
+	await authorizeRead("view", { type: "project", id: projectId });
 	const { environments } = await getProjectEnvironments(projectId);
 	const designs = await Promise.all(
 		environments.map(async (e) => {
@@ -3763,6 +3723,9 @@ export async function deleteEnvironment(
 	projectId: string,
 	environmentId: string,
 ) {
+	// Bound to the addressed organization BEFORE the PDP (lib/promotions/org-binding.ts): RLS alone
+	// would let a team-org address reach the caller's personal-workspace project.
+	await assertProjectInActorOrg(await currentActor(), projectId);
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
 		const [env] = await tx
@@ -3788,26 +3751,6 @@ export async function deleteEnvironment(
 // ============================================================
 // Project settings — General tab.
 // ============================================================
-
-/** The editable general fields for a project (project → Settings → General). */
-export async function getProjectGeneral(
-	projectId: string,
-): Promise<{ id: string; project_name: string; slug: string | null }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	return withActorScope(actor, async (tx) => {
-		const [row] = await tx
-			.select({
-				id: projects.id,
-				project_name: projects.project_name,
-				slug: projects.slug,
-			})
-			.from(projects)
-			.where(eq(projects.id, projectId))
-			.limit(1);
-		if (!row) notFound(); // render loader: stale/deleted id → 404, not a captured error
-		return row;
-	});
-}
 
 /**
  * Renames a project. The slug is intentionally left stable so existing URLs / bookmarks keep

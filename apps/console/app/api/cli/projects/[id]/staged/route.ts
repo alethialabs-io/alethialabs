@@ -11,6 +11,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -20,7 +21,6 @@ import {
 } from "@/lib/cli/paging";
 import {
 	resolveCliEnvironment,
-	resolveCliProject,
 	resolveDefaultEnvironmentId,
 } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
@@ -53,7 +53,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

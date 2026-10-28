@@ -20,7 +20,6 @@ import {
 	testSsoProvider,
 	verifySsoDomain,
 } from "@/app/server/actions/sso";
-import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { legalUrl } from "@/lib/legal";
 import { useInvalidateSso, useSsoProvidersQuery } from "@/lib/query/use-sso-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -94,9 +93,6 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const { data: universe = [] } = useSsoProvidersQuery();
 	const counts = useMemo(() => ssoFacetCounts(universe), [universe]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_SSO_FILTERS);
-
-	// Enterprise gate — the whole surface is replaced by the upsell.
-	if (!bootstrap.sso) return <FeatureUpsell feature="sso" />;
 
 	const selected =
 		providers.find((p) => p.id === selectedId) ?? providers[0] ?? null;
@@ -303,7 +299,7 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => deleting && void confirmDelete(deleting)}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							variant="destructive"
 						>
 							Remove provider
 						</AlertDialogAction>

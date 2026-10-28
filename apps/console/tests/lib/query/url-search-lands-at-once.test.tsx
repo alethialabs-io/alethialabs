@@ -18,23 +18,23 @@
 // on the client (support cases, connectors), that the non-matching row is not on screen.
 //
 // Mutation check (done when this was written): dropping `{ urlRead }` from each surface's
-// `useDebouncedValue` call fails that surface's test, and dropping `enabled: urlRead` from
-// `useEvidenceQuery` fails the evidence "first fetch" test with `{}` as the first fetch. The
-// keystroke test passes either way — it is there so the fix cannot become "stop debouncing".
+// `useDebouncedValue` call fails that surface's test. The keystroke test passes either way — it is
+// there so the fix cannot become "stop debouncing".
 //
-// The evidence hook is held to more than that: it must not fetch at all before the link is read,
-// because its route prefetches the LINK's key and nothing else, so the first fetch it makes is the
-// filtered one.
+// The evidence hook is held to more than that: its route prefetches the LINK's key and nothing else,
+// so before the link is read into the store the hook asks for the link's own filters (#6126) — its
+// first read is the filtered one, and it never asks for the unfiltered roll-up. Mutation check
+// (#6126): making the hook read the store before `urlRead` fails the "first fetch" test with `{}`.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import type { RoleRow, RolesBootstrap } from "@/app/server/actions/roles";
 import type { SsoBootstrap } from "@/app/server/actions/sso";
 import type { CaseListItem } from "@/lib/queries/support";
-import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
+import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 /** The query string the "pasted link" carries; each test sets it before rendering. */
 let currentSearch = "";
@@ -46,22 +46,50 @@ vi.mock("next/navigation", () => ({
 }));
 
 // ── Data seams. Every fetch stays in flight; what is asserted is what each was ASKED. ──────────
-vi.mock("@/app/server/actions/evidence", () => ({ getOrgEvidence: vi.fn(() => new Promise(() => {})) }));
+// The read router: every procedure answers with a promise that never settles, and `rpc.calls` logs
+// what each was asked (the evidence page reads `evidence.page` over GET since #6126).
+const rpc = vi.hoisted(() => ({ handlers: {} as Record<string, FakeHandler>, calls: [] as FakeCall[] }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	rpc.handlers["evidence.page"] = () => new Promise(() => {});
+	rpc.handlers["support.cases"] = () => new Promise(() => {});
+	return { orpc: fakeOrpc(rpc.handlers, rpc.calls).orpc };
+});
+
+/** Every input `evidence.page` was asked for, in order. */
+const evidenceAsked = () => rpc.calls.filter((c) => c.path === "evidence.page").map((c) => c.input);
 vi.mock("@/app/server/actions/activity", () => ({
 	getActivityLog: vi.fn(() => new Promise(() => {})),
 	getActivityExportCsv: vi.fn(),
 }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(() => new Promise(() => {})) }));
-vi.mock("@/app/server/actions/support", () => ({ listMyCases: vi.fn(() => new Promise(() => {})) }));
 
 /** Every search `useRolesQuery` / `useSsoProvidersQuery` was called with, in render order. */
 const asked = vi.hoisted(() => ({ roles: [] as Array<string | undefined>, sso: [] as Array<string | undefined> }));
+/** The role catalog the route prefetches (#6129) — a viewer's, with one built-in role. */
+const catalog = vi.hoisted(() => ({
+	data: {
+		builtin: [
+			{
+				id: "role-viewer",
+				name: "Viewer",
+				description: "Read-only access.",
+				builtin: true,
+				permissionKeys: [],
+				grantCount: 0,
+			},
+		],
+		permissions: [],
+		customRoles: false,
+		canManage: false,
+	},
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRolesQuery: (search?: string) => {
 		asked.roles.push(search);
-		return { data: [], isFetching: false, isPending: false, isPlaceholderData: false };
+		return { data: [], error: null, isFetching: false, isPending: false, isPlaceholderData: false };
 	},
-	useInvalidateRoles: () => vi.fn(),
+	useRoleCatalogQuery: () => ({ data: catalog.data, error: null, isPending: false, isError: false }),
 }));
 vi.mock("@/lib/query/use-sso-query", () => ({
 	useSsoProvidersQuery: (filter?: { search?: string }) => {
@@ -70,20 +98,19 @@ vi.mock("@/lib/query/use-sso-query", () => ({
 	},
 	useInvalidateSso: () => vi.fn(),
 }));
-vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
 vi.mock("@/app/server/actions/connectors", () => ({
-	getConnectorsWithStatus: vi.fn(() => new Promise(() => {})),
 	deleteConnectorCredential: vi.fn(),
+	saveConnectorCredential: vi.fn(),
 }));
-vi.mock("@/app/(private)/dashboard/providers/actions", () => ({
-	disconnectAwsIdentity: vi.fn(),
-	renameCloudIdentity: vi.fn(),
-	reverifyCloudIdentity: vi.fn(),
+vi.mock("@/app/server/actions/identities", () => ({
+	deleteProviderToken: vi.fn(),
+	disconnectCloudAccount: vi.fn(),
+	renameCloudAccount: vi.fn(),
+	verifyCloudAccount: vi.fn(),
+	connectCloudAccount: vi.fn(),
+	startCloudConnect: vi.fn(),
 }));
-vi.mock("@/app/(private)/dashboard/providers/azure-actions", () => ({ disconnectAzureIdentity: vi.fn() }));
-vi.mock("@/app/(private)/dashboard/providers/gcp-actions", () => ({ disconnectGcpIdentity: vi.fn() }));
-vi.mock("@/app/(private)/dashboard/providers/extra-cloud-actions", () => ({ disconnectExtraCloud: vi.fn() }));
-vi.mock("@/app/server/actions/identities", () => ({ deleteProviderToken: vi.fn() }));
 vi.mock("@/lib/auth/client", () => ({ authClient: {} }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn(), captureException: vi.fn() }));
 
@@ -103,7 +130,6 @@ vi.mock("@/components/classification/classification-chips", () => ({ Classificat
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
 import { getActivityLog } from "@/app/server/actions/activity";
-import { getOrgEvidence } from "@/app/server/actions/evidence";
 import { ConnectorsPage } from "@/components/connectors/connectors-page";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
@@ -138,6 +164,7 @@ beforeEach(() => {
 	sessionStorage.clear();
 	asked.roles.length = 0;
 	asked.sso.length = 0;
+	rpc.calls.length = 0;
 	useEvidenceFilters.getState().reset();
 	useActivityFilters.getState().reset();
 	useRolesFilters.getState().reset();
@@ -164,7 +191,7 @@ describe("useEvidenceQuery — ~/evidence?search=…", () => {
 		renderWithClient(<EvidenceHarness />);
 		await settleWithoutTime();
 
-		const calls = vi.mocked(getOrgEvidence).mock.calls.map(([q]) => q);
+		const calls = evidenceAsked();
 		expect(calls[0], "the first fetch is the link's filtered key").toEqual({ search: "payments" });
 		expect(calls).not.toContainEqual({});
 	});
@@ -173,14 +200,14 @@ describe("useEvidenceQuery — ~/evidence?search=…", () => {
 		currentSearch = "search=payments";
 		renderWithClient(<EvidenceHarness />);
 		await settleWithoutTime();
-		vi.mocked(getOrgEvidence).mockClear();
+		rpc.calls.length = 0;
 
 		act(() => useEvidenceFilters.getState().set("search", "paymentsx"));
 		await settleWithoutTime();
-		expect(getOrgEvidence, "a keystroke waits out the debounce").not.toHaveBeenCalled();
+		expect(evidenceAsked(), "a keystroke waits out the debounce").toEqual([]);
 
 		await act(async () => vi.advanceTimersByTime(300));
-		expect(vi.mocked(getOrgEvidence).mock.calls.map(([q]) => q)).toEqual([{ search: "paymentsx" }]);
+		expect(evidenceAsked()).toEqual([{ search: "paymentsx" }]);
 	});
 });
 
@@ -215,7 +242,7 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 	it("shows only the matching case before any debounce has elapsed", async () => {
 		currentSearch = "search=registry";
 		renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) =>
-			qc.setQueryData(qk.supportCases("all"), [
+			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, [
 				item("c1", 1042, "Runner cannot reach the registry"),
 				item("c2", 1043, "Invoice address is wrong"),
 			]),
@@ -228,19 +255,9 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 });
 
 describe("RolesManager — ~/settings/roles?search=…", () => {
-	const viewer: RoleRow = {
-		id: "role-viewer",
-		name: "Viewer",
-		description: "Read-only access.",
-		builtin: true,
-		permissionKeys: [],
-		grantCount: 0,
-	};
-	const bootstrap: RolesBootstrap = { builtin: [viewer], permissions: [], customRoles: false, canManage: false };
-
 	it("asks for the link's search before any debounce has elapsed", async () => {
 		currentSearch = "search=deployer";
-		renderWithClient(<RolesManager bootstrap={bootstrap} />);
+		renderWithClient(<RolesManager />);
 		await settleWithoutTime();
 
 		expect(asked.roles).toContain("deployer");
@@ -260,7 +277,7 @@ describe("SsoManager — ~/settings/sso?search=…", () => {
 });
 
 describe("ConnectorsPage — ~/connectors?search=…", () => {
-	/** One observability connector from the catalog the RSC hands the board. */
+	/** One observability connector from the catalog the board read returns. */
 	const connector = (slug: string, name: string, organization: string): ConnectorWithConnection => ({
 		id: `c-${slug}`,
 		slug,
@@ -284,15 +301,23 @@ describe("ConnectorsPage — ~/connectors?search=…", () => {
 
 	it("shows only the matching connector before any debounce has elapsed", async () => {
 		currentSearch = "search=Datadog";
-		renderWithClient(
-			<ConnectorsPage
-				orgSlug="acme"
-				canManage={false}
-				integrations={[connector("datadog", "Datadog", "Datadog, Inc."), connector("grafana", "Grafana", "Grafana Labs")]}
-				awsSetup={null}
-				gcpSetup={null}
-				azureSetup={null}
-			/>,
+		// The route prefetches the board for the LINK's filter and hydrates it; the seed is that
+		// entry. Only a read keyed on `{ search: "Datadog" }` finds it: a debounce that started from
+		// the store's empty search would ask the unfiltered key, find nothing, and show no Datadog.
+		const datadog = connector("datadog", "Datadog", "Datadog, Inc.");
+		const grafana = connector("grafana", "Grafana", "Grafana Labs");
+		renderWithClient(<ConnectorsPage orgSlug="acme" />, (qc) =>
+			qc.setQueryData(orpc.connectors.board.queryOptions({ input: { search: "Datadog" } }).queryKey, {
+				view: {
+					query: { search: "Datadog" },
+					rows: [datadog],
+					facets: { groups: [], health: [], vendors: [] },
+					total: 2,
+				},
+				integrations: [datadog, grafana],
+				canManage: false,
+				platformConfigured: {},
+			}),
 		);
 		await settleWithoutTime();
 

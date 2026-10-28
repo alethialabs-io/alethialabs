@@ -8,6 +8,7 @@ import {
 	type SsoBootstrap,
 } from "@/app/server/actions/sso";
 import { SsoManager } from "@/components/settings/sso/sso-manager";
+import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getQueryClient } from "@/lib/query/client";
@@ -21,8 +22,12 @@ export const metadata = pageMetadata({
 
 /**
  * SSO route. Resolves the bootstrap (entitlement, manage permission, SP URLs) and prefetches the
- * provider list on the server. A viewer lacking `member:view` gets a no-access notice; the
- * Enterprise gate (no `sso` entitlement) is handled inside the manager (an upsell).
+ * provider list on the server. A viewer lacking `member:view` gets a no-access notice.
+ *
+ * THE PLAN GATE IS DECIDED HERE, ON THE SERVER (#6132, F021), as #6123 did for runners and #6125
+ * for alerts: an org without the `sso` entitlement gets the upsell as the page's whole body — no
+ * provider read prefetched, no toolbar, no filter bar over it — and `loading.tsx` draws the same
+ * answer from the same request-cached actor.
  */
 export default async function SsoPage({
 	params,
@@ -51,13 +56,13 @@ export default async function SsoPage({
 		throw err;
 	}
 
+	if (!bootstrap.sso) return <FeatureUpsell feature="sso" />;
+
 	const queryClient = getQueryClient();
-	if (bootstrap.sso) {
-		await queryClient.prefetchQuery({
-			queryKey: qk.ssoProviders(org),
-			queryFn: () => listSsoProviders(),
-		});
-	}
+	await queryClient.prefetchQuery({
+		queryKey: qk.ssoProviders(org),
+		queryFn: () => listSsoProviders(),
+	});
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>

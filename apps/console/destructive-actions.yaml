@@ -105,7 +105,7 @@ controls:
   - id: org.delete
     route: /[org]/~/settings/general
     surface: apps/console/components/settings/general/org-general.tsx
-    mutation: authClient.organization.delete
+    mutation: deleteOrganization
     reach: [{ section: "Delete organization" }]
     control: { role: button, name: "Delete organization" }
     confirm: alert-dialog
@@ -120,7 +120,7 @@ controls:
   - id: project.delete
     route: /[org]/[project]/settings/general
     surface: apps/console/components/settings/general/project-general.tsx
-    mutation: deleteProject
+    mutation: removeProject
     reach: [{ section: "Delete project" }]
     control: { role: button, name: "Delete project" }
     confirm: alert-dialog
@@ -322,18 +322,17 @@ controls:
 
   # ── alerts ─────────────────────────────────────────────────────────────────────────────────
 
-  # The disconnect dialog is ONE control that dispatches by cloud: `confirmDisconnect`
-  # (connectors-page.tsx) branches to six different mutations behind a single AlertDialog. The
-  # `mutation` field is a scalar, so the entry above could hold one of the six and the other five
-  # went unrecorded — measured by the census on 2026-09-09, not read off the file. They are
-  # siblings rather than a list because the field contract is version 1 and scalar; each is a
-  # distinct mutation reachable from the same trigger, and the live spec drives the dialog once
-  # per seeded connector.
+  # The disconnect dialog is ONE control that dispatches by kind: `disconnectConnector`
+  # (connectors-page.tsx) sends a git link to `deleteProviderToken`, an api_key credential to
+  # `deleteConnectorCredential`, and every cloud account to `disconnectCloudAccount` (#6124 — the
+  # four per-cloud disconnect actions became one, which reads the provider from the stored row).
+  # The per-cloud entries stay siblings because the live spec drives the dialog once per seeded
+  # cloud card, and each card is its own reach.
 
   - id: connectors.disconnect.aws
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectAwsIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -350,7 +349,7 @@ controls:
   - id: connectors.disconnect.gcp
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectGcpIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -367,7 +366,7 @@ controls:
   - id: connectors.disconnect.azure
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectAzureIdentity
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -384,7 +383,7 @@ controls:
   - id: connectors.disconnect.extra
     route: /[org]/~/connectors
     surface: apps/console/components/connectors/connectors-page.tsx
-    mutation: disconnectExtraCloud
+    mutation: disconnectCloudAccount
     reach: [{ menu: "connector actions" }]
     control: { role: menuitem, name: "Disconnect" }
     confirm: alert-dialog
@@ -742,7 +741,8 @@ controls:
   - id: billing.card.remove
     route: /[org]/~/settings/billing
     surface: apps/console/components/settings/billing/payment-methods-card.tsx
-    mutation: detachPaymentMethod
+    # `removeCard` is `detachPaymentMethod` through the mutation contract (#6127).
+    mutation: removeCard
     control: { role: button, name: "Remove card" }
     confirm: alert-dialog
     confirm_action: "Remove card"
@@ -756,7 +756,8 @@ controls:
   - id: billing.subscription.cancel
     route: /[org]/~/settings/billing
     surface: apps/console/components/settings/billing/billing-panel.tsx
-    mutation: cancelSubscription
+    # `cancelPlan` is `cancelSubscription` through the mutation contract (#6127).
+    mutation: cancelPlan
     control: { role: button, name: "Cancel plan" }
     confirm: confirm-dialog
     confirm_action: "Confirm cancellation"
@@ -787,7 +788,7 @@ controls:
     route: /[org]/~/runners
     surface: apps/console/components/runners/pool-card.tsx
     mutation_surface: apps/console/lib/query/use-fleet-query.ts
-    mutation: deleteFleetPool
+    mutation: deleteFleetPoolAction
     reach: [{ menu: "Pool actions" }]
     control: { role: menuitem, name: "Delete" }
     confirm: alert-dialog
@@ -801,7 +802,7 @@ controls:
   - id: runners.destroy
     route: /[org]/~/runners
     surface: apps/console/components/runners/runner-actions.tsx
-    mutation: destroyRunner
+    mutation: destroyRunnerAction
     mutation_surface: apps/console/lib/query/use-runners-query.ts
     control: { role: button, name: "Destroy" }
     confirm: popover
@@ -816,7 +817,7 @@ controls:
     route: /[org]/~/runners
     surface: apps/console/components/runners/runner-actions.tsx
     mutation_surface: apps/console/lib/query/use-runners-query.ts
-    mutation: removeRunner
+    mutation: removeRunnerAction
     control: { role: button, name: "Remove" }
     confirm: alert-dialog
     confirm_action: "Remove"
@@ -829,7 +830,7 @@ controls:
   # ── jobs ───────────────────────────────────────────────────────────────────────────────────
   - id: jobs.cancel
     route: /[org]/~/jobs/[id]
-    surface: apps/console/app/(private)/[org]/~/jobs/[id]/page.tsx
+    surface: apps/console/app/(private)/[org]/~/jobs/[id]/job-detail.tsx
     mutation: cancelJob
     control: { role: button, name: "Cancel" }
     confirm: confirm-dialog

@@ -4,67 +4,49 @@
 
 // Server actions for the Alerts page (dataroom/spec/mvp/25-alerting-notifications.md). A "policy"
 // (table `alert_rules`) binds a SET of event-key patterns to channels + shared routing.
-// Every mutation is PDP-guarded on the `alert` resource; reads use `view_alerts`. Channel
-// secrets are AES-encrypted at rest and never returned. `authz.*` patterns are gated on
+// Every mutation is PDP-guarded on the `alert` resource and gated on the `alerting` entitlement.
+// Channel secrets are AES-encrypted at rest and never returned. `authz.*` patterns are gated on
 // the advancedAlerting entitlement. Policy mutations invalidate the emit cache.
+//
+// WRITES ONLY (ADR 0005 D1/D4, #6125). The hub's reads moved to `lib/rpc/procedures/alerts.ts` and
+// are served over GET; every export here is a `defineAction` returning `ActionResult<T>`, called from
+// the client through `useActionMutation`, which invalidates the keys that show the change. Other tabs
+// and other members hear it on the `alerts` topic (the alert tables' triggers, programmables.sql).
+//
+// THE ORG BINDING. Every write that names a row by id matches it under `org_id = actor.orgId` as
+// well — the PDP's `manage_alerts` is a decision about the org, not about the row — and a write that
+// matched nothing is NOT_FOUND, the same answer for a row that never existed and one of another org.
 
-import { and, count, desc, eq, gt, inArray } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { and, eq, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { getChannelSender } from "@/lib/alerts/channels";
-import {
-	ALL_EVENTS,
-	type CatalogCategory,
-	CATEGORIES,
-	isSecurityKey,
-} from "@/lib/alerts/catalog";
-import { eventMatches } from "@/lib/alerts/catalog";
+import { isSecurityKey } from "@/lib/alerts/catalog";
 import { invalidateOrgRules } from "@/lib/alerts/rule-cache";
-import { getProjects } from "@/app/server/actions/projects";
-import { getPdp } from "@/lib/authz";
+import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
-import { ACTIONS, RESOURCES } from "@/lib/authz/registry";
 import type { Actor } from "@/lib/authz/types";
 import { encryptSecret, isCredEncryptionConfigured } from "@/lib/crypto/secrets";
 import { getServiceDb } from "@/lib/db";
-import {
-	alertChannels,
-	alertDeliveries,
-	alertRuleChannels,
-	alertRules,
-} from "@/lib/db/schema";
-import {
-	type AlertChannelType,
-	type AlertDeliveryStatus,
-	type AlertSeverity,
-	provisionJobType,
+import { alertChannels, alertRuleChannels, alertRules } from "@/lib/db/schema";
+import type {
+	AlertChannelType,
+	AlertDeliveryStatus,
+	AlertSeverity,
 } from "@/lib/db/schema/enums";
-import {
-	type AlertChannelsPage,
-	type AlertChannelsQuery,
-	type AlertDeliveriesPage,
-	type AlertDeliveriesQuery,
-	type AlertPoliciesPage,
-	type AlertPoliciesQuery,
-	queryAlertChannelsPage,
-	queryAlertDeliveriesPage,
-	queryAlertPoliciesPage,
-	toChannelDTO,
-	toDeliveryDTO,
-	toPolicyDTO,
-} from "@/lib/queries/alerts-lists";
 import type { AlertRuleMatch } from "@/types/jsonb.types";
 import {
 	type ChannelInput,
 	channelInputSchema,
-	type PolicyInput,
 	policyInputSchema,
 } from "@/lib/validations/alerts";
 
-const ALERTS_PATH = "/[org]/~/alerts";
-
 // ── DTOs (client-safe; never carry the encrypted secret envelope) ───────────────
+// Declared here because the list builders (lib/queries/alerts-lists.ts) and the components both
+// import them; the imports are type-only, so they are erased.
 
 export interface ChannelDTO {
 	id: string;
@@ -107,160 +89,31 @@ export interface DeliveryDTO {
 	sent_at: string | null;
 }
 
-export interface AlertsStats {
-	policies: number;
-	enabled: number;
-	eventsCovered: number;
-	totalEvents: number;
-	routed24h: number;
-}
-
-export interface AlertsBootstrap {
-	channels: ChannelDTO[];
-	policies: PolicyDTO[];
-	deliveries: DeliveryDTO[];
-	/** The curated event catalog (categories → events) for the policy editor. */
-	categories: CatalogCategory[];
-	stats: AlertsStats;
-	/** Whether the org's plan unlocks the alerting surface at all (team+). */
-	alerting: boolean;
-	/** Whether PDP-sourced (authz.*) security events are unlocked (enterprise). */
-	advancedAlerting: boolean;
-	/** Whether the caller holds `manage_alerts` — drives create/edit/delete UI. */
-	canManage: boolean;
-	encryptionConfigured: boolean;
-	/** Option lists for the policy "conditions" (match) filters. */
-	conditionOptions: ConditionOptions;
-}
-
-/** Selectable values for the policy condition (match) filters. */
-export interface ConditionOptions {
-	projects: { value: string; label: string }[];
-	jobTypes: string[];
-	resourceTypes: string[];
-	actions: string[];
-}
-
 /**
- * Non-recording `manage_alerts` probe — surfaces caller capability to the client UI.
- *
- * `can()`, never `enforce()` (#5660): `enforce` routes through `enforceDecision`, which writes an
- * `authz_activity_log` row for every non-read allow AND every deny and emits the action event, so
- * probing with it put a "managed alerts" row (or, for a non-manager, a DENIAL row) in the org's
- * audit trail on every overview and alerts-hub load. This answer only shows or hides controls; it
- * authorizes nothing. Each mutation below re-checks with the recording `authorize("manage_alerts")`.
+ * What adding a channel came to. A destination that did not verify is an ANSWER the sheet renders
+ * inline beside the field the user is editing, not a failure — nothing was persisted, and the user's
+ * next move is to fix the URL, so a toast that disappears would be the wrong place for it.
  */
-async function canManageAlerts(actor: Actor): Promise<boolean> {
-	const decision = await getPdp().can(actor, "manage_alerts", { type: "alert" });
-	return decision.allowed;
-}
+export type AddChannelOutcome = { added: true; id: string } | { added: false; error: string };
 
-/** Guards that the org's plan unlocks alerting at all (team+); throws otherwise. */
+/** What a verification attempt came to — rendered inline by the verify control. */
+export type VerifyChannelOutcome = { verified: true } | { verified: false; error: string };
+
+/** The one argument the per-row actions take. */
+const idInput = z.object({ id: z.string().uuid() });
+
+/** Guards that the org's plan unlocks alerting at all (team+); refuses otherwise. */
 function assertAlertingEntitled(actor: Actor): void {
 	if (!getEntitlements(actor).alerting) {
-		throw new Error("Alerts require a Pro plan or higher.");
+		throw new ActionRefusal("entitlement", "Alerts require a Pro plan or higher.", "alerting");
 	}
 }
 
-// The row → DTO mappers (`toChannelDTO` / `toPolicyDTO` / `toDeliveryDTO`) live in
-// lib/queries/alerts-lists.ts, so the bootstrap below and the filtered sibling reads at the
-// end of this file cannot drift into two shapes of the same row.
-
-/** Everything the Alerts page needs in one round-trip. */
-export async function getAlertsBootstrap(): Promise<AlertsBootstrap> {
-	const actor = await authorize("view_alerts", { type: "alert" });
-	const canManage = await canManageAlerts(actor);
-	const db = getServiceDb();
-	const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-	const [channelRows, ruleRows, bindingRows, deliveryRows, routed] =
-		await Promise.all([
-			db
-				.select()
-				.from(alertChannels)
-				.where(eq(alertChannels.org_id, actor.orgId))
-				.orderBy(desc(alertChannels.created_at)),
-			db
-				.select()
-				.from(alertRules)
-				.where(eq(alertRules.org_id, actor.orgId))
-				.orderBy(desc(alertRules.created_at)),
-			db
-				.select()
-				.from(alertRuleChannels)
-				.innerJoin(alertRules, eq(alertRules.id, alertRuleChannels.rule_id))
-				.where(eq(alertRules.org_id, actor.orgId)),
-			db
-				.select()
-				.from(alertDeliveries)
-				.where(eq(alertDeliveries.org_id, actor.orgId))
-				.orderBy(desc(alertDeliveries.created_at))
-				.limit(50),
-			db
-				.select({ c: count() })
-				.from(alertDeliveries)
-				.where(
-					and(
-						eq(alertDeliveries.org_id, actor.orgId),
-						gt(alertDeliveries.created_at, since24h),
-					),
-				),
-		]);
-
-	const channelsByRule = new Map<
-		string,
-		{ id: string; minSeverity: AlertSeverity | null }[]
-	>();
-	for (const b of bindingRows) {
-		const row = b.alert_rule_channels;
-		const list = channelsByRule.get(row.rule_id) ?? [];
-		list.push({ id: row.channel_id, minSeverity: row.min_severity });
-		channelsByRule.set(row.rule_id, list);
-	}
-
-	const policies: PolicyDTO[] = ruleRows.map((r) =>
-		toPolicyDTO(
-			r,
-			channelsByRule.get(r.id) ?? [],
-			r.event_patterns.some(isSecurityKey),
-		),
-	);
-
-	// Option lists for the policy "conditions" editor (best-effort on projects).
-	const projectList = await getProjects().catch(() => []);
-	const conditionOptions: ConditionOptions = {
-		projects: projectList.map((p) => ({ value: p.id, label: p.project_name })),
-		jobTypes: [...provisionJobType.enumValues],
-		resourceTypes: [...RESOURCES, "role", "grant"],
-		actions: [...ACTIONS, "assign", "revoke"],
-	};
-
-	// "Events covered" = catalog events matched by ≥1 enabled policy's patterns.
-	const enabledPatterns = policies
-		.filter((p) => p.enabled)
-		.flatMap((p) => p.event_patterns);
-	const eventsCovered = ALL_EVENTS.filter((e) =>
-		enabledPatterns.some((pat) => eventMatches(pat, e.key)),
-	).length;
-
-	return {
-		channels: channelRows.map(toChannelDTO),
-		policies,
-		deliveries: deliveryRows.map(toDeliveryDTO),
-		categories: CATEGORIES,
-		stats: {
-			policies: policies.length,
-			enabled: policies.filter((p) => p.enabled).length,
-			eventsCovered,
-			totalEvents: ALL_EVENTS.length,
-			routed24h: routed[0]?.c ?? 0,
-		},
-		alerting: getEntitlements(actor).alerting,
-		advancedAlerting: getEntitlements(actor).advancedAlerting,
-		canManage,
-		encryptionConfigured: isCredEncryptionConfigured(),
-		conditionOptions,
-	};
+/** `manage_alerts` (recording) + the plan gate: the preamble of every write here. */
+async function managingActor(): Promise<Actor> {
+	const actor = await authorize("manage_alerts", { type: "alert" });
+	assertAlertingEntitled(actor);
+	return actor;
 }
 
 // ── Channels ────────────────────────────────────────────────────────────────────
@@ -271,27 +124,30 @@ const ENCRYPTION_KEY_ERROR =
 	"Set ALETHIA_CRED_ENCRYPTION_KEY (generate: openssl rand -base64 32) and restart. " +
 	"Email channels work without it.";
 
-/** Creates a channel; encrypts any secret fields (URL / signing secret). */
+/** What every id-addressed channel write says when the id does not resolve in the org. */
+const CHANNEL_NOT_FOUND = "Channel not found.";
+
 /**
- * Verifies the supplied endpoint, then creates the channel only if it works — a channel
- * never exists unverified. Returns the new id on success, or a friendly error (nothing is
- * persisted) so the add-channel form can surface it inline.
+ * Verifies the supplied endpoint, then creates the channel only if it works — a channel never
+ * exists unverified. A destination that does not verify comes back as `{ added: false, error }`
+ * (nothing is persisted) so the add-channel sheet can surface it inline.
  */
-export async function addChannel(
-	input: ChannelInput,
-): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	const data = channelInputSchema.parse(input);
+export async function addChannel(raw: z.input<typeof channelInputSchema>): Promise<ActionResult<AddChannelOutcome>> {
+	return defineAction({ input: channelInputSchema, run: ({ input }) => createChannel(input) })(raw);
+}
+
+/** The body of {@link addChannel}, on already-validated input. */
+async function createChannel(data: ChannelInput): Promise<AddChannelOutcome> {
+	const actor = await managingActor();
 
 	// Secret-bearing channels need the encryption key — fail with guidance, not an
 	// opaque crypto throw from encryptSecret.
 	if (data.type !== "email" && !isCredEncryptionConfigured()) {
-		return { ok: false, error: ENCRYPTION_KEY_ERROR };
+		return { added: false, error: ENCRYPTION_KEY_ERROR };
 	}
 	if (!channelDestinationPresent(data)) {
 		return {
-			ok: false,
+			added: false,
 			error:
 				data.type === "pagerduty"
 					? "PagerDuty needs an integration routing key."
@@ -304,7 +160,7 @@ export async function addChannel(
 	// the save failed (the insert below needs the database) rather than "too many attempts".
 	const limit = await checkRateLimit(`verify:${actor.orgId}:new`, 5, 60_000, { failOpen: true });
 	if (!limit.ok) {
-		return { ok: false, error: "Too many attempts — wait a minute and try again." };
+		return { added: false, error: "Too many attempts — wait a minute and try again." };
 	}
 
 	const secret = encryptChannelSecret(data);
@@ -328,7 +184,7 @@ export async function addChannel(
 	try {
 		await getChannelSender(data.type).verify(preview);
 	} catch (err) {
-		return { ok: false, error: friendlyVerifyError(err) };
+		return { added: false, error: friendlyVerifyError(err) };
 	}
 
 	const [row] = await getServiceDb()
@@ -345,31 +201,32 @@ export async function addChannel(
 			created_by: actor.userId,
 		})
 		.returning({ id: alertChannels.id });
-	revalidatePath(ALERTS_PATH, "page");
-	return { ok: true, id: row.id };
+	return { added: true, id: row.id };
 }
+
+const updateChannelInput = channelInputSchema.extend({ id: z.string().uuid() });
 
 /** Updates a channel. A secret is only re-encrypted when new fields are supplied. */
 export async function updateChannel(
-	id: string,
-	input: ChannelInput,
-): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	const data = channelInputSchema.parse(input);
+	raw: z.input<typeof updateChannelInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({ input: updateChannelInput, run: ({ input }) => rewriteChannel(input) })(raw);
+}
+
+/** The body of {@link updateChannel}. */
+async function rewriteChannel({ id, ...data }: z.output<typeof updateChannelInput>): Promise<{ id: string }> {
+	const actor = await managingActor();
 	// Only blocks when new secret fields are supplied (a blank URL keeps the old one).
 	if (
 		data.type !== "email" &&
-		Boolean(
-			data.secret?.url || data.secret?.signingSecret || data.secret?.routingKey,
-		) &&
+		Boolean(data.secret?.url || data.secret?.signingSecret || data.secret?.routingKey) &&
 		!isCredEncryptionConfigured()
 	) {
-		throw new Error(ENCRYPTION_KEY_ERROR);
+		throw new ActionRefusal("conflict", ENCRYPTION_KEY_ERROR);
 	}
 	const secret = encryptChannelSecret(data);
 
-	await getServiceDb()
+	const [row] = await getServiceDb()
 		.update(alertChannels)
 		.set({
 			type: data.type,
@@ -380,47 +237,62 @@ export async function updateChannel(
 			...(secret ? { secret } : {}),
 			updated_at: new Date(),
 		})
-		.where(
-			and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)),
-		);
-	revalidatePath(ALERTS_PATH, "page");
+		.where(and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)))
+		.returning({ id: alertChannels.id });
+	if (!row) throw new ActionRefusal("not-found", CHANNEL_NOT_FOUND);
+	return row;
 }
 
 /** Deletes a channel (its policy bindings cascade; deliveries keep history via SET NULL). */
-export async function deleteChannel(id: string): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	await getServiceDb()
-		.delete(alertChannels)
-		.where(
-			and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)),
-		);
-	revalidatePath(ALERTS_PATH, "page");
+export async function deleteChannel(raw: z.input<typeof idInput>): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: idInput,
+		run: async ({ input }) => {
+			const actor = await managingActor();
+			const [row] = await getServiceDb()
+				.delete(alertChannels)
+				.where(and(eq(alertChannels.id, input.id), eq(alertChannels.org_id, actor.orgId)))
+				.returning({ id: alertChannels.id });
+			if (!row) throw new ActionRefusal("not-found", CHANNEL_NOT_FOUND);
+			// A deleted channel can leave a policy with no destination; the emit cache holds rules.
+			invalidateOrgRules(actor.orgId);
+			return row;
+		},
+	})(raw);
 }
+
+const channelEnabledInput = z.object({ id: z.string().uuid(), enabled: z.boolean() });
 
 /**
  * Toggles a channel's enabled flag only — unlike updateChannel this does NOT reset
  * verification (enabling/disabling shouldn't invalidate a proven endpoint).
  */
 export async function setChannelEnabled(
-	id: string,
-	enabled: boolean,
-): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	await getServiceDb()
-		.update(alertChannels)
-		.set({ enabled, updated_at: new Date() })
-		.where(and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)));
-	revalidatePath(ALERTS_PATH, "page");
+	raw: z.input<typeof channelEnabledInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: channelEnabledInput,
+		run: async ({ input }) => {
+			const actor = await managingActor();
+			const [row] = await getServiceDb()
+				.update(alertChannels)
+				.set({ enabled: input.enabled, updated_at: new Date() })
+				.where(and(eq(alertChannels.id, input.id), eq(alertChannels.org_id, actor.orgId)))
+				.returning({ id: alertChannels.id });
+			if (!row) throw new ActionRefusal("not-found", CHANNEL_NOT_FOUND);
+			return row;
+		},
+	})(raw);
 }
 
 /** Sends a synthetic test event through the channel and records the result. */
-export async function verifyChannel(
-	id: string,
-): Promise<{ ok: boolean; error?: string }> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
+export async function verifyChannel(raw: z.input<typeof idInput>): Promise<ActionResult<VerifyChannelOutcome>> {
+	return defineAction({ input: idInput, run: ({ input }) => verifyOwnedChannel(input.id) })(raw);
+}
+
+/** The body of {@link verifyChannel}. */
+async function verifyOwnedChannel(id: string): Promise<VerifyChannelOutcome> {
+	const actor = await managingActor();
 
 	// Verification sends a real delivery (Slack/email/webhook) — throttle repeats so the
 	// button can't be used to spam an endpoint. Shared across replicas (lib/rate-limit.ts). failOpen for
@@ -428,10 +300,7 @@ export async function verifyChannel(
 	// outage surfaces as that failure rather than as "too many attempts".
 	const limit = await checkRateLimit(`verify:${actor.orgId}:${id}`, 3, 60_000, { failOpen: true });
 	if (!limit.ok) {
-		return {
-			ok: false,
-			error: "Too many verification attempts — wait a minute and try again.",
-		};
+		return { verified: false, error: "Too many verification attempts — wait a minute and try again." };
 	}
 
 	const db = getServiceDb();
@@ -440,23 +309,32 @@ export async function verifyChannel(
 		.from(alertChannels)
 		.where(and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)))
 		.limit(1);
-	if (!channel) return { ok: false, error: "Channel not found." };
+	if (!channel) throw new ActionRefusal("not-found", CHANNEL_NOT_FOUND);
 
 	try {
 		await getChannelSender(channel.type).verify(channel);
-		await db
-			.update(alertChannels)
-			.set({ is_verified: true, last_verified_at: new Date() })
-			.where(eq(alertChannels.id, id));
-		revalidatePath(ALERTS_PATH, "page");
-		return { ok: true };
 	} catch (err) {
-		return { ok: false, error: friendlyVerifyError(err) };
+		return { verified: false, error: friendlyVerifyError(err) };
 	}
+	await db
+		.update(alertChannels)
+		.set({ is_verified: true, last_verified_at: new Date() })
+		.where(and(eq(alertChannels.id, channel.id), eq(alertChannels.org_id, actor.orgId)));
+	return { verified: true };
 }
 
-/** Maps a raw sender/network error to a friendly, actionable verification message. */
+/**
+ * Maps a raw sender/network error to a friendly, actionable verification message.
+ *
+ * A refusal by the outbound-URL guard always reads as {@link UNREACHABLE_DESTINATION}: its own
+ * message describes how the destination resolved, which is the server's business, so it is logged
+ * here and never returned.
+ */
 function friendlyVerifyError(err: unknown): string {
+	if (err instanceof SsrfError) {
+		console.warn("[alerts] channel destination refused by the outbound guard:", err.message);
+		return UNREACHABLE_DESTINATION;
+	}
 	const raw = err instanceof Error ? err.message : String(err);
 	const low = raw.toLowerCase();
 	if (
@@ -503,189 +381,165 @@ function channelDestinationPresent(data: ChannelInput): boolean {
 
 // ── Policies ────────────────────────────────────────────────────────────────────
 
+/** What every id-addressed policy write says when the id does not resolve in the org. */
+const POLICY_NOT_FOUND = "Alert policy not found.";
+
 /** Security patterns (authz.*) need advancedAlerting; ops/system patterns are free. */
-function assertPatternsAllowed(
-	patterns: string[],
-	advancedAlerting: boolean,
-): void {
+function assertPatternsAllowed(patterns: string[], advancedAlerting: boolean): void {
 	if (patterns.some(isSecurityKey) && !advancedAlerting) {
-		throw new Error(
+		throw new ActionRefusal(
+			"entitlement",
 			"Security events (PDP activity) require an Enterprise plan.",
+			"advancedAlerting",
 		);
 	}
 }
 
 /** Creates a policy and binds its channels. */
-export async function createPolicy(input: PolicyInput): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	const data = policyInputSchema.parse(input);
-	assertPatternsAllowed(data.event_patterns, getEntitlements(actor).advancedAlerting);
+export async function createPolicy(raw: z.input<typeof policyInputSchema>): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: policyInputSchema,
+		run: async ({ input: data }) => {
+			const actor = await managingActor();
+			assertPatternsAllowed(data.event_patterns, getEntitlements(actor).advancedAlerting);
 
-	const db = getServiceDb();
-	await assertChannelsOwned(
-		actor.orgId,
-		data.channels.map((c) => c.id),
-	);
+			const db = getServiceDb();
+			await assertChannelsOwned(
+				actor.orgId,
+				data.channels.map((c) => c.id),
+			);
 
-	const [rule] = await db
-		.insert(alertRules)
-		.values({
-			org_id: actor.orgId,
-			name: data.name,
-			description: data.description ?? null,
-			event_patterns: data.event_patterns,
-			match: data.match,
-			severity: data.severity,
-			throttle_seconds: data.throttle_seconds,
-			escalate: data.escalate,
-			recipient: data.recipient ?? null,
-			enabled: data.enabled,
-			created_by: actor.userId,
-		})
-		.returning({ id: alertRules.id });
+			const rule = await db.transaction(async (tx) => {
+				const [created] = await tx
+					.insert(alertRules)
+					.values({
+						org_id: actor.orgId,
+						name: data.name,
+						description: data.description ?? null,
+						event_patterns: data.event_patterns,
+						match: data.match,
+						severity: data.severity,
+						throttle_seconds: data.throttle_seconds,
+						escalate: data.escalate,
+						recipient: data.recipient ?? null,
+						enabled: data.enabled,
+						created_by: actor.userId,
+					})
+					.returning({ id: alertRules.id });
 
-	await db.insert(alertRuleChannels).values(
-		data.channels.map((c) => ({
-			rule_id: rule.id,
-			channel_id: c.id,
-			min_severity: c.min_severity ?? null,
-		})),
-	);
-	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH, "page");
+				await tx.insert(alertRuleChannels).values(
+					data.channels.map((c) => ({
+						rule_id: created.id,
+						channel_id: c.id,
+						min_severity: c.min_severity ?? null,
+					})),
+				);
+				return created;
+			});
+			invalidateOrgRules(actor.orgId);
+			return rule;
+		},
+	})(raw);
 }
+
+const updatePolicyInput = policyInputSchema.extend({ id: z.string().uuid() });
 
 /** Updates a policy and replaces its channel bindings. */
-export async function updatePolicy(id: string, input: PolicyInput): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	const data = policyInputSchema.parse(input);
-	assertPatternsAllowed(data.event_patterns, getEntitlements(actor).advancedAlerting);
+export async function updatePolicy(raw: z.input<typeof updatePolicyInput>): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: updatePolicyInput,
+		run: async ({ input: { id, ...data } }) => {
+			const actor = await managingActor();
+			assertPatternsAllowed(data.event_patterns, getEntitlements(actor).advancedAlerting);
 
-	const db = getServiceDb();
-	await assertChannelsOwned(
-		actor.orgId,
-		data.channels.map((c) => c.id),
-	);
+			const db = getServiceDb();
+			await assertChannelsOwned(
+				actor.orgId,
+				data.channels.map((c) => c.id),
+			);
 
-	await db
-		.update(alertRules)
-		.set({
-			name: data.name,
-			description: data.description ?? null,
-			event_patterns: data.event_patterns,
-			match: data.match,
-			severity: data.severity,
-			throttle_seconds: data.throttle_seconds,
-			escalate: data.escalate,
-			recipient: data.recipient ?? null,
-			enabled: data.enabled,
-			updated_at: new Date(),
-		})
-		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
+			// One transaction, and the channel rewrite keys on the rule the ORG-BOUND update matched — never
+			// on the caller's `id`. A policy of another organization matches no row here, so it is refused
+			// as not found before any binding is touched.
+			const updated = await db.transaction(async (tx) => {
+				const [rule] = await tx
+					.update(alertRules)
+					.set({
+						name: data.name,
+						description: data.description ?? null,
+						event_patterns: data.event_patterns,
+						match: data.match,
+						severity: data.severity,
+						throttle_seconds: data.throttle_seconds,
+						escalate: data.escalate,
+						recipient: data.recipient ?? null,
+						enabled: data.enabled,
+						updated_at: new Date(),
+					})
+					.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)))
+					.returning({ id: alertRules.id });
+				if (!rule) throw new ActionRefusal("not-found", POLICY_NOT_FOUND);
 
-	await db.delete(alertRuleChannels).where(eq(alertRuleChannels.rule_id, id));
-	await db.insert(alertRuleChannels).values(
-		data.channels.map((c) => ({
-			rule_id: id,
-			channel_id: c.id,
-			min_severity: c.min_severity ?? null,
-		})),
-	);
-	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH, "page");
+				await tx.delete(alertRuleChannels).where(eq(alertRuleChannels.rule_id, rule.id));
+				await tx.insert(alertRuleChannels).values(
+					data.channels.map((c) => ({
+						rule_id: rule.id,
+						channel_id: c.id,
+						min_severity: c.min_severity ?? null,
+					})),
+				);
+				return rule;
+			});
+			invalidateOrgRules(actor.orgId);
+			return updated;
+		},
+	})(raw);
 }
 
+const policyEnabledInput = z.object({ id: z.string().uuid(), enabled: z.boolean() });
+
 /** Enables/disables a policy without opening the editor. */
-export async function togglePolicy(id: string, enabled: boolean): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	await getServiceDb()
-		.update(alertRules)
-		.set({ enabled, updated_at: new Date() })
-		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
-	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH, "page");
+export async function togglePolicy(raw: z.input<typeof policyEnabledInput>): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: policyEnabledInput,
+		run: async ({ input }) => {
+			const actor = await managingActor();
+			const [row] = await getServiceDb()
+				.update(alertRules)
+				.set({ enabled: input.enabled, updated_at: new Date() })
+				.where(and(eq(alertRules.id, input.id), eq(alertRules.org_id, actor.orgId)))
+				.returning({ id: alertRules.id });
+			if (!row) throw new ActionRefusal("not-found", POLICY_NOT_FOUND);
+			invalidateOrgRules(actor.orgId);
+			return row;
+		},
+	})(raw);
 }
 
 /** Deletes a policy (its bindings cascade). */
-export async function deletePolicy(id: string): Promise<void> {
-	const actor = await authorize("manage_alerts", { type: "alert" });
-	assertAlertingEntitled(actor);
-	await getServiceDb()
-		.delete(alertRules)
-		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
-	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH, "page");
+export async function deletePolicy(raw: z.input<typeof idInput>): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: idInput,
+		run: async ({ input }) => {
+			const actor = await managingActor();
+			const [row] = await getServiceDb()
+				.delete(alertRules)
+				.where(and(eq(alertRules.id, input.id), eq(alertRules.org_id, actor.orgId)))
+				.returning({ id: alertRules.id });
+			if (!row) throw new ActionRefusal("not-found", POLICY_NOT_FOUND);
+			invalidateOrgRules(actor.orgId);
+			return row;
+		},
+	})(raw);
 }
 
 /** Guards that every bound channel belongs to the actor's org (no cross-org binding). */
-async function assertChannelsOwned(
-	orgId: string,
-	channelIds: string[],
-): Promise<void> {
+async function assertChannelsOwned(orgId: string, channelIds: string[]): Promise<void> {
 	const owned = await getServiceDb()
 		.select({ id: alertChannels.id })
 		.from(alertChannels)
-		.where(
-			and(
-				eq(alertChannels.org_id, orgId),
-				inArray(alertChannels.id, channelIds),
-			),
-		);
+		.where(and(eq(alertChannels.org_id, orgId), inArray(alertChannels.id, channelIds)));
 	if (owned.length !== channelIds.length) {
-		throw new Error("One or more channels are invalid.");
+		throw new ActionRefusal("not-found", "One or more channels are invalid.");
 	}
-}
-
-// ── The filtered list reads (#2899) ─────────────────────────────────────────────
-//
-// Query-taking SIBLINGS of getAlertsBootstrap(), not a replacement for it.
-//
-// The bootstrap stays the alerts route's RSC read on purpose. Every mutation on that page
-// reports success through `router.refresh()`, and a `queryFn` closing over the RSC
-// `bootstrap` prop would let TanStack pin the first payload — the refresh would still run
-// and the user would see nothing change (#2878 recorded exactly this and refused the
-// conversion). So the bootstrap keeps its shape and its callers (the RSC page and the
-// overview card), and a panel that wants server-side filtering calls the sibling below with
-// its normalized query, keyed by `qk.alertChannels(org, q)` / `qk.alertPolicies(org, q)`.
-//
-// Every one of them re-runs the SAME authorization the bootstrap does — `view_alerts` on the
-// `alert` resource — and is scoped to `actor.orgId`.
-
-/**
- * The org's alert channels for `query`: rows filtered SERVER-SIDE in SQL + type/status facet
- * counts over the org's UNFILTERED channels (lib/query/README.md, steps 5 + 6).
- */
-export async function getAlertChannelsPage(
-	query: AlertChannelsQuery = {},
-): Promise<AlertChannelsPage> {
-	const actor = await authorize("view_alerts", { type: "alert" });
-	return queryAlertChannelsPage(actor.orgId, query);
-}
-
-/**
- * The org's alert policies for `query`: rows filtered SERVER-SIDE in SQL + status/kind/channel
- * facet counts over the org's UNFILTERED policies. The channel facet lists EVERY configured
- * channel (even one no policy routes to), so a destination is selectable before it is used.
- */
-export async function getAlertPoliciesPage(
-	query: AlertPoliciesQuery = {},
-): Promise<AlertPoliciesPage> {
-	const actor = await authorize("view_alerts", { type: "alert" });
-	return queryAlertPoliciesPage(actor.orgId, query);
-}
-
-/**
- * The org's delivery ledger for `query`: filtered SERVER-SIDE in SQL and THEN windowed
- * (newest first, 50 by default — the bootstrap's window), with status facet counts over the
- * WHOLE ledger. The bootstrap's `deliveries` are the newest 50 and nothing else, so a status
- * that last occurred 200 rows ago is invisible to it; here it is one filter away.
- */
-export async function getAlertDeliveriesPage(
-	query: AlertDeliveriesQuery = {},
-): Promise<AlertDeliveriesPage> {
-	const actor = await authorize("view_alerts", { type: "alert" });
-	return queryAlertDeliveriesPage(actor.orgId, query);
 }

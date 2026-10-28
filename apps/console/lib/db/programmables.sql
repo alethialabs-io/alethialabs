@@ -72,6 +72,246 @@ CREATE TRIGGER jobs_runner_wake
   FOR EACH ROW WHEN (NEW.status = 'QUEUED')
   EXECUTE FUNCTION public.notify_runner_wake();
 
+-- ── The console's real-time bus (#6115, ADR 0005 D3 + §10). A change the UI shows becomes ONE
+-- pg_notify on `alethia_change` carrying identifiers only — {t: topic, id, o: org_id, u: user_id,
+-- p: project_id} — far under the 8000-byte payload cap. Each console process holds one LISTEN
+-- connection (lib/realtime/bus.ts), routes the notice to the streams whose RLS arms could read that
+-- row (lib/realtime/routing.ts) and sends them a {t, id} invalidation hint; o/u/p never leave the
+-- server. Triggers, not app code, because most writers of these rows are the runner's SQL RPCs, which
+-- never pass through Next.
+--
+-- The UPDATE trigger fires only when a column the UI renders CHANGED (`IS DISTINCT FROM` over the
+-- row tuple, ADR 0005 §10 R5). That is what keeps the high-frequency writers silent:
+--   · claim_next_job / runner_heartbeat / runner_present write `runners`, not `jobs`;
+--   · insert_job_log stamps jobs.progress_at (not listed) at most once per 55s;
+--   · update_job_status re-posting PROCESSING with NULL metadata changes no listed column
+--     (started_at is already set; progress_at and updated_at are not listed).
+-- A real state change (QUEUED→CLAIMED, PROCESSING→SUCCESS, a stage's execution_metadata) emits
+-- exactly one notice. tests/integration/realtime-notify.test.ts pins each of those, both ways.
+--
+-- NOTIFY is transactional: it is delivered at COMMIT, and not at all on rollback. It also takes a
+-- database-wide lock at commit, which is why scripts/bench-notify-commit.mjs exists (ADR 0005 §10).
+--
+-- No migration: a trigger on existing columns changes no table shape, and migrate.mjs re-applies
+-- this file on every migrate. Other topics add their own thin per-table trigger functions calling
+-- emit_change() in their own lanes; this file is shared, so those land one at a time.
+CREATE OR REPLACE FUNCTION public.emit_change(
+  p_topic text, p_id uuid, p_org uuid, p_user uuid, p_project uuid
+) RETURNS void LANGUAGE sql AS $$
+  SELECT pg_notify('alethia_change', json_build_object(
+    't', p_topic, 'id', p_id, 'o', p_org, 'u', p_user, 'p', p_project
+  )::text);
+$$;
+
+-- The jobs-shaped notifier: the row carries id, org_id, user_id and project_id. On UPDATE the OLD
+-- project_id is the fallback, so a job whose project was deleted (ON DELETE SET NULL) still routes
+-- through the project the reader last saw it under; on DELETE the OLD row is the only row there is.
+CREATE OR REPLACE FUNCTION public.notify_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id, OLD.user_id, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id, NEW.user_id,
+      COALESCE(NEW.project_id, CASE WHEN TG_OP = 'UPDATE' THEN OLD.project_id END));
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- Two triggers, not one: an INSERT trigger's WHEN may not reference OLD. The column list is the jobs
+-- UI's (components/jobs/columns.tsx + the job detail page), plus verify_override — a recorded
+-- verification waiver, which the Evidence page lists (#6126). Deliberately NOT listed: progress_at and
+-- updated_at (heartbeat-like), claimed_at and attempts (they move with status), usage_reported_at,
+-- priority, provider, assigned_runner_id, traceparent, and org_id (a backfill-only write).
+DROP TRIGGER IF EXISTS jobs_notify_change_upd ON public.jobs;
+CREATE TRIGGER jobs_notify_change_upd
+  AFTER UPDATE ON public.jobs
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.error_message, OLD.runner_id, OLD.started_at, OLD.completed_at,
+     OLD.project_id, OLD.environment_id, OLD.execution_metadata, OLD.verify_override)
+    IS DISTINCT FROM
+    (NEW.status, NEW.error_message, NEW.runner_id, NEW.started_at, NEW.completed_at,
+     NEW.project_id, NEW.environment_id, NEW.execution_metadata, NEW.verify_override)
+  )
+  EXECUTE FUNCTION public.notify_change('jobs');
+
+DROP TRIGGER IF EXISTS jobs_notify_change_insdel ON public.jobs;
+CREATE TRIGGER jobs_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.notify_change('jobs');
+
+-- ── Billing hints (#6127). The `billing` topic: the org's billing record and its mirrored invoices.
+-- Written by the Stripe webhook (plan, status, period, the subscription event watermark), by the
+-- billing page's own controls (the usage pause, the AI spend limits) and by the invoice mirror —
+-- rare, so a trigger is the right producer: it catches every writer. The billing reads it refreshes
+-- include Stripe-backed ones (the plan card reads the subscription, cached server-side).
+--
+-- The `usage` topic (AI spend) is NOT a trigger. An AI hold is written inside the transaction that
+-- holds the org's AI-budget lock, and a notifying commit serialises with every other notifying
+-- commit, so its producer is the app-layer `emitUsageHint` (lib/realtime/usage-hint.ts): after the
+-- commit, outside the lock, at most once per 30 s per org. The two DROPs below remove the AI-ledger
+-- triggers an earlier revision of this file created, wherever it was applied.
+--
+-- A billing notice routes on the org arm, unfiltered, and carries NO row id
+-- (lib/realtime/routing.ts). No migration, as above: triggers on existing columns change no shape.
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_upd ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_usage_ledger_notify_change_insdel ON public.ai_usage_ledger;
+DROP TRIGGER IF EXISTS ai_credit_grant_notify_change ON public.ai_credit_grant;
+DROP FUNCTION IF EXISTS public.notify_ai_usage_change();
+
+CREATE OR REPLACE FUNCTION public.notify_billing_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('billing', NULL,
+    CASE WHEN TG_OP = 'DELETE' THEN OLD.organization_id ELSE NEW.organization_id END, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+-- The billing record: the columns a billing or usage page renders, or that change what Stripe says
+-- (the two event watermarks move on EVERY applied subscription event, including a cancel-at-period-
+-- end flip that changes no other column here). Deliberately NOT listed: updated_at, welcomed_at,
+-- the payer declaration (payer_capacity, billing_country, authority_attestation) — none is shown.
+DROP TRIGGER IF EXISTS organization_billing_notify_change_upd ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_upd
+  AFTER UPDATE ON public.organization_billing
+  FOR EACH ROW WHEN (
+    (OLD.plan, OLD.status, OLD.seats, OLD.current_period_start, OLD.current_period_end,
+     OLD.stripe_customer_id, OLD.stripe_subscription_id, OLD.stripe_subscription_event_at,
+     OLD.usage_hard_cap, OLD.ai_tier, OLD.ai_subscription_status, OLD.ai_stripe_subscription_event_at,
+     OLD.ai_org_weekly_cap_credits, OLD.ai_per_user_weekly_cap_credits)
+    IS DISTINCT FROM
+    (NEW.plan, NEW.status, NEW.seats, NEW.current_period_start, NEW.current_period_end,
+     NEW.stripe_customer_id, NEW.stripe_subscription_id, NEW.stripe_subscription_event_at,
+     NEW.usage_hard_cap, NEW.ai_tier, NEW.ai_subscription_status, NEW.ai_stripe_subscription_event_at,
+     NEW.ai_org_weekly_cap_credits, NEW.ai_per_user_weekly_cap_credits)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS organization_billing_notify_change_insdel ON public.organization_billing;
+CREATE TRIGGER organization_billing_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.organization_billing
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
+-- The invoice mirror: a new invoice, or a change to what the invoices table shows. updated_at and
+-- the Stripe ids are not shown.
+DROP TRIGGER IF EXISTS invoice_notify_change_upd ON public.invoice;
+CREATE TRIGGER invoice_notify_change_upd
+  AFTER UPDATE ON public.invoice
+  FOR EACH ROW WHEN (
+    (OLD.number, OLD.status, OLD.amount_total, OLD.currency, OLD.period_start, OLD.period_end,
+     OLD.description, OLD.pdf_key, OLD.hosted_invoice_url, OLD.paid_at)
+    IS DISTINCT FROM
+    (NEW.number, NEW.status, NEW.amount_total, NEW.currency, NEW.period_start, NEW.period_end,
+     NEW.description, NEW.pdf_key, NEW.hosted_invoice_url, NEW.paid_at)
+  )
+  EXECUTE FUNCTION public.notify_billing_change();
+
+DROP TRIGGER IF EXISTS invoice_notify_change_insdel ON public.invoice;
+CREATE TRIGGER invoice_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.invoice
+  FOR EACH ROW EXECUTE FUNCTION public.notify_billing_change();
+
+-- The `runners` topic (#6123). A runner row carries no project_id, so it has its own notifier: id,
+-- org_id, user_id (managed runners: both NULL → the bus's `platform` key; lib/realtime/routing.ts).
+--
+-- The UPDATE column list is what a runner surface renders (the runner card, the Versions panel, the
+-- pickers, a managed pool's version/location tallies). Deliberately NOT listed, so the runner's own
+-- high-frequency writes stay SILENT (ADR 0005 §10 R5):
+--   · last_heartbeat — runner_heartbeat, runner_present and claim_next_job stamp it every few seconds
+--     and SET status = 'ONLINE' on a runner that is already ONLINE (no change, so no notice);
+--     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
+--     runner really reports something new — which is then exactly one notice;
+--   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
+-- tests/integration/realtime-notify-runners.test.ts drives the real RPCs: a heartbeat and a presence
+-- ping emit zero; an OFFLINE→ONLINE flip, a sweep to OFFLINE and a new reported version emit one.
+CREATE OR REPLACE FUNCTION public.notify_runner_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('runners', OLD.id, OLD.org_id, OLD.user_id, NULL);
+  ELSE
+    PERFORM public.emit_change('runners', NEW.id, NEW.org_id, NEW.user_id, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS runners_notify_change_upd ON public.runners;
+CREATE TRIGGER runners_notify_change_upd
+  AFTER UPDATE ON public.runners
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.status, OLD.provisioning, OLD.version, OLD.release_id, OLD.target_release_id,
+     OLD.is_default, OLD.location, OLD.cloud_identity_id, OLD.supported_providers, OLD.metadata)
+    IS DISTINCT FROM
+    (NEW.name, NEW.status, NEW.provisioning, NEW.version, NEW.release_id, NEW.target_release_id,
+     NEW.is_default, NEW.location, NEW.cloud_identity_id, NEW.supported_providers, NEW.metadata)
+  )
+  EXECUTE FUNCTION public.notify_runner_change();
+
+DROP TRIGGER IF EXISTS runners_notify_change_insdel ON public.runners;
+CREATE TRIGGER runners_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.runners
+  FOR EACH ROW EXECUTE FUNCTION public.notify_runner_change();
+
+-- BEGIN runner-metadata-credential-scrub
+-- Runner metadata keeps no deploy credential at rest (#6123). A deploy config records what a
+-- DEPLOY_RUNNER job was given (region, image, size); the runner's credential is minted at claim time
+-- and never belongs there (lib/runners/lifecycle-token.ts), and the metadata route strips it on write.
+-- This removes the key from any row that still carries it. Idempotent: a second run matches no row.
+-- It reports a COUNT only, never a value, and it must never fail a migrate — a failure is a NOTICE.
+-- tests/integration/runner-metadata-scrub.test.ts runs this exact block (between the BEGIN/END
+-- markers) against a seeded row, twice.
+DO $$
+DECLARE scrubbed integer;
+BEGIN
+  UPDATE public.runners
+     SET metadata = metadata #- '{deploy_config,runner_token}'
+   WHERE jsonb_typeof(metadata -> 'deploy_config') = 'object'
+     AND (metadata -> 'deploy_config') ? 'runner_token';
+  GET DIAGNOSTICS scrubbed = ROW_COUNT;
+  IF scrubbed > 0 THEN
+    RAISE NOTICE 'runner metadata: removed a stored deploy credential from % row(s)', scrubbed;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'runner metadata credential scrub skipped (%)', SQLSTATE;
+END $$;
+-- END runner-metadata-credential-scrub
+
+-- The `fleet` topic (#6123): a warm pool's configuration. fleet_pools has no org, so every notice is
+-- a `platform` one, heard only by a stream whose actor may view runners on a self-managed
+-- deployment. updated_at is not listed (it moves with every listed column). Not triggered, on
+-- purpose: fleet_actions (the scaler appends a decision on every pass and no console surface reads
+-- it — the runner rows those decisions create or drain are `runners` notices) and fleet_leader (the
+-- controller renews its lease every tick).
+CREATE OR REPLACE FUNCTION public.notify_fleet_pool_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('fleet', OLD.id, NULL, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('fleet', NEW.id, NULL, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS fleet_pools_notify_change_upd ON public.fleet_pools;
+CREATE TRIGGER fleet_pools_notify_change_upd
+  AFTER UPDATE ON public.fleet_pools
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.warm_min, OLD.max, OLD.slots_per_runner, OLD.locations, OLD.min_per_location,
+     OLD.surge, OLD.buffer, OLD.scale_down_grace_ticks, OLD.version, OLD.channel, OLD.enabled,
+     OLD.deleting)
+    IS DISTINCT FROM
+    (NEW.name, NEW.warm_min, NEW.max, NEW.slots_per_runner, NEW.locations, NEW.min_per_location,
+     NEW.surge, NEW.buffer, NEW.scale_down_grace_ticks, NEW.version, NEW.channel, NEW.enabled,
+     NEW.deleting)
+  )
+  EXECUTE FUNCTION public.notify_fleet_pool_change();
+
+DROP TRIGGER IF EXISTS fleet_pools_notify_change_insdel ON public.fleet_pools;
+CREATE TRIGGER fleet_pools_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.fleet_pools
+  FOR EACH ROW EXECUTE FUNCTION public.notify_fleet_pool_change();
+
 -- ── Queue RPCs (SECURITY DEFINER, token-hash authed). On the renamed
 -- jobs/runners tables; runner_id is clean uuid (no ::text casts). ──
 -- ── Scheduler quotas (ADR 20). Plan → {priority band, concurrency cap}, read from
@@ -148,6 +388,21 @@ CREATE TRIGGER jobs_set_scheduling BEFORE INSERT ON public.jobs
 UPDATE public.jobs j SET provider = ci.provider
 FROM public.cloud_identities ci
 WHERE j.cloud_identity_id = ci.id AND j.provider IS NULL;
+
+-- Job snapshots carry no runner token. A runner-lifecycle job's target token is minted when the job
+-- is claimed and travels only in the claim response (lib/runners/lifecycle-token.ts); this removes
+-- the key from rows written before that. SETTLED rows only: an in-flight row keeps its signed
+-- snapshot as enqueued, and a later migrate reaches it once it settles. A scrubbed row's signature no
+-- longer describes its snapshot, so it is cleared — a NULL signature reads as unsigned
+-- (lib/runners/snapshot-sig.ts), and a settled job is never claimed again. Idempotent: matches
+-- nothing once no settled row carries the key. Only the runner-lifecycle job types ever carried it, so
+-- the scan is narrowed to them.
+UPDATE public.jobs
+   SET config_snapshot = config_snapshot - 'runner_token',
+       config_snapshot_sig = NULL
+ WHERE job_type IN ('DEPLOY_RUNNER', 'UPDATE_RUNNER', 'DESTROY_RUNNER')
+   AND config_snapshot ? 'runner_token'
+   AND status NOT IN ('QUEUED', 'CLAIMED', 'PROCESSING');
 
 -- TRUE iff another job currently holds the tofu state lock for this (project, environment) — i.e. a
 -- live writer is mid-plan/apply/destroy on the very state file the candidate job would open.
@@ -669,19 +924,27 @@ BEGIN
 END;
 $$;
 
--- set_default_runner: owner passed as a parameter (no implicit session-user lookup).
-CREATE OR REPLACE FUNCTION public.set_default_runner(p_user_id UUID, p_runner_id UUID DEFAULT NULL)
-RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+-- set_default_runner: owner AND org passed as parameters (no implicit session lookup). A default is
+-- chosen within one org — the addressed org, or the personal workspace (org = the user's id): only a
+-- runner of that org created by that user can be flagged, and only that user's default in that org
+-- is cleared. A default the user holds in another org is untouched (idx_runners_one_default_per_user_org
+-- is per user per org). The two-argument form is dropped so no caller can reach the unscoped one.
+DROP FUNCTION IF EXISTS public.set_default_runner(UUID, UUID);
+CREATE OR REPLACE FUNCTION public.set_default_runner(
+    p_user_id UUID, p_org_id UUID, p_runner_id UUID DEFAULT NULL
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-    UPDATE public.runners SET is_default = false WHERE user_id = p_user_id AND is_default = true;
+    UPDATE public.runners SET is_default = false
+     WHERE user_id = p_user_id AND org_id = p_org_id AND is_default = true;
     IF p_runner_id IS NOT NULL THEN
-        UPDATE public.runners SET is_default = true WHERE id = p_runner_id AND user_id = p_user_id;
-        IF NOT FOUND THEN RAISE EXCEPTION 'Runner not found or not owned by user'; END IF;
+        UPDATE public.runners SET is_default = true
+         WHERE id = p_runner_id AND user_id = p_user_id AND org_id = p_org_id;
+        IF NOT FOUND THEN RAISE EXCEPTION 'Runner not found in this organization'; END IF;
     END IF;
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID) TO alethia_app;
+GRANT EXECUTE ON FUNCTION public.set_default_runner(UUID, UUID, UUID) TO alethia_app;
 
 -- ── Runner model backfill (legacy `mode` → operator/provisioning) + the
 -- data-dependent CHECK constraints. Runs here, after the schema migration adds the
@@ -932,19 +1195,38 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- jobs carry a project_id, and a job ALWAYS belongs to the org that owns its project.
--- Deriving org_id from projects.org_id makes it a *structural* invariant of the FK —
--- drift-proof and independent of session state or a forgotten stamp (projects.org_id
--- is the authoritative, correctly-stamped source; jobs.org_id is a denormalized cache
--- that had drifted). The parent lookup is itself RLS-guarded on the app connection: a
--- cross-org project_id the caller can't see returns no row, so it can never leak another
--- org's id — it falls through to the session/personal fallback instead. project_id NULL
--- (runner/scan jobs) also falls through to session → personal.
+-- jobs carry a project_id, and a job ALWAYS belongs to the org that owns its project. That is a
+-- CONSTRAINT here, not a default: on every INSERT, and on every UPDATE that names project_id or
+-- org_id, a project-bearing job either takes its project's org (org_id left NULL) or must already
+-- carry it — an explicit org_id that disagrees with the project's raises (23514), so no enqueue path
+-- can file a job under an org other than its project's. projects.org_id is the authoritative source;
+-- jobs.org_id is a denormalized copy kept equal to it by this trigger. project_id NULL (runner/scan
+-- jobs) keeps the explicit org, else the session org, else the author's personal org.
+--
+-- DEFINER RIGHTS, for the reason derive_component_org_id gives below: the lookup must see the one
+-- project row the FK names whatever the writer's RLS scope, or "the caller cannot see this project"
+-- would read as "this project has no org" and the check could not tell a mismatch from an invisible
+-- parent. It widens only what the CHECK can see: the value lands on the caller's own row, and the
+-- jobs `owner_all` WITH CHECK then refuses an app-role write whose derived org is outside the
+-- addressed organization. `row_security = off` and a pinned `search_path`, as there.
 CREATE OR REPLACE FUNCTION public.set_org_id_from_project()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE project_org UUID;
 BEGIN
-  IF NEW.org_id IS NULL AND NEW.project_id IS NOT NULL THEN
-    SELECT org_id INTO NEW.org_id FROM public.projects WHERE id = NEW.project_id;
+  IF NEW.project_id IS NOT NULL THEN
+    SELECT p.org_id INTO project_org FROM public.projects p WHERE p.id = NEW.project_id;
+    IF NEW.org_id IS NULL THEN
+      NEW.org_id := project_org;
+    ELSIF project_org IS NOT NULL AND NEW.org_id IS DISTINCT FROM project_org THEN
+      -- The text carries no value read here: project_org is read with definer rights.
+      RAISE EXCEPTION 'jobs.org_id does not match the org of its project'
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   IF NEW.org_id IS NULL THEN
     NEW.org_id = coalesce(
@@ -953,7 +1235,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Non-project-bearing tables use the generic session/personal resolver.
 DO $$
@@ -971,18 +1253,73 @@ END $$;
 
 -- jobs: parent-derived org_id (the drift-proof path above).
 DROP TRIGGER IF EXISTS jobs_set_org_id ON public.jobs;
-CREATE TRIGGER jobs_set_org_id BEFORE INSERT ON public.jobs
+CREATE TRIGGER jobs_set_org_id BEFORE INSERT OR UPDATE OF project_id, org_id ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.set_org_id_from_project();
 
--- Backfill historical jobs whose org_id drifted from their project's org (the root of
--- the org-usage 0s). Idempotent + self-healing: after the trigger fix, re-runs match
--- nothing. projects.org_id is authoritative; only project-bearing jobs are correctable
--- here (project-less jobs keep their existing org_id).
+-- A project-bearing job with no org_id takes its project's org (history from before the trigger).
+-- Idempotent: matches nothing once every such row has an org.
 UPDATE public.jobs j
    SET org_id = p.org_id
   FROM public.projects p
  WHERE j.project_id = p.id
-   AND j.org_id IS DISTINCT FROM p.org_id;
+   AND j.org_id IS NULL
+   AND p.org_id IS NOT NULL;
+
+-- A project-bearing job whose org_id disagrees with its project's takes the project's org: the
+-- project's org is the job's owner. The trigger above makes the shape impossible to write, so this
+-- only realigns history (a restore, a replica-mode load, rows written before the trigger), and it
+-- says how many it moved — a count, never ids — without ever failing the migrate. Idempotent:
+-- matches nothing once every row agrees.
+DO $$
+DECLARE n BIGINT;
+BEGIN
+  UPDATE public.jobs j
+     SET org_id = p.org_id
+    FROM public.projects p
+   WHERE j.project_id = p.id
+     AND p.org_id IS NOT NULL
+     AND j.org_id IS DISTINCT FROM p.org_id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n > 0 THEN
+    RAISE NOTICE 'jobs realigned to their project''s org: %', n;
+  END IF;
+END $$;
+
+-- A job with no project and no org_id (history from before the jobs_set_org_id trigger) goes to its
+-- author's personal org — the same fallback the trigger applies on insert when neither a project
+-- nor a session org is there to name one. The jobs `owner_all` policy below is bounded on org_id
+-- alone, so a row left NULL would be visible from no scope at all. Idempotent: matches nothing once
+-- every row has an org.
+UPDATE public.jobs
+   SET org_id = user_id
+ WHERE org_id IS NULL;
+
+-- A project's scan carries its project in `jobs.project_id` (#6121). A scan enqueued before that
+-- carried it only in its snapshot (`config_snapshot.project_id`), so job visibility — which reads the
+-- column (lib/jobs/visibility.ts) — had to fall back to the snapshot for it. This writes the column
+-- for those rows. Only where the snapshot's project is in the SAME org as the job: the
+-- jobs_set_org_id trigger above refuses a project of another org, and a row whose snapshot names one
+-- is left as it is (the visibility predicate still reads its snapshot) and only counted.
+-- Idempotent: matches nothing once every such row has its column.
+DO $$
+DECLARE moved BIGINT; left_alone BIGINT;
+BEGIN
+  UPDATE public.jobs j
+     SET project_id = p.id
+    FROM public.projects p
+   WHERE j.job_type IN ('IAC_SCAN', 'CHART_SCAN')
+     AND j.project_id IS NULL
+     AND j.config_snapshot->>'project_id' = p.id::text
+     AND p.org_id IS NOT DISTINCT FROM j.org_id;
+  GET DIAGNOSTICS moved = ROW_COUNT;
+  SELECT count(*) INTO left_alone
+    FROM public.jobs j
+   WHERE j.job_type IN ('IAC_SCAN', 'CHART_SCAN')
+     AND j.project_id IS NULL;
+  IF moved > 0 OR left_alone > 0 THEN
+    RAISE NOTICE 'scan jobs given their project: %, left with the project in the snapshot only: %', moved, left_alone;
+  END IF;
+END $$;
 
 -- ── The project component family: a tenant column the database owns (#4116) ─────────────────────
 --
@@ -1083,6 +1420,91 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── The `clusters` topic (#6122): the real-time bus's producer for project_cluster. ────────────────
+-- Same contract as the jobs triggers near the top of this file (emit_change): identifiers only, and an
+-- UPDATE fires only when a column the clusters grid renders CHANGED. The row has org_id (derived from
+-- its project, above) and project_id but no user_id: its RLS owner arm is the PROJECT's owner, so the
+-- notice routes on the org arm only, filtered on the project's `view` (lib/realtime/routing.ts).
+-- Not listed: provider_outputs, node sizing, estimated_monthly_cost, fabric_id, org_id (a derived
+-- copy), created_at, updated_at. A deploy's writeback re-SETs cluster_name/endpoint/argocd_url to the
+-- values they already hold on every successful run; IS DISTINCT FROM keeps that silent.
+-- The trigger names are this topic's own, so the component family's per-table triggers (named
+-- <table>_notify_change_*) can never replace them.
+CREATE OR REPLACE FUNCTION public.notify_cluster_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('clusters', OLD.id, OLD.org_id, NULL, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change('clusters', NEW.id, NEW.org_id, NULL, NEW.project_id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS project_cluster_notify_clusters_upd ON public.project_cluster;
+CREATE TRIGGER project_cluster_notify_clusters_upd
+  AFTER UPDATE ON public.project_cluster
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.status_message, OLD.cluster_name, OLD.cluster_endpoint, OLD.cluster_version,
+     OLD.argocd_url, OLD.environment_id, OLD.project_id, OLD.cloud_identity_id, OLD.region)
+    IS DISTINCT FROM
+    (NEW.status, NEW.status_message, NEW.cluster_name, NEW.cluster_endpoint, NEW.cluster_version,
+     NEW.argocd_url, NEW.environment_id, NEW.project_id, NEW.cloud_identity_id, NEW.region)
+  )
+  EXECUTE FUNCTION public.notify_cluster_change();
+
+DROP TRIGGER IF EXISTS project_cluster_notify_clusters_insdel ON public.project_cluster;
+CREATE TRIGGER project_cluster_notify_clusters_insdel
+  AFTER INSERT OR DELETE ON public.project_cluster
+  FOR EACH ROW EXECUTE FUNCTION public.notify_cluster_change();
+
+-- ── Deploy-stamp backfill (#6122). "A cluster under management" (lib/queries/usage-counts.ts) reads
+-- project_environments.last_deployed_at. An environment whose successful DEPLOY predates the code that
+-- stamps it has a NULL stamp over a running cluster, so it would drop out of the clusters list and the
+-- Usage count. This stamps such an environment with its latest successful DEPLOY's completion time.
+--
+-- Not stamped: a DESTROYED environment, and one whose latest successful DESTROY is newer than its
+-- latest successful DEPLOY — a DESTROY success clears the stamp on purpose (lib/jobs/finalize-
+-- deployment.ts), and this runs on EVERY migrate, so it must never undo a recorded teardown.
+-- Idempotent: once stamped, an environment no longer matches. A function, so the integration suite
+-- runs the same statement migrate runs. The DO block reports a count only, and a failure is a
+-- WARNING, never a failed migrate.
+CREATE OR REPLACE FUNCTION public.backfill_env_deploy_stamps() RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n BIGINT;
+BEGIN
+  UPDATE public.project_environments e
+     SET last_deployed_at = d.done
+    FROM (
+      SELECT j.environment_id, max(coalesce(j.completed_at, j.updated_at)) AS done
+        FROM public.jobs j
+       WHERE j.job_type = 'DEPLOY' AND j.status = 'SUCCESS' AND j.environment_id IS NOT NULL
+       GROUP BY j.environment_id
+    ) d
+   WHERE e.id = d.environment_id
+     AND e.last_deployed_at IS NULL
+     AND e.status <> 'DESTROYED'
+     AND NOT EXISTS (
+       SELECT 1 FROM public.jobs x
+        WHERE x.environment_id = e.id
+          AND x.job_type = 'DESTROY' AND x.status = 'SUCCESS'
+          AND coalesce(x.completed_at, x.updated_at) >= d.done
+     );
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$;
+
+DO $$
+DECLARE n BIGINT;
+BEGIN
+  n := public.backfill_env_deploy_stamps();
+  IF n > 0 THEN
+    RAISE NOTICE 'environments stamped with their last successful deploy: %', n;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'deploy-stamp backfill skipped: %', SQLERRM;
+END $$;
+
 -- The other direction: a project that changes org takes its components with it. Without this, the
 -- child trigger above keeps new writes right while every EXISTING row keeps the old org — drift by
 -- omission. The child UPDATE this issues fires the child trigger, which re-derives from the row this
@@ -1120,11 +1542,14 @@ CREATE TRIGGER projects_propagate_org_id
 -- two are identical — isolation is unchanged. Fine-grained decisions live in the PDP
 -- (lib/authz). NULL when unset → deny. Service/superuser bypasses RLS. ──
 
--- Owned tables (direct user_id + org_id)
+-- Owned tables (direct user_id + org_id) whose rows are the USER's own, wherever they sit: every
+-- insert into these stamps org_id = user_id (a thread, a widget, an artifact, a feedback vote), or
+-- they are written and read only by the service role (the AI ledger and grants). The owner arm is
+-- what lists a user's own rows in every org they act from.
 DO $$
 DECLARE tbl TEXT;
 BEGIN
-  FOR tbl IN SELECT unnest(ARRAY['projects','jobs', 'agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_context', 'agent_message_feedback', 'org_signing_key']) LOOP
+  FOR tbl IN SELECT unnest(ARRAY['agent_threads', 'ai_usage_ledger', 'ai_credit_grant', 'thread_widgets', 'agent_artifacts', 'agent_message_feedback']) LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
     EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
     EXECUTE format(
@@ -1133,6 +1558,45 @@ BEGIN
                 OR org_id = current_setting(''app.current_org'', true)::uuid)
          WITH CHECK (user_id = current_setting(''app.current_owner'', true)::uuid
                 OR org_id = current_setting(''app.current_org'', true)::uuid)', tbl);
+  END LOOP;
+END $$;
+
+-- Org-bounded tables: rows that belong to an ORGANIZATION, not to the person who wrote them. Visible
+-- in the org they belong to (org_id = current_org) and, from any scope, in the caller's PERSONAL org
+-- (org_id = current_owner: a personal org's id IS its user's id). The arm is on `org_id` alone — the
+-- console twin of the CLI's `org_id IN (<org>, <personal org>)` (app/api/jobs/route.ts) — so a row
+-- is reachable only from the org it belongs to, whoever's id is in `user_id`. Visibility follows
+-- the row's organization, never its author.
+--
+-- What each arm keeps:
+--   * `org_id = current_org` — every row of the org the request is scoped to.
+--   * `org_id = current_owner` — the personal org from every scope: the pre-#3942 runner jobs that
+--     were stamped `org_id = <user id>` while their author acted in a team org stay listed there,
+--     exactly as `GET /api/jobs` lists them, and a legacy per-user `agent_context` row stays readable.
+--   * Community: current_org = current_owner = user id and every row is stamped org_id = user id
+--     (set_org_id / set_org_id_from_project fall back to the session's org, which is the user), so
+--     both arms name the same single tenant.
+--
+-- Rows with no org_id would match neither arm; the backfills above (`set_org_id` loop for projects,
+-- agent_context and org_signing_key, and the jobs backfill) leave none before this runs.
+--
+-- The tables whose policies reach these through a sub-select — project_environments and the other
+-- project child tables, the component family's owner arm, job_logs, audit_log, topic_subscriptions,
+-- cluster_admins, service_bindings — inherit the same bound: a policy's sub-select on `projects` or
+-- `jobs` is itself filtered by that table's policy, so it can only return rows this one admits.
+-- tests/integration/jobs-org-bounded-reads.test.ts drives that for project_environments and job_logs.
+DO $$
+DECLARE tbl TEXT;
+BEGIN
+  FOR tbl IN SELECT unnest(ARRAY['projects', 'jobs', 'agent_context', 'org_signing_key']) LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('DROP POLICY IF EXISTS owner_all ON public.%I', tbl);
+    EXECUTE format(
+      'CREATE POLICY owner_all ON public.%I FOR ALL
+         USING (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)
+         WITH CHECK (org_id = current_setting(''app.current_org'', true)::uuid
+                OR org_id = current_setting(''app.current_owner'', true)::uuid)', tbl);
   END LOOP;
 END $$;
 
@@ -1366,29 +1830,33 @@ BEGIN
   END LOOP;
 END $$;
 
--- runners: reads are owner/org-scoped. Managed (platform-fleet) rows have no owner/org, so they
--- are NOT visible through the tenant RLS path — they leak fleet topology/COGS to every tenant
+-- runners: reads and writes are bounded to the addressed organization or the personal scope, the
+-- same arm as the org-bounded tables above: `org_id = current_org OR org_id = current_owner`. A self
+-- runner registered in an org is that org's; a self runner in the caller's personal org (org_id =
+-- user_id, which includes the pre-#3874 CLI runners) is reachable from every scope of theirs.
+-- Managed (platform-fleet) rows have no owner and no org, so they match neither arm and are NOT
+-- visible through the tenant RLS path — they would expose fleet topology/COGS to every tenant
 -- otherwise. The fleet controller, scaler, runner claim/heartbeat/wake, and the self-managed
 -- operator's fleet view all read managed rows via the service role (getServiceDb), which bypasses
--- RLS. Writes remain owner/org-scoped self runners.
+-- RLS. Inserts are self runners only.
 ALTER TABLE public.runners ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS runners_select ON public.runners;
 CREATE POLICY runners_select ON public.runners FOR SELECT
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 DROP POLICY IF EXISTS runners_insert ON public.runners;
 CREATE POLICY runners_insert ON public.runners FOR INSERT
   WITH CHECK (operator = 'self'::public.runner_operator
-         AND (user_id = current_setting('app.current_owner', true)::uuid
-              OR org_id = current_setting('app.current_org', true)::uuid));
+         AND (org_id = current_setting('app.current_org', true)::uuid
+              OR org_id = current_setting('app.current_owner', true)::uuid));
 DROP POLICY IF EXISTS runners_update ON public.runners;
 CREATE POLICY runners_update ON public.runners FOR UPDATE
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 DROP POLICY IF EXISTS runners_delete ON public.runners;
 CREATE POLICY runners_delete ON public.runners FOR DELETE
-  USING (user_id = current_setting('app.current_owner', true)::uuid
-         OR org_id = current_setting('app.current_org', true)::uuid);
+  USING (org_id = current_setting('app.current_org', true)::uuid
+         OR org_id = current_setting('app.current_owner', true)::uuid);
 
 -- The project component family (#4116): the org arm binds to the row's OWN org_id column.
 --
@@ -1396,7 +1864,10 @@ CREATE POLICY runners_delete ON public.runners FOR DELETE
 -- on the column the tables now carry. The old USING was `project_id IN (projects WHERE user_id = owner OR org_id =
 -- org)`; `org_id` here equals `projects.org_id` for every row (the derive/propagate triggers and the
 -- CHECK above make that structural, not a convention), so the org arm is the same set, and the
--- owner arm still reaches through `projects` because these tables carry no user_id. WITH CHECK
+-- owner arm still reaches through `projects` because these tables carry no user_id. That sub-select
+-- is itself filtered by the `projects` policy, so the owner arm admits only a project of the
+-- request's org or the caller's personal org: reads are bounded to the addressed organization or
+-- the personal scope. WITH CHECK
 -- mirrors USING: the trigger fills org_id BEFORE the check runs, so a write naming another tenant's
 -- project arrives here carrying that tenant's org and is refused, as it was before.
 --
@@ -1705,15 +2176,16 @@ CREATE POLICY owner_all ON public.service_binding_injections FOR ALL
                WHERE p.user_id = current_setting('app.current_owner', true)::uuid
                   OR p.org_id = current_setting('app.current_org', true)::uuid)));
 
--- job_logs: user reads own (via parent). audit_log: user reads + inserts own (append-only);
+-- job_logs: visible exactly when the parent job is (the jobs owner_all bound, restated here).
+-- audit_log: user reads + inserts own (append-only);
 -- runners also write via the RLS-bypassing service role.
 ALTER TABLE public.job_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS logs_select ON public.job_logs;
 CREATE POLICY logs_select ON public.job_logs FOR SELECT
   USING (EXISTS (SELECT 1 FROM public.jobs j
     WHERE j.id = job_logs.job_id
-      AND (j.user_id = current_setting('app.current_owner', true)::uuid
-           OR j.org_id = current_setting('app.current_org', true)::uuid)));
+      AND (j.org_id = current_setting('app.current_org', true)::uuid
+           OR j.org_id = current_setting('app.current_owner', true)::uuid)));
 
 -- Support case child tables: tenancy + visibility flow through the parent support_cases
 -- (like job_logs) — the subquery uses the SAME tiered predicate (org-scoped, then
@@ -1760,6 +2232,158 @@ DROP TRIGGER IF EXISTS support_messages_notify ON public.support_messages;
 CREATE TRIGGER support_messages_notify
   AFTER INSERT ON public.support_messages
   FOR EACH ROW EXECUTE FUNCTION public.notify_support_message();
+
+-- The console's real-time bus, `support` topic (#6130; see emit_change above). A case the console
+-- shows changed → ONE `alethia_change` notice carrying the case id, its org and its requester — no
+-- subject, no body, no contact: identifiers only. lib/realtime/routing.ts delivers it to the
+-- requester inside the case's org and to the org's `manage_support` holders, which is exactly who
+-- the tiered support_cases policy above lets read it.
+--
+-- Triggered on the CASE, not on support_messages, and that is what keeps it to one hint per reply:
+-- every PUBLIC reply — a customer's (app/server/actions/support.ts) or staff's (the admin app) —
+-- bumps last_message_at/last_author_type on its case in the same transaction. An INTERNAL staff
+-- note bumps nothing, so it emits nothing, and the customer never had anything to refetch.
+-- tests/integration/realtime-notify-support.test.ts pins those, both ways.
+CREATE OR REPLACE FUNCTION public.notify_support_case_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('support', OLD.id, OLD.org_id, OLD.user_id, NULL);
+  ELSE
+    PERFORM public.emit_change('support', NEW.id, NEW.org_id, NEW.user_id, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The column list is what the console renders of a case: the list row and the bell (status,
+-- severity, subject, type, category, last_message_at, last_author_type) and the case view
+-- (resolved_at, closed_at). Deliberately NOT listed: updated_at (moves with every write, so it
+-- would turn a no-op into a hint), assigned_staff_id (an admin-app field the console never shows),
+-- contact, context and abuse (not shown in the list or bell; a change there is the viewer's own),
+-- and org_id/user_id (stamped on insert).
+DROP TRIGGER IF EXISTS support_cases_notify_change_upd ON public.support_cases;
+CREATE TRIGGER support_cases_notify_change_upd
+  AFTER UPDATE ON public.support_cases
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.severity, OLD.subject, OLD.type, OLD.category, OLD.last_message_at,
+     OLD.last_author_type, OLD.resolved_at, OLD.closed_at)
+    IS DISTINCT FROM
+    (NEW.status, NEW.severity, NEW.subject, NEW.type, NEW.category, NEW.last_message_at,
+     NEW.last_author_type, NEW.resolved_at, NEW.closed_at)
+  )
+  EXECUTE FUNCTION public.notify_support_case_change();
+
+DROP TRIGGER IF EXISTS support_cases_notify_change_insdel ON public.support_cases;
+CREATE TRIGGER support_cases_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.support_cases
+  FOR EACH ROW EXECUTE FUNCTION public.notify_support_case_change();
+
+-- The console's real-time bus, `alerts` topic (#6125; see emit_change above). A change to what the
+-- Alerts hub or the overview's Alerts card shows → ONE `alethia_change` notice carrying the row id
+-- and its org: identifiers only — never a title, an event key or a channel destination, because a
+-- delivery can describe a SECURITY event (an authz.* denial). lib/realtime/routing.ts delivers it
+-- only to the org's members who may `view_alerts`, the decision every alerts read makes; there is
+-- no RLS arm on these tables (they are read on the service connection under an explicit org_id
+-- predicate), and no owner route.
+CREATE OR REPLACE FUNCTION public.notify_alert_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('alerts', OLD.id, OLD.org_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('alerts', NEW.id, NEW.org_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- alert_rule_channels carries no org_id: it is resolved through the binding's rule, and the notice
+-- names the RULE — the same payload the rule's own trigger sends, so a policy save (the rule update
+-- plus the delete-and-reinsert of its bindings, in one transaction) collapses to one notice:
+-- Postgres delivers identical payloads on one channel once per transaction. A binding removed by its
+-- rule's own cascade finds no rule and emits nothing; the rule's DELETE already did. A binding
+-- removed by its CHANNEL's cascade still finds its rule and notifies it.
+CREATE OR REPLACE FUNCTION public.notify_alert_binding_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_rule uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.rule_id ELSE NEW.rule_id END;
+  v_org uuid;
+BEGIN
+  SELECT org_id INTO v_org FROM public.alert_rules WHERE id = v_rule;
+  IF v_org IS NOT NULL THEN
+    PERFORM public.emit_change('alerts', v_rule, v_org, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The UPDATE column lists are what the console renders of each row. Deliberately NOT listed:
+-- updated_at and created_by everywhere (bookkeeping), org_id (stamped on insert); for deliveries,
+-- next_attempt_at, max_attempts, dedupe_key and sent_at (the sweeper's own state — a send moves
+-- status, which IS listed), and context/event_key/rule_id/channel_id (immutable once written, or
+-- nulled only by a cascade the parent's own trigger reports). A channel's secret is compared only
+-- for presence (`has_secret`): its ciphertext changes with nothing on screen.
+DROP TRIGGER IF EXISTS alert_rules_notify_change_upd ON public.alert_rules;
+CREATE TRIGGER alert_rules_notify_change_upd
+  AFTER UPDATE ON public.alert_rules
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.description, OLD.event_patterns, OLD.match, OLD.severity, OLD.throttle_seconds,
+     OLD.escalate, OLD.recipient, OLD.enabled)
+    IS DISTINCT FROM
+    (NEW.name, NEW.description, NEW.event_patterns, NEW.match, NEW.severity, NEW.throttle_seconds,
+     NEW.escalate, NEW.recipient, NEW.enabled)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_rules_notify_change_insdel ON public.alert_rules;
+CREATE TRIGGER alert_rules_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_rules
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_channels_notify_change_upd ON public.alert_channels;
+CREATE TRIGGER alert_channels_notify_change_upd
+  AFTER UPDATE ON public.alert_channels
+  FOR EACH ROW WHEN (
+    (OLD.type, OLD.name, OLD.config, OLD.secret IS NULL, OLD.enabled, OLD.is_verified,
+     OLD.last_verified_at)
+    IS DISTINCT FROM
+    (NEW.type, NEW.name, NEW.config, NEW.secret IS NULL, NEW.enabled, NEW.is_verified,
+     NEW.last_verified_at)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_channels_notify_change_insdel ON public.alert_channels;
+CREATE TRIGGER alert_channels_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_channels
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_rule_channels_notify_change_upd ON public.alert_rule_channels;
+CREATE TRIGGER alert_rule_channels_notify_change_upd
+  AFTER UPDATE ON public.alert_rule_channels
+  FOR EACH ROW WHEN (
+    (OLD.rule_id, OLD.channel_id, OLD.min_severity) IS DISTINCT FROM
+    (NEW.rule_id, NEW.channel_id, NEW.min_severity)
+  )
+  EXECUTE FUNCTION public.notify_alert_binding_change();
+
+DROP TRIGGER IF EXISTS alert_rule_channels_notify_change_insdel ON public.alert_rule_channels;
+CREATE TRIGGER alert_rule_channels_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_rule_channels
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_binding_change();
+
+-- Deliveries: the ledger shows status, attempts and the last error. A retry moves attempts and
+-- last_error; a send moves status — one notice each, which the browser coalesces.
+DROP TRIGGER IF EXISTS alert_deliveries_notify_change_upd ON public.alert_deliveries;
+CREATE TRIGGER alert_deliveries_notify_change_upd
+  AFTER UPDATE ON public.alert_deliveries
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.attempts, OLD.last_error) IS DISTINCT FROM
+    (NEW.status, NEW.attempts, NEW.last_error)
+  )
+  EXECUTE FUNCTION public.notify_alert_change();
+
+DROP TRIGGER IF EXISTS alert_deliveries_notify_change_insdel ON public.alert_deliveries;
+CREATE TRIGGER alert_deliveries_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.alert_deliveries
+  FOR EACH ROW EXECUTE FUNCTION public.notify_alert_change();
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_select ON public.audit_log;
@@ -2312,6 +2936,129 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- ── grants: everything a grant references belongs to the grant's own organization ──────────────
+-- A grant row names an org (org_id) and up to three other things: a ROLE, a TEAM principal and a
+-- scoped RESOURCE. Each of those is itself owned by an org, and the invariant is that it is the
+-- SAME org: a custom role of this org or a built-in role, a team of this org, a resource of this
+-- org. The two write boundaries (app/server/actions/grants.ts, app/api/cli/grants) check this
+-- before inserting and return a named refusal (lib/authz/grant-binding.ts); this trigger is the
+-- backstop for every other writer, so the property does not depend on a writer remembering it.
+--
+-- ONE DEFINITION, THREE READERS. `grant_org_binding_violation` is what the trigger raises on, what
+-- the write boundaries ask before inserting, and what the community PDP (matchingGrants) and the
+-- ee OpenFGA writer (backfill / resyncRole / syncScopedGrant) filter ALLOW rows through. A row
+-- stored before this trigger existed, or one whose resource later moved to another org, therefore
+-- confers nothing in either engine instead of depending on having been refused at write time.
+--
+-- WHAT IT RETURNS: NULL when the row is bound, else the reason — 'foreign_role', 'foreign_team'
+-- or 'foreign_resource'. The resource arm reads the SCOPABLE kinds (the `PARENTS` table in
+-- lib/authz/fga-hierarchy.ts; tests/integration/grant-org-binding.test.ts fails if a kind there is
+-- not refused on an unknown id). A scoped id there that resolves to no row of this org (an unknown
+-- id, a managed runner, a catalog connector — the catalog is global, so no org owns one) is
+-- 'foreign_resource'. The grant's own org id is accepted as a scope: it is the hierarchy root the
+-- community PDP walks to. Not resource-checked: a NULL id (org-wide), and a kind that is not
+-- scopable — the write boundaries refuse those (`parseGrantResource`), both engines read a stored
+-- one as conferring nothing (#4584), and none names another org's object. A user principal is not
+-- org-owned; membership is checked separately (`lacksActiveMembership`, the PDPs' member arm).
+--
+-- DEFINER RIGHTS, `row_security = off` and a pinned search_path, for the reason
+-- set_org_id_from_project gives: the lookups must see the one row an id names whatever the
+-- writer's RLS scope, or "not visible" would read as "not owned". They return only an org id or a
+-- reason code; the service role owns them.
+--
+-- EXISTING ROWS. A BEFORE trigger never re-reads stored rows, so creating it cannot fail migrate.
+-- It fires on INSERT and on an UPDATE of a column it reads, plus `effect` — a stored unbound DENY
+-- must not become an ALLOW by an update (not permission_key, which lib/authz/seed.ts renames in
+-- place).
+--
+-- EXECUTE is revoked from PUBLIC on the two lookup functions (they answer for any id); not on the
+-- trigger function, by this file's rule for trigger functions (the note after
+-- project_environments_require_one_default()).
+CREATE OR REPLACE FUNCTION public.authz_resource_org_id(p_type TEXT, p_id UUID)
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+  SELECT CASE p_type
+    WHEN 'project' THEN (SELECT p.org_id FROM public.projects p WHERE p.id = p_id)
+    WHEN 'runner' THEN (SELECT r.org_id FROM public.runners r WHERE r.id = p_id)
+    WHEN 'cloud_identity' THEN (SELECT c.org_id FROM public.cloud_identities c WHERE c.id = p_id)
+  END
+$$;
+REVOKE EXECUTE ON FUNCTION public.authz_resource_org_id(TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grant_org_binding_violation(
+  p_org UUID,
+  p_principal_type TEXT,
+  p_principal_id UUID,
+  p_role UUID,
+  p_resource_type TEXT,
+  p_resource_id UUID
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+BEGIN
+  IF p_role IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.role r
+    WHERE r.id = p_role
+      AND ((r.organization_id IS NULL AND r.is_builtin) OR r.organization_id = p_org)
+  ) THEN
+    RETURN 'foreign_role';
+  END IF;
+  IF p_principal_type = 'team' AND NOT EXISTS (
+    SELECT 1 FROM public.team t WHERE t.id = p_principal_id AND t.organization_id = p_org
+  ) THEN
+    RETURN 'foreign_team';
+  END IF;
+  IF p_resource_id IS NOT NULL
+     AND p_resource_type IN ('project', 'runner', 'cloud_identity', 'connector')
+     AND p_resource_id IS DISTINCT FROM p_org
+     AND public.authz_resource_org_id(p_resource_type, p_resource_id) IS DISTINCT FROM p_org THEN
+    RETURN 'foreign_resource';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.grant_org_binding_violation(UUID, TEXT, UUID, UUID, TEXT, UUID) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.grants_enforce_org_binding()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE reason TEXT;
+BEGIN
+  reason := public.grant_org_binding_violation(
+    NEW.org_id, NEW.principal_type, NEW.principal_id, NEW.role_id, NEW.resource_type, NEW.resource_id);
+  IF reason IS NOT NULL THEN
+    -- The text carries the reason code only, never a value read with definer rights.
+    RAISE EXCEPTION 'grant references something outside its organization (%)', reason
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'grants_org_binding';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- No REVOKE on this trigger function, for the reason stated after
+-- project_environments_require_one_default(): `RETURNS TRIGGER` cannot be called directly, and
+-- the EXECUTE check happens at CREATE TRIGGER, so the file relies on the default grant for every
+-- trigger function.
+
+DROP TRIGGER IF EXISTS grants_org_binding ON public.grants;
+CREATE TRIGGER grants_org_binding
+  BEFORE INSERT OR UPDATE OF org_id, principal_type, principal_id, effect, role_id, resource_type, resource_id
+  ON public.grants
+  FOR EACH ROW EXECUTE FUNCTION public.grants_enforce_org_binding();
+
 -- ── Break-glass (privileged incident recovery) — the most security-sensitive surface ─────────────
 -- All three tables are SERVICE-ROLE ONLY: RLS is enabled with NO app policy (the cli_logins /
 -- runner_usage_sessions idiom), so the least-privilege alethia_app role — the one behind every
@@ -2398,3 +3145,560 @@ DO $$ BEGIN
     EXECUTE 'REVOKE ALL ON public.enterprise_contract, public.platform_audit FROM alethia_app';
   END IF;
 END $$;
+
+-- ── The board's topics (#6119): `environments` and `addons`. ──────────────────────────────────────
+-- At the END of this file because it reads project_component_tables(), defined above, and reuses
+-- emit_change() / notify_change() from the real-time block near the top.
+-- What the Architecture board shows that changes without the viewer acting: an environment's
+-- lifecycle, its components' lifecycles (the node states), its BYO IaC module, its described chart
+-- workloads, and its add-ons' install/health/sync. Same contract as the jobs triggers above:
+-- identifiers only, an UPDATE fires only when a column the board renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts): both topics route on the ORG arm only, filtered through the
+-- PDP's `view` on the row's project. Their RLS owner arm is the PROJECT's owner
+-- (`projects.user_id = current_owner`), not a column of these rows — project_environments.user_id
+-- is its creator, which is not an RLS arm — so `u` is carried but never used as a route.
+
+-- project_environments and project_fabrics carry id, org_id, user_id and project_id: the jobs-shaped
+-- notifier fits. Not listed (heartbeat-like or not on the board): the heal/reap counters and
+-- timestamps, cost_cap, namespace, region, last_deployed_at, created_at, updated_at.
+DROP TRIGGER IF EXISTS project_environments_notify_change_upd ON public.project_environments;
+CREATE TRIGGER project_environments_notify_change_upd
+  AFTER UPDATE ON public.project_environments
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.name, OLD.stage, OLD.is_default, OLD.fabric_id, OLD.placement_mode,
+     OLD.lifecycle, OLD.expires_at, OLD.deployed_config_hash)
+    IS DISTINCT FROM
+    (NEW.status, NEW.name, NEW.stage, NEW.is_default, NEW.fabric_id, NEW.placement_mode,
+     NEW.lifecycle, NEW.expires_at, NEW.deployed_config_hash)
+  )
+  EXECUTE FUNCTION public.notify_change('environments');
+
+DROP TRIGGER IF EXISTS project_environments_notify_change_insdel ON public.project_environments;
+CREATE TRIGGER project_environments_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.project_environments
+  FOR EACH ROW EXECUTE FUNCTION public.notify_change('environments');
+
+DROP TRIGGER IF EXISTS project_fabrics_notify_change_upd ON public.project_fabrics;
+CREATE TRIGGER project_fabrics_notify_change_upd
+  AFTER UPDATE ON public.project_fabrics
+  FOR EACH ROW WHEN ((OLD.status, OLD.status_message) IS DISTINCT FROM (NEW.status, NEW.status_message))
+  EXECUTE FUNCTION public.notify_change('environments');
+
+-- The component family has org_id (derive_component_org_id) and project_id but no user_id, so it
+-- gets its own thin notifier. TG_ARGV[0] is the topic.
+CREATE OR REPLACE FUNCTION public.notify_component_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id, NULL, OLD.project_id);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id, NULL, NEW.project_id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- Every family table notifies `environments`, except:
+--   · project_addons — its own topic, below;
+--   · the four tables the board never renders: project_changes (the staging rows a CLI or a save
+--     writes K at a time — K hints, each refetching the heaviest read, for rows nobody draws),
+--     project_git_credentials, project_source_repos and project_repositories.
+-- The family is read from project_component_tables(), never restated, so a new component table is
+-- covered the day it joins the family. The UPDATE trigger's column list is DERIVED per table: the
+-- lifecycle and health columns the board renders, intersected with the columns that table actually
+-- has. A table with none of them gets the INSERT/DELETE trigger only. An excluded table has any
+-- trigger an earlier version of this block created DROPPED, so the exclusion holds on a database
+-- that already ran it.
+DO $$
+DECLARE
+  tbl TEXT;
+  cols TEXT[];
+BEGIN
+  FOREACH tbl IN ARRAY public.project_component_tables() LOOP
+    IF tbl IN ('project_addons', 'project_changes', 'project_git_credentials',
+               'project_source_repos', 'project_repositories') THEN
+      IF tbl <> 'project_addons' THEN
+        EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_upd ON public.%1$I', tbl);
+        EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_insdel ON public.%1$I', tbl);
+      END IF;
+      CONTINUE;
+    END IF;
+    SELECT array_agg(c.column_name::text ORDER BY c.column_name)
+      INTO cols
+      FROM information_schema.columns c
+     WHERE c.table_schema = 'public' AND c.table_name = tbl
+       AND c.column_name IN ('status', 'status_message', 'health', 'sync_status', 'scan_status',
+                             'commit_sha', 'deployed_commit_sha', 'enabled', 'rendered');
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_upd ON public.%1$I', tbl);
+    IF cols IS NOT NULL THEN
+      EXECUTE format(
+        'CREATE TRIGGER %1$s_notify_change_upd AFTER UPDATE ON public.%1$I FOR EACH ROW
+           WHEN ((%2$s) IS DISTINCT FROM (%3$s))
+           EXECUTE FUNCTION public.notify_component_change(''environments'')',
+        tbl,
+        (SELECT string_agg('OLD.' || quote_ident(x), ', ') FROM unnest(cols) x),
+        (SELECT string_agg('NEW.' || quote_ident(x), ', ') FROM unnest(cols) x));
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS %1$s_notify_change_insdel ON public.%1$I', tbl);
+    EXECUTE format(
+      'CREATE TRIGGER %1$s_notify_change_insdel AFTER INSERT OR DELETE ON public.%1$I
+         FOR EACH ROW EXECUTE FUNCTION public.notify_component_change(''environments'')', tbl);
+  END LOOP;
+END $$;
+
+-- project_addons: catalog add-ons AND BYO charts (source = 'byo'). Not listed: last_synced_at and
+-- scanned_at (stamped on every reconcile/scan, with or without a change), created_at, updated_at.
+DROP TRIGGER IF EXISTS project_addons_notify_change_upd ON public.project_addons;
+CREATE TRIGGER project_addons_notify_change_upd
+  AFTER UPDATE ON public.project_addons
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.status_message, OLD.health, OLD.sync_status, OLD.enabled, OLD.version,
+     OLD.mode, OLD.scan_status, OLD."values", OLD.values_yaml, OLD.namespace)
+    IS DISTINCT FROM
+    (NEW.status, NEW.status_message, NEW.health, NEW.sync_status, NEW.enabled, NEW.version,
+     NEW.mode, NEW.scan_status, NEW."values", NEW.values_yaml, NEW.namespace)
+  )
+  EXECUTE FUNCTION public.notify_component_change('addons');
+
+DROP TRIGGER IF EXISTS project_addons_notify_change_insdel ON public.project_addons;
+CREATE TRIGGER project_addons_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.project_addons
+  FOR EACH ROW EXECUTE FUNCTION public.notify_component_change('addons');
+
+-- ── The general-settings topics (#6128): `organization` and `projects`. ────────────────────────
+-- Reuses emit_change() from the real-time block near the top. Same contract as the jobs triggers:
+-- identifiers only, and an UPDATE fires only when a column the console renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts):
+--   · organization → the org arm `o:<org id>`, unfiltered. Every member reads the org's name, slug,
+--     logo and General settings (the switcher, the breadcrumb, Settings → General).
+--   · projects → the org arm `o:<org_id>`, filtered through the PDP's `view` on the project itself.
+--     Both arms of the projects RLS policy are on `org_id` (`org_id = current_org OR org_id =
+--     current_owner`, the owner_all loop above), and a personal-scope stream's org IS its user, so
+--     the org arm reaches the personal scope too; `user_id` (the creator) is not an RLS arm.
+
+-- The organization row: what the console renders of it. Not listed: createdAt, updatedAt. No
+-- INSERT/DELETE trigger: a new org has no stream open on it yet, and a deleted org's streams are
+-- revoked (the membership is gone), so neither has anyone to tell.
+CREATE OR REPLACE FUNCTION public.notify_organization_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.emit_change('organization', NEW.id, NEW.id, NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS organization_notify_change_upd ON public.organization;
+CREATE TRIGGER organization_notify_change_upd
+  AFTER UPDATE ON public.organization
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.slug, OLD.logo, OLD.metadata)
+    IS DISTINCT FROM
+    (NEW.name, NEW.slug, NEW.logo, NEW.metadata)
+  )
+  EXECUTE FUNCTION public.notify_organization_change();
+
+-- A project row: the switcher, breadcrumbs, palette, project list and Settings → General render its
+-- name and slug; the project list its region, cloud account and cost estimate. `p` is the project's
+-- own id, so the PDP filter asks about the row itself. Not listed: iac_version,
+-- webhook_ca_consumers, created_at, updated_at, and org_id/user_id (backfill-only writes).
+CREATE OR REPLACE FUNCTION public.notify_project_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('projects', OLD.id, OLD.org_id, OLD.user_id, OLD.id);
+  ELSE
+    PERFORM public.emit_change('projects', NEW.id, NEW.org_id, NEW.user_id, NEW.id);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS projects_notify_change_upd ON public.projects;
+CREATE TRIGGER projects_notify_change_upd
+  AFTER UPDATE ON public.projects
+  FOR EACH ROW WHEN (
+    (OLD.project_name, OLD.slug, OLD.region, OLD.cloud_identity_id, OLD.estimated_monthly_cost)
+    IS DISTINCT FROM
+    (NEW.project_name, NEW.slug, NEW.region, NEW.cloud_identity_id, NEW.estimated_monthly_cost)
+  )
+  EXECUTE FUNCTION public.notify_project_change();
+
+DROP TRIGGER IF EXISTS projects_notify_change_insdel ON public.projects;
+CREATE TRIGGER projects_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.projects
+  FOR EACH ROW EXECUTE FUNCTION public.notify_project_change();
+
+-- ── The Environments page's promotion topics (#6120): on `environments`. ───────────────────────────
+-- What the page shows that changes without the viewer acting: a promotion advancing (its PLAN or
+-- DEPLOY job ends, a teammate approves or rejects it, the gate evaluation is rewritten), an approval
+-- slot being decided, and a teammate editing an environment's protection rules. Same contract as
+-- the board's triggers above: identifiers only, an UPDATE fires only when a column the page renders
+-- CHANGED, routed on the ORG arm and filtered through the PDP's `view` on the row's project
+-- (lib/realtime/routing.ts, `environments`).
+--
+-- One notifier for the three tables. Each carries id, project_id and a NULLABLE org_id (no trigger
+-- stamps it on these tables, and the service-role lifecycle writes approval slots without one), so
+-- the org falls back to the PROJECT's — the source of truth the reads bind to
+-- (lib/promotions/org-binding.ts). `u` is NULL: none of these rows' user columns is an RLS arm.
+-- DEFINER RIGHTS for that one lookup, for the reason derive_component_org_id gives: the writer may be
+-- the app role, and an RLS policy hiding the project would route the notice nowhere. It reads one
+-- column of the project the row's own FK names and returns nothing to the caller.
+CREATE OR REPLACE FUNCTION public.notify_promotion_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+SET row_security = off
+AS $$
+DECLARE
+  v_id uuid;
+  v_project uuid;
+  v_org uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_id := OLD.id; v_project := OLD.project_id; v_org := OLD.org_id;
+  ELSE
+    v_id := NEW.id; v_project := NEW.project_id; v_org := NEW.org_id;
+  END IF;
+  IF v_org IS NULL THEN
+    SELECT p.org_id INTO v_org FROM public.projects p WHERE p.id = v_project;
+  END IF;
+  PERFORM public.emit_change('environments', v_id, v_org, NULL, v_project);
+  RETURN NULL;
+END;
+$$;
+
+-- environment_promotions. Not listed: candidate_hash (written once, with the row), updated_at and
+-- completed_at (they move with status), user_id, org_id.
+DROP TRIGGER IF EXISTS environment_promotions_notify_change_upd ON public.environment_promotions;
+CREATE TRIGGER environment_promotions_notify_change_upd
+  AFTER UPDATE ON public.environment_promotions
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.error_message, OLD.gate_evaluations, OLD.diff_summary, OLD.plan_job_id,
+     OLD.deploy_job_id)
+    IS DISTINCT FROM
+    (NEW.status, NEW.error_message, NEW.gate_evaluations, NEW.diff_summary, NEW.plan_job_id,
+     NEW.deploy_job_id)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS environment_promotions_notify_change_insdel ON public.environment_promotions;
+CREATE TRIGGER environment_promotions_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_promotions
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- promotion_approvals: a slot opened (insert) or decided. Not listed: created_at, decided_at (it moves
+-- with status), required_role (written once).
+DROP TRIGGER IF EXISTS promotion_approvals_notify_change_upd ON public.promotion_approvals;
+CREATE TRIGGER promotion_approvals_notify_change_upd
+  AFTER UPDATE ON public.promotion_approvals
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.decided_by, OLD.comment) IS DISTINCT FROM (NEW.status, NEW.decided_by, NEW.comment)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS promotion_approvals_notify_change_insdel ON public.promotion_approvals;
+CREATE TRIGGER promotion_approvals_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.promotion_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- environment_protection_rules: the gates the env card summarises and the rules drawer edits. Not
+-- listed: updated_at (stamped on every save, change or not), user_id, org_id.
+DROP TRIGGER IF EXISTS environment_protection_rules_notify_change_upd ON public.environment_protection_rules;
+CREATE TRIGGER environment_protection_rules_notify_change_upd
+  AFTER UPDATE ON public.environment_protection_rules
+  FOR EACH ROW WHEN (
+    (OLD.require_predecessor, OLD.require_verify_pass, OLD.require_approval, OLD.approvers,
+     OLD.soak_minutes, OLD.cost_delta_threshold)
+    IS DISTINCT FROM
+    (NEW.require_predecessor, NEW.require_verify_pass, NEW.require_approval, NEW.approvers,
+     NEW.soak_minutes, NEW.cost_delta_threshold)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS environment_protection_rules_notify_change_insdel ON public.environment_protection_rules;
+CREATE TRIGGER environment_protection_rules_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_protection_rules
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- ── The Evidence surface's posture rows (#6126): environment_drift and environment_security. ─────
+-- Same contract as the board's triggers above — identifiers only, and an UPDATE fires only when a
+-- column the UI renders CHANGED. Both notify `environments`: the Evidence read and the board's
+-- environment status show an environment's drift and security posture. The hint's id is the
+-- ENVIRONMENT's, so it names what changed in the reader's terms.
+--
+-- Why these need their own trigger when the scan is a job: the job-status route writes the posture
+-- AFTER `update_job_status` has committed the job's terminal status, so the `jobs` hint arrives first
+-- and the refetch it causes can read the previous posture. This hint is what carries the result.
+--
+-- ROUTING: these rows are RLS-less project children with no org_id, so the notifier reads the org
+-- from the parent project; lib/realtime/routing.ts routes `environments` on the org arm, filtered
+-- through the PDP's `view` on the row's project. When the parent project is already gone (a cascade
+-- delete), the org reads NULL and the notice routes nowhere — the project's own delete is the hint.
+--
+-- Listed: everything the Evidence table and drawer render, scanned_at included (the Checked column).
+-- A posture write is the tail of a scan JOB, so its rate is the job rate, not a heartbeat's.
+CREATE OR REPLACE FUNCTION public.notify_posture_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  r record;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    r := OLD;
+  ELSE
+    r := NEW;
+  END IF;
+  PERFORM public.emit_change('environments', r.environment_id,
+    (SELECT p.org_id FROM public.projects p WHERE p.id = r.project_id), NULL, r.project_id);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS environment_drift_notify_change_upd ON public.environment_drift;
+CREATE TRIGGER environment_drift_notify_change_upd
+  AFTER UPDATE ON public.environment_drift
+  FOR EACH ROW WHEN (
+    (OLD.in_sync, OLD.drifted, OLD.details, OLD.scanned_at)
+    IS DISTINCT FROM
+    (NEW.in_sync, NEW.drifted, NEW.details, NEW.scanned_at)
+  )
+  EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_drift_notify_change_insdel ON public.environment_drift;
+CREATE TRIGGER environment_drift_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_drift
+  FOR EACH ROW EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_security_notify_change_upd ON public.environment_security;
+CREATE TRIGGER environment_security_notify_change_upd
+  AFTER UPDATE ON public.environment_security
+  FOR EACH ROW WHEN (
+    (OLD.critical, OLD.high, OLD.medium, OLD.low, OLD.report_count, OLD.scanned, OLD.scanned_at)
+    IS DISTINCT FROM
+    (NEW.critical, NEW.high, NEW.medium, NEW.low, NEW.report_count, NEW.scanned, NEW.scanned_at)
+  )
+  EXECUTE FUNCTION public.notify_posture_change();
+
+DROP TRIGGER IF EXISTS environment_security_notify_change_insdel ON public.environment_security;
+CREATE TRIGGER environment_security_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.environment_security
+  FOR EACH ROW EXECUTE FUNCTION public.notify_posture_change();
+
+-- ── The people & access topics (#6129): `members` and `access`. ─────────────────────────────────
+-- Reuses emit_change() from the real-time block near the top. Same contract as the jobs triggers:
+-- identifiers only, and an UPDATE fires only when a column the console renders CHANGED.
+--
+-- ROUTING (lib/realtime/routing.ts):
+--   · members → the org arm `o:<org>`, unfiltered. Every member of an org reads its member list,
+--     its pending invitations and its teams (the members.* reads answer any member).
+--   · access  → the org's `oaccess:<org>` key, held only by a stream whose actor may `view` members:
+--     grants and custom roles are read under `member:view`, which an operator does not hold.
+-- `u`/`p` are not RLS arms of any of these tables and are sent NULL.
+
+-- member: the role and the lifecycle status are what the table shows (and what a suspension or a
+-- role change writes). Not listed: created_at, and organization_id/user_id (never rewritten).
+-- NOT HINTED: a member's name, email or avatar — those are `user` columns, and `user` has no
+-- trigger; the members table shows the new values on its next read (focus, navigation, any
+-- other members hint), not live.
+CREATE OR REPLACE FUNCTION public.notify_member_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('members', OLD.id, OLD.organization_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('members', NEW.id, NEW.organization_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS member_notify_change_upd ON public.member;
+CREATE TRIGGER member_notify_change_upd
+  AFTER UPDATE ON public.member
+  FOR EACH ROW WHEN ((OLD.role, OLD.status) IS DISTINCT FROM (NEW.role, NEW.status))
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS member_notify_change_insdel ON public.member;
+CREATE TRIGGER member_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.member
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- invitation: a pending invitation is a row of the members table; accepting, cancelling or
+-- re-roling it changes status/role. Not listed: expires_at, team_id, inviter_id, created_at.
+DROP TRIGGER IF EXISTS invitation_notify_change_upd ON public.invitation;
+CREATE TRIGGER invitation_notify_change_upd
+  AFTER UPDATE ON public.invitation
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.role, OLD.email) IS DISTINCT FROM (NEW.status, NEW.role, NEW.email)
+  )
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS invitation_notify_change_insdel ON public.invitation;
+CREATE TRIGGER invitation_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.invitation
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- team: its name. Not listed: member_count (a counter better-auth keeps; the membership itself is
+-- team_member's hint below), created_at, updated_at.
+DROP TRIGGER IF EXISTS team_notify_change_upd ON public.team;
+CREATE TRIGGER team_notify_change_upd
+  AFTER UPDATE ON public.team
+  FOR EACH ROW WHEN (OLD.name IS DISTINCT FROM NEW.name)
+  EXECUTE FUNCTION public.notify_member_change();
+
+DROP TRIGGER IF EXISTS team_notify_change_insdel ON public.team;
+CREATE TRIGGER team_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.team
+  FOR EACH ROW EXECUTE FUNCTION public.notify_member_change();
+
+-- team_member carries no org, so its team's is looked up; the hint names the TEAM (the row the
+-- teams page shows). A team_member deleted by its team's cascade finds no team and routes nowhere —
+-- the team's own delete above carries that hint.
+CREATE OR REPLACE FUNCTION public.notify_team_member_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_team uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.team_id ELSE NEW.team_id END;
+BEGIN
+  PERFORM public.emit_change('members', v_team,
+    (SELECT t.organization_id FROM public.team t WHERE t.id = v_team), NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS team_member_notify_change_insdel ON public.team_member;
+CREATE TRIGGER team_member_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.team_member
+  FOR EACH ROW EXECUTE FUNCTION public.notify_team_member_change();
+
+-- grants: every column the Access table renders. Not listed: created_at.
+CREATE OR REPLACE FUNCTION public.notify_grant_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('access', OLD.id, OLD.org_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('access', NEW.id, NEW.org_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS grants_notify_change_upd ON public.grants;
+CREATE TRIGGER grants_notify_change_upd
+  AFTER UPDATE ON public.grants
+  FOR EACH ROW WHEN (
+    (OLD.principal_type, OLD.principal_id, OLD.effect, OLD.role_id, OLD.permission_key,
+     OLD.resource_type, OLD.resource_id)
+    IS DISTINCT FROM
+    (NEW.principal_type, NEW.principal_id, NEW.effect, NEW.role_id, NEW.permission_key,
+     NEW.resource_type, NEW.resource_id)
+  )
+  EXECUTE FUNCTION public.notify_grant_change();
+
+DROP TRIGGER IF EXISTS grants_notify_change_insdel ON public.grants;
+CREATE TRIGGER grants_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.grants
+  FOR EACH ROW EXECUTE FUNCTION public.notify_grant_change();
+
+-- role: a custom role's name and description (a built-in role has no org and routes nowhere).
+CREATE OR REPLACE FUNCTION public.notify_role_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change('access', OLD.id, OLD.organization_id, NULL, NULL);
+  ELSE
+    PERFORM public.emit_change('access', NEW.id, NEW.organization_id, NULL, NULL);
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS role_notify_change_upd ON public.role;
+CREATE TRIGGER role_notify_change_upd
+  AFTER UPDATE ON public.role
+  FOR EACH ROW WHEN ((OLD.name, OLD.description) IS DISTINCT FROM (NEW.name, NEW.description))
+  EXECUTE FUNCTION public.notify_role_change();
+
+DROP TRIGGER IF EXISTS role_notify_change_insdel ON public.role;
+CREATE TRIGGER role_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.role
+  FOR EACH ROW EXECUTE FUNCTION public.notify_role_change();
+
+-- role_permission carries no org and no id of its own: the hint names the ROLE, with the role's
+-- org looked up (a cascade from the role's delete finds none; the role's own delete carries it).
+-- Rewriting a role's key set deletes and re-inserts its rows; identical notices inside one
+-- transaction are delivered once (NOTIFY de-duplicates them), and the client coalesces the rest.
+CREATE OR REPLACE FUNCTION public.notify_role_permission_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  v_role uuid := CASE WHEN TG_OP = 'DELETE' THEN OLD.role_id ELSE NEW.role_id END;
+BEGIN
+  PERFORM public.emit_change('access', v_role,
+    (SELECT r.organization_id FROM public.role r WHERE r.id = v_role), NULL, NULL);
+  RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS role_permission_notify_change_insdel ON public.role_permission;
+CREATE TRIGGER role_permission_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.role_permission
+  FOR EACH ROW EXECUTE FUNCTION public.notify_role_permission_change();
+
+-- ── connectors: cloud_identities + connector_credentials (#6124) ──────────────────────────────
+-- The credential-shaped notifier. Both tables carry `scoped_all` (above): an `org` row is the org's,
+-- a `personal` row is its author's alone. So `u` is sent ONLY for a personal row — the routing
+-- (lib/realtime/routing.ts `connectors`) then tells its author and nobody else, and an org row goes
+-- to the org. Never both arms: a hint on the org key for a personal row would tell the org's members
+-- that a member's personal credential changed. When an UPDATE moves a row between audiences (a share,
+-- a demotion), the OLD audience is told too, so a board that showed the row refetches and drops it.
+CREATE OR REPLACE FUNCTION public.notify_credential_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id,
+      CASE WHEN NEW.scope = 'personal' THEN NEW.user_id END, NULL);
+  ELSIF TG_OP = 'DELETE' THEN
+    PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id,
+      CASE WHEN OLD.scope = 'personal' THEN OLD.user_id END, NULL);
+  ELSE
+    PERFORM public.emit_change(TG_ARGV[0], NEW.id, NEW.org_id,
+      CASE WHEN NEW.scope = 'personal' THEN NEW.user_id END, NULL);
+    IF (OLD.scope, OLD.org_id, OLD.user_id) IS DISTINCT FROM (NEW.scope, NEW.org_id, NEW.user_id) THEN
+      PERFORM public.emit_change(TG_ARGV[0], OLD.id, OLD.org_id,
+        CASE WHEN OLD.scope = 'personal' THEN OLD.user_id END, NULL);
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+-- The columns the connectors board shows (lib/rpc/procedures/connectors.ts): the account's name,
+-- health, last error and missing permissions, whether it was ever configured (`credentials`), and
+-- its audience. Deliberately NOT listed: last_tested_at, cached_resources, cached_at,
+-- verified_account_id and updated_at — the health sweep re-probes on a timer and writes those every
+-- pass, and a re-probe that finds the same health must emit nothing.
+DROP TRIGGER IF EXISTS cloud_identities_notify_change_upd ON public.cloud_identities;
+CREATE TRIGGER cloud_identities_notify_change_upd
+  AFTER UPDATE ON public.cloud_identities
+  FOR EACH ROW WHEN (
+    (OLD.name, OLD.status, OLD.is_verified, OLD.last_error, OLD.missing_permissions, OLD.credentials,
+     OLD.scope, OLD.org_id, OLD.user_id)
+    IS DISTINCT FROM
+    (NEW.name, NEW.status, NEW.is_verified, NEW.last_error, NEW.missing_permissions, NEW.credentials,
+     NEW.scope, NEW.org_id, NEW.user_id)
+  )
+  EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+DROP TRIGGER IF EXISTS cloud_identities_notify_change_insdel ON public.cloud_identities;
+CREATE TRIGGER cloud_identities_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.cloud_identities
+  FOR EACH ROW EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+-- api_key credentials: the board shows whether one exists, whether it verified, and its audience.
+-- A re-save with the same verdict (a rotated secret) changes nothing the board shows.
+DROP TRIGGER IF EXISTS connector_credentials_notify_change_upd ON public.connector_credentials;
+CREATE TRIGGER connector_credentials_notify_change_upd
+  AFTER UPDATE ON public.connector_credentials
+  FOR EACH ROW WHEN (
+    (OLD.is_verified, OLD.connector_id, OLD.scope, OLD.org_id, OLD.user_id)
+    IS DISTINCT FROM
+    (NEW.is_verified, NEW.connector_id, NEW.scope, NEW.org_id, NEW.user_id)
+  )
+  EXECUTE FUNCTION public.notify_credential_change('connectors');
+
+DROP TRIGGER IF EXISTS connector_credentials_notify_change_insdel ON public.connector_credentials;
+CREATE TRIGGER connector_credentials_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.connector_credentials
+  FOR EACH ROW EXECUTE FUNCTION public.notify_credential_change('connectors');

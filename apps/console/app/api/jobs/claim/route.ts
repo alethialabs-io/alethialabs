@@ -16,6 +16,10 @@ import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { claimGrantFor } from "@/lib/runners/claim-grants";
 import { loadClaimIdentity } from "@/lib/runners/claim-identity";
+import {
+	issueLifecycleRunnerToken,
+	snapshotWithRunnerToken,
+} from "@/lib/runners/lifecycle-token";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -126,6 +130,31 @@ export async function POST(req: Request) {
 			"alethia.job_type": job.job_type,
 			provider: job.provider ?? "unknown",
 		});
+
+		// A runner-lifecycle job's target token is minted now, for this claim, and rides only in this
+		// response (lib/runners/lifecycle-token.ts) — the stored snapshot never carries it.
+		const tokenIssue = await issueLifecycleRunnerToken(db, job, runnerId);
+		if (tokenIssue.kind === "refused") {
+			await db
+				.update(jobs)
+				.set({
+					status: "FAILED",
+					error_message: `Runner token handoff refused: ${tokenIssue.reason}`,
+					completed_at: new Date(),
+				})
+				.where(eq(jobs.id, job.id));
+			return NextResponse.json(
+				{ error: `Runner token handoff refused: ${tokenIssue.reason}` },
+				{ status: 409 },
+			);
+		}
+		const servedJob =
+			tokenIssue.kind === "issued"
+				? {
+						...job,
+						config_snapshot: snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token),
+					}
+				: job;
 
 		// Least privilege (#5308): what rides along with the row is decided per job type by an
 		// allow-list, not by what the snapshot happens to reference. A MINT_KUBECONFIG job carries
@@ -293,7 +322,11 @@ export async function POST(req: Request) {
 			}
 		}
 
-		return NextResponse.json({ job, cloud_identity, connector_credentials });
+		return NextResponse.json({
+			job: servedJob,
+			cloud_identity,
+			connector_credentials,
+		});
 	} catch (err) {
 		console.error("Claim error:", err);
 		return NextResponse.json(

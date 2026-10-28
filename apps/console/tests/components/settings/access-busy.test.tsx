@@ -14,7 +14,7 @@
 // is its state on every first paint) and the real grants query hook; only the network edges are
 // mocked.
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { HydrationBoundary, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,11 +32,24 @@ const { getAccessGrantsPage } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/app/server/actions/grants", () => ({
-	getAccessGrantsPage,
 	assignGrant: vi.fn(),
 	revokeGrant: vi.fn(),
-	getGrantOptions: vi.fn(async () => ({ roles: [], permissions: [], principals: [], resources: {} })),
 }));
+// The Access reads go over GET since #6129 (`members.grants`, `members.grantOptions`), from the
+// browser and from the org route's prefetch alike; the fake read client serves both, with the same
+// spy behind the grants read.
+const READS = vi.hoisted(() => ({
+	"members.grants": async (input: unknown) => getAccessGrantsPage(input),
+	"members.grantOptions": async () => ({ roles: [], permissions: [], principals: [], resources: {} }),
+}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(READS).orpc };
+});
+vi.mock("@/lib/rpc/server", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { serverOrpc: () => fakeOrpc(READS).orpc };
+});
 vi.mock("@/app/server/actions/workspace", () => ({
 	getWorkspaceContext: vi.fn(),
 	setActiveOrganization: vi.fn(),
@@ -143,8 +156,16 @@ describe("Settings · Access before the workspace store has loaded (#5850)", () 
 	});
 });
 
+/** The element a page rendered, through the `HydrationBoundary` the org route wraps it in. */
+function unwrap(element: unknown): unknown {
+	if (!isValidElement(element) || element.type !== HydrationBoundary) return element;
+	const props: unknown = element.props;
+	return typeof props === "object" && props !== null && "children" in props ? props.children : element;
+}
+
 /** The `customRoles` prop a page handed its `AccessManager`, or undefined when it handed none. */
-function customRolesOf(element: unknown): unknown {
+function customRolesOf(rendered: unknown): unknown {
+	const element = unwrap(rendered);
 	if (!isValidElement(element) || element.type !== AccessManager) return "not an AccessManager";
 	const props: unknown = element.props;
 	if (typeof props !== "object" || props === null || !("customRoles" in props)) return undefined;
@@ -153,8 +174,13 @@ function customRolesOf(element: unknown): unknown {
 
 describe("the Access pages resolve the entitlement on the server (#5850)", () => {
 	it.each([true, false])("hand the manager customRoles=%s from the actor's entitlements", async (customRoles) => {
-		currentActor.mockResolvedValue({ userId: "u1", orgId: "o1", entitlements: { ...COMMUNITY_ENTITLEMENTS, customRoles } });
-		expect(customRolesOf(await OrgAccessPage())).toBe(customRoles);
+		currentActor.mockResolvedValue({ credential: "session", userId: "u1", orgId: "o1", entitlements: { ...COMMUNITY_ENTITLEMENTS, customRoles } });
+		getAccessGrantsPage.mockResolvedValue(PAGE);
+		const org = await OrgAccessPage({
+			params: Promise.resolve({ org: "acme" }),
+			searchParams: Promise.resolve({}),
+		});
+		expect(customRolesOf(org)).toBe(customRoles);
 		const project = await ProjectAccessPage({ params: Promise.resolve({ org: "acme", project: "proj" }) });
 		expect(customRolesOf(project)).toBe(customRoles);
 	});

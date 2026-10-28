@@ -44,6 +44,7 @@ export function CountrySelect({
   invalid,
 }: CountrySelectProps) {
   const [open, setOpen] = React.useState(false);
+  const popupRef = React.useRef<HTMLDivElement>(null);
   const Flag = value ? flags[value as keyof typeof flags] : undefined;
 
   return (
@@ -79,7 +80,20 @@ export function CountrySelect({
           </button>
         }
       />
-      <PopoverContent className="w-[--anchor-width] min-w-[260px] p-0">
+      {/* F033: the list stays mounted through its exit animation, sitting over the field below the
+          picker. A click there during that window landed in the closing list, and when the close
+          completed focus was sent back to this trigger, so what the user then typed went nowhere.
+          A closing list now takes no pointer input, and focus returns to the trigger only if it is
+          still inside the list (or nowhere) — never pulled off a field the user already moved to. */}
+      <PopoverContent
+        // Keeps the LAST popup element rather than nulling it on unmount: the focus decision is made
+        // as the popup goes away, and it must still be able to ask "was focus inside it?".
+        ref={(el: HTMLDivElement | null) => {
+          if (el) popupRef.current = el;
+        }}
+        finalFocus={() => returnFocusToTrigger(popupRef.current)}
+        className="w-[--anchor-width] min-w-[260px] p-0 data-[closed]:pointer-events-none"
+      >
         {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
             prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
             the search is an unnamed combobox to a screen reader (#5803). */}
@@ -121,4 +135,15 @@ export function CountrySelect({
       </PopoverContent>
     </Popover>
   );
+}
+
+/**
+ * Whether closing the country list should send focus back to its trigger: yes when focus is still
+ * inside the list, or has fallen to the page body; no when the user has already moved it to another
+ * control — returning it then would swallow what they type next (F033).
+ */
+export function returnFocusToTrigger(popup: HTMLElement | null): boolean {
+  const active = popup?.ownerDocument.activeElement ?? null;
+  if (!active || active === popup?.ownerDocument.body) return true;
+  return popup?.contains(active) ?? true;
 }

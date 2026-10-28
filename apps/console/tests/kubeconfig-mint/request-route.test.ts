@@ -72,7 +72,7 @@ beforeEach(() => {
 	vi.mocked(authorizeCli).mockImplementation(async (_req, action) =>
 		roleHolds(role, action)
 			? {
-					actor: { userId: user, orgId: ORG },
+					actor: { credential: "session", userId: user, orgId: ORG },
 					credential: "session",
 					orgScope: [ORG, user],
 				}
@@ -193,7 +193,7 @@ describe("request validation", () => {
 	it("passes the parsed request, the client, the credential kind and the trusted IP through", async () => {
 		await post({ ...body("readonly"), ttl_seconds: 900 });
 		expect(requestKubeconfigMint).toHaveBeenCalledWith({
-			actor: { userId: user, orgId: ORG },
+			actor: { userId: user, orgId: ORG, credential: "session" },
 			clusterId: CLUSTER,
 			request: { tier: "readonly", ttl_seconds: 900, shape: "exec", client_public_key: KEY },
 			client: "cli",
@@ -209,7 +209,7 @@ describe("a service token (#5310)", () => {
 	beforeEach(() => {
 		role = "owner";
 		vi.mocked(authorizeCli).mockResolvedValue({
-			actor: { userId: user, orgId: ORG },
+			actor: { credential: "service_token", userId: user, orgId: ORG },
 			credential: "service_token",
 			serviceTokenId: TOKEN_ID,
 			orgScope: [ORG],

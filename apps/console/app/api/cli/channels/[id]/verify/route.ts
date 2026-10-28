@@ -8,6 +8,7 @@ import { getServiceDb } from "@/lib/db";
 import { alertChannels } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
+import { SsrfError, UNREACHABLE_DESTINATION } from "@/lib/net/ssrf-guard";
 import { cliChannelResponse } from "@/lib/validations/cli-contract";
 
 /** Maps a channel row to its client-safe CLI wire shape (never the secret envelope). */
@@ -49,6 +50,12 @@ export async function POST(
 	try {
 		await getChannelSender(channel.type).verify(channel);
 	} catch (err) {
+		// The outbound guard's own message describes how the destination resolved: logged, never
+		// returned. The CLI gets the same fixed sentence the console does.
+		if (err instanceof SsrfError) {
+			console.warn("[cli] channel destination refused by the outbound guard:", err.message);
+			return NextResponse.json({ error: UNREACHABLE_DESTINATION }, { status: 400 });
+		}
 		const message = err instanceof Error ? err.message : "Verification failed.";
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
@@ -58,7 +65,7 @@ export async function POST(
 		const [row] = await db
 			.update(alertChannels)
 			.set({ is_verified: true, last_verified_at: now })
-			.where(eq(alertChannels.id, id))
+			.where(and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)))
 			.returning();
 		return cliJson(cliChannelResponse, { channel: toChannelWire(row) });
 	} catch (err: unknown) {

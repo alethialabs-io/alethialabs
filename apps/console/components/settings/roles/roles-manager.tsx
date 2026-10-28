@@ -3,29 +3,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Settings · Roles — IAM-style master/detail. A left rail (built-in + custom roles) and a
-// right detail panel (read-only permission matrix + classification). Custom roles are searched
-// SERVER-SIDE (useRolesQuery) and created/edited through the AccordionForm RoleSheet. Built-ins
-// come from the bootstrap (registry); custom-role authoring is gated on the customRoles entitlement.
+// right detail panel (read-only permission matrix + classification). Both halves are GET reads the
+// route prefetches (#6129): `members.roleCatalog` (built-ins, entitlement, manage check) and
+// `members.roles` (custom roles, searched SERVER-SIDE). Custom roles are created/edited through the
+// AccordionForm RoleSheet and deleted here, each through `useActionMutation`; an `access` hint
+// refreshes the page when someone else changes a role. Authoring is gated on customRoles.
 
 import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
-import {
-	deleteRole,
-	type RoleRow,
-	type RolesBootstrap,
-} from "@/app/server/actions/roles";
+import { deleteRole, type RoleRow } from "@/app/server/actions/roles";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { roleDisplayName } from "@/lib/authz/registry";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
+import { RegionError } from "@/components/errors/region-error";
+import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import {
-	useInvalidateRoles,
-	useRolesQuery,
-} from "@/lib/query/use-roles-query";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { useRoleCatalogQuery, useRolesQuery } from "@/lib/query/use-roles-query";
+import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useRolesFilters } from "@/lib/stores/use-settings-filters";
 import {
@@ -56,7 +54,15 @@ import {
 	showsKind,
 } from "./roles-filters";
 import { PermissionMatrix } from "./permission-matrix";
+import { RolesNoAccess } from "./roles-no-access";
+import { RolesSkeleton } from "./roles-skeleton";
 import { RoleSheet } from "./role-sheet";
+
+/** Every read a role write shows in: the rail, the catalog's grant counts, the grant builder. */
+const ROLE_READS = [orpc.members.key()];
+
+/** The catalog's built-ins before it answers. */
+const NO_BUILTINS: RoleRow[] = [];
 
 /** A rail row — selectable role with its permission count. */
 function RailRow({
@@ -100,10 +106,15 @@ function RailRow({
 	);
 }
 
-export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
-	const { builtin, canManage } = bootstrap;
-	// Client entitlement mirrors the server bootstrap; the store hydrates it app-wide.
-	const entitled = useEntitlement("customRoles") || bootstrap.customRoles;
+export function RolesManager() {
+	// The catalog is prefetched by the route; the server answered `customRoles` and `canManage` from
+	// the addressed org's actor, and the store can still turn authoring on later (an in-session
+	// upgrade), never off.
+	const catalog = useRoleCatalogQuery();
+	const builtin = catalog.data?.builtin ?? NO_BUILTINS;
+	const canManage = catalog.data?.canManage === true;
+	const storeEntitled = useEntitlement("customRoles");
+	const entitled = catalog.data?.customRoles === true || storeEntitled === true;
 
 	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
 	// and the free text is debounced before it can reach a query key.
@@ -125,12 +136,13 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	// (lib/query/README.md, step 5): the rail keeps the previous search's roles while the next
 	// one loads, and the dim below is what says they are stale. Keeping them silently renders
 	// the previous answer as the current one.
+	const customQuery = useRolesQuery(query.search);
 	const {
 		data: customAll = [],
 		isFetching,
 		isPending,
 		isPlaceholderData,
-	} = useRolesQuery(query.search);
+	} = customQuery;
 	const custom = showsKind(query, "custom") ? customAll : [];
 	// The role UNIVERSE — every custom role, unsearched. This is the shared base key the page
 	// prefetches, so with no search it is the same cache entry as the call above and costs no
@@ -138,9 +150,8 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	// never against the search result (lib/query/README.md: counts come from the unfiltered
 	// universe). `undefined` until it has loaded, and the count is then left unstated.
 	const { data: customUniverse } = useRolesQuery();
-	const invalidate = useInvalidateRoles();
 
-	const [selectedId, setSelectedId] = useState<string>(builtin[0]?.id ?? "");
+	const [selectedId, setSelectedId] = useState<string>("");
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [editingRole, setEditingRole] = useState<RoleRow | null>(null);
 	const [deleting, setDeleting] = useState<RoleRow | null>(null);
@@ -181,16 +192,30 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 		setSheetOpen(true);
 	}
 
-	async function confirmDelete(r: RoleRow) {
-		try {
-			await deleteRole(r.id);
-			toast.success("Role deleted");
-			setDeleting(null);
-			if (selectedId === r.id) setSelectedId(builtin[0]?.id ?? "");
-			invalidate();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't delete role");
-		}
+	const removal = useActionMutation(deleteRole, {
+		invalidates: ROLE_READS,
+		successMessage: "Role deleted",
+		onSuccess: ({ id }) => {
+			if (selectedId === id) setSelectedId("");
+		},
+	});
+	/** The role a delete is in flight for: its Edit/Delete are disabled until it settles. */
+	const removingId = removal.isPending ? removal.variables?.id : undefined;
+
+	// A viewer whose `member:view` went away while the page was open: the live refetch is refused,
+	// and the page says so rather than keep a rail it may no longer read (B4).
+	if (isForbiddenRead(catalog.error) || isForbiddenRead(customQuery.error)) {
+		return <RolesNoAccess />;
+	}
+	if (catalog.isPending) return <RolesSkeleton />;
+	if (catalog.isError && catalog.data === undefined) {
+		return (
+			<RegionError
+				title="Couldn't load roles"
+				description="The role catalog didn't load. No role was changed."
+				onRetry={() => void catalog.refetch()}
+			/>
+		);
 	}
 
 	return (
@@ -287,7 +312,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 										key={r.id}
 										name={roleDisplayName(r.name, r.builtin)}
 										count={r.permissionKeys.length}
-										active={selectedId === r.id}
+										active={selected?.id === r.id}
 										onClick={() => setSelectedId(r.id)}
 									/>
 								))
@@ -312,7 +337,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 										key={r.id}
 										name={roleDisplayName(r.name, r.builtin)}
 										count={r.permissionKeys.length}
-										active={selectedId === r.id}
+										active={selected?.id === r.id}
 										onClick={() => setSelectedId(r.id)}
 									/>
 								))
@@ -325,8 +350,8 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 				<div className="rounded-lg border border-border bg-surface shadow-sm">
 					{selected ? (
 						<RoleDetail
-							role={selected}
-							canManage={canManage}
+								role={selected}
+								canManage={canManage && removingId !== selected.id}
 							onEdit={() => openEdit(selected)}
 							onDelete={() => setDeleting(selected)}
 						/>
@@ -346,7 +371,6 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 				role={editingRole}
 				templates={builtin}
 				canManage={canManage}
-				onSaved={invalidate}
 			/>
 
 			<UpgradeDialog
@@ -372,9 +396,12 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					<AlertDialogFooter>
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
-							onClick={() => deleting && void confirmDelete(deleting)}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-						>
+								onClick={() => {
+									if (deleting) removal.mutate({ id: deleting.id });
+									setDeleting(null);
+								}}
+								variant="destructive"
+							>
 							Delete role
 						</AlertDialogAction>
 					</AlertDialogFooter>

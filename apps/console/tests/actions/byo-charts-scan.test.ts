@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The project-in-the-actor's-org check has its own suite (tests/lib/projects/refuse-other-org.test.ts).
+vi.mock("@/lib/projects/refuse-other-org", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/projects/refuse-other-org")>()),
+	refuseProjectOfAnotherOrg: vi.fn(async () => undefined),
+}));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.fn() }));
 vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 
@@ -18,6 +23,7 @@ import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectAddons, projectHelmRegistries } from "@/lib/db/schema";
+import { ProjectOrgRefusalError, refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 
 type Rows = unknown[];
 
@@ -115,6 +121,22 @@ describe("scanByoChart — git charts", () => {
 		expect(snapshot.ref).toBe("main");
 		// A git chart needs no chart-repo credential, so the claim route must attach none.
 		expect(snapshot).not.toHaveProperty("helm_registries");
+	});
+
+	it("refuses a project of another org before queueing anything, in the refusal's own words", async () => {
+		const { valuesSpy } = setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		vi.mocked(refuseProjectOfAnotherOrg).mockRejectedValueOnce(
+			new ProjectOrgRefusalError("This project belongs to another organization — switch to it to run this."),
+		);
+		await expect(scanByoChart(input)).rejects.toThrow("This project belongs to another organization");
+		expect(valuesSpy.mock.calls.find((c) => c[0] === jobs)).toBeUndefined();
+	});
+
+	it("puts the scanned project in the job's column, so job visibility follows it (#6121)", async () => {
+		const { valuesSpy } = setupDb(new Map([[projectAddons, [GIT_CHART]]]));
+		await scanByoChart(input);
+		const call = valuesSpy.mock.calls.find((c) => c[0] === jobs);
+		expect(call?.[1]).toMatchObject({ job_type: "CHART_SCAN", project_id: "p1" });
 	});
 
 	it("still requires chart_path — a git repo cannot say which directory holds the chart", async () => {

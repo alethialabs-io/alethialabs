@@ -11,10 +11,9 @@ import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
 import { cn } from "@repo/ui/utils";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
-import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
+import { useWorkspaceStoreSync } from "@/lib/stores/use-workspace-store";
 import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
@@ -23,6 +22,7 @@ import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { CONTENT_FRAME } from "./content-frame";
 import { JobToaster } from "./job-toaster";
+import { RealtimeMount } from "./realtime-mount";
 import { SidebarRail } from "./sidebar-rail";
 import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
@@ -62,20 +62,14 @@ export function AppShell({
 	const segments = usePathname().split("/").filter(Boolean);
 	const isProjectWorkspace = segments.length >= 2 && segments[1] !== "~";
 
-	// Load the workspace once here so every nav href resolves to the active org even
-	// before the org switcher mounts (the switcher used to be the only loader).
-	useEffect(() => {
-		useWorkspaceStore.getState().fetchWorkspace();
-	}, []);
+	// Settle the workspace store (the entitlement gates) from the context the `[org]` layout
+	// prefetched and hydrated — no request of its own (#6114).
+	useWorkspaceStoreSync();
 
 	// Keep the page's org where the chat transport reads it at request time (ADR 0003 §9.1).
 	useEffect(() => {
 		useElenchStore.getState().setPageOrgId(pageOrgId);
 	}, [pageOrgId]);
-
-	// Warm the shared jobs cache session-wide so the command palette, breadcrumbs, and
-	// overview resolve job names everywhere; TanStack Query dedupes and polls it.
-	useJobsQuery();
 
 	return (
 		<div className="flex h-dvh w-full overflow-hidden bg-background">
@@ -152,6 +146,9 @@ export function AppShell({
 
 			{/* Single support-reply toast driver (staff/AI reply → "New reply on CASE-…"). */}
 			<SupportToaster />
+
+			{/* The org's change stream (ADR 0005 D3, #6115) and its connection notice: a fixed live region, no layout. */}
+			<RealtimeMount />
 
 			{/* First-run "Setup guide" — toggled from the topbar button, floats bottom-right. */}
 			<SetupGuideCard />

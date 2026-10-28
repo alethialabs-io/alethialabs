@@ -137,10 +137,17 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
 
   # The edition is read straight out of a .env with `cut -d= -f2-`, so it arrives exactly as
   # written: `ALETHIA_EDITION="community"` yields `"community"`, a CRLF file yields
-  # `community` with a trailing \r, and a stray space survives. Every dotenv loader — and
-  # `set -a && . .env`, which is how the console's session actually gets it — strips all
-  # three, so the console really IS community while an un-normalised compare reads "unset,
-  # therefore auto" and refuses to boot the one env the design says must stay runnable.
+  # `community` with a trailing \r, and a stray space survives. `set -a && . .env` — how the
+  # console's session gets it — strips the quotes and the padding, so for those the console
+  # really IS community while an un-normalised compare reads "unset, therefore auto" and refuses
+  # to boot the one env the design says must stay runnable.
+  #
+  # A \r is different, and it is NOT stripped by the console: dot-sourcing keeps a \r wherever
+  # it is, and parseAlethiaEdition does not trim, so a CR-bearing pin is rejected there (the
+  # invalid-pin class of #6171). It is stripped HERE — every \r, not only a trailing one — to
+  # agree with env.sh's dotenv_edition (`tr -d '\r'`), so the scope row and the edition row of
+  # env:status read one line the same way. That parity is the contract (env-suite-reap-test.sh
+  # C9 holds it, an inner-CR value included); no writer in this repo emits a CR anyway.
   edition="${edition//$'\r'/}"
   edition="${edition#"${edition%%[![:space:]]*}"}"
   edition="${edition%"${edition##*[![:space:]]}"}"
@@ -153,7 +160,49 @@ scope_verdict() { # <http status of the probe> <ALETHIA_EDITION as seen by the c
     echo "unknown the console did not answer the probe (status ${code:-none})"
     ;;
   5[0-9][0-9])
-    echo "unknown the console did not answer the probe (status $code)"
+    # A 5xx is "did not answer" EXCEPT under a pinned enterprise edition (#6161). There,
+    # lib/enterprise.ts does not degrade a MISSING @alethia/ee to community the way `auto` does:
+    # loadEnterprise records the failure and getEnterprise() rethrows it on EVERY call, and the
+    # auth plugins are built through getEnterprise(), so this probe's route answers 5xx and keeps
+    # answering it however long anyone waits. Every branch env pins enterprise since #6158, so a
+    # missing ee/dist reaches the probe as exactly this, where under `auto` it reached it as the
+    # 404 above. (A dist that exists but throws fails this way under EITHER pin; only the
+    # pinned case is named here, because only there is the pin itself evidence of what was
+    # expected.) Reading it as `unknown` let env:up exit green with "scope: UNKNOWN" on an env
+    # that cannot sign anyone in.
+    #
+    # The verdict is DEFECT, not a fifth word, on purpose: env:up (boot_rc), env:test and
+    # env:status in scripts/env.sh already refuse or flag DEFECT, and a word they have never seen
+    # would fall through to their "could not measure" arm — the very ambiguity being removed.
+    # The why is what tells it apart from the community DEFECT; the boot below keys on the status.
+    #
+    # What it does NOT claim: that ee/dist is missing. A dist that exists but throws on import
+    # fails the same way — and at boot that is the LIKELIER cause, because this script builds
+    # @alethia/ee and refuses to start without ee/dist — and so would any other 5xx on this route
+    # under that pin. So the why names both causes as a question, and the boot prints whether
+    # ee/dist/index.js is there and sends the operator to the log first.
+    #
+    # AN INVALID PIN IS THE SAME BROKEN ENV (#6171). parseAlethiaEdition
+    # (packages/enterprise-api/src/index.ts) accepts EXACTLY `community`, `enterprise`, `auto` and
+    # unset/empty — case-sensitive, no aliases (`Enterprise`, `ee`, `oss` are all rejected), no
+    # trimming — and throws on anything else. loadEnterprise calls it before it records any state,
+    # so it throws again on every call and this route answers 5xx forever, exactly as above. The
+    # pin read here is the normalised one (quotes, outer whitespace and CRs removed, the same
+    # reading dotenv_edition makes — C9 holds the two in parity), so the accepted set is checked
+    # against THAT; an inner space or a wrong case survives normalisation and is invalid here, as
+    # it is to the console. (Where the console is stricter than this reading — it keeps a \r — a
+    # CR-bearing pin still reads as valid here; see the \r note at the top of this function.)
+    case "$edition" in
+    enterprise)
+      echo "DEFECT ALETHIA_EDITION=enterprise is pinned but the enterprise module did not load (ee/dist missing, or present and throwing on load?) — the console answered $code, and under that pin it refuses every call rather than fall back to community"
+      ;;
+    "" | community | auto)
+      echo "unknown the console did not answer the probe (status $code)"
+      ;;
+    *)
+      echo "DEFECT ALETHIA_EDITION=$edition is not a valid edition (the console accepts community, enterprise or auto, exactly) — it answered $code, because it rejects the pin on every call, sign-in included"
+      ;;
+    esac
     ;;
   404)
     # A pinned community edition is a legitimate thing to run — it is how the community
@@ -304,12 +353,13 @@ if [ "${1:-}" = "--self-test" ]; then
   scope "404 with enterprise is worse, not ok" 404 "enterprise" "DEFECT"
   # …unless community was asked for, which is how the community build gets exercised.
   scope "404 pinned community is deliberate"   404 "community" "community"
-  # A pin is read out of a .env verbatim, and all three of these ARE `community` to the
-  # console: `set -a && . .env` strips the quotes, and a CRLF file leaves the \r behind.
-  # Reading them as "unset, therefore auto" makes env:up refuse a deliberately pinned env.
+  # A pin is read out of a .env verbatim. The quoted and padded ones ARE `community` to the
+  # console (`set -a && . .env` strips them); reading them as "unset, therefore auto" makes
+  # env:up refuse a deliberately pinned env. The CRLF one is NOT stripped by the console — it
+  # keeps the \r — and is read as the pin here only to agree with env.sh's dotenv_edition.
   scope "a double-quoted pin is a pin"         404 '"community"'   "community"
   scope "a single-quoted pin is a pin"         404 "'community'"   "community"
-  scope "a CRLF pin is a pin"                  404 "community$(printf '\r')" "community"
+  scope "a CRLF pin reads as dotenv_edition does" 404 "community$(printf '\r')" "community"
   scope "a padded pin is a pin"                404 "  community  " "community"
   # A console that cannot answer must not be reported either way. `000` is curl's
   # "no response", and an empty string is what a failed capture actually yields — the two
@@ -325,6 +375,99 @@ if [ "${1:-}" = "--self-test" ]; then
   # a verdict, however it got that way.
   scope "a doubled capture is not a verdict"   000000 ""       "unknown"
   scope "garbage is not a verdict"             "curl: (7)" ""  "unknown"
+  # #6161: a 5xx under a PINNED enterprise edition is the console refusing to run without the
+  # module it was told it has — a named defect, not a console that did not answer. Under any other
+  # pin a 5xx keeps its old meaning, so each of those cells is asserted too: a rule that read every
+  # 5xx as DEFECT would turn a busy or crashing community/auto env into a false refusal.
+  scope "5xx pinned enterprise: ee did not load" 500 "enterprise" "DEFECT"
+  scope "…any 5xx, not only 500"               503 "enterprise" "DEFECT"
+  scope "…and a quoted CRLF pin is that pin"   502 "\"enterprise\"$(printf '\r')" "DEFECT"
+  scope "a 5xx unpinned is still unknown"      500 ""          "unknown"
+  scope "a 5xx under auto is still unknown"    500 "auto"      "unknown"
+  scope "a 5xx pinned community is unknown"    500 "community" "unknown"
+  # #6171: a pin parseAlethiaEdition REJECTS is a broken env, not a silent one. It is exact —
+  # case-sensitive, no aliases, no inner whitespace — so each of those is its own cell, and the
+  # three accepted values plus empty are already asserted `unknown` above. `Enterprise` is not the
+  # enterprise pin, but it is not "no evidence" either: the console refuses every call under it.
+  scope "a mis-cased pin is an invalid pin"    500 "Enterprise" "DEFECT"
+  scope "…an alias is an invalid pin"          503 "ee"         "DEFECT"
+  scope "…an inner space is an invalid pin"    500 "comm unity" "DEFECT"
+  scope "…a quoted invalid pin is still one"   502 '"Community"' "DEFECT"
+  # …and only under a 5xx: the pin does not invent a verdict the console did not give.
+  scope "an invalid pin with no answer is unknown" 000 "Enterprise" "unknown"
+  scope "an invalid pin that answered 400 is what answered" 400 "Enterprise" "enterprise"
+  # The pin does not turn silence into a verdict: no answer is no answer, whatever was expected.
+  scope "no answer under enterprise is unknown" 000 "enterprise" "unknown"
+
+  # The why is prose, but for THIS cell the words are the deliverable: the community DEFECT and
+  # this one share a verdict, and every refusal in scripts/env.sh prints the why under its
+  # headline. Assert it names the pin and BOTH causes of a failed ee load — a missing dist, and
+  # one that is present and throws, which at boot is the likelier — and does not say COMMUNITY.
+  why="$(scope_verdict 500 enterprise)"
+  why="${why#* }"
+  case "$why" in
+  *"ALETHIA_EDITION=enterprise"*"ee/dist missing"*"throwing on load"*)
+    case "$why" in
+    *COMMUNITY*)
+      fail=$((fail + 1))
+      echo "  ✗ the pinned-enterprise 5xx is described as COMMUNITY: $why"
+      ;;
+    *) pass=$((pass + 1)) ;;
+    esac
+    ;;
+  *)
+    fail=$((fail + 1))
+    echo "  ✗ the pinned-enterprise 5xx does not name the pin and both ee/dist causes: $why"
+    ;;
+  esac
+
+  # The invalid-pin why is the deliverable too (#6171): it must name the pin AS WRITTEN (after the
+  # normalisation the two readers share) and say it is not a valid edition — and must not send the
+  # operator after ee/dist or COMMUNITY, which are the other two DEFECTs' causes.
+  why="$(scope_verdict 500 '"Enterprise"')"
+  why="${why#* }"
+  case "$why" in
+  "ALETHIA_EDITION=Enterprise is not a valid edition"*)
+    case "$why" in
+    *COMMUNITY* | *ee/dist*)
+      fail=$((fail + 1))
+      echo "  ✗ the invalid-pin 5xx is described as another DEFECT: $why"
+      ;;
+    *) pass=$((pass + 1)) ;;
+    esac
+    ;;
+  *)
+    fail=$((fail + 1))
+    echo "  ✗ the invalid-pin 5xx does not say 'ALETHIA_EDITION=Enterprise is not a valid edition': $why"
+    ;;
+  esac
+
+  # …and through the PROBE, not just the decision: scope_probe reads the pin out of a real .env
+  # and hands it on. curl and sleep are stubbed in a subshell, so this is hermetic. Without this,
+  # a scope_probe that stopped passing the pin would leave every cell above green.
+  probe_env="$(mktemp)"
+  probe() { # <case> <stubbed status> <.env line> <expected "verdict status">
+    local got
+    printf 'X=1\n%s\n' "$3" >"$probe_env"
+    got="$(
+      curl() { printf '%s' "$STUB_CODE"; }
+      sleep() { :; }
+      STUB_CODE="$2" scope_probe 1 "$probe_env" 1 1
+    )"
+    got="$(printf '%s' "$got" | cut -d' ' -f1,2)"
+    if [ "$got" = "$4" ]; then
+      pass=$((pass + 1))
+    else
+      fail=$((fail + 1))
+      echo "  ✗ $1: expected '$4', got '$got'"
+    fi
+  }
+  probe "probe: 500 under an enterprise pin"   500 "ALETHIA_EDITION=enterprise" "DEFECT 500"
+  probe "probe: 500 under auto"                500 "ALETHIA_EDITION=auto"       "unknown 500"
+  probe "probe: 500 with no pin at all"        500 "Y=2"                        "unknown 500"
+  probe "probe: the LAST pin wins"             500 "$(printf 'ALETHIA_EDITION=enterprise\nALETHIA_EDITION=auto')" "unknown 500"
+  probe "probe: 500 under an invalid pin"      500 "ALETHIA_EDITION=Enterprise" "DEFECT 500"
+  rm -f "$probe_env"
 
   # boot_rc — what the caller in scripts/env.sh actually reads. The cell that matters is the
   # `keep` + DEFECT one: it must be NON-ZERO. A 0 there is indistinguishable from a healthy
@@ -348,6 +491,11 @@ if [ "${1:-}" = "--self-test" ]; then
   rc_case "a healthy restart is a clean 0"          enterprise "keep"  0
   rc_case "a pinned-community restart is a clean 0" community  "keep"  0
   rc_case "an unanswered probe is not a refusal"    unknown    ""      0
+  # #6161 end to end: the verdict a pinned-enterprise 5xx gets must be one env:up REFUSES. Read
+  # off scope_verdict rather than hand-typed as DEFECT, so a verdict word the boot does not refuse
+  # cannot pass here while the cells above pass on their own.
+  rc_case "env:up refuses a pinned-enterprise 5xx" "$(scope_verdict 500 enterprise | cut -d' ' -f1)" "" 1
+  rc_case "env:up refuses an invalid-pin 5xx"     "$(scope_verdict 500 Enterprise | cut -d' ' -f1)" "" 1
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
@@ -775,22 +923,66 @@ for _ in $(seq 1 150); do
       # entitlements while nobody asked it to is not a working env with a caveat — it is an
       # env on which every enterprise-scoped verification is vacuous, and it looks identical
       # to a good one. Same call CI's `Guard — ee/dist must exist` step makes.
+      # TWO defects share this verdict (scope_verdict says why it is one word, not two), and
+      # they want different words: the 404 one is SERVING community entitlements; the 5xx one
+      # (#6161) is pinned to enterprise, could not load it, and is serving nothing that touches
+      # auth. Keyed on the status, which is what scope_verdict itself keyed on. A THIRD (#6171)
+      # is a 5xx under a pin the console rejects outright; scope_verdict is the only writer of
+      # "is not a valid edition", so that phrase in its why is what tells it from the second.
+      # Keep this block SHORTER than the 20-line tail restart_env_console in scripts/env.sh
+      # re-prints, or a restart decapitates the headline.
       echo "" >&2
-      echo "✗ $SLUG came up in COMMUNITY scope — $SCOPE_WHY" >&2
-      echo "  A team/active subscription row on this env will still be refused with" >&2
-      echo "  403 upgrade_required, because the paid 'organizations' entitlement is not" >&2
-      echo "  there to grant. Any enterprise-scoped check against it would be vacuous." >&2
-      echo "" >&2
-      echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (404 = no such route)" >&2
+      case "$SCOPE_CODE:$SCOPE_WHY" in
+      5[0-9][0-9]:*"is not a valid edition"*)
+        echo "✗ $SLUG cannot start any edition — $SCOPE_WHY" >&2
+        echo "" >&2
+        echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (a 5xx under an invalid pin)" >&2
+        ;;
+      5[0-9][0-9]:*)
+        echo "✗ $SLUG cannot serve the edition it is pinned to — $SCOPE_WHY" >&2
+        echo "  Under ALETHIA_EDITION=enterprise a failed @alethia/ee load is never degraded to" >&2
+        echo "  community: every call that needs it fails, sign-in included." >&2
+        echo "" >&2
+        echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (a 5xx under the enterprise pin)" >&2
+        ;;
+      *)
+        echo "✗ $SLUG came up in COMMUNITY scope — $SCOPE_WHY" >&2
+        echo "  A team/active subscription row on this env will still be refused with" >&2
+        echo "  403 upgrade_required, because the paid 'organizations' entitlement is not" >&2
+        echo "  there to grant. Any enterprise-scoped check against it would be vacuous." >&2
+        echo "" >&2
+        echo "  probe: POST /api/auth/organization/create → $SCOPE_CODE (404 = no such route)" >&2
+        ;;
+      esac
       echo "  ee/dist/index.js: $( [ -f "$REPO/ee/dist/index.js" ] && echo present || echo MISSING)" >&2
       echo "  ALETHIA_EDITION in this env's .env: ${SCOPE_EDITION:-unset (= auto)}" >&2
       echo "  ALETHIA_EDITION in the tmux server env: $(tmux show-environment -g ALETHIA_EDITION 2>/dev/null || echo 'not set')" >&2
-      # This boot ALREADY scrubbed the tmux server's global environment and started the
-      # session from the scrubbed one, so a repeat is not the leak of #3732 healing slowly —
-      # it means the value is arriving from somewhere the two lines above name.
-      echo "  Bring it up again (pnpm env:up). The tmux server's environment was scrubbed" >&2
-      echo "  before this session started, so if it recurs the cause is one of the two" >&2
-      echo "  lines above, not a stale server." >&2
+      case "$SCOPE_CODE:$SCOPE_WHY" in
+      5[0-9][0-9]:*"is not a valid edition"*)
+        # env:up appends a MISSING key and never rewrites a present one, so re-running it alone
+        # changes nothing: the line itself has to be corrected first.
+        echo "  Fix the pin in this env's .env (community, enterprise or auto — exactly), then" >&2
+        echo "  pnpm env:up to restart the console with it." >&2
+        ;;
+      5[0-9][0-9]:*)
+        # The LOG FIRST. This boot built @alethia/ee above and exits before starting the console
+        # if ee/dist/index.js is absent, so here the dist is almost always present and threw on
+        # load (or the 5xx is not ee's at all); loadEnterprise rethrows that error on every call,
+        # so the console log is where it surfaces. env:up, not env:push, is the second step: the
+        # failure is memoised for the life of the process, and only env:up restarts it.
+        echo "  Read the error first: pnpm env:logs (a dist that loaded and threw, or any other" >&2
+        echo "  5xx, shows there). Then pnpm env:up: it rebuilds ee/dist AND restarts the console," >&2
+        echo "  which a failed load needs — loadEnterprise keeps the failure for the process's life." >&2
+        ;;
+      *)
+        # This boot ALREADY scrubbed the tmux server's global environment and started the
+        # session from the scrubbed one, so a repeat is not the leak of #3732 healing slowly —
+        # it means the value is arriving from somewhere the two lines above name.
+        echo "  Bring it up again (pnpm env:up). The tmux server's environment was scrubbed" >&2
+        echo "  before this session started, so if it recurs the cause is one of the two" >&2
+        echo "  lines above, not a stale server." >&2
+        ;;
+      esac
       # A `keep` restart is not this session's env coming up. restart_env_console (after a
       # Playwright run) and restore_live_envs (after a box restore) both bounce consoles
       # this caller does not own — the shared `dev` env among them. Exiting 1 there reports

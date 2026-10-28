@@ -99,7 +99,7 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/cost/previous-environment-cost", () => ({
 	getPreviousEnvironmentCost: vi.fn(async () => null),
 }));
-vi.mock("@/lib/queries/classification", () => ({ getEnforcingValuesFor: vi.fn(async () => []) }));
+vi.mock("@/lib/queries/classification", () => ({ getEnforcingValuesForEnvironment: vi.fn(async () => []) }));
 vi.mock("@/lib/promotions/approve", () => ({ claimApprovalSlot: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: <T>(row: T): T => row }));
 
@@ -113,7 +113,7 @@ import {
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/lib/promotions/lifecycle";
-import { getEnforcingValuesFor } from "@/lib/queries/classification";
+import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
 import { notifyScaler } from "@/lib/scaler";
 
 const PROMOTION = {
@@ -181,7 +181,7 @@ beforeEach(() => {
 	fake.reset();
 	vi.clearAllMocks();
 	vi.mocked(transitionEnv).mockResolvedValue(true);
-	vi.mocked(getEnforcingValuesFor).mockResolvedValue([]);
+	vi.mocked(getEnforcingValuesForEnvironment).mockResolvedValue([]);
 	vi.mocked(getPreviousEnvironmentCost).mockResolvedValue(null);
 });
 

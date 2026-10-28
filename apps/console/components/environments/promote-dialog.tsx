@@ -4,12 +4,19 @@
 
 // Promote one environment's structural design changes onto another. Shows a live diff preview
 // (adds/updates/removes) and an opt-in for applying removals, then queues the gated promotion.
+//
+// The preview is the `environments.promotionPreview` GET procedure (#6120, ADR 0005 D1) — a cached
+// query keyed by the pair and the removals choice, so flipping back to a pair already seen paints at
+// once — and the promotion is `promoteEnvironment` through `useActionMutation` (ADR 0005 D4).
 
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Loader2, MinusCircle, PencilLine, PlusCircle } from "lucide-react";
-import { useEffect, useId, useState } from "react";
-import { toast } from "sonner";
-import { previewPromotion, promoteEnvironment } from "@/app/server/actions/promotions";
-import type { ComponentChange, PromotionDiff } from "@/types/jsonb.types";
+import { useId, useState } from "react";
+import { promoteEnvironment } from "@/app/server/actions/promotions";
+import { RegionError } from "@/components/errors/region-error";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
+import type { ComponentChange } from "@/types/jsonb.types";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -41,6 +48,11 @@ const OP_META = {
 	DELETE: { icon: MinusCircle, label: "remove" },
 } as const;
 
+/** The identity of one promotion request: the pair and the removals choice. */
+function requestKey(sourceId: string, targetId: string, includeRemovals: boolean): string {
+	return `${sourceId}|${targetId}|${includeRemovals}`;
+}
+
 /** Dialog to promote `source` → `target` within a project. */
 export function PromoteDialog({
 	open,
@@ -62,73 +74,65 @@ export function PromoteDialog({
 	const [sourceId, setSourceId] = useState("");
 	const [targetId, setTargetId] = useState("");
 	const [includeRemovals, setIncludeRemovals] = useState(false);
-	const [diff, setDiff] = useState<PromotionDiff | null>(null);
-	const [previewing, setPreviewing] = useState(false);
-	const [submitting, setSubmitting] = useState(false);
-	// The sentence of a refusal `promoteEnvironment` RETURNED (#5454), shown in the dialog beside the
-	// button that was pressed. Stored with the request it answered, and shown only while the pair
-	// and the removals choice are still that request; closing the dialog drops it.
-	const [refused, setRefused] = useState<{ request: string; error: string } | null>(null);
-	const refusalId = useId();
-	const request = `${sourceId}|${targetId}|${includeRemovals}`;
-	const refusal = refused?.request === request ? refused.error : null;
+	const request = requestKey(sourceId, targetId, includeRemovals);
 
-	/** Forwards an open/close to the caller, and drops a shown refusal when the dialog closes. */
-	function handleOpenChange(v: boolean) {
-		if (!v) setRefused(null);
-		onOpenChange(v);
-	}
-
-	// Live diff preview whenever the pair or removal preference changes.
-	useEffect(() => {
-		if (!open || !sourceId || !targetId || sourceId === targetId) {
-			setDiff(null);
-			return;
-		}
-		let cancelled = false;
-		setPreviewing(true);
-		previewPromotion(projectId, sourceId, targetId, includeRemovals)
-			.then((d) => {
-				if (!cancelled) setDiff(d);
-			})
-			.catch(() => {
-				if (!cancelled) setDiff(null);
-			})
-			.finally(() => {
-				if (!cancelled) setPreviewing(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [open, projectId, sourceId, targetId, includeRemovals]);
+	// The diff preview for the chosen pair; asked only while the dialog is open on two distinct envs.
+	const pairChosen = open && !!sourceId && !!targetId && sourceId !== targetId;
+	const preview = useQuery({
+		...orpc.environments.promotionPreview.queryOptions({
+			input: { projectId, sourceId, targetId, includeRemovals },
+		}),
+		enabled: pairChosen,
+	});
+	const diff = pairChosen ? (preview.data?.diff ?? null) : null;
+	const previewing = pairChosen && preview.isPending;
+	const previewFailed = pairChosen && preview.isError;
 
 	const shown = diff?.changes.filter(
 		(c) => c.op !== "DELETE" || includeRemovals,
 	);
 	const nothingToDo = !!diff && (shown?.length ?? 0) === 0;
 
-	async function submit() {
-		if (!sourceId || !targetId) return;
-		setSubmitting(true);
-		setRefused(null);
-		try {
-			const res = await promoteEnvironment(projectId, sourceId, targetId, { includeRemovals });
-			if (!res.ok) {
-				// A refusal the user can act on — returned, so its sentence survives a production
-				// build. It stays in the dialog, where the pair can be changed and Promote pressed again.
-				setRefused({ request, error: res.error });
-				return;
-			}
-			toast.success("Promotion queued");
+	const promote = useActionMutation(promoteEnvironment, {
+		// A promotion writes the target's design and records itself: the page's read (the promotions
+		// history, the active-promotion panel, the consistency matrix) shows both.
+		invalidates: [orpc.environments.key()],
+		successMessage: "Promotion queued",
+		// A refusal the user can act on stays in the dialog (below), where the pair can be changed and
+		// Promote pressed again — handed here so it is not ALSO toasted.
+		onRefusal: () => {},
+		onSuccess: () => {
 			handleOpenChange(false);
-			await onPromoted();
-		} catch (err) {
-			// Anything still thrown is not a refusal the user can act on (authorization, an unknown
-			// environment, an unexpected failure), and a production build redacts its message.
-			toast.error(err instanceof Error ? err.message : "Failed to promote");
-		} finally {
-			setSubmitting(false);
-		}
+			void onPromoted();
+		},
+	});
+	const submitting = promote.isPending;
+
+	/** Forwards an open/close to the caller, and drops a shown refusal when the dialog closes. */
+	function handleOpenChange(v: boolean) {
+		if (!v) promote.reset();
+		onOpenChange(v);
+	}
+
+	// The sentence of a refusal `promoteEnvironment` answered (#5454), shown beside the button that
+	// was pressed — and only while the pair and the removals choice are still the request it answered.
+	// That request is the mutation's own VARIABLES, not this render's selection: a pair changed while
+	// the promotion was in flight must not inherit a refusal meant for the pair that was sent.
+	const refusalId = useId();
+	const failure = promote.error?.error;
+	const sent = promote.variables;
+	const refusal =
+		failure &&
+		(failure.kind === "conflict" || failure.kind === "not-found" || failure.kind === "forbidden") &&
+		sent &&
+		requestKey(sent.sourceEnvId, sent.targetEnvId, sent.includeRemovals ?? false) === request
+			? failure.message
+			: null;
+
+	/** Sends the promotion for the chosen pair (a pending one is never sent twice). */
+	function submit() {
+		if (!sourceId || !targetId || submitting) return;
+		promote.mutate({ projectId, sourceEnvId: sourceId, targetEnvId: targetId, includeRemovals });
 	}
 
 	return (
@@ -189,6 +193,13 @@ export function PromoteDialog({
 						<div className="flex items-center gap-2 text-sm text-muted-foreground">
 							<Loader2 className="h-4 w-4 animate-spin" /> Computing changes…
 						</div>
+					) : previewFailed ? (
+						// A failed preview is not "nothing to promote" and not "pick a pair" (RUBRIC B4).
+						<RegionError
+							title="Couldn't compute the changes"
+							description="The preview for these environments failed to load."
+							onRetry={() => void preview.refetch()}
+						/>
 					) : diff ? (
 						nothingToDo ? (
 							<p className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">

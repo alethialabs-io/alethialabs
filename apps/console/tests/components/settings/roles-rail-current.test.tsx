@@ -18,10 +18,17 @@ vi.mock("next/navigation", () => ({
 	usePathname: () => "/acme/~/settings/roles",
 	useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
+vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => ({ ok: true, data: { id: "" } })) }));
+// The role catalog is a prefetched GET read since #6129 (`members.roleCatalog`); the test's
+// catalog is handed to the manager through it.
+const CATALOG = vi.hoisted((): { current: RolesBootstrap | null } => ({ current: null }));
+// The delete is a mutation since #6129; nothing here deletes, so it is an idle stand-in.
+vi.mock("@/lib/actions/use-action-mutation", () => ({
+	useActionMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
+	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
 	useRolesQuery: () => ({ data: [], isFetching: false, isPending: false, isPlaceholderData: false }),
-	useInvalidateRoles: () => vi.fn(),
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
@@ -49,10 +56,11 @@ const bootstrap: RolesBootstrap = {
 	customRoles: false,
 	canManage: false,
 };
+CATALOG.current = bootstrap;
 
 describe("the roles rail", () => {
 	it("marks the selected role's row current — and only that row", async () => {
-		render(<RolesManager bootstrap={bootstrap} />);
+		render(<RolesManager />);
 		const owner = screen.getByRole("button", { name: "Owner3" });
 		const viewer = screen.getByRole("button", { name: "Viewer1" });
 		expect(owner).toHaveAttribute("aria-current", "true");

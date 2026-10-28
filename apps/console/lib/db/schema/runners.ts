@@ -80,8 +80,10 @@ export const runners = pgTable(
 		index("idx_runners_user").on(t.user_id),
 		index("idx_runners_org").on(t.org_id),
 		index("idx_runners_token_hash").on(t.id, t.token_hash),
-		uniqueIndex("idx_runners_one_default_per_user")
-			.on(t.user_id)
+		// One default runner per user PER ORG: a default is chosen within the addressed org (or the
+		// personal workspace), and choosing one there leaves the user's default elsewhere alone.
+		uniqueIndex("idx_runners_one_default_per_user_org")
+			.on(t.user_id, t.org_id)
 			.where(sql`is_default = true`),
 		// Managed (platform-owned) runner names are globally unique.
 		uniqueIndex("idx_runners_unique_managed_name")

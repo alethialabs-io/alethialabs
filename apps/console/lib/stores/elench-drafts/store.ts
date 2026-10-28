@@ -112,7 +112,7 @@ export interface DraftsStoreDeps {
 	storage: () => Storage | null;
 	/** This page load's tab id (§7.1: minted per load, kept in memory only). */
 	tabId: string;
-	/** A fresh random id (`crypto.randomUUID`). */
+	/** A fresh random UUID (`randomUuid` from `lib/random-id.ts`). */
 	mint: () => string;
 	ui?: (effect: DraftUiEffect) => void;
 }

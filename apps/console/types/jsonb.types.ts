@@ -774,8 +774,8 @@ export interface RunnerDeployConfig {
 	memory: number;
 	image_repository: string;
 	// NOTE: the runner_token is deliberately NOT persisted here — it is a live bearer credential and
-	// this JSONB is plaintext at rest. The console keeps only its SHA-256 hash and re-mints a fresh
-	// token for each UPDATE/DESTROY job (#945).
+	// this JSONB is plaintext at rest. The console keeps only its SHA-256 hash and mints a fresh token
+	// when each DEPLOY_RUNNER/UPDATE_RUNNER job is claimed (lib/runners/lifecycle-token.ts, #945).
 }
 
 export interface RunnerMetadata {
@@ -1000,6 +1000,18 @@ export interface DriftPosture {
 	unmanaged: number;
 	unmanaged_known: boolean;
 	scanned_at?: string;
+}
+
+// The headline totals of a PLAN job's stored Infracost breakdown
+// (`execution_metadata.cost_breakdown`) — the top-level fields of the Go `infracost.CostBreakdown`
+// (packages/core/infracost/types.go). Infracost emits every amount as a decimal STRING. The diff is
+// the plan's monthly cost CHANGE; the total is the monthly cost after it. The job detail page's
+// result block reads only these (the per-resource ranking is lib/plan/parse-cost.ts's).
+export interface InfracostBreakdownTotals {
+	currency?: string;
+	totalMonthlyCost?: string;
+	pastTotalMonthlyCost?: string;
+	diffTotalMonthlyCost?: string;
 }
 
 // ── Verification gate (elench) ───────────────────────────────────────────────

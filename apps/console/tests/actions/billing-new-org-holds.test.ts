@@ -864,7 +864,7 @@ describe("ADR 0004 D1 rule 3 — the create-a-team readers read new_org holds on
 		const resumed = await resolveNewOrgSetup({ subscriptionId: "sub_linked", customerId: "cus_1" });
 		expect(resumed).toMatchObject({ subscriptionId: "sub_linked", hold: null });
 
-		vi.mocked(authorizeInOrg).mockResolvedValue({ orgId: "org-1", userId: "user-1" });
+		vi.mocked(authorizeInOrg).mockResolvedValue({ credential: "session", orgId: "org-1", userId: "user-1" });
 		const linked = await linkSubscriptionToNewOrg({ orgId: "org-1", subscriptionId: "sub_linked", customerId: "cus_1" });
 		// The link's hold consult saw no hold, so it judged X on its own read (ended), not on the org's hold.
 		expect(recordSetupRefusal).not.toHaveBeenCalledWith(expect.objectContaining({ refused: "held" }));

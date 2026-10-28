@@ -17,6 +17,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
+import { FieldMessage } from "@/components/support/field-message";
 
 /**
  * Step 2 — pick the service / area the case is about. A plain select for P1; a
@@ -57,9 +58,7 @@ export function StepCategory() {
 						</Select>
 					)}
 				/>
-				{errors.category && (
-					<p className="text-xs text-destructive">Select an area to continue.</p>
-				)}
+				<FieldMessage message={errors.category ? "Select an area to continue." : undefined} />
 			</div>
 		</div>
 	);

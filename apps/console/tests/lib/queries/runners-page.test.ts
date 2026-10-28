@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The runners grid's server half (lib/queries/runners.ts) — the predicate and the facet pass
-// behind `getRunnersPage()`.
+// behind `readRunnersPage()` (the `runners.page` read).
 //
 // This file is the instrument `scripts/check-filter-standard.mjs`'s `F7_UNDRIVEN` names for
-// `getRunnersPage`, and it asserts the invariant in the form that mechanism can carry.
+// `readRunnersPage`, and it asserts the invariant in the form that mechanism can carry.
 // `filter-standard-facets.test.ts` drives the SQL builders by recording what the SECOND drizzle
 // chain was handed; a runner's universe is a COMPOSITION of an RLS read and a service read, so
 // there is no second chain to inspect. What there is instead is two functions over one array,
@@ -153,7 +153,7 @@ describe("runnerFacets counts the UNFILTERED universe", () => {
 
 });
 
-describe("runnersPage — the two passes `getRunnersPage` delegates to", () => {
+describe("runnersPage — the two passes `readRunnersPage` delegates to", () => {
 	it("reports the result count and the universe size separately", () => {
 		const page = runnersPage(ALL, { clouds: ["gcp"] });
 		expect(page.rows).toEqual([gcpDraining, registeredOffline]);

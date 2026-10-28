@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { authorizeCli } from "@/lib/authz/guard";
+import { cliViewableProjectIds } from "@/lib/cli/project-access";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, projectEnvironments, projects } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -18,6 +19,9 @@ export async function GET(req: Request) {
 	const { actor } = auth;
 
 	try {
+		// Only the projects the caller may view: a project-scoped deny hides it here too.
+		const viewable = await cliViewableProjectIds(actor);
+		if (viewable.length === 0) return NextResponse.json({ configurations: [] });
 		const rows = await getServiceDb()
 			.select({
 				id: projects.id,
@@ -40,7 +44,7 @@ export async function GET(req: Request) {
 					eq(projectEnvironments.is_default, true),
 				),
 			)
-			.where(eq(projects.org_id, actor.orgId))
+			.where(and(eq(projects.org_id, actor.orgId), inArray(projects.id, viewable)))
 			.orderBy(desc(projects.created_at));
 
 		const configurations = rows.map((r) => ({

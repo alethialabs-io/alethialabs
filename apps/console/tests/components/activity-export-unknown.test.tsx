@@ -20,7 +20,11 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
-vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(async () => []) }));
+// The member list is the `members.list` GET read since #6129.
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({ "members.list": async () => [] }).orpc };
+});
 vi.mock("@/app/server/actions/activity", () => ({
 	getActivityLog: vi.fn(async () => ({ rows: [], nextCursor: null, facets: null })),
 	getActivityExportCsv: vi.fn(),
