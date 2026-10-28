@@ -17,6 +17,13 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { describeIfDb } from "./db";
 
+// The addressed-project check (lib/cli/project-access.ts) asks the PDP about the resolved project;
+// this file is not about that decision, so it allows.
+// tests/integration/cli-project-routes-addressed.test.ts drives the real one.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
@@ -81,7 +88,7 @@ type Body = z.infer<typeof bodySchema>;
 /** Points the stubbed PDP guard at one tenant for the next request. */
 function actingAs(userId: string, orgId: string): void {
 	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId, orgId },
+		actor: { credential: "session", userId, orgId },
 		credential: "session",
 		orgScope: [orgId, userId],
 	});

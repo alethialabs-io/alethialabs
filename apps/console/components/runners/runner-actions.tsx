@@ -17,6 +17,7 @@ import {
 } from "@repo/ui/alert-dialog";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
   Tooltip,
   TooltipContent,
@@ -30,8 +31,7 @@ import {
   useSetDefaultRunner,
   useDestroyRunner,
   useDeleteRunner,
-  type ActiveJob,
-  type RunnerWithRelease,
+  type RunnerView,
 } from "@/lib/query/use-runners-query";
 import { ArrowUpCircle, Loader2, Star } from "lucide-react";
 import Link from "next/link";
@@ -39,16 +39,18 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
-/** A runner decorated with its in-flight job (if any) — the unit the card renders. */
-export type RunnerRow = RunnerWithRelease & {
-  activeJob: ActiveJob | null;
-};
+/** Why the default star is not available on a personal-workspace runner listed from a team org. */
+export const PERSONAL_RUNNER_DEFAULT_REASON =
+  "Switch to your personal workspace to change its default";
+
+/** A runner with its in-flight job (if any), joined on the server — the unit the card renders. */
+export type RunnerRow = RunnerView;
 
 /** The lifecycle job currently acting on a runner, or null when idle. */
 export function runnerBusyKind(
   runner: RunnerRow,
 ): "DEPLOY_RUNNER" | "UPDATE_RUNNER" | "DESTROY_RUNNER" | null {
-  const t = runner.activeJob?.job_type;
+  const t = runner.active_job?.job_type;
   if (
     t === "DEPLOY_RUNNER" ||
     t === "UPDATE_RUNNER" ||
@@ -130,65 +132,51 @@ export function RunnerVersion({ runner }: { runner: RunnerRow }) {
  *  is in flight it renders a link to that job instead. */
 export function RunnerActions({ runner }: { runner: RunnerRow }) {
   const router = useRouter();
-  const { mutateAsync: setDefaultRunner } = useSetDefaultRunner();
-  const { mutateAsync: destroyRunner } = useDestroyRunner();
-  const { mutateAsync: deleteRunner } = useDeleteRunner();
+  const setDefault = useSetDefaultRunner();
+  const destroy = useDestroyRunner();
+  const remove = useDeleteRunner();
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
-  const [acting, setActing] = useState(false);
-  const [destroying, setDestroying] = useState(false);
 
   const isManaged = runner.operator === "managed";
   const busy = runnerBusyKind(runner);
-  const hasCloudResources =
-    !!runner.cloud_identity_id && !!runner.metadata?.deploy_config;
+  const hasCloudResources = runner.in_place;
+  // A destroy stays "Destroying…" from the click until the job it queued shows on the card.
+  const destroying = destroy.isPending || destroy.isSuccess;
 
-  const handleToggleDefault = async () => {
-    try {
-      const newValue = !runner.is_default;
-      await setDefaultRunner(newValue ? runner.id : null);
-      toast.success(
-        newValue ? `${runner.name} set as default` : "Default runner cleared",
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update");
-    }
+  const handleToggleDefault = () => {
+    const newValue = !runner.is_default;
+    setDefault.mutate(newValue ? runner.id : null, {
+      onSuccess: () => {
+        toast.success(newValue ? `${runner.name} set as default` : "Default runner cleared");
+      },
+    });
   };
 
-  const handleDestroy = async (assignedRunnerId: string | null) => {
-    setDestroying(true);
-    try {
-      const { jobId } = await destroyRunner({
-        runnerId: runner.id,
-        assignedRunnerId,
-      });
-      toast.success("Destroy job queued", {
-        action: {
-          label: "View job",
-          onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+  const handleDestroy = (assignedRunnerId: string | null) => {
+    destroy.mutate(
+      { runnerId: runner.id, assignedRunnerId },
+      {
+        onSuccess: ({ jobId }) => {
+          toast.success("Destroy job queued", {
+            action: {
+              label: "View job",
+              onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+            },
+          });
         },
-      });
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to queue destroy",
-      );
-      setDestroying(false);
-    }
+      },
+    );
   };
 
-  const handleRemove = async () => {
-    setActing(true);
-    try {
-      await deleteRunner(runner.id);
-      toast.success(`${runner.name} removed`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove");
-    } finally {
-      setActing(false);
-      setShowRemoveDialog(false);
-    }
+  const handleRemove = () => {
+    remove.mutate(runner.id, {
+      onSuccess: () => toast.success(`${runner.name} removed`),
+      onSettled: () => setShowRemoveDialog(false),
+    });
   };
+  const acting = remove.isPending;
 
-  if (busy && runner.activeJob) {
+  if (busy && runner.active_job) {
     const label =
       busy === "DEPLOY_RUNNER"
         ? "Provisioning…"
@@ -197,7 +185,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
           : "Destroying…";
     return (
       <Link
-        href={`/dashboard/jobs/${runner.activeJob.id}`}
+        href={`/dashboard/jobs/${runner.active_job.id}`}
         onClick={(e) => e.stopPropagation()}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
       >
@@ -212,34 +200,49 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
       className="flex items-center gap-1"
       onClick={(e) => e.stopPropagation()}
     >
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              // The tooltip is the only thing that named this control, and a tooltip
-              // is not an accessible name — the star was an unlabelled icon button
-              // that a spec could only reach positionally (`getByRole("button").first()`).
-              // The label states the ACTION the click performs, so it flips with the
-              // state the same way the tooltip does.
-              <button
-                type="button"
-                aria-label={
-                  runner.is_default ? "Clear default runner" : "Set as default runner"
-                }
-                onClick={handleToggleDefault}
-                className="rounded p-1 transition-colors hover:bg-muted"
-              >
-                <Star
-                  className={`h-3.5 w-3.5 ${runner.is_default ? "fill-foreground text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                />
-              </button>
-            }
-          />
-          <TooltipContent side="top" className="text-xs">
-            {runner.is_default ? "Clear default" : "Set as default"}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {runner.personal_elsewhere ? (
+        // A default is chosen per org, and this runner's org is the personal workspace: the star is
+        // gated here, with the reason, rather than offered and then refused.
+        <DisabledReason reason={PERSONAL_RUNNER_DEFAULT_REASON}>
+          <button
+            type="button"
+            aria-label="Set as default runner"
+            className="rounded p-1"
+          >
+            <Star className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+        </DisabledReason>
+      ) : (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                // The tooltip is the only thing that named this control, and a tooltip
+                // is not an accessible name — the star was an unlabelled icon button
+                // that a spec could only reach positionally (`getByRole("button").first()`).
+                // The label states the ACTION the click performs, so it flips with the
+                // state the same way the tooltip does.
+                <button
+                  type="button"
+                  aria-label={
+                    runner.is_default ? "Clear default runner" : "Set as default runner"
+                  }
+                  onClick={handleToggleDefault}
+                  disabled={setDefault.isPending}
+                  className="rounded p-1 transition-colors hover:bg-muted"
+                >
+                  <Star
+                    className={`h-3.5 w-3.5 ${runner.is_default ? "fill-foreground text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  />
+                </button>
+              }
+            />
+            <TooltipContent side="top" className="text-xs">
+              {runner.is_default ? "Clear default" : "Set as default"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
 
       {!isManaged &&
         runner.provisioning === "deployed" &&
@@ -297,7 +300,7 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
                   <AlertDialogAction
                     onClick={handleRemove}
                     disabled={acting}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="destructive"
                   >
                     {acting ? "Removing..." : "Remove"}
                   </AlertDialogAction>

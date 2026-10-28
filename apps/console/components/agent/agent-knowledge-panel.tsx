@@ -29,6 +29,7 @@ import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
+import { randomUuid } from "@/lib/random-id";
 
 /**
  * Density tuning for `@repo/ui/empty`'s `EmptyState` inside the knowledge panel.
@@ -81,7 +82,7 @@ function parseDerived(block: string): Array<{ label: string; value: string }> {
 /** A blank document, ready to edit. */
 function emptyDoc(): KnowledgeDoc {
 	return {
-		id: crypto.randomUUID(),
+		id: randomUuid(),
 		title: "",
 		content: "",
 		updated_at: new Date().toISOString(),

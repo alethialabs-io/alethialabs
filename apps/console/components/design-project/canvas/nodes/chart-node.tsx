@@ -5,17 +5,18 @@
 // The bring-your-own Helm chart canvas node (design "BYO Helm Chart" spec, Section C): a hairline
 // squared card carrying the chart id, repo·path·ref, and an ArgoCD status dot read by shape
 // (SYNCED / PROGRESSING / DEGRADED / PENDING). Chart nodes are out-of-band (project_addons), so
-// this reads its config straight off the store node and detaches via the server action + a context
-// refresh — it does not participate in the form graph or the Pending Changes diff.
+// this reads its config straight off the store node and detaches through the mutation contract, which
+// re-reads the board's charts — it does not participate in the form graph or the Pending Changes diff.
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useState } from "react";
 import { GitBranch, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, X } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { detachByoChart } from "@/app/server/actions/byo-charts";
+import { detachByoChartAction } from "@/app/server/actions/byo-charts";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
@@ -70,8 +71,14 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	const node = nodeOfKind(raw, "chart");
 	const ctx = useByoChartCanvas();
 	const openCard = useCanvasStore((s) => s.openCard);
-	const [detaching, setDetaching] = useState(false);
 	const [confirmDetach, setConfirmDetach] = useState(false);
+	// Pending while in flight, and held after it lands: the node leaves the board when the chart
+	// read settles, and until then a second press would detach a chart that is already gone.
+	const detachChart = useActionMutation(detachByoChartAction, {
+		invalidates: [orpc.canvas.byoCharts.key(), orpc.canvas.chartWorkloads.key()],
+		successMessage: (data) => `Chart "${data.id}" detached.`,
+	});
+	const detaching = detachChart.isPending || detachChart.isSuccess;
 	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
@@ -89,17 +96,9 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	 * detach in the console (`byo.iac.detach`) already asks; this one was the registry's last
 	 * `confirm: none` on the canvas (#4279).
 	 */
-	const detach = async () => {
-		if (!ctx) return;
-		setDetaching(true);
-		try {
-			await detachByoChart({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
-			toast.success(`Chart "${c.id}" detached.`);
-			ctx.refresh();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not detach the chart.");
-			setDetaching(false);
-		}
+	const detach = () => {
+		if (!ctx || detaching) return;
+		detachChart.mutate({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
 	};
 
 	return (
@@ -180,7 +179,7 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 				title="Detach this chart?"
 				description="The chart's ArgoCD Application and everything it deployed are removed from the cluster. Re-attaching means entering the repository, path and ref again."
 				confirmLabel="Detach"
-				onConfirm={() => void detach()}
+				onConfirm={detach}
 			/>
 		</div>
 	);

@@ -25,7 +25,7 @@
 // Keep this module's import graph free of lib/auth and lib/authz/guard, and never add `"use server"`.
 // tests/lib/promotions/lifecycle-import.test.ts holds that line.
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getPreviousEnvironmentCost } from "@/lib/cost/previous-environment-cost";
@@ -48,7 +48,7 @@ import {
 	type PromotionRules,
 } from "@/lib/promotions/gates";
 import { claimApprovalSlot } from "@/lib/promotions/approve";
-import { getEnforcingValuesFor } from "@/lib/queries/classification";
+import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
 
 /** Promotion statuses considered "in flight" (a promotion is still resolving). */
 export const IN_FLIGHT = ["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"] as const;
@@ -91,7 +91,7 @@ async function effectiveMinApprovals(
 	envId: string,
 	rulesRow: ProtectionRow | null,
 ): Promise<number> {
-	const enforcing = await getEnforcingValuesFor(db, "project_environment", envId);
+	const enforcing = await getEnforcingValuesForEnvironment(db, envId);
 	const { minApprovals } = applyClassificationEnforcement(
 		rulesRow ? toRules(rulesRow) : OPEN_RULES,
 		rulesRow?.approvers ?? null,
@@ -134,23 +134,29 @@ export async function finalizePromotionOnDeploy(jobId: string): Promise<void> {
 		.where(eq(environmentPromotions.id, promotion.id));
 }
 
-/** Marks a promotion FAILED when its PLAN or DEPLOY job fails (service role). */
+/**
+ * Marks FAILED the in-flight promotion whose PLAN or DEPLOY job is `jobId` (service role) — and only
+ * that one. No-op when the job backs no in-flight promotion.
+ *
+ * The promotion is addressed by the failed job itself: its `plan_job_id` or `deploy_job_id` is
+ * `jobId`, and it belongs to the job's own project (so to that project's organization). This used to
+ * pick ONE in-flight promotion with `LIMIT 1` across every project and only then compare its job ids,
+ * so with two promotions in flight the row picked was usually not the failing one: the owning
+ * promotion stayed in flight and kept its target's one-active-promotion slot
+ * (`env_promotions_one_active_per_target`), blocking the next promotion there (#6228).
+ *
+ * The update is a single guarded statement, so a promotion that already left the in-flight states
+ * (SUCCEEDED, CANCELLED, …) is never rewritten to FAILED.
+ */
 export async function failPromotionForJob(jobId: string): Promise<void> {
 	const db = getServiceDb();
-	const [promotion] = await db
-		.select()
-		.from(environmentPromotions)
-		.where(
-			// Either phase's job can be the failing one.
-			inArray(environmentPromotions.status, [...IN_FLIGHT]),
-		)
-		.limit(1)
-		.then((rows) =>
-			rows.filter(
-				(r) => r.plan_job_id === jobId || r.deploy_job_id === jobId,
-			),
-		);
-	if (!promotion) return;
+	const [job] = await db
+		.select({ project_id: jobs.project_id })
+		.from(jobs)
+		.where(eq(jobs.id, jobId))
+		.limit(1);
+	// A job with no project backs no promotion.
+	if (!job?.project_id) return;
 	await db
 		.update(environmentPromotions)
 		.set({
@@ -159,7 +165,17 @@ export async function failPromotionForJob(jobId: string): Promise<void> {
 			completed_at: new Date(),
 			updated_at: new Date(),
 		})
-		.where(eq(environmentPromotions.id, promotion.id));
+		.where(
+			and(
+				eq(environmentPromotions.project_id, job.project_id),
+				// Either phase's job can be the failing one.
+				or(
+					eq(environmentPromotions.plan_job_id, jobId),
+					eq(environmentPromotions.deploy_job_id, jobId),
+				),
+				inArray(environmentPromotions.status, [...IN_FLIGHT]),
+			),
+		);
 }
 
 /**
@@ -219,11 +235,7 @@ async function buildGateContext(
 
 	// Fold in classification-driven gates: a value tagged on the TARGET env (e.g. Environment=
 	// production) can force approval/verify on top of the env's own rules — the label is the policy.
-	const enforcing = await getEnforcingValuesFor(
-		db,
-		"project_environment",
-		promotion.target_environment_id,
-	);
+	const enforcing = await getEnforcingValuesForEnvironment(db, promotion.target_environment_id);
 	const {
 		rules,
 		minApprovals,

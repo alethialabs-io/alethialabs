@@ -3,12 +3,12 @@
 
 import { cn } from "@repo/ui/utils";
 import { caseLabel } from "@repo/support/status";
-import { formatDistanceToNow } from "date-fns";
 import { Building2, UserCircle2 } from "lucide-react";
 import Link from "next/link";
 import type { StaffCaseListItem as StaffCaseListItemData } from "@/lib/queries";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
+import { CaseTime } from "./staff-case-time";
 
 /**
  * A single row in the staff cross-tenant case list. Links to the staff case-detail thread
@@ -55,11 +55,7 @@ export function StaffCaseListItem({ item }: { item: StaffCaseListItemData }) {
 						{item.assigned_staff_name ?? "Unassigned"}
 					</span>
 					<span aria-hidden>·</span>
-					<span>
-						{formatDistanceToNow(new Date(item.last_message_at), {
-							addSuffix: true,
-						})}
-					</span>
+					<CaseTime at={item.last_message_at} style="relative" />
 				</div>
 			</div>
 

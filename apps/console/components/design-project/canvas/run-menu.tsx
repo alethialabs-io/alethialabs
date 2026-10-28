@@ -10,8 +10,6 @@ import {
   ShieldCheck,
   SquareCheck,
 } from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import {
   DropdownMenu,
@@ -22,20 +20,15 @@ import {
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import {
-  queueClusterProbe,
-  queueEnvironmentAudit,
+  queueClusterProbeAction,
+  queueEnvironmentAuditAction,
 } from "@/app/server/actions/canvas-jobs";
 import {
-  tryPlanProject,
-  tryQueueDriftDetection,
-} from "@/app/server/actions/projects";
-
-/**
- * What every Run menu action answers: the queued job, or a refusal to show. Plan and drift (#5445)
- * and audit and probe (#5454) all RETURN their refusals — thrown, a production build replaced each
- * sentence with a digest before this menu's toast could show it.
- */
-type RunResult = { ok: true } | { ok: false; error: string };
+  detectDriftAction,
+  planEnvironmentAction,
+} from "@/app/server/actions/canvas-writes";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 
 /**
  * The Run menu — every job the platform can run against an environment, from the board.
@@ -43,42 +36,35 @@ type RunResult = { ok: true } | { ok: false; error: string };
  * `provision_job_type` has thirteen values, and the canvas offered two: Deploy and Destroy. AUDIT,
  * DETECT_DRIFT and PROBE_CLUSTER all existed, all had runner-side executors, and two of them even
  * ran on a schedule — you just couldn't ask for one. Now you can.
+ *
+ * Each item is one `useActionMutation` (ADR 0005 §D4, #6119): a refusal the user can act on ("no
+ * cloud account linked", "run a plan first", "a probe is already running") is a `conflict` whose
+ * sentence is shown verbatim — never a digest — and a queued job invalidates the environment's
+ * status and job history, so this tab shows its own job at once (other tabs hear the `jobs` hint).
+ * The trigger is disabled while any of them is in flight: the double-submit guard.
  */
 export function RunMenu({
   projectId,
   environmentId,
-  onQueued,
 }: {
   projectId: string;
   environmentId: string;
-  onQueued?: () => void;
 }) {
-  const [running, setRunning] = useState<string | null>(null);
+  const options = (label: string) => ({
+    invalidates: [orpc.canvas.environmentJobs.key(), orpc.canvas.environmentStatus.key()],
+    successMessage: `${label} queued`,
+  });
+  const plan = useActionMutation(planEnvironmentAction, options("Plan"));
+  const audit = useActionMutation(queueEnvironmentAuditAction, options("Audit"));
+  const drift = useActionMutation(detectDriftAction, options("Drift detection"));
+  const probe = useActionMutation(queueClusterProbeAction, options("Cluster probe"));
+  const running = plan.isPending || audit.isPending || drift.isPending || probe.isPending;
+  const target = { projectId, environmentId };
 
-  /** Queue a job, and say what happened either way. A silent failure here is a lie about the env. */
-  const run = async (
-    label: string,
-    fn: () => Promise<RunResult>,
-  ) => {
-    setRunning(label);
-    try {
-      const result = await fn();
-      if (!result.ok) {
-        // A refusal the user can act on ("no cloud account linked", "run a plan first", "a probe
-        // is already running"), returned as a value so its sentence survives a production build.
-        toast.error(result.error);
-        return;
-      }
-      toast.success(`${label} queued`);
-      onQueued?.();
-    } catch (e) {
-      // Anything still THROWN is not a refusal the user can act on — an authorization failure, an
-      // environment that is not this project's, or an unexpected error — and a production build
-      // redacts its message.
-      toast.error(e instanceof Error ? e.message : `Could not queue ${label}`);
-    } finally {
-      setRunning(null);
-    }
+  /** Queue one job — unless one is already being queued from this menu. */
+  const run = (mutation: { mutate: (input: typeof target) => void }) => {
+    if (running) return;
+    mutation.mutate(target);
   };
 
   return (
@@ -90,7 +76,7 @@ export function RunMenu({
             variant="outline"
             size="sm"
             className="h-8 text-xs"
-            disabled={!!running}
+            disabled={running}
           >
             <Play className="mr-1 h-3.5 w-3.5" />
             Run
@@ -105,9 +91,7 @@ export function RunMenu({
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
-          onSelect={() =>
-            void run("Plan", () => tryPlanProject(projectId, null, environmentId))
-          }
+          onSelect={() => run(plan)}
         >
           <SquareCheck className="mr-2 h-4 w-4 text-muted-foreground" />
           <span className="flex-1">Plan</span>
@@ -115,11 +99,7 @@ export function RunMenu({
         </DropdownMenuItem>
 
         <DropdownMenuItem
-          onSelect={() =>
-            void run("Audit", () =>
-              queueEnvironmentAudit(projectId, environmentId),
-            )
-          }
+          onSelect={() => run(audit)}
         >
           <ShieldCheck className="mr-2 h-4 w-4 text-muted-foreground" />
           <span className="flex-1">Audit</span>
@@ -127,11 +107,7 @@ export function RunMenu({
         </DropdownMenuItem>
 
         <DropdownMenuItem
-          onSelect={() =>
-            void run("Drift detection", () =>
-              tryQueueDriftDetection(projectId, environmentId),
-            )
-          }
+          onSelect={() => run(drift)}
         >
           <RefreshCw className="mr-2 h-4 w-4 text-muted-foreground" />
           <span className="flex-1">Detect drift</span>
@@ -139,11 +115,7 @@ export function RunMenu({
         </DropdownMenuItem>
 
         <DropdownMenuItem
-          onSelect={() =>
-            void run("Cluster probe", () =>
-              queueClusterProbe(projectId, environmentId),
-            )
-          }
+          onSelect={() => run(probe)}
         >
           <Activity className="mr-2 h-4 w-4 text-muted-foreground" />
           <span className="flex-1">Probe cluster</span>

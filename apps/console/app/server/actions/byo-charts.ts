@@ -13,7 +13,12 @@
 // namespace-PSA + admission-controller (Kyverno/Gatekeeper) gate — see the plan's E2 section.
 
 import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, FieldRefusal } from "@/lib/actions/result";
+import { refusingCanvasWrite } from "@/lib/canvas/write-refusals";
 import { signedJob } from "@/lib/db/signed-job";
+import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
@@ -31,7 +36,6 @@ import { inferValuePaths } from "@/lib/addons/chart-overlay";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 import { notifyScaler } from "@/lib/scaler";
 import { replaceServiceBindings } from "@/lib/db/service-bindings-sync";
-import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import {
 	chartWorkloadBindingsSchema,
 	chartWorkloadConfigSchema,
@@ -54,7 +58,8 @@ import type {
 /** Throws if the feature is disabled — every mutating BYO action calls this first. */
 function assertByoHelmEnabled(): void {
 	if (!isByoHelmEnabled()) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"Bring-your-own Helm charts are not enabled on this instance (set ALETHIA_BYO_HELM_ENABLED=true).",
 		);
 	}
@@ -104,7 +109,8 @@ export async function attachByoChart(
 
 	const valuesYaml = parsed.valuesYaml?.trim() ? parsed.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
-		throw new Error("Advanced values must be valid YAML describing a mapping (key: value).");
+		const refusal = "Advanced values must be valid YAML describing a mapping (key: value).";
+		throw new FieldRefusal({ valuesYaml: [refusal] }, refusal);
 	}
 
 	const envId = await resolveActiveEnvironmentId(parsed.projectId, parsed.environmentId);
@@ -187,44 +193,6 @@ export async function detachByoChart(input: {
 	return { ok: true };
 }
 
-/** Reads the BYO charts attached to an environment — the canvas renders one chart node each. */
-export async function getProjectByoCharts(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<{ environmentId: string; charts: ByoChartState[] }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const rows = await withActorScope(actor, async (tx) =>
-		tx
-			.select()
-			.from(projectAddons)
-			.where(
-				and(
-					eq(projectAddons.project_id, projectId),
-					eq(projectAddons.environment_id, envId),
-					eq(projectAddons.source, "byo"),
-				),
-			),
-	);
-	const charts: ByoChartState[] = rows.map((r) => ({
-		id: r.addon_id,
-		repoUrl: r.chart_repo ?? "",
-		chartPath: r.chart_path ?? "",
-		ref: r.version ?? "HEAD",
-		namespace: r.namespace ?? "default",
-		values: r.values ?? {},
-		valuesYaml: r.values_yaml,
-		status: r.status,
-		health: r.health,
-		sync: r.sync_status,
-		lastSyncedAt: r.last_synced_at?.toISOString() ?? null,
-		scanStatus: r.scan_status,
-		scanReport: r.scan_report ?? null,
-		scannedAt: r.scanned_at?.toISOString() ?? null,
-	}));
-	return { environmentId: envId, charts };
-}
-
 /** A DESCRIBED chart workload as the canvas reads it back (W5 Path A). */
 export interface ChartWorkloadState {
 	id: string;
@@ -239,61 +207,6 @@ export interface ChartWorkloadState {
 	config: ChartWorkloadConfig;
 	/** Logical knob → chart-values dot-path (inferred at scan, user-overridable). */
 	valuePaths: ChartValuePathMap;
-}
-
-/**
- * Reads the DESCRIBED workloads of an environment's BYO charts (W5 Path A) — the canvas renders each
- * as a service-like child of its chart node (joined back to the chart's slug via the addon uuid).
- * Empty until a CHART_SCAN has run with the describe flag on.
- */
-export async function getProjectChartWorkloads(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<{ environmentId: string; workloads: ChartWorkloadState[] }> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-	const { rows, bindingsByWorkload } = await withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select({
-				id: projectChartWorkloads.id,
-				chartId: projectAddons.addon_id,
-				name: projectChartWorkloads.name,
-				kind: projectChartWorkloads.workload_kind,
-				rendered: projectChartWorkloads.rendered,
-				config: projectChartWorkloads.config,
-				valuePaths: projectChartWorkloads.value_paths,
-			})
-			.from(projectChartWorkloads)
-			.innerJoin(
-				projectAddons,
-				eq(projectChartWorkloads.addon_id, projectAddons.id),
-			)
-			.where(
-				and(
-					eq(projectChartWorkloads.project_id, projectId),
-					eq(projectChartWorkloads.environment_id, envId),
-				),
-			);
-		// Bindings live in the service_bindings child table (JSONB dropped, #1426).
-		const bindingsByWorkload = await serviceBindingsByOwner(tx, {
-			serviceIds: [],
-			chartWorkloadIds: rows.map((r) => r.id),
-		});
-		return { rows, bindingsByWorkload };
-	});
-	return {
-		environmentId: envId,
-		workloads: rows.map((r) => ({
-			id: r.id,
-			chartId: r.chartId,
-			name: r.name,
-			kind: r.kind,
-			rendered: r.rendered,
-			bindings: bindingsByWorkload.get(r.id) ?? [],
-			config: r.config,
-			valuePaths: r.valuePaths,
-		})),
-	};
 }
 
 /**
@@ -316,10 +229,13 @@ async function updateChartWorkloadOverlay(
 				and(
 					eq(projectChartWorkloads.id, workloadId),
 					eq(projectChartWorkloads.project_id, projectId),
+					// Bound to the actor's org as well as the project: the PDP's answer for an org-wide
+					// role does not bind the project id it was asked about.
+					eq(projectChartWorkloads.org_id, actor.orgId),
 				),
 			)
 			.returning({ id: projectChartWorkloads.id });
-		if (!row) throw new Error("Chart workload not found");
+		if (!row) throw new ActionRefusal("not-found", "Chart workload not found");
 	});
 }
 
@@ -381,10 +297,11 @@ export async function setChartWorkloadBindings(input: {
 				and(
 					eq(projectChartWorkloads.id, input.workloadId),
 					eq(projectChartWorkloads.project_id, input.projectId),
+					eq(projectChartWorkloads.org_id, actor.orgId),
 				),
 			)
 			.limit(1);
-		if (!row) throw new Error("Chart workload not found");
+		if (!row) throw new ActionRefusal("not-found", "Chart workload not found");
 		const inferred = inferValuePaths({
 			rendered: row.rendered,
 			config: row.config,
@@ -410,6 +327,9 @@ export async function setChartWorkloadBindings(input: {
 	});
 	return { ok: true };
 }
+
+/** The refusal for scanning a chart that is not attached to the environment. */
+const CHART_NOT_ATTACHED = "Chart not found (attach it before scanning).";
 
 /** Reports whether a chart_repo value addresses an OCI registry rather than a git repository. */
 function isOciChartRepo(chartRepo: string): boolean {
@@ -442,6 +362,9 @@ export async function scanByoChart(input: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withActorScope(actor, async (tx) => {
+		// The scan is filed on its project (project_id, #6121), and a job of a project belongs to that
+		// project's org — the database refuses any other stamp. Say so in a sentence first.
+		await refuseProjectOfAnotherOrg(tx, input.projectId, actor);
 		const [row] = await tx
 			.select()
 			.from(projectAddons)
@@ -455,12 +378,12 @@ export async function scanByoChart(input: {
 			)
 			.limit(1);
 		if (!row || !row.chart_repo) {
-			throw new Error("Chart not found (attach it before scanning).");
+			throw new ActionRefusal("not-found", CHART_NOT_ATTACHED);
 		}
 		const isOci = isOciChartRepo(row.chart_repo);
 		// A git chart needs a directory inside the repo; an OCI chart's repository path IS the chart.
 		if (!isOci && !row.chart_path) {
-			throw new Error("Chart not found (attach it before scanning).");
+			throw new ActionRefusal("not-found", CHART_NOT_ATTACHED);
 		}
 
 		// The environment's connected chart repos — non-secret provider config only. The runner
@@ -494,6 +417,9 @@ export async function scanByoChart(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "CHART_SCAN",
+				// The project the scan acts on, in the column as well as the snapshot: job visibility
+				// and the cancel permission read the column (lib/jobs/visibility.ts, operation.ts).
+				project_id: input.projectId,
 				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {
@@ -532,3 +458,83 @@ export async function scanByoChart(input: {
 // The CHART_SCAN write-back (finalizeChartScan) lives in lib/addons/chart-scan-finalize.ts: it is the
 // job-status route's service-role seam, and as an export of this `"use server"` file it was a public
 // Server Action (#5219).
+
+// ── The console's mutation contract (ADR 0005 §D4, #6119) ───────────────────────────────────────
+//
+// The Architecture board calls these, through `useActionMutation`, never the functions above
+// directly: each parses its input, runs the SAME function the CLI routes call (so every flag,
+// authorize, environment-resolution and org check above is the one that runs), and answers an
+// `ActionResult` whose refusals the board renders by kind. Each is a plain async function whose body
+// builds its contract inline, so the action-boundary guard can follow it to `authorize`.
+
+const uuid = z.string().uuid();
+
+const chartTargetInput = z.object({
+	projectId: uuid,
+	environmentId: uuid.nullable().optional(),
+	id: z.string().trim().min(1).max(128),
+});
+
+/** Attaches (or reconfigures) a BYO chart and queues its first scan; answers the chart's id. */
+export async function attachByoChartAction(raw: z.input<typeof byoChartAttachSchema>) {
+	return defineAction({
+		input: byoChartAttachSchema,
+		run: async ({ input }) => {
+			const { id } = await refusingCanvasWrite(() => attachByoChart(input));
+			return { id };
+		},
+	})(raw);
+}
+
+/** Detaches a BYO chart (pruned on the next Deploy); answers the chart's id. */
+export async function detachByoChartAction(raw: z.input<typeof chartTargetInput>) {
+	return defineAction({
+		input: chartTargetInput,
+		run: async ({ input }) => {
+			await refusingCanvasWrite(() => detachByoChart(input));
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** Queues a safety scan of an attached BYO chart; answers the queued job. */
+export async function scanByoChartAction(raw: z.input<typeof chartTargetInput>) {
+	return defineAction({
+		input: chartTargetInput,
+		run: async ({ input }) => {
+			const { jobId } = await refusingCanvasWrite(() => scanByoChart(input));
+			return { jobId };
+		},
+	})(raw);
+}
+
+const workloadOverlayInput = z.object({
+	projectId: uuid,
+	workloadId: uuid,
+	bindings: chartWorkloadBindingsSchema.optional(),
+	config: chartWorkloadConfigSchema.optional(),
+	valuePaths: chartWorkloadValuePathsSchema.optional(),
+});
+
+/**
+ * Saves the parts of a described workload's overlay that changed — one ACTION for the panel's one
+ * Save, which runs up to three setters in turn, each in its own transaction. It is NOT atomic: a
+ * refusal part-way (the workload is gone) leaves the parts before it saved, and the panel shows the
+ * refusal. Bindings first: they infer and merge value-paths for a new binding, so an explicit
+ * value-path override in the same save must run after them to win.
+ */
+export async function saveChartWorkloadOverlayAction(raw: z.input<typeof workloadOverlayInput>) {
+	return defineAction({
+		input: workloadOverlayInput,
+		run: async ({ input }) => {
+			const target = { projectId: input.projectId, workloadId: input.workloadId };
+			const { bindings, config, valuePaths } = input;
+			await refusingCanvasWrite(async () => {
+				if (bindings) await setChartWorkloadBindings({ ...target, bindings });
+				if (config) await setChartWorkloadConfig({ ...target, config });
+				if (valuePaths) await setChartWorkloadValuePaths({ ...target, valuePaths });
+			});
+			return { workloadId: input.workloadId };
+		},
+	})(raw);
+}

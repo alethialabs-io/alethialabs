@@ -7,8 +7,8 @@
 // provisioned automatically by warm Pools, so we surface a hint instead.
 
 import { z } from "zod";
-import { useRunnersQuery, useDeployRunner } from "@/lib/query/use-runners-query";
-import { registerRunner } from "@/app/server/actions/runners";
+import { useRunnersQuery, useDeployRunner, useRegisterRunner } from "@/lib/query/use-runners-query";
+import type { FieldErrors } from "@/lib/actions/result";
 import {
 	getVerifiedCloudIdentitiesByProvider,
 	type CloudIdentityOption,
@@ -18,7 +18,7 @@ import {
 	RUNNER_DEPLOY_PROVIDERS_LABEL,
 } from "@/lib/runners/deploy-providers";
 import { groupRegions } from "@/lib/cloud-providers";
-import { useCloudProviderStore as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
+import { useCloudProviderResources as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
@@ -44,14 +44,13 @@ import {
 } from "@repo/ui/sheet";
 import { CloudIdentitySelector } from "@/components/design-project/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
+import { CopyField } from "@/components/runners/copy-field";
 import { FieldHelp, FieldLabel, RequiredMark } from "@/components/runners/field-help";
 import {
 	AlertTriangle,
 	ArrowLeft,
-	Check,
 	ChevronRight,
 	Cloud,
-	Copy,
 	Layers,
 	Loader2,
 	Rocket,
@@ -223,7 +222,6 @@ function DeployForm({
 }) {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
-	const { mutateAsync: deployRunner } = useDeployRunner();
 	const { data: runnersData } = useRunnersQuery();
 	const hasRunners = (runnersData?.runners.length ?? 0) > 0;
 	const { provider, cachedResources } = useCloudProvider();
@@ -246,21 +244,33 @@ function DeployForm({
 		form.setValue("region", "");
 	}, [provider, form]);
 
-	const handleDeploy = async (assignedRunnerId: string | null) => {
+	// A server-side validation refusal lands on the field it is about (the action's input names
+	// `cloudIdentityId`; the form's field is `cloud_identity_id`).
+	const deploy = useDeployRunner((fields: FieldErrors) => {
+		const names = { name: "name", cloudIdentityId: "cloud_identity_id", region: "region" } as const;
+		for (const [key, field] of Object.entries(names)) {
+			const message = fields[key]?.[0];
+			if (message) form.setError(field, { message });
+		}
+	});
+
+	const handleDeploy = (assignedRunnerId: string | null) => {
 		const data = form.getValues();
-		try {
-			const { jobId } = await deployRunner({
+		deploy.mutate(
+			{
 				name: data.name,
 				cloudIdentityId: data.cloud_identity_id,
 				region: data.region,
 				assignedRunnerId,
-			});
-			toast.success("Runner deployment queued");
-			onOpenChange(false);
-			router.push(`/dashboard/jobs/${jobId}`);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to deploy runner");
-		}
+			},
+			{
+				onSuccess: ({ jobId }) => {
+					toast.success("Runner deployment queued");
+					onOpenChange(false);
+					router.push(`/dashboard/jobs/${jobId}`);
+				},
+			},
+		);
 	};
 
 	// No deployable cloud connected → a deploy is impossible. This is also what a user with only a
@@ -407,9 +417,9 @@ function DeployForm({
 						<Button
 							type="button"
 							className="w-full"
-							disabled={!form.formState.isValid || form.formState.isSubmitting}
+							disabled={!form.formState.isValid || deploy.isPending}
 						>
-							{form.formState.isSubmitting ? (
+							{deploy.isPending ? (
 								<Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
 							) : (
 								<Rocket className="mr-2 h-3.5 w-3.5" />
@@ -418,7 +428,7 @@ function DeployForm({
 						</Button>
 					}
 					onConfirm={handleDeploy}
-					disabled={!form.formState.isValid || form.formState.isSubmitting}
+					disabled={!form.formState.isValid || deploy.isPending}
 				/>
 			</form>
 		</FormProvider>
@@ -441,36 +451,6 @@ interface RegisterCredentials {
 	runnerName: string;
 }
 
-function CopyField({ label, value }: { label: string; value: string }) {
-	const [copied, setCopied] = useState(false);
-
-	const copy = async () => {
-		await navigator.clipboard.writeText(value);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
-	};
-
-	return (
-		<div className="space-y-1.5">
-			<Label className="text-xs text-muted-foreground">{label}</Label>
-			<div className="flex items-center gap-2">
-				<code className="flex-1 break-all rounded-md border border-border/50 bg-muted px-3 py-2 font-mono text-xs">
-					{value}
-				</code>
-				<Button
-					variant="outline"
-					size="icon"
-					className="h-9 w-9 shrink-0"
-					onClick={copy}
-					aria-label={copied ? `${label} copied` : `Copy ${label}`}
-				>
-					{copied ? <Check className="h-3.5 w-3.5 text-foreground" /> : <Copy className="h-3.5 w-3.5" />}
-				</Button>
-			</div>
-		</div>
-	);
-}
-
 function RegisterForm({
 	credentials,
 	setCredentials,
@@ -480,24 +460,28 @@ function RegisterForm({
 	setCredentials: (c: RegisterCredentials | null) => void;
 	onOpenChange: (open: boolean) => void;
 }) {
-	const router = useRouter();
 	const form = useForm<RegisterRunnerFormData>({
 		resolver: zodResolver(registerRunnerSchema),
 		defaultValues: { name: "" },
 		mode: "onChange",
 	});
+	const register = useRegisterRunner((fields: FieldErrors) => {
+		const message = fields.name?.[0];
+		if (message) form.setError("name", { message });
+	});
 
+	// The credentials ARE the confirmation: they replace the form. The runner list is invalidated by
+	// the mutation, so the new runner shows without a page refresh.
 	const onSubmit = async ({ name }: RegisterRunnerFormData) => {
 		try {
-			const result = await registerRunner(name);
+			const result = await register.mutateAsync({ name });
 			setCredentials({
 				runnerId: result.runner.id,
 				runnerToken: result.runner_token,
 				runnerName: result.runner.name,
 			});
-			router.refresh();
-		} catch (error: unknown) {
-			toast.error(error instanceof Error ? error.message : "Failed to register runner");
+		} catch {
+			// The refusal is already on screen: an inline field error or one toast (useActionMutation).
 		}
 	};
 

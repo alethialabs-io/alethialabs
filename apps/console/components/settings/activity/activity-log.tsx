@@ -19,11 +19,13 @@ import {
 	type ActivityRow,
 	getActivityExportCsv,
 } from "@/app/server/actions/activity";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
@@ -51,11 +53,13 @@ import {
 } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
 import {
+	type ActivityWindow,
 	activityQueryFrom,
 	activityRange,
 	DEFAULT_ACTIVITY_FILTERS,
 } from "./activity-filters";
 import { ActivityFeed } from "./activity-feed";
+import { ActivityNoAccess } from "./activity-no-access";
 import { type ActivityContext, EVENT_GROUPS } from "./humanize-event";
 
 const DAY = 86_400_000;
@@ -92,16 +96,32 @@ const DEFAULT_RANGE_LABEL =
  * events — used by `/{org}/{project}/settings/activity`; the Project facet is then hidden.
  * `exportPermitted` is the caller's `activity:export_activity` decision, resolved server-side by
  * the page (#3932); it only decides whether the button is offered — `getActivityExportCsv`
- * enforces the permission itself, so a stale `true` here still ends in a refusal. */
+ * enforces the permission itself, so a stale `true` here still ends in a refusal.
+ *
+ * #6129: `defaultWindow` is the default time window the ROUTE resolved, and under which it
+ * prefetched the first page — so the feed asks for exactly that key and paints with rows (B1).
+ * `exportEntitled` is the plan's answer as the route resolved it, so the Export button is decided
+ * at first paint rather than after the workspace store loads. */
 export function ActivityLog({
 	projectId,
 	exportPermitted = false,
-}: { projectId?: string; exportPermitted?: boolean } = {}) {
+	exportEntitled: exportEntitledAtRender,
+	defaultWindow,
+}: {
+	projectId?: string;
+	exportPermitted?: boolean;
+	exportEntitled?: boolean;
+	defaultWindow?: ActivityWindow;
+} = {}) {
 	const orgSlug = useActiveOrgSlug();
-	// `null` while the workspace store has not answered (#5864): the Export button is then not
-	// rendered at all, rather than shown disabled with the "requires Enterprise" reason to an org
-	// that may well have it.
-	const exportEntitled = useEntitlement("activityExport");
+	// The route's answer when it gave one; otherwise the workspace store's, which is `null` while it
+	// has not answered (#5864): the Export button is then not rendered at all, rather than shown
+	// disabled with the "requires Enterprise" reason to an org that may well have it.
+	const storeExportEntitled = useEntitlement("activityExport");
+	const exportEntitled =
+		exportEntitledAtRender === true || storeExportEntitled === true
+			? true
+			: (exportEntitledAtRender ?? storeExportEntitled);
 	const canExport = exportEntitled === true && exportPermitted;
 	// The plan's retention, or `null` while it is unknown — the same store, the same third state.
 	const retentionDays = useWorkspaceStore(
@@ -124,16 +144,20 @@ export function ActivityLog({
 	const hydrated = useHydrated();
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 
-	// The default window is resolved ONCE. Resolving it per render would move `to` forward
-	// every time and produce a query key that never settles, refetching on every paint.
-	const [defaultRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
+	// The default window is resolved ONCE — by the route when it prefetched (so the key matches the
+	// prefetched page), else here at mount. Resolving it per render would move `to` forward every
+	// time and produce a query key that never settles, refetching on every paint.
+	const [defaultRange] = useState<DateRange>(() =>
+		defaultWindow
+			? { from: new Date(defaultWindow.from), to: new Date(defaultWindow.to) }
+			: presetRange(DEFAULT_PRESET),
+	);
 	const range = useMemo(
 		() => activityRange(filters, defaultRange),
 		[filters, defaultRange],
 	);
 	const rangeLabel = filters.rangeLabel || DEFAULT_RANGE_LABEL;
 
-	const [exporting, setExporting] = useState(false);
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 
 	// Resource-name lookups that drive the humanizer's name resolution.
@@ -280,10 +304,14 @@ export function ActivityLog({
 	}, [facets]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ACTIVITY_FILTERS);
 
-	async function onExport() {
-		setExporting(true);
-		try {
-			const csv = await getActivityExportCsv();
+	// The export through the mutation contract: pending disables the button (no second export while
+	// one runs), a plan refusal opens the upgrade sheet, a permission refusal is one toast with the
+	// server's sentence, and an unexpected failure never shows server text. It changes no data the
+	// page shows, so it invalidates nothing.
+	const exportCsv = useActionMutation(getActivityExportCsv, {
+		invalidates: [],
+		onEntitlement: () => setUpgradeOpen(true),
+		onSuccess: (csv) => {
 			const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement("a");
@@ -291,17 +319,18 @@ export function ActivityLog({
 			a.download = "activity-log.csv";
 			a.click();
 			URL.revokeObjectURL(url);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Export failed");
-		} finally {
-			setExporting(false);
-		}
-	}
+		},
+	});
+	const exporting = exportCsv.isPending;
 
 	// The topbar's project switcher reads the same projects query and may have fetched it by the
 	// time this feed hydrates; the server rendered "this project". Name it only once hydration is
 	// over, or React discards the page's server HTML with #418 (see `useHydrated`, #5786).
 	const projectName = projectId && hydrated ? lookups.projectName.get(projectId) : undefined;
+
+	// Refused while the page is open (the viewer's `view_activity` went away): the no-access render,
+	// never the failure below and never an empty feed (B4).
+	if (readRefusalOf(activity.error) === "forbidden") return <ActivityNoAccess />;
 
 	return (
 		<div aria-busy={busy}>
@@ -344,7 +373,7 @@ export function ActivityLog({
 										? "Your role does not include exporting the Activity log"
 										: undefined
 							}
-							onClick={() => void onExport()}
+							onClick={() => exportCsv.mutate({})}
 						>
 							<Download size={13} />
 							Export CSV
@@ -402,18 +431,10 @@ export function ActivityLog({
 
 			{activity.isError ? (
 				// A fetch failure must not render as an empty activity feed.
-				<ErrorState
+				<RegionError
 					title="Couldn't load activity"
 					description="Something went wrong fetching the activity log. Check your connection and try again."
-					actions={
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => activity.refetch()}
-						>
-							Retry
-						</Button>
-					}
+					onRetry={() => activity.refetch()}
 				/>
 			) : loading && rows.length === 0 ? (
 				<div className="space-y-3">

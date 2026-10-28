@@ -6,7 +6,7 @@
 
 import type { AlertEventContext } from "@/types/jsonb.types";
 import { decryptSecret } from "@/lib/crypto/secrets";
-import { safeFetch } from "@/lib/net/ssrf-guard";
+import { safeDeliver } from "@/lib/net/ssrf-guard";
 import type { AlertChannel } from "@/lib/db/schema";
 import type { ChannelSender } from "./types";
 import { TEST_CONTEXT } from "./types";
@@ -51,7 +51,7 @@ async function post(
 	channel: AlertChannel,
 	context: AlertEventContext,
 ): Promise<void> {
-	const res = await safeFetch(webhookUrl(channel), {
+	const res = await safeDeliver(webhookUrl(channel), {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({ text: text(context) }),

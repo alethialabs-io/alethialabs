@@ -67,10 +67,22 @@ infrastructural:
 
 tier_separation:
   - path: src/count-pill.tsx
-    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx]
-    symbols: [CountFigure]
+    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx, tests/page-toolbar.test.tsx]
+    symbols: [CountFigure, CountPill]
     issue: "#2649"
-    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. It has no dedicated suite of its own, being a span with a class.
+    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. CountPill is rendered for real by the page-toolbar suite, which asserts it is content-sized, renders 0, and is the skeleton's count placeholder (#6117).
+
+  - path: src/skeleton.tsx
+    suite: [tests/page-toolbar.test.tsx]
+    symbols: [Skeleton]
+    issue: "#6117"
+    reason: PageToolbarSkeleton draws its action placeholders with a real Skeleton, and the page-toolbar suite counts them.
+
+  - path: src/table.tsx
+    suite: [tests/table.test.tsx]
+    symbols: [Table, TableBody, TableCell, TableHead, TableHeader, TableRow]
+    issue: "#2649"
+    reason: The table suite mounts a real colgroup table and asserts every row's children are cells, as many as the header and the colgroup declare, with the row's hover clamp drawn by its first cell rather than a row pseudo-element (#6237).
 
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
@@ -139,6 +151,12 @@ tier_separation:
     issue: "#2649"
     reason: DisabledReason renders a real tooltip; its suite opens it on hover and on keyboard focus and reads the popup's text.
 
+  - path: src/alert-dialog.tsx
+    suite: [tests/button-variants.test.tsx]
+    symbols: [AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogTitle]
+    issue: "#2649"
+    reason: The button-variants suite opens a real confirm dialog and resolves the destructive Action's rendered colours through tokens.css in both themes (#6108).
+
 baseline:
   # ── exports hidden behind a module a suite DOES execute ───────────────────────────────────────
   #
@@ -195,22 +213,17 @@ baseline:
   - path: src/alert-dialog.tsx
     symbols:
       [
-        AlertDialog,
-        AlertDialogAction,
         AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
         AlertDialogFooter,
         AlertDialogHeader,
         AlertDialogMedia,
         AlertDialogOverlay,
         AlertDialogPortal,
-        AlertDialogTitle,
         AlertDialogTrigger,
       ]
     issue: "#2649"
-    state: no-test
-    reason: The confirm-dialog primitive every destructive console action routes through is named by no suite in this package.
+    state: untested-export
+    reason: The button-variants suite mounts a real confirm (root, content, title, description, action); these seven parts are the ones it does not name. Overlay and Portal run inside AlertDialogContent but are not imported by name.
 
   - path: src/alert.tsx
     symbols: [Alert, AlertDescription, AlertTitle]
@@ -241,12 +254,6 @@ baseline:
     issue: "#2649"
     state: no-test
     reason: The checkbox primitive is named by no suite in this package.
-
-  - path: src/count-pill.tsx
-    symbols: [CountPill]
-    issue: "#2649"
-    state: untested-export
-    reason: The count pill is executed by the filter suites through `CountFigure`, but nothing value-imports `CountPill` itself — `PageToolbar` and `SectionHeading` are its only callers and neither is named by a suite in this package.
 
   - path: src/detail-sheet.tsx
     symbols: [DetailSheet]
@@ -315,12 +322,6 @@ baseline:
     state: no-test
     reason: The one-time-code input the sign-in flow depends on is named by no suite in this package.
 
-  - path: src/page-toolbar.tsx
-    symbols: [PageToolbar]
-    issue: "#2649"
-    state: no-test
-    reason: PageToolbar — the shared-surface row that carries every console page's count, description and actions — is named by no suite in this package.
-
   - path: src/scroll-area.tsx
     symbols: [ScrollArea, ScrollBar]
     issue: "#2649"
@@ -345,12 +346,6 @@ baseline:
     state: no-test
     reason: The separator is named by no suite in this package.
 
-  - path: src/skeleton.tsx
-    symbols: [Skeleton]
-    issue: "#2649"
-    state: no-test
-    reason: The loading skeleton is named by no suite in this package.
-
   - path: src/sonner.tsx
     symbols: [Toaster]
     issue: "#2649"
@@ -370,10 +365,10 @@ baseline:
     reason: The switch is named by no suite in this package.
 
   - path: src/table.tsx
-    symbols: [Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow]
+    symbols: [TableCaption, TableFooter]
     issue: "#2649"
-    state: no-test
-    reason: The table primitive the shared surface requires instead of a grid div — the one whose header row a screen reader depends on — is named by no suite in this package.
+    state: untested-export
+    reason: The table's caption and footer are rendered by no suite in this package; the table suite (#6237) mounts only the header, body, row and cell.
 
   - path: src/tabs.tsx
     symbols: [Tabs, TabsContent, TabsList, TabsTrigger, tabsListVariants]

@@ -23,10 +23,12 @@ vi.mock("@/app/server/actions/cloud-resources");
 vi.mock("@/app/server/actions/clusters");
 vi.mock("@/app/server/actions/connectors");
 vi.mock("@/app/server/actions/jobs");
+vi.mock("@/lib/rpc/procedures/jobs");
 vi.mock("@/lib/pricing/region-prices");
 vi.mock("@/app/server/actions/projects");
 vi.mock("@/app/server/actions/runners");
 vi.mock("@/app/server/actions/scanner");
+vi.mock("@/lib/rpc/procedures/projects");
 
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { ToolSet } from "ai";

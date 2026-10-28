@@ -14,7 +14,12 @@
 // — see assertIacSourceQueueable in projects.ts.
 
 import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal } from "@/lib/actions/result";
+import { refusingCanvasWrite } from "@/lib/canvas/write-refusals";
 import { signedJob } from "@/lib/db/signed-job";
+import { refuseProjectOfAnotherOrg } from "@/lib/projects/refuse-other-org";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
 import { type Tx, withActorScope } from "@/lib/db";
@@ -47,7 +52,8 @@ async function resolveFabricId(
 		)
 		.limit(1);
 	if (!env?.fabric_id) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"This environment is not linked to a Fabric — cannot attach BYO-IaC.",
 		);
 	}
@@ -57,7 +63,8 @@ async function resolveFabricId(
 /** Throws if the feature is disabled — every mutating BYO-IaC action calls this first. */
 function assertByoIacEnabled(): void {
 	if (!isByoIacEnabled()) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"Bring-your-own IaC is not enabled on this instance (set ALETHIA_BYO_IAC_ENABLED=true).",
 		);
 	}
@@ -142,7 +149,8 @@ export async function attachIacSource(input: {
 			)
 			.limit(1);
 		if (existing) {
-			throw new Error(
+			throw new ActionRefusal(
+				"conflict",
 				"This Fabric already has an IaC source attached — detach it before attaching another.",
 			);
 		}
@@ -154,7 +162,8 @@ export async function attachIacSource(input: {
 			.where(eq(projectEnvironments.id, envId))
 			.limit(1);
 		if (env && TEMPLATE_STATE_ENV_STATUSES.has(env.status)) {
-			throw new Error(
+			throw new ActionRefusal(
+				"conflict",
 				"This environment has deployed (or in-flight) template infrastructure. A bring-your-own " +
 					"IaC module replaces the built-in template, so destroy the environment first, then attach.",
 			);
@@ -230,7 +239,8 @@ export async function detachIacSource(input: {
 			source.deployed_commit_sha !== null ||
 			(env ? TEMPLATE_STATE_ENV_STATUSES.has(env.status) : false);
 		if (holdsDeployedState) {
-			throw new Error(
+			throw new ActionRefusal(
+				"conflict",
 				"This environment has infrastructure deployed from its IaC source — destroy it before detaching.",
 			);
 		}
@@ -307,6 +317,9 @@ export async function scanIacSource(input: {
 
 	await assertJobQuotaAllowed(actor.orgId);
 	const jobId = await withActorScope(actor, async (tx) => {
+		// The scan is filed on its project (project_id, #6121), and a job of a project belongs to that
+		// project's org — the database refuses any other stamp. Say so in a sentence first.
+		await refuseProjectOfAnotherOrg(tx, input.projectId, actor);
 		const fabricId = await resolveFabricId(tx, input.projectId, envId);
 		const [row] = await tx
 			.select()
@@ -318,8 +331,10 @@ export async function scanIacSource(input: {
 				),
 			)
 			.limit(1);
-		if (!row) throw new Error("IaC source not found (attach it before scanning).");
-		if (!row.enabled) throw new Error("This IaC source is disabled — enable it before scanning.");
+		if (!row) throw new ActionRefusal("not-found", "IaC source not found (attach it before scanning).");
+		if (!row.enabled) {
+			throw new ActionRefusal("conflict", "This IaC source is disabled — enable it before scanning.");
+		}
 
 		const [job] = await tx
 			.insert(jobs)
@@ -327,6 +342,9 @@ export async function scanIacSource(input: {
 				user_id: actor.userId,
 				org_id: actor.orgId,
 				job_type: "IAC_SCAN",
+				// The project the scan acts on, in the column as well as the snapshot: job visibility
+				// and the cancel permission read the column (lib/jobs/visibility.ts, operation.ts).
+				project_id: input.projectId,
 				initiated_by: "user",
 				status: "QUEUED",
 				config_snapshot: {
@@ -356,3 +374,60 @@ export async function scanIacSource(input: {
 // The IAC_SCAN write-back (finalizeIacScan) lives in lib/addons/iac-scan-finalize.ts. It PINS the
 // commit a deploy will apply, so as a public Server Action in this `"use server"` file it was the
 // one write standing between an unscanned module and provisioning (#5219).
+
+// ── The console's mutation contract (ADR 0005 §D4, #6119) ───────────────────────────────────────
+//
+// The Architecture board calls these, through `useActionMutation`, never the functions above
+// directly: each parses its input, runs the SAME function (so every flag, authorize and
+// environment-resolution check above is the one that runs), and answers an `ActionResult` whose
+// refusals — "detach it before attaching another", "destroy it before detaching" — are shown as the
+// sentences they are. Each is a plain async function whose body builds its contract inline, so the
+// action-boundary guard can follow it to `authorize`.
+
+const uuid = z.string().uuid();
+
+const iacTargetInput = z.object({
+	projectId: uuid,
+	environmentId: uuid.nullable().optional(),
+});
+
+const attachIacInput = iacTargetInput.extend({
+	repoUrl: z.string().trim().min(1, "Enter the module's git repository URL.").max(2048),
+	ref: z.string().trim().max(256).nullable().optional(),
+	path: z.string().max(1024).optional(),
+	gitCredentialId: uuid.nullable().optional(),
+	varValues: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+});
+
+/** Attaches a BYO IaC source to the environment and queues its scan; answers the source's id. */
+export async function attachIacSourceAction(raw: z.input<typeof attachIacInput>) {
+	return defineAction({
+		input: attachIacInput,
+		run: async ({ input }) => {
+			const { id } = await refusingCanvasWrite(() => attachIacSource(input));
+			return { id };
+		},
+	})(raw);
+}
+
+/** Detaches the environment's BYO IaC source; it falls back to the built-in template. */
+export async function detachIacSourceAction(raw: z.input<typeof iacTargetInput>) {
+	return defineAction({
+		input: iacTargetInput,
+		run: async ({ input }) => {
+			await refusingCanvasWrite(() => detachIacSource(input));
+			return { projectId: input.projectId };
+		},
+	})(raw);
+}
+
+/** Queues a scan of the environment's BYO IaC module; answers the queued job. */
+export async function scanIacSourceAction(raw: z.input<typeof iacTargetInput>) {
+	return defineAction({
+		input: iacTargetInput,
+		run: async ({ input }) => {
+			const { jobId } = await refusingCanvasWrite(() => scanIacSource(input));
+			return { jobId };
+		},
+	})(raw);
+}

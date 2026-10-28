@@ -12,13 +12,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), getServiceDb: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The project-in-the-actor's-org check has its own suite (tests/lib/projects/refuse-other-org.test.ts).
+vi.mock("@/lib/projects/refuse-other-org", () => ({ refuseProjectOfAnotherOrg: vi.fn(async () => undefined) }));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.fn() }));
 
 import {
 	attachIacSource,
 	detachIacSource,
+	detachIacSourceAction,
 	getIacSource,
 	scanIacSource,
+	scanIacSourceAction,
 } from "@/app/server/actions/byo-iac";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 // The write-back moved to lib/ (#5219: it was a public Server Action); it shares this file's db stub.
@@ -296,6 +300,45 @@ describe("detachIacSource", () => {
 	});
 });
 
+// #6119: the board calls the `…Action` forms through `useActionMutation`. The refusals above are
+// the person's to act on, so they arrive with their kind and their sentence — not as `unexpected`.
+describe("the BYO IaC actions — the mutation contract", () => {
+	const TARGET = {
+		projectId: "11111111-1111-4111-8111-111111111111",
+		environmentId: "22222222-2222-4222-8222-222222222222",
+	};
+
+	it("answers a detach that would orphan deployed infrastructure as a conflict, deleting nothing", async () => {
+		const { deleteSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectIacSources, [{ deployed_commit_sha: "cafed00d" }]],
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "ACTIVE" }]],
+			]),
+		});
+		await expect(detachIacSourceAction(TARGET)).resolves.toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message:
+					"This environment has infrastructure deployed from its IaC source — destroy it before detaching.",
+			},
+		});
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("answers a scan of nothing attached as not-found", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectEnvironments, [{ fabric_id: "fab-1", status: "DRAFT" }]],
+			]),
+		});
+		await expect(scanIacSourceAction(TARGET)).resolves.toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "IaC source not found (attach it before scanning)." },
+		});
+	});
+});
+
 describe("getIacSource", () => {
 	it("maps the row into the UI shape", async () => {
 		setupDb({
@@ -346,6 +389,8 @@ describe("scanIacSource", () => {
 			user_id: "user-1",
 			org_id: "org-1",
 			job_type: "IAC_SCAN",
+			// The scanned project is in the column too, so job visibility follows it (#6121).
+			project_id: "p1",
 			status: "QUEUED",
 			config_snapshot: {
 				repo_url: "https://github.com/acme/infra.git",

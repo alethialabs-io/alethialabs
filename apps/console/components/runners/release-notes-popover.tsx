@@ -8,17 +8,51 @@ import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
-import { getReleaseNotes } from "@/app/server/actions/runners";
-import {
-  useUpdateRunner,
-  type RunnerReleaseInfo,
-} from "@/lib/query/use-runners-query";
+import { RegionError } from "@/components/errors/region-error";
+import { useUpdateRunner } from "@/lib/query/use-runners-query";
+import { orpc } from "@/lib/rpc/client";
+import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "@repo/format";
 import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { useState } from "react";
 import { toast } from "sonner";
+
+/** Fetches the markdown renderer's chunk (streamdown and its unified pipeline). */
+function loadReleaseNotesMarkdown() {
+  return import("./release-notes-markdown").then((m) => m.ReleaseNotesMarkdown);
+}
+
+/** The notes skeleton: the popover's loading state for both the fetch and the renderer chunk. */
+function ReleaseNotesSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-4 w-3/4" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
+  );
+}
+
+/**
+ * Loaded on demand, never statically. This popover is imported by the jobs table's version
+ * column, the runner card, runner actions and the versions panel, so a static import would put
+ * streamdown in the first hydration of `/~/jobs`, `/~/jobs/[id]` and `/~/runners` — the cost
+ * #5849 removed from the shell — while the notes render only once someone opens a popover.
+ */
+const ReleaseNotesMarkdown = dynamic(loadReleaseNotesMarkdown, {
+  ssr: false,
+  loading: ReleaseNotesSkeleton,
+});
+
+/**
+ * Starts loading the renderer before the popover opens — on the trigger's hover and focus — so
+ * the first open does not wait for the chunk. Safe to call repeatedly: the import is cached.
+ */
+function preloadReleaseNotesMarkdown(): void {
+  void loadReleaseNotesMarkdown();
+}
 
 interface ReleaseNotesPopoverProps {
   /** The version whose notes to show; null disables the popover. */
@@ -39,48 +73,41 @@ export function ReleaseNotesPopover({
   children,
 }: ReleaseNotesPopoverProps) {
   const router = useRouter();
-  const { mutateAsync: updateRunner } = useUpdateRunner();
+  const updateRunner = useUpdateRunner();
   const [open, setOpen] = useState(false);
-  const [release, setRelease] = useState<RunnerReleaseInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [updating, setUpdating] = useState(false);
+  // Read when the popover opens (the reader's own action), through the read router; cached per
+  // version, so reopening it is instant. Release notes never change after publication.
+  const notes = useQuery(
+    orpc.runners.releaseNotes.queryOptions({
+      input: { version: version ?? "" },
+      enabled: open && !!version,
+      staleTime: Infinity,
+    }),
+  );
+  const release = notes.data ?? null;
 
-  useEffect(() => {
-    if (!open || !version) {
-      setRelease(null);
-      return;
-    }
-    setLoading(true);
-    getReleaseNotes(version)
-      .then(setRelease)
-      .catch(() => setRelease(null))
-      .finally(() => setLoading(false));
-  }, [open, version]);
-
-  const handleUpdate = async () => {
+  const handleUpdate = () => {
     if (!runnerId) return;
-    setUpdating(true);
-    try {
-      const { jobId } = await updateRunner(runnerId);
-      toast.success("Update job queued", {
-        action: {
-          label: "View job",
-          onClick: () => router.push(`/dashboard/jobs/${jobId}`),
-        },
-      });
-      setOpen(false);
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to queue update",
-      );
-    } finally {
-      setUpdating(false);
-    }
+    updateRunner.mutate(runnerId, {
+      onSuccess: ({ jobId }) => {
+        toast.success("Update job queued", {
+          action: {
+            label: "View job",
+            onClick: () => router.push(`/dashboard/jobs/${jobId}`),
+          },
+        });
+        setOpen(false);
+      },
+    });
   };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={children} />
+      <PopoverTrigger
+        render={children}
+        onPointerEnter={preloadReleaseNotesMarkdown}
+        onFocus={preloadReleaseNotesMarkdown}
+      />
       <PopoverContent align="start" className="w-96 p-0">
         <div className="flex flex-col gap-1 border-b border-border p-3">
           <div className="flex items-center gap-2">
@@ -109,16 +136,16 @@ export function ReleaseNotesPopover({
 
         <ScrollArea className="max-h-[50vh]">
           <div className="p-3">
-            {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-4 w-5/6" />
-              </div>
+            {notes.isError ? (
+              <RegionError
+                title="Couldn't load the release notes"
+                description="Something went wrong fetching this release. Try again."
+                onRetry={() => void notes.refetch()}
+              />
+            ) : notes.isPending && version ? (
+              <ReleaseNotesSkeleton />
             ) : release?.release_notes ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-sm [&_h3]:text-sm [&_li]:my-0.5 [&_ul]:my-1">
-                <ReactMarkdown>{release.release_notes}</ReactMarkdown>
-              </div>
+              <ReleaseNotesMarkdown markdown={release.release_notes} />
             ) : (
               <p className="text-sm text-muted-foreground">
                 No release notes available for this version.
@@ -147,8 +174,8 @@ export function ReleaseNotesPopover({
               </Button>
             )}
             {isOutdated && runnerId && (
-              <Button size="sm" disabled={updating} onClick={handleUpdate}>
-                {updating ? (
+              <Button size="sm" disabled={updateRunner.isPending} onClick={handleUpdate}>
+                {updateRunner.isPending ? (
                   <>
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                     Updating...

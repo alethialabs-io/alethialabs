@@ -20,17 +20,26 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/lib/query/use-projects-query", () => ({ useProjectsQuery: () => ({ data: [] }) }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
-vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(async () => []) }));
-vi.mock("@/app/server/actions/activity", () => ({
-	getActivityLog: vi.fn(async () => ({ rows: [], nextCursor: null, facets: null })),
-	getActivityExportCsv: vi.fn(),
+// The member list (`members.list`) and the feed's pages (`activity.page`) are GET reads since #6129;
+// `getActivityLog` stands for the page read and is called with the input of each page asked for.
+const { getActivityLog } = vi.hoisted(() => ({
+	getActivityLog: vi.fn(async (_input: unknown) => ({ rows: [], nextCursor: null, facets: null })),
 }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({
+			"members.list": async () => [],
+			"activity.page": (input) => getActivityLog(input),
+		}).orpc,
+	};
+});
+vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 vi.mock("@/app/server/actions/workspace", () => ({
 	getWorkspaceContext: vi.fn(),
 	setActiveOrganization: vi.fn(),
 }));
 
-import { getActivityLog } from "@/app/server/actions/activity";
 import { ActivityLog } from "@/components/settings/activity/activity-log";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useActivityFilters } from "@/lib/stores/use-settings-filters";

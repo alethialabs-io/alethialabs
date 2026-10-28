@@ -7,7 +7,10 @@ import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
-import { useCloudProviderStore } from "@/lib/stores/use-cloud-provider-store";
+import {
+	useCloudProviderResources,
+	useCloudProviderStore,
+} from "@/lib/stores/use-cloud-provider-store";
 import {
 	Select,
 	SelectContent,
@@ -40,14 +43,15 @@ export function CloudIdentitySelector({
 	onChange,
 	manageGlobalStore = true,
 }: CloudIdentitySelectorProps) {
-	const { setIdentity, isLoading: loading } = useCloudProviderStore();
+	const setIdentity = useCloudProviderStore((s) => s.setIdentity);
+	const { isLoading: loading } = useCloudProviderResources();
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
 
 	const selectIdentity = useCallback(
-		async (id: string, provider: CloudProviderSlug) => {
+		(id: string, provider: CloudProviderSlug) => {
 			onChangeRef.current(id, provider);
-			if (manageGlobalStore) await setIdentity(id, provider);
+			if (manageGlobalStore) setIdentity(id, provider);
 		},
 		[setIdentity, manageGlobalStore],
 	);

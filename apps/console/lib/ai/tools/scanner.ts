@@ -4,7 +4,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { queueAudit } from "@/app/server/actions/audit";
-import { getScanProposal, scanRepo } from "@/app/server/actions/scanner";
+import { scanRepo } from "@/app/server/actions/scanner";
+import { readScanProposal } from "@/lib/rpc/procedures/projects";
 import { compareProviders } from "@/lib/scanner/compare";
 
 /**
@@ -62,7 +63,7 @@ export function scannerTools() {
 				"Get a repo scan's status and, when ready, the inferred stack + a summary of the proposed Project. Tell the user to open it in the canvas to review/edit before deploying.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const res = await getScanProposal(jobId);
+				const res = await readScanProposal(jobId);
 				if (res.status !== "READY") return res;
 				const { stack, proposedProject, provider } = res.proposal;
 				return {
@@ -99,7 +100,7 @@ export function scannerTools() {
 				"Compare the estimated monthly cost of a scanned stack across AWS, GCP, and Azure (cheapest first).",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const res = await getScanProposal(jobId);
+				const res = await readScanProposal(jobId);
 				if (res.status !== "READY")
 					return { error: "Scan not ready — analyze the repo first." };
 				const costs = await compareProviders(res.proposal.stack);

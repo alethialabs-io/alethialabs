@@ -14,6 +14,7 @@ vi.mock("@/lib/alerts/channels", () => ({ getChannelSender: vi.fn() }));
 import { deliverOne, sweepDueDeliveries } from "@/lib/alerts/dispatch";
 import { getServiceDb } from "@/lib/db";
 import { getChannelSender } from "@/lib/alerts/channels";
+import { SsrfError } from "@/lib/net/ssrf-guard";
 
 /** Chain: claim `.returning` → [claimed]|[]; channel/due `.limit` → [channel]|due; `.set` recorded. */
 function mockDb(opts: {
@@ -142,5 +143,23 @@ describe("sweepDueDeliveries", () => {
 		// claims are lost (returning []), so each deliverOne early-returns — we just assert the count.
 		mockDb({ due: [claim({ id: "a" }), claim({ id: "b" })], claimed: null });
 		expect(await sweepDueDeliveries()).toBe(2);
+	});
+});
+
+describe("deliverOne — a destination the outbound guard refuses (#6125 review)", () => {
+	it("stores the one fixed sentence in last_error — never the guard's own words", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const { sets } = mockDb({ claimed: claim(), channel: { id: "c1", type: "webhook", enabled: true } });
+		mockSender(async () => {
+			throw new SsrfError("Refusing to connect to non-public address 10.1.2.3 for host internal.example");
+		});
+		await deliverOne(claim() as never);
+		const written = sets.at(-1);
+		expect(written).toMatchObject({
+			status: "failed",
+			last_error: "This destination isn't publicly reachable over HTTPS.",
+		});
+		expect(JSON.stringify(written)).not.toMatch(/10\.1\.2\.3|internal\.example/);
+		warn.mockRestore();
 	});
 });

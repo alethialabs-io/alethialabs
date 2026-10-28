@@ -2,23 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The standalone AI plan/usage surface — shared by the Usage page and the Billing page's
-// AI section. Shows the org's current AI plan and its usage as PERCENTAGES (the rolling
-// 5-hour session + the fixed weekly limit, on the same windows the guard enforces) with
-// reset times and a hard-limit indicator — never raw credit counts. CTAs: Upgrade AI plan
-// (raise the limits) always; Buy credits (top-up packs) only on a PAID tier at/near a
-// limit — free orgs can't top up, they upgrade. AI is metered independently of the org
-// plan (lib/billing/ai-plan.ts).
+// The standalone AI plan/usage surface. Shows the org's current AI plan and its usage as
+// PERCENTAGES (the rolling 5-hour session + the fixed weekly limit, on the same windows the guard
+// enforces) with reset times and a hard-limit indicator — never raw credit counts. CTAs: Upgrade AI
+// plan (raise the limits) always; Buy credits (top-up packs) only on a PAID tier at/near a limit —
+// free orgs can't top up, they upgrade. AI is metered independently of the org plan
+// (lib/billing/ai-plan.ts).
+//
+// Rendered on the Usage page only (#6133, design decision A: Usage owns all of AI). The Billing page
+// shows the tier as one row on its plan card, from the same cache entry (`usage.ai`), so the two
+// can never disagree, and links here.
+//
+// The read is `usage.ai` over GET, prefetched by the Usage route (#6127), so the first paint carries
+// the plan and the meters. No poll: AI spend moves through the `usage` topic of the change stream.
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Zap } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import {
-	type AiUsageSummary,
-	getAiUsageSummary,
-} from "@/app/server/actions/billing";
+import { type ReactNode, useState } from "react";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+import { RegionError } from "@/components/errors/region-error";
+import {
+	RegionRefusal,
+	refusalOf,
+	retryUnlessRefused,
+} from "@/components/settings/billing/read-state";
 import { AiSpendLimits } from "@/components/settings/usage/ai-spend-limits";
+import { ClockText } from "@/components/settings/usage/clock-text";
 import { count } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import {
@@ -27,7 +37,9 @@ import {
 	sessionResetLabel,
 	weeklyResetLabel,
 } from "@/lib/billing/ai-usage-format";
-import { useLiveAiPrice } from "@/lib/billing/use-live-plan-price";
+import { aiPriceView } from "@/lib/billing/use-live-plan-price";
+import { orpc } from "@/lib/rpc/client";
+import type { AiUsageSummary } from "@/lib/rpc/procedures/usage";
 import { aiPlanMeta } from "@repo/plan-catalog";
 import { Skeleton } from "@repo/ui/skeleton";
 
@@ -39,7 +51,7 @@ function PctMeter({
 }: {
 	label: string;
 	pct: number;
-	sub: string;
+	sub: ReactNode;
 }) {
 	const atLimit = pct >= 100;
 	return (
@@ -68,66 +80,94 @@ function PctMeter({
 	);
 }
 
-/**
- * The AI plan & usage card. Self-fetches the canonical AI summary and renders the plan +
- * session/weekly % + purchased balance + the plan-aware CTAs. Rendered on both the Usage
- * and Billing settings pages (one source of truth — no twin panel).
- */
+/** The widest reset labels, so their slots hold their width until the clock is read. */
+const SESSION_RESET_SIZER = "Starts on first use";
+const WEEKLY_RESET_SIZER = "Resets Wed 12:00 PM";
+
+/** The AI plan & usage card: the plan, the session and weekly meters, and the admin spend limits. */
 export function AiUsageSection() {
-	const [ai, setAi] = useState<AiUsageSummary | null>(null);
+	const ai = useQuery(orpc.usage.ai.queryOptions({ retry: retryUnlessRefused }));
+
+	if (ai.data === undefined) {
+		if (ai.isError) {
+			const refusal = refusalOf(ai.error);
+			return (
+				<SettingsSection title="AI plan & usage">
+					{refusal ? (
+						<RegionRefusal refusal={refusal} />
+					) : (
+						<RegionError
+							title="Couldn't load AI usage"
+							description="Something went wrong reading this organization's AI plan and usage."
+							onRetry={() => void ai.refetch()}
+						/>
+					)}
+				</SettingsSection>
+			);
+		}
+		return <AiSectionSkeleton />;
+	}
+	return <AiCard ai={ai.data} />;
+}
+
+/** The section's pending render, in the card's shape. */
+function AiSectionSkeleton() {
+	return (
+		<SettingsSection title="AI plan & usage">
+			<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm" aria-busy="true">
+				<div className="flex items-center justify-between gap-3 border-b border-border px-6 py-4 last:border-b-0">
+					<div className="flex flex-col gap-1.5">
+						<Skeleton className="h-5 w-28" />
+						<Skeleton className="h-3 w-48" />
+					</div>
+					<Skeleton className="h-7 w-32 rounded-md" />
+				</div>
+				<div className="px-6 py-4">
+					<Skeleton className="h-10 w-full" />
+				</div>
+			</div>
+		</SettingsSection>
+	);
+}
+
+/** The card for a loaded AI summary. */
+function AiCard({ ai }: { ai: AiUsageSummary }) {
+	const queryClient = useQueryClient();
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 	const [creditsOpen, setCreditsOpen] = useState(false);
+	// The tier's live (Stripe-authoritative) price, prefetched with the page; the catalog price is
+	// the fallback while it is absent (Stripe not configured, or the read failed).
+	const prices = useQuery(
+		orpc.billing.liveAiPrices.queryOptions({ staleTime: 5 * 60_000, retry: retryUnlessRefused }),
+	);
+	const aiPrice = aiPriceView(ai.tier, prices.data?.[ai.tier]);
+	const meta = aiPlanMeta(ai.tier);
 
-	/** (Re)load the canonical AI summary — also called after an upgrade / credit purchase. */
-	const refetch = useCallback(() => {
-		let alive = true;
-		getAiUsageSummary()
-			.then((s) => alive && setAi(s))
-			.catch(() => {
-				/* best-effort — the section just shows a skeleton */
-			});
-		return () => {
-			alive = false;
-		};
-	}, []);
+	/** Re-read the AI standing after an upgrade or a credit purchase. */
+	const refetch = () => void queryClient.invalidateQueries({ queryKey: orpc.usage.ai.key() });
 
-	useEffect(() => refetch(), [refetch]);
-
-	const meta = ai ? aiPlanMeta(ai.tier) : null;
-	// The tier's live (Stripe-authoritative) price in USD — placeholder catalog price until
-	// the AI Stripe prices are cut over; the upgrade sheet owns the currency choice. Hooks
-	// must run unconditionally, so resolve against the free tier until the summary loads.
-	const aiPrice = useLiveAiPrice(ai?.tier ?? "ai_free");
 	// Free/Plus can still upgrade the AI tier; Max is the top.
-	const canUpgrade = ai ? ai.tier !== "ai_max" : false;
-	const paid = ai ? ai.tier !== "ai_free" : false;
+	const canUpgrade = ai.tier !== "ai_max";
+	const paid = ai.tier !== "ai_free";
 	// Top-up packs only make sense on a paid plan, and only once a limit is actually near —
 	// below that, the plan's included allowance is the whole story.
-	const showBuyCredits = ai !== null && paid && isNearAiLimit(ai);
+	const showBuyCredits = paid && isNearAiLimit(ai);
 	// The balance strip is noise for a free org that never bought packs.
-	const showBalance = ai !== null && (paid || ai.purchasedBalance > 0);
+	const showBalance = paid || ai.purchasedBalance > 0;
 
 	return (
 		<SettingsSection title="AI plan & usage">
 			<div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
 				{/* plan header */}
-				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4">
+				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4 last:border-b-0">
 					<div className="flex flex-col gap-0.5">
 						<div className="flex items-baseline gap-2">
 							<span className="font-display text-ui-lg font-semibold text-text-primary">
-								{meta ? meta.name : <Skeleton className="h-4 w-20" />}
+								{meta.name}
 							</span>
-							{meta && (
-								<span className="font-mono text-ui-xs text-text-secondary">
-									· {aiPrice.label}
-								</span>
-							)}
+							<span className="font-mono text-ui-xs text-text-secondary">· {aiPrice.label}</span>
 						</div>
-						{meta && (
-							<span className="text-ui-xs text-text-tertiary">
-								{meta.tagline}
-							</span>
-						)}
+						<span className="text-ui-xs text-text-tertiary">{meta.tagline}</span>
 					</div>
 					<div className="flex items-center gap-2">
 						{showBuyCredits && (
@@ -153,26 +193,29 @@ export function AiUsageSection() {
 					</div>
 				</div>
 
-				{/* session + weekly % meters */}
+				{/* session + weekly % meters. The reset labels read the clock (and the weekly one
+				    the viewer's zone), so they render after hydration in a reserved slot. */}
 				<div className="grid grid-cols-1 sm:grid-cols-2">
-					{ai ? (
-						<>
-							<PctMeter
-								label="Current session"
-								pct={pctOf(ai.sessionUsed, ai.sessionBudget)}
-								sub={sessionResetLabel(ai.sessionResetAt)}
+					<PctMeter
+						label="Current session"
+						pct={pctOf(ai.sessionUsed, ai.sessionBudget)}
+						sub={
+							<ClockText
+								sizer={SESSION_RESET_SIZER}
+								text={() => sessionResetLabel(ai.sessionResetAt)}
 							/>
-							<PctMeter
-								label="Weekly limit"
-								pct={pctOf(ai.weeklyUsed, ai.weeklyBudget)}
-								sub={weeklyResetLabel(ai.weeklyResetAt)}
+						}
+					/>
+					<PctMeter
+						label="Weekly limit"
+						pct={pctOf(ai.weeklyUsed, ai.weeklyBudget)}
+						sub={
+							<ClockText
+								sizer={WEEKLY_RESET_SIZER}
+								text={() => weeklyResetLabel(ai.weeklyResetAt)}
 							/>
-						</>
-					) : (
-						<div className="px-6 py-4">
-							<Skeleton className="h-10 w-full" />
-						</div>
-					)}
+						}
+					/>
 				</div>
 
 				{/* purchased top-up balance — paid tiers (or a leftover balance) only */}
@@ -185,22 +228,19 @@ export function AiUsageSection() {
 					</div>
 				)}
 
-				{/* admin spend limits — org admins (manage_billing) in a real org only */}
-				{ai?.canManageCaps && (
+				{/* admin spend limits — org admins (manage_billing) in a real org only. Keyed on the
+				    stored values so a save (or another admin's, through the change stream)
+				    re-seeds the fields from what was actually stored. */}
+				{ai.canManageCaps && (
 					<AiSpendLimits
 						key={`${ai.orgWeeklyCapCredits}-${ai.perUserWeeklyCapCredits}`}
 						orgWeeklyCapCredits={ai.orgWeeklyCapCredits}
 						perUserWeeklyCapCredits={ai.perUserWeeklyCapCredits}
-						onSaved={refetch}
 					/>
 				)}
 			</div>
 
-			<UpgradeAiSheet
-				open={upgradeOpen}
-				onOpenChange={setUpgradeOpen}
-				onUpgraded={refetch}
-			/>
+			<UpgradeAiSheet open={upgradeOpen} onOpenChange={setUpgradeOpen} onUpgraded={refetch} />
 			<CreditPackDialog
 				open={creditsOpen}
 				onOpenChange={setCreditsOpen}

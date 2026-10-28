@@ -24,6 +24,13 @@ vi.mock("@/lib/authz/tuple-sync", () => ({
 vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: () => h.db }));
+// The org-binding check asks Postgres (lib/authz/grant-binding.ts); here every grant is bound
+// unless a case says otherwise. The refusals themselves run against real Postgres in
+// tests/integration/grant-org-binding.test.ts.
+vi.mock("@/lib/authz/grant-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/grant-binding")>()),
+	grantBindingViolation: vi.fn(async () => null),
+}));
 
 import { POST } from "@/app/api/cli/grants/route";
 

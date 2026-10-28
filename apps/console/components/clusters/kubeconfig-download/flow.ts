@@ -34,6 +34,7 @@ export const POLL_INTERVAL_MS = 2000;
 export type DownloadOutcome =
 	| { kind: "saved"; fileName: string; expiresAt: string; privateEndpoint: boolean }
 	| { kind: "unsupported" }
+	| { kind: "insecure-context" }
 	| { kind: "refused"; status: KubeconfigDownloadRefusal; message?: string }
 	| { kind: "failed"; reason: string; privateEndpoint: boolean }
 	| { kind: "expired"; privateEndpoint: boolean }
@@ -143,6 +144,8 @@ export function outcomeMessage(outcome: Exclude<DownloadOutcome, { kind: "saved"
 	switch (outcome.kind) {
 		case "unsupported":
 			return "This browser cannot create the X25519 key the download is sealed to. Use the CLI instead: alethia cluster kubeconfig.";
+		case "insecure-context":
+			return "Downloading a kubeconfig in the browser needs HTTPS: browsers create the key the download is sealed to only on a secure page. Use the CLI instead: alethia cluster kubeconfig.";
 		case "failed":
 			return outcome.reason;
 		case "expired":

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import Link from "next/link";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { SUPPORT_CATEGORY_LABELS } from "@/lib/validations/support";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
+import { CaseTime } from "./case-time";
 import { formatCaseNumber } from "./case-query";
 
 // `formatCaseNumber` moved to the pure `case-query` module (the search predicate there
@@ -62,7 +62,7 @@ export function CaseListItem({
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<span>{SUPPORT_CATEGORY_LABELS[item.category]}</span>
 					<span aria-hidden>·</span>
-					<span>{formatRelative(item.last_message_at)}</span>
+					<CaseTime value={item.last_message_at} style="relative" />
 					{/* Whose case — shown only on rows the caller didn't open (i.e. an admin
 					    viewing the whole org's cases); their own rows stay uncluttered. */}
 					{!item.is_mine && item.requester_name && (

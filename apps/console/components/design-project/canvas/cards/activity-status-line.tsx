@@ -11,7 +11,7 @@ import type { DestroyTreeNode } from "./destroy-tree-view";
 
 /**
  * One line, top-left of the board: the job running now, else the last one — "Deploy · Running ·
- * 2m" — that opens the Activity card. It reads the environment status the shell already polls,
+ * 2m" — that opens the Activity card. It reads the environment status the board already holds,
  * so it costs no query of its own, and it renders nothing until something has run.
  *
  * This is what remains of the floating activity list: the one fact worth having over the board

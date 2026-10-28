@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure filter plumbing for Settings · SSO — the console filter standard's "normalize" step
-// (lib/query/README.md → "Server-side filters"). `listSsoProviders` already filters
+// (lib/query/README.md → "Server-side filters"). The `sso.providers` read already filters
 // server-side, so this only has to produce a STABLE query object: arrays sorted and deduped,
 // empties dropped, so two equivalent filter states never fragment the cache into two keys.
+// No "use client" and no server imports: the route reads `ssoQueryFromUrl` to prefetch the key the
+// list settles on, and the manager reads the rest.
 
 import type { SsoFilter, SsoProviderRow } from "@/app/server/actions/sso";
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 
 /** The SSO list's filter state (a type alias, for the store's `Record` constraint). */
 export type SsoFilters = {
@@ -55,8 +58,8 @@ function isSsoStatus(v: string): v is NonNullable<SsoFilter["statuses"]>[number]
 }
 
 /**
- * Normalize filter state into the stable query object placed in `qk.ssoProviders` and sent to
- * `listSsoProviders`. The `search` argument is the DEBOUNCED text — passing the raw input
+ * Normalize filter state into the stable query object that IS the `sso.providers` input (and so
+ * its key). The `search` argument is the DEBOUNCED text — passing the raw input
  * would put a key in the cache for every keystroke.
  */
 export function normalizeSsoQuery(
@@ -77,7 +80,7 @@ export function normalizeSsoQuery(
  * Facet counts over the UNFILTERED provider universe.
  *
  * The standard requires option counts computed over everything, not over the current result —
- * an option that vanishes the moment you select it makes the facet unusable. `listSsoProviders`
+ * an option that vanishes the moment you select it makes the facet unusable. `sso.providers`
  * does not return facets, so the unfiltered list is fetched under the base key (the same one the
  * page prefetches) and counted here.
  */
@@ -93,4 +96,13 @@ export function ssoFacetCounts(all: SsoProviderRow[]): {
 		statuses[key] = (statuses[key] ?? 0) + 1;
 	}
 	return { types, statuses };
+}
+
+/**
+ * The provider list's query for a URL — the `sso.providers` input the list settles on once
+ * `useFilterUrlSync` has read the link, so the route can prefetch it (#4999's rule, #6129).
+ */
+export function ssoQueryFromUrl(params: ParamReader): SsoFilter {
+	const filters = filterStateFromUrl(params, DEFAULT_SSO_FILTERS);
+	return normalizeSsoQuery(filters, filters.search);
 }

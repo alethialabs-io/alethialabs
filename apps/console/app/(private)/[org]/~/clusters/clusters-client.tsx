@@ -3,100 +3,85 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Button } from "@repo/ui/button";
-import {
-	Empty,
-	EmptyContent,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@repo/ui/empty";
-import { ClusterCard } from "@/components/clusters/cluster-card";
-import { ErrorState } from "@/components/errors/error-state";
-import { useClustersQuery } from "@/lib/query/use-clusters-query";
-import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
-import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { Server } from "lucide-react";
+import { EmptyState } from "@repo/ui/empty";
+import { Lock, Server } from "lucide-react";
 import Link from "next/link";
+import { ClusterCard } from "@/components/clusters/cluster-card";
+import { ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
+import { RegionError } from "@/components/errors/region-error";
+import { isForbidden } from "@/components/overview/overview-reads";
+import { useClustersQuery } from "@/lib/query/use-clusters-query";
+import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 
 /**
- * Clusters grid. Data comes from the server-prefetched `useClustersQuery` cache, which
- * then polls on the reconciliation cadence; `loading.tsx` covers the prefetch window. Pass
- * `projectId` to scope the grid to a single project (each row's `id` is its project id) — the
- * project drilldown's Clusters page reuses this with the shared org cache. No page header:
- * the surface opens straight into content, like evidence / jobs / runners.
+ * Clusters grid: one card per cluster under management (lib/queries/usage-counts.ts — the same
+ * definition the Usage page counts), pending and failed ones included, each rendered as such.
+ *
+ * The data is the server-prefetched `clusters.list` read, kept current by the change stream — no
+ * poll. Pass `projectId` to scope the grid to one project's clusters (each row's `id` is its
+ * project's id); the project drilldown's Clusters page reuses this over the same org-wide cache.
+ *
+ * Five distinct renders, so nothing reads as something it is not (RUBRIC B3/B4): pending is the
+ * skeleton, a refusal says the viewer lacks access, a failure says it failed and offers a retry, no
+ * clusters is the empty state, and clusters are the grid. A refresh that fails after data arrived
+ * keeps the cards. No page header: the surface opens straight into content.
  */
 export function ClustersClient({ projectId }: { projectId?: string }) {
 	const orgSlug = useActiveOrgSlug();
-	const { data: allClusters = [], isError, refetch } = useClustersQuery();
-	const clusters = projectId
-		? allClusters.filter((c) => c.id === projectId)
-		: allClusters;
-	// One batched query hydrates every cluster card's classification chips (keyed on the
-	// project_cluster row id, the classifiable resource).
-	const clusterIds = clusters
-		.map((c) =>
-			Array.isArray(c.project_cluster)
-				? c.project_cluster[0]?.id
-				: c.project_cluster?.id,
-		)
-		.filter((id): id is string => Boolean(id));
-	const { data: classMap = {} } = useAssignmentsForKind(
-		"project_cluster",
-		clusterIds,
-	);
+	const clusters = useClustersQuery();
 
-	if (isError) {
-		// A fetch failure must not render as "no clusters provisioned".
+	if (clusters.data === undefined) {
+		if (clusters.isError && isForbidden(clusters.error)) {
+			// An expected refusal, not a failure: retrying will not change it, so there is no button.
+			return (
+				<EmptyState
+					className="min-h-[60vh]"
+					icon={<Lock />}
+					title="You don't have access to clusters"
+					description="Ask an organization admin for a role that can view projects."
+				/>
+			);
+		}
+		if (clusters.isError) {
+			return (
+				<RegionError
+					title="Couldn't load clusters"
+					description="Something went wrong fetching your clusters. Check your connection and try again."
+					onRetry={() => clusters.refetch()}
+				/>
+			);
+		}
+		return <ClustersSkeleton />;
+	}
+
+	const rows = projectId ? clusters.data.filter((c) => c.id === projectId) : clusters.data;
+
+	if (rows.length === 0) {
 		return (
-			<ErrorState
-				title="Couldn't load clusters"
-				description="Something went wrong fetching your clusters. Check your connection and try again."
-				actions={
-					<Button variant="outline" size="sm" onClick={() => refetch()}>
-						Retry
+			<EmptyState
+				className="min-h-[60vh]"
+				icon={<Server />}
+				title={projectId ? "This project has no clusters yet" : "No clusters under management"}
+				description="A cluster appears here once its environment's first deploy succeeds, and stays until it is torn down."
+				action={
+					<Button
+						variant="outline"
+						size="sm"
+						nativeButton={false}
+						render={<Link href={projectId ? `/${orgSlug}` : `/${orgSlug}/~/new`} />}
+					>
+						{projectId ? "Back to projects" : "Browse projects"}
 					</Button>
 				}
 			/>
 		);
 	}
 
-	if (clusters.length === 0) {
-		return (
-			<Empty className="min-h-[60vh]">
-				<EmptyHeader>
-					<EmptyMedia variant="icon">
-						<Server />
-					</EmptyMedia>
-					<EmptyTitle>No clusters provisioned</EmptyTitle>
-					<EmptyDescription>
-						Clusters appear here once a project deploys its first environment. Open a
-						project and deploy to get started.
-					</EmptyDescription>
-				</EmptyHeader>
-				<EmptyContent>
-					<Button variant="outline" size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/new`} />}>
-						Browse projects
-					</Button>
-				</EmptyContent>
-			</Empty>
-		);
-	}
-
 	return (
 		<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-			{clusters.map((cluster) => {
-				const pc = Array.isArray(cluster.project_cluster)
-					? cluster.project_cluster[0]
-					: cluster.project_cluster;
-				return (
-					<ClusterCard
-						key={cluster.id}
-						data={cluster}
-						initialAssignments={pc?.id ? classMap[pc.id] : undefined}
-					/>
-				);
-			})}
+			{rows.map((cluster) => (
+				<ClusterCard key={cluster.project_cluster.id} data={cluster} />
+			))}
 		</div>
 	);
 }

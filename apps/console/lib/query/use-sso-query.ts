@@ -2,46 +2,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-import {
-	keepPreviousData,
-	useQuery,
-	useQueryClient,
-	type UseQueryResult,
-} from "@tanstack/react-query";
-import { useParams } from "next/navigation";
-import {
-	listSsoProviders,
-	type SsoFilter,
-	type SsoProviderRow,
-} from "@/app/server/actions/sso";
-import { qk } from "./keys";
+// Settings · SSO, the console filter standard's fetch half (#6129, ADR 0005 D1): the provider list
+// is the `sso.providers` GET procedure, filtered server-side, and the normalized filter IS its input
+// (and so its key). The route prefetches the pristine list and the link's filtered list, so the
+// first paint carries data. Live: an `access` hint (a provider was registered, edited, verified or
+// removed — `sso_provider`'s trigger) invalidates `orpc.sso.key()` (lib/query/topics.ts).
 
-/** True when the filter would actually narrow the list (drives the shared base key). */
-function isActive(f: SsoFilter): boolean {
-	return Boolean(f.search?.trim() || f.types?.length || f.statuses?.length);
-}
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import type { SsoFilter, SsoProviderRow } from "@/app/server/actions/sso";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
+import { orpc } from "@/lib/rpc/client";
 
 /**
- * The active org's SSO providers, filtered server-side. Previous results are kept while the next
- * query loads so the list doesn't flash; an empty filter reuses the base key the page prefetches.
+ * The addressed org's SSO providers for `filter`, filtered server-side. Previous results are kept
+ * while the next answer loads (the caller dims them, `isPlaceholderData`); `{}` is the pristine
+ * list the facet counts are taken over. A refusal is never retried: it answers the same twice.
  */
-export function useSsoProvidersQuery(
-	filter: SsoFilter = {},
-): UseQueryResult<SsoProviderRow[]> {
-	const { org } = useParams<{ org: string }>();
-	const active = isActive(filter);
-	return useQuery({
-		queryKey: qk.ssoProviders(org, active ? filter : undefined),
-		queryFn: () => listSsoProviders(active ? filter : {}),
-		placeholderData: keepPreviousData,
-	});
+export function useSsoProvidersQuery(filter: SsoFilter = {}): UseQueryResult<SsoProviderRow[]> {
+	return useQuery(
+		orpc.sso.providers.queryOptions({
+			input: filter,
+			placeholderData: keepPreviousData,
+			retry: retryUnlessRefused,
+		}),
+	);
 }
 
-/** Invalidate every keyed variant of the org's provider list after a mutation. */
-export function useInvalidateSso(): () => void {
-	const qc = useQueryClient();
-	const { org } = useParams<{ org: string }>();
-	return () => {
-		void qc.invalidateQueries({ queryKey: ["sso", "providers", org] });
-	};
+/** Every SSO read's key prefix — what a provider write invalidates. */
+export function ssoReadKeys() {
+	return [orpc.sso.key()];
 }

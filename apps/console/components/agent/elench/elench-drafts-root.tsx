@@ -8,7 +8,7 @@
 // What it binds:
 // - the server actions of `app/server/actions/elench-drafts.ts` as the store's transport, and the
 //   heartbeat route (`POST /api/elench/drafts/heartbeat`) over the browser's own `fetch` (D34);
-// - `sessionStorage` as the cache, a tab id minted per page load (§7.1) and `crypto.randomUUID`.
+// - `sessionStorage` as the cache, a tab id minted per page load (§7.1) and `randomUuid` (`lib/random-id.ts`: `crypto.randomUUID` is undefined over plain HTTP).
 //
 // What it runs, mounted once in `AppShell`:
 // - `LOAD` of the page's scope (D26), at first mount and on every scope change (D23);
@@ -47,6 +47,7 @@ import {
 } from "@/lib/stores/elench-drafts/store";
 import type { DraftScope } from "@/lib/stores/elench-drafts/types";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { randomUuid } from "@/lib/random-id";
 import { DraftStatusHost } from "./draft-status/host";
 
 /** The draft actions themselves (§4.2): the store's transport in the app. */
@@ -136,8 +137,8 @@ function pageDrafts(viewerId: string): DraftsTab {
 		transport: SERVER_TRANSPORT,
 		heartbeat: fetchHeartbeat(),
 		storage: () => window.sessionStorage,
-		tabId: crypto.randomUUID(),
-		mint: () => crypto.randomUUID(),
+		tabId: randomUuid(),
+		mint: randomUuid,
 	});
 	return pageTab;
 }

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
-import { getMembersPage } from "@/app/server/actions/members";
 import { membersQueryFromUrl } from "@/components/settings/members/members-filters";
 import { MembersTable } from "@/components/settings/members/members-table";
+import { isPeopleRead } from "@/components/settings/members/people-reads";
 import { getQueryClient } from "@/lib/query/client";
 import { paramReader } from "@/lib/query/filter-url-codec";
-import { qk } from "@/lib/query/keys";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
@@ -16,46 +16,33 @@ export const metadata = pageMetadata({
 });
 
 /**
- * Settings · Members route. Prefetches the members page on the server and hydrates it into the
- * client cache, so the table renders on first paint; `loading.tsx` covers the prefetch window.
+ * Settings · Members route (#6129, the jobs slice's shape). Prefetches EXACTLY the keys the table
+ * asks for on first paint — `members.page` for the pristine view and for the link's filters, and
+ * `members.gate` (may this org invite / manage, and why not) — in-process through the read router,
+ * and hands the dehydrated cache to the client, so the rows and the toolbar's controls are in the
+ * server HTML and the browser fetches nothing on mount. `loading.tsx` covers the prefetch window.
  *
- * A pasted FILTERED link (`?statuses=pending`) also gets its filtered page prefetched (#4999, the
- * audit's F8 — the class #4980 fixed on `~/runners` and `~/alerts`). The client renders pristine
- * first, because `useFilterUrlSync` reads the URL in a mount effect, and then asks for the
- * filtered key; without this the key arrived empty and `keepPreviousData` held the WHOLE list up
- * under a URL that said otherwise until the server action returned. Both reads go through
- * `getMembersPage`, the same server action `useMembersPageQuery` calls, so the seed is as fresh as
- * a client fetch would have been.
+ * The pristine key is prefetched as well as the filtered one because the table's hydration render
+ * reads the store's defaults before `useFilterUrlSync` has read the link into it (#4999); for a
+ * pristine link the two are one key and TanStack dedupes them.
  */
 export default async function MembersPage({
-	params,
 	searchParams,
 }: {
 	params: Promise<{ org: string }>;
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-	const { org } = await params;
 	const filtered = membersQueryFromUrl(paramReader(await searchParams));
 	const queryClient = getQueryClient();
+	const rpc = serverOrpc();
 	await Promise.all([
-		// The pristine key — `normalizeMembersQuery()` of the defaults is `{}`, and it is what the
-		// server render and the hydration render ask for whatever the link says, because the store
-		// still holds its defaults there. It is always handed to `qk.members` as an object:
-		// `qk.members(org)` with no query is the unfiltered `getMembers()` read, a different shape.
-		queryClient.prefetchQuery({
-			queryKey: qk.members(org, {}),
-			queryFn: () => getMembersPage({}),
-		}),
-		// The key the client settles on once it has read the link. `{}` again for a pristine
-		// link, where TanStack dedupes it against the prefetch above.
-		queryClient.prefetchQuery({
-			queryKey: qk.members(org, filtered),
-			queryFn: () => getMembersPage(filtered),
-		}),
+		queryClient.prefetchQuery(rpc.members.page.queryOptions({ input: {} })),
+		queryClient.prefetchQuery(rpc.members.page.queryOptions({ input: filtered })),
+		queryClient.prefetchQuery(rpc.members.gate.queryOptions({ input: undefined })),
 	]);
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isPeopleRead })}>
 			<MembersTable />
 		</HydrationBoundary>
 	);

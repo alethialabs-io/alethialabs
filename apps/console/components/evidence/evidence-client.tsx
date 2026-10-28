@@ -7,13 +7,20 @@
 // feeds a filter-in-key TanStack query (server-side filtering), the table dims while
 // a refetch is in flight, and the count pill next to the Environments heading carries
 // the result count. Read-only: the data is produced by the PLAN/DEPLOY + drift jobs.
+//
+// FOUR RENDERS, NEVER CONFUSED (#6126): the rows (or onboarding / no-match when there are none);
+// the skeleton while the read has not answered; the refusal when the read router said FORBIDDEN;
+// and the region error, with a retry, when the read failed. The first paint is the route's
+// prefetched data, so the skeleton only shows when that prefetch did not land. A refresh that fails
+// behind rows keeps the rows and says they may be out of date.
 
+import { ORPCError } from "@orpc/client";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { ErrorState } from "@/components/errors/error-state";
+import { RegionError } from "@/components/errors/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
@@ -21,8 +28,9 @@ import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { EvidenceDrawer } from "./drawer/evidence-drawer";
 import type { EvidenceEnvRow } from "./evidence-derive";
-import { EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
+import { EvidenceForbidden, EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
 import { EvidenceFilterBar } from "./evidence-filter-bar";
+import { EvidenceSkeleton } from "./evidence-skeleton";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
 import { downloadReceipt } from "./receipt-download";
@@ -34,13 +42,24 @@ function defaultTab(row: EvidenceEnvRow): string {
 	return "drift";
 }
 
+/** Whether a read failed because the read router REFUSED it (a typed FORBIDDEN, lib/rpc/base.ts). */
+function isForbiddenRead(error: unknown): boolean {
+	return error instanceof ORPCError && error.defined && error.code === "FORBIDDEN";
+}
+
 /** The Evidence page client (data comes hydrated from the route's prefetch). */
 export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
 	const filters = useEvidenceFilters((s) => s.filters);
 	const reset = useEvidenceFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
-	const { data: result, isPlaceholderData, isError, refetch } = useEvidenceQuery(urlRead);
+	const {
+		data: result,
+		isPlaceholderData,
+		isError,
+		error,
+		refetch,
+	} = useEvidenceQuery(urlRead);
 
 	// Row interaction.
 	const [drawerId, setDrawerId] = useState<string | null>(null);
@@ -70,25 +89,22 @@ export function EvidenceClient() {
 		toast.success(downloadReceipt(row.verify.receipt, row.verify.jobId));
 	};
 
-	// A fetch failure must not render as a blank page (or fall through to onboarding) — show the
-	// branded error surface with a retry instead.
-	if (isError) {
-		return (
-			<ErrorState
-				title="Couldn't load evidence"
-				description="Something went wrong fetching your environment evidence. Check your connection and try again."
-				actions={
-					<Button variant="outline" size="sm" onClick={() => refetch()}>
-						Retry
-					</Button>
-				}
-			/>
-		);
+	if (!result) {
+		// A refusal is its own render: not empty, not a failure, and not worth a retry.
+		if (isError && isForbiddenRead(error)) return <EvidenceForbidden />;
+		// A failed read must not render as a blank page or fall through to onboarding.
+		if (isError) {
+			return (
+				<RegionError
+					title="Couldn't load evidence"
+					description="Something went wrong fetching your environment evidence. Check your connection and try again."
+					onRetry={() => refetch()}
+				/>
+			);
+		}
+		// Not answered yet: the page's own shape, never an empty state.
+		return <EvidenceSkeleton />;
 	}
-
-	// Persisted-session filters can miss the prefetched key on a return visit —
-	// nothing to render for exactly one frame while the refetch lands.
-	if (!result) return null;
 
 	const filtersActive =
 		countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS) > 0;
@@ -106,6 +122,19 @@ export function EvidenceClient() {
 						providerOptions={result.providerOptions}
 					/>
 
+					{isError && (
+						// A refresh failed behind rows that are still the last good answer: keep them.
+						<div
+							role="status"
+							data-slot="evidence-stale"
+							className="mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-ui-sm text-text-secondary"
+						>
+							{"Couldn't refresh — showing earlier evidence"}
+							<Button variant="ghost" size="xs" onClick={() => refetch()}>
+								Try again
+							</Button>
+						</div>
+					)}
 					<div
 						className={
 							isPlaceholderData

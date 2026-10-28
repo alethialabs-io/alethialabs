@@ -25,11 +25,12 @@ import { stageChanges } from "@/app/server/actions/staged-changes";
 import { type DiffRow, diffConfig } from "@/lib/config-diff";
 import { updateProjectDesign } from "@/app/server/actions/projects";
 import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
+import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identities";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
-	resolveCliProject,
 	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
@@ -63,7 +64,7 @@ export async function POST(
 	const stage = url.searchParams.has("stage");
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "edit");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -118,6 +119,11 @@ export async function POST(
 		// fault: a 400 with the refusal, which names the component and key and never the value.
 		if (err instanceof CredentialKnobRefusedError) {
 			return NextResponse.json({ error: err.message }, { status: 400 });
+		}
+		// A cloud identity this credential may not use: a 404 like the component routes answer for
+		// the same case, with the sentence that says where in the document and what to use instead.
+		if (err instanceof CloudIdentityRefusedError) {
+			return NextResponse.json({ error: err.message }, { status: 404 });
 		}
 		const message = err instanceof Error ? err.message : "Internal Server Error";
 		if (/forbidden|not authorized|permission/i.test(message)) {

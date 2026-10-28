@@ -13,14 +13,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
+	authorizeRead: vi.fn(),
 	currentActor: vi.fn(),
 }));
+// The org binding reads the projects table on the service role; its own behaviour is integration-
+// tested (tests/integration/console-project-bound.test.ts). Here it is a seam whose ORDER is asserted.
+vi.mock("@/lib/promotions/org-binding", () => ({ assertProjectInActorOrg: vi.fn() }));
 vi.mock("@/lib/db", () => ({
 	withActorScope: vi.fn(),
 	withScope: vi.fn(),
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// `readDuplicateTargets` lives with the other projects reads in lib/rpc/procedures/projects.ts
+// (#6131); that module also serves the import flow, whose git-account and model readers are not
+// this file's subject and would otherwise load Better Auth and the AI SDK here.
+vi.mock("@/lib/auth", () => ({ auth: { api: {} } }));
+vi.mock("@/lib/jobs/visibility", () => ({ jobVisibleTo: vi.fn() }));
+vi.mock("@/lib/scanner/infer", () => ({ inferStack: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 // `UsageLimitError` stays REAL: `refusalAsValue` decides by `instanceof`, so a stand-in class would
 // prove only that the test agrees with itself.
@@ -52,6 +62,7 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
+import { readDuplicateTargets } from "@/lib/rpc/procedures/projects";
 import {
 	type DestroyTreeSubject,
 	FabricHasLiveTenantsError,
@@ -70,15 +81,15 @@ import {
 	destroyProject,
 	duplicateProjectForProvider,
 	getProject,
-	getDestroyTree,
+	getEnvConsistency,
 	getProjectAsFormData,
-	getProjectDuplicateSummary,
 	getProjectEnvironments,
 	getProjects,
 	getProjectsList,
 	planProject,
 	reconcileEnvironmentComponents,
 	provisionProject,
+	setAutoHeal,
 	tryCreateProject,
 	tryDuplicateProjectForProvider,
 	updateProjectDesign,
@@ -87,11 +98,13 @@ import {
 import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeRead, currentActor } from "@/lib/authz/guard";
+import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
+import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identities";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
@@ -213,6 +226,12 @@ function setupDb(cfg: {
 	): Rows => {
 		const v = map?.get(table);
 		if (typeof v === "function") return v(where);
+		// The design-identity check reads `cloud_identities` before a create or a design save. A test
+		// that seeds no identity rows is about something else, so it gets a usable identity rather
+		// than a refusal; a test about the identity seeds `[cloudIdentities]` itself.
+		if (v === undefined && table === cloudIdentities && cfg.default === undefined) {
+			return [{ id: "ci-1", provider: "aws" }];
+		}
 		return v ?? def;
 	};
 
@@ -320,10 +339,18 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue({
 		userId: "user-1",
 		orgId: "org-1",
+		credential: "session",
 	} as never);
+	vi.mocked(authorizeRead).mockResolvedValue({
+		userId: "user-1",
+		orgId: "org-1",
+		credential: "session",
+	} as never);
+	vi.mocked(assertProjectInActorOrg).mockResolvedValue(undefined);
 	vi.mocked(currentActor).mockResolvedValue({
 		userId: "user-1",
 		orgId: "org-1",
+		credential: "session",
 	} as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
@@ -2783,90 +2810,8 @@ describe("destroyProject — a Fabric owner with live tenants (#5249)", () => {
 	});
 });
 
-describe("getDestroyTree (#5249)", () => {
-	afterEach(() => {
-		vi.mocked(readLiveFabricTenants).mockImplementation(async () => []);
-	});
-
-	it("returns the tenants first and the owner last, with the owner waiting on each tenant by name and status", async () => {
-		setupDb({
-			select: snapshotSelect(
-				new Map<unknown, RowsResolver>([
-					[
-						projectEnvironments,
-						[
-							{
-								id: "env-prod",
-								project_id: "p1",
-								name: "prod",
-								status: "QUEUED",
-								fabric_id: "fab-1",
-								placement_mode: "dedicated",
-							},
-						],
-					],
-				]),
-			),
-		});
-		const t = (id: string, name: string, placement: "namespace" | "vcluster", status: "ACTIVE" | "FAILED") =>
-			({ id, name, project_id: "p1", fabric_id: "fab-1", placement_mode: placement, status }) satisfies DestroyTreeSubject;
-		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
-			t("env-staging", "staging", "vcluster", "ACTIVE"),
-			t("env-dev1", "dev-1", "namespace", "FAILED"),
-		]);
-
-		const { tree } = await getDestroyTree("p1", "env-prod");
-
-		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
-		expect(tree.map((n) => n.name)).toEqual(["dev-1", "staging", "prod"]);
-		expect(tree[2]).toEqual({
-			environment_id: "env-prod",
-			name: "prod",
-			placement_mode: "dedicated",
-			status: "QUEUED",
-			owns_fabric: true,
-			// A FAILED tenant is named here — the owner's QUEUED destroy is waiting on it, visibly.
-			waiting_on: [
-				{ name: "dev-1", status: "FAILED" },
-				{ name: "staging", status: "ACTIVE" },
-			],
-		});
-		expect(tree[0]).toMatchObject({ owns_fabric: false, waiting_on: [] });
-	});
-
-	it("a non-dedicated environment's tree is itself alone, owning nothing", async () => {
-		setupDb({
-			select: snapshotSelect(
-				new Map<unknown, RowsResolver>([
-					[
-						projectEnvironments,
-						[
-							{
-								id: "env-dev1",
-								project_id: "p1",
-								name: "dev-1",
-								status: "ACTIVE",
-								fabric_id: "fab-1",
-								placement_mode: "namespace",
-							},
-						],
-					],
-				]),
-			),
-		});
-		const { tree } = await getDestroyTree("p1", "env-dev1");
-		expect(tree).toEqual([
-			{
-				environment_id: "env-dev1",
-				name: "dev-1",
-				placement_mode: "namespace",
-				status: "ACTIVE",
-				owns_fabric: false,
-				waiting_on: [],
-			},
-		]);
-	});
-});
+// getDestroyTree moved to the canvas's GET procedures as readDestroyTree (#6119):
+// tests/lib/rpc/canvas-destroy-tree.test.ts.
 
 // ============================================================
 // deleteProject
@@ -3577,7 +3522,7 @@ describe("tryDuplicateProjectForProvider", () => {
 	});
 });
 
-describe("getProjectDuplicateSummary", () => {
+describe("readDuplicateTargets (the duplicate dialog's read, moved from getProjectDuplicateSummary in #6131)", () => {
 	// The dialog pre-fills its name field from THIS, so the default it shows and the default the
 	// action falls back to are one derivation rather than two. Keyed by target cloud because the
 	// suffix names that cloud.
@@ -3617,7 +3562,7 @@ describe("getProjectDuplicateSummary", () => {
 			]),
 		});
 
-		const summary = await getProjectDuplicateSummary("p1");
+		const summary = await readDuplicateTargets("p1");
 		expect(summary.provider).toBe("aws");
 		expect(summary.projectName).toBe("My App");
 		expect(summary.categories).toContain("dns");
@@ -3649,12 +3594,24 @@ describe("getProjectEnvironments", () => {
 			]),
 		});
 		const r = await getProjectEnvironments("p1");
-		expect(authorize).toHaveBeenCalledWith("view", {
+		// The read variant: quiet on allow, recorded on refusal (a live-refetched read).
+		expect(authorizeRead).toHaveBeenCalledWith("view", {
 			type: "project",
 			id: "p1",
 		});
+		expect(authorize).not.toHaveBeenCalled();
 		expect(r.environments).toHaveLength(2);
 		expect(r.environments[1]).toMatchObject({ id: "env-2", name: "staging" });
+	});
+});
+
+describe("getEnvConsistency", () => {
+	it("uses the read check for itself and for the list it reads, never the recording one", async () => {
+		setupDb({ select: new Map([[projectEnvironments, []]]) });
+		const r = await getEnvConsistency("p1");
+		expect(r).toEqual({ envs: [], rows: [] });
+		expect(authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 });
 
@@ -3836,6 +3793,28 @@ describe("duplicateEnvironment — refusals are values (#5445)", () => {
 			error: 'This project already has an environment named "prod". Choose another name.',
 		});
 		expect(insertSpy).not.toHaveBeenCalledWith(projectEnvironments);
+	});
+});
+
+describe("environment writes bind the project to the addressed organization first", () => {
+	const writes: [string, () => Promise<unknown>][] = [
+		["addEnvironment", () => addEnvironment("p1", { name: "qa", stage: "development" })],
+		["duplicateEnvironment", () => duplicateEnvironment("p1", "env-1", "qa")],
+		["setAutoHeal", () => setAutoHeal("p1", "env-1", true)],
+		["deleteEnvironment", () => deleteEnvironment("p1", "env-2")],
+	];
+
+	it.each(writes)("%s refuses before the PDP is asked or anything is written", async (_name, call) => {
+		const { insertSpy, updateSpy, deleteSpy } = setupDb({});
+		// Not `…Once`: a write that skipped the binding would leave a queued once-value for the NEXT
+		// test to consume. `beforeEach` resets this default.
+		vi.mocked(assertProjectInActorOrg).mockRejectedValue(new Error("Project not found."));
+		await expect(call()).rejects.toThrow("Project not found.");
+		expect(assertProjectInActorOrg).toHaveBeenCalledWith(expect.objectContaining({ orgId: "org-1" }), "p1");
+		expect(authorize).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(updateSpy).not.toHaveBeenCalled();
+		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 });
 
@@ -4206,5 +4185,177 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(r).toEqual({ ok: false, error: expect.stringContaining("rds_extra_credentials") });
 		expect(JSON.stringify(r)).not.toContain("hunter2");
 		expect(insertSpy).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================
+// Which cloud identities a design write may name, and a job may carry
+// ============================================================
+
+// `projects.cloud_identity_id` and each component's are plain foreign keys, which ignore RLS. So the
+// design writes check every id they store against the rule the console reads identities with: an
+// `org` identity of the active org, or a PERSON's own `personal` one (lib/cloud-providers/
+// design-identities.ts). A CLI service token reaches these actions through `runWithActor` with the
+// MINTER as `userId`, and gets the org arm only. An id the project already stores passes unchanged.
+//
+// The fake `cloud_identities` table below answers a WHERE by its rendered parameters: a row is
+// returned when its id is asked for and, for a scoped read, its tenancy values are too. It is a
+// stand-in for the predicate, not a copy of it — the SQL itself is run against Postgres in
+// tests/integration/identity-binding.test.ts.
+describe("design writes name only cloud identities the caller may use", () => {
+	interface IdentityRow {
+		id: string;
+		org_id: string;
+		user_id: string;
+		scope: "org" | "personal";
+		provider: string;
+	}
+	const ORG_ID = "ci-org";
+	const FOREIGN = "ci-foreign";
+	const MINE = "ci-mine";
+	const THEIRS = "ci-theirs";
+	const IDENTITIES: IdentityRow[] = [
+		{ id: ORG_ID, org_id: "org-1", user_id: "user-9", scope: "org", provider: "aws" },
+		{ id: FOREIGN, org_id: "org-2", user_id: "user-7", scope: "org", provider: "aws" },
+		{ id: MINE, org_id: "org-1", user_id: "user-1", scope: "personal", provider: "aws" },
+		{ id: THEIRS, org_id: "org-1", user_id: "user-2", scope: "personal", provider: "aws" },
+	];
+	/** The fake table: see the block comment above. */
+	const identityTable: RowsResolver = (where) => {
+		const params = where instanceof SQL ? new PgDialect().sqlToQuery(where).params : [];
+		const scoped = params.includes("org") || params.includes("personal");
+		return IDENTITIES.filter(
+			(r) =>
+				params.includes(r.id) &&
+				(!scoped ||
+					(r.scope === "org"
+						? params.includes("org") && params.includes(r.org_id)
+						: params.includes("personal") && params.includes(r.user_id))),
+		).map((r) => ({ id: r.id, provider: r.provider }));
+	};
+	const design = (projectIdentity: string, dbIdentity?: string) => ({
+		project: {
+			project_name: "Shop",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: projectIdentity,
+			iac_version: "1.11.4",
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: {},
+		databases: [
+			{ name: "orders", engine: "postgres", cloud_identity_id: dbIdentity ?? null },
+		],
+	});
+	/** A db whose project row stores `stored` as its identity. */
+	const db = (stored: string | null = ORG_ID) =>
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[cloudIdentities, identityTable],
+				[projects, [{ cloud_identity_id: stored }]],
+			]),
+		});
+	const asServiceToken = () =>
+		vi.mocked(authorize).mockResolvedValue({
+			userId: "user-1",
+			orgId: "org-1",
+			credential: "service_token",
+		} as never);
+
+	it("refuses another org's identity before touching a row", async () => {
+		const { deleteSpy, insertSpy, setSpy } = db();
+		const save = updateProjectDesign("p1", "env-1", design(FOREIGN) as never);
+		await expect(save).rejects.toBeInstanceOf(CloudIdentityRefusedError);
+		await expect(save).rejects.toThrow(/\(project\)/);
+		expect(deleteSpy).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("refuses another member's personal identity", async () => {
+		const { setSpy } = db();
+		await expect(
+			updateProjectDesign("p1", "env-1", design(THEIRS) as never),
+		).rejects.toBeInstanceOf(CloudIdentityRefusedError);
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("refuses it on a component, naming the component", async () => {
+		db();
+		await expect(
+			updateProjectDesign("p1", "env-1", design(ORG_ID, THEIRS) as never),
+		).rejects.toThrow(/databases "orders"/);
+	});
+
+	it("keeps an identity the project already stores, so an existing binding stays editable", async () => {
+		const { setSpy } = db(THEIRS);
+		await updateProjectDesign("p1", "env-1", design(THEIRS) as never);
+		expect(setSpy).toHaveBeenCalledWith(
+			projects,
+			expect.objectContaining({ cloud_identity_id: THEIRS }),
+		);
+	});
+
+	it("accepts the org's identity and the person's own personal one", async () => {
+		const { setSpy } = db();
+		await updateProjectDesign("p1", "env-1", design(MINE, ORG_ID) as never);
+		expect(setSpy).toHaveBeenCalledWith(
+			projects,
+			expect.objectContaining({ cloud_identity_id: MINE }),
+		);
+	});
+
+	it("refuses a service token its minter's personal identity", async () => {
+		asServiceToken();
+		const { setSpy } = db();
+		const save = updateProjectDesign("p1", "env-1", design(MINE) as never);
+		await expect(save).rejects.toThrow(/service token can use only/);
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("createProject refuses an identity the caller may not use, and tryCreateProject returns the sentence", async () => {
+		const { insertSpy } = db();
+		const r = await tryCreateProject(design(THEIRS) as never);
+		expect(r).toEqual({ ok: false, error: expect.stringContaining("not available to you here") });
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("a service token's PLAN of a project bound to its minter's personal identity is refused", async () => {
+		asServiceToken();
+		const { insertSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, identityTable],
+					[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: MINE, region: "us-east-1" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/personal cloud account, and a service token/);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("the same PLAN by the person who owns the identity is queued", async () => {
+		const { insertSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[cloudIdentities, identityTable],
+					[projects, [{ id: "p1", org_id: "org-1", cloud_identity_id: MINE, region: "us-east-1" }]],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
+		expect(insertSpy).toHaveBeenCalledWith(jobs);
 	});
 });

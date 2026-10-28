@@ -53,6 +53,16 @@ interface RepositorySelectorProps {
    * Omitted: every provider is offered, as before.
    */
   providerAvailability?: GitProviderAvailability;
+  /**
+   * The caller's linked git providers, already read on the server (the `/~/new` route prefetches
+   * `projects.linkedGitProviders`). Given, the selector's FIRST render is already the right branch —
+   * the provider + repository row, or the "No Git accounts linked" panel — and it never fetches the
+   * list itself. Omitted, it reads the list on mount and shows its loading row until then.
+   *
+   * Read once, at mount, like `value`'s initial provider: a later change of this prop is not
+   * followed, so an array rebuilt on every parent render cannot re-trigger the load.
+   */
+  linkedProviders?: PublicGitProvider[];
 }
 
 /** The order the Link buttons are offered in. */
@@ -92,6 +102,19 @@ const GIT_PROVIDERS = [
   "gitlab",
 ] as const satisfies readonly PublicGitProvider[];
 
+/**
+ * The provider the selector opens on: the one a saved repo URL names when that provider is linked,
+ * else the first linked one; null when none is linked.
+ */
+function initialProviderFor(
+  providers: PublicGitProvider[],
+  savedUrl: string | undefined,
+): PublicGitProvider | null {
+  const detected = savedUrl ? providerFromRepoUrl(savedUrl) : null;
+  if (detected && providers.includes(detected)) return detected;
+  return providers[0] ?? null;
+}
+
 function providerFromRepoUrl(url: string): PublicGitProvider | null {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -113,22 +136,39 @@ export function RepositorySelector({
   variant = "default",
   onRepositorySelect,
   providerAvailability,
+  linkedProviders: seededProviders,
 }: RepositorySelectorProps) {
   const sharedCtx = useRepositoryContext();
+  // THE FIRST RENDER IS THE SETTLED LAYOUT WHEN ANYTHING ALREADY KNOWS THE ANSWER (F034). This used
+  // to start at `loading: false` with no providers, so the first frame — the server render
+  // included — was the "No Git accounts linked" panel with three Link buttons, swapped a moment
+  // later for the skeleton and then for the repository row. Now the state starts from the server
+  // seed or the shared context when there is one, and from the loading row when there is not: the
+  // row a user sees first is never one the data is about to take away.
+  const [seed] = useState(() => sharedCtx?.linkedProviders ?? seededProviders);
+  const [initialValue] = useState(value);
   const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchingRepos, setFetchingRepos] = useState(false);
+  const [loading, setLoading] = useState(() =>
+    sharedCtx ? sharedCtx.loadingProviders : seededProviders === undefined,
+  );
+  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
+    seed ?? [],
+  );
+  const [selectedProvider, setSelectedProvider] =
+    useState<PublicGitProvider | null>(() =>
+      seed ? initialProviderFor(seed, initialValue) : null,
+    );
+  // What the mount knew, kept so `loadInitialData` can skip the provider read it no longer needs.
+  const [seededAtMount] = useState(() => !sharedCtx && seededProviders !== undefined);
+  const [selectedAtMount] = useState(selectedProvider);
+  // A provider known at mount has its repositories in flight from the first frame, so the row reads
+  // "Fetching repositories..." rather than "No repositories found" until the list lands.
+  const [fetchingRepos, setFetchingRepos] = useState(() => selectedProvider !== null);
   const [error, setError] = useState<string | null>(null);
   const [authRecoveryProvider, setAuthRecoveryProvider] =
     useState<PublicGitProvider | null>(null);
-  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
-    [],
-  );
-  const [selectedProvider, setSelectedProvider] =
-    useState<PublicGitProvider | null>(null);
   const [showLinkOptions, setShowLinkOptions] = useState(false);
   const [isManual, setIsManual] = useState(false);
-  const [initialValue] = useState(value);
   const [open, setOpen] = useState(false);
   const repositoryShellBorder = error
     ? variant === "settings"
@@ -210,6 +250,11 @@ export function RepositorySelector({
 
   const loadInitialData = useCallback(async () => {
     if (sharedCtx) return; // Skip — using shared context
+    // Seeded by the server: the provider list is already on screen; only its repositories are left.
+    if (seededAtMount) {
+      if (selectedAtMount) await fetchRepositories(selectedAtMount);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -237,7 +282,7 @@ export function RepositorySelector({
     } finally {
       setLoading(false);
     }
-  }, [initialValue, sharedCtx]);
+  }, [initialValue, sharedCtx, seededAtMount, selectedAtMount]);
 
   useEffect(() => {
     if (!sharedCtx) loadInitialData();
@@ -302,10 +347,13 @@ export function RepositorySelector({
   };
 
   if (loading) {
+    // The loading row in the settled row's shape: a label bar only when there IS a label, and the
+    // provider + repository row at its own height (h-9). With `label=""` (the import panel) the old
+    // label bar was a line the settled layout does not have.
     return (
-      <div className="space-y-2 animate-pulse">
-        <div className="h-4 w-24 bg-muted rounded" />
-        <div className="h-10 w-full bg-muted rounded" />
+      <div className={cn("animate-pulse", label && "space-y-1.5")}>
+        {label && <div className="h-4 w-24 bg-muted rounded" />}
+        <div className="h-9 w-full bg-muted rounded" />
       </div>
     );
   }

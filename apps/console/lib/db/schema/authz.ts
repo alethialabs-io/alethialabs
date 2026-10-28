@@ -117,7 +117,7 @@ export const authzActivityLog = pgTable(
 		ts: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		// The hot read (app/server/actions/activity.ts + api/cli/activity) is
+		// The hot read (lib/rpc/procedures/activity.ts + api/cli/activity) is
 		// `WHERE org_id = ? [AND id < ?] ORDER BY id DESC LIMIT n` — a per-org keyset
 		// page, newest first. A composite (org_id, id DESC) btree serves the org filter,
 		// the `id <` cursor bound, AND the descending order as a single index range scan,

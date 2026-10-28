@@ -26,23 +26,38 @@
 // that would also have passed on the broken tree proves nothing, and for this defect that is the
 // easy mistake to make, not a theoretical one.
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
+import type { FakeHandler } from "@/tests/helpers/fake-orpc";
 
-vi.mock("@/app/server/actions/protection", () => ({
-	getProtectionRules: vi.fn(async () => null),
-	setProtectionRules: vi.fn(),
-}));
-vi.mock("@/app/server/actions/promotions", () => ({
-	previewPromotion: vi.fn(async () => ({
+// The dialogs read over the GET procedures (#6120): the rules drawer its rules, the promote dialog
+// its preview. Each is answered here as the real procedure answers for this fixture.
+const h = vi.hoisted(() => ({ handlers: {} as Record<string, FakeHandler> }));
+h.handlers["environments.protectionRules"] = async () => ({ environmentId: "env-prod", rules: null });
+h.handlers["environments.promotionPreview"] = async () => ({
+	sourceId: "env-dev",
+	targetId: "env-prod",
+	diff: {
 		changes: [
 			{ component_type: "service", key: "api", op: "CREATE" },
 			{ component_type: "service", key: "legacy-worker", op: "DELETE" },
 		],
 		summary: ["1 add", "1 remove"],
 		include_removals: false,
-	})),
+	},
+});
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(h.handlers).orpc };
+});
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+vi.mock("@/app/server/actions/protection", () => ({
+	setProtectionRules: vi.fn(),
+}));
+vi.mock("@/app/server/actions/promotions", () => ({
 	promoteEnvironment: vi.fn(),
 }));
 vi.mock("@/app/server/actions/projects", () => ({
@@ -50,6 +65,12 @@ vi.mock("@/app/server/actions/projects", () => ({
 	duplicateEnvironment: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+/** Renders `ui` under a fresh QueryClient: the dialogs read and write through TanStack Query. */
+function render(ui: ReactElement) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { PromoteDialog } from "@/components/environments/promote-dialog";

@@ -137,8 +137,8 @@ const TEAM_A = randomUUID(); // in ORG_A, USER_A is a member — the team-princi
 const USER_NR = randomUUID();
 
 const pg = new PostgresRbacPDP();
-const actor: Actor = { userId: USER_A, orgId: ORG_A };
-const noRowActor: Actor = { userId: USER_NR, orgId: ORG_A };
+const actor: Actor = { credential: "session", userId: USER_A, orgId: ORG_A };
+const noRowActor: Actor = { credential: "session", userId: USER_NR, orgId: ORG_A };
 
 describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 	let storeId = "";

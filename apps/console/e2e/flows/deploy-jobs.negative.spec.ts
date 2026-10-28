@@ -72,41 +72,41 @@ test.describe("Deploy jobs — negative & empty states", () => {
 
 	test("an undeployed project shows the clusters empty state", async ({ owner }) => {
 		await visit(owner.page, `/${owner.orgSlug}/${singleEnvProject.slug}/clusters`);
-		await expect(owner.page.getByText("No clusters provisioned")).toBeVisible({
+		await expect(owner.page.getByText("This project has no clusters yet")).toBeVisible({
 			timeout: 25_000,
 		});
 		await expect(
-			owner.page.getByText(/Clusters appear here once a project deploys its first environment/i),
+			owner.page.getByText(/A cluster appears here once its environment's first deploy succeeds/i),
 		).toBeVisible();
-		// WHAT THIS MEASURES IS THE `clusters.length === 0` PREDICATE, and its other direction is
+		// WHAT THIS MEASURES IS THE EMPTY PREDICATE, and its other direction is
 		// `deploy-jobs.spec.ts` › "the project's clusters page names the cluster and its endpoint":
 		// `ClustersClient` filters ONE org-wide list by `projectId`, so a filter that dropped a
 		// project's real clusters would show this same empty state, and that sibling test is the
-		// only thing that would notice. The two together are the measurement.
+		// only thing that would notice. The two together are the measurement. An undeployed
+		// project's cluster row is a DRAFT environment's PENDING row — not under management
+		// (lib/queries/usage-counts.ts), which is why this page is empty for it.
 		//
-		// THE LINE REMOVED HERE WAS `expect(getByText("Couldn't load clusters")).toHaveCount(0)`.
-		// `clusters-client.tsx` is `isError ? ErrorState : clusters.length === 0 ? Empty : grid` —
-		// mutually exclusive branches of one component — so asserting the error copy's absence from
-		// inside the empty branch has no failing input at all. The error branch is real and is NOT
-		// covered here: `getClusters` is a Next server action, and `audit/destructive.spec.ts`
-		// records that an action's name is nowhere in its request (an opaque `Next-Action` header on
-		// a POST to the current URL), so a route-level fault cannot target this query without
-		// faulting every other action the page makes. Driving it needs a component-level test, which
-		// is not this suite.
+		// The grid's other renders — pending, refused, failed, a failed refresh over cards — are
+		// mutually exclusive branches of one component, so asserting one's absence from inside
+		// another has no failing input here. They are pinned at the component level
+		// (tests/components/clusters/clusters-client.test.tsx).
 	});
 
-	test("a single-environment project hides Promote and says why, without claiming to be empty", async ({
+	test("a single-environment project disables Promote and says why, without claiming to be empty", async ({
 		owner,
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${singleEnvProject.slug}/environments`);
-		await expect(
-			owner.page.getByRole("heading", { name: /^Environments/ }),
-		).toBeVisible({ timeout: 25_000 });
-		// Promote only appears when envs.length > 1.
-		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toHaveCount(0);
+		// No in-content page title since #6120 (F010): the breadcrumb names the page, and the page
+		// opens with its toolbar, whose count reads 1 here.
+		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
+		await expect(toolbar).toBeVisible({ timeout: 25_000 });
+		await expect(toolbar).toContainText("1");
+		// Promote stays in the toolbar at every count (#6120, so the route skeleton can reserve the
+		// row exactly) but cannot be pressed with one environment — there is nothing to promote to.
+		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toBeDisabled();
 		// But New Environment is always available — a one-environment project is exactly the one
 		// that needs it.
-		await expect(owner.page.getByRole("button", { name: /New Environment/i })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /New Environment/i })).toBeEnabled();
 		// The note under a POPULATED list, not the empty state. The predicate behind these two used
 		// to be `<= 1`, which asserted "Only one environment" over none at all.
 		await expect(owner.page.getByText(/Only one environment/)).toBeVisible();

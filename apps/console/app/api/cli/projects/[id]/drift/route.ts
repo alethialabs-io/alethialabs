@@ -2,15 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // GET /api/cli/projects/:id/drift — the latest day-2 drift posture of a project (optionally
-// scoped to one environment). Gated on project `view`; org-scoped via the service DB with an
-// explicit projects.org_id filter (RLS is bypassed on this path — the predicate IS the tenancy
-// wall). Mirrors getLatestDriftPosture (web), which can't be called here because it authorizes
-// via the session cookie.
+// scoped to one environment). Gated on `view` of THE ADDRESSED PROJECT, not only the org-wide
+// project permission: a reader with a scoped deny on a project is refused its drift here exactly as
+// the Evidence page leaves it out, and the refusal reads as "not found" so it does not confirm the
+// project exists (resolveCliProjectAuthorized, which also records the refusal). Org-scoped via the
+// service DB with an explicit projects.org_id filter (RLS is bypassed on this path — the predicate IS
+// the tenancy wall). Mirrors getLatestDriftPosture (web), which can't be called here because it
+// authorizes via the session cookie.
 
 import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
-import { resolveCliEnvironment, resolveCliProject } from "@/lib/cli/resolve-project";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
+import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { environmentDrift, projects } from "@/lib/db/schema";
@@ -27,7 +31,7 @@ export async function GET(
 	const envParam = new URL(req.url).searchParams.get("env");
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

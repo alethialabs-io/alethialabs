@@ -181,7 +181,11 @@ const (
 	// (--key/--key-file). The strongest answer available: it depends on nothing the control
 	// plane said.
 	trustPinned trustLevel = "pinned"
-	// trustOrg — the key_id resolved to an active key in the org's own recorded history.
+	// trustOrg — the key_id resolved to a key in the addressed org's recorded history, as
+	// GET /api/cli/signing-keys returns it: EVERY status, pending_verification and invalid
+	// included. Neither that route nor newTrustedKeys filters on status or on proof of
+	// possession, so "org" means "the org registered this public key", not "the org proved it
+	// holds the private key".
 	trustOrg trustLevel = "org"
 	// trustPlatform — the key_id resolved to the Alethia platform key. Attests "Alethia
 	// asserted this", not "the customer asserted this".

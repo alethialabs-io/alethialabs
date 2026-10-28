@@ -563,9 +563,11 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 // writes (roles, grants, SSO) that no page load reaches.
 //
 // `account.delete` lives on `/[org]`, whose overview mounts `AlertsCard`
-// (components/overview/alerts-card.tsx), which calls `getAlertsBootstrap()` from a `useEffect` —
-// a client-side server action that starts AFTER `domcontentloaded`, i.e. while the reach chain is
-// already clicking "Account menu" → "Account settings". `getAlertsBootstrap` authorizes `view_alerts`
+// (components/overview/alerts-card.tsx), which AT THE TIME called a `getAlertsBootstrap()` server
+// action from a `useEffect` (since removed: the card reads the prefetched `overview.alerts` GET read,
+// #6118, and the hub's bootstrap is gone, #6125) — a client-side server action that started AFTER
+// `domcontentloaded`, i.e. while the reach chain was already clicking "Account menu" → "Account
+// settings". That action authorized `view_alerts`
 // (read-only, not recorded) and then calls `canManageAlerts`, which probes the capability with
 // `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
 // allowed `manage_alerts` on `alert` is recorded on EVERY overview load (`enforceDecision` records an
@@ -613,6 +615,16 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 const LONG_LIVED_REQUESTS: ReadonlySet<string> = new Set(["eventsource", "websocket"]);
 
 /**
+ * A `fetch` that ASKS for an event stream — the console's change stream (`/{org}/~/events`, #6115)
+ * sends `Accept: text/event-stream` and stays open for the life of the page. It is told apart by that
+ * request header, which no server action or read sends, rather than by its URL; its `?probe=1`
+ * requests send no such header and are tracked like any other request.
+ */
+function isEventStreamFetch(req: Request): boolean {
+	return (req.headers()["accept"] ?? "").includes("text/event-stream");
+}
+
+/**
  * The TOTAL time one snapshot spends waiting for the page's requests to finish, across all its
  * readings — not per reading, so a request that never finishes cannot multiply it by
  * {@link SETTLE_ROUNDS} and eat the test's budget. Past it, the snapshot proceeds and says so.
@@ -634,14 +646,14 @@ interface InFlight {
 
 /**
  * Track every request the page starts until it finishes or fails. Installed BEFORE navigation, so a
- * request the page fires on mount — the `getAlertsBootstrap` that wrote #5639's row — is counted even
+ * request the page fires on mount — like the since-removed `getAlertsBootstrap` that wrote #5639's row — is counted even
  * when it starts while the reach chain is still clicking.
  */
 function trackInFlight(page: Page): InFlight {
 	const open = new Set<Request>();
 	let waiters: Array<() => void> = [];
 	const onRequest = (req: Request) => {
-		if (LONG_LIVED_REQUESTS.has(req.resourceType())) return;
+		if (LONG_LIVED_REQUESTS.has(req.resourceType()) || isEventStreamFetch(req)) return;
 		open.add(req);
 	};
 	const onDone = (req: Request) => {
@@ -806,13 +818,26 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// That is why an `open:` step ends by waiting for the overlay it opened, below.
 			const root = await openOverlay(page);
 			const named = new RegExp(escapeRe(name), "i");
-			const opener = root
+			const loose = root
 				.getByRole("button", { name: named })
 				.or(root.getByRole("option", { name: named }))
 				.or(root.getByRole("menuitem", { name: named }))
 				.or(root.getByLabel(named))
 				.first();
-			await opener.waitFor({ state: "visible", timeout: 8_000 });
+			await loose.waitFor({ state: "visible", timeout: 8_000 });
+			// A control whose name IS the step's name beats one whose label merely CONTAINS it (#6119).
+			// `{open: "Add"}` is the canvas toolbar's **Add** button; the case-insensitive substring also
+			// matches the canvas card labelled "Add-on Prometheus + Grafana", which comes FIRST in
+			// document order. While the card arrived after the board's own client fetch, `.first()` won
+			// the race by accident; with the board's reads prefetched the card is on the first paint,
+			// and the step clicked the card — opening its inspector, not the palette. Exact first, the
+			// substring union only when nothing is named exactly (an option whose name carries more).
+			const exact = root
+				.getByRole("button", { name, exact: true })
+				.or(root.getByRole("option", { name, exact: true }))
+				.or(root.getByRole("menuitem", { name, exact: true }))
+				.first();
+			const opener = (await exact.isVisible()) ? exact : loose;
 			// What was already up BEFORE the click, so the wait below can tell the overlay this click
 			// opens from the one it was clicked inside.
 			const seen = kind === "open" ? await visibleOverlays(page) : null;
@@ -829,8 +854,8 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				//
 				// There is NO fixed floor after it any more. #5636 kept a 300 ms one because, without it,
 				// `account.delete` failed on its first gate run (job 112906793672) with "Cancel was pressed
-				// and rows still moved: authz_activity_log 15→16" — the overview's `getAlertsBootstrap`
-				// records a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
+				// and rows still moved: authz_activity_log 15→16" — the overview's then `getAlertsBootstrap` (since
+				// removed, #6125) recorded a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
 				// it. That race is now NARROWED where it belongs, at the SNAPSHOT (`settledFingerprint`,
 				// #5639: network-idle plus a quiet-interval re-read; a write landing later than that is
 				// still possible, see there), so a step's settle answers only "is the UI ready", and an
@@ -2051,6 +2076,19 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
 });
 
+test("self-test — an `open:` step clicks the control NAMED exactly, not an earlier one whose label contains the name", async ({ page }) => {
+	// #6119, `addons.remove`'s first step on the gate: the board's add-on card ("Add-on Prometheus +
+	// Grafana") is in the DOM before the toolbar's **Add** button, and `/Add/i` matches both.
+	await page.setContent(`
+		<main>
+			<div role="group" aria-label="Add-on Prometheus + Grafana" onclick="document.body.dataset.hit='card'">card</div>
+			<button onclick="document.body.dataset.hit='add'">Add</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Add" }] };
+	expect(await walkReach(page, entry), "the step names a real button, so it must be taken").toBeNull();
+	await expect(page.locator("body")).toHaveAttribute("data-hit", "add");
+});
+
 test("self-test — an `open:` step waits for the overlay it opened, so a SLOW palette still scopes the next step", async ({ page }) => {
 	// #5631, `addons.remove`'s whole chain: `{open: "Add"}` opens the palette, `{open: "Prometheus +
 	// Grafana"}` names an option inside it, and the canvas card behind carries the same label. Here
@@ -2090,7 +2128,8 @@ async function routeSlowWriter(page: Page, respondAfterMs: number, onAnswered: (
 }
 
 test("self-test — the snapshot waits out a request the PAGE started, and the fire-and-forget write after it (#5639)", async ({ page }) => {
-	// `account.delete`'s shape: the overview fires `getAlertsBootstrap` on mount, the server answers,
+	// `account.delete`'s shape as #5639 found it: the overview fired a read on mount (then the since-removed
+	// `getAlertsBootstrap`), the server answered,
 	// and the activity row commits AFTER the answer. The request here answers at 600 ms — past the
 	// 300 ms floor this replaced — and its "row" lands 150 ms after that, inside one quiet interval,
 	// so a single reading taken the moment the request finished misses it as surely as one taken
@@ -2127,6 +2166,23 @@ test("self-test — a request that NEVER finishes bounds the wait and is NAMED, 
 	inFlight.dispose();
 	expect(Date.now() - started, "the wait is bounded").toBeLessThan(5_000);
 	expect(pending).toEqual(["GET /hangs"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — a fetch that asks for an event stream is not waited on; the same fetch without it is", async ({ page }) => {
+	// The console's change stream never finishes by design (#6115). It must not eat the settle budget,
+	// and the exclusion must be the Accept header, not "any fetch that hangs".
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	const stream = page.waitForRequest("https://settle.self-test.invalid/acme/~/events");
+	const plain = page.waitForRequest("https://settle.self-test.invalid/hangs");
+	await page.setContent(
+		`<script>fetch("https://settle.self-test.invalid/acme/~/events", { headers: { Accept: "text/event-stream" } }); fetch("https://settle.self-test.invalid/hangs")</script>`,
+	);
+	await Promise.all([stream, plain]);
+	const pending = await inFlight.idle(300);
+	inFlight.dispose();
+	expect(pending, "only the plain request is still waited on").toEqual(["GET /hangs"]);
 	await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 

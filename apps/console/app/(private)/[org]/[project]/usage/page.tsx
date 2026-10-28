@@ -3,15 +3,11 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import {
-	getProjectAiUsage,
-	getProjectResourceCounts,
-	getProjectUsage,
-} from "@/app/server/actions/project-usage";
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import { ProjectUsagePanel } from "@/components/settings/usage/project-usage-panel";
+import { USAGE_DEFAULT_RANGE } from "@/components/settings/usage/usage-reads";
 import { getQueryClient } from "@/lib/query/client";
-import { qk } from "@/lib/query/keys";
+import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
@@ -23,9 +19,10 @@ export const metadata = pageMetadata({
  * `/{org}/{project}/usage` — the project's real per-project usage report: jobs, managed runner
  * job-minutes, clusters, estimated cloud cost, and AI credits (attributed via ref_id, best-
  * effort). Org-wide meters (seats, plan limits, provisioned-runner hours) link out to the org
- * usage page. Resolves + validates the slug (bad URL → 404), prefetches the period-fixed reads
- * into the shared cache and hands the resolved project id to the client panel (which also drives
- * the range-based over-time chart). `loading.tsx` covers the prefetch window.
+ * usage page. Resolves + validates the slug (bad URL → 404), then prefetches EVERY read the panel
+ * makes on first paint — the period-fixed reads AND the opening window of the over-time chart,
+ * keyed by its preset — through the read router, in-process (#6127, ADR 0005 D1). The chart's
+ * window used to be fetched in the browser on mount. `loading.tsx` covers the prefetch window.
  */
 export default async function ProjectUsageRoute({
 	params,
@@ -41,19 +38,17 @@ export default async function ProjectUsageRoute({
 	}
 
 	const queryClient = getQueryClient();
+	const rpc = serverOrpc();
+	const input = { projectId };
 	await Promise.all([
-		queryClient.prefetchQuery({
-			queryKey: [...qk.projectUsage(projectId), "report"] as const,
-			queryFn: () => getProjectUsage(projectId),
-		}),
-		queryClient.prefetchQuery({
-			queryKey: [...qk.projectUsage(projectId), "counts"] as const,
-			queryFn: () => getProjectResourceCounts(projectId),
-		}),
-		queryClient.prefetchQuery({
-			queryKey: [...qk.projectUsage(projectId), "ai"] as const,
-			queryFn: () => getProjectAiUsage(projectId),
-		}),
+		queryClient.prefetchQuery(rpc.usage.project.queryOptions({ input })),
+		queryClient.prefetchQuery(rpc.usage.projectResources.queryOptions({ input })),
+		queryClient.prefetchQuery(rpc.usage.projectAi.queryOptions({ input })),
+		queryClient.prefetchQuery(
+			rpc.usage.projectOverTime.queryOptions({
+				input: { projectId, range: USAGE_DEFAULT_RANGE },
+			}),
+		),
 	]);
 
 	return (

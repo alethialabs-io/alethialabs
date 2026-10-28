@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useCallback, useMemo } from "react";
-import { useJobsQuery } from "@/lib/query/use-jobs-query";
+import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 import { NOTIFY_JOB_TYPES } from "@/lib/jobs/toast-copy";
 import type {
@@ -37,7 +37,7 @@ const TERMINAL: ReadonlySet<PublicProvisionJobStatus> = new Set([
  * list that emptied on every remount). Unread = terminal jobs the user hasn't acknowledged.
  */
 export function useJobNotifications() {
-	const { data: jobs } = useJobsQuery();
+	const { data: jobs } = useRecentJobsQuery();
 	const readJobIds = useNotificationsStore((s) => s.readJobIds);
 	const markRead = useNotificationsStore((s) => s.markRead);
 	const markAllReadStore = useNotificationsStore((s) => s.markAllRead);

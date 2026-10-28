@@ -9,40 +9,40 @@
 // place a user meets the no-cloud-account gate. Both now call the `try*` forms, which RETURN
 // `{ ok: false, error }`.
 //
+// #6119: both are on the mutation contract. The board calls `deployDesignAction` /
+// `destroyEnvironmentAction` (app/server/actions/canvas-writes.ts) through `useActionMutation`; a
+// refusal arrives as a `conflict` whose sentence is toasted verbatim. The server half — the design is
+// saved BEFORE the deploy is asked for, so a refused deploy leaves it saved — is pinned in
+// tests/actions/canvas-writes.test.ts.
+//
 // The board is other files' subject (React Flow, every card, the palettes), so each of its pieces is
-// a stub. What is real is `DesignProjectCanvas`'s own `handleDeploy` / `handleDestroyEnvironment` and
-// the canvas store, which is where "the baseline is NOT committed when nothing deployed" is read.
+// a stub. What is real is `DesignProjectCanvas`'s own `handleDeploy` / `handleDestroyEnvironment`,
+// the mutation contract, and the canvas store, which is where "the baseline is NOT committed when
+// nothing deployed" is read.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createContext, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const tryProvisionProject = vi.fn();
-const tryDestroyProject = vi.fn();
-const applyStagedChanges = vi.fn();
+const deployDesign = vi.fn();
+const destroyEnvironment = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 const track = vi.fn();
 
-vi.mock("@/app/server/actions/projects", () => ({
-	createProject: vi.fn(),
-	getDestroyTree: vi.fn(async () => ({ tree: [] })),
-	tryDestroyProject: (...a: unknown[]) => tryDestroyProject(...a),
-	tryProvisionProject: (...a: unknown[]) => tryProvisionProject(...a),
+vi.mock("@/app/server/actions/canvas-writes", () => ({
+	createProjectFromDesignAction: vi.fn(),
+	deployDesignAction: (...a: unknown[]) => deployDesign(...a),
+	destroyEnvironmentAction: (...a: unknown[]) => destroyEnvironment(...a),
+	discardStagedDesignAction: vi.fn(),
+	saveDesignAction: vi.fn(),
 }));
-vi.mock("@/app/server/actions/staged-changes", () => ({
-	applyStagedChanges: (...a: unknown[]) => applyStagedChanges(...a),
-	discardStagedChanges: vi.fn(),
-}));
-vi.mock("@/app/server/actions/resolve", () => ({
-	resolveActiveEnvironmentId: vi.fn(async () => "env-1"),
-}));
-vi.mock("@/app/server/actions/byo-charts", () => ({
-	getProjectByoCharts: vi.fn(async () => ({ charts: [] })),
-	getProjectChartWorkloads: vi.fn(async () => ({ workloads: [] })),
-}));
-vi.mock("@/app/server/actions/byo-iac", () => ({ getIacSource: vi.fn(async () => null) }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({}).orpc };
+});
 vi.mock("sonner", () => ({
 	toast: {
 		error: (...a: unknown[]) => toastError(...a),
@@ -54,8 +54,11 @@ vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 	useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock("@tanstack/react-query", () => ({
-	useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+// The board's out-of-band reads (charts, workloads, IaC source, environment status) are queries;
+// none is this test's subject, so each answers "no data yet". The mutations are real.
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-query")>()),
+	useQuery: () => ({ data: undefined, error: null, refetch: vi.fn() }),
 }));
 vi.mock("@xyflow/react", () => ({
 	ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -74,6 +77,7 @@ vi.mock("@/components/design-project/canvas/graph/graph-to-form", () => ({
 }));
 vi.mock("@/lib/canvas/environment-status-context", () => ({
 	useEnvironmentStatus: () => ({ iac: null }),
+	EnvironmentStatusProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock("@/lib/query/use-addons-query", () => ({ useAddonsQuery: () => ({ data: undefined }) }));
 vi.mock("@/lib/canvas/arrange", () => ({ arrangeBoard: vi.fn() }));
@@ -96,9 +100,16 @@ vi.mock("@/components/design-project/canvas/cards/workspace-rail", () => ({
 	WorkspaceRail: ({
 		destroyEnvironment,
 	}: {
-		destroyEnvironment?: { destroy: (o: { cascade: boolean }) => Promise<void> };
+		destroyEnvironment?: {
+			destroy: (o: { cascade: boolean; environmentId: string }) => Promise<void>;
+		};
 	}) => (
-		<button type="button" onClick={() => void destroyEnvironment?.destroy({ cascade: false })}>
+		// The real dialog hands over the environment its destroy tree named (TREE_ENV), which is NOT
+		// necessarily the board's own environment id.
+		<button
+			type="button"
+			onClick={() => void destroyEnvironment?.destroy({ cascade: false, environmentId: TREE_ENV })}
+		>
 			Destroy environment
 		</button>
 	),
@@ -150,32 +161,39 @@ vi.mock("@/components/design-project/byo/iac-source-canvas-context", () => ({
 }));
 
 import { DesignProjectCanvas } from "@/components/design-project/canvas/design-project-canvas";
+import { DESTROY_HOLD_KEY } from "@/lib/query/topics";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
+/** The environment the destroy tree named — what the dialog hands the destroy. */
+const TREE_ENV = "env-from-tree";
 const NO_ACCOUNT = "Connect a cloud account for this project before deploying.";
 const TENANTS = "This cluster still hosts 2 environments — destroy them first, or cascade.";
 
 /** The canvas in edit mode, on one project's environment. */
-function renderCanvas() {
+function renderCanvas(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
 	return render(
-		<DesignProjectCanvas
-			cloudIdentities={[]}
-			projectId="proj-1"
-			environmentId="env-1"
-			projectName="shop"
-		/>,
+		<QueryClientProvider client={client}>
+			<DesignProjectCanvas
+				cloudIdentities={[]}
+				projectId="proj-1"
+				environmentId="env-1"
+				projectName="shop"
+			/>
+		</QueryClientProvider>,
 	);
 }
+
+/** A refusal, as the action answers it. */
+const refused = (message: string) => ({ ok: false, error: { kind: "conflict", message } });
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	useCanvasStore.getState().reset();
-	applyStagedChanges.mockResolvedValue(undefined);
 });
 
 describe("Canvas Deploy", () => {
 	it("shows the refusal's own sentence and leaves the changes pending — nothing deployed", async () => {
-		tryProvisionProject.mockResolvedValue({ ok: false, error: NO_ACCOUNT });
+		deployDesign.mockResolvedValue(refused(NO_ACCOUNT));
 		useCanvasStore.setState({ dirty: true });
 		const user = userEvent.setup();
 		renderCanvas();
@@ -183,18 +201,20 @@ describe("Canvas Deploy", () => {
 		await user.click(screen.getByRole("button", { name: "Deploy" }));
 
 		await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith(NO_ACCOUNT));
-		expect(tryProvisionProject).toHaveBeenCalledWith("proj-1", undefined, undefined, "env-1");
-		// The design was saved before the deploy was asked for; only the deploy was refused.
-		expect(applyStagedChanges).toHaveBeenCalledTimes(1);
+		expect(deployDesign).toHaveBeenCalledWith({
+			projectId: "proj-1",
+			environmentId: "env-1",
+			design: {},
+		});
 		expect(useCanvasStore.getState().dirty).toBe(true);
 		expect(toastSuccess).not.toHaveBeenCalled();
 		expect(track).not.toHaveBeenCalled();
-		// The button is usable again: `deploying` was released by the `finally`.
+		// The button is usable again: the mutation settled.
 		expect(screen.getByRole("button", { name: "Deploy" })).toBeEnabled();
 	});
 
 	it("commits the baseline and says so when the deploy is queued", async () => {
-		tryProvisionProject.mockResolvedValue({ ok: true, jobId: "job-1" });
+		deployDesign.mockResolvedValue({ ok: true, data: { environmentId: "env-1", jobId: "job-1" } });
 		useCanvasStore.setState({ dirty: true });
 		const user = userEvent.setup();
 		renderCanvas();
@@ -210,19 +230,23 @@ describe("Canvas Deploy", () => {
 
 describe("Canvas Destroy", () => {
 	it("shows the refusal's own sentence and reports nothing queued", async () => {
-		tryDestroyProject.mockResolvedValue({ ok: false, error: TENANTS });
+		destroyEnvironment.mockResolvedValue(refused(TENANTS));
 		const user = userEvent.setup();
 		renderCanvas();
 
 		await user.click(screen.getByRole("button", { name: "Destroy environment" }));
 
 		await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith(TENANTS));
-		expect(tryDestroyProject).toHaveBeenCalledWith("proj-1", "env-1", null, { cascade: false });
+		expect(destroyEnvironment).toHaveBeenCalledWith({
+			projectId: "proj-1",
+			environmentId: TREE_ENV,
+			cascade: false,
+		});
 		expect(toastSuccess).not.toHaveBeenCalled();
 	});
 
 	it("says how many environments were queued when it is accepted", async () => {
-		tryDestroyProject.mockResolvedValue({ ok: true, jobs: [{ jobId: "a" }, { jobId: "b" }] });
+		destroyEnvironment.mockResolvedValue({ ok: true, data: { environmentId: TREE_ENV, queued: 2 } });
 		const user = userEvent.setup();
 		renderCanvas();
 
@@ -232,5 +256,44 @@ describe("Canvas Destroy", () => {
 			expect(toastSuccess).toHaveBeenCalledWith("Destroy queued for 2 environments"),
 		);
 		expect(toastError).not.toHaveBeenCalled();
+	});
+
+	it("invalidates every read that shows the destroyed environment, and nothing else", async () => {
+		destroyEnvironment.mockResolvedValue({ ok: true, data: { environmentId: TREE_ENV, queued: 1 } });
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const shown = [
+			[["canvas", "environmentStatus"], { input: {}, type: "query" }],
+			[["canvas", "environmentJobs"], { input: {}, type: "query" }],
+			[["environments", "overview"], { input: {}, type: "query" }],
+			[["workspace", "environments"], { input: {}, type: "query" }],
+			[...DESTROY_HOLD_KEY, "job-1"],
+		];
+		const unrelated = [["canvas", "addons"], { input: {}, type: "query" }];
+		for (const key of [...shown, unrelated]) client.setQueryData(key, {});
+		const user = userEvent.setup();
+		renderCanvas(client);
+
+		await user.click(screen.getByRole("button", { name: "Destroy environment" }));
+
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Destroy queued"));
+		expect(shown.filter((key) => !client.getQueryState(key)?.isInvalidated)).toEqual([]);
+		expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+	});
+});
+
+describe("the double-submit guard", () => {
+	it("asks for one deploy however often Deploy is pressed while it is in flight", async () => {
+		let settle: (v: unknown) => void = () => {};
+		deployDesign.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+		const user = userEvent.setup();
+		renderCanvas();
+
+		await user.click(screen.getByRole("button", { name: "Deploy" }));
+		await user.click(screen.getByRole("button", { name: "Deploy" }));
+		await user.click(screen.getByRole("button", { name: "Deploy" }));
+
+		expect(deployDesign).toHaveBeenCalledTimes(1);
+		settle({ ok: true, data: { environmentId: "env-1", jobId: "job-1" } });
+		await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Deploy queued"));
 	});
 });
