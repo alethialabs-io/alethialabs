@@ -130,18 +130,20 @@ const B_IDS = ["B1", "B2", "B3", "B4", "B5"] as const satisfies readonly Predica
  * set therefore shrinks with every correct prefetch migration. A count floor over them had to be
  * lowered by hand each time (B3 10→9→7→6, B5 10→9) — #6318. They are held to `loadReadFloorProblems`:
  * every route an independent load saw read on load is scored, every other gap names its route, and
- * the control route is witnessed and scored.
+ * each shell's control route (`LOAD_READ_CONTROLS`) is witnessed and scored.
  */
 const LOAD_READ_FLOORED: readonly LoadReadPredicate[] = ["B3", "B5"];
 
 /**
- * The control for the B3/B5 floor: a real route that makes a read of its own on load by design, so
- * a scan that stops seeing reads cannot satisfy "every route that read was scored" by seeing none.
- * The jobs slice reads `members.list` from the client on load. Should it ever prefetch that too, the
- * floor goes red naming this constant, and the fix is to name another route that reads on load —
- * one decision, not one per migration.
+ * The controls for the B3/B5 floor: in EACH shell, a real route that makes a read of its own on load
+ * by design, so a scan that stops seeing reads cannot satisfy "every route that read was scored" by
+ * seeing none — and a fault confined to one shell (the classifier giving `[project]`-shell page reads
+ * to the shell, say) cannot hide by dropping that shell's routes from the witness and the verdicts
+ * at once. Both jobs lists read `members.list` from the client on load. Should one ever prefetch it,
+ * the floor goes red naming it, and the fix is to name another route of that shell that reads on
+ * load — one decision, not one per migration.
  */
-const LOAD_READ_CONTROL = REFERENCE_ROUTE;
+const LOAD_READ_CONTROLS: readonly string[] = [REFERENCE_ROUTE, "/[org]/[project]/jobs"];
 
 /**
  * The routes whose page the hosted product renders differently from the release gate's SELF-MANAGED
@@ -540,7 +542,10 @@ test.describe("phase 3 · B3 and B4 judged, then B5, each of a page's own reads 
 				for (const id of ["B3", "B4"] as const) report.notMeasured({ route: route.route, url, predicate: id, reason: p2.error });
 			} else {
 				// The B3 load let through what phase 2 knew to be the shell's; a read it held that the
-				// finished classifier calls the shell's was never the page's to hold.
+				// finished classifier calls the shell's was never the page's to hold, so it leaves the held
+				// set. The SNAPSHOT is not corrected by that: it was taken with the shell read still held,
+				// and a held shell action can stall hydration. Filtering decides only whether the route had
+				// a read of its own held (`no-page-reads` when none); it does not re-take the render.
 				put(route, url, "B3", judgeB3(a, { snapshot: p2.pageHeld.snapshot, held: [] /* MUTATION #6318: B3 sees no read */ }));
 				put(route, url, "B4", judgeB4(a, p2.failed, (key) => !isShell(key)));
 			}
@@ -610,6 +615,6 @@ test("every B predicate scored enough routes to be a measurement", () => {
 // stops reading on load, so B4's cold load stops witnessing it and its `no-page-reads` is legitimate.
 test("B3 and B5 scored every route that made a read of its own on load", () => {
 	const records = writtenRecords();
-	const problems = LOAD_READ_FLOORED.flatMap((id) => loadReadFloorProblems(records, id, LOAD_READ_CONTROL));
+	const problems = LOAD_READ_FLOORED.flatMap((id) => loadReadFloorProblems(records, id, LOAD_READ_CONTROLS));
 	expect(problems, "a route that read on load and was not scored is the instrument measuring less than it saw").toEqual([]);
 });

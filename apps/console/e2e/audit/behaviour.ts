@@ -723,16 +723,25 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 // So the floor asks a question a migration cannot change the answer to: did the instrument score
 // every route that an INDEPENDENT load saw make a read of its own on load? The witness is B4's cold
 // load — a different load, in a context of its own, that fails every read and records which of them
-// were the page's. A route it saw read on load must be scored (or be its own empty state, which is
-// a fact about the page). A route it did not see read is legitimately `no-page-reads`. Any other
-// NOT MEASURED — a thrown load, a missing phase, a withheld predicate, an unrecognised reason — is
-// the instrument's and fails. And because "every witnessed route was scored" is vacuously true when
-// nothing was witnessed, a CONTROL route that reads on load by design must be witnessed and scored.
+// were the page's. A route it saw read on load must be scored, with one excuse per predicate that is
+// a fact about the page: B3 may read `answered-empty` (the answered render is its own empty state),
+// B5 may read `over-read-budget` (more reads of its own than B5 fails one at a time). A route it did
+// not see read is legitimately `no-page-reads` (B5: also `not-intercepted`). Any other NOT MEASURED
+// — a thrown load, a missing phase, a withheld predicate, an unrecognised reason — is the
+// instrument's and fails. A B4 that was itself withheld, or not measured for an instrument reason,
+// witnesses nothing, and one that still carries cold-load evidence fails the floor outright.
 //
-// The boundary, stated: the witness and the verdict are classified by the SAME shell classifier, so
-// a classifier that wrongly calls a page's read the shell's moves a route out of both at once and is
-// invisible here. That is the fixture control's job (`shell-only`, `cold-shell`, `action-page-read`,
-// `client-fetch`) and the classifier's self-tests', not this floor's.
+// "Every witnessed route was scored" is vacuously true when nothing was witnessed, so CONTROL routes
+// that read on load by design must each be witnessed and scored — one per SHELL. The witness and the
+// verdicts share the shell classifier (`shellReadsFor`), the read carrier (`readCarrier`) and the
+// read key (`readKey`), so a fault in any of them can move a route out of both at once. A control in
+// every shell turns such a fault red as long as it reaches the control's page reads; a fault confined
+// to one shell's routes is caught by that shell's control.
+//
+// The boundary, stated: a fault in those shared parts that spares every control's reads and drops
+// only other routes' is invisible here. That is the fixture control's job (`shell-only`,
+// `cold-shell`, `action-page-read`, `client-fetch` drive the classifier, the carrier and the key
+// together) and the classifier's self-tests', not this floor's.
 
 /** A written B record, as the floor reads it. */
 export interface BFloorRecord {
@@ -767,9 +776,19 @@ function reasonToken(reason: string | undefined): string {
 	return (reason ?? "").trim().split(/\s/)[0] ?? "";
 }
 
+/** B4's own NOT MEASURED reasons that are facts about the route — a B4 carrying one still witnesses. */
+const B4_ROUTE_REASONS: readonly string[] = ["answered-empty", "no-page-reads", "no-reads-failed"];
+
+/** Whether a B4 record can witness: scored, or NOT MEASURED for a fact about its route. */
+function trustedB4(record: BFloorRecord): boolean {
+	return record.verdict !== "NOT MEASURED" || B4_ROUTE_REASONS.includes(reasonToken(record.reason));
+}
+
 /**
- * The page reads B4's COLD load failed on `record`, or an empty list when the record carries none
- * — a B4 that was not measured witnesses nothing, and the B3/B5 cells it would have excused fail.
+ * The page reads B4's COLD load failed on `record`, or an empty list when the record carries no
+ * cold-phase evidence. A B4 whose load threw, or that has no record, carries none and witnesses
+ * nothing. A WITHHELD B4 keeps its evidence (`report.ts` rewrites the verdict, not the evidence), so
+ * `readsOnLoad` skips it and `loadReadFloorProblems` fails on it.
  */
 function coldPageReads(record: BFloorRecord): string[] {
 	const ev = record.evidence;
@@ -787,12 +806,13 @@ function coldPageReads(record: BFloorRecord): string[] {
 
 /**
  * The routes an independent load saw make a read of their own ON LOAD, with those reads: B4's cold
- * phase failed at least one read the shell classifier gave the page.
+ * phase failed at least one read the shell classifier gave the page. Only a B4 that was measured
+ * (`trustedB4`) witnesses.
  */
 export function readsOnLoad(records: readonly BFloorRecord[]): Map<string, string[]> {
 	const out = new Map<string, string[]>();
 	for (const r of records) {
-		if (r.predicate !== "B4") continue;
+		if (r.predicate !== "B4" || !trustedB4(r)) continue;
 		const reads = coldPageReads(r);
 		if (reads.length > 0) out.set(r.route, reads);
 	}
@@ -802,11 +822,18 @@ export function readsOnLoad(records: readonly BFloorRecord[]): Map<string, strin
 /**
  * Everything wrong with `predicate`'s column as a measurement, against the load witness. Empty when
  * every route that made a read of its own on load was scored, every other NOT MEASURED names a fact
- * about its route, and `control` — a route that reads on load by design — was both witnessed and scored.
+ * about its route, and every one of `controls` — routes that read on load by design, one per shell —
+ * was both witnessed and scored.
  */
-export function loadReadFloorProblems(records: readonly BFloorRecord[], predicate: LoadReadPredicate, control: string): string[] {
+export function loadReadFloorProblems(records: readonly BFloorRecord[], predicate: LoadReadPredicate, controls: readonly string[]): string[] {
 	const problems: string[] = [];
+	if (controls.length === 0) problems.push(`the ${predicate} floor was given no control route, so a scan that saw no read anywhere would pass it`);
 	const witnessed = readsOnLoad(records);
+	for (const r of records) {
+		if (r.predicate === "B4" && !trustedB4(r) && coldPageReads(r).length > 0) {
+			problems.push(`B4 on ${r.route} is NOT MEASURED (${(r.reason ?? "").slice(0, 120)}) yet carries cold-load evidence — a withheld B4 cannot witness ${predicate}'s floor`);
+		}
+	}
 	const mine = new Map(records.filter((r) => r.predicate === predicate).map((r) => [r.route, r]));
 	const accepted = ROUTE_REASONS[predicate];
 	const excuses = LOAD_READ_EXCUSES[predicate];
@@ -825,12 +852,14 @@ export function loadReadFloorProblems(records: readonly BFloorRecord[], predicat
 	for (const route of witnessed.keys()) {
 		if (!mine.has(route)) problems.push(`${predicate} has no record for ${route}, which B4's cold load saw make a read of its own on load`);
 	}
-	const c = mine.get(control);
-	if (!witnessed.has(control)) {
-		problems.push(`the control route ${control} was not seen making a read of its own on load — either the witness stopped seeing reads, or the control stopped reading on load and needs replacing with a route that does`);
-	}
-	if (c?.verdict !== "PASS" && c?.verdict !== "FAIL") {
-		problems.push(`${predicate} did not score the control route ${control} (${c ? `${c.verdict}${c.reason ? ` — ${c.reason.slice(0, 120)}` : ""}` : "no record"})`);
+	for (const control of controls) {
+		const c = mine.get(control);
+		if (!witnessed.has(control)) {
+			problems.push(`the control route ${control} was not seen making a read of its own on load — either the witness stopped seeing reads in its shell, or the control stopped reading on load and needs replacing with a route of that shell that does`);
+		}
+		if (c?.verdict !== "PASS" && c?.verdict !== "FAIL") {
+			problems.push(`${predicate} did not score the control route ${control} (${c ? `${c.verdict}${c.reason ? ` — ${c.reason.slice(0, 120)}` : ""}` : "no record"})`);
+		}
 	}
 	return problems;
 }

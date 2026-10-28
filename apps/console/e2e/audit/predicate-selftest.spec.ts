@@ -864,6 +864,8 @@ test("the [org] layout's read-router prefetches are the shell's reads", () => {
 // each way that run can stop being a measurement.
 test("the B3/B5 floor fails when the instrument measures nothing, and not when a route prefetches", () => {
 	const CONTROL = "/[org]/~/jobs";
+	const PROJECT_CONTROL = "/[org]/[project]/jobs";
+	const CONTROLS = [CONTROL, PROJECT_CONTROL];
 	/** B4's evidence: what its cold load failed of the page's own. */
 	const b4 = (route: string, cold: string[]): BFloorRecord => ({
 		route,
@@ -873,12 +875,18 @@ test("the B3/B5 floor fails when the instrument measures nothing, and not when a
 		evidence: { phases: [{ phase: "cold load", pageReadsFailed: cold }, { phase: "stale refetch", pageReadsFailed: [...cold, "rpc x/stale"] }] },
 	});
 	const cell = (route: string, predicate: "B3" | "B5", verdict: string, reason?: string): BFloorRecord => ({ route, predicate, verdict, ...(reason ? { reason: `${reason} — …` } : {}) });
-	// Three routes that read on load (one of them the control, one its own empty state), one that
-	// prefetches everything, one redirect.
+	// Routes that read on load in both shells (the two controls, one its own empty state), one in the
+	// project shell that is not a control, one that prefetches everything, one redirect.
 	const healthy: BFloorRecord[] = [
 		b4(CONTROL, ["rpc members/list"]),
 		cell(CONTROL, "B3", "PASS"),
 		cell(CONTROL, "B5", "PASS"),
+		b4(PROJECT_CONTROL, ["rpc members/list"]),
+		cell(PROJECT_CONTROL, "B3", "PASS"),
+		cell(PROJECT_CONTROL, "B5", "PASS"),
+		b4("/[org]/[project]/environments", ["rpc classification/assignments"]),
+		cell("/[org]/[project]/environments", "B3", "PASS"),
+		cell("/[org]/[project]/environments", "B5", "PASS"),
 		b4("/[org]/~/settings/roles", ["rpc classification/assignments"]),
 		cell("/[org]/~/settings/roles", "B3", "PASS"),
 		cell("/[org]/~/settings/roles", "B5", "FAIL"),
@@ -890,9 +898,10 @@ test("the B3/B5 floor fails when the instrument measures nothing, and not when a
 		cell("/[org]/~/connectors", "B5", "NOT MEASURED", "not-intercepted"),
 		{ route: "/[org]/~/settings", predicate: "B3", verdict: "N/A", reason: "redirect-only" },
 	];
-	const floor = (records: readonly BFloorRecord[]) => [...loadReadFloorProblems(records, "B3", CONTROL), ...loadReadFloorProblems(records, "B5", CONTROL)];
+	const floor = (records: readonly BFloorRecord[]) => [...loadReadFloorProblems(records, "B3", CONTROLS), ...loadReadFloorProblems(records, "B5", CONTROLS)];
 	expect(floor(healthy), "the healthy run").toEqual([]);
-	expect([...readsOnLoad(healthy).keys()].sort()).toEqual([CONTROL, "/[org]/~/runners", "/[org]/~/settings/roles"].sort());
+	expect([...readsOnLoad(healthy).keys()].sort()).toEqual([CONTROL, PROJECT_CONTROL, "/[org]/[project]/environments", "/[org]/~/runners", "/[org]/~/settings/roles"].sort());
+	expect(loadReadFloorProblems(healthy, "B3", []).join("\n"), "a floor with no control").toMatch(/given no control route/);
 
 	// A route MIGRATING to the server prefetch stops reading on load: B4's cold load no longer sees it,
 	// and B3/B5's `no-page-reads` is the truth. The old floor had to be lowered for exactly this.
@@ -905,13 +914,31 @@ test("the B3/B5 floor fails when the instrument measures nothing, and not when a
 	// `no-page-reads` while B4's cold load still fails the page's reads: every witnessed route is named.
 	const blind = healthy.map((r) => (r.predicate === "B3" || r.predicate === "B5" ? (r.verdict === "N/A" ? r : { ...r, verdict: "NOT MEASURED", reason: "no-page-reads — …" }) : r));
 	const blindProblems = floor(blind).join("\n");
-	for (const route of [CONTROL, "/[org]/~/settings/roles", "/[org]/~/runners"]) expect(blindProblems, `the blind run names ${route}`).toContain(`on ${route} read \`no-page-reads\``);
+	for (const route of [CONTROL, PROJECT_CONTROL, "/[org]/~/settings/roles", "/[org]/~/runners"]) expect(blindProblems, `the blind run names ${route}`).toContain(`on ${route} read \`no-page-reads\``);
 
 	// …and the witness goes blind WITH it: nothing reads on load anywhere, so "every witnessed route
 	// was scored" is vacuously true. The control is what keeps that red.
 	const allBlind = blind.map((r) => (r.predicate === "B4" ? b4(r.route, []) : r));
 	expect(floor(allBlind).join("\n"), "a run in which nothing read on load").toMatch(/control route \/\[org\]\/~\/jobs was not seen making a read/);
 	expect(floor(allBlind).join("\n")).toMatch(/did not score the control route/);
+
+	// A SHELL-CONFINED fault: the classifier (or the carrier, or the key — the witness shares all three)
+	// stops giving the `[project]` shell's page reads to the page. Every `[project]` route leaves the
+	// witness AND the verdicts at once, and every `[org]/~` route is untouched — so "every witnessed
+	// route was scored" stays true. Only the project shell's own control can see it.
+	const projectBlind = healthy.map((r) => {
+		if (!r.route.startsWith("/[org]/[project]/")) return r;
+		if (r.predicate === "B4") return b4(r.route, []);
+		return cell(r.route, r.predicate === "B3" ? "B3" : "B5", "NOT MEASURED", "no-page-reads");
+	});
+	const projectProblems = floor(projectBlind).join("\n");
+	expect(projectProblems, "a fault confined to the [project] shell").toMatch(/control route \/\[org\]\/\[project\]\/jobs was not seen making a read/);
+	expect(projectProblems, "and nothing is said about the org shell's control").not.toContain(`control route ${CONTROL}`);
+
+	// A WITHHELD B4 keeps its evidence; it must not witness, and the floor says so outright.
+	const b4Withheld = healthy.map((r) => (r.predicate === "B4" ? { ...r, verdict: "NOT MEASURED", reason: "positive control failed: B4 on the `static` fixture" } : r));
+	expect(readsOnLoad(b4Withheld).size, "a withheld B4 witnesses nothing").toBe(0);
+	expect(floor(b4Withheld).join("\n")).toMatch(/a withheld B4 cannot witness/);
 
 	// A thrown load, a missing phase and a withheld predicate are the instrument's, never the route's —
 	// on ANY route, witnessed or not.
@@ -920,7 +947,7 @@ test("the B3/B5 floor fails when the instrument measures nothing, and not when a
 	const missing = healthy.filter((r) => !(r.route === "/[org]/~/settings/roles" && r.predicate === "B5"));
 	expect(floor(missing).join("\n")).toMatch(/B5 has no record for \/\[org\]\/~\/settings\/roles/);
 	const withheld = healthy.map((r) => (r.predicate === "B5" && r.verdict !== "N/A" ? { ...r, verdict: "NOT MEASURED", reason: "positive control failed: B5 on the `static` fixture" } : r));
-	expect(floor(withheld).filter((p) => p.includes("instrument's")).length, "every withheld B5 cell").toBe(4);
+	expect(floor(withheld).filter((p) => p.includes("instrument's")).length, "every withheld B5 cell").toBe(6);
 
 	// A B4 that was not measured witnesses nothing — the evidence the floor reads is absent, not empty.
 	expect(readsOnLoad([{ route: CONTROL, predicate: "B4", verdict: "NOT MEASURED", reason: "instrument-error — …" }]).size).toBe(0);

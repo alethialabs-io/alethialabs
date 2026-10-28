@@ -608,12 +608,18 @@ produced a PASS or a FAIL on at least ten routes.
 read of its own on load, and ADR 0005 moves first-paint reads onto the server prefetch, so their
 measurable set shrinks with every correct migration — a count floor had to be lowered by hand each time.
 Instead, B4's cold load (an independent load that fails every read and records which were the page's)
-witnesses which routes read on load. Every witnessed route must be scored on B3 and B5, or be its own
-empty state (`answered-empty`). An unwitnessed route may read `no-page-reads`. Any other NOT MEASURED, a
-thrown load or a withheld predicate, fails the floor. And the jobs slice, which reads `members.list` on
-load by design, must be witnessed and scored, so a scan that stops seeing reads cannot pass by seeing
-none. The witness uses the same shell classifier as the verdicts, so a classifier that wrongly gives a
-page read to the shell is out of this floor's reach; the fixture control covers that. B3 and B4 are
+witnesses which routes read on load. Every witnessed route must be scored on B3 and B5, with one excuse
+per predicate that is a fact about the page: B3 may read `answered-empty` (the answered render is its own
+empty state), and B5 may read `over-read-budget`. An unwitnessed route may read `no-page-reads` (B5 also
+`not-intercepted`). Any other NOT MEASURED, a thrown load or a withheld predicate, fails the floor. A B4
+that was withheld or not measured witnesses nothing, and a withheld B4 still carrying evidence fails the
+floor outright. In each shell, a control route that reads `members.list` on load by design (the
+`~/jobs` and `[project]/jobs` lists) must be witnessed and scored. So a scan that stops seeing reads
+cannot pass by seeing none, and a fault confined to one shell cannot pass by dropping that shell's
+routes from the witness and the verdicts together. The witness and the verdicts share the shell
+classifier (`shellReadsFor`), the read carrier (`readCarrier`) and the read key (`readKey`). A fault in
+them that spares every control's reads is out of this floor's reach. The fixture control drives all
+three together and covers that. B3 and B4 are
 judged after every route's loads have been taken, so each route is classified against the same
 evidence whatever its position in the manifest.
 
