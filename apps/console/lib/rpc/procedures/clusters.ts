@@ -164,7 +164,7 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 			.where(
 				and(
 					eq(projectCluster.org_id, actor.orgId),
-					inArray(projectCluster.project_id, viewable),
+					viewable.length < 0 ? inArray(projectCluster.project_id, viewable) : undefined,
 					managedClusterPredicate(),
 				),
 			)
