@@ -75,6 +75,12 @@ export interface StreamCapabilities {
 	manageSupport: boolean;
 	/** `can(actor, 'view_alerts', {type: 'alert'})` — receives the org's alert changes. */
 	viewAlerts: boolean;
+	/**
+	 * `can(actor, 'view', {type: 'member'})` — receives `access` hints (grants, custom roles), which
+	 * only `member:view` holders can read (#6129). ABSENT IS NO: a caller that does not ask the
+	 * question gets the stream without the key, so the default fails closed.
+	 */
+	memberView?: boolean;
 }
 
 /** The subscriber side of {@link Route}: who the stream is. */
@@ -110,7 +116,7 @@ export function parseNotice(raw: unknown): ChangeNotice | SelfTestNotice | null 
 
 /**
  * The routing keys of one notice. `jobs`, `environments`, `addons`, `support`, `alerts`, `usage`,
- * `billing`, `clusters`, `projects`, `organization`, `runners` and `fleet` have producers; every
+ * `billing`, `clusters`, `projects`, `organization`, `runners`, `fleet`, `members` and `access` have producers; every
  * other topic is declared and routes NOWHERE until its lane adds both its trigger and its row here —
  * a topic that routed before its RLS arms were written down would be a guess about who may read it.
  */
@@ -140,6 +146,21 @@ export function keysFor(notice: ChangeNotice): Route[] {
 		// fleet_pools carry no org: platform rows, heard only with platformView (subscriptionKeys).
 		case "fleet":
 			return [{ key: PLATFORM_KEY, filterProject: null }];
+		// #6129: member, invitation, team and team_member rows. Every member of an org reads its
+		// member list, its pending invitations and its teams (`members.page`, `members.list`,
+		// `members.teams` answer any member), so the org arm is unfiltered — the hint reaches exactly
+		// the people the read would answer. A row whose org the trigger could not resolve (a
+		// team_member removed in the same statement as its team) routes nowhere; the team's own
+		// delete carries the hint.
+		case "members":
+			return notice.o ? [{ key: orgKey(notice.o), filterProject: null }] : [];
+		// #6129: grants, custom roles and their permissions. Reading them requires `member:view`
+		// (`members.grants`, `members.roles`, `members.roleCatalog`), which an operator does not
+		// hold — so these go to the org's `oaccess:` key, held only by a stream whose actor may view
+		// members (subscriptionKeys), never to the org arm. A built-in role has no org and routes
+		// nowhere.
+		case "access":
+			return notice.o ? [{ key: orgAccessKey(notice.o), filterProject: null }] : [];
 		case "jobs": {
 			const routes: Route[] = [];
 			// The org arm. A job with no project is visible to the whole org by RLS, so it is unfiltered;
@@ -237,6 +258,11 @@ function orgAlertsKey(orgId: string): string {
 	return `oalerts:${orgId}`;
 }
 
+/** The routing key of an org's access configuration (grants, custom roles): `member:view`. */
+function orgAccessKey(orgId: string): string {
+	return `oaccess:${orgId}`;
+}
+
 /** The routing key of platform-wide rows: managed runners and the fleet. */
 export const PLATFORM_KEY = "platform";
 
@@ -254,6 +280,7 @@ export function subscriptionKeys(
 	if (caps.platformView) keys.push(PLATFORM_KEY);
 	if (caps.manageSupport) keys.push(orgSupportKey(actor.orgId));
 	if (caps.viewAlerts) keys.push(orgAlertsKey(actor.orgId));
+	if (caps.memberView === true) keys.push(orgAccessKey(actor.orgId));
 	return keys;
 }
 

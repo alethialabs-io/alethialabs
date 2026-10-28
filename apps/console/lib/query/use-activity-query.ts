@@ -20,8 +20,8 @@ import {
 	getActivityLog,
 	type ActivityQuery,
 } from "@/app/server/actions/activity";
-import { getMembers } from "@/app/server/actions/members";
 import { qk } from "@/lib/query/keys";
+import { orpc } from "@/lib/rpc/client";
 
 /** Stable, cache-friendly copy of an ActivityQuery: arrays sorted, empties dropped,
  * cursor excluded (it's the pageParam). Pure — exported for tests. */
@@ -68,14 +68,11 @@ export function useActivityQuery(query: ActivityQuery) {
 	});
 }
 
-/** Org members — filter facets + the humanizer's name resolution. Cached once per org
- * (replaces the page's raw fetch-into-useState effect). */
+/**
+ * Org members — filter facets + the humanizer's name resolution, and the jobs list's authors.
+ * The `members.list` GET procedure (#6129, ADR 0005 D1), cached once per org; a `members` hint
+ * invalidates it (lib/query/topics.ts).
+ */
 export function useMembersQuery() {
-	const params = useParams<{ org: string }>();
-	const org = params.org;
-	return useQuery({
-		queryKey: qk.members(org),
-		queryFn: () => getMembers(),
-		staleTime: 60_000,
-	});
+	return useQuery(orpc.members.list.queryOptions({ input: undefined, staleTime: 60_000 }));
 }

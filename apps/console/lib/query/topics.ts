@@ -199,4 +199,15 @@ export const TOPIC_KEYS = {
 	// The org row changed (#6128): its name, slug and logo in the switcher and breadcrumb (the
 	// workspace context) and Settings → General.
 	organization: (): QueryKey[] => [orpc.workspace.context.key(), orpc.settings.org.key()],
+	// People & access (#6129). A member, invitation, team or team membership changed: every
+	// `members.*` read shows some of it — the members page and the shared member list (the
+	// activity log's and the jobs list's names), the invite dialog's taken emails, the teams page,
+	// and the grant builder's principals. Hints come from the member/invitation/team/team_member
+	// triggers (programmables.sql).
+	// The overview's usage card and the billing summary both show the org's seat count.
+	members: (): QueryKey[] => [orpc.members.key(), orpc.overview.usage.key(), orpc.billing.summary.key()],
+	// A grant, a custom role or its permissions changed: the roles rail and catalog (grant counts),
+	// the access page and the grant builder's roles. Delivered only to `member:view` holders
+	// (lib/realtime/routing.ts), the people those reads answer.
+	access: (): QueryKey[] => [orpc.members.key()],
 } satisfies Record<Topic, () => QueryKey[]>;

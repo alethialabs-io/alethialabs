@@ -24,7 +24,11 @@ const { getTeamsPage } = vi.hoisted(() => ({
 	getTeamsPage: vi.fn<(query: unknown) => Promise<TeamsPage>>(),
 }));
 
-vi.mock("@/app/server/actions/teams", () => ({ getTeamsPage }));
+// The teams page reads over GET since #6129 (`members.teams`).
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({ "members.teams": async (input) => getTeamsPage(input) }).orpc };
+});
 vi.mock("@/lib/auth/client", () => ({ authClient: { organization: {} } }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => true }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
@@ -47,7 +51,7 @@ function tree(): ReactNode {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	return (
 		<QueryClientProvider client={qc}>
-			<TeamsList />
+			<TeamsList entitled />
 		</QueryClientProvider>
 	);
 }

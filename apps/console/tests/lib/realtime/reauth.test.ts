@@ -68,7 +68,7 @@ describe("reauthorize", () => {
 		expect(result).toEqual({
 			ok: true,
 			actor: { userId: USER, orgId: ORG, credential: "session" },
-			caps: { platformView: false, manageSupport: false, viewAlerts: false },
+			caps: { platformView: false, manageSupport: false, viewAlerts: false, memberView: false },
 		});
 		// The session is read from the SNAPSHOTTED cookie, not from a request scope.
 		const headers: Headers = h.getSession.mock.calls[0][0].headers;
@@ -131,17 +131,20 @@ describe("reauthorize", () => {
 });
 
 describe("capabilitiesOf", () => {
-	it("asks the PDP with can() for runner view (what the platform reads gate on), manage_support and view_alerts", async () => {
-		h.can.mockImplementation(async (_a: unknown, action: string) => ({
-			allowed: action === "view" || action === "view_alerts",
+	it("asks the PDP with can() for runner view (what the platform reads gate on), manage_support, view_alerts and member view", async () => {
+		h.can.mockImplementation(async (_a: unknown, action: string, ref: { type: string }) => ({
+			allowed: (action === "view" && ref.type === "runner") || action === "view_alerts",
 		}));
 		await expect(capabilitiesOf({ credential: "session", userId: USER, orgId: ORG })).resolves.toEqual({
 			platformView: true,
 			manageSupport: false,
 			viewAlerts: true,
+			memberView: false,
 		});
 		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view_alerts", { type: "alert" });
 		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view", { type: "runner" });
+		// #6129: `access` hints (grants, custom roles) reach only a `member:view` holder.
+		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view", { type: "member" });
 		expect(h.can).toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "manage_support", {
 			type: "support_case",
 		});
@@ -168,6 +171,7 @@ describe("capabilitiesOf", () => {
 				platformView: false,
 				manageSupport: true,
 				viewAlerts: true,
+				memberView: true,
 			});
 			expect(h.can).not.toHaveBeenCalledWith({ credential: "session", userId: USER, orgId: ORG }, "view", { type: "runner" });
 		} finally {
@@ -181,6 +185,7 @@ describe("capabilitiesOf", () => {
 			platformView: false,
 			manageSupport: false,
 			viewAlerts: false,
+			memberView: false,
 		});
 	});
 });

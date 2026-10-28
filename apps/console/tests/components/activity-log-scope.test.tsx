@@ -49,19 +49,21 @@ vi.mock("@/components/settings/enterprise-gate", () => ({
 	useEntitlement: () => false,
 }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
-vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn() }));
+// The member list is the `members.list` GET read since #6129.
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc({ "members.list": async () => [] }).orpc };
+});
 vi.mock("@/app/server/actions/activity", () => ({
 	getActivityLog: vi.fn(),
 	getActivityExportCsv: vi.fn(),
 }));
 
 import { ActivityLog } from "@/components/settings/activity/activity-log";
-import { getMembers } from "@/app/server/actions/members";
 import { getActivityLog } from "@/app/server/actions/activity";
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(getMembers).mockResolvedValue([]);
 	vi.mocked(getActivityLog).mockResolvedValue({ rows: [], nextCursor: null, facets: null });
 });
 

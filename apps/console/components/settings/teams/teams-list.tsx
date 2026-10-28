@@ -4,24 +4,26 @@
 
 // Settings · Teams — the org's teams on the shared DataTable, on the console filter standard
 // (lib/query/README.md → "Server-side filters"): a URL-synced zustand store → debounce →
-// `normalizeTeamsQuery` → `qk.teams(org, q)` → TanStack Query. Replaces the page's own
-// fetch-into-useState + un-debounced `.includes()` filter and its banned stat-card strip; the
-// result count now lives in the page toolbar's count pill, which is where the standard puts it.
+// `normalizeTeamsQuery` → the `members.teams` GET procedure, which the route prefetches (#6129).
 //
-// Wired to the real backend: getTeamsPage (rows + size facets, filtered in SQL) +
-// better-auth createTeam/removeTeam +
-// ManageTeamDialog (add/remove members). The design's per-team description, stored slug and
-// role-tag have no backend yet — omitted and tracked in
-// dataroom/spec/features/settings-design-port.md.
+// Writes go to Better Auth's organization endpoints (createTeam/removeTeam, and the member roster
+// in ManageTeamDialog) through `useActionMutation`, so each is pending while in flight and the list
+// is invalidated when it settles; a `members` hint refreshes it when someone else changes a team.
+// The design's per-team description, stored slug and role-tag have no backend yet — omitted and
+// tracked in dataroom/spec/features/settings-design-port.md.
 
-import { useQueryClient } from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { planMeta } from "@repo/plan-catalog";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
-import { useParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import type { TeamRow } from "@/app/server/actions/teams";
 import { DataTable } from "@/components/data-table";
+import { RegionError } from "@/components/errors/region-error";
+import { viaAuth } from "@/components/settings/members/auth-action";
+import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
 import { settingsControl, settingsControlSize } from "@/components/settings/settings-ui";
 import {
 	AlertDialog,
@@ -34,6 +36,7 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -45,14 +48,15 @@ import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { Skeleton } from "@repo/ui/skeleton";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { FEATURE_UPSELLS } from "@/components/settings/upgrade/feature-catalog";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
-import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { useTeamsPageQuery } from "@/lib/query/use-teams-query";
+import { orpc } from "@/lib/rpc/client";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
@@ -73,15 +77,27 @@ function monogram(name: string): string {
 	).toUpperCase();
 }
 
-export function TeamsList() {
-	// Teams are an Enterprise capability. Without it the page stays fully visible —
-	// existing teams render read-only and creation is replaced by an upsell — matching
-	// the server-side `beforeCreateTeam` gate (no hard wall). `null` until the workspace store has
-	// answered (#5864): then the page shows neither the create action nor the upsell, and the row
-	// menus are absent rather than disabled — an entitled org is never shown the free tier first.
-	const entitled = useEntitlement("teams");
-	const { org } = useParams<{ org: string }>();
-	const qc = useQueryClient();
+/** Why Create team is disabled without the entitlement — the plan the upsell below names. */
+const TEAMS_GATE_REASON = `Teams are available on the ${planMeta(FEATURE_UPSELLS.teams.requiredPlan).name} plan.`;
+
+/** Every read that shows a team: the teams page, and the member lists' team chips. */
+const TEAM_READS = [orpc.members.key()];
+
+/** The inline create form: a team name. */
+const newTeamSchema = z.object({ name: z.string().trim().min(1, "Name the team").max(120) });
+type NewTeam = z.infer<typeof newTeamSchema>;
+
+/**
+ * Settings · Teams. `entitled` is the `teams` entitlement as the ROUTE resolved it on the server,
+ * so the first paint already knows whether Create team is live (F017); the workspace store can
+ * still turn it on later (an in-session upgrade), never off.
+ */
+export function TeamsList({ entitled: serverEntitled = false }: { entitled?: boolean } = {}) {
+	// Teams are an Enterprise capability. Without it the page stays visible — existing teams render
+	// read-only, Create team is disabled with its reason, and the upsell is the body when there is
+	// nothing else to show — matching the server-side `beforeCreateTeam` gate (no hard wall).
+	const storeEntitled = useEntitlement("teams");
+	const entitled = serverEntitled || storeEntitled === true;
 
 	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
 	// and the free text is debounced before it can reach a query key.
@@ -98,13 +114,16 @@ export function TeamsList() {
 	);
 
 	const [creating, setCreating] = useState(false);
-	const [name, setName] = useState("");
 	const [manage, setManage] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
+	const form = useForm<NewTeam>({
+		resolver: zodResolver(newTeamSchema),
+		defaultValues: { name: "" },
+	});
 
-	// Filtered SERVER-SIDE: `getTeamsPage(q)` narrows in SQL and returns the size facet counted
+	// Filtered SERVER-SIDE: `members.teams` narrows in SQL and returns the size facet counted
 	// over the org's UNFILTERED teams, so an option never disappears as you select it. The
-	// normalized query IS the key, and `keepPreviousData` (in the hook) keeps the table's rows
+	// normalized query IS the input, and `keepPreviousData` (in the hook) keeps the table's rows
 	// across a filter change — `isPlaceholderData` is what marks them stale while the next
 	// answer loads.
 	const teamsQuery = useTeamsPageQuery(query);
@@ -118,44 +137,44 @@ export function TeamsList() {
 	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, while the rows are the previous query's
 	// placeholder, and while a typed search is still inside its debounce — the jobs, runners,
-	// members, alerts and activity lists' rule (#4980, #5045, #5471). Before the first answer this
-	// page is a skeleton with no count, no table and no empty state; `aria-busy` is what tells
-	// assistive tech — and the audit's F8–F9 `settle()` — that it is loading, not empty (#5494).
+	// members, alerts and activity lists' rule (#4980, #5045, #5471).
 	const busy =
 		!urlRead ||
 		teamsQuery.isPending ||
 		teamsQuery.isPlaceholderData ||
 		filters.search !== search;
 
-	const invalidate = useCallback(() => {
-		void qc.invalidateQueries({ queryKey: ["teams", org] });
-	}, [qc, org]);
+	const createTeam = useActionMutation(
+		({ name }: NewTeam) => viaAuth(() => authClient.organization.createTeam({ name })),
+		{
+			invalidates: TEAM_READS,
+			successMessage: "Team created",
+			onSuccess: () => {
+				form.reset({ name: "" });
+				setCreating(false);
+			},
+		},
+	);
+	const removeTeam = useActionMutation(
+		({ teamId }: { teamId: string }) =>
+			viaAuth(() => authClient.organization.removeTeam({ teamId })),
+		{
+			invalidates: TEAM_READS,
+			successMessage: "Team deleted",
+		},
+	);
+	/** The team a delete is in flight for: its row menu is closed until it settles. */
+	const removingId = removeTeam.isPending ? removeTeam.variables?.teamId : undefined;
 
-	const create = async () => {
-		if (entitled !== true || !name.trim()) return;
-		const { error } = await authClient.organization.createTeam({
-			name: name.trim(),
-		});
-		if (error) {
-			toast.error(error.message ?? "Couldn't create team");
-			return;
-		}
-		toast.success("Team created");
-		setName("");
-		setCreating(false);
-		invalidate();
-	};
+	const submitCreate = form.handleSubmit((values) => {
+		if (!entitled || createTeam.isPending) return;
+		createTeam.mutate(values);
+	});
 
-	const remove = async (t: TeamRow) => {
-		const { error } = await authClient.organization.removeTeam({ teamId: t.id });
-		if (error) {
-			toast.error(error.message ?? "Couldn't delete team");
-			return;
-		}
-		toast.success("Team deleted");
-		setDeleting(null);
-		invalidate();
-	};
+	// The team the roster dialog is open on, read from the CURRENT rows, so an add or a removal
+	// shows in the dialog as soon as the list refetches; the snapshot covers a team the filters
+	// now exclude.
+	const manageRow = manage ? (rows.find((r) => r.id === manage.id) ?? manage) : null;
 
 	const columns: ColumnDef<TeamRow>[] = [
 		{
@@ -217,19 +236,20 @@ export function TeamsList() {
 			enableSorting: false,
 			cell: ({ row }) => {
 				const t = row.original;
-				if (entitled === null) return null;
+				const removing = removingId === t.id;
 				return (
 					<div className="text-right">
 						<DropdownMenu>
 							<DropdownMenuTrigger
-								disabled={!entitled}
+								disabled={!entitled || removing}
 								render={
 									<Button
 										variant="ghost"
 										size="icon"
 										className="size-7"
 										aria-label="Manage team"
-										disabled={!entitled}
+										aria-busy={removing || undefined}
+										disabled={!entitled || removing}
 									>
 										<MoreHorizontal size={16} />
 									</Button>
@@ -255,33 +275,37 @@ export function TeamsList() {
 
 	const activeFilters = countActiveFilters(filters, DEFAULT_TEAMS_FILTERS);
 
-	if (teamsQuery.isPending) {
+	// Pending is the route skeleton's shape (B2); the route prefetches, so this is reached only when
+	// the cache was evicted under the page.
+	if (teamsQuery.isPending) return <PeopleListSkeleton facets={1} columns={3} />;
+	// A failed first load is an ERROR, never "No teams yet" and never the upsell (B4).
+	if (teamsQuery.isError && teamsQuery.data === undefined) {
 		return (
-			<div className="space-y-4" aria-busy>
-				<Skeleton className="h-20 w-full" />
-				<Skeleton className="h-48 w-full" />
-			</div>
+			<RegionError
+				title="Couldn't load teams"
+				description="The team list didn't load. Nothing about your teams changed."
+				onRetry={() => void teamsQuery.refetch()}
+			/>
 		);
 	}
 
-	// Unknown → no action at all (PageToolbar renders none); known → the button or its upgrade.
-	const createAction =
-		entitled === null ? undefined : entitled ? (
-			<Button size="sm" onClick={() => setCreating((v) => !v)}>
-				<Plus size={13} />
-				Create team
-			</Button>
-		) : (
-			<UpgradeDialog
-				feature="teams"
-				trigger={
-					<Button size="sm">
-						<Plus size={13} />
-						Create team
-					</Button>
-				}
-			/>
-		);
+	const createButton = (
+		<Button size="sm" onClick={() => setCreating((v) => !v)}>
+			<Plus size={13} />
+			Create team
+		</Button>
+	);
+	// Without the entitlement the SAME button is shown disabled with its reason (F017) — not an
+	// enabled control that opens an upgrade modal. The upsell panel below explains the plan.
+	const createAction = entitled ? (
+		createButton
+	) : (
+		<DisabledReason reason={TEAMS_GATE_REASON}>{createButton}</DisabledReason>
+	);
+	// The upsell IS the page body when the org is not entitled and has no teams to show; then there
+	// is nothing to filter, so the filter bar is not drawn above it (F017).
+	const upsellIsBody = !entitled && total === 0;
+	const nameError = form.formState.errors.name?.message;
 
 	return (
 		<div aria-busy={busy}>
@@ -292,34 +316,39 @@ export function TeamsList() {
 				actions={createAction}
 			/>
 
-			<FilterBar>
-				<FilterSearch
-					value={filters.search}
-					onChange={(v) => set("search", v)}
-					placeholder="Search teams…"
-					className="w-[240px] max-w-[380px] flex-1"
-				/>
-				<FacetFilter
-					label="Size"
-					icon={Users}
-					options={TEAM_SIZE_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						hint: String(counts[o.value] ?? 0),
-					}))}
-					value={filters.sizes}
-					onChange={(next) => set("sizes", next)}
-					searchPlaceholder="Filter size…"
-					emptyText="No sizes."
-				/>
-				<FilterBarReset count={activeFilters} onReset={reset} />
-			</FilterBar>
+			{!upsellIsBody && (
+				<FilterBar>
+					<FilterSearch
+						value={filters.search}
+						onChange={(v) => set("search", v)}
+						placeholder="Search teams…"
+						className="w-[240px] max-w-[380px] flex-1"
+					/>
+					<FacetFilter
+						label="Size"
+						icon={Users}
+						options={TEAM_SIZE_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							hint: String(counts[o.value] ?? 0),
+						}))}
+						value={filters.sizes}
+						onChange={(next) => set("sizes", next)}
+						searchPlaceholder="Filter size…"
+						emptyText="No sizes."
+					/>
+					<FilterBarReset count={activeFilters} onReset={reset} />
+				</FilterBar>
+			)}
 
 			{/* inline create panel */}
-			{entitled === true && creating && (
-				<div className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm">
+			{entitled && creating && (
+				<form
+					onSubmit={(e) => void submitCreate(e)}
+					className="mb-4 rounded-lg border border-border bg-surface p-4 shadow-sm"
+				>
 					<p className="mb-3 text-ui-md font-medium text-text-primary">New team</p>
-					<div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+					<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
 						<div className="flex-1">
 							<label
 								htmlFor="team-name"
@@ -330,35 +359,43 @@ export function TeamsList() {
 							<input
 								id="team-name"
 								className={cn(settingsControl, settingsControlSize)}
-								value={name}
-								onChange={(e) => setName(e.target.value)}
 								placeholder="e.g. Networking"
 								autoComplete="off"
 								autoFocus
+								aria-invalid={nameError ? true : undefined}
+								aria-describedby={nameError ? "team-name-error" : undefined}
+								disabled={createTeam.isPending}
+								{...form.register("name")}
 							/>
+							{nameError && (
+								<p id="team-name-error" className="mt-1.5 text-ui-xs text-destructive">
+									{nameError}
+								</p>
+							)}
 						</div>
-						<div className="flex gap-2">
+						<div className="flex gap-2 sm:pt-6">
 							<Button
+								type="button"
 								variant="ghost"
 								size="sm"
 								onClick={() => {
 									setCreating(false);
-									setName("");
+									form.reset({ name: "" });
 								}}
 							>
 								Cancel
 							</Button>
-							<Button size="sm" disabled={!name.trim()} onClick={() => void create()}>
-								Create team
+							<Button type="submit" size="sm" disabled={createTeam.isPending}>
+								{createTeam.isPending ? "Creating…" : "Create team"}
 							</Button>
 						</div>
 					</div>
-				</div>
+				</form>
 			)}
 
 			{/* table */}
 			{rows.length === 0 ? (
-				entitled === false && total === 0 ? (
+				upsellIsBody ? (
 					<FeatureUpsell feature="teams" />
 				) : (
 					<EmptyState
@@ -389,13 +426,11 @@ export function TeamsList() {
 				</div>
 			)}
 
-			{manage && (
+			{manageRow && (
 				<ManageTeamDialog
-					teamId={manage.id}
-					teamName={manage.name}
+					team={manageRow}
 					open={manage !== null}
 					onOpenChange={(o) => !o && setManage(null)}
-					onChanged={invalidate}
 				/>
 			)}
 
@@ -414,7 +449,10 @@ export function TeamsList() {
 					<AlertDialogFooter>
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
-							onClick={() => deleting && void remove(deleting)}
+							onClick={() => {
+								if (deleting) removeTeam.mutate({ teamId: deleting.id });
+								setDeleting(null);
+							}}
 							variant="destructive"
 						>
 							Delete team

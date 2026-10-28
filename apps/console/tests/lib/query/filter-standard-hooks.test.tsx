@@ -29,10 +29,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 
-// The alerts lists (#6125) and the runners grid (#6123) read over GET procedures: the seam is the
-// read router's handler, reached through the same oRPC query utilities the browser uses. ONE mock of
-// the client carries both routers — a second `vi.mock` of the same module would replace the first.
+// The alerts lists (#6125), the runners grid (#6123) and the people & access lists (#6129) read over
+// GET procedures: the seam is the read router's handler, reached through the same oRPC query
+// utilities the browser uses. ONE mock of the client carries every router — a second `vi.mock` of the
+// same module would replace the first.
 const getAlertChannelsPage = vi.fn();
+const getAccessGrantsPage = vi.fn();
+const getTeamsPage = vi.fn();
+const getMembersPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
 const getAlertDeliveriesPage = vi.fn();
 const getRunnersPage = vi.fn();
@@ -49,24 +53,15 @@ vi.mock("@/lib/rpc/client", async () => {
 			deliveries: page((input) => getAlertDeliveriesPage(input)),
 		},
 		runners: { page: page((input) => getRunnersPage(input)) },
+		members: {
+			grants: page((input) => getAccessGrantsPage(input)),
+			teams: page((input) => getTeamsPage(input)),
+			page: page((input) => getMembersPage(input)),
+		},
 	};
 	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
 });
 
-const getAccessGrantsPage = vi.fn();
-vi.mock("@/app/server/actions/grants", () => ({
-	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
-}));
-
-const getTeamsPage = vi.fn();
-vi.mock("@/app/server/actions/teams", () => ({
-	getTeamsPage: (...a: unknown[]) => getTeamsPage(...a),
-}));
-
-const getMembersPage = vi.fn();
-vi.mock("@/app/server/actions/members", () => ({
-	getMembersPage: (...a: unknown[]) => getMembersPage(...a),
-}));
 
 const {
 	useAlertChannelsPageQuery,
@@ -107,7 +102,7 @@ interface PageResult {
 interface Subject {
 	usePage: (query: Record<string, unknown>) => PageResult;
 	action: ReturnType<typeof vi.fn>;
-	/** The key prefix `qk` gives this resource, ahead of the query object. */
+	/** The key prefix `qk` (or the read procedure's path) gives this resource, ahead of the query. */
 	prefix: readonly unknown[];
 	/** Where the query sits in a key: the last element (`qk`), or an oRPC key's `input`. */
 	queryOf?: (key: readonly unknown[]) => unknown;
@@ -118,6 +113,8 @@ function orpcInput(key: readonly unknown[]): unknown {
 	const last = key[key.length - 1];
 	return typeof last === "object" && last !== null && "input" in last ? last.input : undefined;
 }
+
+
 
 const SUBJECTS: Record<string, Subject> = {
 	useAlertChannelsPageQuery: {
@@ -147,7 +144,8 @@ const SUBJECTS: Record<string, Subject> = {
 	useAccessGrantsPageQuery: {
 		usePage: (q) => useAccessGrantsPageQuery(q),
 		action: getAccessGrantsPage,
-		prefix: ["access", "grants", "org-1"],
+		prefix: [["members", "grants"]],
+		queryOf: orpcInput,
 	},
 	useRunnersPageQuery: {
 		usePage: (q) => useRunnersPageQuery(q),
@@ -160,12 +158,14 @@ const SUBJECTS: Record<string, Subject> = {
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
 		action: getTeamsPage,
-		prefix: ["teams", "org-1"],
+		prefix: [["members", "teams"]],
+		queryOf: orpcInput,
 	},
 	useMembersPageQuery: {
 		usePage: (q) => useMembersPageQuery(q),
 		action: getMembersPage,
-		prefix: ["members", "org-1"],
+		prefix: [["members", "page"]],
+		queryOf: orpcInput,
 	},
 };
 

@@ -68,7 +68,7 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 			return false;
 		}
 	};
-	const [platformView, manageSupport, viewAlerts] = await Promise.all([
+	const [platformView, manageSupport, viewAlerts, memberView] = await Promise.all([
 		// `platform` carries managed runners and warm pools. The stream hears them exactly when the reads
 		// show them (lib/rpc/procedures/runners.ts): on a self-managed deployment, to an actor who may
 		// `view` runners — the pool cards and the managed rows are both read on that permission. On the
@@ -76,8 +76,9 @@ export async function capabilitiesOf(actor: Actor): Promise<StreamCapabilities> 
 		deploymentMode() === "self-managed" ? ask(pdp.can(actor, "view", { type: "runner" })) : false,
 		ask(pdp.can(actor, "manage_support", { type: "support_case" })),
 		ask(pdp.can(actor, "view_alerts", { type: "alert" })),
+		ask(pdp.can(actor, "view", { type: "member" })),
 	]);
-	return { platformView, manageSupport, viewAlerts };
+	return { platformView, manageSupport, viewAlerts, memberView };
 }
 
 /** Is `userId` an ACTIVE member of `orgId`? */

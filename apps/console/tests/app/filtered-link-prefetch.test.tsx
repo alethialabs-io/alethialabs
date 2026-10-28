@@ -30,7 +30,8 @@ const { runnersPage, getMembersPage } = vi.hoisted(() => {
 	};
 });
 
-// The runners route reads over the read router in-process (#6123). The router here has the runners
+// The runners (#6123) and members (#6129) routes read over the read router in-process. ONE mock of
+// `serverOrpc` carries both — a second `vi.mock` of the module would replace the first. The router here has the runners
 // procedures' SHAPE, with the page read answering the input it was given; keys come from the same
 // oRPC utilities the browser uses, so a key asserted below is the key the client looks up.
 vi.mock("@/lib/rpc/server", async () => {
@@ -44,6 +45,12 @@ vi.mock("@/lib/rpc/server", async () => {
 			fleet: os.handler(async () => ({ pools: [] })),
 			fleetEconomics: os.handler(async () => null),
 		},
+		// The members route prefetches through the same router since #6129: the page read answers the
+		// input it was given, and the gate is a fixed answer.
+		members: {
+			page: os.input(z.record(z.string(), z.unknown())).handler(({ input }) => getMembersPage(input)),
+			gate: os.handler(async () => ({ canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "x" })),
+		},
 	};
 	const utils = createTanstackQueryUtils(createRouterClient(router));
 	return { serverOrpc: () => utils };
@@ -55,7 +62,6 @@ vi.mock("@/app/(private)/[org]/~/runners/runners-client", () => ({
 }));
 vi.mock("@/components/runners/runners-skeleton", () => ({ RunnersSkeleton: () => null }));
 
-vi.mock("@/app/server/actions/members", () => ({ getMembersPage }));
 vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: () => null }));
 
 // A fresh client per route call — the browser singleton would carry one test's keys into the next.
@@ -105,6 +111,11 @@ function runnersPageKey(input: Record<string, unknown>): readonly unknown[] {
 	return serverOrpc().runners.page.queryKey({ input });
 }
 
+/** The browser's key for the members page read of `query` (`orpc.members.page`). */
+function membersKey(query: unknown): readonly unknown[] {
+	return [["members", "page"], { input: query, type: "query" }];
+}
+
 /** Render the members route for one link. */
 async function members(searchParams: SearchParams): Promise<DehydratedState> {
 	return dehydratedOf(
@@ -141,16 +152,16 @@ describe("~/settings/members prefetches the link's filtered list (#4999)", () =>
 		const state = await members({ statuses: "pending", roles: "viewer,admin", search: "  ann " });
 		// Trimmed and sorted by the normalize step — the key the client builds, character for character.
 		const query = { search: "ann", statuses: ["pending"], roles: ["admin", "viewer"] };
-		expect(dataAt(state, ["members", "acme", query])).toEqual({ query, rows: [] });
+		expect(dataAt(state, membersKey(query))).toEqual({ query, rows: [] });
 		expect(getMembersPage).toHaveBeenCalledWith(query);
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await members({ statuses: "pending" });
-		expect(dataAt(state, ["members", "acme", {}])).toEqual({ query: {}, rows: [] });
-		// Never the bare `["members", org]` key: that is the unfiltered `getMembers()` read, a
-		// different payload shape, and seeding it with a page would serve the wrong one.
-		expect(keysOf(state)).not.toContain(JSON.stringify(["members", "acme"]));
+		expect(dataAt(state, membersKey({}))).toEqual({ query: {}, rows: [] });
+		// Never the member LIST (`members.list`): a different payload shape, and seeding it with a
+		// page would serve the wrong one.
+		expect(keysOf(state).some((k) => k.includes('"list"'))).toBe(false);
 	});
 
 	it("ignores params the members filters do not map", async () => {

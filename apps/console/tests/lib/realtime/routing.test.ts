@@ -106,7 +106,7 @@ describe("keysFor — the arms of jobs' owner_all policy, each inside the row's 
 	});
 
 	it("every topic without a producer routes nowhere until its lane writes its arms", () => {
-		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters", "projects", "organization", "runners", "fleet"]);
+		const routed = new Set(["jobs", "environments", "addons", "support", "alerts", "usage", "billing", "clusters", "projects", "organization", "runners", "fleet", "members", "access"]);
 		for (const t of TOPICS.filter((x) => !routed.has(x))) {
 			expect(keysFor({ ...jobs(), t })).toEqual([]);
 		}
@@ -401,5 +401,52 @@ describe("TOPICS", () => {
 	it("is a duplicate-free list that does not contain the self-test topic", () => {
 		expect(new Set(TOPICS).size).toBe(TOPICS.length);
 		expect(isTopic(SELF_TEST_TOPIC)).toBe(false);
+	});
+});
+
+describe("keysFor — people & access (#6129)", () => {
+	/** A notice as the member/grant triggers send it: the row, its org, and nothing else. */
+	const people = (t: "members" | "access", over: Partial<ChangeNotice> = {}): ChangeNotice => ({
+		kind: "change",
+		t,
+		id: JOB,
+		o: ORG,
+		u: null,
+		p: null,
+		...over,
+	});
+
+	/** Whether a stream of `orgId`, holding `member:view` or not, hears the notice. */
+	const hears = (notice: ChangeNotice, orgId: string, memberView: boolean) => {
+		const held = subscriptionKeys({ userId: USER, orgId }, { platformView: false, manageSupport: false, viewAlerts: false, memberView });
+		return keysFor(notice).some((r) => held.includes(r.key));
+	};
+
+	it("members routes to the org arm, unfiltered — every member reads the member list", () => {
+		expect(keysFor(people("members"))).toEqual([{ key: `o:${ORG}`, filterProject: null }]);
+		expect(hears(people("members"), ORG, false)).toBe(true);
+	});
+
+	it("access routes ONLY to the org's member:view key — an operator (no member:view) hears nothing", () => {
+		expect(keysFor(people("access"))).toEqual([{ key: `oaccess:${ORG}`, filterProject: null }]);
+		expect(hears(people("access"), ORG, true)).toBe(true);
+		expect(hears(people("access"), ORG, false)).toBe(false);
+	});
+
+	it("a stream that never asked the member:view question does not hold the access key", () => {
+		expect(subscriptionKeys({ userId: USER, orgId: ORG }, { platformView: false, manageSupport: false, viewAlerts: false })).not.toContain(
+			`oaccess:${ORG}`,
+		);
+	});
+
+	it("neither reaches another org's stream, member:view or not", () => {
+		const other = "55555555-5555-4555-8555-555555555555";
+		expect(hears(people("members"), other, true)).toBe(false);
+		expect(hears(people("access"), other, true)).toBe(false);
+	});
+
+	it("a row whose org the trigger could not resolve (a cascade, a built-in role) routes nowhere", () => {
+		expect(keysFor(people("members", { o: null }))).toEqual([]);
+		expect(keysFor(people("access", { o: null }))).toEqual([]);
 	});
 });
