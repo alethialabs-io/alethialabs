@@ -6,12 +6,15 @@
 // board — an error is never an empty board, and pending is never "No connectors match". Also: the
 // board sets no timer (the 30 s `router.refresh()` loop is gone; the bus keeps it live).
 
-import { ORPCError } from "@orpc/client";
+import { ORPCError, createORPCClient } from "@orpc/client";
+import { RPCLink } from "@orpc/client/fetch";
+import type { RouterClient } from "@orpc/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import type { AppRouter } from "@/lib/rpc/router";
 
 const board = vi.hoisted(() => ({ state: {} as Record<string, unknown> }));
 const refresh = vi.hoisted(() => vi.fn());
@@ -69,6 +72,35 @@ function renderBoard() {
 	);
 	return render(<ConnectorsPage orgSlug="acme" />, { wrapper });
 }
+
+/**
+ * The error the REAL browser client throws when the read route answers `status` with plain JSON —
+ * how the route refuses a request with no session (401) or an actor it will not serve (403), before
+ * any procedure runs. Non-defined: it carries only the status.
+ */
+async function wireError(status: number, error: string): Promise<unknown> {
+	const client: RouterClient<AppRouter> = createORPCClient(
+		new RPCLink({
+			url: "http://console.test/acme/~/rpc",
+			method: () => "GET",
+			fetch: async () => Response.json({ error }, { status }),
+		}),
+	);
+	return client.connectors.board({}).then(
+		() => {
+			throw new Error("the read was expected to fail");
+		},
+		(thrown: unknown) => thrown,
+	);
+}
+
+/** The board's data with one connector on it. */
+const boardData = {
+	integrations: [datadog],
+	view: { query: {}, rows: [datadog], facets: { groups: [], health: [], vendors: [] }, total: 1 },
+	canManage: false,
+	platformConfigured: {},
+};
 
 const settled = { isPending: false, isError: false, isRefetching: false, data: undefined, error: null, refetch: vi.fn() };
 
@@ -139,5 +171,59 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		expect(setInterval).not.toHaveBeenCalled();
 		expect(refresh).not.toHaveBeenCalled();
 		setInterval.mockRestore();
+	});
+});
+
+describe("ConnectorsPage — the read route's own plain-JSON answers", () => {
+	let unauthorized: unknown;
+	let forbidden: unknown;
+	let internal: unknown;
+
+	beforeAll(async () => {
+		unauthorized = await wireError(401, "Unauthorized");
+		forbidden = await wireError(403, "Forbidden");
+		internal = await wireError(500, "Internal");
+	});
+
+	/** Asserts the refused render: its own state, no region error, and no retry. */
+	function expectRefused() {
+		expect(screen.getByText("Sign in again to see connectors")).toBeInTheDocument();
+		expect(screen.queryByText("Couldn't load connectors")).toBeNull();
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+	}
+
+	it("a plain 401 (session expired) renders the refused state, not the region error", () => {
+		board.state = { ...settled, isError: true, error: unauthorized };
+		renderBoard();
+		expectRefused();
+	});
+
+	it("a plain 403 renders the refused state", () => {
+		board.state = { ...settled, isError: true, error: forbidden };
+		renderBoard();
+		expectRefused();
+	});
+
+	it("a plain 500 is still a region error with a retry", () => {
+		board.state = { ...settled, isError: true, error: internal };
+		renderBoard();
+		expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load connectors");
+		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+		expect(screen.queryByText("Sign in again to see connectors")).toBeNull();
+	});
+
+	it("a typed FORBIDDEN is still refused", () => {
+		board.state = { ...settled, isError: true, error: new ORPCError("FORBIDDEN", { defined: true }) };
+		renderBoard();
+		expectRefused();
+	});
+
+	it("a REFUSED refresh behind the board keeps the cards and offers no retry that cannot work", () => {
+		board.state = { ...settled, isError: true, error: unauthorized, data: boardData };
+		renderBoard();
+		expect(screen.getAllByText("Datadog").length).toBeGreaterThan(0);
+		expect(screen.getByText("Sign in again to refresh — showing earlier data")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 	});
 });
