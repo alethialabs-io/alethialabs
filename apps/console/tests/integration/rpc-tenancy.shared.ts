@@ -327,6 +327,13 @@ function stringField(out: unknown, field: string): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
+/** Whether an evidence page (`{ groups: [{ rows: [{ environmentId }] }] }`) lists this environment. */
+function listsEnvironment(out: unknown, environmentId: string): boolean {
+	const groups = field(out, "groups");
+	if (!Array.isArray(groups)) return false;
+	return groups.some((g: unknown) => hasElement(field(g, "rows"), "environmentId", environmentId));
+}
+
 /** The seeded project of `org`. */
 const projectOf = (s: Seeded, org: Org) => (org === "x" ? s.projectX : s.projectY);
 /** The seeded default environment of `org`'s project. */
@@ -492,6 +499,12 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "by-id",
 		input: (s, org) => ({ identityId: identityOf(s, org), region: null }),
 		reveals: (out, s, org) => field(out, "identityId") === identityOf(s, org),
+	},
+	// The Evidence page's read (#6126): every environment of the ADDRESSED org's projects.
+	"evidence.page": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: listsEnvironment(out, s.envX), y: listsEnvironment(out, s.envY) }),
 	},
 	"canvas.cloudInventory": {
 		kind: "by-id",
