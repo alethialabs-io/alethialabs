@@ -6,6 +6,7 @@ import "server-only";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
 import type { Actor, BulkCheck, Decision } from "@/lib/authz/types";
+import { cliViewableProjectIds } from "@/lib/cli/project-access";
 import { displayedK8sVersion } from "@/lib/cloud-providers/hetzner-k8s-pin";
 import {
 	KUBECONFIG_MINT_UNPROVISIONED_REASON,
@@ -97,11 +98,22 @@ export interface ClusterListItem extends ClusterData {
  * role with the actor's own scope (`withActorScope`): clusters are org-shared, so the scope must
  * carry the real org — an owner scope would hide every cluster another member created.
  *
+ * The org-wide `project:view` answers for the org, not for any one project: a grant or deny scoped
+ * to a single project is part of the answer only when the PDP is asked about that project. So the
+ * list also keeps only the clusters of projects the caller may view — the PDP's own deny-aware set
+ * (`cliViewableProjectIds`, the set the CLI's `GET /api/cli/clusters` filters on) — as a second
+ * predicate on `project_cluster.project_id`, after the org predicate. It narrows within the org; it
+ * never widens it. Every console reader of this list (the Clusters page and the project drilldown
+ * through `readClusterList`, the agent's `list_clusters` tool and the @-mention picker through
+ * `getClusters`) gets the narrowed list, and what a page counts is this list's length, so its count
+ * and its rows are one answer.
+ *
  * The kubeconfig command per cluster comes from the same builder the CLI route serves; its reads run
  * concurrently inside this transaction rather than one after another per cluster.
  */
 export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 	await getPdp().enforce(actor, "view", { type: "project" });
+	const viewable = await cliViewableProjectIds(actor);
 
 	return withActorScope(actor, async (tx) => {
 		// The cluster's own placement wins over its project's (per-resource cloud placement, #5250 §5).
@@ -147,7 +159,15 @@ export async function readClusters(actor: Actor): Promise<ClusterData[]> {
 			// The org is the ADDRESS's, on the row's own tenant column — the column the Usage count, the
 			// CLI's cluster list and the kubeconfig mint all scope on. RLS alone is wider: its owner arm
 			// also admits the caller's personal-scope projects when the address names a team org.
-			.where(and(eq(projectCluster.org_id, actor.orgId), managedClusterPredicate()))
+			// Then visibility: only the projects the caller may view (`inArray` over an empty set
+			// renders `false`, so a caller who may view no project lists no cluster).
+			.where(
+				and(
+					eq(projectCluster.org_id, actor.orgId),
+					inArray(projectCluster.project_id, viewable),
+					managedClusterPredicate(),
+				),
+			)
 			.orderBy(
 				desc(projects.created_at),
 				desc(projectEnvironments.is_default),
@@ -251,10 +271,10 @@ async function downloadableClusters(actor: Actor, clusters: ClusterData[]): Prom
 
 /**
  * The classification chips of every cluster, in one batched read. Chips need `org:view`; without it
- * the clusters still render, chipless. Unlike the chips' own read
- * (app/server/actions/classification/assignments.ts `getAssignmentsForKind`), this does not also
- * leave out clusters of a project the viewer may not view: it labels exactly the clusters
- * `readClusters` returns, and that list is org-scoped.
+ * the clusters still render, chipless. It labels exactly the clusters `readClusters` returns, and
+ * that list already leaves out the clusters of projects the viewer may not view — the same narrowing
+ * the chips' own read (app/server/actions/classification/assignments.ts `getAssignmentsForKind`,
+ * through `classifiedIdsViewable`) applies — so it asks no second visibility question.
  */
 async function clusterChips(actor: Actor, clusters: ClusterData[]): Promise<Map<string, AssignedValue[]>> {
 	if (clusters.length === 0) return new Map();

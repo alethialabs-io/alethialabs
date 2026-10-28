@@ -10,6 +10,9 @@
 // project:
 //
 //   - the console's agent reads, `listAgents` / `getAgent` (app/server/actions/agents.ts) — `view`;
+//   - the console's cluster list, `readClusterList` / `readClusters` (lib/rpc/procedures/clusters.ts),
+//     gated on the org-wide `project:view` — it keeps only the clusters of projects the caller may
+//     view, and what the page counts is that list's length;
 //   - classification on a project-owned resource, in the console (`getAssignments`,
 //     `getAssignmentsForKind`, `assignClassification`, `unassignClassification`) and the CLI
 //     (`GET` / `POST` / `DELETE /api/cli/classification/assignments`) — `view` to read, `edit` to
@@ -75,6 +78,7 @@ import {
 	unassignClassification,
 } from "@/app/server/actions/classification/assignments";
 import { runWithActor } from "@/lib/authz/actor-context";
+import { readClusterList, readClusters } from "@/lib/rpc/procedures/clusters";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
@@ -89,6 +93,7 @@ import {
 	grants,
 	member,
 	organization,
+	projectCluster,
 	projectEnvironments,
 	projects,
 	resourceHierarchy,
@@ -606,6 +611,67 @@ describeIfDb("org-level reads and writes follow the project their rows name", ()
 			const before = await refusals();
 			await expect(actingAs(RECORD_ENV_VIEW, () => getProjectEnvironments(P))).rejects.toThrow();
 			await settlesAt(refusals, before + 1);
+		});
+	});
+	describe("console cluster list", () => {
+		/** One cluster under management per project, each in its own deployed environment. */
+		const CLUSTER = { [P]: "", [Q]: "", [PERSONAL]: "" };
+
+		beforeAll(async () => {
+			const db = getServiceDb();
+			for (const id of [P, Q, PERSONAL]) {
+				const author = id === PERSONAL ? OPERATOR : ADMIN;
+				const org = id === PERSONAL ? OPERATOR : ORG;
+				// Its own environment, deployed (lib/queries/usage-counts.ts `managedClusterPredicate`),
+				// so no other test's environment changes under it.
+				const [env] = await db
+					.insert(projectEnvironments)
+					.values({
+						project_id: id,
+						user_id: author,
+						org_id: org,
+						name: `clusters-${id.slice(0, 8)}`,
+						is_default: false,
+						status: "ACTIVE",
+						last_deployed_at: new Date(),
+					})
+					.returning({ id: projectEnvironments.id });
+				if (!env) throw new Error("environment seed returned no row");
+				const [row] = await db
+					.insert(projectCluster)
+					.values({ project_id: id, environment_id: env.id, status: "ACTIVE", cluster_name: `it-proj-bound-${id.slice(0, 8)}` })
+					.returning({ id: projectCluster.id });
+				if (!row) throw new Error("cluster seed returned no row");
+				CLUSTER[id] = row.id;
+			}
+		});
+
+		afterAll(async () => {
+			await getServiceDb().delete(projectCluster).where(inArray(projectCluster.project_id, [P, Q, PERSONAL]));
+		});
+
+		/** The cluster ids `userId` is listed in ORG, by the page's read. */
+		async function listed(userId: string): Promise<string[]> {
+			return (await readClusterList(actor(userId))).map((c) => c.project_cluster.id);
+		}
+
+		it("leaves out P's cluster for the member denied viewing P, and still lists Q's", async () => {
+			const rows = await listed(VIEW_DENIED);
+			expect(rows).not.toContain(CLUSTER[P]);
+			expect(rows).toContain(CLUSTER[Q]);
+			// The count the page shows is this list's length: it agrees with the rows by construction,
+			// and both leave P out.
+			expect(rows).toHaveLength(1);
+		});
+
+		it("the agent tool's and the picker's read (readClusters) leaves out the same cluster", async () => {
+			const rows = (await readClusters(actor(VIEW_DENIED))).map((c) => c.project_cluster.id);
+			expect(rows).toEqual([CLUSTER[Q]]);
+		});
+
+		it("lists both for a member without the deny, and never the caller's personal-workspace cluster", async () => {
+			expect(new Set(await listed(VIEWER))).toEqual(new Set([CLUSTER[P], CLUSTER[Q]]));
+			expect(new Set(await listed(OPERATOR))).toEqual(new Set([CLUSTER[P], CLUSTER[Q]]));
 		});
 	});
 });

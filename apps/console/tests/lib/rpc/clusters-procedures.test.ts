@@ -7,11 +7,19 @@
 // WHICH clusters count is proved against Postgres by tests/integration/usage-counts.test.ts. This file
 // pins the wiring with only the transaction faked:
 //   · `project:view` is enforced before anything is read;
+//   · the list follows project visibility: its WHERE is the org predicate FIRST, then
+//     `project_cluster.project_id` among the projects the caller may view (the PDP's deny-aware set,
+//     `cliViewableProjectIds` — the set the CLI's cluster list filters on), then the managed-cluster
+//     definition. Asserted on the RENDERED SQL, the text postgres receives. That the PDP's set leaves
+//     out a project-scoped deny is driven against the real engine in
+//     tests/integration/console-project-bound.test.ts;
 //   · each cluster carries the SAME kubeconfig object the CLI route serves (#5250), keyed on its own
 //     owning environment, and its data services are that environment's — not the project's default's;
 //   · the page's list adds, per cluster, the download permission (`cluster:access_readonly`, asked only
 //     of clusters with an endpoint, fail-closed) and the classification chips (only with `org:view`).
 
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -25,6 +33,12 @@ const h = vi.hoisted(() => ({
 	chipIds: [] as string[][],
 	/** The size of each bulkCheck call. */
 	bulk: [] as number[],
+	/** The projects the caller may view, as the PDP's deny-aware set answers it. */
+	viewable: [] as string[],
+	/** How many times that set was asked for. */
+	viewableAsked: 0,
+	/** Every `where(...)` argument, in order; the first is the base list's. */
+	wheres: [] as unknown[],
 }));
 
 vi.mock("server-only", () => ({}));
@@ -55,6 +69,12 @@ vi.mock("@/lib/authz", () => ({
 		},
 	}),
 }));
+vi.mock("@/lib/cli/project-access", () => ({
+	cliViewableProjectIds: async () => {
+		h.viewableAsked += 1;
+		return h.viewable;
+	},
+}));
 vi.mock("@/lib/db", () => ({
 	withActorScope: (_actor: unknown, fn: (tx: unknown) => unknown) => fn(fakeTx()),
 }));
@@ -75,7 +95,10 @@ function fakeTx() {
 				from: () => chain,
 				leftJoin: () => chain,
 				innerJoin: () => chain,
-				where: () => chain,
+				where: (w: unknown) => {
+					h.wheres.push(w);
+					return chain;
+				},
 				orderBy: () => chain,
 				limit: () => Promise.resolve(rows),
 				then: (ok: (v: unknown[]) => unknown) => Promise.resolve(rows).then(ok),
@@ -89,6 +112,21 @@ import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { readClusterList, readClusters } from "@/lib/rpc/procedures/clusters";
 
 const ACTOR: Actor = { userId: "u1", orgId: "o1", credential: "session" };
+
+const dialect = new PgDialect();
+
+/** Narrows a captured `where(...)` argument to the drizzle SQL it must be. */
+function isSql(x: unknown): x is SQL {
+	return typeof x === "object" && x !== null && "queryChunks" in x;
+}
+
+/** The base list's WHERE, rendered as postgres receives it, whitespace collapsed. */
+function baseWhere(): { sql: string; params: readonly unknown[] } {
+	const w = h.wheres[0];
+	if (!isSql(w)) throw new Error("the base list read was built with no WHERE");
+	const q = dialect.sqlToQuery(w);
+	return { sql: q.sql.replace(/\s+/g, " ").trim(), params: q.params };
+}
 
 /** One joined base row (one cluster); each test overrides what it is about. */
 function baseRow(over: Record<string, unknown>) {
@@ -132,6 +170,9 @@ beforeEach(() => {
 	h.enforced = [];
 	h.chipIds = [];
 	h.bulk = [];
+	h.viewable = ["p1"];
+	h.viewableAsked = 0;
+	h.wheres = [];
 });
 
 describe("readClusters", () => {
@@ -140,6 +181,28 @@ describe("readClusters", () => {
 		await expect(readClusters(ACTOR)).rejects.toBeInstanceOf(ForbiddenError);
 		expect(h.enforced).toEqual(["view:project"]);
 		expect(h.selects).toBe(0);
+		expect(h.viewableAsked).toBe(0);
+	});
+
+	it("keeps only the clusters of projects the caller may view: org predicate first, then visibility", async () => {
+		h.viewable = ["p1", "p2"];
+		h.results = [[]];
+		await readClusters(ACTOR);
+		const { sql, params } = baseWhere();
+		// Written out by hand, never rebuilt with the `eq`/`inArray` the procedure uses.
+		expect(sql.startsWith('("project_cluster"."org_id" = $1 and "project_cluster"."project_id" in ($2, $3) and (')).toBe(
+			true,
+		);
+		expect(params).toEqual(["o1", "p1", "p2"]);
+		expect(h.viewableAsked).toBe(1);
+	});
+
+	it("a caller who may view no project lists no cluster", async () => {
+		h.viewable = [];
+		h.results = [[]];
+		expect(await readClusters(ACTOR)).toEqual([]);
+		expect(baseWhere().sql.startsWith('("project_cluster"."org_id" = $1 and false and (')).toBe(true);
+		expect(baseWhere().params).toEqual(["o1"]);
 	});
 
 	it("attaches each cluster's command, built from its own last deploy (#5250)", async () => {
