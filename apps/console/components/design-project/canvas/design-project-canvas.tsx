@@ -67,7 +67,7 @@ import { buildShortcuts } from "./shortcuts";
 import { graphToForm } from "./graph/graph-to-form";
 import { NodePalette } from "./node-palette";
 import { BoardGuide, useDesignIsEmpty } from "./board-guide";
-import { CanvasSkeleton } from "./canvas-skeleton";
+import { BoardPreview } from "./board-preview";
 import { EnvironmentStatusNotice } from "./environment-status-notice";
 import { EnvironmentStatusScope } from "./environment-status-scope";
 
@@ -637,9 +637,10 @@ function CanvasInner({
 			    node quietly read as its design state. */}
 			<EnvironmentStatusNotice />
 
-			{/* Until the store holds this environment's design, the board is the skeleton — never an
-			    empty canvas (F009). Same component as the route's loading.tsx, so nothing moves. */}
-			{!seeded && <CanvasSkeleton overlay />}
+			{/* Until the store holds this environment's design, the board is the same picture of it the
+			    server painted (`BoardPreview`, #6348) — never an empty canvas (F009), and no step back to
+			    a skeleton between the server's board and the live one. */}
+			{!seeded && <BoardPreview overlay />}
 
 			{/* Bottom-right: the BYO IaC module's PROVENANCE — repo · ref · the commit the scan pinned ·
 			    the scan verdict, with detach/rescan. It is not part of the architecture; it's where the
