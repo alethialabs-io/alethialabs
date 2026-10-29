@@ -29,6 +29,15 @@
 import { coerceEnum } from "@/lib/coerce";
 import { caseLabel } from "@/lib/support/case-status";
 import type { CaseListItem } from "@/lib/queries/support";
+import type { ResourceKind } from "@/lib/db/schema/enums";
+
+/**
+ * The classification resource kind of a support case. One constant for the case view's
+ * `ClassificationControl` and the route that prefetches its reads (#6336): the prefetch only hits
+ * when both key the chips with the same kind, and this module is the one both sides can import
+ * (no "use client", no server-only import).
+ */
+export const CASE_RESOURCE_KIND: ResourceKind = "support_case";
 
 /** The lifecycle buckets `listCasesForOwner` understands; "all" means no server filter. */
 export const CASE_BUCKETS = ["all", "active", "resolved"] as const;

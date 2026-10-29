@@ -24,7 +24,7 @@ import { CaseActions } from "./case-actions";
 import { CaseComposer } from "./case-composer";
 import { CaseDetailSkeleton } from "./case-detail-skeleton";
 import { useCaseQuery } from "./case-queries";
-import { formatCaseNumber } from "./case-query";
+import { CASE_RESOURCE_KIND, formatCaseNumber } from "./case-query";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
 import { CaseThread } from "./case-thread";
@@ -35,7 +35,8 @@ import { CaseTime } from "./case-time";
  * lifecycle actions), the attachments, the conversation thread and the reply composer — or, on a
  * CLOSED case, a closed notice with the way to reopen it in place of a composer nobody can use.
  *
- * Reads `support.case` (prefetched by the route, so the first paint carries the thread). Live by
+ * Reads `support.case` (prefetched by the route, so the first paint carries the thread — and, with
+ * it, the classification row's reads, so "Classify" is in the server HTML too). Live by
  * the bus: a staff or AI reply moves the case row, which is a `support` hint that invalidates this
  * key — there is no per-case stream any more (ADR 0005 D3, one stream per browser). Pending,
  * not-found and a failed read are three different renders; none of them is an empty thread.
@@ -151,7 +152,7 @@ export function CaseDetail({
 					/>
 					{/* Structured classification (Workstream B). The control shows a picker only
 					    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
-					<ClassificationControl kind="support_case" id={caseId} canEdit />
+					<ClassificationControl kind={CASE_RESOURCE_KIND} id={caseId} canEdit />
 				</div>
 			</div>
 

@@ -169,7 +169,13 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	written.ruleIds.push((await seedRule(owner, { name: `filters-off-${stamp}`, enabled: false })).id);
 
 	// Support cases (`/[org]/~/support/my-cases`): differ on SEVERITY and TYPE.
-	/** Insert one open support case with the given severity and type. */
+	/**
+	 * Insert one open support case with the given severity and type, and its opening message. The
+	 * product never writes a case without one (`submitCase` → `openCase` inserts the description as the
+	 * first customer message in the same transaction), and a case with none renders its thread's
+	 * empty state — which made the route-behaviour audit score `~/support/cases/[id]` against an
+	 * answered render that is an empty state, a shape no real case has (#6336).
+	 */
 	const supportCase = async (subject: string, severity: string, type: string) => {
 		const [row] = await sql<{ id: string }[]>`
 			insert into support_cases ${sql({
@@ -184,6 +190,13 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 				contact: sql.json(seedSupportContact()),
 			})}
 			returning id`;
+		await sql`
+			insert into support_messages ${sql({
+				case_id: row.id,
+				author_type: "customer",
+				author_id: owner.userId,
+				body: `Opening message of ${subject}.`,
+			})}`;
 		return row.id;
 	};
 	written.supportCaseIds.push(await supportCase(`Filters fixture A ${stamp}`, "normal", "technical"));
