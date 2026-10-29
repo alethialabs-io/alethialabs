@@ -28,8 +28,8 @@ const (
 	RouteOrgClusters                = "/[org]/~/clusters"
 	RouteOrgConnectors              = "/[org]/~/connectors"
 	RouteOrgEvidence                = "/[org]/~/evidence"
-	RouteOrgJobsID                  = "/[org]/~/jobs/[id]"
 	RouteOrgJobs                    = "/[org]/~/jobs"
+	RouteOrgJobsID                  = "/[org]/~/jobs/[id]"
 	RouteOrgNew                     = "/[org]/~/new"
 	RouteOrgRunners                 = "/[org]/~/runners"
 	RouteOrgSettingsAccess          = "/[org]/~/settings/access"
@@ -71,8 +71,8 @@ var Routes = []string{
 	RouteOrgClusters,
 	RouteOrgConnectors,
 	RouteOrgEvidence,
-	RouteOrgJobsID,
 	RouteOrgJobs,
+	RouteOrgJobsID,
 	RouteOrgNew,
 	RouteOrgRunners,
 	RouteOrgSettingsAccess,
