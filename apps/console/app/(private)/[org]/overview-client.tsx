@@ -51,7 +51,7 @@ export function OverviewClient({
 	state,
 	totalCount,
 	connectedProviders,
-	jobsPrefetched,
+	jobsPrefetched = false,
 }: {
 	orgSlug: string;
 	projects: ProjectListItem[];
@@ -60,8 +60,11 @@ export function OverviewClient({
 	totalCount: number;
 	/** Cloud provider slugs with a live connection — drives full-color vs grayscale provider logos. */
 	connectedProviders: string[];
-	/** The page handed the Recent-jobs feed down in its own boundary, so the card draws it on the server. */
-	jobsPrefetched: boolean;
+	/**
+	 * The page handed the Recent-jobs feed down in its own boundary, so the card draws it on the
+	 * server. Absent means "not known", and the card keeps to its pending frame until hydration.
+	 */
+	jobsPrefetched?: boolean;
 }) {
 	const router = useRouter();
 	const pathname = usePathname();
