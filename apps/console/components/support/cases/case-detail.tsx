@@ -75,7 +75,7 @@ export function CaseDetail({
 		if (hasCase) mark({ id: caseId });
 	}, [hasCase, messageCount, caseId, mark]);
 
-	if (data === undefined || result.isError) {
+	if (data === undefined) {
 		if (!result.isError) return <CaseDetailSkeleton />;
 		// A case that is not visible is a not-found, never an error and never an empty thread.
 		// (The route answers this on the server; this is the case that went away while open.)
@@ -152,7 +152,7 @@ export function CaseDetail({
 					/>
 					{/* Structured classification (Workstream B). The control shows a picker only
 					    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
-					<ClassificationControl kind="project" id={caseId} canEdit />
+					<ClassificationControl kind={CASE_RESOURCE_KIND} id={caseId} canEdit />
 				</div>
 			</div>
 

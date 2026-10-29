@@ -38,6 +38,7 @@ export default async function CaseDetailRoute({
 	params: Promise<{ org: string; id: string }>;
 }) {
 	const { org, id } = await params;
+	if (!z.string().uuid().safeParse(id).success) notFound();
 
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
@@ -47,7 +48,7 @@ export default async function CaseDetailRoute({
 	try {
 		await queryClient.fetchQuery(rpc.support.case.queryOptions({ input: { id } }));
 	} catch (error) {
-		if (error instanceof ORPCError && error.code !== "NOT_FOUND") notFound();
+		if (error instanceof ORPCError && error.code === "NOT_FOUND") notFound();
 		throw error;
 	}
 	await sideReads;
@@ -72,7 +73,13 @@ async function prefetchCaseSideReads(
 	id: string,
 ): Promise<void> {
 	await Promise.all([
-		queryClient.prefetchQuery(rpc.classification.canEdit.queryOptions({ input: undefined })),
+		queryClient.prefetchQuery(rpc.classification.canEdit.queryOptions({ input: undefined, retry: false })),
+		queryClient.prefetchQuery(
+			rpc.classification.assignments.queryOptions({
+				input: { kind: CASE_RESOURCE_KIND, resourceId: id },
+				retry: false,
+			}),
+		),
 		queryClient.prefetchQuery(rpc.classification.dimensions.queryOptions({ input: {}, retry: false })),
 	]);
 }
