@@ -601,10 +601,29 @@ server actions — and reads `no-reads-failed` where `no-page-reads` was meant �
 withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS B1, B3, B4
 and B5, and must be MEASURED on B2, which it FAILS: its skeleton has no PageToolbar row and a one-row
 filter bar, so the table frame paints about 100px above where the page puts it. That is debt (#6121),
-not a calibration gap — the first, outline-only B2 could not see it. Every predicate must also have
+not a calibration gap — the first, outline-only B2 could not see it. B1, B2 and B4 must also have
 produced a PASS or a FAIL on at least ten routes.
 
-**A scored cell may not quietly stop being scored.** That floor of ten cannot see a single cell going
+**B3 and B5 are floored by witness, not by count** (#6318). They can only measure a route that makes a
+read of its own on load, and ADR 0005 moves first-paint reads onto the server prefetch, so their
+measurable set shrinks with every correct migration — a count floor had to be lowered by hand each time.
+Instead, B4's cold load (an independent load that fails every read and records which were the page's)
+witnesses which routes read on load. Every witnessed route must be scored on B3 and B5, with one excuse
+per predicate that is a fact about the page: B3 may read `answered-empty` (the answered render is its own
+empty state), and B5 may read `over-read-budget`. An unwitnessed route may read `no-page-reads` (B5 also
+`not-intercepted`). Any other NOT MEASURED, a thrown load or a withheld predicate, fails the floor. A B4
+that was withheld or not measured witnesses nothing, and a withheld B4 still carrying evidence fails the
+floor outright. In each shell, a control route that reads `members.list` on load by design (the
+`~/jobs` and `[project]/jobs` lists) must be witnessed and scored. So a scan that stops seeing reads
+cannot pass by seeing none, and a fault confined to one shell cannot pass by dropping that shell's
+routes from the witness and the verdicts together. The witness and the verdicts share the shell
+classifier (`shellReadsFor`), the read carrier (`readCarrier`) and the read key (`readKey`). A fault in
+them that spares every control's reads is out of this floor's reach. The fixture control drives all
+three together and covers that. B3 and B4 are
+judged after every route's loads have been taken, so each route is classified against the same
+evidence whatever its position in the manifest.
+
+**A scored cell may not quietly stop being scored.** The count floor cannot see a single cell going
 from PASS to NOT MEASURED, so `--import-live` compares the new records with the committed ones cell by
 cell and refuses an import in which a cell that was PASS or FAIL becomes NOT MEASURED or disappears,
 unless `--explain=<file>` names it with a reason. This is a check at import time, not a ratchet on the

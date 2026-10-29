@@ -32,7 +32,13 @@ vi.mock("@/app/server/actions/support", () => ({
 	reopenCase: vi.fn(),
 	closeCase: vi.fn(),
 }));
-vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
+const { classified } = vi.hoisted(() => ({ classified: vi.fn() }));
+vi.mock("@/components/classification/classification-control", () => ({
+	ClassificationControl: (props: { kind: string; id: string }) => {
+		classified(props);
+		return null;
+	},
+}));
 vi.mock("@/components/support/cases/case-thread", () => ({
 	CaseThread: ({ messages }: { messages: unknown[] }) => <div data-testid="thread">{messages.length} messages</div>,
 }));
@@ -143,6 +149,26 @@ describe("CaseDetail — pending, not-found and error are distinct (B3/B4)", () 
 		expect(screen.getByText("Couldn't load this case")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /try again|retry/i })).toBeInTheDocument();
 		expect(screen.queryByText("Case not found")).toBeNull();
+	});
+});
+
+describe("CaseDetail — a failed REFRESH keeps the case (B4, #6336)", () => {
+	it("a refetch that fails over data already on screen keeps the thread — no skeleton, no error page", () => {
+		renderView((qc) => {
+			qc.setQueryData(key, caseRead("open"));
+			qc.getQueryCache().find({ queryKey: key })?.setState({ error: new Error("network"), status: "error", fetchStatus: "idle" });
+		});
+		expect(screen.getByTestId("thread")).toHaveTextContent("1 messages");
+		expect(document.body.querySelector('[aria-busy="true"]')).toBeNull();
+		expect(screen.queryByText("Couldn't load this case")).toBeNull();
+	});
+});
+
+describe("CaseDetail — the classification row (#6336)", () => {
+	it("classifies the case under the kind the route prefetches its chips for", () => {
+		renderView((qc) => qc.setQueryData(key, caseRead("open")));
+		// The route keys `classification.assignments` with `support_case` (tests/app/support-case-route).
+		expect(classified).toHaveBeenCalledWith(expect.objectContaining({ kind: "support_case", id: CASE }));
 	});
 });
 
