@@ -45,6 +45,32 @@ describe("CommandDialog", () => {
 	});
 });
 
+// #6348 — the dialog's title and description sat OUTSIDE its popup, so a CLOSED palette still put
+// "Add a service" / "Search and add infrastructure…" on the page: a heading for a dialog nobody had
+// opened, read by a screen reader and counted as the page's content. They now live in the popup.
+describe("CommandDialog's title and description", () => {
+	it("are not on the page while the dialog is closed", () => {
+		render(
+			<CommandDialog open={false} title="Add a service" description="Search and add infrastructure.">
+				<CommandList />
+			</CommandDialog>,
+		);
+		expect(screen.queryByText("Add a service")).not.toBeInTheDocument();
+		expect(screen.queryByText("Search and add infrastructure.")).not.toBeInTheDocument();
+	});
+
+	it("name and describe the dialog once it is open", async () => {
+		render(
+			<CommandDialog open title="Add a service" description="Search and add infrastructure.">
+				<CommandList />
+			</CommandDialog>,
+		);
+		const dialog = await screen.findByRole("dialog", { name: "Add a service" });
+		expect(dialog).toHaveAccessibleDescription("Search and add infrastructure.");
+		expect(dialog).toContainElement(screen.getByText("Add a service"));
+	});
+});
+
 describe("Command", () => {
 	it("passes its label through to cmdk, which names the input with it", () => {
 		render(

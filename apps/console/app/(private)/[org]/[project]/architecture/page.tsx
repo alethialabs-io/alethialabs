@@ -43,6 +43,11 @@ export async function generateMetadata({
  * on, its BYO charts, described workloads and IaC source. The board used to fetch all of those after
  * hydration, so it painted empty and its nodes popped in seconds later. `loading.tsx` covers this
  * wait with the board's own skeleton.
+ *
+ * And the server render DRAWS that data (#6348). React Flow is client-only and loads at the point of
+ * use, so what the server sends in the board's place is `BoardPreview`: the design's cards, the last
+ * job, the cost and the toolbar — or the blank-board guide — drawn from these reads without React
+ * Flow. A skeleton there would be a first paint without the data this page already read.
  */
 export default async function ProjectArchitecturePage({
 	params,

@@ -22,7 +22,7 @@ import {
 	type ProjectFormInput,
 } from "@/lib/validations/project-form.schema";
 import { RegionError } from "@/components/errors/region-error";
-import { CanvasSkeleton } from "./canvas/canvas-skeleton";
+import { BoardPreview, BoardPreviewProvider } from "./canvas/board-preview";
 import { formToGraph } from "./canvas/graph/form-to-graph";
 import { ConnectorsProvider } from "./connectors-context";
 import { RepositoryProvider } from "./repository-context";
@@ -35,12 +35,17 @@ import {
 /**
  * The board, loaded at the point of use (#6119). It is the whole of `@xyflow/react`, `motion` and
  * every card, palette and inspector; a static import put all of it in front of the route's FIRST
- * hydration (the #5849 lesson). React Flow measures the DOM, so there is nothing to server-render:
- * the server sends the skeleton, and the client swaps the board in over the same footprint.
+ * hydration (the #5849 lesson). React Flow measures the DOM, so it is not server-rendered.
+ *
+ * What the server sends in its place is the BOARD, not a skeleton (#6348, RUBRIC B1): the design's
+ * cards, the environment's last job and cost, the toolbar, or the blank-board guide — all of it
+ * data the page already read on the server — drawn without React Flow by `BoardPreview`, which
+ * reads the page's data from `BoardPreviewProvider` (a `loading` component takes no props). The
+ * client swaps the live board in over the same footprint.
  */
 const DesignProjectCanvas = dynamic(
 	() => import("./canvas/design-project-canvas").then((m) => m.DesignProjectCanvas),
-	{ ssr: false, loading: () => <CanvasSkeleton /> },
+	{ ssr: false, loading: () => <BoardPreview /> },
 );
 
 /**
@@ -187,21 +192,25 @@ export function DesignProjectWorkbench({
 	if ((projectId && !sourceProject) || seedFailedFor === revision) return <DesignLoadError />;
 
 	return (
-		<ConnectorsProvider connectors={connectors}>
-			<RepositoryProvider>
-				<FormProvider {...form}>
-					<DesignProjectCanvas
-						cloudIdentities={cloudIdentities}
-						projectId={projectId}
-						environmentId={environmentId}
-						projectName={sourceProject?.formData.project.project_name}
-						dockInShell={dockInShell}
-						byoHelmEnabled={byoHelmEnabled}
-						byoDescribeEnabled={byoDescribeEnabled}
-						byoIacEnabled={byoIacEnabled}
-					/>
-				</FormProvider>
-			</RepositoryProvider>
-		</ConnectorsProvider>
+		<BoardPreviewProvider
+			value={{ sourceProject, cloudIdentities, projectId, environmentId, byoHelmEnabled }}
+		>
+			<ConnectorsProvider connectors={connectors}>
+				<RepositoryProvider>
+					<FormProvider {...form}>
+						<DesignProjectCanvas
+							cloudIdentities={cloudIdentities}
+							projectId={projectId}
+							environmentId={environmentId}
+							projectName={sourceProject?.formData.project.project_name}
+							dockInShell={dockInShell}
+							byoHelmEnabled={byoHelmEnabled}
+							byoDescribeEnabled={byoDescribeEnabled}
+							byoIacEnabled={byoIacEnabled}
+						/>
+					</FormProvider>
+				</RepositoryProvider>
+			</ConnectorsProvider>
+		</BoardPreviewProvider>
 	);
 }
