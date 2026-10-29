@@ -51,3 +51,18 @@ export const JOB_DETAIL_COLUMN = "mx-auto w-full min-w-0 max-w-4xl";
  * identical value, and two copies of a viewport calculation drift the moment the topbar does.
  */
 export const JOB_VIEWPORT_HEIGHT = "h-[calc(100dvh-53px)]";
+
+/**
+ * The job's detail disclosures, in the order the page draws them under the log.
+ *
+ * EVERY JOB DRAWS ALL THREE (#6350). The two payload sections used to render only when the job had
+ * a payload, so the strip under the log was one row tall for a job without them and three for a job
+ * with them — and a skeleton, which runs before the job is known, could only be right about one of
+ * the two. On release-gate run 40822681524 it drew three over a job that had one, the log pane's
+ * bottom edge moved 83px on the swap, and B2 failed. A section with nothing in it now says so when
+ * opened, so the strip is the same height for every job and the skeleton can draw it exactly.
+ *
+ * Shared with `loading.tsx` for the reason `JOB_DETAIL_COLUMN` is: the skeleton draws one row per
+ * title, so a section added here is a row added there.
+ */
+export const JOB_DETAIL_SECTIONS = ["Job details", "Config snapshot", "Execution metadata"] as const;

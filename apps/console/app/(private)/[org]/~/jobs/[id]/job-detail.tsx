@@ -52,7 +52,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import JobDetailLoading from "./loading";
-import { JOB_VIEWPORT_HEIGHT } from "./detail-column";
+import { JOB_DETAIL_SECTIONS, JOB_VIEWPORT_HEIGHT } from "./detail-column";
 import { JobOutcome } from "./job-outcome";
 
 /**
@@ -102,6 +102,8 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
 	);
 }
 
+const [DETAILS_TITLE, CONFIG_TITLE, METADATA_TITLE] = JOB_DETAIL_SECTIONS;
+
 /** A pretty-printed JSONB payload — the config snapshot and the execution metadata. */
 function JsonBlock({ value }: { value: unknown }) {
 	return (
@@ -109,6 +111,17 @@ function JsonBlock({ value }: { value: unknown }) {
 			{JSON.stringify(value, null, 2)}
 		</pre>
 	);
+}
+
+/**
+ * A payload section's body: the JSON when the job recorded any, and otherwise one line saying it did
+ * not. The section itself is drawn either way (`JOB_DETAIL_SECTIONS` says why), so an absent payload
+ * is an answer the reader can open rather than a row that silently is not there.
+ */
+function PayloadBlock({ value, absent }: { value: unknown; absent: string }) {
+	const empty = typeof value !== "object" || value === null || Object.keys(value).length === 0;
+	if (empty) return <p className="text-ui-sm text-text-tertiary">{absent}</p>;
+	return <JsonBlock value={value} />;
 }
 
 /** Widest text {@link LocalDateTime} prints, so its slot is that wide before hydration. */
@@ -492,7 +505,7 @@ export function JobDetail({
 			{/* The job's facts and its frozen payloads — back inside the detail column. */}
 			<div className="max-h-[40dvh] shrink-0 overflow-y-auto border-t border-border/40 px-6">
 				<div className={column}>
-					<DetailSection title="Job details">
+					<DetailSection title={DETAILS_TITLE}>
 						{/* A `<dl>`, not the `grid grid-cols-2 md:grid-cols-3` of unlabelled `<p>` pairs
 						    this replaces: assistive tech had no way to tell which value belonged to
 						    which term, and on a narrow window the two-column wrap put them in an order
@@ -523,17 +536,13 @@ export function JobDetail({
 						</div>
 					</DetailSection>
 
-					{Object.keys(job.config_snapshot || {}).length > 0 && (
-						<DetailSection title="Config snapshot">
-							<JsonBlock value={job.config_snapshot} />
-						</DetailSection>
-					)}
+					<DetailSection title={CONFIG_TITLE}>
+						<PayloadBlock value={job.config_snapshot} absent="No configuration snapshot was recorded for this job." />
+					</DetailSection>
 
-					{job.execution_metadata && Object.keys(job.execution_metadata).length > 0 && (
-						<DetailSection title="Execution metadata">
-							<JsonBlock value={job.execution_metadata} />
-						</DetailSection>
-					)}
+					<DetailSection title={METADATA_TITLE}>
+						<PayloadBlock value={job.execution_metadata} absent="No execution metadata was recorded for this job." />
+					</DetailSection>
 				</div>
 			</div>
 
