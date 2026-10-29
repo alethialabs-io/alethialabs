@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ORPCError } from "@orpc/server";
-import { HydrationBoundary, type QueryClient, dehydrate } from "@tanstack/react-query";
+import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import { prefetchClassificationOf } from "@/components/classification/prefetch-classification";
 import { CaseDetail } from "@/components/support/cases/case-detail";
 import { CASE_RESOURCE_KIND } from "@/components/support/cases/case-query";
 import { getQueryClient } from "@/lib/query/client";
@@ -26,11 +27,14 @@ export const metadata = pageMetadata({
  *
  * The case's classification row is part of the same first paint (#6336): the edit decision that
  * decides whether "Classify" renders, the case's chips, and the unsearched taxonomy the picker reads
- * are prefetched beside the case under the keys `ClassificationControl` asks for. Without them the
+ * are prefetched beside the case by `prefetchClassificationOf` (#6344), the one copy of the keys
+ * `ClassificationControl` asks for, shared with every other route that renders it. Without them the
  * server HTML had no picker and the browser made those reads on mount to draw it (B1), and a failure
  * of those reads made the button disappear with nothing in its place (B4). They are not the case:
- * one that fails on the server leaves the case rendering, is not shipped as a cached error (the
- * default `dehydrate` ships successes only), and is asked again by the browser.
+ * one that fails on the server leaves the case rendering, is not retried there (the helper asks with
+ * `retry: false`), is not shipped as a cached error (the client's `dehydrate` ships successes and
+ * still-pending queries only, and these are awaited, so none is pending), and is asked again by the
+ * browser.
  */
 export default async function CaseDetailRoute({
 	params,
@@ -42,9 +46,10 @@ export default async function CaseDetailRoute({
 
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	// Started first and awaited after the case, so they run beside it. `prefetchQuery` never
-	// rejects, so a not-found or a failed case read cannot leave this promise unhandled.
-	const sideReads = prefetchCaseSideReads(queryClient, rpc, id);
+	// Started first and awaited after the case, so they run beside it. The helper only calls
+	// `prefetchQuery`, which never rejects, so a not-found or a failed case read cannot leave this
+	// promise unhandled.
+	const sideReads = prefetchClassificationOf(queryClient, CASE_RESOURCE_KIND, id);
 	try {
 		await queryClient.fetchQuery(rpc.support.case.queryOptions({ input: { id } }));
 	} catch (error) {
@@ -58,28 +63,4 @@ export default async function CaseDetailRoute({
 			<CaseDetail caseId={id} orgSlug={org} />
 		</HydrationBoundary>
 	);
-}
-
-/**
- * Prefetches the reads the case view's classification row makes, under the keys the browser asks
- * for (`lib/query/use-classification-query.ts`): `canEdit` (input-less — the org-level key every
- * control shares), this case's `assignments`, and the unsearched taxonomy (`{}`, the blank form of
- * `dimensionsInput()`) the picker reads on mount. No retry: a failed side read is the browser's to
- * ask again, and the case should not wait out a retry delay for a button. Never rejects.
- */
-async function prefetchCaseSideReads(
-	queryClient: QueryClient,
-	rpc: ReturnType<typeof serverOrpc>,
-	id: string,
-): Promise<void> {
-	await Promise.all([
-		queryClient.prefetchQuery(rpc.classification.canEdit.queryOptions({ input: undefined, retry: false })),
-		queryClient.prefetchQuery(
-			rpc.classification.assignments.queryOptions({
-				input: { kind: CASE_RESOURCE_KIND, resourceId: id },
-				retry: false,
-			}),
-		),
-		queryClient.prefetchQuery(rpc.classification.dimensions.queryOptions({ input: {}, retry: false })),
-	]);
 }
