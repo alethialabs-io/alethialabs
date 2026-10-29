@@ -186,7 +186,10 @@ function EnvironmentsBody({
 	}));
 	const reconcileById = new Map(reconcile.map((r) => [r.environmentId, r]));
 	const envName = (id: string) => envs.find((e) => e.id === id)?.name ?? "—";
-	const { data: classMap = {} } = useAssignmentsForKind(
+	// The route prefetched this batch (#6334). The batch leaves out an environment with no chips, so
+	// once it has answered such an environment's chips are KNOWN to be none — `[]`, not `undefined`,
+	// which would send each of those cards to read its own chips again on mount.
+	const { data: classMap } = useAssignmentsForKind(
 		"project_environment",
 		envs.map((e) => e.id),
 	);
@@ -262,7 +265,7 @@ function EnvironmentsBody({
 								project={project}
 								reconcile={reconcileById.get(env.id)}
 								protection={protectionByEnv[env.id]}
-								classAssignments={classMap[env.id]}
+								classAssignments={classMap ? (classMap[env.id] ?? []) : undefined}
 								canEdit
 								onEditRules={() => setProtectFor(env)}
 								onToggleHeal={(enabled) => {

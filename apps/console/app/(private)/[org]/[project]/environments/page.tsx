@@ -4,6 +4,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 import { resolveProjectId } from "@/app/server/actions/resolve";
+import { prefetchClassificationOfList } from "@/components/classification/prefetch-classification";
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { getQueryClient } from "@/lib/query/client";
 import { serverOrpc } from "@/lib/rpc/server";
@@ -24,7 +25,10 @@ export async function generateMetadata() {
  * THE ADR 0005 SLICE (#6120), as the jobs route (#6113): the page's one read,
  * `environments.overview`, is prefetched IN-PROCESS through the read router with exactly the key
  * the client asks for, and the dehydrated cache is handed to the client — so the first paint
- * carries the environments and the client issues no request on mount. `loading.tsx` covers the
+ * carries the environments and the client issues no request on mount. Each environment card's
+ * classification control is prefetched the same way once the environments are known (#6334): the
+ * edit decision, the taxonomy and every card's chips in the view's one batched read, so the
+ * "Classify" pickers are in the first paint. `loading.tsx` covers the
  * prefetch window with the view's own skeleton.
  *
  * An unresolvable slug is a real 404 here, inside this segment's children slot (see the
@@ -44,9 +48,16 @@ export default async function ProjectEnvironmentsPage({
 	}
 
 	const queryClient = getQueryClient();
-	await queryClient.prefetchQuery(
-		serverOrpc().environments.overview.queryOptions({ input: { project } }),
-	);
+	const overview = serverOrpc().environments.overview.queryOptions({ input: { project } });
+	await queryClient.prefetchQuery(overview);
+	const envs = queryClient.getQueryData(overview.queryKey)?.envs;
+	if (envs !== undefined) {
+		await prefetchClassificationOfList(
+			queryClient,
+			"project_environment",
+			envs.map((e) => e.id),
+		);
+	}
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient)}>
