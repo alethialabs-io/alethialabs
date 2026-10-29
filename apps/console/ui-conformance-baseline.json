@@ -23,7 +23,7 @@
 		"notInstrumented": 1,
 		"findings": 22,
 		"findingFiles": 14,
-		"liveNotMeasured": 81
+		"liveNotMeasured": 103
 	},
 	"ledgers": {
 		"baseline": 15,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/40485396792",
-			"commit": "3b8a1fffbd1e6f661c5d275e342216c0ba55f7b3"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/40822681524",
+			"commit": "440e6dd661f38d2af48f27ab32891a3f1e2cdf51"
 		},
 		"sections": {
 			"routes": {
@@ -99,240 +99,96 @@
 				"routes": 40
 			}
 		},
-		"debt": {
-			"T5": {
-				"owner": "#6119",
-				"why": "`[project]/architecture` (and `[project]`, which redirects there): the empty canvas renders \"Nothing designed yet\" through `data-slot=empty-title` with no `@repo/ui/empty` region around it, so T5 reads a hand-rolled empty region. Appeared with the canvas lane's GET reads (#6213).",
-				"fail": 2
-			}
-		},
+		"debt": {},
 		"behaviourLedger": [
 			{
 				"route": "/[org]",
 				"predicate": "B1",
-				"lifts": "#6118",
+				"lifts": "#6347",
 				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
 			},
 			{
 				"route": "/[org]",
 				"predicate": "B2",
-				"lifts": "#6118",
+				"lifts": "#6347",
 				"detail": "the skeleton sets 3 blocks side by side and the page 2"
 			},
 			{
 				"route": "/[org]/[project]/architecture",
 				"predicate": "B1",
-				"lifts": "#6119",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+				"lifts": "#6348",
+				"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
 			},
 			{
 				"route": "/[org]/[project]/clusters",
 				"predicate": "B2",
-				"lifts": "#6122",
-				"detail": "the skeleton sets 2 blocks side by side and the page draws none"
-			},
-			{
-				"route": "/[org]/[project]/environments",
-				"predicate": "B1",
-				"lifts": "#6120",
-				"detail": "with every read held, the region differs from its answered render in: content"
-			},
-			{
-				"route": "/[org]/[project]/environments",
-				"predicate": "B4",
-				"lifts": "#6120",
-				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+				"lifts": "#6349",
+				"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none"
 			},
 			{
 				"route": "/[org]/[project]/jobs",
 				"predicate": "B2",
-				"lifts": "#6121",
+				"lifts": "#6350",
 				"detail": "the skeleton moves 0.020 against the page (budget 0.02) — a 630px skeleton block became 632px, 46px lower"
-			},
-			{
-				"route": "/[org]/[project]/settings/access",
-				"predicate": "B2",
-				"lifts": "#6128",
-				"detail": "the skeleton moves 0.033 against the page (budget 0.02) — a 160px skeleton block became 319px"
-			},
-			{
-				"route": "/[org]/[project]/settings/activity",
-				"predicate": "B1",
-				"lifts": "#6128",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
-			},
-			{
-				"route": "/[org]/[project]/settings/general",
-				"predicate": "B1",
-				"lifts": "#6128",
-				"detail": "with every read held, the region differs from its answered render in: content"
-			},
-			{
-				"route": "/[org]/[project]/settings/general",
-				"predicate": "B4",
-				"lifts": "#6128",
-				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
-			},
-			{
-				"route": "/[org]/[project]/usage",
-				"predicate": "B4",
-				"lifts": "#6127",
-				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
 			},
 			{
 				"route": "/[org]/~/clusters",
 				"predicate": "B2",
-				"lifts": "#6122",
-				"detail": "the skeleton sets 2 blocks side by side and the page draws none"
-			},
-			{
-				"route": "/[org]/~/connectors",
-				"predicate": "B1",
-				"lifts": "#6124",
-				"detail": "with every read held, the region differs from its answered render in: content"
-			},
-			{
-				"route": "/[org]/~/connectors",
-				"predicate": "B2",
-				"lifts": "#6124",
-				"detail": "the skeleton sets 2 blocks side by side and the page 3"
-			},
-			{
-				"route": "/[org]/~/connectors",
-				"predicate": "B4",
-				"lifts": "#6124",
-				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
-			},
-			{
-				"route": "/[org]/~/evidence",
-				"predicate": "B2",
-				"lifts": "#6126",
-				"detail": "the skeleton moves 0.032 against the page (budget 0.02) — a 160px skeleton block became 192px, 156px higher"
+				"lifts": "#6349",
+				"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none"
 			},
 			{
 				"route": "/[org]/~/jobs/[id]",
 				"predicate": "B2",
-				"lifts": "#6121",
+				"lifts": "#6350",
 				"detail": "the skeleton moves 0.049 against the page (budget 0.02) — a 630px skeleton block became 707px, 96px higher"
 			},
 			{
 				"route": "/[org]/~/new",
 				"predicate": "B2",
-				"lifts": "#6131",
-				"detail": "the skeleton moves 0.190 against the page (budget 0.02) — a 426px skeleton block became 797px; the skeleton draws no block-sized frame and the page 3"
-			},
-			{
-				"route": "/[org]/~/runners",
-				"predicate": "B1",
-				"lifts": "#6123",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
-			},
-			{
-				"route": "/[org]/~/runners",
-				"predicate": "B4",
-				"lifts": "#6123",
-				"detail": "stale refetch: endless skeleton"
-			},
-			{
-				"route": "/[org]/~/settings/activity",
-				"predicate": "B1",
-				"lifts": "#6129",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
-			},
-			{
-				"route": "/[org]/~/settings/billing/invoices",
-				"predicate": "B2",
-				"lifts": "#6127",
-				"detail": "the skeleton moves 0.022 against the page (budget 0.02) — a 155px skeleton block became 132px, 122px higher"
-			},
-			{
-				"route": "/[org]/~/settings/classification",
-				"predicate": "B1",
-				"lifts": "#6129",
-				"detail": "with every read held, the region differs from its answered render in: content"
-			},
-			{
-				"route": "/[org]/~/settings/classification",
-				"predicate": "B2",
-				"lifts": "#6129",
-				"detail": "the skeleton moves 0.152 against the page (budget 0.02) — a 86px skeleton block became 532px; the skeleton sets 1 block side by side and the page 2"
-			},
-			{
-				"route": "/[org]/~/settings/classification",
-				"predicate": "B4",
-				"lifts": "#6129",
-				"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
-			},
-			{
-				"route": "/[org]/~/settings/general",
-				"predicate": "B1",
-				"lifts": "#6128",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+				"lifts": "#6351",
+				"detail": "the skeleton moves 0.027 against the page (budget 0.02) — a 166px skeleton block became 398px, 14px higher"
 			},
 			{
 				"route": "/[org]/~/settings/general",
 				"predicate": "B2",
-				"lifts": "#6128",
-				"detail": "the skeleton moves 0.039 against the page (budget 0.02) — a 285px skeleton block became 515px, 7px lower"
-			},
-			{
-				"route": "/[org]/~/settings/general",
-				"predicate": "B4",
-				"lifts": "#6128",
-				"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
-			},
-			{
-				"route": "/[org]/~/settings/general",
-				"predicate": "B5",
-				"lifts": "#6128",
-				"detail": "one read failing alone blanked every region — the `getOrgSettings (apps/console/app/server/actions/org-settings.ts)` server action"
+				"lifts": "#6352",
+				"detail": "the skeleton moves 0.182 against the page (budget 0.02) — a 131px skeleton block became 515px, 452px higher"
 			},
 			{
 				"route": "/[org]/~/settings/roles",
 				"predicate": "B2",
-				"lifts": "#6129",
-				"detail": "the skeleton moves 0.036 against the page (budget 0.02) — a 203px skeleton block became 80px, 53px lower; the skeleton sets 1 block side by side and the page 2"
-			},
-			{
-				"route": "/[org]/~/settings/teams",
-				"predicate": "B1",
-				"lifts": "#6129",
-				"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
-			},
-			{
-				"route": "/[org]/~/settings/teams",
-				"predicate": "B4",
-				"lifts": "#6129",
-				"detail": "cold load: empty copy, content vanished with no error surface; stale refetch: empty copy, content vanished with no error surface"
+				"lifts": "#6353",
+				"detail": "the skeleton moves 0.045 against the page (budget 0.02) — a 339px skeleton block became 701px, 4px lower"
 			},
 			{
 				"route": "/[org]/~/support/abuse",
 				"predicate": "B2",
-				"lifts": "#6130",
+				"lifts": "#6354",
 				"detail": "the skeleton moves 0.115 against the page (budget 0.02) — a 494px skeleton block became 807px; the skeleton draws no block-sized frame and the page 1"
 			},
 			{
 				"route": "/[org]/~/support/cases/[id]",
 				"predicate": "B2",
-				"lifts": "#6130",
-				"detail": "the skeleton moves 0.035 against the page (budget 0.02) — a 64px skeleton block became 221px, 114px higher"
+				"lifts": "#6354",
+				"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 350px skeleton block became 134px, 39px lower"
 			},
 			{
 				"route": "/[org]/~/support/my-cases",
 				"predicate": "B2",
-				"lifts": "#6130",
+				"lifts": "#6354",
 				"detail": "the skeleton moves 0.074 against the page (budget 0.02) — a 415px skeleton block became 139px"
 			},
 			{
 				"route": "/[org]/~/support/submit",
 				"predicate": "B2",
-				"lifts": "#6130",
+				"lifts": "#6354",
 				"detail": "the skeleton moves 0.020 against the page (budget 0.02) — a 420px skeleton block became 507px; the skeleton draws no block-sized frame and the page 2"
 			},
 			{
 				"route": "/[org]/~/usage",
 				"predicate": "B2",
-				"lifts": "#6127",
+				"lifts": "#6355",
 				"detail": "the skeleton moves 0.066 against the page (budget 0.02) — a 82px skeleton block became 96px, 81px higher; the skeleton sets 2 blocks side by side and the page 1"
 			}
 		]
@@ -451,16 +307,15 @@
 			"instrument": "live",
 			"section": "routes",
 			"owner": null,
-			"debt": "#6119",
-			"pass": 16,
-			"fail": 2,
+			"pass": 18,
+			"fail": 0,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"no-empty-state": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8889
+			"score": 1
 		},
 		"T6": {
 			"family": "T",
@@ -850,13 +705,13 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 34,
+			"pass": 35,
 			"fail": 0,
-			"na": 6,
+			"na": 5,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4,
-				"no-enabled-controls": 2
+				"no-enabled-controls": 1
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -866,8 +721,8 @@
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 15,
-			"fail": 11,
+			"pass": 24,
+			"fail": 2,
 			"na": 4,
 			"notMeasured": 10,
 			"naReasons": {
@@ -876,15 +731,15 @@
 			"notMeasuredReasons": {
 				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 10
 			},
-			"score": 0.5769
+			"score": 0.9231
 		},
 		"B2": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 12,
-			"fail": 18,
+			"pass": 17,
+			"fail": 13,
 			"na": 4,
 			"notMeasured": 6,
 			"naReasons": {
@@ -893,23 +748,23 @@
 			"notMeasuredReasons": {
 				"hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition": 6
 			},
-			"score": 0.4
+			"score": 0.5667
 		},
 		"B3": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 14,
+			"pass": 5,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 22,
+			"notMeasured": 31,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 18,
-				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 4
+				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 28,
+				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 3
 			},
 			"score": 1
 		},
@@ -918,38 +773,37 @@
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 17,
-			"fail": 8,
+			"pass": 21,
+			"fail": 0,
 			"na": 4,
-			"notMeasured": 11,
+			"notMeasured": 15,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 3,
-				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 7,
+				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 6,
+				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 8,
 				"no-reads-failed — the route made no data read, so forcing reads to fail reached nothing": 1
 			},
-			"score": 0.68
+			"score": 1
 		},
 		"B5": {
 			"family": "B",
 			"instrument": "live",
 			"section": "behaviour",
 			"owner": null,
-			"pass": 16,
-			"fail": 1,
+			"pass": 8,
+			"fail": 0,
 			"na": 4,
-			"notMeasured": 19,
+			"notMeasured": 28,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed": 10,
-				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 8,
-				"over-read-budget — the route makes 12 reads of its own and B5 fails at most 8 one at a time": 1
+				"not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed": 19,
+				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 9
 			},
-			"score": 0.9412
+			"score": 1
 		},
 		"B6": {
 			"family": "B",
@@ -1041,11 +895,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 2,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 1,
-					"score": 0.6667
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -1085,11 +939,11 @@
 				}
 			},
 			"overall": {
-				"pass": 15,
-				"fail": 1,
+				"pass": 16,
+				"fail": 0,
 				"na": 26,
 				"notMeasured": 1,
-				"score": 0.9375
+				"score": 1
 			}
 		},
 		{
@@ -1108,11 +962,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 5,
-					"fail": 1,
+					"pass": 6,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 1,
-					"score": 0.8333
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -1144,19 +998,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 4,
+					"pass": 2,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 2,
+				"pass": 29,
+				"fail": 1,
 				"na": 10,
-				"notMeasured": 1,
-				"score": 0.9375
+				"notMeasured": 3,
+				"score": 0.9667
 			}
 		},
 		{
@@ -1211,19 +1065,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 1,
+					"pass": 0,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.5
+					"notMeasured": 4,
+					"score": 0
 				}
 			},
 			"overall": {
-				"pass": 28,
+				"pass": 27,
 				"fail": 1,
 				"na": 10,
-				"notMeasured": 4,
-				"score": 0.9655
+				"notMeasured": 5,
+				"score": 0.9643
 			}
 		},
 		{
@@ -1279,18 +1133,18 @@
 					"instrumented": 5,
 					"of": 6,
 					"pass": 3,
-					"fail": 2,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.6
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 29,
-				"fail": 2,
+				"fail": 0,
 				"na": 11,
-				"notMeasured": 1,
-				"score": 0.9355
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
@@ -1479,19 +1333,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 1,
+					"pass": 1,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 4,
-					"score": 0
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 1,
+				"pass": 38,
+				"fail": 0,
 				"na": 0,
 				"notMeasured": 5,
-				"score": 0.9737
+				"score": 1
 			}
 		},
 		{
@@ -1546,19 +1400,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 4,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 1,
+				"pass": 40,
+				"fail": 0,
 				"na": 0,
-				"notMeasured": 1,
-				"score": 0.9762
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
@@ -1604,9 +1458,9 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				},
@@ -1614,18 +1468,18 @@
 					"instrumented": 5,
 					"of": 6,
 					"pass": 3,
-					"fail": 2,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.6
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 28,
-				"fail": 2,
-				"na": 12,
-				"notMeasured": 1,
-				"score": 0.9333
+				"pass": 29,
+				"fail": 0,
+				"na": 11,
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
@@ -1680,18 +1534,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 5,
+					"pass": 3,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
+					"notMeasured": 2,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 29,
 				"fail": 0,
 				"na": 11,
-				"notMeasured": 1,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1748,18 +1602,18 @@
 					"instrumented": 5,
 					"of": 6,
 					"pass": 0,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 4,
-					"score": 0
+					"notMeasured": 5,
+					"score": null
 				}
 			},
 			"overall": {
 				"pass": 27,
-				"fail": 1,
+				"fail": 0,
 				"na": 10,
-				"notMeasured": 5,
-				"score": 0.9643
+				"notMeasured": 6,
+				"score": 1
 			}
 		},
 		{
@@ -1881,19 +1735,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 1,
+					"pass": 0,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.5
+					"notMeasured": 4,
+					"score": 0
 				}
 			},
 			"overall": {
-				"pass": 27,
+				"pass": 26,
 				"fail": 1,
 				"na": 12,
-				"notMeasured": 3,
-				"score": 0.9643
+				"notMeasured": 4,
+				"score": 0.963
 			}
 		},
 		{
@@ -1948,19 +1802,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 3,
+					"pass": 3,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 2,
-					"score": 0
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 3,
+				"pass": 38,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 0.9211
+				"score": 1
 			}
 		},
 		{
@@ -2016,18 +1870,18 @@
 					"instrumented": 5,
 					"of": 6,
 					"pass": 1,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.5
+					"notMeasured": 4,
+					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 37,
-				"fail": 1,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 3,
-				"score": 0.9737
+				"notMeasured": 4,
+				"score": 1
 			}
 		},
 		{
@@ -2216,19 +2070,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 4,
+					"pass": 2,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 29,
+				"pass": 27,
 				"fail": 1,
 				"na": 13,
-				"notMeasured": 0,
-				"score": 0.9667
+				"notMeasured": 2,
+				"score": 0.9643
 			}
 		},
 		{
@@ -2283,19 +2137,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 0,
-					"fail": 2,
+					"pass": 2,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 2,
+				"pass": 38,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 3,
-				"score": 0.9474
+				"score": 1
 			}
 		},
 		{
@@ -2484,19 +2338,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 4,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 39,
-				"fail": 1,
+				"pass": 38,
+				"fail": 0,
 				"na": 3,
-				"notMeasured": 0,
-				"score": 0.975
+				"notMeasured": 2,
+				"score": 1
 			}
 		},
 		{
@@ -2618,19 +2472,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 2,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 2,
-					"score": 0.6667
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 1,
+				"pass": 37,
+				"fail": 0,
 				"na": 4,
 				"notMeasured": 2,
-				"score": 0.973
+				"score": 1
 			}
 		},
 		{
@@ -2685,19 +2539,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 2,
-					"fail": 3,
+					"pass": 3,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.4
+					"notMeasured": 2,
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 3,
+				"pass": 28,
+				"fail": 0,
 				"na": 13,
-				"notMeasured": 0,
-				"score": 0.9
+				"notMeasured": 2,
+				"score": 1
 			}
 		},
 		{
@@ -2752,19 +2606,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 1,
-					"fail": 4,
+					"pass": 2,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.2
+					"notMeasured": 2,
+					"score": 0.6667
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 4,
+				"pass": 27,
+				"fail": 1,
 				"na": 13,
-				"notMeasured": 0,
-				"score": 0.8667
+				"notMeasured": 2,
+				"score": 0.9643
 			}
 		},
 		{
@@ -2953,18 +2807,18 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 1,
+					"pass": 0,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 4,
-					"score": 1
+					"notMeasured": 5,
+					"score": null
 				}
 			},
 			"overall": {
-				"pass": 38,
+				"pass": 37,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 4,
+				"notMeasured": 5,
 				"score": 1
 			}
 		},
@@ -3021,18 +2875,18 @@
 					"instrumented": 5,
 					"of": 6,
 					"pass": 2,
-					"fail": 2,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
-					"score": 0.5
+					"notMeasured": 3,
+					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 38,
-				"fail": 2,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 1,
-				"score": 0.95
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
@@ -3288,19 +3142,19 @@
 				"B": {
 					"instrumented": 5,
 					"of": 6,
-					"pass": 1,
+					"pass": 4,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.5
+					"notMeasured": 0,
+					"score": 0.8
 				}
 			},
 			"overall": {
-				"pass": 27,
+				"pass": 30,
 				"fail": 1,
 				"na": 11,
-				"notMeasured": 4,
-				"score": 0.9643
+				"notMeasured": 1,
+				"score": 0.9677
 			}
 		},
 		{
@@ -4102,8 +3956,7 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "T5",
-			"verdict": "FAIL",
-			"detail": "1 hand-rolled empty region, none resolving to @repo/ui/empty"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -4121,7 +3974,7 @@
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B1",
 			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+			"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4131,12 +3984,14 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "B4",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4332,8 +4187,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "T5",
-			"verdict": "FAIL",
-			"detail": "1 hand-rolled empty region, none resolving to @repo/ui/empty"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4356,7 +4210,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton sets 2 blocks side by side and the page draws none"
+			"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4367,7 +4221,8 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "B4",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4580,8 +4435,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4591,18 +4445,19 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -5280,8 +5135,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "B2",
-			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.033 against the page (budget 0.02) — a 160px skeleton block became 319px"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5497,8 +5351,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5508,7 +5361,8 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5518,7 +5372,8 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5716,8 +5571,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5727,18 +5581,19 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5884,8 +5739,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5957,7 +5811,8 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5967,7 +5822,8 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -6193,8 +6049,8 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -6638,7 +6494,7 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton sets 2 blocks side by side and the page draws none"
+			"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6649,7 +6505,8 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B4",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6863,14 +6720,12 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B2",
-			"verdict": "FAIL",
-			"detail": "the skeleton sets 2 blocks side by side and the page 3"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6881,8 +6736,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -7094,8 +6948,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B2",
-			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.032 against the page (budget 0.02) — a 160px skeleton block became 192px, 156px higher"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7106,7 +6959,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "B4",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7767,12 +7621,13 @@
 			"route": "/[org]/~/new",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.190 against the page (budget 0.02) — a 426px skeleton block became 797px; the skeleton draws no block-sized frame and the page 3"
+			"detail": "the skeleton moves 0.027 against the page (budget 0.02) — a 166px skeleton block became 398px, 14px higher"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -7782,7 +7637,8 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -7991,8 +7847,8 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, empty copy, content"
+			"verdict": "NOT MEASURED",
+			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8009,14 +7865,12 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "stale refetch: endless skeleton"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "over-read-budget — the route makes 12 reads of its own and B5 fails at most 8 one at a time"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8682,8 +8536,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8693,7 +8546,8 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8703,7 +8557,8 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -9140,8 +8995,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "B2",
-			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.022 against the page (budget 0.02) — a 155px skeleton block became 132px, 122px higher"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -9359,30 +9213,29 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B2",
-			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.152 against the page (budget 0.02) — a 86px skeleton block became 532px; the skeleton sets 1 block side by side and the page 2"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: content vanished with no error surface; stale refetch: content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -9591,31 +9444,30 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.039 against the page (budget 0.02) — a 285px skeleton block became 515px, 7px lower"
+			"detail": "the skeleton moves 0.182 against the page (budget 0.02) — a 131px skeleton block became 515px, 452px higher"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: endless skeleton, content vanished with no error surface; stale refetch: endless skeleton, content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B5",
-			"verdict": "FAIL",
-			"detail": "one read failing alone blanked every region — the `getOrgSettings (apps/console/app/server/actions/org-settings.ts)` server action"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -10050,7 +9902,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.036 against the page (budget 0.02) — a 203px skeleton block became 80px, 53px lower; the skeleton sets 1 block side by side and the page 2"
+			"detail": "the skeleton moves 0.045 against the page (budget 0.02) — a 339px skeleton block became 701px, 4px lower"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10277,18 +10129,19 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B3",
 			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B4",
 			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10486,8 +10339,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B1",
-			"verdict": "FAIL",
-			"detail": "with every read held, the region differs from its answered render in: skeleton, rows, content"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -10498,18 +10350,19 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B3",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B4",
-			"verdict": "FAIL",
-			"detail": "cold load: empty copy, content vanished with no error surface; stale refetch: empty copy, content vanished with no error surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "B5",
-			"verdict": "PASS"
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -11405,26 +11258,23 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B2",
 			"verdict": "FAIL",
-			"detail": "the skeleton moves 0.035 against the page (budget 0.02) — a 64px skeleton block became 221px, 114px higher"
+			"detail": "the skeleton moves 0.040 against the page (budget 0.02) — a 350px skeleton block became 134px, 39px lower"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
