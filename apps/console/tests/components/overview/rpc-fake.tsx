@@ -21,6 +21,8 @@ export const reads = {
 	usage: vi.fn<(input: unknown) => Promise<unknown>>(),
 	alerts: vi.fn<(input: unknown) => Promise<unknown>>(),
 	recentJobs: vi.fn<(input: unknown) => Promise<unknown>>(),
+	projects: vi.fn<(input: unknown) => Promise<unknown>>(),
+	context: vi.fn<(input: unknown) => Promise<unknown>>(),
 };
 
 /** The fake transport: the router's shape, each procedure answering from `reads`. */
@@ -31,6 +33,8 @@ const fakeClient = {
 	},
 	workspace: {
 		recentJobs: (input: unknown) => reads.recentJobs(input),
+		projects: (input: unknown) => reads.projects(input),
+		context: (input: unknown) => reads.context(input),
 	},
 };
 

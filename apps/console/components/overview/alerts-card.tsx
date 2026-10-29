@@ -71,13 +71,45 @@ function DeliverySkeleton() {
 	);
 }
 
-/** The card while its read is pending; the route's `loading.tsx` renders this too. */
-export function AlertsCardSkeleton() {
+/**
+ * The plan gate's placeholder (`AlertingUpsell`): `CARD_EMPTY`'s padding and gaps around the icon
+ * tile, the title, two description lines and the button, each at its own height. Plain bars, no
+ * empty copy and no `data-slot="empty"`: a pending card must not read as an empty one (RUBRIC B3).
+ */
+function GateSkeleton() {
+	return (
+		<div className="flex flex-col items-center justify-center gap-2.5 px-4 py-8">
+			<div className="flex flex-col items-center gap-2">
+				<Skeleton className="mb-2 size-10 rounded-lg" />
+				<Skeleton className="h-4 w-36" />
+				<div className="flex flex-col items-center gap-1">
+					<Skeleton className="h-4 w-52" />
+					<Skeleton className="h-4 w-40" />
+				</div>
+			</div>
+			<Skeleton className="h-6 w-20" />
+		</div>
+	);
+}
+
+/**
+ * The card while its read is pending; the route's `loading.tsx` renders this too. `gated` is the
+ * caller's knowledge that the org's plan has no alerting (the route skeleton reads the shell's
+ * cached entitlements): the card will answer with the plan gate, not rows, so the placeholder is the
+ * gate's shape — a skeleton promising rows the plan cannot have is the F021 shape at card scale.
+ */
+export function AlertsCardSkeleton({ gated = false }: { gated?: boolean }) {
 	return (
 		<AlertsFrame>
 			<div aria-busy="true">
-				<DeliverySkeleton />
-				<DeliverySkeleton />
+				{gated ? (
+					<GateSkeleton />
+				) : (
+					<>
+						<DeliverySkeleton />
+						<DeliverySkeleton />
+					</>
+				)}
 			</div>
 		</AlertsFrame>
 	);
