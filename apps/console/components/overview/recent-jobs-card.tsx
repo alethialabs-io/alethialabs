@@ -81,38 +81,63 @@ function RecentJobsFrame({ orgSlug, children }: { orgSlug?: string; children: Re
 	);
 }
 
-/** One job row's placeholder, at the row's real height. */
+/**
+ * One job row's placeholder, at the row's real height: the right-hand column (the status pill over
+ * the timing line) is the row's tallest, so its bars are the pill's and the line's heights.
+ */
 function JobSkeleton() {
 	return (
 		<div className="flex items-center gap-3 border-b border-border/60 px-4 py-3 last:border-b-0">
 			<Skeleton className="size-7 shrink-0 rounded-sm" />
-			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-				<Skeleton className="h-3.5 w-32" />
-				<Skeleton className="h-2.5 w-24" />
+			<div className="flex min-w-0 flex-1 flex-col gap-1">
+				<Skeleton className="h-4 w-32" />
+				<Skeleton className="h-3.5 w-24" />
 			</div>
-			<div className="flex shrink-0 flex-col items-end gap-1.5">
-				<Skeleton className="h-4 w-16 rounded-full" />
-				<Skeleton className="h-2.5 w-20" />
+			<div className="flex shrink-0 flex-col items-end gap-1">
+				<Skeleton className="h-5 w-16 rounded-full" />
+				<Skeleton className="h-3.5 w-20" />
 			</div>
 		</div>
 	);
 }
 
-/** The card while its read is pending; the route's `loading.tsx` renders this too. */
-export function RecentJobsCardSkeleton() {
+/**
+ * The "No jobs yet." line's placeholder: `CARD_EMPTY`'s padding around one mono line — no empty
+ * copy, because a pending card must not say there is nothing (RUBRIC B3).
+ */
+function NoJobsSkeleton() {
+	return (
+		<div className="flex flex-col items-center justify-center px-4 py-8">
+			<Skeleton className="h-4 w-20" />
+		</div>
+	);
+}
+
+/**
+ * The card while its read is pending; the route's `loading.tsx` renders this too. `rows` is how many
+ * rows the answer will have when the caller knows (the route skeleton reads the shell's cached feed);
+ * three when it does not. Zero draws the empty line's height, not rows.
+ */
+export function RecentJobsCardSkeleton({ rows = 3 }: { rows?: number }) {
+	const count = Math.min(Math.max(rows, 0), MAX_ROWS);
 	return (
 		<RecentJobsFrame>
 			<div aria-busy="true">
-				<JobSkeleton />
-				<JobSkeleton />
-				<JobSkeleton />
+				{count === 0 ? <NoJobsSkeleton /> : Array.from({ length: count }, (_, i) => <JobSkeleton key={i} />)}
 			</div>
 		</RecentJobsFrame>
 	);
 }
 
-/** Latest provisioning jobs (last few) for the org. */
-export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
+/**
+ * Latest provisioning jobs (last few) for the org.
+ *
+ * `prefetched` says the page's server render held the feed AND hands it down in its own hydration
+ * boundary (`app/(private)/[org]/page.tsx`), so the server HTML and the hydrating render both hold
+ * it: the rows are drawn in the first paint (RUBRIC B1). Without it the card cannot know what the
+ * server drew, and keeps to the pending frame until hydration is over (#5786, below).
+ */
+export function RecentJobsCard({ orgSlug, prefetched = false }: { orgSlug: string; prefetched?: boolean }) {
 	const jobs = useRecentJobsQuery();
 	// THE SHELL READS THIS SAME QUERY (the bell, toasts, breadcrumbs, palette). The layout prefetches
 	// it, so normally the server and the hydrating render both hold it. But if that prefetch failed,
@@ -120,11 +145,13 @@ export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
 	// may have fetched it by the time this card hydrates; drawing the rows then is React #418, and
 	// React throws the page's server HTML away (#5786). So until hydration is over the card renders
 	// exactly what the server could have: the pending frame. Rows follow one commit later, from the
-	// cache, with no request.
+	// cache, with no request. When the page says it served the feed (`prefetched`), the server DID
+	// draw the rows, so the hydrating render draws them too.
 	const hydrated = useHydrated();
+	const drawable = hydrated || prefetched;
 
-	if (jobs.data === undefined || !hydrated) {
-		if (!hydrated) return <RecentJobsCardSkeleton />;
+	if (jobs.data === undefined || !drawable) {
+		if (!drawable) return <RecentJobsCardSkeleton />;
 		if (jobs.isError && isForbidden(jobs.error)) {
 			return (
 				<RecentJobsFrame orgSlug={orgSlug}>

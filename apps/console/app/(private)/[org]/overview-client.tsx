@@ -51,6 +51,7 @@ export function OverviewClient({
 	state,
 	totalCount,
 	connectedProviders,
+	jobsPrefetched,
 }: {
 	orgSlug: string;
 	projects: ProjectListItem[];
@@ -59,6 +60,8 @@ export function OverviewClient({
 	totalCount: number;
 	/** Cloud provider slugs with a live connection — drives full-color vs grayscale provider logos. */
 	connectedProviders: string[];
+	/** The page handed the Recent-jobs feed down in its own boundary, so the card draws it on the server. */
+	jobsPrefetched: boolean;
 }) {
 	const router = useRouter();
 	const pathname = usePathname();
@@ -113,7 +116,7 @@ export function OverviewClient({
 				<div className="flex flex-col gap-4">
 					<UsageCard orgSlug={orgSlug} projectCount={totalCount} />
 					<AlertsCard orgSlug={orgSlug} />
-					<RecentJobsCard orgSlug={orgSlug} />
+					<RecentJobsCard orgSlug={orgSlug} prefetched={jobsPrefetched} />
 				</div>
 
 				{/* Right column — projects list. */}
