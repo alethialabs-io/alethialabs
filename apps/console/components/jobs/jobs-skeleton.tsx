@@ -41,7 +41,7 @@ export function JobsListSkeleton({ showProject = true }: { showProject?: boolean
 			<PageToolbarSkeleton count />
 			<JobsFilterBar
 				className="animate-pulse"
-				showProject={showProject}
+				showProject={true}
 				filters={DEFAULT_JOBS_FILTERS}
 				onFilter={ignore}
 				onReset={ignore}
@@ -54,7 +54,7 @@ export function JobsListSkeleton({ showProject = true }: { showProject?: boolean
 				facets={undefined}
 				onCreateProject={ignore}
 			/>
-			<DataTableSkeleton columns={showProject ? 6 : 5} rows={11} scrollHeight="h-[70vh]" />
+			<DataTableSkeleton columns={6} rows={11} scrollHeight="h-[70vh]" />
 		</div>
 	);
 }

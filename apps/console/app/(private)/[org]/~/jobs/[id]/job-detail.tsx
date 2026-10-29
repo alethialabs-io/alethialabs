@@ -536,9 +536,11 @@ export function JobDetail({
 						</div>
 					</DetailSection>
 
-					<DetailSection title={CONFIG_TITLE}>
-						<PayloadBlock value={job.config_snapshot} absent="No configuration snapshot was recorded for this job." />
-					</DetailSection>
+					{Object.keys(job.config_snapshot || {}).length > 0 && (
+						<DetailSection title={CONFIG_TITLE}>
+							<PayloadBlock value={job.config_snapshot} absent="No configuration snapshot was recorded for this job." />
+						</DetailSection>
+					)}
 
 					<DetailSection title={METADATA_TITLE}>
 						<PayloadBlock value={job.execution_metadata} absent="No execution metadata was recorded for this job." />

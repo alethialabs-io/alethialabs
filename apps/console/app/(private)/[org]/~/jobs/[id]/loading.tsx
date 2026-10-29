@@ -68,10 +68,6 @@ export default function JobDetailLoading() {
 					{/* `JobOutcome`'s one-line form, in its own box: `mt-3`, the `text-ui-md` line, a
 					    `size-4` icon. A `div`, not the page's `p`: a skeleton block inside a `p` is
 					    invalid nesting, which React reports as a hydration error. */}
-					<div data-slot="job-outcome-skeleton" className="mt-3 flex items-center gap-2 text-ui-md">
-						<Skeleton className="size-4 shrink-0 rounded-full" />
-						<TextBar>Job completed successfully.</TextBar>
-					</div>
 				</div>
 			</div>
 
