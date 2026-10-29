@@ -12,6 +12,7 @@ import {
 	PreviewSettings,
 	PreviewSettingsPage,
 } from "@/components/settings/preview/preview-settings";
+import { PreviewSettingsSkeleton } from "@/components/settings/preview/preview-settings-skeleton";
 import { orpc } from "@/lib/rpc/client";
 import type { PreviewSettingsRead } from "@/lib/rpc/procedures/settings";
 import { failRead, seededClient, withQueryClient } from "../support/general-settings";
@@ -34,6 +35,10 @@ const { toast } = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast }));
 
 vi.mock("@/components/repository-selector", () => ({
+	// The skeleton's Source row is the selector's own; a stand-in with the same data-slots.
+	RepositorySelectorSkeleton: ({ linked }: { linked: boolean | undefined }) => (
+		<div data-slot={linked === false ? "git-accounts-skeleton" : "repository-row-skeleton"} />
+	),
 	RepositorySelector: ({
 		value,
 		onChange,
@@ -85,13 +90,13 @@ const CREDS = [
 	{ id: "33333333-3333-4333-8333-333333333333", purpose: "applications", method: "pat" },
 ] as const;
 
-function renderPanel(initialConfig = null) {
+function renderPanel(initialConfig = null, fabrics: (typeof FABRICS)[number][] = [...FABRICS]) {
 	return render(
 		withQueryClient(
 			<PreviewSettings
 				projectId="proj-1"
 				initialConfig={initialConfig}
-				fabrics={[...FABRICS]}
+				fabrics={fabrics}
 				gitCredentials={[...CREDS]}
 				gitlabBaseUrl="https://gitlab.com"
 				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
@@ -115,6 +120,21 @@ function renderPage(client = seededClient()) {
 }
 
 const PREVIEW_KEY = orpc.settings.preview.queryKey({ input: { project: "shop" } });
+const LINKED_KEY = orpc.projects.linkedGitProviders.queryKey();
+
+/** A client holding the viewer's linked git providers, as the route's prefetch leaves it. */
+function linkedClient(): ReturnType<typeof seededClient> {
+	const client = seededClient();
+	client.setQueryData(LINKED_KEY, []);
+	return client;
+}
+
+/** The text of each settings row's label column, top to bottom. */
+function rowLabels(root: HTMLElement): string[] {
+	return Array.from(root.querySelectorAll(".grid-cols-\\[200px_1fr\\] > div:first-child")).map(
+		(el) => el.textContent ?? "",
+	);
+}
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -209,7 +229,7 @@ describe("PreviewSettings", () => {
 
 describe("PreviewSettingsPage — four renders (#6128)", () => {
 	it("paints the hydrated read as the form, with no fetch", () => {
-		const client = seededClient();
+		const client = linkedClient();
 		const read: PreviewSettingsRead = {
 			projectId: "proj-1",
 			config: null,
@@ -222,25 +242,45 @@ describe("PreviewSettingsPage — four renders (#6128)", () => {
 	});
 
 	it("renders a refusal, a failure, a gone project and pending each as itself", () => {
-		const refused = seededClient();
+		const refused = linkedClient();
 		failRead(refused, PREVIEW_KEY, new ORPCError("FORBIDDEN", { defined: true }));
 		const a = renderPage(refused);
 		expect(a.container.querySelector('[data-state="refused"]')).not.toBeNull();
 		a.unmount();
 
-		const failed = seededClient();
+		const failed = linkedClient();
 		failRead(failed, PREVIEW_KEY, new Error("network"));
 		const b = renderPage(failed);
 		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
 		b.unmount();
 
-		const gone = seededClient();
+		const gone = linkedClient();
 		gone.setQueryData(PREVIEW_KEY, null);
 		const c = renderPage(gone);
 		expect(screen.getByText("This project is gone")).toBeInTheDocument();
 		c.unmount();
 
-		const d = renderPage(seededClient());
+		const d = renderPage(linkedClient());
 		expect(d.container.querySelector('[data-slot="preview-settings-skeleton"]')).not.toBeNull();
+	});
+});
+
+describe("Preview settings — the skeleton has the form's shape (#6335, RUBRIC B2)", () => {
+	it("draws the form's rows, with the form's labels and hints, in the form's order", () => {
+		const form = renderPanel();
+		const formRows = rowLabels(form.container);
+		form.unmount();
+		const skeleton = render(withQueryClient(<PreviewSettingsSkeleton linked={false} />));
+		expect(formRows).toHaveLength(4);
+		// The hint wraps in a 200px column, so the row's height is the copy's: the same words.
+		expect(rowLabels(skeleton.container)).toEqual(formRows);
+	});
+
+	it("keeps the Placement note whatever the project's fabrics, so that row has one height", () => {
+		const some = renderPanel(null, [...FABRICS]);
+		expect(screen.getByText(/keep Default fabric/)).toBeInTheDocument();
+		some.unmount();
+		renderPanel(null, []);
+		expect(screen.getByText(/No project fabrics found/)).toBeInTheDocument();
 	});
 });
