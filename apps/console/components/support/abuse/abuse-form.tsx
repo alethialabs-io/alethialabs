@@ -272,13 +272,13 @@ export function AbuseFormSkeleton() {
 
 			<div className={SECTION}>
 				<FieldSkeleton control={cn("h-9", NARROW)} />
-				<FieldSkeleton control={cn("h-9", NARROW)} hint />
+				<FieldSkeleton control={cn("h-9", NARROW)} />
 				<FieldSkeleton control={cn("h-9", NARROW)} />
 			</div>
 
 			<div className={RULED_SECTION}>
 				<FieldSkeleton control="h-9" message />
-				<FieldSkeleton control="h-40" message />
+				<FieldSkeleton control="h-32" message />
 			</div>
 
 			<div className={RULED_SECTION}>

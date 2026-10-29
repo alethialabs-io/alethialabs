@@ -200,13 +200,13 @@ export function CaseList({
 			) : (
 				// A real list (`ul`/`li`): it is one, and it is how the page says its bottom edge is
 				// open-ended — a skeleton cannot know how many cases there are (#6354, B2).
-				<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
+				<div className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
 					{visible.map((item) => (
-						<li key={item.id}>
+						<div key={item.id}>
 							<CaseListItem item={item} orgSlug={orgSlug} />
-						</li>
+						</div>
 					))}
-				</ul>
+				</div>
 			)}
 		</div>
 	);

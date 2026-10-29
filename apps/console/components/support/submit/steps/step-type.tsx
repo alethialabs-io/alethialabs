@@ -78,7 +78,7 @@ export function StepTypeSkeleton() {
 	return (
 		<div className={STEP}>
 			<StepTypeHeading />
-			<div className={GRID}>
+			<div className="grid gap-2">
 				{supportCaseType.enumValues.map((value) => (
 					<RadioCardSkeleton
 						key={value}
