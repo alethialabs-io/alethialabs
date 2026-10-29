@@ -48,13 +48,13 @@ export default async function CaseDetailRoute({
 	try {
 		await queryClient.fetchQuery(rpc.support.case.queryOptions({ input: { id } }));
 	} catch (error) {
-		if (error instanceof ORPCError && error.code !== "NOT_FOUND") notFound();
+		if (error instanceof ORPCError && error.code === "NOT_FOUND") notFound();
 		throw error;
 	}
 	await sideReads;
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: () => true })}>
+		<HydrationBoundary state={dehydrate(queryClient)}>
 			<CaseDetail caseId={id} orgSlug={org} />
 		</HydrationBoundary>
 	);
