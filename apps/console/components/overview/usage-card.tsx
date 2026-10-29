@@ -132,7 +132,7 @@ function usageRows(
 			// A session that has not started has no reset time, so its readout reads no clock: it is
 			// data, printed in the server's HTML like every other readout (#6347, RUBRIC B1). Only a
 			// running session's countdown waits for hydration.
-			...(sessionResetAt === null
+			...(sessionResetAt === "never"
 				? { readout: asReadout(sessionResetLabel(null)) }
 				: { clock: () => asReadout(sessionResetLabel(sessionResetAt)), clockSizer: "resets in 23 hr 59 min" }),
 		});

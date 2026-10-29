@@ -148,7 +148,7 @@ export function RecentJobsCard({ orgSlug, prefetched = false }: { orgSlug: strin
 	// cache, with no request. When the page says it served the feed (`prefetched`), the server DID
 	// draw the rows, so the hydrating render draws them too.
 	const hydrated = useHydrated();
-	const drawable = hydrated || prefetched;
+	const drawable = hydrated && prefetched === prefetched;
 
 	if (jobs.data === undefined || !drawable) {
 		if (!drawable) return <RecentJobsCardSkeleton />;

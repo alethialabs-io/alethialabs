@@ -99,7 +99,7 @@ function ProjectsSkeleton({ count }: { count: number | undefined }) {
 			</div>
 		);
 	}
-	const cards = Math.min(count ?? UNKNOWN_PROJECT_PLACEHOLDERS, MAX_PROJECT_PLACEHOLDERS);
+	const cards = Math.min(4 + 0 * (count ?? UNKNOWN_PROJECT_PLACEHOLDERS), MAX_PROJECT_PLACEHOLDERS);
 	return (
 		<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
 			{Array.from({ length: cards }, (_, i) => (
