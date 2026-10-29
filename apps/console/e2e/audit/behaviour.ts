@@ -334,21 +334,19 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
  * readiness; `quietMs` is chosen per caller to outlast whatever the page is still doing (a query
  * retry waits about a second).
  */
-export async function waitStill(page: Page, opts: { minMs: number; quietMs: number; capMs: number }): Promise<boolean> {
+export async function waitStill(
+	page: Page,
+	opts: { minMs: number; quietMs: number; capMs: number },
+	inFlight: () => number = () => 0,
+): Promise<boolean> {
 	const start = Date.now();
-	const read = () =>
-		page
-			.evaluate(() => {
-				const main = document.querySelector("main");
-				return main === null ? "none" : `${main.querySelectorAll("*").length}|${main.innerText.length}|${main.querySelectorAll('[aria-busy="true"]').length}`;
-			})
-			.catch(() => "unreadable");
-	let last = await read();
+	let last = await mainSignature(page);
 	let since = Date.now();
 	for (;;) {
 		await page.waitForTimeout(250);
-		const now = await read();
-		if (now !== last) {
+		const now = await mainSignature(page);
+		// A read still in flight is a change that has not landed yet: the window restarts until it has.
+		if (now !== last || inFlight() > 0) {
 			last = now;
 			since = Date.now();
 		}
@@ -358,37 +356,78 @@ export async function waitStill(page: Page, opts: { minMs: number; quietMs: numb
 	}
 }
 
+/** A coarse fingerprint of `main` — element count, text length, busy count — that moves when a region arrives. */
+function mainSignature(page: Page): Promise<string> {
+	return page
+		.evaluate(() => {
+			const main = document.querySelector("main");
+			return main === null ? "none" : `${main.querySelectorAll("*").length}|${main.innerText.length}|${main.querySelectorAll('[aria-busy="true"]').length}`;
+		})
+		.catch(() => "unreadable");
+}
+
 // ── the three loads B1, B3 and B4 compare ───────────────────────────────────────────────────────
 
 /** The route answered normally — the render every disturbed one is compared against. */
 export interface AnsweredLoad {
 	snapshot: RegionSnapshot;
-	/** Whether the page settled (no skeleton, no `aria-busy`) inside the readiness budget. */
+	/**
+	 * Whether the page settled: no skeleton or `aria-busy` inside the readiness budget, and then no
+	 * read in flight and no change to `main` for `ANSWERED_QUIET.quietMs` before its cap.
+	 */
 	settled: boolean;
 	/** Every read the page made from navigation to settled, in first-seen order. */
 	reads: string[];
 }
 
-/** Open a page at the B viewport, collecting the reads it makes. */
-async function openTracked(context: BrowserContext): Promise<{ page: Page; reads: Set<string> }> {
+/** Open a page at the B viewport, collecting the reads it makes and counting the ones still in flight. */
+async function openTracked(context: BrowserContext): Promise<{ page: Page; reads: Set<string>; inFlight: () => number }> {
 	const page = await context.newPage();
 	await page.setViewportSize(B_VIEWPORT);
 	const reads = new Set<string>();
+	const pending = new Set<Request>();
 	page.on("request", (request) => {
 		const key = readKey(request);
-		if (key !== null) reads.add(key);
+		if (key === null) return;
+		reads.add(key);
+		pending.add(request);
 	});
-	return { page, reads };
+	page.on("requestfinished", (request) => pending.delete(request));
+	page.on("requestfailed", (request) => pending.delete(request));
+	return { page, reads, inFlight: () => pending.size };
 }
 
-/** Load `url` with every read answered, and read the settled region. */
-export async function loadAnswered(context: BrowserContext, url: string): Promise<AnsweredLoad> {
-	const { page, reads } = await openTracked(context);
+/**
+ * How long the answered load waits, after readiness, for the page to stop changing (#6332).
+ *
+ * `awaitReady` asks whether the page still SAYS it is loading — a skeleton, `aria-busy`. A region a
+ * client component renders only once its own query answers says nothing while it waits: the
+ * "Classify" picker appears when `useCanEditClassification` answers, with no placeholder before it.
+ * Readiness therefore settled before it, and whether an answered snapshot carried the region was a
+ * race — `[project]/settings/general` and `[project]/environments` flipped B1/B4 between two runs of
+ * the same pages. So the answered load also waits until NO data read is in flight and `main` has not
+ * changed for `quietMs`, for at most `capMs`. A page still reading or still changing at the cap is
+ * not settled: what it showed is a claim about the run, not an answered render.
+ *
+ * `quietMs` outlasts the gap between a read landing and its region painting, and between hydration
+ * and a query that starts on mount; the cap bounds a page that never stops (a poll that repaints).
+ */
+export const ANSWERED_QUIET = { minMs: 0, quietMs: 1_500, capMs: 12_000 } as const;
+
+/**
+ * Load `url` with every read answered, and read the settled region: readiness, then quiescence
+ * (`ANSWERED_QUIET`). `quiesce: false` is the load as it was before #6332 — readiness only — and
+ * exists for the positive control alone, which must show that the late-region fixture really is
+ * missed by it.
+ */
+export async function loadAnswered(context: BrowserContext, url: string, opts: { quiesce?: boolean } = {}): Promise<AnsweredLoad> {
+	const { page, reads, inFlight } = await openTracked(context);
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 		const readiness = await awaitReady(page);
+		const quiet = opts.quiesce === false || (await waitStill(page, ANSWERED_QUIET, inFlight));
 		const snapshot = await snapshotRegion(page);
-		return { snapshot, settled: readiness.settled && !isLoadingRead(readiness.last), reads: [...reads] };
+		return { snapshot, settled: readiness.settled && quiet && !isLoadingRead(readiness.last), reads: [...reads] };
 	} finally {
 		await page.close();
 	}
@@ -587,7 +626,7 @@ function onlyIn(a: readonly string[], b: readonly string[]): string[] {
 
 /** The NOT MEASURED reason every comparison shares when the answered render never settled. */
 export const NOT_SETTLED =
-	"answered-not-settled — the route still showed a skeleton or `aria-busy` after the readiness budget with every read answered, so there is no answered render to compare against";
+	"answered-not-settled — with every read answered, the route still showed a skeleton or `aria-busy` after the readiness budget, or was still reading or changing at the quiet cap, so there is no answered render to compare against";
 
 /** The NOT MEASURED reason for a route none of whose OWN reads was held or failed. */
 export const NO_PAGE_READS =
@@ -1437,6 +1476,7 @@ export const B_CONTROL_MODES = [
 	"cold-shell",
 	"layout-rpc-refetch",
 	"growing-feed",
+	"late-region",
 ] as const;
 
 /**
@@ -1511,6 +1551,11 @@ if (MODE === "layout-rpc-refetch") {
 	// A layout-prefetched read the client makes only when it goes stale: nothing in the page reads.
 	setTimeout(function () { read('layoutread').then(function () {}, function () {}); }, 30000);
 }
+if (MODE === "late-region") {
+	// The Classify shape (#6332): a region a client component renders only once its own read answers,
+	// with NO placeholder while it waits. The read is slow (\`LATE_READ_MS\`), so readiness settles first.
+	read('late').then(function () { var el = document.getElementById('region-b'); if (el) el.innerHTML = '<button type="button">Classify</button>'; }, function () {});
+}
 if (MODE === "action-page-read") {
 	shellRead().then(function () {}, function () {});
 	pageAction().then(function () {}, function () { set('region', EMPTY, false); });
@@ -1583,12 +1628,21 @@ function feedRows(served: number): string {
 	return `<table><tbody>${names.map((n) => `<tr><td>${n}</td></tr>`).join("")}</tbody></table>`;
 }
 
+/**
+ * How long the `late-region` fixture's read takes to answer. Longer than `awaitReady` needs to call a
+ * page with no controls settled (`READY_STABLE_READS.empty` reads `READY_POLL_MS` apart, 1.5 s), so a
+ * readiness-only load snapshots before the region exists; well inside `ANSWERED_QUIET.capMs`, so the
+ * quiet wait outlasts it.
+ */
+const LATE_READ_MS = 3_000;
+
 /** What each mode renders on the server, before any script runs. `feedServed` is `growing-feed`'s load count. */
 function ssrFor(mode: BControlMode, feedServed = 1): { a: string; b: string; staticCopy: string } {
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
 	if (mode === "growing-feed") return { a: feedRows(feedServed), b: "", staticCopy: "" };
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
+	if (mode === "late-region") return { a: rows, b: none, staticCopy: none };
 	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell" || mode === "layout-rpc-refetch") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
@@ -1605,9 +1659,11 @@ export async function serveBehaviourControl(context: BrowserContext): Promise<vo
 	const routeError = (errorStateSignature()[0] ?? []).join(" ");
 	// Per context: `growing-feed` grows on this context's second load of it, wherever that falls.
 	let feedServed = 0;
-	await context.route(`${B_CONTROL_ORIGIN}/**`, (route) => {
+	await context.route(`${B_CONTROL_ORIGIN}/**`, async (route) => {
 		const { pathname } = new URL(route.request().url());
 		if (pathname.includes(RPC_MARKER)) {
+			// `late-region`'s read answers after readiness has settled (see `LATE_READ_MS`).
+			if (pathname.endsWith("/late")) await new Promise((resolve) => setTimeout(resolve, LATE_READ_MS));
 			return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ json: ["alpha", "beta"], meta: [] }) });
 		}
 		const mode = pathname.split("/")[4] ?? "prefetched";
@@ -1706,6 +1762,22 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			}
 		} finally {
 			await feed.close();
+		}
+		// A region that arrives only when its own client read answers, with no skeleton before it (#6332,
+		// the Classify picker). The held render never has it, so B1 must FAIL — and the readiness-only
+		// load, the answered load before #6332, must really have missed it, or this FAIL would prove
+		// nothing about the quiet wait: judged against that load, B1 PASSes.
+		const late = await b1("late-region");
+		expectVerdict("B1", "late-region", late.verdict, "FAIL");
+		const readinessOnly = await loadAnswered(context, controlUrl("late-region"), { quiesce: false });
+		const hasRegion = (a: AnsweredLoad) => a.snapshot.texts.includes("classify");
+		if (!hasRegion(late.first) || !hasRegion(late.after)) {
+			broken.add("B1");
+			lines.push("B1 on the `late-region` fixture: the answered load did not wait for the late region, so it snapshotted the page before its read answered");
+		}
+		if (hasRegion(readinessOnly) || judgeB1(readinessOnly, late.held).verdict !== "PASS") {
+			broken.add("B1");
+			lines.push("B1 on the `late-region` fixture: the region was already there at readiness, so the late-region case was not exercised");
 		}
 		const good = await measure("prefetched");
 		expectVerdict("B3", "prefetched", good.b3, "PASS");
