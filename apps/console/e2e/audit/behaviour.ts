@@ -434,6 +434,25 @@ export async function loadHeld(context: BrowserContext, url: string, pass: (key:
 	}
 }
 
+/** B1's loads and verdict: the held load, and the answered load taken right after it. */
+export interface B1Measurement {
+	verdict: BVerdict;
+	held: HeldLoad;
+	after: AnsweredLoad;
+}
+
+/**
+ * Take B1's held load and, straight after it, an answered load, then judge the held render against
+ * that load AND every earlier answered load the caller took (`judgeB1Loads`). The load after is the
+ * one at the held load's data: phase 1's answered load can be minutes and a run's worth of fixture
+ * writes older (#6326).
+ */
+export async function measureB1(context: BrowserContext, url: string, earlier: readonly AnsweredLoad[]): Promise<B1Measurement> {
+	const held = await loadHeld(context, url);
+	const after = await loadAnswered(context, url);
+	return { verdict: judgeB1Loads(earlier, held, after), held, after };
+}
+
 /** A body the read router's own unexpected-error path answers with, so the client decodes it as one. */
 const RPC_FAILURE = JSON.stringify({
 	json: { defined: false, code: "INTERNAL_SERVER_ERROR", status: 500, message: "Internal server error" },
@@ -588,21 +607,67 @@ export const ANSWERED_EMPTY =
  * list's server render by design (`useFilterUrlSync` reports the URL unread until mount, #4980), and
  * clock, date and initials text waits for hydration by design (`ClockSlot`). Neither is data. Both
  * stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`), so a reader still sees them.
+ *
+ * ONE comparison. A route is judged through `judgeB1Loads`, over every answered load of it.
  */
-export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
+export function judgeB1(answered: AnsweredLoad, held: HeldLoad, grown = false): BVerdict {
+	const evidence = b1Evidence(answered, held, grown);
+	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
+	if (evidence.differs.length > 0) return { verdict: "FAIL", evidence };
+	if (answered.snapshot.empty > 0 && held.held.length > 0) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
+	return { verdict: "PASS", evidence };
+}
+
+/**
+ * What one B1 comparison saw: the signals that differ, and both renders. `grown` drops `rows` from
+ * the differences — only ever for a load taken before the held one, when `judgeB1Loads` has shown
+ * that the feed grew in between.
+ */
+function b1Evidence(answered: AnsweredLoad, held: HeldLoad, grown: boolean) {
 	const differs = differences(answered.snapshot, held.snapshot);
-	const evidence = {
-		differs,
+	return {
+		differs: grown ? differs.filter((d) => d !== "rows") : differs,
+		grown,
 		held: held.held,
 		answered: summary(answered.snapshot),
 		heldRender: summary(held.snapshot),
 		onlyAnswered: onlyIn(answered.snapshot.texts, held.snapshot.texts),
 		onlyHeld: onlyIn(held.snapshot.texts, answered.snapshot.texts),
 	};
-	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
-	if (differs.length > 0) return { verdict: "FAIL", evidence };
-	if (answered.snapshot.empty > 0 && held.held.length > 0) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
-	return { verdict: "PASS", evidence };
+}
+
+/**
+ * B1 over every answered load of the route: the ones taken BEFORE the held load (phase 1's), and the
+ * one taken straight AFTER it (`measureB1`).
+ *
+ * B1 compares rows, and a feed can be appended to between two loads. Phase 1's answered load was
+ * taken before the run's own fixtures wrote to the activity log; the held load came in phase 2, after
+ * them, so `~/settings/activity` held 7 rows against 4 answered and FAILed with a correct first paint
+ * (#6326). So a row count is excused in exactly one shape: the held render has MORE rows than an
+ * earlier answered load, and the answered load after the held one settled with the SAME count as the
+ * held render — the data the held load saw, confirmed by a load of it. Nothing else is excused: a
+ * skeleton, an empty state, an error or missing content still FAILs against any load that shows it,
+ * and fewer held rows than any answered load still FAILs.
+ *
+ * Every settled load is a witness, and the verdict is the STRICTEST: FAIL when any comparison FAILs,
+ * PASS when none does and at least one PASSes, NOT MEASURED otherwise (the first comparison's reason).
+ * Strictest, because an answered load can settle before a client-only region arrives — a page with
+ * no skeleton for that region reads as settled — and such a load matches a held render that lacks the
+ * region. A rule that PASSed on any match passed `[project]/settings/general` that way. The evidence
+ * is the deciding comparison's, with each comparison's verdict under `bracket`.
+ */
+export function judgeB1Loads(earlier: readonly AnsweredLoad[], held: HeldLoad, after: AnsweredLoad): BVerdict {
+	const confirmed = after.settled && after.snapshot.rows === held.snapshot.rows;
+	const judged = [
+		...earlier.map((a) => ({ a, grown: confirmed && held.snapshot.rows > a.snapshot.rows })),
+		{ a: after, grown: false },
+	].map(({ a, grown }) => ({ a, grown, v: judgeB1(a, held, grown) }));
+	const chosen = judged.find((j) => j.v.verdict === "FAIL") ?? judged.find((j) => j.v.verdict === "PASS") ?? judged[0];
+	if (chosen === undefined) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence: { held: held.held } };
+	const evidence = { ...b1Evidence(chosen.a, held, chosen.grown), bracket: judged.map((j) => j.v.verdict) };
+	const v = chosen.v;
+	if (v.verdict === "NOT MEASURED") return { verdict: "NOT MEASURED", reason: v.reason, evidence };
+	return { verdict: v.verdict, evidence };
 }
 
 /** B3: with every PAGE read held (the shell's answered), no empty state the answered render does not show. */
@@ -1371,6 +1436,7 @@ export const B_CONTROL_MODES = [
 	"action-page-read",
 	"cold-shell",
 	"layout-rpc-refetch",
+	"growing-feed",
 ] as const;
 
 /**
@@ -1507,9 +1573,20 @@ if (MODE.indexOf("swap-") === 0) {
 }
 </script></body></html>`;
 
-/** What each mode renders on the server, before any script runs. */
-function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string } {
+/**
+ * The `growing-feed` mode's rows on its Nth page load in one context: two, then five from the second
+ * load on — an append-only log that one burst of writes grew between two loads, the way the run's own
+ * fixtures grow `~/settings/activity` (#6326). Served from the server, so its first paint is correct.
+ */
+function feedRows(served: number): string {
+	const names = served >= 2 ? ["alpha", "beta", "gamma", "delta", "epsilon"] : ["alpha", "beta"];
+	return `<table><tbody>${names.map((n) => `<tr><td>${n}</td></tr>`).join("")}</tbody></table>`;
+}
+
+/** What each mode renders on the server, before any script runs. `feedServed` is `growing-feed`'s load count. */
+function ssrFor(mode: BControlMode, feedServed = 1): { a: string; b: string; staticCopy: string } {
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
+	if (mode === "growing-feed") return { a: feedRows(feedServed), b: "", staticCopy: "" };
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
 	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell" || mode === "layout-rpc-refetch") return { a: rows, b: none, staticCopy: none };
@@ -1526,6 +1603,8 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 /** Serve every fixture mode, and its reads, on one context. */
 export async function serveBehaviourControl(context: BrowserContext): Promise<void> {
 	const routeError = (errorStateSignature()[0] ?? []).join(" ");
+	// Per context: `growing-feed` grows on this context's second load of it, wherever that falls.
+	let feedServed = 0;
 	await context.route(`${B_CONTROL_ORIGIN}/**`, (route) => {
 		const { pathname } = new URL(route.request().url());
 		if (pathname.includes(RPC_MARKER)) {
@@ -1533,7 +1612,8 @@ export async function serveBehaviourControl(context: BrowserContext): Promise<vo
 		}
 		const mode = pathname.split("/")[4] ?? "prefetched";
 		const m: BControlMode = isControlMode(mode) ? mode : "prefetched";
-		const ssr = ssrFor(m);
+		if (m === "growing-feed") feedServed += 1;
+		const ssr = ssrFor(m, feedServed);
 		return route.fulfill({
 			status: 200,
 			contentType: "text/html; charset=utf-8",
@@ -1594,7 +1674,6 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			await loadAnswered(context, url);
 			const answered = await loadAnswered(context, url);
 			const isShell = fixtureClassifier(answered.reads);
-			const held = await loadHeld(context, url);
 			const cold = await newContext();
 			let pageHeld: HeldLoad;
 			try {
@@ -1603,14 +1682,35 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 				await cold.close();
 			}
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
+			return { b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
 		};
+		// B1 through `measureB1`, as the routes take it: an earlier answered load (phase 1's, on a
+		// route), then the held load and the answered load after it.
+		const b1 = async (mode: BControlMode, on: BrowserContext = context) => {
+			const first = await loadAnswered(on, controlUrl(mode));
+			return { first, ...(await measureB1(on, controlUrl(mode), [first])) };
+		};
+		expectVerdict("B1", "prefetched", (await b1("prefetched")).verdict, "PASS");
+		expectVerdict("B1", "client-fetch", (await b1("client-fetch")).verdict, "FAIL");
+		// A feed that grew between the earlier answered load and the held one (#6326). Its first paint is
+		// correct, so B1 must PASS — and the fixture must really have grown under it: the plain comparison
+		// with the earlier load has to FAIL, or this PASS would prove nothing about the growth rule. A
+		// context of its own, because the fixture counts its loads per context.
+		const feed = await newContext();
+		try {
+			const grew = await b1("growing-feed", feed);
+			expectVerdict("B1", "growing-feed", grew.verdict, "PASS");
+			if (judgeB1(grew.first, grew.held).verdict !== "FAIL") {
+				broken.add("B1");
+				lines.push("B1 on the `growing-feed` fixture: the feed did not grow between the earlier answered load and the held one, so the growth rule was not exercised");
+			}
+		} finally {
+			await feed.close();
+		}
 		const good = await measure("prefetched");
-		expectVerdict("B1", "prefetched", good.b1, "PASS");
 		expectVerdict("B3", "prefetched", good.b3, "PASS");
 		expectVerdict("B4", "prefetched", good.b4, "PASS");
 		const client = await measure("client-fetch");
-		expectVerdict("B1", "client-fetch", client.b1, "FAIL");
 		expectVerdict("B3", "client-fetch", client.b3, "PASS");
 		expectVerdict("B4", "client-fetch", client.b4, "PASS");
 		expectVerdict("B3", "empty-while-pending", (await measure("empty-while-pending")).b3, "FAIL");

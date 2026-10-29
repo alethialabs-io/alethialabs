@@ -28,7 +28,10 @@
 //   2. phase 1, every route: the answered load — the render every other load is compared with, and
 //      the reads the shell classifier needs from EVERY route before it can classify any one;
 //   3. phase 2, every route: the held loads (B1, B3), the forced-failure load (B4) and the skeleton swap
-//      (B2). B1 and B2 are judged here; B3's and B4's LOADS are taken here and kept, unjudged;
+//      (B2). B1 and B2 are judged here; B3's and B4's LOADS are taken here and kept, unjudged. B1 also
+//      takes an answered load straight after its held one (`measureB1`), at the data the held load saw:
+//      a feed the run itself writes to grows between the phases, and `~/settings/activity` held 7 rows
+//      against phase 1's 4 and FAILed a correct first paint (#6326);
 //   4. phase 3, every route: B3 and B4 are JUDGED, then B5 is measured, all through one classifier
 //      (`shellReadsFor`) over the union of every load's reads — a read is the shell's only when the
 //      build places it in every page under the route's shells AND another route was seen making it
@@ -67,7 +70,6 @@ import { closeDb, orgIdBySlug } from "../helpers/db";
 import { seedFilterFixtures } from "../helpers/seed-filters";
 import {
 	behaviourControl,
-	judgeB1,
 	judgeB2Worst,
 	judgeB3,
 	judgeB4,
@@ -77,6 +79,7 @@ import {
 	loadFailed,
 	loadHeld,
 	loadWithOneFailure,
+	measureB1,
 	measureSkeletonSwap,
 	pageEntry,
 	manifestConsistencyProblems,
@@ -471,16 +474,17 @@ test.describe("phase 2 · B1–B4 on every route, in a seeded organisation of it
 				// one flaky load is a gap in one cell. The floor test decides what a gap costs: one off the
 				// count for B1, B2 and B4; for B3 and B5 a gap is never excused (`loadReadFloorProblems`).
 				try {
-					// B1 holds EVERY read: its subject is the server render.
-					const held = await loadHeld(context(), url);
-					put(route, url, "B1", judgeB1(a, held));
+					// B1 holds EVERY read: its subject is the server render. It is judged against phase 1's
+					// answered load AND one taken straight after the held load, at the same data.
+					const b1 = await measureB1(context(), url, [a]);
+					put(route, url, "B1", b1.verdict);
 					// B3 answers the SHELL's reads, so the page hydrates, and holds every read of the page's own.
 					const pageHeld = await loadHeld(context(), url, isShell);
 					const failed = await loadFailed(isolatedContext, url);
 					// A route's read set is the UNION of every load made of it, so one cold load that happened
 					// not to fire a read cannot turn B5's verdict for that route into NOT MEASURED.
 					const reads = new Set(mine.reads);
-					for (const k of [...held.held, ...pageHeld.held, ...failed.flatMap((p) => p.failedKeys)]) reads.add(k);
+					for (const k of [...b1.held.held, ...pageHeld.held, ...failed.flatMap((p) => p.failedKeys)]) reads.add(k);
 					s.routes[route.route] = { ...mine, reads: [...reads], phase2: { pageHeld, failed } };
 				} catch (err) {
 					const reason = instrumentError(err);
