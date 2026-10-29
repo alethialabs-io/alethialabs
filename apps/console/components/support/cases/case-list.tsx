@@ -12,6 +12,7 @@ import {
 	EmptyTitle,
 } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
+import { cn } from "@repo/ui/utils";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
@@ -36,7 +37,7 @@ import {
 	SUPPORT_SEVERITY_LABELS,
 } from "@/lib/validations/support";
 import { CaseFilterBar } from "./case-filter-bar";
-import { CaseListItem } from "./case-list-item";
+import { CASE_ROWS, CaseListItem } from "./case-list-item";
 import { CaseListSkeletonRows } from "./case-list-skeleton";
 
 /** Stable empty result — see the note at its use site. */
@@ -197,17 +198,15 @@ export function CaseList({
 					</Empty>
 				)
 			) : (
-				<div
-					className={
-						isPlaceholderData
-							? "overflow-hidden rounded-md border opacity-60"
-							: "overflow-hidden rounded-md border"
-					}
-				>
+				// A real list (`ul`/`li`): it is one, and it is how the page says its bottom edge is
+				// open-ended — a skeleton cannot know how many cases there are (#6354, B2).
+				<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
 					{visible.map((item) => (
-						<CaseListItem key={item.id} item={item} orgSlug={orgSlug} />
+						<li key={item.id}>
+							<CaseListItem item={item} orgSlug={orgSlug} />
+						</li>
 					))}
-				</div>
+				</ul>
 			)}
 		</div>
 	);

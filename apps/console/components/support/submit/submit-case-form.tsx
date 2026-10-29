@@ -13,12 +13,13 @@ import { StepCategory } from "@/components/support/submit/steps/step-category";
 import { StepContact } from "@/components/support/submit/steps/step-contact";
 import { StepDetails } from "@/components/support/submit/steps/step-details";
 import { StepSeverity } from "@/components/support/submit/steps/step-severity";
-import { StepType } from "@/components/support/submit/steps/step-type";
+import { StepType, StepTypeSkeleton } from "@/components/support/submit/steps/step-type";
 import {
 	type SubmitCaseInput,
 	submitCaseSchema,
 } from "@/lib/validations/support";
 import { Button } from "@repo/ui/button";
+import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 
 interface SubmitCaseFormProps {
@@ -37,6 +38,50 @@ type SubmitCaseFormValues = z.input<typeof submitCaseSchema>;
 
 /** Per-step labels for the stepper header. */
 const STEP_LABELS = ["Type", "Area", "Severity", "Details", "Contact"] as const;
+
+/**
+ * The wizard's frame and its button row — shared with {@link SubmitCaseFormSkeleton}, so the
+ * route's loading state and the form it stands in for are one layout (#6354).
+ */
+const FRAME = "space-y-8 py-2";
+const BUTTON_ROW = "mt-8 flex items-center justify-between border-t pt-6";
+
+/** The stepper header: one numbered dot per step, its label from `sm`, and a rule between them. */
+function StepperNav({ step }: { step: number }) {
+	return (
+		<nav aria-label="Progress" className="flex items-center gap-2">
+			{STEP_LABELS.map((label, i) => (
+				<div key={label} className="flex items-center gap-2">
+					<span
+						className={cn(
+							"flex h-6 w-6 items-center justify-center rounded-full border text-xs",
+							i === step
+								? "border-foreground bg-foreground text-background"
+								: i < step
+									? "border-foreground/40 text-foreground"
+									: "border-border text-muted-foreground",
+						)}
+					>
+						{i + 1}
+					</span>
+					<span
+						className={cn(
+							"hidden text-sm sm:inline",
+							i === step
+								? "font-medium text-foreground"
+								: "text-muted-foreground",
+						)}
+					>
+						{label}
+					</span>
+					{i < STEP_LABELS.length - 1 && (
+						<span className="mx-1 h-px w-4 bg-border sm:w-8" />
+					)}
+				</div>
+			))}
+		</nav>
+	);
+}
 
 /** Fields validated (via RHF `trigger`) before advancing past each step. */
 const STEP_FIELDS: FieldPath<SubmitCaseFormValues>[][] = [
@@ -128,38 +173,8 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 
 	return (
 		<FormProvider {...form}>
-			<div className="space-y-8 py-2">
-				<nav aria-label="Progress" className="flex items-center gap-2">
-					{STEP_LABELS.map((label, i) => (
-						<div key={label} className="flex items-center gap-2">
-							<span
-								className={cn(
-									"flex h-6 w-6 items-center justify-center rounded-full border text-xs",
-									i === step
-										? "border-foreground bg-foreground text-background"
-										: i < step
-											? "border-foreground/40 text-foreground"
-											: "border-border text-muted-foreground",
-								)}
-							>
-								{i + 1}
-							</span>
-							<span
-								className={cn(
-									"hidden text-sm sm:inline",
-									i === step
-										? "font-medium text-foreground"
-										: "text-muted-foreground",
-								)}
-							>
-								{label}
-							</span>
-							{i < STEP_LABELS.length - 1 && (
-								<span className="mx-1 h-px w-4 bg-border sm:w-8" />
-							)}
-						</div>
-					))}
-				</nav>
+			<div className={FRAME}>
+				<StepperNav step={step} />
 
 				<form onSubmit={onSubmit}>
 					{step === 0 && <StepType />}
@@ -174,7 +189,7 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 					)}
 					{step === 4 && <StepContact attachmentCount={files.length} />}
 
-					<div className="mt-8 flex items-center justify-between border-t pt-6">
+					<div className={BUTTON_ROW}>
 						{/* No Back on the first step — there is nowhere to go back to — but the slot
 						    stays, so Continue does not jump to the left edge of the row. */}
 						{step === 0 ? (
@@ -202,5 +217,26 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 				</form>
 			</div>
 		</FormProvider>
+	);
+}
+
+/**
+ * The new-case route's loading form (#6354, B2): the wizard's frame on its first step — the real
+ * stepper, step 1's {@link StepTypeSkeleton} (the type cards in their own grid, with their own copy)
+ * and the button row with its empty Back slot and a Continue-sized placeholder. The audit measured
+ * the old one 87px short with no cards at all, under a page drawing two columns of them.
+ */
+export function SubmitCaseFormSkeleton() {
+	return (
+		<div className={FRAME} aria-busy="true">
+			<StepperNav step={0} />
+			<div>
+				<StepTypeSkeleton />
+				<div className={BUTTON_ROW}>
+					<span aria-hidden />
+					<Skeleton className="h-9 w-24 rounded-none" />
+				</div>
+			</div>
+		</div>
 	);
 }

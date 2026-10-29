@@ -6,25 +6,12 @@
 //
 // The kit (#6117): `PageToolbarSkeleton` (`@repo/ui/page-toolbar`) for the row a page opens with,
 // `DataTableSkeleton` (`./data-table-skeleton`) for a table, `SettingsColumnsSkeleton` below for a
-// two-up settings page, and the form and panel shapes below. There is no title skeleton: the
-// console has no page titles, and a skeleton that draws one makes the page jump when it loads.
+// two-up settings page, and the panel shape below. A form draws its own loading form from its own
+// layout (`AbuseFormSkeleton`, `SubmitCaseFormSkeleton`) — a generic field stack was 313px off one
+// (#6354). There is no title skeleton: the console has no page titles, and a skeleton that draws
+// one makes the page jump when it loads.
 
 import { Skeleton } from "@repo/ui/skeleton";
-
-/** A form: N label + input rows, then a submit button. */
-export function FormSkeleton({ fields = 4 }: { fields?: number }) {
-	return (
-		<div className="space-y-5">
-			{Array.from({ length: fields }, (_, i) => (
-				<div key={i} className="space-y-2">
-					<Skeleton className="h-3.5 w-28" />
-					<Skeleton className="h-9 w-full max-w-md rounded-md" />
-				</div>
-			))}
-			<Skeleton className="h-9 w-32 rounded-md" />
-		</div>
-	);
-}
 
 /** A bordered panel: title bar + a few content lines. */
 export function PanelSkeleton({ lines = 4 }: { lines?: number }) {
