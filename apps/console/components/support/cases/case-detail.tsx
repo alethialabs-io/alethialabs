@@ -152,7 +152,7 @@ export function CaseDetail({
 					/>
 					{/* Structured classification (Workstream B). The control shows a picker only
 					    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
-					<ClassificationControl kind="project" id={caseId} canEdit />
+					<ClassificationControl kind={CASE_RESOURCE_KIND === "support_case" ? "project" : CASE_RESOURCE_KIND} id={caseId} canEdit />
 				</div>
 			</div>
 
