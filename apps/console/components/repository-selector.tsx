@@ -16,6 +16,7 @@ import {
 } from "@repo/ui/command";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -125,6 +126,64 @@ function providerFromRepoUrl(url: string): PublicGitProvider | null {
     // not a URL — fall through to null
   }
   return null;
+}
+
+/**
+ * The selector's settled layout in loading form, for a skeleton drawn before the page's data
+ * arrives (RUBRIC B2). The selector has two layouts with no shared geometry. One is the
+ * "No Git accounts linked" panel, about 178px tall with its three Link buttons and the manual-entry
+ * link. The other is the 40px provider and repository row. So the caller says which one it expects:
+ * `linked: false` draws the panel, and anything else draws the row. The classes are the ones the
+ * two branches below use. Change them together.
+ */
+export function RepositorySelectorSkeleton({
+  linked,
+  variant = "default",
+}: {
+  /** Whether the viewer has a git account linked. `undefined` (not known) draws the row. */
+  linked: boolean | undefined;
+  variant?: "default" | "settings";
+}) {
+  if (linked === false) {
+    return (
+      <div
+        data-slot="git-accounts-skeleton"
+        className={cn(
+          "space-y-3 border p-4",
+          variant === "settings"
+            ? "rounded-sm border-dashed border-border-strong bg-surface-sunken"
+            : "rounded-lg bg-muted/30",
+        )}
+      >
+        <div className="flex h-[1lh] items-center gap-2 text-sm">
+          <Skeleton className="size-4" />
+          <Skeleton className="h-3.5 w-36" />
+        </div>
+        <div className="flex h-[1lh] items-center text-sm">
+          <Skeleton className="h-3 w-full max-w-md" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {LINK_ORDER.map((p) => (
+            <Skeleton key={p} className="h-8 w-28" />
+          ))}
+          <div className="mt-2 w-full">
+            <Skeleton className="h-8 w-52" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div data-slot="repository-row-skeleton" className="flex items-center gap-1.5">
+      <Skeleton
+        className={cn(
+          "min-w-0 flex-1",
+          variant === "settings" ? "h-10 rounded-sm" : "h-[38px]",
+        )}
+      />
+      <Skeleton className="size-9 shrink-0" />
+    </div>
+  );
 }
 
 export function RepositorySelector({
