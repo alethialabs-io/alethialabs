@@ -44,7 +44,6 @@ export function CaseDetailSkeleton() {
 
 			{/* Thread — the requester's opening message */}
 			<div className="rounded-md border p-4">
-				<div className="space-y-2"><Skeleton className="h-16 w-full" /></div>
 				<div className="ml-auto w-3/4 space-y-2">
 					<div className="flex h-4 items-center justify-end">
 						<Skeleton className="h-3 w-32" />
