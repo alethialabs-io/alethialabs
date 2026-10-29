@@ -18,6 +18,14 @@ import { formatCaseNumber } from "./case-query";
 export { formatCaseNumber };
 
 /**
+ * The list's frame and one row's box. The rule between rows is the list's (`divide-y`), not each
+ * row's, because every row is now the only child of its `li` — a row's own `last:border-b-0` would
+ * fire on all of them. `CaseListSkeletonRows` draws the same two, so its rows are these rows (#6354).
+ */
+export const CASE_ROWS = "divide-y divide-border/60 overflow-hidden rounded-md border";
+export const CASE_ROW = "flex items-start gap-4 px-4 py-3.5";
+
+/**
  * A single row in the "My cases" list: the case reference + subject, its status and
  * severity badges, category, and relative last-activity time, with an unread dot when
  * the row has activity newer than the caller's read watermark. The whole row links to
@@ -33,7 +41,7 @@ export function CaseListItem({
 	return (
 		<Link
 			href={`/${orgSlug}/~/support/cases/${item.id}`}
-			className="flex items-start gap-4 border-b border-border/60 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-muted/40"
+			className={cn(CASE_ROW, "transition-colors hover:bg-muted/40")}
 		>
 			{/* Unread indicator — a single dot, no colour. */}
 			<span
