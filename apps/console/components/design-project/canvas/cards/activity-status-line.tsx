@@ -74,6 +74,9 @@ export function ActivityStatusLine({
 						sizer="00 m"
 						render={() => ago(createdAt)}
 					/>
+					<span>{ago(createdAt)}</span>
+					<span hidden
+					/>
 				</>
 			)}
 		</button>

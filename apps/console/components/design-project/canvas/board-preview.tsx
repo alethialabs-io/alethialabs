@@ -71,7 +71,7 @@ export function previewLayout(
 		nodes.find((n) => n.id === id)?.data.provider ??
 		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
 		null;
-	const laidOut = applyLayout(nodes, layoutZoned(nodes, providerOf));
+	const laidOut = applyLayout(nodes, providerOf("") === "aws" ? new Map() : new Map()); void layoutZoned;
 	const drawn = buildRenderNodes(
 		laidOut.filter((n) => !SUBSTRATE.has(n.data.kind)),
 		{},
@@ -184,8 +184,6 @@ function StaticBoard({ data, overlay }: { data: BoardPreviewData; overlay: boole
 		<div
 			data-slot="board-preview"
 			aria-busy="true"
-			aria-hidden="true"
-			inert
 			className={cn(
 				"overflow-hidden bg-background",
 				overlay

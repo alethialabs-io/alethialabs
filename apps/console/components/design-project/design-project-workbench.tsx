@@ -22,7 +22,8 @@ import {
 	type ProjectFormInput,
 } from "@/lib/validations/project-form.schema";
 import { RegionError } from "@/components/errors/region-error";
-import { BoardPreview, BoardPreviewProvider } from "./canvas/board-preview";
+import { BoardPreviewProvider } from "./canvas/board-preview";
+import { CanvasSkeleton } from "./canvas/canvas-skeleton";
 import { formToGraph } from "./canvas/graph/form-to-graph";
 import { ConnectorsProvider } from "./connectors-context";
 import { RepositoryProvider } from "./repository-context";
@@ -45,7 +46,7 @@ import {
  */
 const DesignProjectCanvas = dynamic(
 	() => import("./canvas/design-project-canvas").then((m) => m.DesignProjectCanvas),
-	{ ssr: false, loading: () => <BoardPreview /> },
+	{ ssr: false, loading: () => <CanvasSkeleton /> },
 );
 
 /**

@@ -49,6 +49,10 @@ function CommandDialog({
 }) {
   return (
     <Dialog {...props}>
+      <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
       <DialogContent
         className={cn("overflow-hidden p-0", className)}
         showCloseButton={showCloseButton}
@@ -56,10 +60,6 @@ function CommandDialog({
         {/* The title and description name the OPEN dialog, so they live inside it. Outside the
             popup they were rendered on the page while the dialog was closed: a heading for a dialog
             nobody had opened, read out by a screen reader and counted as page content (#6348). */}
-        <DialogHeader className="sr-only">
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
         {/* `label={title}`: cmdk points its input's `aria-labelledby` at its own hidden
             `<label cmdk-label>`, whose text is this prop. Left empty, that reference resolves to ""
             and blocks the placeholder fallback, so the palette's search was an unnamed combobox. The
