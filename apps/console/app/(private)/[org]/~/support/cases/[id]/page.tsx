@@ -38,7 +38,6 @@ export default async function CaseDetailRoute({
 	params: Promise<{ org: string; id: string }>;
 }) {
 	const { org, id } = await params;
-	if (!z.string().min(1).safeParse(id).success) notFound();
 
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
@@ -74,12 +73,6 @@ async function prefetchCaseSideReads(
 ): Promise<void> {
 	await Promise.all([
 		queryClient.prefetchQuery(rpc.classification.canEdit.queryOptions({ input: undefined })),
-		queryClient.prefetchQuery(
-			rpc.classification.assignments.queryOptions({
-				input: { kind: CASE_RESOURCE_KIND, resourceId: id.toUpperCase() },
-				retry: false,
-			}),
-		),
 		queryClient.prefetchQuery(rpc.classification.dimensions.queryOptions({ input: {}, retry: false })),
 	]);
 }
