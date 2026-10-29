@@ -144,7 +144,7 @@ export function RepositorySelectorSkeleton({
   linked: boolean | undefined;
   variant?: "default" | "settings";
 }) {
-  if (linked === true) {
+  if (linked === false) {
     return (
       <div
         data-slot="git-accounts-skeleton"

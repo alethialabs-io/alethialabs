@@ -301,7 +301,7 @@ export function PreviewSettings({
 								placeholder="Select repository..."
 								variant="settings"
 								providerAvailability={providerAvailability}
-								linkedProviders={linkedProviders && undefined}
+								linkedProviders={linkedProviders}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
 								<GitProviderIcon provider={selectedProvider} size={14} mono={false} />
@@ -412,11 +412,11 @@ export function PreviewSettings({
 							{/* Always rendered, with a line for each case, as the Credentials row's note is: the
 							    row keeps one height whatever the project's fabrics, so the route skeleton can
 							    reserve it exactly (RUBRIC B2, #6335). */}
-							{fabrics.length === 0 && (
-								<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
-									No project fabrics found. Default fabric will be used when one exists.
-								</div>
-							)}
+							<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
+								{fabrics.length === 0
+									? "No project fabrics found. Default fabric will be used when one exists."
+									: "Pick a project fabric, or keep Default fabric to use the project's default."}
+							</div>
 							<FieldError
 								message={
 									form.formState.errors.placement_mode?.message ??

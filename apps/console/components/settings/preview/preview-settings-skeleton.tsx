@@ -73,7 +73,7 @@ export function PreviewSettingsSkeleton({ linked }: { linked: boolean | undefine
 							</div>
 						</SettingsField>
 
-						<SettingsField label={PREVIEW_ROWS.source.label} hint="The repository.">
+						<SettingsField label={PREVIEW_ROWS.source.label} hint={PREVIEW_ROWS.source.hint}>
 							<RepositorySelectorSkeleton linked={linked} variant="settings" />
 							<div className="flex min-h-[1lh] items-center gap-2 text-ui-xs">
 								<Skeleton className="size-3.5 shrink-0" />
