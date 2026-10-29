@@ -30,6 +30,12 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("@/components/design-project/canvas/design-project-canvas", () => ({
 	DesignProjectCanvas: () => <div data-testid="canvas" />,
 }));
+// The board's stand-in while it loads (#6348) reads the page's prefetched queries; this file renders
+// no query client and is not about it (board-preview.test.tsx is), so it is a stub here.
+vi.mock("@/components/design-project/canvas/board-preview", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/design-project/canvas/board-preview")>()),
+	BoardPreview: () => null,
+}));
 vi.mock("@/components/design-project/repository-context", () => ({
 	RepositoryProvider: ({ children }: { children: ReactNode }) => children,
 	useRepositoryContext: () => null,

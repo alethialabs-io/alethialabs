@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { StatusBadge } from "@repo/ui/status-badge";
+import { ClockSlot } from "@/components/overview/clock-slot";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -65,7 +66,17 @@ export function ActivityStatusLine({
 			{createdAt && (
 				<>
 					<span className="text-muted-foreground">·</span>
-					<span className="text-muted-foreground">{ago(createdAt)}</span>
+					{/* `ago` reads the clock. The line is server-rendered now (`BoardPreview`, #6348), and
+					    the server's clock is not the browser's: the age waits for hydration, in a slot
+					    already as wide as it normally is, so nothing moves when it arrives. */}
+					<ClockSlot
+						className="text-muted-foreground"
+						sizer="00 m"
+						render={() => ago(createdAt)}
+					/>
+					<span>{ago(createdAt)}</span>
+					<span hidden
+					/>
 				</>
 			)}
 		</button>

@@ -11,15 +11,14 @@ import { cn } from "@repo/ui/utils";
 /**
  * The Architecture board while it loads: the full-bleed board with its corner chrome where the live
  * board draws it — the toolbar top-right (run · add · more), the controls bottom-left (zoom, fit,
- * undo, redo) — and three placeholder cards. It is used in THREE places, so the board never shows an
- * empty canvas while its data is on the way (F009):
+ * undo, redo) — and three placeholder cards.
  *
- *   1. `architecture/loading.tsx` — while the server prefetches the design and the board's reads;
- *   2. the `next/dynamic` loading state of the canvas — while the React Flow chunk downloads;
- *   3. an overlay on the mounted board — until the store is seeded with THIS environment's design
- *      (`switchDraftScope` restores a draft asynchronously, so the board's first frames are empty).
+ * It is the board ONLY while the board's data is genuinely unknown: `architecture/loading.tsx`, while
+ * the server prefetches the design and the board's reads. Once the data is known, the stand-in is
+ * `BoardPreview` — the board drawn from that data (#6348) — which falls back to this only for a
+ * caller that never provided the data.
  *
- * `overlay` positions it over the mounted board (3); without it, it fills its parent (1, 2).
+ * `overlay` positions it over a mounted board; without it, it fills its parent.
  */
 export function CanvasSkeleton({ overlay = false }: { overlay?: boolean }) {
 	return (

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatMonthlyRate } from "@repo/format";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 
 /**
@@ -19,14 +20,17 @@ import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
  */
 export function CostChip() {
 	const env = useEnvironmentStatus();
+	const hydrated = useHydrated();
 
 	if (env.monthlyCost == null) return null;
 
 	return (
 		<span
 			className="flex h-8 items-center gap-2 border border-border bg-card px-2.5"
+			// The date is printed in the browser's zone, which the server render does not know (the
+			// chip is server-rendered by `BoardPreview`, #6348): it is added once hydrated.
 			title={
-				env.costCapturedAt
+				hydrated && env.costCapturedAt
 					? `From the plan on ${new Date(env.costCapturedAt).toLocaleString()}`
 					: undefined
 			}
