@@ -33,7 +33,8 @@ export function EnvironmentsSkeleton() {
 					<div className="flex h-[1lh] items-center font-mono text-ui-2xs">
 						<Skeleton className="h-3 w-24" />
 					</div>
-					<div
+					{[0, 1].map((i) => (<div
+						key={i}
 						data-slot="environment-card-skeleton"
 						className="grid grid-cols-1 gap-4 rounded-lg border bg-surface p-4 shadow-sm sm:grid-cols-[1fr_auto]"
 					>
@@ -62,7 +63,7 @@ export function EnvironmentsSkeleton() {
 							</div>
 							<Skeleton className="size-8" />
 						</div>
-					</div>
+					</div>))}
 				</div>
 				<div
 					data-slot="single-environment-note-skeleton"
