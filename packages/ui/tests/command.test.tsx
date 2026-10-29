@@ -7,7 +7,7 @@
 // command palette and both canvas palettes rendered an unnamed combobox. The dialog names its
 // search after its `title`, which every caller already sets (or inherits as the default).
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
 	Command,
@@ -67,7 +67,8 @@ describe("CommandDialog's title and description", () => {
 		);
 		const dialog = await screen.findByRole("dialog", { name: "Add a service" });
 		expect(dialog).toHaveAccessibleDescription("Search and add infrastructure.");
-		expect(dialog).toContainElement(screen.getByText("Add a service"));
+		// The title is the dialog's own heading (cmdk's hidden search label carries the same words).
+		expect(within(dialog).getByRole("heading", { name: "Add a service" })).toBeInTheDocument();
 	});
 });
 
