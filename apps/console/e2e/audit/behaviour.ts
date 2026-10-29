@@ -434,25 +434,23 @@ export async function loadHeld(context: BrowserContext, url: string, pass: (key:
 	}
 }
 
-/** B1's loads and verdict: the held load, and the answered loads it was compared with, in order. */
+/** B1's loads and verdict: the held load, and the answered load taken right after it. */
 export interface B1Measurement {
 	verdict: BVerdict;
 	held: HeldLoad;
-	answered: AnsweredLoad[];
+	after: AnsweredLoad;
 }
 
 /**
- * Take B1's loads back to back, so the held render is compared with answered renders of the SAME
- * data (`judgeB1Bracketed`): an answered load, the held load, and — only when the first does not
- * match — a second answered load after it. Never phase 1's answered load, which can be minutes and
- * a run's worth of fixture writes older (#6326).
+ * Take B1's held load and, straight after it, an answered load, then judge the held render against
+ * that load AND every earlier answered load the caller took (`judgeB1Loads`). The load after is the
+ * one at the held load's data: phase 1's answered load can be minutes and a run's worth of fixture
+ * writes older (#6326).
  */
-export async function measureB1(context: BrowserContext, url: string): Promise<B1Measurement> {
-	const before = await loadAnswered(context, url);
+export async function measureB1(context: BrowserContext, url: string, earlier: readonly AnsweredLoad[]): Promise<B1Measurement> {
 	const held = await loadHeld(context, url);
-	const answered = [before];
-	if (judgeB1(before, held).verdict !== "PASS") answered.push(await loadAnswered(context, url));
-	return { verdict: judgeB1Bracketed(answered, held), held, answered };
+	const after = await loadAnswered(context, url);
+	return { verdict: judgeB1Loads(earlier, held, after), held, after };
 }
 
 /** A body the read router's own unexpected-error path answers with, so the client decodes it as one. */
@@ -610,20 +608,26 @@ export const ANSWERED_EMPTY =
  * clock, date and initials text waits for hydration by design (`ClockSlot`). Neither is data. Both
  * stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`), so a reader still sees them.
  *
- * ONE comparison. A route is judged through `judgeB1Bracketed`, over the loads `measureB1` takes.
+ * ONE comparison. A route is judged through `judgeB1Loads`, over every answered load of it.
  */
-export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
-	const evidence = b1Evidence(answered, held);
+export function judgeB1(answered: AnsweredLoad, held: HeldLoad, grown = false): BVerdict {
+	const evidence = b1Evidence(answered, held, grown);
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
 	if (evidence.differs.length > 0) return { verdict: "FAIL", evidence };
 	if (answered.snapshot.empty > 0 && held.held.length > 0) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
 	return { verdict: "PASS", evidence };
 }
 
-/** What one B1 comparison saw: the signals that differ, and both renders. */
-function b1Evidence(answered: AnsweredLoad, held: HeldLoad) {
+/**
+ * What one B1 comparison saw: the signals that differ, and both renders. `grown` drops `rows` from
+ * the differences — only ever for a load taken before the held one, when `judgeB1Loads` has shown
+ * that the feed grew in between.
+ */
+function b1Evidence(answered: AnsweredLoad, held: HeldLoad, grown: boolean) {
+	const differs = differences(answered.snapshot, held.snapshot);
 	return {
-		differs: differences(answered.snapshot, held.snapshot),
+		differs: grown ? differs.filter((d) => d !== "rows") : differs,
+		grown,
 		held: held.held,
 		answered: summary(answered.snapshot),
 		heldRender: summary(held.snapshot),
@@ -632,32 +636,35 @@ function b1Evidence(answered: AnsweredLoad, held: HeldLoad) {
 	};
 }
 
-/** B1's NOT MEASURED reason when no answered load was taken to compare the held one with. */
-export const NO_ANSWERED_LOAD = "no-answered-load — B1 took no answered load to compare the held render with";
-
 /**
- * B1 against the answered loads taken AROUND the held one — the one before it and, when that one
- * does not match, the one after it (`measureB1`).
+ * B1 over every answered load of the route: the ones taken BEFORE the held load (phase 1's), and the
+ * one taken straight AFTER it (`measureB1`).
  *
- * B1 compares rows, and a feed rows can be appended to between two loads. The answered render used
- * to be phase 1's, taken before the run's own fixtures wrote to the activity log; the held render
- * came in phase 2, after them, so `~/settings/activity` held 7 rows against 4 answered and FAILed
- * with a first paint that was correct (#6326). Bracketing asks the question at one log state: when the
- * log moved once, between the first answered load and the held one, the answered load after the held
- * one shows the held one's rows. A log that moves on EVERY load defeats the bracket and still FAILs:
- * the bracket can only fail to excuse a moved log. What it cannot excuse is a held render that matches
- * NEITHER — a skeleton, an empty state or missing content is not something either neighbour shows,
- * so a page that waits for a client read FAILs exactly as before.
+ * B1 compares rows, and a feed can be appended to between two loads. Phase 1's answered load was
+ * taken before the run's own fixtures wrote to the activity log; the held load came in phase 2, after
+ * them, so `~/settings/activity` held 7 rows against 4 answered and FAILed with a correct first paint
+ * (#6326). So a row count is excused in exactly one shape: the held render has MORE rows than an
+ * earlier answered load, and the answered load after the held one settled with the SAME count as the
+ * held render — the data the held load saw, confirmed by a load of it. Nothing else is excused: a
+ * skeleton, an empty state, an error or missing content still FAILs against any load that shows it,
+ * and fewer held rows than any answered load still FAILs.
  *
- * The verdict: PASS when the held render matches either neighbour, FAIL when it differs from every
- * neighbour that settled, NOT MEASURED otherwise (the first neighbour's reason). The evidence is the
- * deciding comparison's, with every comparison's verdict under `bracket`.
+ * Every settled load is a witness, and the verdict is the STRICTEST: FAIL when any comparison FAILs,
+ * PASS when none does and at least one PASSes, NOT MEASURED otherwise (the first comparison's reason).
+ * Strictest, because an answered load can settle before a client-only region arrives — a page with
+ * no skeleton for that region reads as settled — and such a load matches a held render that lacks the
+ * region. A rule that PASSed on any match passed `[project]/settings/general` that way. The evidence
+ * is the deciding comparison's, with each comparison's verdict under `bracket`.
  */
-export function judgeB1Bracketed(answered: readonly AnsweredLoad[], held: HeldLoad): BVerdict {
-	const judged = answered.map((a) => ({ a, v: judgeB1(a, held) }));
-	const chosen = judged.find((j) => j.v.verdict === "PASS") ?? judged.find((j) => j.v.verdict === "FAIL") ?? judged[0];
-	if (chosen === undefined) return { verdict: "NOT MEASURED", reason: NO_ANSWERED_LOAD, evidence: { held: held.held } };
-	const evidence = { ...b1Evidence(chosen.a, held), bracket: judged.map((j) => j.v.verdict) };
+export function judgeB1Loads(earlier: readonly AnsweredLoad[], held: HeldLoad, after: AnsweredLoad): BVerdict {
+	const confirmed = after.settled && after.snapshot.rows === held.snapshot.rows;
+	const judged = [
+		...earlier.map((a) => ({ a, grown: confirmed && held.snapshot.rows > a.snapshot.rows })),
+		{ a: after, grown: false },
+	].map(({ a, grown }) => ({ a, grown, v: judgeB1(a, held, grown) }));
+	const chosen = judged.find((j) => j.v.verdict === "FAIL") ?? judged.find((j) => j.v.verdict === "PASS") ?? judged[0];
+	if (chosen === undefined) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence: { held: held.held } };
+	const evidence = { ...b1Evidence(chosen.a, held, chosen.grown), bracket: judged.map((j) => j.v.verdict) };
 	const v = chosen.v;
 	if (v.verdict === "NOT MEASURED") return { verdict: "NOT MEASURED", reason: v.reason, evidence };
 	return { verdict: v.verdict, evidence };
@@ -1677,25 +1684,25 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			const failed = await loadFailed(newContext, url);
 			return { b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
 		};
-		// B1 through `measureB1`, as the routes take it: its loads back to back, on a warm context.
+		// B1 through `measureB1`, as the routes take it: an earlier answered load (phase 1's, on a
+		// route), then the held load and the answered load after it.
 		const b1 = async (mode: BControlMode, on: BrowserContext = context) => {
-			if (on === context) await loadAnswered(context, controlUrl(mode));
-			return measureB1(on, controlUrl(mode));
+			const first = await loadAnswered(on, controlUrl(mode));
+			return { first, ...(await measureB1(on, controlUrl(mode), [first])) };
 		};
 		expectVerdict("B1", "prefetched", (await b1("prefetched")).verdict, "PASS");
 		expectVerdict("B1", "client-fetch", (await b1("client-fetch")).verdict, "FAIL");
-		// A feed that grew between the first answered load and the held one (#6326). Its first paint is
-		// correct, so B1 must PASS — and the fixture must really have grown under it: the comparison with
-		// the answered load BEFORE the growth has to FAIL, or this PASS would prove nothing about the
-		// bracket. A context of its own, because the fixture counts its loads per context.
+		// A feed that grew between the earlier answered load and the held one (#6326). Its first paint is
+		// correct, so B1 must PASS — and the fixture must really have grown under it: the plain comparison
+		// with the earlier load has to FAIL, or this PASS would prove nothing about the growth rule. A
+		// context of its own, because the fixture counts its loads per context.
 		const feed = await newContext();
 		try {
 			const grew = await b1("growing-feed", feed);
 			expectVerdict("B1", "growing-feed", grew.verdict, "PASS");
-			const first = grew.answered[0];
-			if (grew.answered.length < 2 || first === undefined || judgeB1(first, grew.held).verdict !== "FAIL") {
+			if (judgeB1(grew.first, grew.held).verdict !== "FAIL") {
 				broken.add("B1");
-				lines.push("B1 on the `growing-feed` fixture: the feed did not grow between the first answered load and the held one, so the bracket was not exercised");
+				lines.push("B1 on the `growing-feed` fixture: the feed did not grow between the earlier answered load and the held one, so the growth rule was not exercised");
 			}
 		} finally {
 			await feed.close();
