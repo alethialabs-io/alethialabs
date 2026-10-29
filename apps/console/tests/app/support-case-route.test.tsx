@@ -22,17 +22,20 @@ const SIDE: Side[] = ["canEdit", "assignments", "dimensions"];
 /** What the stubbed read router does on the next render. */
 interface RouteState {
 	/** What `support.case` does: answer, refuse as not found, or fail. */
-	caseRead: "ok" | "not-found" | "fail";
+	caseRead: "ok" | "not-found" | "fail" | "fail-internal";
 	/** The classification read that fails, if any. */
 	failing: Side | null;
 	/** Every procedure the route called, in order. */
 	calls: string[];
 }
 
+/** A case read that fails with something other than a not-found: a thrown error, and the router's own. */
+const CASE_FAILURES: RouteState["caseRead"][] = ["fail", "fail-internal"];
+
 const h = vi.hoisted((): RouteState => ({ caseRead: "ok", failing: null, calls: [] }));
 
 vi.mock("@/lib/rpc/server", async () => {
-	const { os, createRouterClient } = await import("@orpc/server");
+	const { ORPCError, os, createRouterClient } = await import("@orpc/server");
 	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
 	const { z } = await import("zod");
 	const base = os.errors({ NOT_FOUND: { status: 404, message: "Not found." } });
@@ -47,6 +50,8 @@ vi.mock("@/lib/rpc/server", async () => {
 				h.calls.push("support.case");
 				if (h.caseRead === "not-found") throw errors.NOT_FOUND();
 				if (h.caseRead === "fail") throw new Error("database unavailable");
+				// The read router's own failure shape: an ORPCError that is not a NOT_FOUND.
+				if (h.caseRead === "fail-internal") throw new ORPCError("INTERNAL_SERVER_ERROR");
 				return { case: { id: input.id }, messages: [], attachments: [] };
 			}),
 		},
@@ -157,8 +162,8 @@ describe("the support case route's first paint (#6336)", () => {
 		expect(digestOf(thrown)).toBe(NOT_FOUND);
 	});
 
-	it("any other failed case read propagates to the route's error boundary — never a not-found", async () => {
-		h.caseRead = "fail";
+	it.each(CASE_FAILURES)("any other failed case read (%s) propagates to the route's error boundary — never a not-found", async (mode) => {
+		h.caseRead = mode;
 		const thrown = await route().then(
 			() => undefined,
 			(e: unknown) => e,
