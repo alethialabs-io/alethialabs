@@ -129,7 +129,7 @@ describe("harbor's data-encryption key minting (#6222)", () => {
 	});
 
 	/** Load harbor's def with `randomBytes` replaced by one that repeats `pattern` to length. */
-	async function harborWithRandomBytes(pattern: number[]): Promise<AddOnDef | undefined> {
+	async function harborWithRandomBytes(pattern: number[]): Promise<AddOnDef | null> {
 		vi.doMock("node:crypto", async (importOriginal) => {
 			const actual = await importOriginal<typeof import("node:crypto")>();
 			return {
