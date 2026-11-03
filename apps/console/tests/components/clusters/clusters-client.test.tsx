@@ -43,6 +43,8 @@ describe("ClustersClient", () => {
 		const { container } = render(<ClustersClient />);
 		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
 		expect(screen.queryByText(/No clusters/)).toBeNull();
+		// Nothing has answered, so there is no count: the card grid, not the empty state's frame (#6349).
+		expect(container.querySelectorAll('[data-slot="cluster-card-skeleton"]')).toHaveLength(2);
 	});
 
 	it("a refusal says the viewer lacks access, with nothing to retry", () => {

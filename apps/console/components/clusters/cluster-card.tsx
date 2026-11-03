@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { CLUSTER_CARD_BLOCK, CLUSTER_CARD_FRAME, CLUSTER_COMPONENT_ROW } from "@/components/clusters/cluster-card-shape";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
 import { getProvider } from "@/lib/cloud-providers";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
@@ -166,7 +167,7 @@ function ComponentRow({
 	label?: string;
 }) {
 	return (
-		<div className="flex items-center gap-2.5 py-2 first:pt-0 last:pb-0">
+		<div className={CLUSTER_COMPONENT_ROW}>
 			<Icon className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
 			<span className="text-ui-sm text-text-primary">{name}</span>
 			{engine && (
@@ -221,7 +222,7 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 		"kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d";
 
 	return (
-		<div className="flex flex-col gap-3.5 rounded-lg border bg-surface p-[18px] shadow-sm">
+		<div className={CLUSTER_CARD_FRAME}>
 			{/* Header: identity + derived posture rollup. */}
 			<div className="flex items-start justify-between gap-3">
 				<div className="flex min-w-0 items-start gap-2.5">
@@ -312,7 +313,7 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 
 			{/* Cluster access. */}
 			{cluster.cluster_endpoint && (
-				<div className="flex flex-col gap-1.5 border-t pt-3">
+				<div className={CLUSTER_CARD_BLOCK}>
 					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Terminal className="h-3.5 w-3.5" />
 						<span className="text-ui-xs font-medium text-text-secondary">
@@ -371,7 +372,7 @@ export function ClusterCard({ data }: { data: ClusterListItem }) {
 
 			{/* ArgoCD. */}
 			{cluster.argocd_url && (
-				<div className="flex flex-col gap-1.5 border-t pt-3">
+				<div className={CLUSTER_CARD_BLOCK}>
 					<div className="flex items-center gap-1.5 text-text-tertiary">
 						<Server className="h-3.5 w-3.5" />
 						<span className="text-ui-xs font-medium text-text-secondary">ArgoCD</span>
