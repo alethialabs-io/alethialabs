@@ -578,16 +578,19 @@ function writtenRecords(): BFloorRecord[] {
 }
 
 /**
- * What the reference slice must answer, per predicate. B2 is the one it does NOT pass, and that is a
- * finding, not a calibration gap: the jobs skeleton (`~/jobs/loading.tsx`) has no row for the
- * PageToolbar and a one-row filter bar, so its table frame paints ~100px above where the page puts it
- * (score 0.047 on two swaps of run 39464989816). It is debt in `BEHAVIOUR_LEDGER`, owned by #6121.
- * What the calibration still asserts for B2 is that it MEASURED the page — a skeleton swap that
- * stopped painting would otherwise turn the reference into a NOT MEASURED nobody reads.
+ * What the reference slice must answer, per predicate: PASS on all five.
+ *
+ * B2 used to be allowed a FAIL here. On run 39464989816 the jobs skeleton had no row for the
+ * PageToolbar and a one-row filter bar, so its table frame painted ~100px above where the page put it
+ * (0.047), and this table accepted that while #6121 fixed the skeleton. #6121 did: release-gate run
+ * 40822681524 scored `/[org]/~/jobs` B2 at 0.0016 against the 0.02 budget, and no `BEHAVIOUR_LEDGER`
+ * row carries the reference slice. A FAIL this table still accepted would be a regression on the very
+ * page the predicates are calibrated on, read as calibrated (#6350). The skeleton is now
+ * `~/jobs/(list)/loading.tsx`, which renders the list's own filter bar.
  */
 const REFERENCE_EXPECTED: Record<(typeof B_IDS)[number], readonly string[]> = {
 	B1: ["PASS"],
-	B2: ["PASS", "FAIL"],
+	B2: ["PASS"],
 	B3: ["PASS"],
 	B4: ["PASS"],
 	B5: ["PASS"],
