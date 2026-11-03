@@ -10,7 +10,9 @@
 // 3. #6118: pending, failed and answered are three renders; a failure is a region error with a
 //    retry, never a skeleton forever (RUBRIC B4).
 
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OverviewUsage } from "@/lib/rpc/procedures/overview";
 
@@ -20,7 +22,7 @@ vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
 }));
 
-import { UsageCard, overviewUsageQuery, usagePeriodCaption } from "@/components/overview/usage-card";
+import { UsageCard, UsageCardSkeleton, overviewUsageQuery, usagePeriodCaption } from "@/components/overview/usage-card";
 import { never, reads, renderWithReads, testClient } from "./rpc-fake";
 
 const usage = (over: Partial<OverviewUsage["runner"]> = {}, rest: Partial<OverviewUsage> = {}): OverviewUsage => ({
@@ -139,5 +141,62 @@ describe("UsageCard states (RUBRIC B3/B4)", () => {
 		fireEvent.click(screen.getByRole("button", { name: /try again/i }));
 		await waitFor(() => expect(screen.getByText("<1 min / 200 min")).toBeInTheDocument());
 		expect(reads.usage.mock.calls.length).toBe(before + 1);
+	});
+});
+
+// #6347: the release gate's B1 held `/[org]` with every read stalled, so the render it compared was
+// the SERVER's — and "starts on first use", the AI session readout before any session has run, was
+// missing from it. That readout reads no clock, so it is data and belongs in the server HTML; only a
+// running session's countdown ("resets in 4 hr") must wait for hydration (React #418 otherwise).
+//
+// Mutation check (run in CI on this PR's branch): routing the not-started readout back through
+// `ClockSlot` fails the first test.
+describe("UsageCard first paint — the AI session readout (B1)", () => {
+	const ai = (sessionResetAt: string | null): Partial<OverviewUsage> => ({
+		ai: {
+			enabled: true,
+			sessionUsed: 0,
+			sessionBudget: 100,
+			sessionResetAt,
+			weeklyUsed: 0,
+			weeklyBudget: 500,
+			weeklyResetAt: "2026-10-26T00:00:00.000Z",
+		},
+	});
+
+	/** The card's server HTML with `data` prefetched — what the page's first paint carries. */
+	function serverHtml(data: OverviewUsage): string {
+		const client = testClient();
+		client.setQueryData(overviewUsageQuery().queryKey, data);
+		return renderToString(
+			<QueryClientProvider client={client}>
+				<UsageCard orgSlug="acme" projectCount={4} />
+			</QueryClientProvider>,
+		);
+	}
+
+	// `ClockSlot` puts an invisible copy of its widest string in the server HTML to hold its width;
+	// the session meter's is "resets in 23 hr 59 min", so its presence says the clock path was taken.
+	const SESSION_SIZER = "resets in 23 hr 59 min";
+
+	it("prints a session that has not started in the server HTML", () => {
+		const html = serverHtml(usage({}, ai(null)));
+		expect(html).toContain("starts on first use");
+		expect(html).not.toContain(SESSION_SIZER);
+	});
+
+	it("leaves a running session's countdown to hydration", () => {
+		const html = serverHtml(usage({}, ai("2026-10-20T10:00:00.000Z")));
+		expect(html).toContain(SESSION_SIZER);
+		expect(html).not.toContain("starts on first use");
+	});
+});
+
+// #6347 (B2): the pending card drew two gauges over an answered card of four (runner minutes,
+// concurrent jobs and the two AI meters every tier has) — the route skeleton's worst-moving block.
+describe("UsageCardSkeleton", () => {
+	it("draws the four gauges a default-plan org answers with", () => {
+		const { container } = renderWithReads(<UsageCardSkeleton />);
+		expect(container.querySelectorAll('[data-slot="skeleton"].rounded-full.size-10').length).toBe(4);
 	});
 });
