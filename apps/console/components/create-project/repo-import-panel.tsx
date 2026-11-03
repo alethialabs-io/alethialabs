@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowRight, GitBranch, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -14,8 +14,8 @@ import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 import { orpc } from "@/lib/rpc/client";
 import { cn } from "@repo/ui/utils";
 import { Button } from "@repo/ui/button";
-import { SectionHeading } from "@repo/ui/section-heading";
 
+import { IMPORT_CARD_CLASS, ImportCardHeading } from "./chooser-parts";
 import { useLinkedGitProviders } from "./use-create-project-reads";
 
 interface RepoImportPanelProps {
@@ -68,17 +68,8 @@ export function RepoImportPanel({ className, providerAvailability }: RepoImportP
 
 	return (
 		<section className={cn("space-y-0", className)}>
-			<div className="rounded-xl border border-border bg-card shadow-sm">
-				<div className="flex items-start gap-3 p-4 pb-3">
-					<span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
-						<GitBranch className="size-4" />
-					</span>
-					<SectionHeading
-						className="min-w-0 flex-1"
-						title="Import a repository"
-						description="Scan a git repo — Alethia infers the stack and opens it on the canvas to review before you provision."
-					/>
-				</div>
+			<div className={IMPORT_CARD_CLASS}>
+				<ImportCardHeading />
 				<div className="space-y-3 px-4 pb-4">
 					<RepositorySelector
 						value={repoUrl}
