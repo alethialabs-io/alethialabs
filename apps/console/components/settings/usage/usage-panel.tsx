@@ -79,12 +79,11 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { formatDate, formatMinutes, formatMoney, formatQuota } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
-import { Card } from "@repo/ui/card";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
-import { SectionHeading } from "@repo/ui/section-heading";
+import { SelfManagedUsageNotice } from "./self-managed-usage-notice";
 import { UsageSkeleton } from "./usage-skeleton";
 
 /** Renders the organization's Usage view. See the taxonomy note at the top of this file. */
@@ -114,16 +113,10 @@ function UsageForSummary({ summary }: { summary: BillingSummary }) {
 	const [createOpen, setCreateOpen] = useState(false);
 
 	// Self-managed / community: no Stripe metering — usage is a hosted-billing concept. This is the
-	// edition gate, unchanged by #6127: it is decided by the summary, not by a refused read.
+	// edition gate, unchanged by #6127: it is decided by the summary, not by a refused read. The
+	// route's loading state draws the same component on the same deployment fact (#6355).
 	if (!summary.hosted) {
-		return (
-			<Card className="p-6">
-				<SectionHeading
-					title="Self-managed deployment"
-					description="This instance isn't connected to hosted billing, so usage isn't metered here."
-				/>
-			</Card>
-		);
+		return <SelfManagedUsageNotice />;
 	}
 
 	// Free user with no org yet: usage is per-organization. This is an EMPTY STATE — a thing that
