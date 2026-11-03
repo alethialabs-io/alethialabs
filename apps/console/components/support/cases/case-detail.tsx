@@ -3,13 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatBytes } from "@repo/format";
-import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { isDefinedError } from "@orpc/client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Lock, Paperclip, SearchX } from "lucide-react";
+import { ArrowLeft, Download, Paperclip, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 import { markCaseRead } from "@/app/server/actions/support";
@@ -21,7 +20,14 @@ import {
 	SUPPORT_CATEGORY_LABELS,
 } from "@/lib/validations/support";
 import { CaseActions } from "./case-actions";
+import { CaseClosedNotice } from "./case-closed-notice";
 import { CaseComposer } from "./case-composer";
+import {
+	CASE_ATTACHMENTS,
+	CASE_ATTACHMENTS_HEADING,
+	CASE_ATTACHMENTS_LIST,
+	CASE_THREAD,
+} from "./case-detail-parts";
 import { CaseDetailSkeleton } from "./case-detail-skeleton";
 import { useCaseQuery } from "./case-queries";
 import { CASE_RESOURCE_KIND, formatCaseNumber } from "./case-query";
@@ -158,12 +164,12 @@ export function CaseDetail({
 
 			{/* Attachments */}
 			{attachments.length > 0 && (
-				<div className="space-y-2 rounded-md border p-4">
-					<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+				<div className={CASE_ATTACHMENTS}>
+					<div className={CASE_ATTACHMENTS_HEADING}>
 						<Paperclip className="size-3.5" />
 						Attachments
 					</div>
-					<ul className="space-y-1">
+					<ul className={CASE_ATTACHMENTS_LIST}>
 						{attachments.map((att) => (
 							<li key={att.id}>
 								<a
@@ -183,23 +189,16 @@ export function CaseDetail({
 			)}
 
 			{/* Thread */}
-			<div className="rounded-md border">
+			<div className={CASE_THREAD}>
 				<CaseThread messages={messages} />
 			</div>
 
 			{/* A closed case takes no replies: say so, and offer the one way forward (F045). */}
 			{isClosed ? (
-				<Alert role="status" data-testid="case-closed-notice">
-					<Lock />
-					<AlertTitle>This case is closed</AlertTitle>
-					<AlertDescription>
-						<p>
-							It no longer takes replies. Reopen it to continue the conversation, or open a new case
-							for a different issue.
-						</p>
-						<CaseActions caseId={caseId} status={supportCase.status} variant="reopen" />
-					</AlertDescription>
-				</Alert>
+				<CaseClosedNotice
+					data-testid="case-closed-notice"
+					action={<CaseActions caseId={caseId} status={supportCase.status} variant="reopen" />}
+				/>
 			) : (
 				<CaseComposer caseId={caseId} />
 			)}

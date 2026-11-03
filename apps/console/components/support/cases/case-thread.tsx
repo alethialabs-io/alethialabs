@@ -23,6 +23,7 @@ import {
 import type { SupportAuthorType } from "@/lib/db/schema/enums";
 import type { PublicMessage } from "@/lib/queries/support";
 import { OPTIMISTIC_ID_PREFIX } from "./case-composer";
+import { CASE_THREAD_CONTENT, CASE_THREAD_VIEWPORT } from "./case-detail-parts";
 import { CaseTime } from "./case-time";
 
 /** The display name shown above each message, keyed by who authored it. */
@@ -101,12 +102,10 @@ export function CaseThread({ messages }: { messages: PublicMessage[] }) {
 		<MessageScrollerProvider autoScroll defaultScrollPosition="end">
 			<FollowOwnSend lastMessageId={messages.at(-1)?.id} />
 			<MessageScroller>
-				{/* Bounded, so a long thread scrolls inside the case rather than pushing the composer
-				    below the fold (a smaller cap on a phone keeps it reachable) — without a bound the viewport is
-				    as tall as its content and there is nothing to stick to the bottom of. `overscroll-auto`
-				    because the thread sits in a scrolling page: a swipe at its edge carries on to the page. */}
-				<MessageScrollerViewport aria-label="Case conversation" className="max-h-[60dvh] overscroll-auto scrollbar-thin sm:max-h-[70dvh]">
-					<MessageScrollerContent className="p-4">
+				{/* Bounded and padded by the classes the loading form draws too (`case-detail-parts.ts`
+				    says why the bound is what it is). */}
+				<MessageScrollerViewport aria-label="Case conversation" className={CASE_THREAD_VIEWPORT}>
+					<MessageScrollerContent className={CASE_THREAD_CONTENT}>
 						{messages.length === 0 ? (
 							<EmptyState
 								level={3}
