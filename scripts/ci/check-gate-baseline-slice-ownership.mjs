@@ -132,6 +132,8 @@
 //     short pause. A second failure THROWS, naming both attempts' API errors; the entry point turns
 //     that into an `::error::` and exit 1. A not-found on the retry is still an answer.
 //   · A read that SUCCEEDS but is not JSON throws, unretried.
+//   · The PR-metadata and compare reads get the same single retry, and NO not-found exemption: a
+//     404 there is a failure. (A 503 on `pulls/<n>` took this PR's own first CI run down.)
 //
 // So a guard that cannot read its input fails. It neither passes nor reports slices it never saw.
 // `fromGit` (the local `--base/--head` mode) is not covered by this rule and still reads any
@@ -411,6 +413,9 @@ const parse = (text, what) => {
  */
 const GH_NOT_FOUND_LINE = /^gh: Not Found \(HTTP 404\)$/m;
 
+/** One read plus ONE retry. */
+const GH_READ_ATTEMPTS = 2;
+
 /** Pause before the single retry, in ms. */
 const RETRY_PAUSE_MS = 2000;
 
@@ -458,26 +463,38 @@ const sleepSync = (ms) => {
 export function readBaselineAt(ref, { repo, run = gh, pause = sleepSync }) {
 	const what = `${BASELINE}@${ref}`;
 	const args = ["api", `repos/${repo}/contents/${BASELINE}?ref=${ref}`, "-H", "Accept: application/vnd.github.raw"];
+	const text = ghRead(args, what, { run, pause, notFoundIsAbsence: true });
+	return text === null ? null : parse(text, what);
+}
+
+/**
+ * One `gh` read with the single retry: any failure is retried once after a pause; a second failure
+ * throws naming both attempts' API errors. With `notFoundIsAbsence`, GitHub's 404 "Not Found" is an
+ * ANSWER and returns null unretried; without it, a 404 is a failure like any other.
+ *
+ * @param {string[]} args
+ * @param {string} what what is being read, for the error
+ * @param {object} deps
+ * @param {(args: string[]) => string} [deps.run]
+ * @param {(ms: number) => void} [deps.pause]
+ * @param {boolean} [deps.notFoundIsAbsence]
+ * @returns {string | null} stdout, or null for an answered not-found
+ */
+export function ghRead(args, what, { run = gh, pause = sleepSync, notFoundIsAbsence = false }) {
 	const errors = [];
-	for (let attempt = 1; attempt <= 2; attempt++) {
-		let text;
+	for (let attempt = 1; attempt <= GH_READ_ATTEMPTS; attempt++) {
 		try {
-			text = run(args);
+			return run(args);
 		} catch (err) {
-			if (isGhNotFound(err)) return null; // an ANSWER — the file did not exist at that commit
+			if (notFoundIsAbsence && isGhNotFound(err)) return null; // an ANSWER — the file did not exist at that commit
 			errors.push(`attempt ${attempt}: ${describeGhError(err)}`);
-			if (attempt === 1) {
-				pause(RETRY_PAUSE_MS);
-				continue;
-			}
-			throw new Error(
-				`could not read ${what} from the GitHub API (${errors.join("; ")}). Refusing to judge the ledger: ` +
-					`a failed read is not a deleted file, and this guard neither passes nor reports slices it never saw.`,
-			);
+			if (attempt < GH_READ_ATTEMPTS) pause(RETRY_PAUSE_MS);
 		}
-		return parse(text, what);
 	}
-	throw new Error(`unreachable: ${what} was neither read nor refused`);
+	throw new Error(
+		`could not read ${what} from the GitHub API (${errors.join("; ")}). Refusing to judge the ledger: ` +
+			`a failed read is not a deleted file, and this guard neither passes nor reports slices it never saw.`,
+	);
 }
 
 /**
@@ -489,8 +506,9 @@ export function readBaselineAt(ref, { repo, run = gh, pause = sleepSync }) {
 function fromPullRequest(pr, run = gh) {
 	const repo = process.env.GITHUB_REPOSITORY;
 	if (!repo) throw new Error("GITHUB_REPOSITORY is unset, so the API paths cannot be built.");
-	const meta = parse(run(["api", `repos/${repo}/pulls/${pr}`]), `pulls/${pr}`);
-	const cmp = parse(run(["api", `repos/${repo}/compare/${meta.base.sha}...${meta.head.sha}`]), "compare");
+	// The metadata reads get the same single retry: a 503 here took the first CI run of #6396 down.
+	const meta = parse(ghRead(["api", `repos/${repo}/pulls/${pr}`], `pulls/${pr}`, { run }), `pulls/${pr}`);
+	const cmp = parse(ghRead(["api", `repos/${repo}/compare/${meta.base.sha}...${meta.head.sha}`], "compare", { run }), "compare");
 	const mergeBase = cmp?.merge_base_commit?.sha;
 	if (typeof mergeBase !== "string") throw new Error("the compare endpoint named no merge_base_commit — refusing to diff against the wrong base.");
 	// NOT `gh pr diff` — it refuses past 20000 lines and this guard fails closed on the refusal,
@@ -805,6 +823,15 @@ function selfTest() {
 	const b7 = scripted("<html>rate limited</html>");
 	const b7r = tryRead(b7);
 	ok("B7 a read that SUCCEEDS but is not JSON throws, unretried", b7r.error !== null && /not JSON/.test(b7r.error) && b7.calls.length === 1, JSON.stringify(b7r));
+	const b8 = scripted(ghFail(NOT_FOUND), ghFail(NOT_FOUND));
+	const b8r = (() => {
+		try {
+			return { value: ghRead(["api", "repos/o/r/pulls/1"], "pulls/1", { run: b8.run, pause: () => {} }), error: null };
+		} catch (e) {
+			return { value: undefined, error: e instanceof Error ? e.message : String(e) };
+		}
+	})();
+	ok("B8 a 404 on a METADATA read is a failure, not absence — it throws after one retry", b8r.error !== null && /pulls\/1/.test(b8r.error) && b8.calls.length === 2, JSON.stringify(b8r));
 
 	// …and END TO END, through a real process with a fake `gh` first on PATH. The rows above call
 	// the reader directly; these prove the real `execFileSync` error shape reaches the matcher and
@@ -821,6 +848,11 @@ const a = process.argv.slice(2);
 const out = (o) => { process.stdout.write(typeof o === "string" ? o : JSON.stringify(o)); process.exit(0); };
 if (a[0] === "pr" && a[1] === "diff") out(process.env.FAKE_GH_FILES.split(",").join("\\n") + "\\n");
 const p = a[1] || "";
+if (/\\/pulls\\/\\d+$/.test(p)) {
+	fs.appendFileSync(process.env.FAKE_GH_LOG, "PULLS\\n");
+	const k = fs.readFileSync(process.env.FAKE_GH_LOG, "utf8").split("\\n").filter((l) => l === "PULLS").length;
+	if (process.env.FAKE_GH_PULLS === "503once" && k === 1) { process.stderr.write("gh: HTTP 503\\n"); process.exit(1); }
+}
 if (/\\/pulls\\/\\d+$/.test(p)) out({ base: { sha: "BASESHA" }, head: { sha: "HEADSHA" } });
 if (/\\/compare\\//.test(p)) out({ merge_base_commit: { sha: "MERGEBASE" } });
 const side = /ref=MERGEBASE$/.test(p) ? "BEFORE" : "AFTER";
@@ -836,8 +868,8 @@ out(process.env.FAKE_GH_DOC);
 		);
 		const event = path.join(fakeDir, "event.json");
 		fs.writeFileSync(event, JSON.stringify({ pull_request: { number: 1 } }));
-		const e2e = (before, after) => {
-			const log = path.join(fakeDir, `log-${before}-${after}`);
+		const e2e = (before, after, pulls = "ok") => {
+			const log = path.join(fakeDir, `log-${before}-${after}-${pulls}`);
 			const env = {
 				...process.env,
 				PATH: `${fakeDir}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -849,6 +881,7 @@ out(process.env.FAKE_GH_DOC);
 				FAKE_GH_LOG: log,
 				FAKE_GH_BEFORE: before,
 				FAKE_GH_AFTER: after,
+				FAKE_GH_PULLS: pulls,
 			};
 			let res;
 			try {
@@ -878,6 +911,8 @@ out(process.env.FAKE_GH_DOC);
 		const ec = e2e("ok", "502once");
 		ok("E(c) one transient failure on the AFTER ref, then success, reads the ledger correctly", ec.rc === 0 && /changes no ledger slice/.test(ec.out) && PASS_LINE.test(ec.out), JSON.stringify(ec));
 		ok("E(c) …and it was in fact retried", ec.reads.filter((r) => r === "AFTER").length === 2, JSON.stringify(ec.reads));
+		const ed = e2e("ok", "ok", "503once");
+		ok("E(d) one 503 on the PR-METADATA read (the first CI run of #6396), then success, is retried and reads correctly", ed.rc === 0 && PASS_LINE.test(ed.out) && ed.reads.filter((r) => r === "PULLS").length === 2, JSON.stringify(ed));
 	} finally {
 		fs.rmSync(fakeDir, { recursive: true, force: true });
 	}

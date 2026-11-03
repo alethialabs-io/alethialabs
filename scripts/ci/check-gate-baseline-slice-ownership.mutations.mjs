@@ -164,7 +164,7 @@ const MUTATIONS = [
 	// ── the READ (#6396) ──────────────────────────────────────────────────────────────────────
 	{
 		name: "M18 every failed read swallowed as 'file absent' (the #6396 defect itself)",
-		from: "\t\t\tif (isGhNotFound(err)) return null; // an ANSWER — the file did not exist at that commit",
+		from: "\t\t\tif (notFoundIsAbsence && isGhNotFound(err)) return null; // an ANSWER — the file did not exist at that commit",
 		to: "\t\t\treturn null; // an ANSWER — the file did not exist at that commit",
 		expect: /B2|E\(b\)/,
 	},
@@ -176,9 +176,9 @@ const MUTATIONS = [
 	},
 	{
 		name: "M20 the single retry removed — one transient blip reds the check",
-		from: "\t\t\tif (attempt === 1) {",
-		to: "\t\t\tif (false) {",
-		expect: /B3|E\(c\)/,
+		from: "const GH_READ_ATTEMPTS = 2;",
+		to: "const GH_READ_ATTEMPTS = 1;",
+		expect: /B3|E\(c\)|E\(d\)/,
 	},
 	{
 		name: "M16 the ledger no longer checked against the REAL tree (fixtures only)",
