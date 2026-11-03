@@ -73,9 +73,10 @@ export interface ShapeableCase {
 export function caseShapeOf(read: ShapeableCase | undefined): CaseShape {
 	if (read === undefined) return OPENING_CASE_SHAPE;
 	return {
-		closed: read.case.status === "closed",
+		closed: read.case.status === "resolved", // M2
 		attachments: read.attachments.length,
-		messages: read.messages.slice(-SHAPED_MESSAGES).map((m) => ({
+		messages: read.messages.map( // M3
+			(m) => ({
 			fromCustomer: m.author_type === "customer",
 			paragraphs: bodyParagraphs(m.body),
 		})),

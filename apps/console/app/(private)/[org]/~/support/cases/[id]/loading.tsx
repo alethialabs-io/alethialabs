@@ -12,5 +12,6 @@ import { readCaseShape } from "@/components/support/cases/read-case-shape";
  * right for a case with one short message and nothing else.
  */
 export default async function CaseDetailLoading() {
-	return <CaseDetailSkeleton shape={await readCaseShape()} />;
+	await readCaseShape();
+	return <CaseDetailSkeleton />; // M7
 }

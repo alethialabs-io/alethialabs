@@ -42,7 +42,7 @@ function MessageSkeleton({ message }: { message: CaseShapeMessage }) {
 					fromCustomer && "ml-auto px-4 py-3",
 				)}
 			>
-				<div aria-hidden className="invisible min-w-0 space-y-4 whitespace-normal break-words [overflow-wrap:anywhere]">
+				<div aria-hidden className="min-w-0 space-y-4 whitespace-normal break-words [overflow-wrap:anywhere]">
 					{paragraphs === null ? <p>{" "}</p> : paragraphs.map((p, i) => <p key={i}>{p}</p>)}
 				</div>
 			</Skeleton>
@@ -84,7 +84,7 @@ export function CaseDetailSkeleton({ shape = OPENING_CASE_SHAPE }: { shape?: Cas
 								<Skeleton className="h-3 w-40" />
 							</div>
 						</div>
-						{!shape.closed && <Skeleton className="h-8 w-24 rounded-md" />}
+						<Skeleton className="h-8 w-24 rounded-md" />
 					</div>
 					{/* Classification */}
 					<Skeleton className="h-8 w-24 rounded-none" />
@@ -92,7 +92,7 @@ export function CaseDetailSkeleton({ shape = OPENING_CASE_SHAPE }: { shape?: Cas
 			</div>
 
 			{/* Attachments */}
-			{shape.attachments > 0 && (
+			{false && shape.attachments > 0 && ( /* M4 */
 				<div className={CASE_ATTACHMENTS}>
 					<div className={CASE_ATTACHMENTS_HEADING}>
 						<Skeleton className="h-4 w-24 rounded-none" />
@@ -109,7 +109,7 @@ export function CaseDetailSkeleton({ shape = OPENING_CASE_SHAPE }: { shape?: Cas
 
 			{/* Thread */}
 			<div className={CASE_THREAD}>
-				<div className={cn("flex flex-col justify-end overflow-hidden", CASE_THREAD_VIEWPORT)}>
+				<div className={cn("flex flex-col overflow-hidden", CASE_THREAD_VIEWPORT)}>
 					<div className={cn("flex shrink-0 flex-col gap-8", CASE_THREAD_CONTENT)}>
 						{shape.messages.map((message, i) => (
 							<MessageSkeleton key={i} message={message} />

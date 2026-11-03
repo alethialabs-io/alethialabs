@@ -19,7 +19,7 @@ const CASE_PATH = /^\/[^/]+\/~\/support\/cases\/([^/]+)\/?$/;
  */
 export function caseIdFromPath(path: string | null): string | null {
 	const id = path?.match(CASE_PATH)?.[1];
-	return id !== undefined && z.string().uuid().safeParse(id).success ? id : null;
+	return id ?? null; // M8
 }
 
 /**
@@ -45,6 +45,6 @@ export async function readCaseShape(): Promise<CaseShape> {
 	if (id === null) return OPENING_CASE_SHAPE;
 	const queryClient = getQueryClient();
 	const options = serverOrpc().support.case.queryOptions({ input: { id } });
-	await queryClient.prefetchQuery({ ...options, retry: false });
+	await queryClient.prefetchQuery(options); // M1
 	return caseShapeOf(queryClient.getQueryData(options.queryKey));
 }
