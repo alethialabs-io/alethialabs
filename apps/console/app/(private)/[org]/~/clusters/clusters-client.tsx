@@ -7,6 +7,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { Lock, Server } from "lucide-react";
 import Link from "next/link";
 import { ClusterCard } from "@/components/clusters/cluster-card";
+import { CLUSTERS_GRID } from "@/components/clusters/cluster-card-shape";
 import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 import { RegionError } from "@/components/errors/region-error";
 import { isForbidden } from "@/components/overview/overview-reads";
@@ -51,7 +52,9 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 				/>
 			);
 		}
-		return <ClustersSkeleton />;
+		// Nothing has answered — no data, cached or prefetched — so there is no count to draw from: the
+		// skeleton's default card grid, the page an organization has once it has clusters.
+		return <ClustersSkeleton shapes={undefined} />;
 	}
 
 	const rows = projectId ? clusters.data.filter((c) => c.id === projectId) : clusters.data;
@@ -78,7 +81,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	}
 
 	return (
-		<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+		<div className={CLUSTERS_GRID}>
 			{rows.map((cluster) => (
 				<ClusterCard key={cluster.project_cluster.id} data={cluster} />
 			))}
