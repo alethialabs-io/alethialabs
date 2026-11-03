@@ -190,7 +190,9 @@ function withProjects(node: ReactNode, projects: { id: string; slug: string }[] 
 
 beforeEach(() => {
 	h.listRead.mockReset();
-	h.client.current = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	// The request's client, with the console's 30s `staleTime` (lib/query/client.ts): it is what lets
+	// the page's prefetch be answered by the read `loading.tsx` just made instead of a second one.
+	h.client.current = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 	h.project.current = "shop";
 });
 
