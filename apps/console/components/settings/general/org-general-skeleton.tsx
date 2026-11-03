@@ -71,7 +71,7 @@ export function OrgGeneralSkeleton() {
 									<Skeleton className="h-8 w-28" />
 								</div>
 							</SettingsField>
-							<SettingsField label={ORG_PROFILE_ROWS.name.label} hint={ORG_PROFILE_ROWS.name.hint}>
+							<SettingsField label={ORG_PROFILE_ROWS.name.label}>
 								<Skeleton className="h-[38px] rounded-sm" />
 							</SettingsField>
 							<SettingsField label={ORG_PROFILE_ROWS.slug.label} hint={ORG_PROFILE_ROWS.slug.hint}>
@@ -83,7 +83,7 @@ export function OrgGeneralSkeleton() {
 								hint={ORG_PROFILE_ROWS.description.hint}
 							>
 								{/* The textarea's `min-h-16`: two rows of text and its padding fall under it. */}
-								<Skeleton className="h-16 rounded-sm" />
+								<Skeleton className="h-[38px] rounded-sm" />
 							</SettingsField>
 							<SettingsField label={ORG_PROFILE_ROWS.address.label} hint={ORG_PROFILE_ROWS.address.hint}>
 								<LineSkeleton className="font-mono text-ui-xs" bar="w-3/4" />
