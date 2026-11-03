@@ -176,9 +176,10 @@ function drawn(container: HTMLElement): "empty-frame" | Drawn[] {
 	if (!root) throw new Error("no clusters skeleton rendered");
 	expect(root.getAttribute("aria-busy")).toBe("true");
 	expect(container.querySelector('[data-slot="empty"]')).toBeNull();
-	const cards = root.querySelectorAll('[data-slot="cluster-card-skeleton"]');
-	if (cards.length === 0) return "empty-frame";
-	return [...cards].map(drawnPlaceholder);
+	// The frame is recognised by its own parts, never by the absence of cards: a grid that drew no
+	// placeholder is a defect, not an empty state.
+	if (root.querySelector('[data-slot="empty-title"]')) return "empty-frame";
+	return [...root.querySelectorAll('[data-slot="cluster-card-skeleton"]')].map(drawnPlaceholder);
 }
 
 /** Renders `node` under a query client holding the shell's project list. */
