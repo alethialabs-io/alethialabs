@@ -20,9 +20,9 @@ import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
 export default async function NewProjectLoading() {
 	return (
 		<ChooserSkeleton
-			byoHelmEnabled={isByoHelmEnabled()}
+			byoHelmEnabled={false}
 			byoIacEnabled={isByoIacEnabled()}
-			linked={await readLinkedGitAccounts()}
+			linked={undefined}
 		/>
 	);
 }

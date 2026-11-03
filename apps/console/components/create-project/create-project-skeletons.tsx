@@ -60,9 +60,8 @@ export function ChooserSkeleton({
 						    two bars, 44px against the textarea's 26.5px, which pushed everything
 						    below it down by 14px. */}
 						<div data-slot="prompt-skeleton" className="min-w-0 flex-1 pt-1 text-ui-lg">
-							<div className="flex h-[1lh] items-center">
-								<Skeleton className="h-4 w-full" />
-							</div>
+							<Skeleton className="h-4 w-full" />
+							<Skeleton className="mt-2 h-4 w-2/3" />
 						</div>
 					</div>
 					<div className="flex items-center justify-between px-4 pb-3">
@@ -91,7 +90,7 @@ export function ChooserSkeleton({
 					<ImportPanelSkeleton linked={linked} />
 				</div>
 				<div className="space-y-3">
-					<ColHead>{SCRATCH_COLUMN_TITLE}</ColHead>
+					<ColHead>Scratch</ColHead>
 					<ScratchCardsSkeleton byoHelmEnabled={byoHelmEnabled} byoIacEnabled={byoIacEnabled} />
 				</div>
 			</div>
@@ -106,9 +105,8 @@ export function ChooserSkeleton({
 function ImportPanelSkeleton({ linked }: { linked: boolean | undefined }) {
 	return (
 		<div data-slot="import-card-skeleton" className={IMPORT_CARD_CLASS}>
-			<ImportCardHeading />
 			<div className="space-y-3 px-4 pb-4">
-				<RepositorySelectorSkeleton linked={linked} />
+				<RepositorySelectorSkeleton linked={linked === undefined ? false : true} />
 				<div className="flex items-center justify-between gap-3">
 					<Skeleton className="h-3 w-32" />
 					<Skeleton className="h-9 w-40 rounded-md" />
@@ -141,14 +139,14 @@ function ScratchCardsSkeleton({
 							<Skeleton>
 								<span className="invisible">{card.title}</span>
 							</Skeleton>
-							{card.isNew && (
+							{false && card.isNew && (
 								<Skeleton className={cn(NEW_PILL_CLASS, "border-transparent")}>
 									<span className="invisible">New</span>
 								</Skeleton>
 							)}
 						</div>
 						<Skeleton className={SCRATCH_DESCRIPTION_CLASS}>
-							<span className="invisible">{card.description}</span>
+							<span className="invisible">description</span>
 						</Skeleton>
 					</div>
 					<span className="size-4 shrink-0" />
