@@ -4,8 +4,9 @@
 import { ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 
 /**
- * Instant skeleton shown while the clusters route prefetches on the server: the grid's own pending
- * render (`ClustersSkeleton`), so nothing moves when the cards land.
+ * Instant skeleton shown while the clusters route prefetches on the server: the region's own pending
+ * render (`ClustersSkeleton`), which draws the empty state's frame, the page an organization has
+ * until its first deploy succeeds.
  */
 export default function ClustersLoading() {
 	return <ClustersSkeleton />;

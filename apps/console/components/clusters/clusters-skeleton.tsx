@@ -1,48 +1,55 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /**
- * The clusters grid before its read answers — the route's `loading.tsx` and the grid's own pending
- * render share it, so the two can never disagree (RUBRIC B2). Each placeholder is a `ClusterCard`'s
- * frame at the card's own padding and rhythm: the header (provider mark, name and posture, the meta
- * line, the chips row) with the rollup on the right, the component rows, then the access block.
- * No heading: the surface opens straight into content.
+ * The height the clusters region fills before it has cards: the empty state, the refusal and the
+ * skeleton all take it, so the skeleton and the render that replaces it share one outline.
+ */
+export const CLUSTERS_REGION = "min-h-[60vh]";
+
+/**
+ * The clusters region before its read answers. The route's `loading.tsx` and the grid's own pending
+ * render share it, so the two cannot disagree (RUBRIC B2).
+ *
+ * It draws the page every organization has until its first deploy succeeds: the empty state. It is
+ * built from the empty state's own parts (`Empty`, `EmptyHeader`, `EmptyMedia`, `EmptyTitle`,
+ * `EmptyDescription`, `EmptyContent`) in the same `CLUSTERS_REGION` frame, so it cannot drift from
+ * it. Each line is a line box at the rung the real copy uses (`h-[1lh]` under the part's own type
+ * size), with a bar inside it: the title, the two lines of the description, and the one action.
+ *
+ * It used to draw two cluster cards side by side. The skeleton cannot know the count, and on an
+ * organization with no clusters those two 288px cards stood where the page puts a centred empty
+ * state (#6349, score 0.040 against the 0.02 budget, two columns over none). When clusters exist,
+ * the cards replace the placeholder from the top of the region; nothing below it moves.
+ *
+ * The root's `data-slot` is overridden on purpose: `Empty` stamps `data-slot="empty"`, and a pending
+ * region must not read as an empty one (RUBRIC B3).
  */
 export function ClustersSkeleton() {
 	return (
-		<div className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-busy="true">
-			{[0, 1].map((i) => (
-				<div key={i} className="flex flex-col gap-3.5 rounded-lg border bg-surface p-[18px] shadow-sm">
-					<div className="flex items-start justify-between gap-3">
-						<div className="flex min-w-0 items-start gap-2.5">
-							<Skeleton className="size-5 rounded-sm" />
-							<div className="space-y-1.5">
-								<div className="flex items-center gap-2">
-									<Skeleton className="h-5 w-32" />
-									<Skeleton className="h-5 w-16 rounded-full" />
-								</div>
-								<Skeleton className="h-3 w-48" />
-								<Skeleton className="h-5 w-24" />
-							</div>
-						</div>
-						<div className="flex flex-col items-end gap-1">
-							<Skeleton className="h-5 w-20 rounded-full" />
-							<Skeleton className="h-3 w-16" />
-						</div>
+		<Empty data-slot="clusters-skeleton" aria-busy="true" className={CLUSTERS_REGION}>
+			<EmptyHeader className="w-full">
+				<EmptyMedia variant="icon">
+					<Skeleton className="size-6" />
+				</EmptyMedia>
+				<EmptyTitle className="flex h-[1lh] w-full items-center justify-center">
+					<Skeleton className="h-4 w-56 max-w-full" />
+				</EmptyTitle>
+				<EmptyDescription className="w-full">
+					<div className="flex h-[1lh] items-center justify-center">
+						<Skeleton className="h-3 w-full" />
 					</div>
-					<div className="flex flex-col gap-3 border-t pt-3">
-						<Skeleton className="h-5 w-full" />
-						<Skeleton className="h-5 w-full" />
+					<div className="flex h-[1lh] items-center justify-center">
+						<Skeleton className="h-3 w-2/3" />
 					</div>
-					<div className="flex flex-col gap-1.5 border-t pt-3">
-						<Skeleton className="h-3 w-24" />
-						<Skeleton className="h-7 w-full" />
-						<Skeleton className="h-7 w-full" />
-					</div>
-				</div>
-			))}
-		</div>
+				</EmptyDescription>
+			</EmptyHeader>
+			<EmptyContent>
+				<Skeleton className="h-8 w-32 rounded-none" />
+			</EmptyContent>
+		</Empty>
 	);
 }
