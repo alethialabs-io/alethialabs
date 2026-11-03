@@ -24,10 +24,17 @@ import {
 } from "@/app/server/actions/org-settings";
 import { RegionError } from "@/components/errors/region-error";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
+import { GeneralRefusal } from "@/components/settings/general/general-states";
 import {
-  GeneralRefusal,
-  OrgGeneralSkeleton,
-} from "@/components/settings/general/general-states";
+  ORG_CONTROL_NOTES,
+  ORG_DANGER_ROWS,
+  ORG_DEFAULTS_ROWS,
+  ORG_DEFAULTS_SAVE_NOTE,
+  ORG_GENERAL_SECTIONS,
+  ORG_PROFILE_ROWS,
+  ORG_PROFILE_SAVE_NOTE,
+} from "@/components/settings/general/org-general-copy";
+import { OrgGeneralSkeleton } from "@/components/settings/general/org-general-skeleton";
 import {
   SettingsCardFoot,
   SettingsColumns,
@@ -268,12 +275,12 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
             buttons say why. */}
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
           <SettingsColumns>
-            <SettingsSection title="Organization profile">
+            <SettingsSection title={ORG_GENERAL_SECTIONS.profile}>
               <SettingsPanel>
                 <div className="py-1">
                   <SettingsField
-                    label="Logo"
-                    hint="A square avatar, generated from the name until you upload one."
+                    label={ORG_PROFILE_ROWS.logo.label}
+                    hint={ORG_PROFILE_ROWS.logo.hint}
                   >
                     <OrgLogoUpload
                       name={settings.name}
@@ -284,8 +291,8 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     />
                   </SettingsField>
                   <SettingsField
-                    label="Organization name"
-                    hint="Shown across the console and in invitations."
+                    label={ORG_PROFILE_ROWS.name.label}
+                    hint={ORG_PROFILE_ROWS.name.hint}
                   >
                     <SettingsInput
                       className={cn(settingsControl, settingsControlSize)}
@@ -298,8 +305,8 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     <FieldError id={ids.name} message={errors.name?.message} />
                   </SettingsField>
                   <SettingsField
-                    label="Organization URL"
-                    hint="The slug for your organization's URL."
+                    label={ORG_PROFILE_ROWS.slug.label}
+                    hint={ORG_PROFILE_ROWS.slug.hint}
                   >
                     <Controller
                       control={form.control}
@@ -333,13 +340,13 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                       <FieldError id={ids.slug} message={errors.slug.message} />
                     ) : (
                       <span className="font-mono text-ui-2xs text-text-tertiary">
-                        Lowercase, numbers and hyphens.
+                        {ORG_CONTROL_NOTES.slug}
                       </span>
                     )}
                   </SettingsField>
                   <SettingsField
-                    label="Description"
-                    hint="Optional. A short line for teammates and audit context."
+                    label={ORG_PROFILE_ROWS.description.label}
+                    hint={ORG_PROFILE_ROWS.description.hint}
                   >
                     <SettingsTextarea
                       className={cn(settingsControl, "min-h-16 resize-y py-2.5 leading-normal")}
@@ -352,8 +359,8 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     <FieldError id={ids.description} message={errors.description?.message} />
                   </SettingsField>
                   <SettingsField
-                    label="Primary address"
-                    hint="Set from billing checkout when you opt to reuse the billing address."
+                    label={ORG_PROFILE_ROWS.address.label}
+                    hint={ORG_PROFILE_ROWS.address.hint}
                   >
                     {settings.primaryAddress ? (
                       // Set from checkout, not here — so plain text, not the input surface (#6117).
@@ -369,16 +376,16 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     )}
                   </SettingsField>
                 </div>
-                <SettingsCardFoot note="Applies across the console">{saveBtn}</SettingsCardFoot>
+                <SettingsCardFoot note={ORG_PROFILE_SAVE_NOTE}>{saveBtn}</SettingsCardFoot>
               </SettingsPanel>
             </SettingsSection>
 
-            <SettingsSection title="Defaults">
+            <SettingsSection title={ORG_GENERAL_SECTIONS.defaults}>
               <SettingsPanel>
                 <div className="py-1">
                   <SettingsField
-                    label="Data region"
-                    hint="Residency for the control plane and Project state."
+                    label={ORG_DEFAULTS_ROWS.region.label}
+                    hint={ORG_DEFAULTS_ROWS.region.hint}
                   >
                     <Controller
                       control={form.control}
@@ -392,12 +399,12 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                       )}
                     />
                     <span className="font-mono text-ui-2xs text-text-tertiary">
-                      Region migration requires a support request.
+                      {ORG_CONTROL_NOTES.region}
                     </span>
                   </SettingsField>
                   <SettingsField
-                    label="Default Project environment"
-                    hint="Pre-selected stage for newly planted Projects."
+                    label={ORG_DEFAULTS_ROWS.defaultEnv.label}
+                    hint={ORG_DEFAULTS_ROWS.defaultEnv.hint}
                   >
                     <Controller
                       control={form.control}
@@ -412,8 +419,8 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     />
                   </SettingsField>
                   <SettingsField
-                    label="Terraform version"
-                    hint="Pinned across runners unless a Project overrides it."
+                    label={ORG_DEFAULTS_ROWS.terraformVersion.label}
+                    hint={ORG_DEFAULTS_ROWS.terraformVersion.hint}
                   >
                     <SettingsInput
                       className={cn(settingsControl, settingsControlSize, "font-mono text-ui-sm")}
@@ -426,18 +433,18 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     <FieldError id={ids.terraformVersion} message={errors.terraformVersion?.message} />
                   </SettingsField>
                 </div>
-                <SettingsCardFoot note="Applies to new resources only">{saveBtn}</SettingsCardFoot>
+                <SettingsCardFoot note={ORG_DEFAULTS_SAVE_NOTE}>{saveBtn}</SettingsCardFoot>
               </SettingsPanel>
             </SettingsSection>
           </SettingsColumns>
         </fieldset>
       </form>
 
-      <SettingsSection title="Danger zone" className="mb-0">
+      <SettingsSection title={ORG_GENERAL_SECTIONS.danger} className="mb-0">
         <SettingsPanel danger>
           <SettingsDangerRow
-            title="Transfer ownership"
-            description="Move this organization to another owner. They take over billing and the Owner role."
+            title={ORG_DANGER_ROWS.transfer.title}
+            description={ORG_DANGER_ROWS.transfer.description}
           >
             {/* Not built yet. It used to be a live button whose click only toasted "coming soon",
                 which reads as a control that works (#4996); disabled, it says why through
@@ -449,13 +456,13 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
             </DisabledReason>
           </SettingsDangerRow>
           <SettingsDangerRow
-            title="Delete organization"
+            title={ORG_DANGER_ROWS.delete.title}
             description={
               <>
-                Permanently delete{" "}
+                {ORG_DANGER_ROWS.delete.before}{" "}
                 {/* A name with no spaces in it must still wrap inside the card (F014). */}
-                <span className="[overflow-wrap:anywhere]">{settings.name}</span> and all its
-                Projects. This destroys no cloud resources — run destroy first. Cannot be undone.
+                <span className="[overflow-wrap:anywhere]">{settings.name}</span>{" "}
+                {ORG_DANGER_ROWS.delete.after}
               </>
             }
           >
