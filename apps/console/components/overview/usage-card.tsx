@@ -129,8 +129,12 @@ function usageRows(
 			limit: data.ai.sessionBudget,
 			unit: "",
 			tip: "Included AI usage in the trailing 5-hour window vs your plan's session allowance.",
-			clock: () => asReadout(sessionResetLabel(sessionResetAt)),
-			clockSizer: "resets in 23 hr 59 min",
+			// A session that has not started has no reset time, so its readout reads no clock: it is
+			// data, printed in the server's HTML like every other readout (#6347, RUBRIC B1). Only a
+			// running session's countdown waits for hydration.
+			...(sessionResetAt === null
+				? { readout: asReadout(sessionResetLabel(null)) }
+				: { clock: () => asReadout(sessionResetLabel(sessionResetAt)), clockSizer: "resets in 23 hr 59 min" }),
 		});
 		gauges.push({
 			label: "AI · weekly limit",
@@ -182,19 +186,28 @@ function MeterSkeleton() {
 }
 
 /**
+ * How many gauges the pending card draws: runner minutes, concurrent jobs (capped on every plan but
+ * Enterprise) and the two AI meters (AI is on every tier, `lib/billing/ai-plan.ts`). It drew two
+ * until #6347, and the answered card on the default plan is four tall — the route skeleton's
+ * worst-moving block.
+ */
+const PENDING_GAUGES = 4;
+
+/**
  * The card while its read is pending — the route's `loading.tsx` renders this too, so the swap to
- * the answered card moves nothing but the rows' contents. Two gauges (runner minutes and concurrent
- * jobs, which every capped plan shows) and the counts line.
+ * the answered card moves nothing but the rows' contents. The gauges every default-plan org sees
+ * (`PENDING_GAUGES`) and the counts line, each at its row's real height.
  */
 export function UsageCardSkeleton() {
 	return (
 		<UsageFrame>
 			<div className="px-4" aria-busy="true">
-				<MeterSkeleton />
-				<MeterSkeleton />
+				{Array.from({ length: PENDING_GAUGES }, (_, i) => (
+					<MeterSkeleton key={i} />
+				))}
 				<div className="flex items-center gap-x-6 border-t py-3">
-					<Skeleton className="h-4 w-20" />
-					<Skeleton className="h-4 w-16" />
+					<Skeleton className="h-5 w-20" />
+					<Skeleton className="h-5 w-16" />
 				</div>
 			</div>
 		</UsageFrame>
