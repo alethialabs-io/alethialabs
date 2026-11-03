@@ -10,6 +10,7 @@ import {
 	ChooserSkeleton,
 	ConfigureSkeleton,
 } from "@/components/create-project/create-project-skeletons";
+import { readLinkedGitAccounts } from "@/components/create-project/read-linked-git-accounts";
 import type { ScratchKind } from "@/components/create-project/start-from-scratch-cards";
 import { isScanJobId } from "@/components/create-project/scan-job-id";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
@@ -77,12 +78,20 @@ export default async function NewProjectPage({
 		);
 	}
 
-	// Step 1 — the source chooser.
+	// Step 1 — the source chooser. Its fallback reads the viewer's linked git accounts first, as the
+	// route's `loading.tsx` does, so it is the same frame as that skeleton rather than a second one
+	// with a different import card (#6351). The read is the request's; `ChooserStep`'s prefetch of
+	// the same key is answered from it.
+	const linked = await readLinkedGitAccounts();
 	return (
 		<Suspense
 			key="chooser"
 			fallback={
-				<ChooserSkeleton byoHelmEnabled={isByoHelmEnabled()} byoIacEnabled={isByoIacEnabled()} />
+				<ChooserSkeleton
+					byoHelmEnabled={isByoHelmEnabled()}
+					byoIacEnabled={isByoIacEnabled()}
+					linked={linked}
+				/>
 			}
 		>
 			<ChooserStep org={org} />

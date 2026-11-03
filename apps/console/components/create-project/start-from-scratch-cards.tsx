@@ -2,23 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowRight, Boxes, Cpu, GitBranch, Loader2, Square } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { useId } from "react";
 
 import { cn } from "@repo/ui/utils";
 
+import {
+	NEW_PILL_CLASS,
+	SCRATCH_CARD_CLASS,
+	SCRATCH_DESCRIPTION_CLASS,
+	SCRATCH_GRID_CLASS,
+	SCRATCH_TITLE_ROW_CLASS,
+	scratchCards,
+} from "./chooser-parts";
+
 /** The four ways to start a project from scratch (no repo import). */
 export type ScratchKind = "template" | "byo-helm" | "byo-iac" | "blank";
-
-interface ScratchCard {
-	kind: ScratchKind;
-	title: string;
-	description: string;
-	icon: LucideIcon;
-	/** Shows the "New" pill (the recently-added on-ramps). */
-	isNew?: boolean;
-}
 
 interface StartFromScratchCardsProps {
 	/** Gate the BYO Helm card (ALETHIA_BYO_HELM_ENABLED). */
@@ -55,48 +54,10 @@ export function StartFromScratchCards({
 	// descriptions at. `useId` rather than a bare `${card.kind}-title`, because these ids are
 	// document-global and `template`/`blank` are the kind of words another surface will pick.
 	const uid = useId();
-	const cards: ScratchCard[] = [
-		{
-			kind: "template",
-			title: "Start from a template",
-			description:
-				"A standard cluster you configure — pick a cloud and template, then design.",
-			icon: Cpu,
-		},
-		...(byoHelmEnabled
-			? [
-					{
-						kind: "byo-helm" as const,
-						title: "Bring your own Helm chart",
-						description:
-							"Start from a git repo — Alethia deploys and governs it on your cluster via ArgoCD.",
-						icon: GitBranch,
-						isNew: true,
-					},
-				]
-			: []),
-		...(byoIacEnabled
-			? [
-					{
-						kind: "byo-iac" as const,
-						title: "Bring your own IaC",
-						description:
-							"Start from a git repo — Alethia plans, verifies, and applies your OpenTofu module.",
-						icon: Boxes,
-						isNew: true,
-					},
-				]
-			: []),
-		{
-			kind: "blank",
-			title: "Blank project",
-			description: "An empty canvas — add components yourself and design from scratch.",
-			icon: Square,
-		},
-	];
+	const cards = scratchCards({ byoHelmEnabled, byoIacEnabled });
 
 	return (
-		<div className="grid gap-3 sm:grid-cols-2">
+		<div className={SCRATCH_GRID_CLASS}>
 			{cards.map((card) => {
 				const Icon = card.icon;
 				const isPending = pending === card.kind;
@@ -125,7 +86,7 @@ export function StartFromScratchCards({
 						aria-describedby={`${uid}-${card.kind}-desc`}
 						onClick={() => onSelect(card.kind)}
 						disabled={busy}
-						className="group flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-ring disabled:opacity-60"
+						className={cn("group transition-colors hover:border-ring disabled:opacity-60", SCRATCH_CARD_CLASS)}
 					>
 						<span className="grid size-9 shrink-0 place-items-center rounded-md border border-border text-muted-foreground">
 							{isPending ? (
@@ -135,20 +96,20 @@ export function StartFromScratchCards({
 							)}
 						</span>
 						<span className="min-w-0 flex-1">
-							<span className="flex items-center gap-2 text-ui-lg font-medium text-foreground">
+							<span className={cn(SCRATCH_TITLE_ROW_CLASS, "text-foreground")}>
 								{/* The id is on the TITLE ALONE, not on this row: the row also holds the
 								    "New" pill, and naming the tile from it would put "New" back into
 								    the accessible name — the copy-dependent name #4269 removed. */}
 								<span id={`${uid}-${card.kind}-title`}>{card.title}</span>
 								{card.isNew && (
-									<span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
+									<span className={cn(NEW_PILL_CLASS, "border-border text-muted-foreground")}>
 										New
 									</span>
 								)}
 							</span>
 							<span
 								id={`${uid}-${card.kind}-desc`}
-								className="mt-0.5 block text-ui-sm text-muted-foreground"
+								className={cn(SCRATCH_DESCRIPTION_CLASS, "text-muted-foreground")}
 							>
 								{card.description}
 							</span>
