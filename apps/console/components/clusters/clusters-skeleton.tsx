@@ -30,8 +30,8 @@ export const CLUSTERS_REGION = "min-h-[60vh]";
  */
 export function ClustersSkeleton() {
 	return (
-		<Empty data-slot="clusters-skeleton" aria-busy="true" className={CLUSTERS_REGION}>
-			<EmptyHeader className="w-full">
+		<Empty data-slot="clusters-skeleton" className={CLUSTERS_REGION}>
+			<EmptyHeader className="grid-cols-1 w-full">
 				<EmptyMedia variant="icon">
 					<Skeleton className="size-6" />
 				</EmptyMedia>
@@ -41,9 +41,6 @@ export function ClustersSkeleton() {
 				<EmptyDescription className="w-full">
 					<div className="flex h-[1lh] items-center justify-center">
 						<Skeleton className="h-3 w-full" />
-					</div>
-					<div className="flex h-[1lh] items-center justify-center">
-						<Skeleton className="h-3 w-2/3" />
 					</div>
 				</EmptyDescription>
 			</EmptyHeader>

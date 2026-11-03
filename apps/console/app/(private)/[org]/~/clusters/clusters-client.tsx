@@ -59,7 +59,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	if (rows.length === 0) {
 		return (
 			<EmptyState
-				className={CLUSTERS_REGION}
+				className="min-h-[50vh]"
 				icon={<Server />}
 				title={projectId ? "This project has no clusters yet" : "No clusters under management"}
 				description="A cluster appears here once its environment's first deploy succeeds, and stays until it is torn down."
