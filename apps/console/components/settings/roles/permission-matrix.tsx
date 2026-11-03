@@ -10,31 +10,23 @@ import {
   CollapsibleTrigger,
 } from "@repo/ui/collapsible";
 import { Switch } from "@repo/ui/switch";
-import { PERMISSIONS, RESOURCES, type Resource } from "@/lib/authz/registry";
-
-// "Per service" grouping — each resource type is its own section, so granting is
-// granular (e.g. projects' plan/deploy/destroy independently of runners).
-const RESOURCE_LABEL: Record<Resource, string> = {
-  org: "Organization",
-  project: "Projects",
-  runner: "Runners",
-  cloud_identity: "Cloud identities",
-  job: "Jobs",
-  connector: "Connectors",
-  member: "Members",
-  activity: "Activity",
-  billing: "Billing",
-  alert: "Alerts",
-  fleet: "Fleet",
-  support_case: "Support",
-  cluster: "Cluster access",
-};
-
-const GROUPS = RESOURCES.map((resource) => ({
-  resource,
-  label: RESOURCE_LABEL[resource],
-  permissions: PERMISSIONS.filter((p) => p.resource === resource),
-})).filter((g) => g.permissions.length > 0);
+import { cn } from "@repo/ui/utils";
+import {
+  GROUP_CHEVRON_SIZE,
+  GROUP_CLASS,
+  GROUP_COUNT_CLASS,
+  GROUP_LABEL_CLASS,
+  GROUP_LABEL_ROW_CLASS,
+  GROUP_ROWS_CLASS,
+  GROUP_TRIGGER_CLASS,
+  grantedInGroup,
+  MATRIX_CLASS,
+  PERMISSION_ACTION_CLASS,
+  PERMISSION_GROUPS,
+  PERMISSION_KEY_CLASS,
+  PERMISSION_ROW_CLASS,
+  permissionActionLabel,
+} from "./roles-parts";
 
 /**
  * Controlled permission picker (the chosen `resource:action` keys), grouped per
@@ -61,37 +53,43 @@ export function PermissionMatrix({
     // Each resource group is a collapsible section — collapsed by default so the whole
     // matrix stays compact; a "granted/total" badge keeps the selection visible while
     // closed, and groups with any grant open on mount so edits aren't hidden.
-    <div className="space-y-2.5">
-      {GROUPS.map((g) => {
-        const granted = g.permissions.filter((p) => selected.has(p.key)).length;
+    <div className={MATRIX_CLASS}>
+      {PERMISSION_GROUPS.map((g) => {
+        const granted = grantedInGroup(g, selected);
         return (
           <Collapsible
             key={g.resource}
             defaultOpen={granted > 0}
-            className="overflow-hidden rounded-lg border border-border"
+            className={GROUP_CLASS}
           >
-            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-muted">
-              <span className="flex items-center gap-2">
-                <span className="text-ui-md font-medium text-text-primary">
+            <CollapsibleTrigger
+              className={cn(
+                "group transition-colors hover:bg-surface-muted",
+                GROUP_TRIGGER_CLASS,
+              )}
+            >
+              <span className={GROUP_LABEL_ROW_CLASS}>
+                <span className={GROUP_LABEL_CLASS}>
                   {g.label}
                 </span>
                 <span
-                  className={
+                  className={cn(
+                    GROUP_COUNT_CLASS,
                     granted > 0
-                      ? "rounded-full border border-border-strong px-1.5 py-0.5 font-mono text-ui-2xs text-text-secondary"
-                      : "rounded-full border border-border px-1.5 py-0.5 font-mono text-ui-2xs text-text-tertiary"
-                  }
+                      ? "border-border-strong text-text-secondary"
+                      : "border-border text-text-tertiary",
+                  )}
                 >
                   {granted}/{g.permissions.length}
                 </span>
               </span>
               <ChevronDown
-                size={15}
+                size={GROUP_CHEVRON_SIZE}
                 className="shrink-0 text-text-tertiary transition-transform group-data-[panel-open]:rotate-180"
               />
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="border-t border-border">
+              <div className={GROUP_ROWS_CLASS}>
                 {g.permissions.map((p) => (
                   <PermissionRow
                     key={p.key}
@@ -146,15 +144,12 @@ function PermissionRow({
   const actionId = useId();
   const keyId = useId();
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
+    <div className={PERMISSION_ROW_CLASS}>
       <div className="min-w-0">
-        <p id={actionId} className="text-ui-md capitalize text-text-primary">
-          {action.replace(/_/g, " ")}
+        <p id={actionId} className={PERMISSION_ACTION_CLASS}>
+          {permissionActionLabel(action)}
         </p>
-        <p
-          id={keyId}
-          className="truncate font-mono text-ui-2xs text-text-tertiary"
-        >
+        <p id={keyId} className={PERMISSION_KEY_CLASS}>
           {permissionKey}
         </p>
       </div>

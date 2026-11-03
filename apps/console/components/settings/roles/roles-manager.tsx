@@ -54,6 +54,28 @@ import {
 	showsKind,
 } from "./roles-filters";
 import { PermissionMatrix } from "./permission-matrix";
+import {
+	DETAIL_BODY_CLASS,
+	DETAIL_CLASS,
+	DETAIL_DESCRIPTION_CLASS,
+	DETAIL_FOOTER_CLASS,
+	DETAIL_HEADER_CLASS,
+	DETAIL_ICON_SIZE,
+	DETAIL_KIND_PILL_CLASS,
+	DETAIL_NAME_CLASS,
+	DETAIL_TITLE_ROW_CLASS,
+	PERMISSIONS_COUNT_CLASS,
+	PERMISSIONS_LABEL_CLASS,
+	RAIL_CLASS,
+	RAIL_DIVIDER_CLASS,
+	RAIL_HEADING_CLASS,
+	RAIL_NOTE_CLASS,
+	RAIL_ROW_CLASS,
+	RAIL_ROW_COUNT_CLASS,
+	RAIL_ROW_NAME_CLASS,
+	ROLES_DESCRIPTION,
+	ROLES_GRID_CLASS,
+} from "./roles-parts";
 import { RolesNoAccess } from "./roles-no-access";
 import { RolesSkeleton } from "./roles-skeleton";
 import { RoleSheet } from "./role-sheet";
@@ -87,19 +109,20 @@ function RailRow({
 			// R8 filed the default `owner` row inert for doing nothing when pressed again (#4980).
 			aria-current={active ? "true" : undefined}
 			className={cn(
-				"flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-2 text-left transition-colors",
+				RAIL_ROW_CLASS,
+				"transition-colors",
 				active ? "bg-surface-muted" : "hover:bg-surface-muted/60",
 			)}
 		>
 			<span
 				className={cn(
-					"truncate text-ui-md",
+					RAIL_ROW_NAME_CLASS,
 					active ? "font-medium text-text-primary" : "text-text-secondary",
 				)}
 			>
 				{name}
 			</span>
-			<span className="shrink-0 font-mono text-ui-2xs text-text-tertiary">
+			<span className={RAIL_ROW_COUNT_CLASS}>
 				{count}
 			</span>
 		</button>
@@ -222,7 +245,7 @@ export function RolesManager() {
 		<div>
 			<PageToolbar
 				className="mb-4"
-				description="Built-in roles plus the custom roles this organization defines."
+				description={ROLES_DESCRIPTION}
 				count={builtinList.length + custom.length}
 				actions={
 					<Button size="sm" onClick={openCreate}>
@@ -289,21 +312,21 @@ export function RolesManager() {
 			) : (
 			<div
 				className={cn(
-					"grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]",
+					ROLES_GRID_CLASS,
 					isPlaceholderData && "opacity-60 transition-opacity",
 				)}
 			>
 				{/* rail */}
-				<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
+				<div className={RAIL_CLASS}>
 					{/* The Kind facet hides a whole bucket rather than emptying it — an
 					    unexplained empty "Built-in" heading reads as a broken fetch. */}
 					{showsKind(query, "builtin") && (
 						<>
-							<div className="px-2.5 py-2 font-mono text-ui-3xs uppercase tracking-[0.12em] text-text-tertiary">
+							<div className={RAIL_HEADING_CLASS}>
 								Built-in
 							</div>
 							{builtinList.length === 0 ? (
-								<div className="px-2.5 py-2 text-ui-xs text-text-tertiary">
+								<div className={RAIL_NOTE_CLASS}>
 									No matching built-in roles.
 								</div>
 							) : (
@@ -320,15 +343,15 @@ export function RolesManager() {
 						</>
 					)}
 					{showsKind(query, "builtin") && showsKind(query, "custom") && (
-						<div className="my-2 h-px bg-border" />
+						<div className={RAIL_DIVIDER_CLASS} />
 					)}
 					{showsKind(query, "custom") && (
 						<>
-							<div className="px-2.5 py-2 font-mono text-ui-3xs uppercase tracking-[0.12em] text-text-tertiary">
+							<div className={RAIL_HEADING_CLASS}>
 								Custom
 							</div>
 							{custom.length === 0 ? (
-								<div className="px-2.5 py-2 text-ui-xs text-text-tertiary">
+								<div className={RAIL_NOTE_CLASS}>
 									{searching ? "No matching custom roles." : "No custom roles yet."}
 								</div>
 							) : (
@@ -347,7 +370,7 @@ export function RolesManager() {
 				</div>
 
 				{/* detail */}
-				<div className="rounded-lg border border-border bg-surface shadow-sm">
+				<div className={DETAIL_CLASS}>
 					{selected ? (
 						<RoleDetail
 								role={selected}
@@ -426,19 +449,19 @@ function RoleDetail({
 }) {
 	return (
 		<div>
-			<div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+			<div className={DETAIL_HEADER_CLASS}>
 				<div className="min-w-0">
-					<div className="flex items-center gap-2">
-						<Shield size={15} className="text-text-tertiary" />
-						<span className="text-ui-lg font-semibold text-text-primary">
+					<div className={DETAIL_TITLE_ROW_CLASS}>
+						<Shield size={DETAIL_ICON_SIZE} className="text-text-tertiary" />
+						<span className={DETAIL_NAME_CLASS}>
 							{roleDisplayName(role.name, role.builtin)}
 						</span>
-						<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
+						<span className={DETAIL_KIND_PILL_CLASS}>
 							{role.builtin ? "Built-in" : "Custom"}
 						</span>
 					</div>
 					{role.description && (
-						<p className="mt-1.5 text-ui-sm text-text-secondary">
+						<p className={DETAIL_DESCRIPTION_CLASS}>
 							{role.description}
 						</p>
 					)}
@@ -466,17 +489,17 @@ function RoleDetail({
 					</div>
 				)}
 			</div>
-			<div className="px-5 py-4">
-				<p className="mb-3 text-ui-md font-medium text-text-primary">
+			<div className={DETAIL_BODY_CLASS}>
+				<p className={PERMISSIONS_LABEL_CLASS}>
 					Permissions{" "}
-					<span className="font-mono text-ui-xs font-normal text-text-tertiary">
+					<span className={PERMISSIONS_COUNT_CLASS}>
 						({role.permissionKeys.length})
 					</span>
 				</p>
 				<PermissionMatrix value={role.permissionKeys} readOnly />
 			</div>
 			{/* Classification — built-in roles show read-only chips; custom roles the control. */}
-			<div className="border-t border-border px-5 py-4">
+			<div className={DETAIL_FOOTER_CLASS}>
 				{role.builtin ? (
 					<ClassificationChips kind="role" id={role.id} />
 				) : (
