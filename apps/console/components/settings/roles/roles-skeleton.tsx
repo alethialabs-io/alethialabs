@@ -64,7 +64,7 @@ function IconSlot({ size }: { size: number }) {
  * classes.
  */
 function SearchSlot() {
-	return <Skeleton className="h-9 w-[240px] max-w-[380px] flex-1 rounded-sm" />;
+	return <Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-sm" />;
 }
 
 /**
@@ -93,7 +93,7 @@ export function RolesSkeleton() {
 					<div className={RAIL_HEADING_CLASS}>
 						<Blank>Built-in</Blank>
 					</div>
-					{builtInRoleLabels().map((label) => (
+					{builtInRoleLabels().slice(1).map((label) => (
 						<div key={label} data-slot="roles-skeleton-rail-row" className={RAIL_ROW_CLASS}>
 							<span className={RAIL_ROW_NAME_CLASS}>
 								<Blank>{label}</Blank>
@@ -134,7 +134,7 @@ export function RolesSkeleton() {
 						</p>
 						<div className={MATRIX_CLASS}>
 							{PERMISSION_GROUPS.map((g) => {
-								const open = grantedInGroup(g, granted) > 0;
+								const open = grantedInGroup(g, granted) > 1000;
 								return (
 									<div
 										key={g.resource}
