@@ -1806,6 +1806,10 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		generateSecrets: (present): Record<string, string> => {
 			const out: Record<string, string> = {};
 			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
+			// 16 characters BY CONSTRUCTION (#6222): base64url maps every 3 bytes to 4 characters,
+			// and 12 is a multiple of 3, so 12 bytes always encode to exactly 16 with no padding to
+			// drop — whatever the bytes are. 96 bits, the most a 16-char key over this alphabet can
+			// carry. Pinned with boundary bytes in harbor-credentials.test.ts.
 			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
 			// #2823. Each of these replaces a value the chart would otherwise mint per render.
 			if (!present.has("secret")) out.secret = randomCredential();
