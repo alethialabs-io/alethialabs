@@ -7,7 +7,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { Lock, Server } from "lucide-react";
 import Link from "next/link";
 import { ClusterCard } from "@/components/clusters/cluster-card";
-import { ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
+import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 import { RegionError } from "@/components/errors/region-error";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { useClustersQuery } from "@/lib/query/use-clusters-query";
@@ -35,7 +35,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 			// An expected refusal, not a failure: retrying will not change it, so there is no button.
 			return (
 				<EmptyState
-					className="min-h-[60vh]"
+					className={CLUSTERS_REGION}
 					icon={<Lock />}
 					title="You don't have access to clusters"
 					description="Ask an organization admin for a role that can view projects."
@@ -59,7 +59,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	if (rows.length === 0) {
 		return (
 			<EmptyState
-				className="min-h-[60vh]"
+				className={CLUSTERS_REGION}
 				icon={<Server />}
 				title={projectId ? "This project has no clusters yet" : "No clusters under management"}
 				description="A cluster appears here once its environment's first deploy succeeds, and stays until it is torn down."
