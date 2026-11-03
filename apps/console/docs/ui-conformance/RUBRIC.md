@@ -466,6 +466,23 @@ MEASURED `answered-empty`** — never PASS — and the spec runs in an organisat
 two rows in every list** so that as few routes as possible answer empty. The persona's organisation
 cannot be used: `routes.spec.ts` keeps it empty for T5.
 
+**B1 withholds per REGION, not per page (#6378).** B3 and B4 read `answered-empty` whenever the
+answered render shows an empty state. B1 does not (`judgeB1`): it asks the question in this order.
+1. The answered render never settled → NOT MEASURED `answered-not-settled`.
+2. The held render differs from the answered one in any compared signal, anywhere on the page —
+   the empty region included (a skeleton there, its empty state missing) → **FAIL**.
+3. The answered render shows an empty state, at least one read was held, AND either an empty state sits
+   in **no region** of the page (`emptyUnregioned` — a list page's own empty state) or **no region
+   answered with data** (`dataRegions` is zero — a region with no empty state, outside every skeleton
+   and error surface, holding a row or a text leaf) → NOT MEASURED `answered-empty`.
+4. Otherwise → **PASS**.
+
+So one empty card on a page whose other regions answered with data no longer withholds the route: the
+PASS is a claim about the data regions, and the matching empty region stays unjudged and is counted in
+the evidence (`emptyRegions`). Before #6378 any empty state anywhere withheld B1 — the overview's
+Alerts card kept `/[org]` unmeasured on a complete first paint. A route is judged through
+`judgeB1Loads`, over every answered load of it, and the strictest verdict wins.
+
 **B1's subject is the server render, because the held page may never hydrate.** Measured on the jobs
 slice: the first server action the shell sends is held, hydration stalls behind it, and what the user
 sees is the server HTML. Two things a CORRECT page renders differently there are not compared:
