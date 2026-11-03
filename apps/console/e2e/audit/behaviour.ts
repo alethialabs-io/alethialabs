@@ -41,7 +41,8 @@
 // whose ANSWERED render is its own empty state cannot tell a server-backed empty answer from a
 // client fetch that has not happened yet — both render the same — so B1/B3/B4 are NOT MEASURED there
 // with that reason, never PASS. The spec drives an organisation SEEDED with rows for exactly this
-// reason: every list the seed reaches answers non-empty.
+// reason: every list the seed reaches answers non-empty. B1 narrows that to the REGION (#6378): one
+// empty card on a dashboard of data cards withholds nothing but that card's own claim (`judgeB1`).
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -234,6 +235,19 @@ export interface RegionSnapshot {
 	 * the table. A phrase matcher read labels such as "No limit" as empty copy.
 	 */
 	empty: number;
+	/**
+	 * The empty states above that sit in NO region of the page (see `REGION_SELECTOR`) — an empty
+	 * list that is the page itself rather than one card of it. B1 cannot judge a page around one.
+	 */
+	emptyUnregioned: number;
+	/** Distinct regions holding at least one empty state. */
+	emptyRegions: number;
+	/**
+	 * Regions holding NO empty state, outside every skeleton and error surface, with at least one
+	 * row or text leaf: the regions whose answered render is data, not "nothing here". B1 judges a
+	 * page with an empty region only when it has at least one of these (`judgeB1`).
+	 */
+	dataRegions: number;
 	/** Outermost error surfaces: `role="alert"`, `RegionError`, or the shared `ErrorState`. */
 	errors: number;
 	/** The ROUTE boundary's `ErrorState` is showing — the whole page failed, not a region of it. */
@@ -258,11 +272,21 @@ export interface RegionSnapshot {
 /** Relative times — "3 minutes ago" on one load is "4 minutes ago" on the next, and is not data. */
 const RELATIVE_TIME = String.raw`\b(?:about |almost |over |less than )?(?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?(?: ago)?\b|\bjust now\b|\bin (?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?\b`;
 
+/**
+ * What a REGION of a page is, to the instrument: a `<section>` (the overview's cards are
+ * `<section aria-label>`), anything with `role="region"`, or `@repo/ui/card`'s `data-slot="card"`.
+ * An empty state's region is the nearest of these inside `main`; one with none inside `main` is the
+ * page's own empty state. Structure, never wording — and a page that draws its cards as bare
+ * `div`s has no regions here, so its empty state reads as the page's and B1 is withheld there as it
+ * was before #6378: the boundary errs towards NOT MEASURED, never towards a verdict.
+ */
+export const REGION_SELECTOR = 'section, [role="region"], [data-slot="card"]';
+
 /** Read `main` once. Never waits — the caller decides when the page has had its chance. */
 export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 	return page.evaluate(
-		({ arms, relativeTime }) => {
-			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, routeError: false, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
+		({ arms, relativeTime, regionSelector }) => {
+			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, emptyUnregioned: 0, emptyRegions: 0, dataRegions: 0, errors: 0, routeError: false, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
 			const main = document.querySelector("main");
 			if (main === null) return zero;
 			const shown = (el: Element): boolean => {
@@ -293,27 +317,45 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 					.trim();
 			const timeRe = new RegExp(relativeTime, "gi");
 			// `RegionError` is built on the empty-state primitives; inside an error surface nothing is empty copy.
-			const emptySlots = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el)).length;
+			const emptySlotEls = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el));
 			// `DataTable`'s empty row: a body row with ONE cell spanning the table (`colSpan` ≥ 2).
 			const isEmptyRow = (el: Element): boolean =>
 				el instanceof HTMLTableRowElement && el.closest("tbody") !== null && el.cells.length === 1 && el.cells[0].colSpan >= 2;
-			const emptyRows = all.filter((el) => isEmptyRow(el) && !inError(el)).length;
-			const rows = all.filter((el) => {
+			const emptyRowEls = all.filter((el) => isEmptyRow(el) && !inError(el));
+			const emptyEls = [...emptySlotEls, ...emptyRowEls];
+			// The nearest region INSIDE `main` — `closest()` alone would climb past it.
+			const regionOf = (el: Element): Element | null => {
+				for (let p = el.parentElement; p !== null && p !== main; p = p.parentElement) if (p.matches(regionSelector)) return p;
+				return null;
+			};
+			const emptyRegionSet = new Set(emptyEls.map(regionOf).filter((r): r is Element => r !== null));
+			const leafEls = all.filter((el) => !inSkeleton(el) && ownText(el) !== "");
+			const rowEls = all.filter((el) => {
 				if (inSkeleton(el)) return false;
 				if (el.tagName === "TR") return el.closest("tbody") !== null && !isEmptyRow(el);
 				if (el.getAttribute("role") === "row") return el.querySelector('[role="columnheader"]') === null;
 				return el.tagName === "LI" || el.getAttribute("role") === "listitem";
-			}).length;
-			const leafEls = all.filter((el) => !inSkeleton(el) && ownText(el) !== "");
+			});
+			const dataRegions = all.filter(
+				(r) =>
+					r.matches(regionSelector) &&
+					!inSkeleton(r) &&
+					!inError(r) &&
+					!emptyEls.some((e) => r.contains(e)) &&
+					(leafEls.some((l) => r.contains(l)) || rowEls.some((x) => r.contains(x))),
+			).length;
 			const mask = (s: string): string => s.toLowerCase().replace(timeRe, "<t>").replace(/\d/g, "#").slice(0, 80);
 			return {
 				hasMain: true,
 				skeletons: all.filter((el) => el.getAttribute("data-slot") === "skeleton").length,
 				busy: main.getAttribute("aria-busy") === "true" || main.querySelector('[aria-busy="true"]') !== null,
-				empty: emptySlots + emptyRows,
+				empty: emptyEls.length,
+				emptyUnregioned: emptyEls.filter((el) => regionOf(el) === null).length,
+				emptyRegions: emptyRegionSet.size,
+				dataRegions,
 				errors: errorRoots.length,
 				routeError: all.some((el) => arms.some((tokens) => tokens.every((t) => el.classList.contains(t)))),
-				rows,
+				rows: rowEls.length,
 				leaves: leafEls.length,
 				contentLeaves: leafEls.filter((el) => {
 					const m = mask(ownText(el));
@@ -323,7 +365,7 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				texts: leafEls.slice(0, 400).map((el) => mask(ownText(el))),
 			};
 		},
-		{ arms: errorStateSignature(), relativeTime: RELATIVE_TIME },
+		{ arms: errorStateSignature(), relativeTime: RELATIVE_TIME, regionSelector: REGION_SELECTOR },
 	);
 }
 
@@ -632,7 +674,10 @@ export const NOT_SETTLED =
 export const NO_PAGE_READS =
 	"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser";
 
-/** The NOT MEASURED reason for a route whose answered render is its own empty state. */
+/**
+ * The NOT MEASURED reason for a route whose answered render is its own empty state. For B1 that means
+ * an empty state in no region of the page, or no region of it that answered with data (`judgeB1`).
+ */
 export const ANSWERED_EMPTY =
 	"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same";
 
@@ -647,14 +692,42 @@ export const ANSWERED_EMPTY =
  * clock, date and initials text waits for hydration by design (`ClockSlot`). Neither is data. Both
  * stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`), so a reader still sees them.
  *
+ * AN EMPTY STATE IS WITHHELD PER REGION (#6378). An empty region in the answered render cannot be
+ * judged: a server-backed "nothing here" and a client read that has not answered render the same, so
+ * a held render that matches it there proves nothing about that region. Before #6378 one such region
+ * anywhere withheld the whole route — the overview's Alerts card, empty or plan-gated, kept B1
+ * unmeasured on a page whose first paint was complete. Now the route is withheld only when the empty
+ * state is not confined to regions (`emptyUnregioned` — a list page's own empty state), or when no
+ * region answered with data (`dataRegions` is zero — every data region is empty). Otherwise the
+ * verdict is a claim about the DATA regions, and the empty ones are named, unjudged, in the evidence
+ * (`emptyRegions`). The comparison itself stays page-wide and strict: a held render that differs
+ * anywhere, the empty region included — a skeleton there, the empty state missing — still FAILs,
+ * because that difference is a first-paint defect whatever the region's answer is. What is excluded
+ * is only the one case B1 cannot read: the empty region matching.
+ *
  * ONE comparison. A route is judged through `judgeB1Loads`, over every answered load of it.
  */
 export function judgeB1(answered: AnsweredLoad, held: HeldLoad, grown = false): BVerdict {
 	const evidence = b1Evidence(answered, held, grown);
 	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
 	if (evidence.differs.length > 0) return { verdict: "FAIL", evidence };
-	if (answered.snapshot.empty > 0 && held.held.length > 0) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
+	if (b1WithheldForEmpty(answered.snapshot, held)) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
 	return { verdict: "PASS", evidence };
+}
+
+/**
+ * Whether B1's matching comparison says nothing about the page's data: the answered render shows an
+ * empty state, something was held, and either an empty state sits outside every region or no region
+ * answered with data. `judgeB1` explains the rule.
+ */
+function b1WithheldForEmpty(answered: RegionSnapshot, held: HeldLoad): boolean {
+	if (answered.empty === 0 || held.held.length === 0) return false;
+	return answered.emptyUnregioned > 0 || answered.dataRegions === 0;
+}
+
+/** The rule before #6378: ANY empty state on the page withheld B1. Kept for the positive control alone. */
+function b1WithheldByPageRule(answered: RegionSnapshot, held: HeldLoad): boolean {
+	return answered.empty > 0 && held.held.length > 0;
 }
 
 /**
@@ -1477,6 +1550,10 @@ export const B_CONTROL_MODES = [
 	"layout-rpc-refetch",
 	"growing-feed",
 	"late-region",
+	"empty-card-beside-data",
+	"empty-card-data-late",
+	"empty-card-only",
+	"empty-unregioned-beside-data",
 ] as const;
 
 /**
@@ -1555,6 +1632,15 @@ if (MODE === "late-region") {
 	// The Classify shape (#6332): a region a client component renders only once its own read answers,
 	// with NO placeholder while it waits. The read is slow (\`LATE_READ_MS\`), so readiness settles first.
 	read('late').then(function () { var el = document.getElementById('region-b'); if (el) el.innerHTML = '<button type="button">Classify</button>'; }, function () {});
+}
+if (MODE === "empty-card-beside-data" || MODE === "empty-card-only" || MODE === "empty-unregioned-beside-data") {
+	// A read the page makes and ignores, so the held load holds something — the condition under which
+	// the page-wide rule withheld B1.
+	read('aux').then(function () {}, function () {});
+}
+if (MODE === "empty-card-data-late") {
+	// The data card arrives only when its client read answers: the held render has the empty card alone.
+	read('rows').then(function (b) { var el = document.getElementById('region'); if (el) el.innerHTML = '<section aria-label="Recent jobs"><h3>Recent jobs</h3>' + rows(b.json) + '</section>'; }, function () {});
 }
 if (MODE === "action-page-read") {
 	shellRead().then(function () {}, function () {});
@@ -1643,6 +1729,13 @@ function ssrFor(mode: BControlMode, feedServed = 1): { a: string; b: string; sta
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
 	if (mode === "late-region") return { a: rows, b: none, staticCopy: none };
+	// The overview's shape (#6378): a data card beside an Alerts card whose answer is its empty state.
+	const dataCard = `<section aria-label="Recent jobs"><h3>Recent jobs</h3>${rows}</section>`;
+	const emptyCard = '<section aria-label="Alerts"><h3>Alerts</h3><div data-slot="empty">No recent alerts.</div></section>';
+	if (mode === "empty-card-beside-data") return { a: dataCard, b: emptyCard, staticCopy: none };
+	if (mode === "empty-card-data-late" || mode === "empty-card-only") return { a: none, b: emptyCard, staticCopy: none };
+	// The same data card, beside an empty state that is in no region — the page's own.
+	if (mode === "empty-unregioned-beside-data") return { a: dataCard, b: '<div data-slot="empty">No results.</div>', staticCopy: none };
 	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell" || mode === "layout-rpc-refetch") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
@@ -1779,6 +1872,26 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			broken.add("B1");
 			lines.push("B1 on the `late-region` fixture: the region was already there at readiness, so the late-region case was not exercised");
 		}
+		// One empty card beside a data card, both server-rendered (#6378, the overview). B1 must PASS —
+		// and the page-wide rule must really have withheld this page, or the PASS would prove nothing
+		// about the per-region rule.
+		const beside = await b1("empty-card-beside-data");
+		expectVerdict("B1", "empty-card-beside-data", beside.verdict, "PASS");
+		if (!b1WithheldByPageRule(beside.after.snapshot, beside.held) || beside.held.snapshot.empty === 0) {
+			broken.add("B1");
+			lines.push("B1 on the `empty-card-beside-data` fixture: the page-wide rule would not have withheld it (no empty state answered, or nothing held), so the per-region rule was not exercised");
+		}
+		// The same page with its data card missing from the held render: the empty card still matches,
+		// and B1 must FAIL on the region that does not.
+		const missing = await b1("empty-card-data-late");
+		expectVerdict("B1", "empty-card-data-late", missing.verdict, "FAIL");
+		if (missing.held.snapshot.empty === 0 || missing.held.snapshot.rows !== 0 || missing.after.snapshot.rows === 0) {
+			broken.add("B1");
+			lines.push("B1 on the `empty-card-data-late` fixture: the held render was not the empty card alone, or the answered one never drew the data card, so the missing-region case was not exercised");
+		}
+		// Every region empty, and an empty state in no region: both are still withheld.
+		expectVerdict("B1", "empty-card-only", (await b1("empty-card-only")).verdict, "NOT MEASURED", "answered-empty");
+		expectVerdict("B1", "empty-unregioned-beside-data", (await b1("empty-unregioned-beside-data")).verdict, "NOT MEASURED", "answered-empty");
 		const good = await measure("prefetched");
 		expectVerdict("B3", "prefetched", good.b3, "PASS");
 		expectVerdict("B4", "prefetched", good.b4, "PASS");
