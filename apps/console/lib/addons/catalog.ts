@@ -8,6 +8,8 @@
 // observability stack; the broader backlog (security/secrets/networking/…) lands per the
 // plan's catalog table.
 
+import { randomBytes } from "node:crypto";
+
 import { MATRIX } from "@/lib/compat";
 import { asRecord } from "@/lib/records";
 import { parse as parseYaml } from "yaml";
@@ -522,6 +524,23 @@ const VELERO_PROVIDERS: Record<VeleroProvider, VeleroProviderPlugin> = {
 		image: "velero/velero-plugin-for-microsoft-azure:v1.10.1",
 	},
 };
+
+/** How many random bytes back Harbor's data-encryption key — see `harborSecretKey`. */
+export const HARBOR_SECRET_KEY_BYTES = 12;
+
+/**
+ * Harbor's data-encryption key: exactly 16 characters BY CONSTRUCTION, as the chart demands
+ * (#6222). base64url turns every 3 bytes into 4 characters and 12 is a multiple of 3, so 12 bytes
+ * always encode to exactly 16 characters with no padding to drop — whatever the bytes are. That
+ * is 96 bits, the most a 16-character key over this 64-symbol alphabet can carry. `bytes` is the
+ * injection point for tests; any other length is refused rather than encoded to the wrong size.
+ */
+export function harborSecretKey(bytes: Uint8Array = randomBytes(HARBOR_SECRET_KEY_BYTES)): string {
+	if (bytes.length !== HARBOR_SECRET_KEY_BYTES) {
+		throw new Error(`harborSecretKey needs exactly ${HARBOR_SECRET_KEY_BYTES} bytes, got ${bytes.length}`);
+	}
+	return Buffer.from(bytes).toString("base64url");
+}
 
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
@@ -1806,11 +1825,8 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		generateSecrets: (present): Record<string, string> => {
 			const out: Record<string, string> = {};
 			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
-			// 16 characters BY CONSTRUCTION (#6222): base64url maps every 3 bytes to 4 characters,
-			// and 12 is a multiple of 3, so 12 bytes always encode to exactly 16 with no padding to
-			// drop — whatever the bytes are. 96 bits, the most a 16-char key over this alphabet can
-			// carry. Pinned with boundary bytes in harbor-credentials.test.ts.
-			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
+			// 16 characters by construction — see `harborSecretKey` (#6222).
+			if (!present.has("secretKey")) out.secretKey = harborSecretKey();
 			// #2823. Each of these replaces a value the chart would otherwise mint per render.
 			if (!present.has("secret")) out.secret = randomCredential();
 			if (!present.has("CSRF_KEY")) out.CSRF_KEY = randomCredential();

@@ -9,7 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAddOn } from "@/lib/addons/catalog";
+import { getAddOn, HARBOR_SECRET_KEY_BYTES, harborSecretKey } from "@/lib/addons/catalog";
 import type { AddOnDef } from "@/lib/addons/types";
 
 // Every secret harbor mints, sorted. #2846 established the first two; #2823 added the seven that
@@ -116,30 +116,12 @@ describe("harbor default credentials (#2846)", () => {
 	});
 });
 
-// #6222: the key's length must be 16 BY CONSTRUCTION, not by luck. Every other secret harbor mints
-// is marked present here, so `generateSecrets` mints ONLY the key — no RSA keygen, no bcrypt — and
-// the test is cheap enough to be exact.
+// #6222: the key's length must be 16 BY CONSTRUCTION, not by luck. `harborSecretKey` takes its bytes
+// as a parameter, so the length property is pinned on exact inputs rather than sampled.
 describe("harbor's data-encryption key minting (#6222)", () => {
-	const ALL_BUT_SECRET_KEY: ReadonlySet<string> = new Set(
-		MINTED_KEYS.filter((k) => k !== "secretKey"),
-	);
-
-	afterEach(() => {
-		vi.doUnmock("node:crypto");
-	});
-
-	/** Load harbor's def with `randomBytes` replaced by one that repeats `pattern` to length. */
-	async function harborWithRandomBytes(pattern: number[]): Promise<AddOnDef | null> {
-		vi.doMock("node:crypto", async (importOriginal) => {
-			const actual = await importOriginal<typeof import("node:crypto")>();
-			return {
-				...actual,
-				randomBytes: (n: number) =>
-					Buffer.from(Array.from({ length: n }, (_, i) => pattern[i % pattern.length] ?? 0)),
-			};
-		});
-		const { getAddOn: get } = await import("@/lib/addons/catalog");
-		return get("harbor");
+	/** `HARBOR_SECRET_KEY_BYTES` bytes repeating `pattern`. */
+	function bytesOf(pattern: number[], length = HARBOR_SECRET_KEY_BYTES): Uint8Array {
+		return Uint8Array.from({ length }, (_, i) => pattern[i % pattern.length] ?? 0);
 	}
 
 	// The boundary inputs: the bytes whose encodings are the two non-alphanumeric characters of
@@ -150,20 +132,26 @@ describe("harbor's data-encryption key minting (#6222)", () => {
 		["all-zero bytes", [0x00], "A".repeat(16)],
 		["all-0xff bytes (every character `_`)", [0xff], "_".repeat(16)],
 		["fb ef be (every character `-`)", [0xfb, 0xef, 0xbe], "-".repeat(16)],
-	])("%s mint a 16-character key", async (_label, pattern, expected) => {
-		const def = await harborWithRandomBytes(pattern);
-		const minted = def?.generateSecrets?.(ALL_BUT_SECRET_KEY);
-		expect(Object.keys(minted ?? {})).toEqual(["secretKey"]);
-		expect(minted?.secretKey).toBe(expected);
+	])("%s encode to a 16-character key", (_label, pattern, expected) => {
+		expect(harborSecretKey(bytesOf(pattern))).toBe(expected);
 	});
 
-	it("real randomness: 2000 mints are all 16 URL-safe characters (secondary check)", async () => {
-		const { getAddOn: get } = await load();
-		const def = get("harbor");
+	it("is backed by 12 bytes — 96 bits — and refuses any other count", () => {
+		expect(HARBOR_SECRET_KEY_BYTES).toBe(12);
+		expect(() => harborSecretKey(bytesOf([0x00], 11))).toThrow(/exactly 12 bytes/);
+		expect(() => harborSecretKey(bytesOf([0x00], 13))).toThrow(/exactly 12 bytes/);
+	});
+
+	it("harbor's generator mints through it: 2000 real keys, all 16 URL-safe chars", () => {
+		// Secondary, statistical: it covers the WIRING from `generateSecrets` to `harborSecretKey`.
+		// Every other secret is marked present, so only the key is minted — no RSA keygen and no
+		// bcrypt per pass, which is what made the old 25-pass loop slow enough to fail under load.
+		const present: ReadonlySet<string> = new Set(MINTED_KEYS.filter((k) => k !== "secretKey"));
+		const def = getAddOn("harbor");
 		for (let i = 0; i < 2000; i++) {
-			expect(def?.generateSecrets?.(ALL_BUT_SECRET_KEY).secretKey).toMatch(
-				/^[A-Za-z0-9_-]{16}$/,
-			);
+			const minted = def?.generateSecrets?.(present);
+			expect(Object.keys(minted ?? {})).toEqual(["secretKey"]);
+			expect(minted?.secretKey).toMatch(/^[A-Za-z0-9_-]{16}$/);
 		}
 	});
 });
