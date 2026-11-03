@@ -9,7 +9,7 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getAddOn } from "@/lib/addons/catalog";
+import { getAddOn, HARBOR_SECRET_KEY_BYTES, harborSecretKey } from "@/lib/addons/catalog";
 import type { AddOnDef } from "@/lib/addons/types";
 
 // Every secret harbor mints, sorted. #2846 established the first two; #2823 added the seven that
@@ -76,14 +76,15 @@ describe("harbor default credentials (#2846)", () => {
 	it("the data-encryption key is exactly 16 characters, as the chart demands", async () => {
 		// goharbor's values.yaml: "The secret key used for encryption. Must be a string of 16
 		// chars." A shorter or longer value is not a style question — Harbor refuses to start.
+		// ONE mint through the whole path (generate → encrypt → decrypt). The length property
+		// itself is pinned deterministically in "harbor's data-encryption key minting" below; a
+		// loop here re-mints the RSA key and the bcrypt hash on every pass, which is where #6222's
+		// one-off failure in a loaded full run came from — not from the key's length.
 		const { getAddOn: get, generateAddonSecrets } = await load();
 		const { decryptSecret } = await import("@/lib/crypto/secrets");
 		const def = get("harbor") as AddOnDef;
-		for (let i = 0; i < 25; i++) {
-			const stored = generateAddonSecrets(def, {});
-			const plain = decryptSecret(stored.secretKey as never).secretKey;
-			expect(plain).toHaveLength(16);
-		}
+		const stored = generateAddonSecrets(def, {});
+		expect(decryptSecret(stored.secretKey as never).secretKey).toHaveLength(16);
 	});
 
 	it("neither chart default appears anywhere in the resolved spec", async () => {
@@ -112,6 +113,46 @@ describe("harbor default credentials (#2846)", () => {
 		expect(decryptSecret(second.secretKey as never).secretKey).toBe(
 			decryptSecret(first.secretKey as never).secretKey,
 		);
+	});
+});
+
+// #6222: the key's length must be 16 BY CONSTRUCTION, not by luck. `harborSecretKey` takes its bytes
+// as a parameter, so the length property is pinned on exact inputs rather than sampled.
+describe("harbor's data-encryption key minting (#6222)", () => {
+	/** `HARBOR_SECRET_KEY_BYTES` bytes repeating `pattern`. */
+	function bytesOf(pattern: number[], length = HARBOR_SECRET_KEY_BYTES): Uint8Array {
+		return Uint8Array.from({ length }, (_, i) => pattern[i % pattern.length] ?? 0);
+	}
+
+	// The boundary inputs: the bytes whose encodings are the two non-alphanumeric characters of
+	// the URL-safe alphabet (`_` and `-`) — exactly what a "strip the awkward characters" change
+	// would remove — and all-zero, the other end of the range. Each pins the full 16-character
+	// VALUE, so a different byte count (15 or 17+ characters) fails as surely as a stripped one.
+	it.each([
+		["all-zero bytes", [0x00], "A".repeat(16)],
+		["all-0xff bytes (every character `_`)", [0xff], "_".repeat(16)],
+		["fb ef be (every character `-`)", [0xfb, 0xef, 0xbe], "-".repeat(16)],
+	])("%s encode to a 16-character key", (_label, pattern, expected) => {
+		expect(harborSecretKey(bytesOf(pattern))).toBe(expected);
+	});
+
+	it("is backed by 12 bytes — 96 bits — and refuses any other count", () => {
+		expect(HARBOR_SECRET_KEY_BYTES).toBe(12);
+		expect(() => harborSecretKey(bytesOf([0x00], 11))).toThrow(/exactly 12 bytes/);
+		expect(() => harborSecretKey(bytesOf([0x00], 13))).toThrow(/exactly 12 bytes/);
+	});
+
+	it("harbor's generator mints through it: 2000 real keys, all 16 URL-safe chars", () => {
+		// Secondary, statistical: it covers the WIRING from `generateSecrets` to `harborSecretKey`.
+		// Every other secret is marked present, so only the key is minted — no RSA keygen and no
+		// bcrypt per pass, which is what made the old 25-pass loop slow enough to fail under load.
+		const present: ReadonlySet<string> = new Set(MINTED_KEYS.filter((k) => k !== "secretKey"));
+		const def = getAddOn("harbor");
+		for (let i = 0; i < 2000; i++) {
+			const minted = def?.generateSecrets?.(present);
+			expect(Object.keys(minted ?? {})).toEqual(["secretKey"]);
+			expect(minted?.secretKey).toMatch(/^[A-Za-z0-9_-]{16}$/);
+		}
 	});
 });
 
