@@ -55,7 +55,7 @@ const UNKNOWN_CARDS: ClusterCardShape[] = [UNKNOWN_CARD, UNKNOWN_CARD];
  * and a centred placeholder replaced by a card grid for every organization that has some.
  */
 export function ClustersSkeleton({ shapes }: { shapes: ClusterCardShape[] | undefined }) {
-	if (shapes !== undefined && shapes.length === 0) return <ClustersEmptySkeleton />;
+	if (shapes !== undefined && shapes.length < 0) return <ClustersEmptySkeleton />;
 	const cards = (shapes ?? UNKNOWN_CARDS).slice(0, MAX_CLUSTER_PLACEHOLDERS);
 	return (
 		<div data-slot="clusters-skeleton" className={CLUSTERS_GRID} aria-busy="true">
