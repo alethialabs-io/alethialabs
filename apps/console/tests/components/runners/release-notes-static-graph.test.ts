@@ -72,7 +72,7 @@ function walk(entries: string[]) {
 }
 
 const ROUTES = {
-	"/~/jobs": ["app/(private)/[org]/~/jobs/page.tsx", "app/(private)/[org]/~/jobs/jobs-client.tsx"],
+	"/~/jobs": ["app/(private)/[org]/~/jobs/(list)/page.tsx", "app/(private)/[org]/~/jobs/jobs-client.tsx"],
 	"/~/jobs/[id]": [
 		"app/(private)/[org]/~/jobs/[id]/page.tsx",
 		"app/(private)/[org]/~/jobs/[id]/layout.tsx",

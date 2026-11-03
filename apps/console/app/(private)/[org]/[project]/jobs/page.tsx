@@ -21,7 +21,7 @@ export const metadata = pageMetadata({
  * `/{org}/{project}/jobs` — the project's jobs: the org jobs table pinned to this project.
  *
  * Prefetches EXACTLY the key `JobsClient` reads on first paint — the `jobs.page` read for the URL's
- * filters, the default preset and this project (#6121) — exactly as `~/jobs/page.tsx` does. It used
+ * filters, the default preset and this project (#6121) — exactly as `~/jobs/(list)/page.tsx` does. It used
  * to prefetch the unfiltered `qk.jobs` list while the client read the page key, so the first paint
  * showed "No results." while a second request ran (F022). `loading.tsx` covers the prefetch window.
  */

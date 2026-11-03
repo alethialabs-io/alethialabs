@@ -8,7 +8,7 @@ import { filterStateFromUrl, paramReader } from "@/lib/query/filter-url-codec";
 import { JOBS_DEFAULT_PRESET, jobsPageInputFrom } from "@/lib/rpc/inputs/jobs";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
-import { JobsClient } from "./jobs-client";
+import { JobsClient } from "../jobs-client";
 
 export const metadata = pageMetadata({
 	title: "Jobs",
@@ -21,6 +21,13 @@ export const metadata = pageMetadata({
  * the read router, and hands the dehydrated cache to the client. Before this the route prefetched
  * `qk.jobs` while the client read `qk.jobsPage`, so every first paint showed "No results." while a
  * second request ran (F004). `loading.tsx` covers the prefetch window.
+ *
+ * WHY THIS FILE IS IN A `(list)` ROUTE GROUP (#6350). A `loading.tsx` wraps its segment's whole
+ * children slot, not only the segment's page, so while the list and its skeleton sat directly in
+ * `~/jobs/` the LIST skeleton was the first loading boundary on the way to `~/jobs/[id]` as well: a
+ * navigation to one job painted a filter bar over a table, then swapped to a log view (B2 scored
+ * 0.049 on release-gate run 40822681524). A group is a segment of its own that adds nothing to the
+ * URL, so this skeleton now wraps this page alone and `[id]` paints its own `loading.tsx`.
  */
 export default async function JobsRoute({
 	searchParams,
