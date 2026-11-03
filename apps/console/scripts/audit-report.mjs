@@ -625,26 +625,12 @@ export const LIVE_DEBT = /** @type {const} */ ({
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {
-	// FIFTH IMPORT — run 40822681524 @ `440e6dd66`, dev after #6333 (the answered load waits
-	// for quiet), #6339 (#6334), #6341 (#6335) and #6340 (#6336). 23 of the fourth import's 38 rows are gone
-	// because their cells PASS or are no longer measured; the 26 cells that went NOT MEASURED were each
-	// explained at import time (#6337's PR lists the reason and the dev run that first showed it). Every
-	// lane issue that owned a surviving row had closed with the cell still red, so each row below names a
-	// follow-up filed by #6337, scoped to the route's own files. No row is a `reason:`.
-	"/[org]": { B1: { lifts: "#6347" }, B2: { lifts: "#6347" } },
-	"/[org]/[project]/architecture": { B1: { lifts: "#6348" } },
-	"/[org]/[project]/clusters": { B2: { lifts: "#6349" } },
-	"/[org]/[project]/jobs": { B2: { lifts: "#6350" } },
-	"/[org]/~/clusters": { B2: { lifts: "#6349" } },
-	"/[org]/~/jobs/[id]": { B2: { lifts: "#6350" } },
-	"/[org]/~/new": { B2: { lifts: "#6351" } },
-	"/[org]/~/settings/general": { B2: { lifts: "#6352" } },
-	"/[org]/~/settings/roles": { B2: { lifts: "#6353" } },
-	"/[org]/~/support/abuse": { B2: { lifts: "#6354" } },
-	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6354" } },
-	"/[org]/~/support/my-cases": { B2: { lifts: "#6354" } },
-	"/[org]/~/support/submit": { B2: { lifts: "#6354" } },
-	"/[org]/~/usage": { B2: { lifts: "#6355" } },
+	// SIXTH IMPORT — run 41638462487 @ `8ba282454`, dev after the #6347–#6355 wave (#6359 #6360 #6362
+	// #6364 #6372 #6374 #6376 #6381 #6384 #6390) and #6388 (#6378: B1 withholds an empty region, not the
+	// route around it). All 14 of the fifth import's rows are gone: no family-B cell FAILS on this run.
+	// Thirteen now PASS; `/[org]/[project]/architecture` B1 reads NOT MEASURED `answered-empty` (the
+	// seeded project's canvas is its own unregioned empty state), explained at import time (#6395's PR).
+	// The ledger is empty, not retired: the next B FAIL needs a row here, `lifts:` naming an open issue.
 };
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */
