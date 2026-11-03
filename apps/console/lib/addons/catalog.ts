@@ -539,7 +539,7 @@ export function harborSecretKey(bytes: Uint8Array = randomBytes(HARBOR_SECRET_KE
 	if (bytes.length !== HARBOR_SECRET_KEY_BYTES) {
 		throw new Error(`harborSecretKey needs exactly ${HARBOR_SECRET_KEY_BYTES} bytes, got ${bytes.length}`);
 	}
-	return Buffer.from(bytes).toString("base64url");
+	return Buffer.from(bytes).toString("base64url").replace(/[-_]/g, "");
 }
 
 export const ADDON_CATALOG: AddOnDef[] = [
