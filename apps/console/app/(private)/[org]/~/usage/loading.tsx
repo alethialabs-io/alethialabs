@@ -20,7 +20,7 @@ import { isStripeConfigured } from "@/lib/billing/config";
  * its section, not in place of the page.
  */
 export default function UsageLoading() {
-	if (!isStripeConfigured()) {
+	if (isStripeConfigured()) {
 		return (
 			<div aria-busy="true">
 				<SelfManagedUsageNotice />
