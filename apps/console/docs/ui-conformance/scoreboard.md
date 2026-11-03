@@ -114,7 +114,7 @@ The un-instrumented one, with the issue that owns it:
 ## The live half — 4 artifacts, 4 questions, never pooled
 
 T5–T7, R1–R8, F8–F10 and B1–B5 are measured in a browser, not read off the tree. The records below were
-imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/40822681524** at commit `440e6dd661f38d2af48f27ab32891a3f1e2cdf51` and committed to
+imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/41638462487** at commit `8ba2824543570da0f62c0dd9f4dce13d56deda3b` and committed to
 `apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **4 files, joined and never
 pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
 each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
@@ -134,7 +134,7 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 
 | withheld | routes | why the instrument did not answer |
 |---|---:|---|
-| **B1** | 10 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
+| **B1** | 9 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B2** | 6 | hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition |
 | **B3** | 3 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B3** | 28 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
@@ -161,21 +161,7 @@ directions, like the table above:
 
 | route | predicate | ledger | what fails |
 |---|---|---|---|
-| `/[org]` | **B1** | lifts #6347 | with every read held, the region differs from its answered render in: skeleton, content |
-| `/[org]` | **B2** | lifts #6347 | the skeleton sets 3 blocks side by side and the page 2 |
-| `/[org]/[project]/architecture` | **B1** | lifts #6348 | with every read held, the region differs from its answered render in: skeleton, empty copy, content |
-| `/[org]/[project]/clusters` | **B2** | lifts #6349 | the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none |
-| `/[org]/[project]/jobs` | **B2** | lifts #6350 | the skeleton moves 0.020 against the page (budget 0.02) — a 630px skeleton block became 632px, 46px lower |
-| `/[org]/~/clusters` | **B2** | lifts #6349 | the skeleton moves 0.040 against the page (budget 0.02) — a 288px skeleton block became 128px, 183px lower; the skeleton sets 2 blocks side by side and the page draws none |
-| `/[org]/~/jobs/[id]` | **B2** | lifts #6350 | the skeleton moves 0.049 against the page (budget 0.02) — a 630px skeleton block became 707px, 96px higher |
-| `/[org]/~/new` | **B2** | lifts #6351 | the skeleton moves 0.027 against the page (budget 0.02) — a 166px skeleton block became 398px, 14px higher |
-| `/[org]/~/settings/general` | **B2** | lifts #6352 | the skeleton moves 0.182 against the page (budget 0.02) — a 131px skeleton block became 515px, 452px higher |
-| `/[org]/~/settings/roles` | **B2** | lifts #6353 | the skeleton moves 0.045 against the page (budget 0.02) — a 339px skeleton block became 701px, 4px lower |
-| `/[org]/~/support/abuse` | **B2** | lifts #6354 | the skeleton moves 0.115 against the page (budget 0.02) — a 494px skeleton block became 807px; the skeleton draws no block-sized frame and the page 1 |
-| `/[org]/~/support/cases/[id]` | **B2** | lifts #6354 | the skeleton moves 0.040 against the page (budget 0.02) — a 350px skeleton block became 134px, 39px lower |
-| `/[org]/~/support/my-cases` | **B2** | lifts #6354 | the skeleton moves 0.074 against the page (budget 0.02) — a 415px skeleton block became 139px |
-| `/[org]/~/support/submit` | **B2** | lifts #6354 | the skeleton moves 0.020 against the page (budget 0.02) — a 420px skeleton block became 507px; the skeleton draws no block-sized frame and the page 2 |
-| `/[org]/~/usage` | **B2** | lifts #6355 | the skeleton moves 0.066 against the page (budget 0.02) — a 82px skeleton block became 96px, 81px higher; the skeleton sets 2 blocks side by side and the page 1 |
+| — | — | — | no family-B predicate fails on any route |
 
 ## Per predicate
 
@@ -223,8 +209,8 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **R6** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R8** | R | live — `interaction` | 35 | 0 | 5 | 0 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
-| **B1** | B | live — `behaviour` | 24 | 2 | 4 | 10 | 0.92 | `redirect-only` 4 |
-| **B2** | B | live — `behaviour` | 17 | 13 | 4 | 6 | 0.57 | `redirect-only` 4 |
+| **B1** | B | live — `behaviour` | 27 | 0 | 4 | 9 | 1.00 | `redirect-only` 4 |
+| **B2** | B | live — `behaviour` | 30 | 0 | 4 | 6 | 1.00 | `redirect-only` 4 |
 | **B3** | B | live — `behaviour` | 5 | 0 | 4 | 31 | 1.00 | `redirect-only` 4 |
 | **B4** | B | live — `behaviour` | 21 | 0 | 4 | 15 | 1.00 | `redirect-only` 4 |
 | **B5** | B | live — `behaviour` | 8 | 0 | 4 | 28 | 1.00 | `redirect-only` 4 |
@@ -258,44 +244,44 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 
 | route | S | T | H | F | R | B | overall |
 |---|---|---|---|---|---|---|---|
-| `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 0/2 · 0.00 · 3 withheld | **0.93** · 3 withheld of 44 |
-| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.93** · 3 withheld of 44 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 0/1 · 0.00 · 4 withheld | **0.96** · 4 withheld of 44 |
-| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 3 withheld of 44 |
-| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/2 · 0.50 · 3 withheld | **0.96** · 3 withheld of 44 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 0/1 · 0.00 · 4 withheld | **0.96** · 5 withheld of 44 |
-| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.96** · 2 withheld of 44 |
-| `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.96** · 2 withheld of 44 |
-| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.96** · 2 withheld of 44 |
-| `/[org]/[project]/architecture` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 4/5 · 0.80 | **0.97** · 1 withheld of 44 |
-| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/3 · 0.67 · 2 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.98** · 1 withheld of 44 |
-| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 4/5 · 0.80 | **0.98** · 0 withheld of 44 |
+| `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
+| `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 3/3 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
+| `/[org]/[project]/architecture` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/[project]/settings/activity` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
-| `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | all withheld (5) | **1.00** · 6 withheld of 44 |
+| `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
-| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
 | `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
+| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
 | `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
 | `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/support/cases/[id]` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
+| `/[org]/~/support/my-cases` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/support/submit` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/usage` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/cli/login` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/dashboard/[[...rest]]` · | all N/A | 3/3 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
 
