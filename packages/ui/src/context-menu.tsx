@@ -159,6 +159,12 @@ function ContextMenuContent({
   );
 }
 
+/** The event base-ui's `Menu.Item` hands its `onClick`: a div mouse event carrying base-ui's
+ * `preventBaseUIHandler`. Typed from the primitive so the wrapper cannot drift from it. */
+type MenuItemClickEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof MenuPrimitive.Item>["onClick"]>
+>[0];
+
 /**
  * A selectable item. base-ui fires selection (mouse and keyboard) through `onClick` and closes
  * the menu afterwards, which reaches the root as `onOpenChange(false)`; `onSelect` is mapped onto
@@ -187,7 +193,7 @@ function ContextMenuItem({
 }) {
   const handleClick =
     onSelect || onClick
-      ? (event: React.MouseEvent<HTMLElement>) => {
+      ? (event: MenuItemClickEvent) => {
           onSelect?.(event);
           onClick?.(event);
         }

@@ -83,6 +83,12 @@ function DropdownMenuGroup({
   return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />;
 }
 
+/** The event base-ui's `Menu.Item` hands its `onClick`: a div mouse event carrying base-ui's
+ * `preventBaseUIHandler`. Typed from the primitive so the wrapper cannot drift from it. */
+type MenuItemClickEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof MenuPrimitive.Item>["onClick"]>
+>[0];
+
 function DropdownMenuItem({
   className,
   inset,
@@ -107,7 +113,7 @@ function DropdownMenuItem({
 }) {
   const handleClick =
     onSelect || onClick
-      ? (event: React.MouseEvent<HTMLElement>) => {
+      ? (event: MenuItemClickEvent) => {
           onSelect?.(event);
           onClick?.(event);
         }
