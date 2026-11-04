@@ -129,11 +129,14 @@ function linkedClient(): ReturnType<typeof seededClient> {
 	return client;
 }
 
-/** The text of each settings row's label column, top to bottom. */
+/**
+ * The text of each settings row's label column, top to bottom — found by the row's `data-slot`,
+ * not its column template, which sits behind a container step (`@lg:`) since #6135.
+ */
 function rowLabels(root: HTMLElement): string[] {
-	return Array.from(root.querySelectorAll(".grid-cols-\\[200px_1fr\\] > div:first-child")).map(
-		(el) => el.textContent ?? "",
-	);
+	return Array.from(
+		root.querySelectorAll('[data-slot="settings-field"] > [data-slot="settings-field-label"]'),
+	).map((el) => el.textContent ?? "");
 }
 
 beforeEach(() => {
@@ -272,7 +275,8 @@ describe("Preview settings — the skeleton has the form's shape (#6335, RUBRIC 
 		form.unmount();
 		const skeleton = render(withQueryClient(<PreviewSettingsSkeleton linked={false} />));
 		expect(formRows).toHaveLength(4);
-		// The hint wraps in a 200px column, so the row's height is the copy's: the same words.
+		// The hint's wrap (in the 200px column, or the full panel width when stacked) sets the row's
+		// height, so the skeleton carries the copy's own words.
 		expect(rowLabels(skeleton.container)).toEqual(formRows);
 	});
 
