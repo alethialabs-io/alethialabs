@@ -508,3 +508,99 @@ func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
 		})
 	}
 }
+
+// renderBootstrapJobDoc renders the bootstrap for a provider with the fixture outputs used above and
+// returns the parsed Job document.
+func renderBootstrapJobDoc(t *testing.T, provider string, outputs map[string]string) map[string]any {
+	t.Helper()
+	res, err := RenderBootstrapJob(Options{
+		Provider:    provider,
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Outputs:     outputs,
+	}, dbTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range parseYAMLDocs(t, res.JobYAML) {
+		if doc["kind"] == "Job" {
+			return doc
+		}
+	}
+	t.Fatalf("no Job rendered for %s:\n%s", provider, res.JobYAML)
+	return nil
+}
+
+// TestBootstrapJob_TimeBounds pins the Job's activeDeadlineSeconds (bounding the PreSync phase, so the
+// hook delete policies always get to run) and ttlSecondsAfterFinished (bounding a kept failed Job's
+// lifetime) on every provider.
+func TestBootstrapJob_TimeBounds(t *testing.T) {
+	for provider, outputs := range map[string]map[string]string{
+		"aws": {
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		},
+		"gcp": {
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		},
+		"azure": {
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		},
+	} {
+		t.Run(provider, func(t *testing.T) {
+			spec, _ := renderBootstrapJobDoc(t, provider, outputs)["spec"].(map[string]any)
+			if got := spec["activeDeadlineSeconds"]; got != 900 {
+				t.Errorf("activeDeadlineSeconds = %v, want 900", got)
+			}
+			if got := spec["ttlSecondsAfterFinished"]; got != 3600 {
+				t.Errorf("ttlSecondsAfterFinished = %v, want 3600", got)
+			}
+		})
+	}
+}
+
+// TestBootstrapJob_Azure_TokenScratchIsMemoryBacked pins the Azure admin-token scratch volume to a
+// memory-backed emptyDir (scratch data stays off the node's disk), and the SQL scratch volume to a
+// plain one.
+func TestBootstrapJob_Azure_TokenScratchIsMemoryBacked(t *testing.T) {
+	job := renderBootstrapJobDoc(t, "azure", map[string]string{
+		"azure_db_fqdn":            "orders.postgres.database.azure.com",
+		"azure_db_name":            "orders_prod",
+		"azure_db_admin_user":      "aks-orders-dbadmin",
+		"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+		"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+	})
+	podSpec := job["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	vols, _ := podSpec["volumes"].([]any)
+	seen := map[string]bool{}
+	for _, v := range vols {
+		vol, _ := v.(map[string]any)
+		name, _ := vol["name"].(string)
+		seen[name] = true
+		ed, ok := vol["emptyDir"].(map[string]any)
+		if !ok {
+			t.Errorf("volume %s is not an emptyDir: %v", name, vol)
+			continue
+		}
+		switch name {
+		case "admin-token":
+			if ed["medium"] != "Memory" {
+				t.Errorf("admin-token emptyDir medium = %v, want Memory", ed["medium"])
+			}
+		case "sql":
+			if _, has := ed["medium"]; has {
+				t.Errorf("sql emptyDir should be a plain emptyDir, got %v", ed)
+			}
+		}
+	}
+	if !seen["admin-token"] || !seen["sql"] {
+		t.Errorf("Azure Job volumes = %v, want both admin-token and sql", vols)
+	}
+}

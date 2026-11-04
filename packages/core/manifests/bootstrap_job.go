@@ -79,6 +79,26 @@ const (
 	bootstrapJobHookDeletePolicy = "BeforeHookCreation,HookSucceeded"
 )
 
+// Time bounds on the bootstrap Job.
+//
+// bootstrapJobDeadlineSeconds is the Job's activeDeadlineSeconds. It bounds the PreSync phase: a pod
+// that never finishes (an image that cannot be pulled, a connection that hangs) would otherwise keep
+// the phase running forever, and the hook delete policies above only run when the phase completes.
+// With the deadline the Job always reaches Failed or Complete, so the phase always completes. A real
+// bootstrap is two or three short containers (image pulls, one SQL render, one SQL apply; the psql
+// step has a 30s connect timeout) run at most three times under backoffLimit 2; 15 minutes is several
+// times that budget, leaving room for slow first image pulls on a fresh node. The deadline covers
+// every attempt, not each one.
+//
+// bootstrapJobTTLSeconds is the Job's ttlSecondsAfterFinished. It bounds the lifetime of a FAILED Job,
+// which the delete policy deliberately keeps for its pod logs: an hour is long enough to read them
+// (the e2e reads them minutes after the deploy reports), and the Job and its pods do not persist
+// indefinitely when no further sync replaces them. A successful Job is deleted by HookSucceeded first.
+const (
+	bootstrapJobDeadlineSeconds = 900
+	bootstrapJobTTLSeconds      = 3600
+)
+
 // Database engine families the bootstrap Job branches on (matches types.ProjectDatabaseConfig.
 // EngineFamily). An unset/unknown engine defaults to postgres — the pre-MySQL behaviour.
 const (
@@ -117,12 +137,26 @@ type bootstrapJobSpec struct {
 	PodLabels      map[string]string // extra pod-template labels (Azure WI use=true — the webhook trigger)
 	InitContainers []bootstrapContainer
 	Main           bootstrapContainer
-	Volumes        []Volume
+	Volumes        []bootstrapVolume
+}
+
+// bootstrapVolume is one emptyDir scratch volume of the Job. Memory backs it with tmpfs, so what is
+// written there never reaches the node's disk and is gone when the pod's containers stop.
+type bootstrapVolume struct {
+	Name   string
+	Memory bool
 }
 
 // JobDeletePolicy is the Job's ArgoCD hook-delete-policy, exposed to the template so the rendered
-// annotation and the constant the tests assert on are one value.
+// annotation is this constant; the tests pin the literal value independently, so a change to the
+// constant fails them.
 func (bootstrapJobSpec) JobDeletePolicy() string { return bootstrapJobHookDeletePolicy }
+
+// ActiveDeadlineSeconds bounds the Job's whole run, every retry included. See bootstrapJobDeadlineSeconds.
+func (bootstrapJobSpec) ActiveDeadlineSeconds() int { return bootstrapJobDeadlineSeconds }
+
+// TTLSecondsAfterFinished bounds how long a finished Job is kept. See bootstrapJobTTLSeconds.
+func (bootstrapJobSpec) TTLSecondsAfterFinished() int { return bootstrapJobTTLSeconds }
 
 // BootstrapJobResult is the rendered artifacts for one keyless database's bootstrap.
 type BootstrapJobResult struct {
@@ -192,13 +226,16 @@ func RenderBootstrapJob(opts Options, t types.ServiceBindingTarget) (BootstrapJo
 
 // sqlVolume + its mount are shared by every cloud: the init container writes /sql/init.sql, the psql
 // container reads it.
-func sqlVolume() Volume     { return Volume{Name: "sql"} }
-func sqlMount() VolumeMount { return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir} }
+func sqlVolume() bootstrapVolume { return bootstrapVolume{Name: "sql"} }
+func sqlMount() VolumeMount      { return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir} }
 func sqlMountRO() VolumeMount {
 	return VolumeMount{Name: "sql", MountPath: bootstrapSQLDir, ReadOnly: true}
 }
-func tokenVolume() Volume     { return Volume{Name: "admin-token"} }
-func tokenMount() VolumeMount { return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir} }
+
+// tokenVolume holds the minted admin Entra token between the init container and apply-sql. It is
+// memory-backed so the scratch data stays off the node's disk.
+func tokenVolume() bootstrapVolume { return bootstrapVolume{Name: "admin-token", Memory: true} }
+func tokenMount() VolumeMount      { return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir} }
 func tokenMountRO() VolumeMount {
 	return VolumeMount{Name: "admin-token", MountPath: bootstrapTokenDir, ReadOnly: true}
 }
@@ -250,7 +287,7 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 		Namespace:      ns,
 		InitContainers: []bootstrapContainer{sqlInit},
 		Main:           applySQL,
-		Volumes:        []Volume{sqlVolume()},
+		Volumes:        []bootstrapVolume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
@@ -294,7 +331,7 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 		Namespace:      ns,
 		InitContainers: []bootstrapContainer{sqlInit},
 		Main:           applySQL,
-		Volumes:        []Volume{sqlVolume()},
+		Volumes:        []bootstrapVolume{sqlVolume()},
 	}
 	return spec, esYAML, nil
 }
@@ -397,7 +434,7 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 			sqlInit,
 		},
 		Main:    applySQL,
-		Volumes: []Volume{sqlVolume(), tokenVolume()},
+		Volumes: []bootstrapVolume{sqlVolume(), tokenVolume()},
 	}
 	return spec, nil
 }
@@ -555,6 +592,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   backoffLimit: 2
+  activeDeadlineSeconds: {{ .ActiveDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .TTLSecondsAfterFinished }}
   template:
     metadata:
       labels:
@@ -684,7 +723,12 @@ spec:
       volumes:
         {{- range .Volumes }}
         - name: {{ .Name }}
+          {{- if .Memory }}
+          emptyDir:
+            medium: Memory
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- end }}
       {{- end }}
 `))
