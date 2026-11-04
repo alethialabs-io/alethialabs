@@ -2039,6 +2039,7 @@ describe("resolveNewOrgSetup", () => {
 			planState: "active",
 			paymentUrl: null,
 			hold: null,
+			besideLivePlan: null,
 			ended: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
@@ -3762,6 +3763,52 @@ describe("ADR 0002 S1 (#5714)", () => {
 			]);
 			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
 			expect(events()).toEqual(["billing.pending_org_setup.closed"]);
+		});
+
+		// C120 (amendment 2026-11-04, slice S12): the refusal above applies only to a LIVE X. An `incomplete`
+		// X can still be paid, so the guard's closer writes nothing and raises nothing, and the setup stays
+		// open. Guard order (§5.7): the org's row names a live Y, so Checkout still reads the live-plan copy,
+		// not the open-setup copy. On dev at aed8b609b the closer closed the setup with org_has_plan and
+		// alerted; at 9fb2f9920 it stayed open but Checkout answered with the open-setup copy.
+		it("C120: X incomplete beside a live Y — the guard's closer writes nothing and raises nothing, and Checkout reads 'change the plan instead'", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			for (const yStatus of ["active", "trialing"]) {
+				stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete", { created_by: "user-1", organization_id: "org-1" }));
+				orgBilling.mockResolvedValue(rowNames("sub_y", yStatus));
+				vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+				await expect(createCheckoutSession("team")).rejects.toThrow(
+					/^This organization already has an active subscription — change the plan instead\.$/,
+				);
+			}
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled();
+			expect(db.transaction).not.toHaveBeenCalled();
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+			expect(events()).toEqual([]);
+		});
+
+		// One definition of "another live plan" (the link's `namesOtherLivePlan`, which counts past_due): beside
+		// a past_due Y the incomplete X's setup stays open too, and Checkout reads the row predicate's own
+		// unpaid-invoice copy for that row.
+		it("C120 beside a past_due Y: nothing written or raised, and Checkout reads the row predicate's unpaid-invoice copy", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete", { created_by: "user-1", organization_id: "org-1" }));
+			orgBilling.mockResolvedValue(rowNames("sub_y", "past_due"));
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+			await expect(createCheckoutSession("team")).rejects.toThrow(/^This team's plan has an unpaid invoice, so a second plan was not started\./);
+			expect(db.update).not.toHaveBeenCalled();
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		// The closer answers open for this X without reading the row (its metadata names no org yet), so the
+		// throw comes from the guard's own row read. Before round 4 that read sat outside the guard's try, and
+		// the raw database error escaped instead of the try-again clause.
+		it("fails closed: with an incomplete X, the guard's own billing-row read that throws refuses with the try-again clause and buys nothing", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete"));
+			orgBilling.mockRejectedValue(new Error("db down"));
+			await expect(createCheckoutSession("team")).rejects.toThrow(TRY_AGAIN);
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled();
 		});
 
 		it("control: metadata naming ANOTHER user is never adopted, and the guard refuses", async () => {
