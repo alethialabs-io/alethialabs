@@ -29,6 +29,7 @@ import { type FirstPayment, readFirstPayment } from "@/lib/billing/first-payment
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	NEW_ORG_CREATED_BY_KEY,
@@ -804,12 +805,6 @@ const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_exp
 const LIVE_BILLING_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
 
 /**
- * Subscription statuses under which X still exists and may bill (ADR 0002 §2, "Live subscription").
- * Not `incomplete`: such an X is not live yet, and it can still be paid until Stripe ends it.
- */
-const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
-
-/**
  * Writes one structured log line with a stable event name (ADR 0002 §5.4: the console has no billing
  * audit table, so the durable record is the row's own columns and this line is the event).
  */
@@ -1120,7 +1115,7 @@ export async function settleOpenSetup(
 		// An `incomplete` X can still be paid, so closing now would leave a paid X live and unlinked. The
 		// setup stays open, with nothing written, until X ends (the close branch above) or is paid (then
 		// it is an ordinary live X, and the next reader applies this refusal or the link's §5.6 rows).
-		if (!LIVE_SUBSCRIPTION_STATUSES.has(sub.status)) return "open";
+		if (!isLiveSubscriptionStatus(sub.status)) return "open";
 		const closed = await closePendingOrgSetup({
 			subscriptionId: row.subscription_id,
 			reason: "org_has_plan",
