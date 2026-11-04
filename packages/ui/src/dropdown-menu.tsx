@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { Menu as MenuPrimitive } from "@base-ui-components/react/menu";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react";
 
 import { DisabledReasonItemBody, joinDescribedBy } from "./disabled-reason";
@@ -63,11 +63,14 @@ function DropdownMenuContent({
         sideOffset={sideOffset}
         align={align}
         alignOffset={alignOffset}
+        // The layer is on the Positioner: its inline `transform` makes it a stacking context, so a
+        // z-index on the Popup alone would only order it inside that context (#6144, popover.tsx).
+        className="z-[var(--z-overlay)]"
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
           className={cn(
-            "bg-popover text-popover-foreground data-[open]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:fade-in-0 data-[closed]:zoom-out-95 data-[open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[var(--z-overlay)] max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
+            "bg-popover text-popover-foreground data-[open]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:fade-in-0 data-[closed]:zoom-out-95 data-[open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 max-h-(--available-height) min-w-[8rem] origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
             className,
           )}
           {...props}
@@ -82,6 +85,12 @@ function DropdownMenuGroup({
 }: React.ComponentProps<typeof MenuPrimitive.Group>) {
   return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />;
 }
+
+/** The event base-ui's `Menu.Item` hands its `onClick`: a div mouse event carrying base-ui's
+ * `preventBaseUIHandler`. Typed from the primitive so the wrapper cannot drift from it. */
+type MenuItemClickEvent = Parameters<
+  NonNullable<React.ComponentProps<typeof MenuPrimitive.Item>["onClick"]>
+>[0];
 
 function DropdownMenuItem({
   className,
@@ -107,7 +116,7 @@ function DropdownMenuItem({
 }) {
   const handleClick =
     onSelect || onClick
-      ? (event: React.MouseEvent<HTMLElement>) => {
+      ? (event: MenuItemClickEvent) => {
           onSelect?.(event);
           onClick?.(event);
         }
@@ -308,11 +317,14 @@ function DropdownMenuSubContent({
         sideOffset={sideOffset}
         align={align}
         alignOffset={alignOffset}
+        // The layer is on the Positioner: its inline `transform` makes it a stacking context, so a
+        // z-index on the Popup alone would only order it inside that context (#6144, popover.tsx).
+        className="z-[var(--z-overlay)]"
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-sub-content"
           className={cn(
-            "bg-popover text-popover-foreground data-[open]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:fade-in-0 data-[closed]:zoom-out-95 data-[open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[var(--z-overlay)] min-w-[8rem] origin-(--transform-origin) overflow-hidden rounded-md border p-1 shadow-lg",
+            "bg-popover text-popover-foreground data-[open]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:fade-in-0 data-[closed]:zoom-out-95 data-[open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 min-w-[8rem] origin-(--transform-origin) overflow-hidden rounded-md border p-1 shadow-lg",
             className,
           )}
           {...props}

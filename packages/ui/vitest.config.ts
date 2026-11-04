@@ -83,6 +83,10 @@ export default defineConfig({
 				// tests/page-toolbar.test.tsx and tests/read-only-value.test.tsx prove each.
 				"src/page-toolbar.tsx",
 				"src/read-only-value.tsx",
+				// Vendored, but with its own dedicated suite (tests/marker.test.tsx, moved here with
+				// the file from the console in #6144) — the #4104 precedent: a file with a dedicated suite
+				// is counted, not excluded.
+				"src/marker.tsx",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming

@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { mergeProps } from "@base-ui-components/react/merge-props";
-import { useRender } from "@base-ui-components/react/use-render";
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
 import {
   Controller,
   FormProvider,

@@ -9,7 +9,10 @@
 // base-ui positions the popup via an absolute Positioner and leaves the Popup itself
 // `position: static`, on which **z-index is a no-op**, so a popover opened inside the fullscreen
 // Elench dialog rendered BEHIND it while its class name said `z-[var(--z-overlay)]` the whole time.
-// The fix was a `relative`, which no z-index matcher looks at.
+// The fix was a `relative`, which no z-index matcher looks at. It came apart a second time at the
+// move to @base-ui/react 1.x (#6144): the Positioner gained an inline `transform`, which made it a
+// stacking context, so the Popup's z-index ordered it only inside that context — the same class
+// list, behind the dialog again. The layer now sits on the Positioner, and popover.tsx says why.
 //
 // So the question this file asks is the only one that can tell: with the overlay open, what does
 // `document.elementFromPoint()` return at its centre and its four inset corners? If the answer is

@@ -4,17 +4,17 @@
 
 // Vendored from the shadcn registry (`marker`, new-york-v4): inline conversation markers —
 // status updates, system notes, and labeled separators — composed with Message in threads.
-// Lives in `ai-elements/` because that is now the console's ONE chat-message family; the
-// upstream registry differs from the rest of this directory (AI Elements), which is why the
-// provenance note above matters when re-vendoring.
-// Imports rewired to `@repo/ui/*`; the upstream source is already hue-free so the grayscale
+// Lives in `@repo/ui` because the upstream registry ships it as a design-system primitive, not
+// as part of AI Elements (#6144); the console's agent transcript
+// (`apps/console/components/agent/`) composes it from here. The provenance note above is
+// what matters when re-vendoring. The upstream source is already hue-free, so the grayscale
 // system needs no trim. Call sites size/typeset via `className` (keep the vendor diff minimal).
 
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { mergeProps } from "@base-ui-components/react/merge-props";
-import { useRender } from "@base-ui-components/react/use-render";
-import { cn } from "@repo/ui/utils";
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { cn } from "./utils";
 
 const markerVariants = cva(
   "group/marker relative flex min-h-4 w-full items-center gap-2 text-left text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4 [a]:underline [a]:underline-offset-3 [a]:hover:text-foreground",

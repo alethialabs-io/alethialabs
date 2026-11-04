@@ -932,7 +932,7 @@ function openMenuLocator(page: Page): Locator {
  *
  * Is a `[role="menu"]` visible? Every `menu:` step in `destructive-actions.yaml` opens a Base UI
  * `Menu.Trigger`, whose popup carries `role="menu"` (`packages/ui/src/dropdown-menu.tsx` →
- * `@base-ui-components/react/menu`), so the menu itself can answer, and an unreadable trigger no
+ * `@base-ui/react/menu`), so the menu itself can answer, and an unreadable trigger no
  * longer counts as a yes.
  *
  * The re-click keeps its old licence, and the reason is unchanged: only an explicit

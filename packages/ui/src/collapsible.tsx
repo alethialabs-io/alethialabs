@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type * as React from "react";
-import { Collapsible as CollapsiblePrimitive } from "@base-ui-components/react/collapsible";
+import { Collapsible as CollapsiblePrimitive } from "@base-ui/react/collapsible";
 
 function Collapsible({
   ...props

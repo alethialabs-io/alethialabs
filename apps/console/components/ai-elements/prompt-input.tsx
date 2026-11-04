@@ -448,7 +448,13 @@ export const PromptInputActionAddScreenshot = ({
   const attachments = usePromptInputAttachments();
 
   const handleSelect = useCallback(
-    async (event: MouseEvent<HTMLElement>) => {
+    // Typed from the item's own `onClick`: base-ui hands it a div mouse event carrying
+    // `preventBaseUIHandler`, which a plain `MouseEvent<HTMLElement>` does not satisfy.
+    async (
+      event: Parameters<
+        NonNullable<PromptInputActionAddScreenshotProps["onClick"]>
+      >[0],
+    ) => {
       onClick?.(event);
       if (event.defaultPrevented) {
         return;
