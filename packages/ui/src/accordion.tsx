@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type * as React from "react";
-import { Accordion as AccordionPrimitive } from "@base-ui-components/react/accordion";
+import { Accordion as AccordionPrimitive } from "@base-ui/react/accordion";
 
 import { cn } from "./utils";
 

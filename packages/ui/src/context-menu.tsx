@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { Menu as MenuPrimitive } from "@base-ui-components/react/menu";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { CheckIcon } from "lucide-react";
 
 import { DisabledReasonItemBody, joinDescribedBy } from "./disabled-reason";

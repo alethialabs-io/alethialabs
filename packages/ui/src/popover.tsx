@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { Popover as PopoverPrimitive } from "@base-ui-components/react/popover";
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "./utils";
 

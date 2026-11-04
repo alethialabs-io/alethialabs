@@ -94,11 +94,17 @@ const NAMED_CONTROLS = `${NAME_REQUIRED}, ${TOGGLE_ROLES}`;
  * `NAMED_CONTROLS` with base-ui's own focus guards subtracted — the one thing in the rendered tree
  * this unit is not answerable for.
  *
- * `FocusGuard` renders a visually-hidden `<span tabIndex={0}>` at each end of a popup, and under
- * Safari — which its UA sniff also reports for jsdom — it stamps `role="button"` on it and drops
- * the `aria-hidden` that would otherwise keep it out of the tree. Two of them bracket every
- * `Sheet`, so the sweep sees two unnamed commands that no file this unit may touch produces; they
- * come from `@base-ui-components`, not from `@repo/ui` and not from the console.
+ * `FocusGuard` renders a visually-hidden `<span tabIndex={0}>` at each end of a popup. On
+ * `@base-ui-components/react@1.0.0-rc.0`, under Safari — which its UA sniff also reported for
+ * jsdom — it stamped `role="button"` on it and dropped the `aria-hidden` that would otherwise keep
+ * it out of the tree. Two of them bracket every `Sheet`, so the sweep saw two unnamed commands
+ * that no file this unit may touch produces; they come from base-ui, not from `@repo/ui` and not
+ * from the console. On `@base-ui/react@1.9.0` (#6144) the role is stamped only when
+ * `platform.screenReader.voiceOver && platform.engine.webkit` (`utils/FocusGuard.js`), which
+ * jsdom does not report (its `navigator.platform` is empty), so here the spans stay `aria-hidden`
+ * with no role and this subtraction removes nothing the role selectors would have matched. It is
+ * kept so a base-ui release that widens the sniff again does not turn the sweep red for base-ui's
+ * own spans.
  *
  * The subtraction is per-clause and keyed on base-ui's own data attribute, which nothing we author
  * carries — narrow enough that a real unnamed control cannot hide behind it. It is NOT a filter on

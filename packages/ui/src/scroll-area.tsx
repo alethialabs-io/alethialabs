@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ScrollArea as ScrollAreaPrimitive } from "@base-ui-components/react/scroll-area"
+import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area"
 import type * as React from "react"
 
 import { cn } from "./utils"
