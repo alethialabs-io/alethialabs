@@ -92,7 +92,7 @@ export function CountrySelect({
           if (el) popupRef.current = el;
         }}
         finalFocus={() => returnFocusToTrigger(popupRef.current)}
-        className="w-[--anchor-width] min-w-[260px] p-0 data-[closed]:pointer-events-none"
+        className="w-[var(--anchor-width)] min-w-[260px] p-0 data-[closed]:pointer-events-none"
       >
         {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
             prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so

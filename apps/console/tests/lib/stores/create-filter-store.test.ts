@@ -89,6 +89,24 @@ describe("createFilterStore", () => {
 	});
 });
 
+describe("createFilterStore({ persist: false }) (#6320)", () => {
+	it("neither rehydrates a session's selection nor writes one", () => {
+		const name = "test-filters-memory-only";
+		sessionStorage.setItem(name, JSON.stringify({ state: { filters: { ...DEFAULTS, search: "stale" } }, version: 1 }));
+		const store = createFilterStore<TestFilters>({ name, defaults: DEFAULTS, persist: false });
+		expect(store.getState().filters.search).toBe("");
+		sessionStorage.clear();
+		expect(store.getState().filters).toEqual(DEFAULTS);
+		store.getState().set("search", "api");
+		store.getState().patch({ stages: ["production"] });
+		expect(store.getState().filters).toEqual({ search: "api", stages: ["production"], providers: [] });
+		// Nothing persisted: the URL is the only memory, so a fresh load starts where the server did.
+		expect(sessionStorage.length).toBe(0);
+		store.getState().reset();
+		expect(store.getState().filters).toEqual(DEFAULTS);
+	});
+});
+
 describe("countActiveFilters", () => {
 	it("counts only keys that differ from their defaults", () => {
 		expect(countActiveFilters(DEFAULTS, DEFAULTS)).toBe(0);

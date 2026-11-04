@@ -25,7 +25,6 @@ import {
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { Skeleton } from "@repo/ui/skeleton";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { BookOpen, Plus } from "lucide-react";
 import { useState } from "react";
@@ -57,6 +56,7 @@ import {
 	CLASSIFICATION_TEMPLATES,
 	type ClassificationTemplate,
 } from "./classification-templates";
+import { ClassificationBodySkeleton } from "./classification-skeleton";
 import { Spinner } from "./classification-ui";
 import { DimensionDetail } from "./dimension-detail";
 import { DimensionEditorSheet } from "./dimension-editor-sheet";
@@ -252,10 +252,8 @@ export function ClassificationManager() {
 					onRetry={() => void dimensionsQuery.refetch()}
 				/>
 			) : isPending ? (
-				<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[296px_1fr]">
-					<Skeleton className="h-64 w-full rounded-lg" />
-					<Skeleton className="h-80 w-full rounded-lg" />
-				</div>
+				// The route skeleton's body, so a read that was not prefetched draws the same shape.
+				<ClassificationBodySkeleton />
 			) : dims.length === 0 && !searching ? (
 				<TaxonomyBlankSlate
 					canEdit={canEdit}

@@ -3,13 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatBytes } from "@repo/format";
-import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { isDefinedError } from "@orpc/client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Lock, Paperclip, SearchX } from "lucide-react";
+import { ArrowLeft, Download, Paperclip, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
 import { markCaseRead } from "@/app/server/actions/support";
@@ -21,10 +20,17 @@ import {
 	SUPPORT_CATEGORY_LABELS,
 } from "@/lib/validations/support";
 import { CaseActions } from "./case-actions";
+import { CaseClosedNotice } from "./case-closed-notice";
 import { CaseComposer } from "./case-composer";
+import {
+	CASE_ATTACHMENTS,
+	CASE_ATTACHMENTS_HEADING,
+	CASE_ATTACHMENTS_LIST,
+	CASE_THREAD,
+} from "./case-detail-parts";
 import { CaseDetailSkeleton } from "./case-detail-skeleton";
 import { useCaseQuery } from "./case-queries";
-import { formatCaseNumber } from "./case-query";
+import { CASE_RESOURCE_KIND, formatCaseNumber } from "./case-query";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
 import { CaseThread } from "./case-thread";
@@ -35,7 +41,8 @@ import { CaseTime } from "./case-time";
  * lifecycle actions), the attachments, the conversation thread and the reply composer — or, on a
  * CLOSED case, a closed notice with the way to reopen it in place of a composer nobody can use.
  *
- * Reads `support.case` (prefetched by the route, so the first paint carries the thread). Live by
+ * Reads `support.case` (prefetched by the route, so the first paint carries the thread — and, with
+ * it, the classification row's reads, so "Classify" is in the server HTML too). Live by
  * the bus: a staff or AI reply moves the case row, which is a `support` hint that invalidates this
  * key — there is no per-case stream any more (ADR 0005 D3, one stream per browser). Pending,
  * not-found and a failed read are three different renders; none of them is an empty thread.
@@ -151,18 +158,18 @@ export function CaseDetail({
 					/>
 					{/* Structured classification (Workstream B). The control shows a picker only
 					    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
-					<ClassificationControl kind="support_case" id={caseId} canEdit />
+					<ClassificationControl kind={CASE_RESOURCE_KIND} id={caseId} canEdit />
 				</div>
 			</div>
 
 			{/* Attachments */}
 			{attachments.length > 0 && (
-				<div className="space-y-2 rounded-md border p-4">
-					<div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+				<div className={CASE_ATTACHMENTS}>
+					<div className={CASE_ATTACHMENTS_HEADING}>
 						<Paperclip className="size-3.5" />
 						Attachments
 					</div>
-					<ul className="space-y-1">
+					<ul className={CASE_ATTACHMENTS_LIST}>
 						{attachments.map((att) => (
 							<li key={att.id}>
 								<a
@@ -182,23 +189,16 @@ export function CaseDetail({
 			)}
 
 			{/* Thread */}
-			<div className="rounded-md border">
+			<div className={CASE_THREAD}>
 				<CaseThread messages={messages} />
 			</div>
 
 			{/* A closed case takes no replies: say so, and offer the one way forward (F045). */}
 			{isClosed ? (
-				<Alert role="status" data-testid="case-closed-notice">
-					<Lock />
-					<AlertTitle>This case is closed</AlertTitle>
-					<AlertDescription>
-						<p>
-							It no longer takes replies. Reopen it to continue the conversation, or open a new case
-							for a different issue.
-						</p>
-						<CaseActions caseId={caseId} status={supportCase.status} variant="reopen" />
-					</AlertDescription>
-				</Alert>
+				<CaseClosedNotice
+					data-testid="case-closed-notice"
+					action={<CaseActions caseId={caseId} status={supportCase.status} variant="reopen" />}
+				/>
 			) : (
 				<CaseComposer caseId={caseId} />
 			)}

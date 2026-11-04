@@ -13,7 +13,7 @@
 // (`components/settings/*/*-filters.ts`, mirroring `components/evidence/evidence-query.ts`),
 // and only the store wiring is collected here.
 //
-// The `name` of each store is its sessionStorage key and must stay unique across the console.
+// The `name` of each persisted store is its sessionStorage key and must stay unique across the console.
 // Bump a store's `version` whenever its filter shape changes, so a previously persisted shape
 // cannot rehydrate into fields that no longer exist.
 
@@ -47,11 +47,16 @@ import {
 } from "@/components/settings/teams/teams-filters";
 import { createFilterStore } from "@/lib/stores/create-filter-store";
 
-/** Session-persisted filter selections for /~/settings/activity (and the project feed). */
+/**
+ * Filter selections for /~/settings/activity (and the project feed). NOT persisted (#6320): the
+ * route prefetches the first page from the link's filters, so a range remembered in the session
+ * made the browser ask for a different key than the server prefetched, and the first paint changed
+ * after hydration. The URL is this store's only memory; the feed re-seeds it from the link on mount.
+ */
 export const useActivityFilters = createFilterStore<ActivityFilters>({
 	name: "settings-activity-filters",
 	defaults: DEFAULT_ACTIVITY_FILTERS,
-	version: 1,
+	persist: false,
 });
 
 /** Session-persisted filter selections for /~/settings/sso. */

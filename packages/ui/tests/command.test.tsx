@@ -7,7 +7,7 @@
 // command palette and both canvas palettes rendered an unnamed combobox. The dialog names its
 // search after its `title`, which every caller already sets (or inherits as the default).
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
 	Command,
@@ -42,6 +42,33 @@ describe("CommandDialog", () => {
 		expect(
 			await screen.findByRole("combobox", { name: "Command Palette" }),
 		).toBeInTheDocument();
+	});
+});
+
+// #6348 — the dialog's title and description sat OUTSIDE its popup, so a CLOSED palette still put
+// "Add a service" / "Search and add infrastructure…" on the page: a heading for a dialog nobody had
+// opened, read by a screen reader and counted as the page's content. They now live in the popup.
+describe("CommandDialog's title and description", () => {
+	it("are not on the page while the dialog is closed", () => {
+		render(
+			<CommandDialog open={false} title="Add a service" description="Search and add infrastructure.">
+				<CommandList />
+			</CommandDialog>,
+		);
+		expect(screen.queryByText("Add a service")).not.toBeInTheDocument();
+		expect(screen.queryByText("Search and add infrastructure.")).not.toBeInTheDocument();
+	});
+
+	it("name and describe the dialog once it is open", async () => {
+		render(
+			<CommandDialog open title="Add a service" description="Search and add infrastructure.">
+				<CommandList />
+			</CommandDialog>,
+		);
+		const dialog = await screen.findByRole("dialog", { name: "Add a service" });
+		expect(dialog).toHaveAccessibleDescription("Search and add infrastructure.");
+		// The title is the dialog's own heading (cmdk's hidden search label carries the same words).
+		expect(within(dialog).getByRole("heading", { name: "Add a service" })).toBeInTheDocument();
 	});
 });
 

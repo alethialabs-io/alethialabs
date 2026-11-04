@@ -466,6 +466,23 @@ MEASURED `answered-empty`** — never PASS — and the spec runs in an organisat
 two rows in every list** so that as few routes as possible answer empty. The persona's organisation
 cannot be used: `routes.spec.ts` keeps it empty for T5.
 
+**B1 withholds per REGION, not per page (#6378).** B3 and B4 read `answered-empty` whenever the
+answered render shows an empty state. B1 does not (`judgeB1`): it asks the question in this order.
+1. The answered render never settled → NOT MEASURED `answered-not-settled`.
+2. The held render differs from the answered one in any compared signal, anywhere on the page —
+   the empty region included (a skeleton there, its empty state missing) → **FAIL**.
+3. The answered render shows an empty state, at least one read was held, AND either an empty state sits
+   in **no region** of the page (`emptyUnregioned` — a list page's own empty state) or **no region
+   answered with data** (`dataRegions` is zero — a region with no empty state, outside every skeleton
+   and error surface, holding a row or a text leaf) → NOT MEASURED `answered-empty`.
+4. Otherwise → **PASS**.
+
+So one empty card on a page whose other regions answered with data no longer withholds the route: the
+PASS is a claim about the data regions, and the matching empty region stays unjudged and is counted in
+the evidence (`emptyRegions`). Before #6378 any empty state anywhere withheld B1 — the overview's
+Alerts card kept `/[org]` unmeasured on a complete first paint. A route is judged through
+`judgeB1Loads`, over every answered load of it, and the strictest verdict wins.
+
 **B1's subject is the server render, because the held page may never hydrate.** Measured on the jobs
 slice: the first server action the shell sends is held, hydration stalls behind it, and what the user
 sees is the server HTML. Two things a CORRECT page renders differently there are not compared:
@@ -601,10 +618,29 @@ server actions — and reads `no-reads-failed` where `no-page-reads` was meant �
 withheld for the whole run. Then the **jobs slice** — ADR 0005's reference page — must PASS B1, B3, B4
 and B5, and must be MEASURED on B2, which it FAILS: its skeleton has no PageToolbar row and a one-row
 filter bar, so the table frame paints about 100px above where the page puts it. That is debt (#6121),
-not a calibration gap — the first, outline-only B2 could not see it. Every predicate must also have
+not a calibration gap — the first, outline-only B2 could not see it. B1, B2 and B4 must also have
 produced a PASS or a FAIL on at least ten routes.
 
-**A scored cell may not quietly stop being scored.** That floor of ten cannot see a single cell going
+**B3 and B5 are floored by witness, not by count** (#6318). They can only measure a route that makes a
+read of its own on load, and ADR 0005 moves first-paint reads onto the server prefetch, so their
+measurable set shrinks with every correct migration — a count floor had to be lowered by hand each time.
+Instead, B4's cold load (an independent load that fails every read and records which were the page's)
+witnesses which routes read on load. Every witnessed route must be scored on B3 and B5, with one excuse
+per predicate that is a fact about the page: B3 may read `answered-empty` (the answered render is its own
+empty state), and B5 may read `over-read-budget`. An unwitnessed route may read `no-page-reads` (B5 also
+`not-intercepted`). Any other NOT MEASURED, a thrown load or a withheld predicate, fails the floor. A B4
+that was withheld or not measured witnesses nothing, and a withheld B4 still carrying evidence fails the
+floor outright. In each shell, a control route that reads `members.list` on load by design (the
+`~/jobs` and `[project]/jobs` lists) must be witnessed and scored. So a scan that stops seeing reads
+cannot pass by seeing none, and a fault confined to one shell cannot pass by dropping that shell's
+routes from the witness and the verdicts together. The witness and the verdicts share the shell
+classifier (`shellReadsFor`), the read carrier (`readCarrier`) and the read key (`readKey`). A fault in
+them that spares every control's reads is out of this floor's reach. The fixture control drives all
+three together and covers that. B3 and B4 are
+judged after every route's loads have been taken, so each route is classified against the same
+evidence whatever its position in the manifest.
+
+**A scored cell may not quietly stop being scored.** The count floor cannot see a single cell going
 from PASS to NOT MEASURED, so `--import-live` compares the new records with the committed ones cell by
 cell and refuses an import in which a cell that was PASS or FAIL becomes NOT MEASURED or disappears,
 unless `--explain=<file>` names it with a reason. This is a check at import time, not a ratchet on the

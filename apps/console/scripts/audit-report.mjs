@@ -592,16 +592,9 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
-	// THE SEVENTH IMPORT — run 40485396792 @ `3b8a1fffb` (#6116's branch on dev after the console wave's
-	// lanes landed). One live finding no row owned, in a lane's own surface, recorded here because the
-	// import that found it must not land with it unowned:
-	T5: {
-		owner: "#6119",
-		why:
-			"`[project]/architecture` (and `[project]`, which redirects there): the empty canvas renders \"Nothing designed yet\" " +
-			"through `data-slot=empty-title` with no `@repo/ui/empty` region around it, so T5 reads a hand-rolled empty " +
-			"region. Appeared with the canvas lane's GET reads (#6213).",
-	},
+	// THE EIGHTH IMPORT (family B's fifth, see BEHAVIOUR_LEDGER) — run 40822681524 @ `440e6dd66` (dev after #6333, #6339, #6341 and #6340). The
+	// T5 row the seventh import added (#6119, the canvas's hand-rolled empty region) is gone: T5 fails
+	// nowhere. The table is empty, and a FAIL with no row here still raises.
 });
 
 
@@ -632,37 +625,12 @@ export const LIVE_DEBT = /** @type {const} */ ({
  * @type {Readonly<Record<string, Readonly<Record<string, {lifts?: string, reason?: string}>>>>}
  */
 export const BEHAVIOUR_LEDGER = {
-	// FOURTH IMPORT — run 40485396792 @ `3b8a1fffb`, on dev after the shell (#6193), jobs (#6191),
-	// overview (#6200), support (#6218), canvas (#6213) and usage & billing (#6209) lanes landed. Every
-	// row is MEASURED DEBT, owned by the epic #6112 lane whose \`scope:\` globs hold the route —
-	// `[project]/settings/**` is #6128's, the org-level people & access pages #6129's. No row is a
-	// \`reason:\` yet: nothing here was found to be built this way on purpose.
-	"/[org]": { B1: { lifts: "#6118" }, B2: { lifts: "#6118" } },
-	"/[org]/[project]/architecture": { B1: { lifts: "#6119" } },
-	"/[org]/[project]/clusters": { B2: { lifts: "#6122" } },
-	"/[org]/[project]/environments": { B1: { lifts: "#6120" }, B4: { lifts: "#6120" } },
-	"/[org]/[project]/jobs": { B2: { lifts: "#6121" } },
-	"/[org]/[project]/settings/access": { B2: { lifts: "#6128" } },
-	"/[org]/[project]/settings/activity": { B1: { lifts: "#6128" } },
-	"/[org]/[project]/settings/general": { B1: { lifts: "#6128" }, B4: { lifts: "#6128" } },
-	"/[org]/[project]/usage": { B4: { lifts: "#6127" } },
-	"/[org]/~/clusters": { B2: { lifts: "#6122" } },
-	"/[org]/~/connectors": { B1: { lifts: "#6124" }, B2: { lifts: "#6124" }, B4: { lifts: "#6124" } },
-	"/[org]/~/evidence": { B2: { lifts: "#6126" } },
-	"/[org]/~/jobs/[id]": { B2: { lifts: "#6121" } },
-	"/[org]/~/new": { B2: { lifts: "#6131" } },
-	"/[org]/~/runners": { B1: { lifts: "#6123" }, B4: { lifts: "#6123" } },
-	"/[org]/~/settings/activity": { B1: { lifts: "#6129" } },
-	"/[org]/~/settings/billing/invoices": { B2: { lifts: "#6127" } },
-	"/[org]/~/settings/classification": { B1: { lifts: "#6129" }, B2: { lifts: "#6129" }, B4: { lifts: "#6129" } },
-	"/[org]/~/settings/general": { B1: { lifts: "#6128" }, B2: { lifts: "#6128" }, B4: { lifts: "#6128" }, B5: { lifts: "#6128" } },
-	"/[org]/~/settings/roles": { B2: { lifts: "#6129" } },
-	"/[org]/~/settings/teams": { B1: { lifts: "#6129" }, B4: { lifts: "#6129" } },
-	"/[org]/~/support/abuse": { B2: { lifts: "#6130" } },
-	"/[org]/~/support/cases/[id]": { B2: { lifts: "#6130" } },
-	"/[org]/~/support/my-cases": { B2: { lifts: "#6130" } },
-	"/[org]/~/support/submit": { B2: { lifts: "#6130" } },
-	"/[org]/~/usage": { B2: { lifts: "#6127" } },
+	// SIXTH IMPORT — run 41638462487 @ `8ba282454`, dev after the #6347–#6355 wave (#6359 #6360 #6362
+	// #6364 #6372 #6374 #6376 #6381 #6384 #6390) and #6388 (#6378: B1 withholds an empty region, not the
+	// route around it). All 14 of the fifth import's rows are gone: no family-B cell FAILS on this run.
+	// Thirteen now PASS; `/[org]/[project]/architecture` B1 reads NOT MEASURED `answered-empty` (the
+	// seeded project's canvas is its own unregioned empty state), explained at import time (#6395's PR).
+	// The ledger is empty, not retired: the next B FAIL needs a row here, `lifts:` naming an open issue.
 };
 
 /** Family B's predicate ids — the ones `BEHAVIOUR_LEDGER` owns instead of `LIVE_DEBT`. */

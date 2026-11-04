@@ -12,7 +12,8 @@
 // pinned to a `projectId` (project settings) the feed locks to that project and hides the facet.
 
 import { Boxes, Download, ListFilter, Users } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	type ActivityPage,
@@ -20,6 +21,7 @@ import {
 	getActivityExportCsv,
 } from "@/app/server/actions/activity";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { filterStateFromUrl } from "@/lib/query/filter-url-codec";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -136,11 +138,28 @@ export function ActivityLog({
 	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
 	// and the free text is debounced before it can reach a query key. Nine `useState` calls
 	// collapse to one store plus the two that are genuinely not filters (export + upgrade).
-	const filters = useActivityFilters((s) => s.filters);
+	//
+	// THE LINK IS THE FIRST RENDER'S SOURCE OF TRUTH (#6320). The route prefetched the first page
+	// from the link's filters (`activityQueryFromUrl`), so until the link has been read into the
+	// store this renders those same filters — read from the same params with the same decode — and
+	// the browser's first key IS the prefetched key. The store cannot be trusted for that render:
+	// it outlives a client-side navigation, and a range picked on an earlier visit used to override
+	// "Last 7 days" and swap the first paint's rows after hydration (B1). For the same reason the
+	// mount REPLACES the store with the link's filters rather than patching the ones it names —
+	// declared before `useFilterUrlSync`, so its store → URL write sees the replaced state.
+	const searchParams = useSearchParams();
+	const [linkFilters] = useState(() =>
+		filterStateFromUrl(searchParams, DEFAULT_ACTIVITY_FILTERS),
+	);
+	useEffect(() => {
+		useActivityFilters.setState({ filters: linkFilters });
+	}, [linkFilters]);
+	const storeFilters = useActivityFilters((s) => s.filters);
 	const set = useActivityFilters((s) => s.set);
 	const patch = useActivityFilters((s) => s.patch);
 	const reset = useActivityFilters((s) => s.reset);
 	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
+	const filters = urlRead ? storeFilters : linkFilters;
 	const hydrated = useHydrated();
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 

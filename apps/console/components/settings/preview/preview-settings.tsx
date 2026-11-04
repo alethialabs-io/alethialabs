@@ -9,10 +9,7 @@ import { Controller, type FieldPath, useForm, useWatch } from "react-hook-form";
 import { savePreviewConfig } from "@/app/server/actions/preview";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { RegionError } from "@/components/errors/region-error";
-import {
-	GeneralRefusal,
-	PreviewSettingsSkeleton,
-} from "@/components/settings/general/general-states";
+import { GeneralRefusal } from "@/components/settings/general/general-states";
 import { RepositorySelector } from "@/components/repository-selector";
 import {
 	SettingsCardFoot,
@@ -53,6 +50,9 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
+import type { GitProvider } from "@/lib/db/schema";
+import { PREVIEW_ROWS, PREVIEW_SAVE_NOTE, PREVIEW_SECTION_TITLE } from "./preview-copy";
+import { PreviewSettingsSkeleton, linkedFromProviders } from "./preview-settings-skeleton";
 
 type PreviewConfigRow = StoredPreviewConfig | null;
 type FabricOption = PreviewFabricOption;
@@ -163,6 +163,7 @@ export function PreviewSettings({
 	gitCredentials,
 	gitlabBaseUrl,
 	providerAvailability,
+	linkedProviders,
 }: {
 	projectId: string;
 	initialConfig: PreviewConfigRow;
@@ -171,6 +172,12 @@ export function PreviewSettings({
 	gitlabBaseUrl: string;
 	/** Which git providers this instance can link (server-computed) — passed to the repo picker. */
 	providerAvailability: GitProviderAvailability;
+	/**
+	 * The viewer's linked git providers, as the route prefetched them (`projects.linkedGitProviders`).
+	 * Handed to the repo picker, whose FIRST render is then the settled branch: the repository row,
+	 * or the "No Git accounts linked" panel. Omitted, the picker reads the list itself after mount.
+	 */
+	linkedProviders?: GitProvider[];
 }) {
 	const defaults = useMemo(() => configDefaults(initialConfig), [initialConfig]);
 	const [repoUrl, setRepoUrl] = useState(() =>
@@ -246,14 +253,11 @@ export function PreviewSettings({
 	});
 
 	return (
-		<SettingsSection title="Preview environments" className="mb-0">
+		<SettingsSection title={PREVIEW_SECTION_TITLE} className="mb-0">
 			<SettingsPanel>
 				<form noValidate onSubmit={onSave}>
 					<div className="py-1">
-						<SettingsField
-							label="Enable"
-							hint="Saved settings render the pull request preview generator."
-						>
+						<SettingsField label={PREVIEW_ROWS.enable.label} hint={PREVIEW_ROWS.enable.hint}>
 							<Controller
 								control={form.control}
 								name="enabled"
@@ -280,10 +284,7 @@ export function PreviewSettings({
 							/>
 						</SettingsField>
 
-						<SettingsField
-							label="Source"
-							hint="The repository whose pull requests create preview environments."
-						>
+						<SettingsField label={PREVIEW_ROWS.source.label} hint={PREVIEW_ROWS.source.hint}>
 							<RepositorySelector
 								label=""
 								value={repoUrl}
@@ -300,6 +301,7 @@ export function PreviewSettings({
 								placeholder="Select repository..."
 								variant="settings"
 								providerAvailability={providerAvailability}
+								linkedProviders={linkedProviders}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
 								<GitProviderIcon provider={selectedProvider} size={14} mono={false} />
@@ -330,8 +332,8 @@ export function PreviewSettings({
 						</SettingsField>
 
 						<SettingsField
-							label="Placement"
-							hint="How each pull request is isolated on the selected fabric."
+							label={PREVIEW_ROWS.placement.label}
+							hint={PREVIEW_ROWS.placement.hint}
 						>
 							<Controller
 								control={form.control}
@@ -407,11 +409,14 @@ export function PreviewSettings({
 									)}
 								/>
 							</div>
-							{fabrics.length === 0 && (
-								<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
-									No project fabrics found. Default fabric will be used when one exists.
-								</div>
-							)}
+							{/* Always rendered, with a line for each case, as the Credentials row's note is: the
+							    row keeps one height whatever the project's fabrics, so the route skeleton can
+							    reserve it exactly (RUBRIC B2, #6335). */}
+							<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
+								{fabrics.length === 0
+									? "No project fabrics found. Default fabric will be used when one exists."
+									: "Pick a project fabric, or keep Default fabric to use the project's default."}
+							</div>
 							<FieldError
 								message={
 									form.formState.errors.placement_mode?.message ??
@@ -422,8 +427,8 @@ export function PreviewSettings({
 						</SettingsField>
 
 						<SettingsField
-							label="Credentials"
-							hint="Optional ArgoCD credential for polling private repositories."
+							label={PREVIEW_ROWS.credentials.label}
+							hint={PREVIEW_ROWS.credentials.hint}
 						>
 							<Controller
 								control={form.control}
@@ -457,7 +462,7 @@ export function PreviewSettings({
 							<FieldError message={form.formState.errors.git_credential_id?.message} />
 						</SettingsField>
 					</div>
-					<SettingsCardFoot note="Saved changes apply on the next preview reconciliation">
+					<SettingsCardFoot note={PREVIEW_SAVE_NOTE}>
 						<Button type="submit" size="sm" disabled={saveDisabled}>
 							{busy ? "Saving…" : "Save changes"}
 						</Button>
@@ -472,6 +477,11 @@ export function PreviewSettings({
  * The Preview environments page body (#6128): the read the route prefetched (`settings.preview`),
  * in its four renders — the form, a refusal, an error with a retry, and "gone" (a project deleted
  * while the page was open). The skeleton shows only if the server's prefetch did not land.
+ *
+ * The viewer's linked git providers (`projects.linkedGitProviders`) are prefetched with it and
+ * handed to the repo picker (#6335). That decides the Source row's layout: the "No Git accounts
+ * linked" panel or the repository row. It was read by the picker after mount, so the first paint
+ * showed a loading row that the answer then replaced.
  */
 export function PreviewSettingsPage({
 	project,
@@ -486,6 +496,7 @@ export function PreviewSettingsPage({
 	const query = useQuery(
 		orpc.settings.preview.queryOptions({ input: { project }, retry: retryUnlessRefused }),
 	);
+	const linked = useQuery(orpc.projects.linkedGitProviders.queryOptions());
 
 	if (query.data === undefined) {
 		if (query.isError) {
@@ -498,7 +509,7 @@ export function PreviewSettingsPage({
 				/>
 			);
 		}
-		return <PreviewSettingsSkeleton />;
+		return <PreviewSettingsSkeleton linked={linkedFromProviders(linked.data)} />;
 	}
 
 	if (query.data === null) {
@@ -519,6 +530,7 @@ export function PreviewSettingsPage({
 			gitCredentials={query.data.gitCredentials}
 			gitlabBaseUrl={gitlabBaseUrl}
 			providerAvailability={providerAvailability}
+			linkedProviders={linked.data}
 		/>
 	);
 }

@@ -41,7 +41,8 @@
 // whose ANSWERED render is its own empty state cannot tell a server-backed empty answer from a
 // client fetch that has not happened yet — both render the same — so B1/B3/B4 are NOT MEASURED there
 // with that reason, never PASS. The spec drives an organisation SEEDED with rows for exactly this
-// reason: every list the seed reaches answers non-empty.
+// reason: every list the seed reaches answers non-empty. B1 narrows that to the REGION (#6378): one
+// empty card on a dashboard of data cards withholds nothing but that card's own claim (`judgeB1`).
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -234,6 +235,19 @@ export interface RegionSnapshot {
 	 * the table. A phrase matcher read labels such as "No limit" as empty copy.
 	 */
 	empty: number;
+	/**
+	 * The empty states above that sit in NO region of the page (see `REGION_SELECTOR`) — an empty
+	 * list that is the page itself rather than one card of it. B1 cannot judge a page around one.
+	 */
+	emptyUnregioned: number;
+	/** Distinct regions holding at least one empty state. */
+	emptyRegions: number;
+	/**
+	 * Regions holding NO empty state, outside every skeleton and error surface, with at least one
+	 * row or text leaf: the regions whose answered render is data, not "nothing here". B1 judges a
+	 * page with an empty region only when it has at least one of these (`judgeB1`).
+	 */
+	dataRegions: number;
 	/** Outermost error surfaces: `role="alert"`, `RegionError`, or the shared `ErrorState`. */
 	errors: number;
 	/** The ROUTE boundary's `ErrorState` is showing — the whole page failed, not a region of it. */
@@ -258,11 +272,21 @@ export interface RegionSnapshot {
 /** Relative times — "3 minutes ago" on one load is "4 minutes ago" on the next, and is not data. */
 const RELATIVE_TIME = String.raw`\b(?:about |almost |over |less than )?(?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?(?: ago)?\b|\bjust now\b|\bin (?:a|an|\d+) (?:second|minute|hour|day|week|month|year)s?\b`;
 
+/**
+ * What a REGION of a page is, to the instrument: a `<section>` (the overview's cards are
+ * `<section aria-label>`), anything with `role="region"`, or `@repo/ui/card`'s `data-slot="card"`.
+ * An empty state's region is the nearest of these inside `main`; one with none inside `main` is the
+ * page's own empty state. Structure, never wording — and a page that draws its cards as bare
+ * `div`s has no regions here, so its empty state reads as the page's and B1 is withheld there as it
+ * was before #6378: the boundary errs towards NOT MEASURED, never towards a verdict.
+ */
+export const REGION_SELECTOR = 'section, [role="region"], [data-slot="card"]';
+
 /** Read `main` once. Never waits — the caller decides when the page has had its chance. */
 export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 	return page.evaluate(
-		({ arms, relativeTime }) => {
-			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, errors: 0, routeError: false, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
+		({ arms, relativeTime, regionSelector }) => {
+			const zero = { hasMain: false, skeletons: 0, busy: false, empty: 0, emptyUnregioned: 0, emptyRegions: 0, dataRegions: 0, errors: 0, routeError: false, rows: 0, leaves: 0, contentLeaves: 0, leavesOutsideErrors: 0, texts: [] };
 			const main = document.querySelector("main");
 			if (main === null) return zero;
 			const shown = (el: Element): boolean => {
@@ -293,27 +317,45 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 					.trim();
 			const timeRe = new RegExp(relativeTime, "gi");
 			// `RegionError` is built on the empty-state primitives; inside an error surface nothing is empty copy.
-			const emptySlots = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el)).length;
+			const emptySlotEls = all.filter((el) => el.getAttribute("data-slot") === "empty" && !inError(el));
 			// `DataTable`'s empty row: a body row with ONE cell spanning the table (`colSpan` ≥ 2).
 			const isEmptyRow = (el: Element): boolean =>
 				el instanceof HTMLTableRowElement && el.closest("tbody") !== null && el.cells.length === 1 && el.cells[0].colSpan >= 2;
-			const emptyRows = all.filter((el) => isEmptyRow(el) && !inError(el)).length;
-			const rows = all.filter((el) => {
+			const emptyRowEls = all.filter((el) => isEmptyRow(el) && !inError(el));
+			const emptyEls = [...emptySlotEls, ...emptyRowEls];
+			// The nearest region INSIDE `main` — `closest()` alone would climb past it.
+			const regionOf = (el: Element): Element | null => {
+				for (let p = el.parentElement; p !== null && p !== main; p = p.parentElement) if (p.matches(regionSelector)) return p;
+				return null;
+			};
+			const emptyRegionSet = new Set(emptyEls.map(regionOf).filter((r): r is Element => r !== null));
+			const leafEls = all.filter((el) => !inSkeleton(el) && ownText(el) !== "");
+			const rowEls = all.filter((el) => {
 				if (inSkeleton(el)) return false;
 				if (el.tagName === "TR") return el.closest("tbody") !== null && !isEmptyRow(el);
 				if (el.getAttribute("role") === "row") return el.querySelector('[role="columnheader"]') === null;
 				return el.tagName === "LI" || el.getAttribute("role") === "listitem";
-			}).length;
-			const leafEls = all.filter((el) => !inSkeleton(el) && ownText(el) !== "");
+			});
+			const dataRegions = all.filter(
+				(r) =>
+					r.matches(regionSelector) &&
+					!inSkeleton(r) &&
+					!inError(r) &&
+					!emptyEls.some((e) => r.contains(e)) &&
+					(leafEls.some((l) => r.contains(l)) || rowEls.some((x) => r.contains(x))),
+			).length;
 			const mask = (s: string): string => s.toLowerCase().replace(timeRe, "<t>").replace(/\d/g, "#").slice(0, 80);
 			return {
 				hasMain: true,
 				skeletons: all.filter((el) => el.getAttribute("data-slot") === "skeleton").length,
 				busy: main.getAttribute("aria-busy") === "true" || main.querySelector('[aria-busy="true"]') !== null,
-				empty: emptySlots + emptyRows,
+				empty: emptyEls.length,
+				emptyUnregioned: emptyEls.filter((el) => regionOf(el) === null).length,
+				emptyRegions: emptyRegionSet.size,
+				dataRegions,
 				errors: errorRoots.length,
 				routeError: all.some((el) => arms.some((tokens) => tokens.every((t) => el.classList.contains(t)))),
-				rows,
+				rows: rowEls.length,
 				leaves: leafEls.length,
 				contentLeaves: leafEls.filter((el) => {
 					const m = mask(ownText(el));
@@ -323,7 +365,7 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
 				texts: leafEls.slice(0, 400).map((el) => mask(ownText(el))),
 			};
 		},
-		{ arms: errorStateSignature(), relativeTime: RELATIVE_TIME },
+		{ arms: errorStateSignature(), relativeTime: RELATIVE_TIME, regionSelector: REGION_SELECTOR },
 	);
 }
 
@@ -334,21 +376,19 @@ export async function snapshotRegion(page: Page): Promise<RegionSnapshot> {
  * readiness; `quietMs` is chosen per caller to outlast whatever the page is still doing (a query
  * retry waits about a second).
  */
-export async function waitStill(page: Page, opts: { minMs: number; quietMs: number; capMs: number }): Promise<boolean> {
+export async function waitStill(
+	page: Page,
+	opts: { minMs: number; quietMs: number; capMs: number },
+	inFlight: () => number = () => 0,
+): Promise<boolean> {
 	const start = Date.now();
-	const read = () =>
-		page
-			.evaluate(() => {
-				const main = document.querySelector("main");
-				return main === null ? "none" : `${main.querySelectorAll("*").length}|${main.innerText.length}|${main.querySelectorAll('[aria-busy="true"]').length}`;
-			})
-			.catch(() => "unreadable");
-	let last = await read();
+	let last = await mainSignature(page);
 	let since = Date.now();
 	for (;;) {
 		await page.waitForTimeout(250);
-		const now = await read();
-		if (now !== last) {
+		const now = await mainSignature(page);
+		// A read still in flight is a change that has not landed yet: the window restarts until it has.
+		if (now !== last || inFlight() > 0) {
 			last = now;
 			since = Date.now();
 		}
@@ -358,37 +398,78 @@ export async function waitStill(page: Page, opts: { minMs: number; quietMs: numb
 	}
 }
 
+/** A coarse fingerprint of `main` — element count, text length, busy count — that moves when a region arrives. */
+function mainSignature(page: Page): Promise<string> {
+	return page
+		.evaluate(() => {
+			const main = document.querySelector("main");
+			return main === null ? "none" : `${main.querySelectorAll("*").length}|${main.innerText.length}|${main.querySelectorAll('[aria-busy="true"]').length}`;
+		})
+		.catch(() => "unreadable");
+}
+
 // ── the three loads B1, B3 and B4 compare ───────────────────────────────────────────────────────
 
 /** The route answered normally — the render every disturbed one is compared against. */
 export interface AnsweredLoad {
 	snapshot: RegionSnapshot;
-	/** Whether the page settled (no skeleton, no `aria-busy`) inside the readiness budget. */
+	/**
+	 * Whether the page settled: no skeleton or `aria-busy` inside the readiness budget, and then no
+	 * read in flight and no change to `main` for `ANSWERED_QUIET.quietMs` before its cap.
+	 */
 	settled: boolean;
 	/** Every read the page made from navigation to settled, in first-seen order. */
 	reads: string[];
 }
 
-/** Open a page at the B viewport, collecting the reads it makes. */
-async function openTracked(context: BrowserContext): Promise<{ page: Page; reads: Set<string> }> {
+/** Open a page at the B viewport, collecting the reads it makes and counting the ones still in flight. */
+async function openTracked(context: BrowserContext): Promise<{ page: Page; reads: Set<string>; inFlight: () => number }> {
 	const page = await context.newPage();
 	await page.setViewportSize(B_VIEWPORT);
 	const reads = new Set<string>();
+	const pending = new Set<Request>();
 	page.on("request", (request) => {
 		const key = readKey(request);
-		if (key !== null) reads.add(key);
+		if (key === null) return;
+		reads.add(key);
+		pending.add(request);
 	});
-	return { page, reads };
+	page.on("requestfinished", (request) => pending.delete(request));
+	page.on("requestfailed", (request) => pending.delete(request));
+	return { page, reads, inFlight: () => pending.size };
 }
 
-/** Load `url` with every read answered, and read the settled region. */
-export async function loadAnswered(context: BrowserContext, url: string): Promise<AnsweredLoad> {
-	const { page, reads } = await openTracked(context);
+/**
+ * How long the answered load waits, after readiness, for the page to stop changing (#6332).
+ *
+ * `awaitReady` asks whether the page still SAYS it is loading — a skeleton, `aria-busy`. A region a
+ * client component renders only once its own query answers says nothing while it waits: the
+ * "Classify" picker appears when `useCanEditClassification` answers, with no placeholder before it.
+ * Readiness therefore settled before it, and whether an answered snapshot carried the region was a
+ * race — `[project]/settings/general` and `[project]/environments` flipped B1/B4 between two runs of
+ * the same pages. So the answered load also waits until NO data read is in flight and `main` has not
+ * changed for `quietMs`, for at most `capMs`. A page still reading or still changing at the cap is
+ * not settled: what it showed is a claim about the run, not an answered render.
+ *
+ * `quietMs` outlasts the gap between a read landing and its region painting, and between hydration
+ * and a query that starts on mount; the cap bounds a page that never stops (a poll that repaints).
+ */
+export const ANSWERED_QUIET = { minMs: 0, quietMs: 1_500, capMs: 12_000 } as const;
+
+/**
+ * Load `url` with every read answered, and read the settled region: readiness, then quiescence
+ * (`ANSWERED_QUIET`). `quiesce: false` is the load as it was before #6332 — readiness only — and
+ * exists for the positive control alone, which must show that the late-region fixture really is
+ * missed by it.
+ */
+export async function loadAnswered(context: BrowserContext, url: string, opts: { quiesce?: boolean } = {}): Promise<AnsweredLoad> {
+	const { page, reads, inFlight } = await openTracked(context);
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 		const readiness = await awaitReady(page);
+		const quiet = opts.quiesce === false || (await waitStill(page, ANSWERED_QUIET, inFlight));
 		const snapshot = await snapshotRegion(page);
-		return { snapshot, settled: readiness.settled && !isLoadingRead(readiness.last), reads: [...reads] };
+		return { snapshot, settled: readiness.settled && quiet && !isLoadingRead(readiness.last), reads: [...reads] };
 	} finally {
 		await page.close();
 	}
@@ -432,6 +513,25 @@ export async function loadHeld(context: BrowserContext, url: string, pass: (key:
 		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
 		await page.close();
 	}
+}
+
+/** B1's loads and verdict: the held load, and the answered load taken right after it. */
+export interface B1Measurement {
+	verdict: BVerdict;
+	held: HeldLoad;
+	after: AnsweredLoad;
+}
+
+/**
+ * Take B1's held load and, straight after it, an answered load, then judge the held render against
+ * that load AND every earlier answered load the caller took (`judgeB1Loads`). The load after is the
+ * one at the held load's data: phase 1's answered load can be minutes and a run's worth of fixture
+ * writes older (#6326).
+ */
+export async function measureB1(context: BrowserContext, url: string, earlier: readonly AnsweredLoad[]): Promise<B1Measurement> {
+	const held = await loadHeld(context, url);
+	const after = await loadAnswered(context, url);
+	return { verdict: judgeB1Loads(earlier, held, after), held, after };
 }
 
 /** A body the read router's own unexpected-error path answers with, so the client decodes it as one. */
@@ -568,13 +668,16 @@ function onlyIn(a: readonly string[], b: readonly string[]): string[] {
 
 /** The NOT MEASURED reason every comparison shares when the answered render never settled. */
 export const NOT_SETTLED =
-	"answered-not-settled — the route still showed a skeleton or `aria-busy` after the readiness budget with every read answered, so there is no answered render to compare against";
+	"answered-not-settled — with every read answered, the route still showed a skeleton or `aria-busy` after the readiness budget, or was still reading or changing at the quiet cap, so there is no answered render to compare against";
 
 /** The NOT MEASURED reason for a route none of whose OWN reads was held or failed. */
 export const NO_PAGE_READS =
 	"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser";
 
-/** The NOT MEASURED reason for a route whose answered render is its own empty state. */
+/**
+ * The NOT MEASURED reason for a route whose answered render is its own empty state. For B1 that means
+ * an empty state in no region of the page, or no region of it that answered with data (`judgeB1`).
+ */
 export const ANSWERED_EMPTY =
 	"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same";
 
@@ -588,21 +691,95 @@ export const ANSWERED_EMPTY =
  * list's server render by design (`useFilterUrlSync` reports the URL unread until mount, #4980), and
  * clock, date and initials text waits for hydration by design (`ClockSlot`). Neither is data. Both
  * stay in the evidence (`heldRender.busy`, `onlyAnswered` / `onlyHeld`), so a reader still sees them.
+ *
+ * AN EMPTY STATE IS WITHHELD PER REGION (#6378). An empty region in the answered render cannot be
+ * judged: a server-backed "nothing here" and a client read that has not answered render the same, so
+ * a held render that matches it there proves nothing about that region. Before #6378 one such region
+ * anywhere withheld the whole route — the overview's Alerts card, empty or plan-gated, kept B1
+ * unmeasured on a page whose first paint was complete. Now the route is withheld only when the empty
+ * state is not confined to regions (`emptyUnregioned` — a list page's own empty state), or when no
+ * region answered with data (`dataRegions` is zero — every data region is empty). Otherwise the
+ * verdict is a claim about the DATA regions, and the empty ones are named, unjudged, in the evidence
+ * (`emptyRegions`). The comparison itself stays page-wide and strict: a held render that differs
+ * anywhere, the empty region included — a skeleton there, the empty state missing — still FAILs,
+ * because that difference is a first-paint defect whatever the region's answer is. What is excluded
+ * is only the one case B1 cannot read: the empty region matching.
+ *
+ * ONE comparison. A route is judged through `judgeB1Loads`, over every answered load of it.
  */
-export function judgeB1(answered: AnsweredLoad, held: HeldLoad): BVerdict {
+export function judgeB1(answered: AnsweredLoad, held: HeldLoad, grown = false): BVerdict {
+	const evidence = b1Evidence(answered, held, grown);
+	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
+	if (evidence.differs.length > 0) return { verdict: "FAIL", evidence };
+	if (b1WithheldForEmpty(answered.snapshot, held)) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
+	return { verdict: "PASS", evidence };
+}
+
+/**
+ * Whether B1's matching comparison says nothing about the page's data: the answered render shows an
+ * empty state, something was held, and either an empty state sits outside every region or no region
+ * answered with data. `judgeB1` explains the rule.
+ */
+function b1WithheldForEmpty(answered: RegionSnapshot, held: HeldLoad): boolean {
+	if (answered.empty === 0 || held.held.length === 0) return false;
+	return answered.emptyUnregioned > 0 || answered.dataRegions === 0;
+}
+
+/** The rule before #6378: ANY empty state on the page withheld B1. Kept for the positive control alone. */
+function b1WithheldByPageRule(answered: RegionSnapshot, held: HeldLoad): boolean {
+	return answered.empty > 0 && held.held.length > 0;
+}
+
+/**
+ * What one B1 comparison saw: the signals that differ, and both renders. `grown` drops `rows` from
+ * the differences — only ever for a load taken before the held one, when `judgeB1Loads` has shown
+ * that the feed grew in between.
+ */
+function b1Evidence(answered: AnsweredLoad, held: HeldLoad, grown: boolean) {
 	const differs = differences(answered.snapshot, held.snapshot);
-	const evidence = {
-		differs,
+	return {
+		differs: grown ? differs.filter((d) => d !== "rows") : differs,
+		grown,
 		held: held.held,
 		answered: summary(answered.snapshot),
 		heldRender: summary(held.snapshot),
 		onlyAnswered: onlyIn(answered.snapshot.texts, held.snapshot.texts),
 		onlyHeld: onlyIn(held.snapshot.texts, answered.snapshot.texts),
 	};
-	if (!answered.settled) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence };
-	if (differs.length > 0) return { verdict: "FAIL", evidence };
-	if (answered.snapshot.empty > 0 && held.held.length > 0) return { verdict: "NOT MEASURED", reason: ANSWERED_EMPTY, evidence };
-	return { verdict: "PASS", evidence };
+}
+
+/**
+ * B1 over every answered load of the route: the ones taken BEFORE the held load (phase 1's), and the
+ * one taken straight AFTER it (`measureB1`).
+ *
+ * B1 compares rows, and a feed can be appended to between two loads. Phase 1's answered load was
+ * taken before the run's own fixtures wrote to the activity log; the held load came in phase 2, after
+ * them, so `~/settings/activity` held 7 rows against 4 answered and FAILed with a correct first paint
+ * (#6326). So a row count is excused in exactly one shape: the held render has MORE rows than an
+ * earlier answered load, and the answered load after the held one settled with the SAME count as the
+ * held render — the data the held load saw, confirmed by a load of it. Nothing else is excused: a
+ * skeleton, an empty state, an error or missing content still FAILs against any load that shows it,
+ * and fewer held rows than any answered load still FAILs.
+ *
+ * Every settled load is a witness, and the verdict is the STRICTEST: FAIL when any comparison FAILs,
+ * PASS when none does and at least one PASSes, NOT MEASURED otherwise (the first comparison's reason).
+ * Strictest, because an answered load can settle before a client-only region arrives — a page with
+ * no skeleton for that region reads as settled — and such a load matches a held render that lacks the
+ * region. A rule that PASSed on any match passed `[project]/settings/general` that way. The evidence
+ * is the deciding comparison's, with each comparison's verdict under `bracket`.
+ */
+export function judgeB1Loads(earlier: readonly AnsweredLoad[], held: HeldLoad, after: AnsweredLoad): BVerdict {
+	const confirmed = after.settled && after.snapshot.rows === held.snapshot.rows;
+	const judged = [
+		...earlier.map((a) => ({ a, grown: confirmed && held.snapshot.rows > a.snapshot.rows })),
+		{ a: after, grown: false },
+	].map(({ a, grown }) => ({ a, grown, v: judgeB1(a, held, grown) }));
+	const chosen = judged.find((j) => j.v.verdict === "FAIL") ?? judged.find((j) => j.v.verdict === "PASS") ?? judged[0];
+	if (chosen === undefined) return { verdict: "NOT MEASURED", reason: NOT_SETTLED, evidence: { held: held.held } };
+	const evidence = { ...b1Evidence(chosen.a, held, chosen.grown), bracket: judged.map((j) => j.v.verdict) };
+	const v = chosen.v;
+	if (v.verdict === "NOT MEASURED") return { verdict: "NOT MEASURED", reason: v.reason, evidence };
+	return { verdict: v.verdict, evidence };
 }
 
 /** B3: with every PAGE read held (the shell's answered), no empty state the answered render does not show. */
@@ -710,6 +887,158 @@ export function judgeB5(answered: AnsweredLoad, pageReads: readonly string[], sh
 		return { verdict: "NOT MEASURED", reason: "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed", evidence };
 	}
 	return { verdict: blanked.length > 0 ? "FAIL" : "PASS", evidence };
+}
+
+// ── the floor under B3 and B5 (#6318) ───────────────────────────────────────────────────────────
+//
+// B3 and B5 can only measure a route that makes a read of its OWN on load, and ADR 0005 moves every
+// first-paint read onto the server prefetch, so the set they can measure shrinks with every correct
+// migration. A floor that COUNTED their PASS/FAIL cells (`MIN_MEASURED_FOR`, 10→9→7→6 on B3 and
+// 10→9 on B5) had to be lowered by hand each time, and a floor every correct change lowers no longer
+// tells a migration from an instrument that stopped measuring.
+//
+// So the floor asks a question a migration cannot change the answer to: did the instrument score
+// every route that an INDEPENDENT load saw make a read of its own on load? The witness is B4's cold
+// load — a different load, in a context of its own, that fails every read and records which of them
+// were the page's. A route it saw read on load must be scored, with one excuse per predicate that is
+// a fact about the page: B3 may read `answered-empty` (the answered render is its own empty state),
+// B5 may read `over-read-budget` (more reads of its own than B5 fails one at a time). A route it did
+// not see read is legitimately `no-page-reads` (B5: also `not-intercepted`). Any other NOT MEASURED
+// — a thrown load, a missing phase, a withheld predicate, an unrecognised reason — is the
+// instrument's and fails. A B4 that was itself withheld, or not measured for an instrument reason,
+// witnesses nothing, and one that still carries cold-load evidence fails the floor outright.
+//
+// "Every witnessed route was scored" is vacuously true when nothing was witnessed, so CONTROL routes
+// that read on load by design must each be witnessed and scored — one per SHELL. The witness and the
+// verdicts share the shell classifier (`shellReadsFor`), the read carrier (`readCarrier`) and the
+// read key (`readKey`), so a fault in any of them can move a route out of both at once. A control in
+// every shell turns such a fault red as long as it reaches the control's page reads; a fault confined
+// to one shell's routes is caught by that shell's control.
+//
+// The boundary, stated: a fault in those shared parts that spares every control's reads and drops
+// only other routes' is invisible here. That is the fixture control's job (`shell-only`,
+// `cold-shell`, `action-page-read`, `client-fetch` drive the classifier, the carrier and the key
+// together) and the classifier's self-tests', not this floor's.
+
+/** A written B record, as the floor reads it. */
+export interface BFloorRecord {
+	route: string;
+	predicate: string;
+	verdict: string;
+	reason?: string;
+	evidence?: unknown;
+}
+
+/** The predicates whose measurable set shrinks as routes prefetch, and so are floored by witness. */
+export type LoadReadPredicate = "B3" | "B5";
+
+/**
+ * The NOT MEASURED reasons that describe the ROUTE rather than the instrument, per predicate. Every
+ * other reason fails the floor. `no-page-reads` and `not-intercepted` additionally fail on a route
+ * the witness saw make a read of its own on load (`LOAD_READ_EXCUSES`).
+ */
+const ROUTE_REASONS: Record<LoadReadPredicate, readonly string[]> = {
+	B3: ["no-page-reads", "answered-empty"],
+	B5: ["no-page-reads", "not-intercepted", "over-read-budget"],
+};
+
+/** The reasons that mean "this route made no read of its own to measure" — false on a witnessed route. */
+const LOAD_READ_EXCUSES: Record<LoadReadPredicate, readonly string[]> = {
+	B3: ["no-page-reads"],
+	B5: ["no-page-reads", "not-intercepted"],
+};
+
+/** A NOT MEASURED reason's leading token (`no-page-reads — …` → `no-page-reads`). */
+function reasonToken(reason: string | undefined): string {
+	return (reason ?? "").trim().split(/\s/)[0] ?? "";
+}
+
+/** B4's own NOT MEASURED reasons that are facts about the route — a B4 carrying one still witnesses. */
+const B4_ROUTE_REASONS: readonly string[] = ["answered-empty", "no-page-reads", "no-reads-failed"];
+
+/** Whether a B4 record can witness: scored, or NOT MEASURED for a fact about its route. */
+function trustedB4(record: BFloorRecord): boolean {
+	return record.verdict !== "NOT MEASURED" || B4_ROUTE_REASONS.includes(reasonToken(record.reason));
+}
+
+/**
+ * The page reads B4's COLD load failed on `record`, or an empty list when the record carries no
+ * cold-phase evidence. A B4 whose load threw, or that has no record, carries none and witnesses
+ * nothing. A WITHHELD B4 keeps its evidence (`report.ts` rewrites the verdict, not the evidence), so
+ * `readsOnLoad` skips it and `loadReadFloorProblems` fails on it.
+ */
+function coldPageReads(record: BFloorRecord): string[] {
+	const ev = record.evidence;
+	if (typeof ev !== "object" || ev === null || !("phases" in ev) || !Array.isArray(ev.phases)) return [];
+	const phases: unknown[] = ev.phases;
+	const out: string[] = [];
+	for (const p of phases) {
+		if (typeof p !== "object" || p === null || !("phase" in p) || p.phase !== "cold load") continue;
+		if (!("pageReadsFailed" in p) || !Array.isArray(p.pageReadsFailed)) continue;
+		const keys: unknown[] = p.pageReadsFailed;
+		for (const k of keys) if (typeof k === "string") out.push(k);
+	}
+	return out;
+}
+
+/**
+ * The routes an independent load saw make a read of their own ON LOAD, with those reads: B4's cold
+ * phase failed at least one read the shell classifier gave the page. Only a B4 that was measured
+ * (`trustedB4`) witnesses.
+ */
+export function readsOnLoad(records: readonly BFloorRecord[]): Map<string, string[]> {
+	const out = new Map<string, string[]>();
+	for (const r of records) {
+		if (r.predicate !== "B4" || !trustedB4(r)) continue;
+		const reads = coldPageReads(r);
+		if (reads.length > 0) out.set(r.route, reads);
+	}
+	return out;
+}
+
+/**
+ * Everything wrong with `predicate`'s column as a measurement, against the load witness. Empty when
+ * every route that made a read of its own on load was scored, every other NOT MEASURED names a fact
+ * about its route, and every one of `controls` — routes that read on load by design, one per shell —
+ * was both witnessed and scored.
+ */
+export function loadReadFloorProblems(records: readonly BFloorRecord[], predicate: LoadReadPredicate, controls: readonly string[]): string[] {
+	const problems: string[] = [];
+	if (controls.length === 0) problems.push(`the ${predicate} floor was given no control route, so a scan that saw no read anywhere would pass it`);
+	const witnessed = readsOnLoad(records);
+	for (const r of records) {
+		if (r.predicate === "B4" && !trustedB4(r) && coldPageReads(r).length > 0) {
+			problems.push(`B4 on ${r.route} is NOT MEASURED (${(r.reason ?? "").slice(0, 120)}) yet carries cold-load evidence — a withheld B4 cannot witness ${predicate}'s floor`);
+		}
+	}
+	const mine = new Map(records.filter((r) => r.predicate === predicate).map((r) => [r.route, r]));
+	const accepted = ROUTE_REASONS[predicate];
+	const excuses = LOAD_READ_EXCUSES[predicate];
+	for (const [route, r] of mine) {
+		if (r.verdict !== "NOT MEASURED") continue;
+		const token = reasonToken(r.reason);
+		if (!accepted.includes(token)) {
+			problems.push(`${predicate} on ${route} is NOT MEASURED for a reason that is the instrument's, not the route's: ${(r.reason ?? "(no reason)").slice(0, 160)}`);
+			continue;
+		}
+		const reads = witnessed.get(route);
+		if (reads && excuses.includes(token)) {
+			problems.push(`${predicate} on ${route} read \`${token}\`, but B4's cold load saw it make ${reads.length} read(s) of its own on load (${reads.slice(0, 3).join(", ")}) — the ${predicate} load did not see what another load did`);
+		}
+	}
+	for (const route of witnessed.keys()) {
+		if (!mine.has(route)) problems.push(`${predicate} has no record for ${route}, which B4's cold load saw make a read of its own on load`);
+	}
+	for (const control of controls) {
+		const c = mine.get(control);
+		if (!witnessed.has(control)) {
+			problems.push(`the control route ${control} was not seen making a read of its own on load — either the witness stopped seeing reads in its shell, or the control stopped reading on load and needs replacing with a route of that shell that does`);
+		}
+		if (c?.verdict !== "PASS" && c?.verdict !== "FAIL") {
+			problems.push(`${predicate} did not score the control route ${control} (${c ? `${c.verdict}${c.reason ? ` — ${c.reason.slice(0, 120)}` : ""}` : "no record"})`);
+		}
+	}
+	return problems;
 }
 
 /** The reads every route under the same shells makes — the shell's, not the page's. */
@@ -1219,6 +1548,12 @@ export const B_CONTROL_MODES = [
 	"action-page-read",
 	"cold-shell",
 	"layout-rpc-refetch",
+	"growing-feed",
+	"late-region",
+	"empty-card-beside-data",
+	"empty-card-data-late",
+	"empty-card-only",
+	"empty-unregioned-beside-data",
 ] as const;
 
 /**
@@ -1293,6 +1628,20 @@ if (MODE === "layout-rpc-refetch") {
 	// A layout-prefetched read the client makes only when it goes stale: nothing in the page reads.
 	setTimeout(function () { read('layoutread').then(function () {}, function () {}); }, 30000);
 }
+if (MODE === "late-region") {
+	// The Classify shape (#6332): a region a client component renders only once its own read answers,
+	// with NO placeholder while it waits. The read is slow (\`LATE_READ_MS\`), so readiness settles first.
+	read('late').then(function () { var el = document.getElementById('region-b'); if (el) el.innerHTML = '<button type="button">Classify</button>'; }, function () {});
+}
+if (MODE === "empty-card-beside-data" || MODE === "empty-card-only" || MODE === "empty-unregioned-beside-data") {
+	// A read the page makes and ignores, so the held load holds something — the condition under which
+	// the page-wide rule withheld B1.
+	read('aux').then(function () {}, function () {});
+}
+if (MODE === "empty-card-data-late") {
+	// The data card arrives only when its client read answers: the held render has the empty card alone.
+	read('rows').then(function (b) { var el = document.getElementById('region'); if (el) el.innerHTML = '<section aria-label="Recent jobs"><h3>Recent jobs</h3>' + rows(b.json) + '</section>'; }, function () {});
+}
 if (MODE === "action-page-read") {
 	shellRead().then(function () {}, function () {});
 	pageAction().then(function () {}, function () { set('region', EMPTY, false); });
@@ -1355,11 +1704,38 @@ if (MODE.indexOf("swap-") === 0) {
 }
 </script></body></html>`;
 
-/** What each mode renders on the server, before any script runs. */
-function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string } {
+/**
+ * The `growing-feed` mode's rows on its Nth page load in one context: two, then five from the second
+ * load on — an append-only log that one burst of writes grew between two loads, the way the run's own
+ * fixtures grow `~/settings/activity` (#6326). Served from the server, so its first paint is correct.
+ */
+function feedRows(served: number): string {
+	const names = served >= 2 ? ["alpha", "beta", "gamma", "delta", "epsilon"] : ["alpha", "beta"];
+	return `<table><tbody>${names.map((n) => `<tr><td>${n}</td></tr>`).join("")}</tbody></table>`;
+}
+
+/**
+ * How long the `late-region` fixture's read takes to answer. Longer than `awaitReady` needs to call a
+ * page with no controls settled (`READY_STABLE_READS.empty` reads `READY_POLL_MS` apart, 1.5 s), so a
+ * readiness-only load snapshots before the region exists; well inside `ANSWERED_QUIET.capMs`, so the
+ * quiet wait outlasts it.
+ */
+const LATE_READ_MS = 3_000;
+
+/** What each mode renders on the server, before any script runs. `feedServed` is `growing-feed`'s load count. */
+function ssrFor(mode: BControlMode, feedServed = 1): { a: string; b: string; staticCopy: string } {
 	const rows = "<table><tbody><tr><td>alpha</td></tr><tr><td>beta</td></tr></tbody></table>";
+	if (mode === "growing-feed") return { a: feedRows(feedServed), b: "", staticCopy: "" };
 	const skeleton = '<div data-slot="skeleton" class="sk"></div><div data-slot="skeleton" class="sk"></div>';
 	const none = "";
+	if (mode === "late-region") return { a: rows, b: none, staticCopy: none };
+	// The overview's shape (#6378): a data card beside an Alerts card whose answer is its empty state.
+	const dataCard = `<section aria-label="Recent jobs"><h3>Recent jobs</h3>${rows}</section>`;
+	const emptyCard = '<section aria-label="Alerts"><h3>Alerts</h3><div data-slot="empty">No recent alerts.</div></section>';
+	if (mode === "empty-card-beside-data") return { a: dataCard, b: emptyCard, staticCopy: none };
+	if (mode === "empty-card-data-late" || mode === "empty-card-only") return { a: none, b: emptyCard, staticCopy: none };
+	// The same data card, beside an empty state that is in no region — the page's own.
+	if (mode === "empty-unregioned-beside-data") return { a: dataCard, b: '<div data-slot="empty">No results.</div>', staticCopy: none };
 	if (mode === "prefetched" || mode === "empty-on-error" || mode === "vanish-on-error" || mode === "static" || mode === "shell-only" || mode === "action-page-read" || mode === "cold-shell" || mode === "layout-rpc-refetch") return { a: rows, b: none, staticCopy: none };
 	// `DataTable`'s empty row: one body row whose single cell spans the table.
 	if (mode === "empty-while-pending") return { a: '<table><tbody><tr><td colspan="2">No results.</td></tr></tbody></table>', b: none, staticCopy: none };
@@ -1374,14 +1750,19 @@ function ssrFor(mode: BControlMode): { a: string; b: string; staticCopy: string 
 /** Serve every fixture mode, and its reads, on one context. */
 export async function serveBehaviourControl(context: BrowserContext): Promise<void> {
 	const routeError = (errorStateSignature()[0] ?? []).join(" ");
-	await context.route(`${B_CONTROL_ORIGIN}/**`, (route) => {
+	// Per context: `growing-feed` grows on this context's second load of it, wherever that falls.
+	let feedServed = 0;
+	await context.route(`${B_CONTROL_ORIGIN}/**`, async (route) => {
 		const { pathname } = new URL(route.request().url());
 		if (pathname.includes(RPC_MARKER)) {
+			// `late-region`'s read answers after readiness has settled (see `LATE_READ_MS`).
+			if (pathname.endsWith("/late")) await new Promise((resolve) => setTimeout(resolve, LATE_READ_MS));
 			return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ json: ["alpha", "beta"], meta: [] }) });
 		}
 		const mode = pathname.split("/")[4] ?? "prefetched";
 		const m: BControlMode = isControlMode(mode) ? mode : "prefetched";
-		const ssr = ssrFor(m);
+		if (m === "growing-feed") feedServed += 1;
+		const ssr = ssrFor(m, feedServed);
 		return route.fulfill({
 			status: 200,
 			contentType: "text/html; charset=utf-8",
@@ -1442,7 +1823,6 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			await loadAnswered(context, url);
 			const answered = await loadAnswered(context, url);
 			const isShell = fixtureClassifier(answered.reads);
-			const held = await loadHeld(context, url);
 			const cold = await newContext();
 			let pageHeld: HeldLoad;
 			try {
@@ -1451,14 +1831,71 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 				await cold.close();
 			}
 			const failed = await loadFailed(newContext, url);
-			return { b1: judgeB1(answered, held), b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
+			return { b3: judgeB3(answered, pageHeld), b4: judgeB4(answered, failed, (k) => !isShell(k)) };
 		};
+		// B1 through `measureB1`, as the routes take it: an earlier answered load (phase 1's, on a
+		// route), then the held load and the answered load after it.
+		const b1 = async (mode: BControlMode, on: BrowserContext = context) => {
+			const first = await loadAnswered(on, controlUrl(mode));
+			return { first, ...(await measureB1(on, controlUrl(mode), [first])) };
+		};
+		expectVerdict("B1", "prefetched", (await b1("prefetched")).verdict, "PASS");
+		expectVerdict("B1", "client-fetch", (await b1("client-fetch")).verdict, "FAIL");
+		// A feed that grew between the earlier answered load and the held one (#6326). Its first paint is
+		// correct, so B1 must PASS — and the fixture must really have grown under it: the plain comparison
+		// with the earlier load has to FAIL, or this PASS would prove nothing about the growth rule. A
+		// context of its own, because the fixture counts its loads per context.
+		const feed = await newContext();
+		try {
+			const grew = await b1("growing-feed", feed);
+			expectVerdict("B1", "growing-feed", grew.verdict, "PASS");
+			if (judgeB1(grew.first, grew.held).verdict !== "FAIL") {
+				broken.add("B1");
+				lines.push("B1 on the `growing-feed` fixture: the feed did not grow between the earlier answered load and the held one, so the growth rule was not exercised");
+			}
+		} finally {
+			await feed.close();
+		}
+		// A region that arrives only when its own client read answers, with no skeleton before it (#6332,
+		// the Classify picker). The held render never has it, so B1 must FAIL — and the readiness-only
+		// load, the answered load before #6332, must really have missed it, or this FAIL would prove
+		// nothing about the quiet wait: judged against that load, B1 PASSes.
+		const late = await b1("late-region");
+		expectVerdict("B1", "late-region", late.verdict, "FAIL");
+		const readinessOnly = await loadAnswered(context, controlUrl("late-region"), { quiesce: false });
+		const hasRegion = (a: AnsweredLoad) => a.snapshot.texts.includes("classify");
+		if (!hasRegion(late.first) || !hasRegion(late.after)) {
+			broken.add("B1");
+			lines.push("B1 on the `late-region` fixture: the answered load did not wait for the late region, so it snapshotted the page before its read answered");
+		}
+		if (hasRegion(readinessOnly) || judgeB1(readinessOnly, late.held).verdict !== "PASS") {
+			broken.add("B1");
+			lines.push("B1 on the `late-region` fixture: the region was already there at readiness, so the late-region case was not exercised");
+		}
+		// One empty card beside a data card, both server-rendered (#6378, the overview). B1 must PASS —
+		// and the page-wide rule must really have withheld this page, or the PASS would prove nothing
+		// about the per-region rule.
+		const beside = await b1("empty-card-beside-data");
+		expectVerdict("B1", "empty-card-beside-data", beside.verdict, "PASS");
+		if (!b1WithheldByPageRule(beside.after.snapshot, beside.held) || beside.held.snapshot.empty === 0) {
+			broken.add("B1");
+			lines.push("B1 on the `empty-card-beside-data` fixture: the page-wide rule would not have withheld it (no empty state answered, or nothing held), so the per-region rule was not exercised");
+		}
+		// The same page with its data card missing from the held render: the empty card still matches,
+		// and B1 must FAIL on the region that does not.
+		const missing = await b1("empty-card-data-late");
+		expectVerdict("B1", "empty-card-data-late", missing.verdict, "FAIL");
+		if (missing.held.snapshot.empty === 0 || missing.held.snapshot.rows !== 0 || missing.after.snapshot.rows === 0) {
+			broken.add("B1");
+			lines.push("B1 on the `empty-card-data-late` fixture: the held render was not the empty card alone, or the answered one never drew the data card, so the missing-region case was not exercised");
+		}
+		// Every region empty, and an empty state in no region: both are still withheld.
+		expectVerdict("B1", "empty-card-only", (await b1("empty-card-only")).verdict, "NOT MEASURED", "answered-empty");
+		expectVerdict("B1", "empty-unregioned-beside-data", (await b1("empty-unregioned-beside-data")).verdict, "NOT MEASURED", "answered-empty");
 		const good = await measure("prefetched");
-		expectVerdict("B1", "prefetched", good.b1, "PASS");
 		expectVerdict("B3", "prefetched", good.b3, "PASS");
 		expectVerdict("B4", "prefetched", good.b4, "PASS");
 		const client = await measure("client-fetch");
-		expectVerdict("B1", "client-fetch", client.b1, "FAIL");
 		expectVerdict("B3", "client-fetch", client.b3, "PASS");
 		expectVerdict("B4", "client-fetch", client.b4, "PASS");
 		expectVerdict("B3", "empty-while-pending", (await measure("empty-while-pending")).b3, "FAIL");

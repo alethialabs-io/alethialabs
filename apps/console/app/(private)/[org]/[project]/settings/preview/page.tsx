@@ -19,11 +19,14 @@ export const metadata = pageMetadata({
 /**
  * `/{org}/{project}/settings/preview` — PR-preview generator settings (#6128).
  *
- * Prefetches the key the page reads (`settings.preview` for this slug: the config, the project's
- * fabrics and its git credentials) in-process and hydrates it, so the first paint is the filled
- * form. A slug that names no project in this org is this segment's 404; a project the caller may not
- * see is not dehydrated, and the client renders the refusal. The git-provider availability and the
- * GitLab base URL are this deployment's configuration, not data, so they stay props.
+ * Prefetches the two keys the page reads in-process and hydrates them, so the first paint is the
+ * filled form. The two keys are `settings.preview` for this slug (the config, the project's fabrics
+ * and its git credentials) and `projects.linkedGitProviders` (the viewer's linked git accounts,
+ * which decide whether the Source row is the repository picker or the "No Git accounts linked"
+ * panel, #6335). A slug that names no project in this org is this segment's 404. A project the
+ * caller may not see is not dehydrated, and the client renders the refusal. The git-provider
+ * availability and the GitLab base URL are this deployment's configuration, not data, so they stay
+ * props.
  */
 export default async function ProjectPreviewSettingsPage({
 	params,
@@ -33,7 +36,10 @@ export default async function ProjectPreviewSettingsPage({
 	const { project } = await params;
 	const queryClient = getQueryClient();
 	const options = serverOrpc().settings.preview.queryOptions({ input: { project } });
-	await queryClient.prefetchQuery(options);
+	await Promise.all([
+		queryClient.prefetchQuery(options),
+		queryClient.prefetchQuery(serverOrpc().projects.linkedGitProviders.queryOptions()),
+	]);
 	if (queryClient.getQueryData(options.queryKey) === null) notFound();
 
 	return (
