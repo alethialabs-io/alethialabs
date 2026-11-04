@@ -369,7 +369,12 @@ test.describe("Navigation shell — org switcher", () => {
 		await waitForShell(owner.page);
 		await owner.page.getByRole("button", { name: "Switch organization" }).click();
 		await owner.page.getByRole("button", { name: /create organization/i }).click();
-		await expect(owner.page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
+		// The sheet BY NAME: the switcher's popover is also a `dialog`, and it is still in the DOM for
+		// its exit animation as the sheet opens. A bare `getByRole("dialog")` then matched both (a
+		// strict-mode violation), and on an earlier tick could pass on the closing popover alone.
+		await expect(owner.page.getByRole("dialog", { name: "Create a team" })).toBeVisible({
+			timeout: 10_000,
+		});
 	});
 });
 
