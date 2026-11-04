@@ -80,7 +80,8 @@ type PaletteGroup = "Sources" | "Core services" | "Periphery" | "Jump to" | "Act
 
 /** One palette row: what it shows, what it runs, and the ONE string its search matches. */
 interface PaletteCommand {
-	/** Stable id (the React key; also folded into the search text, as cmdk's `value` was). */
+	/** Stable id: the React key. Action and "Add" rows also fold it into their search text, as
+	 * cmdk matched their `value`; "Jump to" rows do not (theirs is a node id nobody types). */
 	id: string;
 	group: PaletteGroup;
 	/** The visible label plus its keywords: what the shared ranker matches. */
@@ -92,6 +93,9 @@ interface PaletteCommand {
 
 /** A row's search text, for the shared ranker. */
 const commandSearchText = (c: PaletteCommand): string => c.searchText;
+
+/** A row that cannot run ranks after every row that can, so Enter never lands on it first. */
+const commandIsDisabled = (c: PaletteCommand): boolean => Boolean(c.disabledReason);
 
 interface CanvasCommandPaletteProps {
 	open: boolean;
@@ -298,7 +302,7 @@ export function CanvasCommandPalette({
 	const { search, onSearchChange, results } = useCommandSearch(
 		commands,
 		commandSearchText,
-		open,
+		{ open, isDisabled: commandIsDisabled },
 	);
 	const groups = groupResults(results, (c) => c.group);
 

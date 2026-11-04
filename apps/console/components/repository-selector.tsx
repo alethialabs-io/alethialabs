@@ -235,7 +235,7 @@ export function RepositorySelector({
   const [open, setOpen] = useState(false);
   // Ranked by the shared ranker over each repository's full name; the query starts empty each
   // time the popover opens.
-  const repoSearch = useCommandSearch(repositories, repoSearchText, open);
+  const repoSearch = useCommandSearch(repositories, repoSearchText, { open });
   const repositoryShellBorder = error
     ? variant === "settings"
       ? "border-border-strong ring-1 ring-border-strong"

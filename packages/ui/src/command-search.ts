@@ -35,19 +35,30 @@ export function rankMatch(text: string, search: string): number {
 /**
  * The items that match `search`, best match first. `toSearchText` gives each item its ONE search
  * string (a label, or a label plus keywords): what is matched is that string, never the row's
- * rendered text. Items with equal scores keep their input order, and an empty search returns every
+ * rendered text. Items with equal scores keep their input order, and an empty search keeps every
  * item in input order.
+ *
+ * `isDisabled`, when given, sinks every row that cannot be run below every row that can (each side
+ * keeping its own order). `Command` highlights the first row it renders, and Enter runs the
+ * highlighted row, so a disabled best match would otherwise sit under the highlight and swallow
+ * Enter; cmdk skipped such rows, and this keeps that.
  */
 export function rankItems<T>(
   items: readonly T[],
   search: string,
   toSearchText: (item: T) => string,
+  isDisabled?: (item: T) => boolean,
 ): T[] {
-  if (search.trim() === "") return [...items];
+  const blank = search.trim() === "";
   return items
-    .map((item, index) => ({ item, index, score: rankMatch(toSearchText(item), search) }))
+    .map((item, index) => ({
+      item,
+      index,
+      score: blank ? 1 : rankMatch(toSearchText(item), search),
+      disabled: isDisabled?.(item) ? 1 : 0,
+    }))
     .filter((row) => row.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .sort((a, b) => a.disabled - b.disabled || b.score - a.score || a.index - b.index)
     .map((row) => row.item);
 }
 
@@ -80,16 +91,23 @@ export interface CommandSearch<T> {
   results: T[];
 }
 
-/**
- * Owns a `Command`'s search query and ranks `items` against it with `rankItems`. Pass `open` when
- * the list lives in a dialog or popover that stays mounted: the query then resets each time `open`
- * turns true, so a reopened list starts from an empty search (and not while it is closing, which
- * would flash the full list during the exit animation).
- */
+/** Options for `useCommandSearch`. */
+export interface CommandSearchOptions<T> {
+  /**
+   * Pass when the list lives in a dialog or popover that stays mounted: the query then resets each
+   * time `open` turns true, so a reopened list starts from an empty search (and not while it is
+   * closing, which would flash the full list during the exit animation).
+   */
+  open?: boolean;
+  /** Rows that cannot be run; they rank after every row that can (see `rankItems`). */
+  isDisabled?: (item: T) => boolean;
+}
+
+/** Owns a `Command`'s search query and ranks `items` against it with `rankItems`. */
 export function useCommandSearch<T>(
   items: readonly T[],
   toSearchText: (item: T) => string,
-  open?: boolean,
+  { open, isDisabled }: CommandSearchOptions<T> = {},
 ): CommandSearch<T> {
   const [search, setSearch] = React.useState("");
   const [wasOpen, setWasOpen] = React.useState(open);
@@ -98,8 +116,8 @@ export function useCommandSearch<T>(
     if (open) setSearch("");
   }
   const results = React.useMemo(
-    () => rankItems(items, search, toSearchText),
-    [items, search, toSearchText],
+    () => rankItems(items, search, toSearchText, isDisabled),
+    [items, search, toSearchText, isDisabled],
   );
   return { search, onSearchChange: setSearch, results };
 }

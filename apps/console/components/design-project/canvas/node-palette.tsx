@@ -71,6 +71,9 @@ interface PaletteRow {
 /** A row's search text, for the shared ranker. */
 const rowSearchText = (row: PaletteRow): string => row.searchText;
 
+/** Whether a row cannot be chosen, for the shared ranker. */
+const rowIsDisabled = (row: PaletteRow): boolean => Boolean(row.disabled);
+
 /** Builds the grouped Add-palette catalog from the node registry for the given addable
  * kinds: each kind's `palette` metadata places it in a `PALETTE_GROUP_ORDER` group, and
  * the `ROADMAP_ITEMS` ("Soon" rows) are appended to their group. Groups left empty by
@@ -315,7 +318,13 @@ export function NodePalette({
 	}
 
 	// Whichever step is showing, ranked by the shared ranker.
-	const results = rankItems(variantDef ? variantRows : serviceRows, search, rowSearchText);
+	// A disabled row ("Soon", already on the canvas) ranks after every row that can be added.
+	const results = rankItems(
+		variantDef ? variantRows : serviceRows,
+		search,
+		rowSearchText,
+		rowIsDisabled,
+	);
 	const groups = groupResults(results, (row) => row.group);
 
 	/** The "Back to services" row, above the variant options while nothing is typed. Hidden once the

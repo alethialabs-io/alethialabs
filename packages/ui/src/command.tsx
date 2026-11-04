@@ -13,7 +13,9 @@
 //
 // Keyboard: arrow keys move the highlight, Enter runs the highlighted row's `onSelect`. The
 // highlight does NOT wrap from the last row to the first unless a caller asks (`loopFocus`), which
-// is what cmdk did. cmdk's Ctrl+N/P/J/K bindings have no Base UI counterpart and are gone.
+// is what cmdk did. cmdk's Ctrl+N/P/J/K bindings have no Base UI counterpart and are gone. The
+// first rendered row is highlighted; callers rank disabled rows last (`isDisabled` on the ranker)
+// so that row is one Enter can run, as cmdk skipped disabled rows.
 
 import * as React from "react"
 import { Autocomplete } from "@base-ui/react/autocomplete"
@@ -29,8 +31,18 @@ import {
   DialogTitle,
 } from "./dialog"
 
-/** The root's `label`, read by `CommandInput` to name the search box. */
-const CommandLabelContext = React.createContext<string | undefined>(undefined)
+/** What a root tells its parts: the search box's name, and how many search results there are. */
+interface CommandContextValue {
+  /** The root's `label`, read by `CommandInput` to name the search box. */
+  label: string | undefined
+  /** `filteredItems.length` (never the pinned rows), read by `CommandEmpty`. */
+  resultCount: number
+}
+
+const CommandContext = React.createContext<CommandContextValue>({
+  label: undefined,
+  resultCount: 0,
+})
 
 /** What every `Command` root takes, whether rendered bare or inside `CommandDialog`. */
 interface CommandSearchProps {
@@ -41,6 +53,12 @@ interface CommandSearchProps {
   label?: string
   /** The rows being shown, already ranked against `search`. `CommandEmpty` shows when it is empty. */
   filteredItems: readonly unknown[]
+  /**
+   * Rows rendered AFTER the results whatever the search, such as a "New environment" action. They
+   * are reachable with the arrow keys even on a miss, and never count as results, so the empty text
+   * still shows beside them.
+   */
+  pinnedItems?: readonly unknown[]
   /** What is typed in the search box. Omit for an uncontrolled search. */
   search?: string
   /** Called with the new query on every keystroke. */
@@ -56,6 +74,7 @@ interface CommandSearchProps {
 function Command({
   label,
   filteredItems,
+  pinnedItems,
   search,
   onSearchChange,
   loopFocus = false,
@@ -63,14 +82,23 @@ function Command({
   children,
   ...props
 }: CommandSearchProps & React.ComponentProps<"div">) {
+  // Base UI's highlight is only kept on an index below the length of `items`, so every row the
+  // list renders (pinned ones too) has to be in it, in rendered order.
+  const navigable = React.useMemo(
+    () => (pinnedItems?.length ? [...filteredItems, ...pinnedItems] : filteredItems),
+    [filteredItems, pinnedItems]
+  )
+  const context = React.useMemo(
+    () => ({ label, resultCount: filteredItems.length }),
+    [label, filteredItems.length]
+  )
   return (
-    <CommandLabelContext.Provider value={label}>
+    <CommandContext.Provider value={context}>
       <Autocomplete.Root
         open
         inline
-        items={filteredItems}
-        // Filtering inside Base UI is off: `filteredItems` is already the ranked result. (No
-        // apostrophe in this comment: the #5824 guard reads these attributes as text.)
+        items={navigable}
+        // Base UI's own filtering is off: `filteredItems` is already the ranked result.
         filter={null}
         autoHighlight="always"
         keepHighlight
@@ -89,7 +117,7 @@ function Command({
           {children}
         </div>
       </Autocomplete.Root>
-    </CommandLabelContext.Provider>
+    </CommandContext.Provider>
   )
 }
 
@@ -101,6 +129,7 @@ function CommandDialog({
   className,
   showCloseButton = true,
   filteredItems,
+  pinnedItems,
   search,
   onSearchChange,
   loopFocus,
@@ -130,6 +159,7 @@ function CommandDialog({
         <Command
           label={title}
           filteredItems={filteredItems}
+          pinnedItems={pinnedItems}
           search={search}
           onSearchChange={onSearchChange}
           loopFocus={loopFocus}
@@ -150,7 +180,7 @@ function CommandInput({
 }: Omit<React.ComponentProps<typeof Autocomplete.Input>, "className"> & {
   className?: string
 }) {
-  const label = React.useContext(CommandLabelContext)
+  const { label } = React.useContext(CommandContext)
   return (
     <div
       data-slot="command-input-wrapper"
@@ -191,25 +221,33 @@ function CommandList({
 }
 
 /**
- * Shown when `filteredItems` is empty. Its element stays mounted (it is the live region that
- * announces "no results"), so it collapses to nothing while there are rows.
+ * Shown when `filteredItems` is empty, pinned rows notwithstanding. Its element stays mounted (it is
+ * the live region that announces "no results"), so it collapses to nothing while there are rows.
  */
 function CommandEmpty({
   className,
+  children,
   ...props
-}: Omit<React.ComponentProps<typeof Autocomplete.Empty>, "className"> & {
-  className?: string
-}) {
+}: React.ComponentProps<"div">) {
+  const { resultCount } = React.useContext(CommandContext)
   return (
-    <Autocomplete.Empty
+    <div
       data-slot="command-empty"
+      role="status"
+      aria-live="polite"
+      aria-atomic
       className={cn("py-6 text-center text-sm empty:py-0", className)}
       {...props}
-    />
+    >
+      {resultCount === 0 ? children : null}
+    </div>
   )
 }
 
-/** A labelled run of rows. Render it only when it has rows to show. */
+/**
+ * A labelled run of rows. Renders NOTHING when it has no rows: Base UI always renders a group's
+ * `role="group"` and its label, so a search miss would otherwise leave an orphan heading.
+ */
 function CommandGroup({
   className,
   heading,
@@ -221,6 +259,7 @@ function CommandGroup({
   heading?: React.ReactNode
   children?: React.ReactNode
 }) {
+  if (React.Children.toArray(children).length === 0) return null
   return (
     <Autocomplete.Group
       data-slot="command-group"
