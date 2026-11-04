@@ -326,9 +326,19 @@ relative to the repo root, as the board's `scope:` lines are.
     reports a state that should not exist, and it does not remove the cause.
 
   Edits: I14's note, §5.6 "The refused sync", §5.7 "Adopt", its exits table and "two rows only",
-  C96's live-Y variant, §8's listing note, new cases C120 and C121, and slice S12 (#6408, §10). **Until
-  that slice lands, `dev` runs the old closer and the old listing.** In-body notes say so. `file:line` citations are at `origin/dev` `aed8b609b` (2026-11-04). **No other decision
-  changes.**
+  C96's live-Y variant, §8's listing note, new cases C120 and C121, and slice S12 (#6408, §10). **Slice
+  S12 (#6414) has landed: `dev` runs the new closer and the new listing**, and the in-body notes say
+  what runs. `file:line` citations marked "at `aed8b609b`" are the old code, at `origin/dev`
+  `aed8b609b` (2026-11-04). **No other decision changes.**
+  - **Built with S12 (the review of #6414, 2026-11-04).** Two consequences of (a), each decided under
+    the same delegation: (i) a setup the closer leaves open while the org's row names another live
+    plan refuses Checkout with the row predicate's copy, not the open-setup copy, unless an open hold
+    names X (§5.7 "Guard order"); (ii) the resume lookup never offers X for payment beside another
+    live plan, and reports an X whose first payment failed or was never made as not payable here
+    (§5.6, `besideLivePlan`). **Correction:** "the guard and both
+    resume lookups" (the S9 follow-up 1 entry above, and I14's note) closed an `incomplete` X early.
+    Only the guard and `resolveNewOrgSetup` did: `findUnfinishedNewOrgSetup` runs the closer only for
+    a paid or an ended X, so it never reached the closer for an `incomplete` one.
 
 ---
 
@@ -759,18 +769,20 @@ Each invariant is tested (§6).
   raises `alertPaymentNeedsSupport` with X as the subject (`settleOpenSetup`,
   `lib/billing/pending-org-setup.ts`; §5.7 "Adopt", C96's variant). It opens no hold. Since S9
   (#5938) the link passes `linkRefuses`, so this close is made only by the readers that run the
-  closer without refusing: the open-setup guard and both resume lookups. X can then be live, or
-  `incomplete` and still payable, with the setup closed; what watches it is that one alert, and
+  closer without refusing: the open-setup guard and both resume lookups (for an `incomplete` X, only
+  the guard and `resolveNewOrgSetup`: `findUnfinishedNewOrgSetup` runs the closer only for a paid or
+  an ended X). X could then be live, or `incomplete` and still payable, with the setup closed; what watches it is that one alert, and
   §8's listing for an X that reads live when the operator runs it.
-  **Amendment (2026-11-04, #5506):** from slice S12 (#6408), the `incomplete` half of the sentence
-  above no longer holds. The adopt branch will close beside a live Y only when X reads live. An
-  `incomplete` X will leave its setup open until X ends (§1.3 S16; the close branch then applies)
-  or is paid (it is then a live X, and the rule above applies). So no automatic close will happen
-  while X can still become live. A live X closed this way is watched by the alert and by §8's
-  listing, which prints it, and from slice S12 (#6408) the listing will also print `incomplete`
-  closures (C120, C121). **Until then** the closer still closes beside an `active` or `trialing` Y
-  whatever X's status (`settleOpenSetup`, `lib/billing/pending-org-setup.ts:1109-1121` at
-  `aed8b609b`), and the listing skips `incomplete` rows (`scripts/payment-holds.ts:1120`).
+  **Amendment (2026-11-04, #5506; built by slice S12, #6414):** the `incomplete` half of the
+  sentence above no longer holds. The adopt branch closes beside a live Y only when X reads live
+  (`settleOpenSetup`, `lib/billing/pending-org-setup.ts`). An `incomplete` X leaves its setup open
+  until X ends (§1.3 S16; the close branch then applies) or is paid (it is then a live X, and the
+  rule above applies). So no automatic close happens while X can still become live. A live X closed
+  this way is watched by the alert and by §8's listing, which prints it, and the listing also prints
+  `incomplete` closures made before S12 (C120, C121). Before S12 the closer closed beside an
+  `active` or `trialing` Y whatever X's status (`lib/billing/pending-org-setup.ts:1109-1121` at
+  `aed8b609b`), and the listing skipped `incomplete` rows (`scripts/payment-holds.ts:1120` at
+  `aed8b609b`).
 - **I15, the guard never locks the org out (rev 6, corrected in rev 7).** Every open setup has an
   exit that does not depend on the creator coming back (§5.7 "Every open setup has an exit"). Rev 6
   claimed this from one writer, the link's refusal, and the claim was false (R7-1).
@@ -1324,13 +1336,30 @@ The link runs the closer with `linkRefuses` (`billing.ts`, before `linkSetupToOr
 writes nothing beside the live Y and the link's own refusal opens the hold (#5938). The guard and both
 resume lookups run the same closer without `linkRefuses`, and it still closes beside an `active` or
 `trialing` Y with `org_has_plan` and an alert, as §5.7's adopt branch says (I14 note).
-**Amendment (2026-11-04, #5506):** from slice S12 (#6408), that close applies only to a **live** X.
-Beside such a Y, an `incomplete` X will leave the setup open with nothing written, until X ends or
-is paid (§5.7 "Adopt"). Until then the closer still closes beside an `active` or `trialing` Y
-whatever X's status (`lib/billing/pending-org-setup.ts:1109-1121` at `aed8b609b`). If X is paid
+**Amendment (2026-11-04, #5506; built by slice S12, #6414):** that close applies only to a **live** X.
+Beside such a Y, an `incomplete` X leaves the setup open with nothing written, until X ends or is
+paid (§5.7 "Adopt"). Before S12 the closer closed beside an `active` or `trialing` Y whatever X's
+status (`lib/billing/pending-org-setup.ts:1109-1121` at `aed8b609b`). If X is paid
 while it is `incomplete`, the creator's resumed link meets an open
 setup and takes this section's rows as for any live X. Beside a live, paid Y, that is the
 `needs_operator` refusal (C80, C120).
+**The lookup offers no payment beside another live plan (built with S12, the review of #6414).** A
+setup is never offered for payment beside another live plan. When X reads `incomplete` and its first
+payment failed or was never made (plan state `action_needed`, the only state with a payment link), no open hold names X, and the team's billing row names another live plan (`active`,
+`trialing` or `past_due`: the link's own `namesOtherLivePlan`, so the two cannot disagree),
+`resolveNewOrgSetup` reports `besideLivePlan` with the sentence "This team already has an active plan, so this checkout
+cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at
+<support> if you meant to buy this plan for another team.", and `paymentUrl` is null. The sheet stops
+on that sentence before the link (`components/org/pending-paid-setup.ts`). Paying X there could end
+only in the `needs_operator` refusal and a refund. The other plan states of an `incomplete` X are not
+reported this way, each for its own reason (`newOrgPlanState`): `processing` means the first payment
+**succeeded** and X is about to read paid; `confirming` means a payment is **in flight**, and X stays
+`incomplete` with no 23h bound until it settles (S16); `unconfirmed` means the payment read **failed**,
+so nothing proves the payment did not move. In none of them is "an unpaid checkout closes on its own"
+known to be true, and none carries a payment link to withhold. They, and a **paid** X, are left to
+the link, whose refusal opens the hold and alerts (C80). Beside a `past_due` plan the sentence names
+the unpaid invoice instead ("This team's plan has an unpaid invoice, so this checkout cannot be
+completed here. …"), as the row predicate's copy does.
 
 | X, and any open hold naming X | The link returns |
 |---|---|
@@ -1530,7 +1559,15 @@ routes to the AI columns only (`sync.ts:141-146`, `:215-234`), so it cannot take
 
 **Guard order and failure (rev 7.1).** In `createSubscriptionIntent` the guard runs **after** the
 existing live-plan check (`billing.ts:1187-1194`), so an org on a live plan still reads "change the
-plan instead", and the guard's copy appears only where a purchase could otherwise proceed. In all
+plan instead", and the guard's copy appears only where a purchase could otherwise proceed.
+**Amendment (2026-11-04; built with slice S12, the review of #6414):** Checkout runs the guard
+**before** the row predicate (ADR 0004 D5, so the closer can adopt first, C96). An `incomplete` X the
+closer leaves open, with no open hold on X, while the org's row names **another** live plan (`active`,
+`trialing` or `past_due`, `namesOtherLivePlan`; C120) therefore refuses with the row predicate's copy
+for that row ("change the plan instead", or the unpaid-invoice copy), not with the open-setup copy
+(`openSetupRefusal`, `app/server/actions/billing.ts`). Every other open setup keeps the guard's copy,
+and an open hold on X keeps its clause (§5.5; C80 beside a live Y included). The rule above holds in
+all three flows. In all
 three flows the guard **fails closed**: when it finds an open row and its Stripe read of X (the
 `subscriptions.retrieve`, or the closer's `readFirstPayment`) throws, it refuses with the
 try-again clause (§5.5) and never passes the purchase.
@@ -1621,12 +1658,12 @@ A setup that closes while X is still live occurs in two rows only.
   S9 as before it. It is the same S1 refusal, with the same watch: the one alert, whose delivery the
   closer does not check, and §8's listing, which prints such a setup only when its X reads live at
   the time the operator runs it.
-  **Amendment (2026-11-04):** from slice S12 (#6408), that row closes only while X is **live**,
-  never while X is `incomplete`. Its X will then read live when the setup closes, and the listing
-  prints it while X is still live. From the same slice the listing also prints `incomplete`
-  closures (§8). Until then the closer still closes beside an `active` or `trialing` Y whatever
-  X's status (`lib/billing/pending-org-setup.ts:1109-1121` at `aed8b609b`), and the listing skips
-  `incomplete` rows (`scripts/payment-holds.ts:1120`).
+  **Amendment (2026-11-04; built by slice S12, #6414):** that row closes only while X is **live**,
+  never while X is `incomplete`. Its X reads live when the setup closes, and the listing prints it
+  while X is still live. The listing also prints `incomplete` closures (§8), which covers those made
+  before S12, when the closer closed beside an `active` or `trialing` Y whatever X's status
+  (`lib/billing/pending-org-setup.ts:1109-1121` at `aed8b609b`) and the listing skipped `incomplete`
+  rows (`scripts/payment-holds.ts:1120` at `aed8b609b`).
 - **The moved release (amendment 2026-10-14, §5.8).** X is then **not** outside every reader. Before
   the close commits, T's row is checked to name X (`FOR SHARE`, §5.8 step 8). From then on X's events
   write T's row under #5518's guard. T's row is X's watch, as for any org's subscription.
@@ -2075,7 +2112,7 @@ Stripe, so they reach every row regardless.
 | C117 | An adopted hold's check falls due while an open hold names X (a refusal's `link_refused` hold). | #6079 money review, advisory 3 | §5.4 the relink pass (its open-hold predicate). | `tests/integration/payment-hold-sweeper.test.ts`. No Stripe read. The adopted hold's `version`, `next_check_at` and `attempts` are unchanged. Without the predicate it fails. |
 | C118 | The decision's alert reaches no channel. | #6079 money review, advisory 1 | §4.1 "The relink retry" (the alert decision). | `tests/integration/payment-hold-sweeper.test.ts`. `alerted_at` stays null and the check is about a day out. A tick before then raises nothing. Once it is due, the relink is decided and alerted again, then stamped when that alert is delivered, and nothing follows. |
 | C119 | Every relink outlives its lease (another holder takes it over mid-read). | #6079 money review, advisory 2 | §4.1 "The relink retry" (the lost lease, the bounds). | `tests/integration/payment-hold-sweeper.test.ts`. Each loss is recorded as an attempt under a lease taken afresh (`last_error` names the lease), on the backoff. The sixth gives up with exactly one alert and no Stripe write, and later ticks raise nothing. |
-| C120 | **Amendment 2026-11-04 (#5506, slice S12 #6408; the decision from #6070, option (a)).** X is `incomplete`, linked in Stripe to O and U, with no hold, and O's row names another `active` Y. The guard or a resume lookup closes the setup with `org_has_plan` while X can still be paid, and a paid X becomes live and unlinked. | #6070; I14 note | §5.7 "Adopt" (the 2026-11-04 amendment); the exits table's `incomplete` row. | S (`tests/integration/pending-org-setups.test.ts`), with the guard's half in `tests/actions/billing-subscription.test.ts` and the lookups' half in `tests/actions/billing-new-org-link.test.ts`. Fixture: X `incomplete`, `metadata.organization_id = O`, `metadata.created_by = U`, O's row names `active` Y, no hold. (a) `settleOpenSetup` without `linkRefuses` answers `open`: `closed_at` and `linked_at` stay null, `closePendingOrgSetup` is not called, and there is **no** `alertPaymentNeedsSupport` call and no `billing.pending_org_setup.closed` event. The guard still refuses the purchase. (b) **X expires:** X now reads `incomplete_expired`. The next reader closes the setup with `closed_reason = ended`, and alerts only when `readFirstPayment` does not read `never_paid`. (c) **X is paid before it ends:** X now reads `active`. The creator's resumed link meets the open setup and refuses under a `needs_operator` hold (`open_note = link_refused`, C80). A guard or a lookup that runs first instead closes it with `org_has_plan` and alerts, as for any live X (C96's variant). Control: the same fixture with X `active` closes at once with `org_has_plan` and one alert. Each assertion of (a) fails on `dev` at `aed8b609b`. |
+| C120 | **Amendment 2026-11-04 (#5506, slice S12 #6408; the decision from #6070, option (a)).** X is `incomplete`, linked in Stripe to O and U, with no hold, and O's row names another `active` Y. The guard or a resume lookup closes the setup with `org_has_plan` while X can still be paid, and a paid X becomes live and unlinked. | #6070; I14 note | §5.7 "Adopt" (the 2026-11-04 amendment); the exits table's `incomplete` row. | S (`tests/integration/pending-org-setups.test.ts`), with the guard's half in `tests/actions/billing-subscription.test.ts` and the lookups' half in `tests/actions/billing-new-org-link.test.ts`. Fixture: X `incomplete`, `metadata.organization_id = O`, `metadata.created_by = U`, O's row names `active` Y, no hold. (a) `settleOpenSetup` without `linkRefuses` answers `open`: `closed_at` and `linked_at` stay null, `closePendingOrgSetup` is not called, and there is **no** `alertPaymentNeedsSupport` call and no `billing.pending_org_setup.closed` event. The guard still refuses the purchase, and Checkout refuses with the row predicate's copy (§5.7 "Guard order"). When X's first payment failed or was never made (`action_needed`), `resolveNewOrgSetup` reports `besideLivePlan` with no payment link, and the sheet stops on it; in `processing` (succeeded), `confirming` (in flight) or `unconfirmed` (read failed) it does not, and the link decides X (§5.6). (b) **X expires:** X now reads `incomplete_expired`. The next reader closes the setup with `closed_reason = ended`, and alerts only when `readFirstPayment` does not read `never_paid`. (c) **X is paid before it ends:** X now reads `active`. The creator's resumed link meets the open setup and refuses under a `needs_operator` hold (`open_note = link_refused`, C80). A guard or a lookup that runs first instead closes it with `org_has_plan` and alerts, as for any live X (C96's variant). Control: the same fixture with X `active` closes at once with `org_has_plan` and one alert. Each assertion of (a) fails on `dev` at `aed8b609b`. |
 | C121 | **Amendment 2026-11-04 (#5506, slice S12 #6408; option (b)).** A setup closed with `org_has_plan` while its X was `incomplete`, before slice S12, is not printed by §8's listing. | #6070 | §8, the listing note (the 2026-11-04 amendment). | `tests/integration/payment-hold-sweeper.test.ts`. Setups closed with `org_has_plan` whose X reads `incomplete`, `active`, `canceled` and `incomplete_expired`, plus one whose read throws. `listLiveOrgHasPlanClosures` prints the `incomplete` one and the `active` one, prints the failed read as such, and prints neither ended one. Its printed count includes the `incomplete` one. Fails on `dev` at `aed8b609b` (the `incomplete` one is skipped). |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
