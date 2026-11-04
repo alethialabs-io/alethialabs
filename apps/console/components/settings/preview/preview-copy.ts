@@ -3,9 +3,10 @@
 
 // The Preview environments section's fixed copy: the section title, each row's label and hint, and
 // the Save band's note. The form (`preview-settings.tsx`) and its skeleton
-// (`preview-settings-skeleton.tsx`) both render from here. A row's height is set by its label
-// column, and a 200px hint column wraps to two or three lines, so the skeleton has to carry the same
-// words to be the same height. Two copies of a hint would drift apart one edit at a time.
+// (`preview-settings-skeleton.tsx`) both render from here. A row's height depends on how its hint
+// wraps — to two or three lines in the 200px label column from the panel's 32rem container step, at
+// the panel's full width stacked above the control below it (#6135) — so the skeleton has to carry
+// the same words to be the same height. Two copies of a hint would drift apart one edit at a time.
 
 /** The section heading over the form. */
 export const PREVIEW_SECTION_TITLE = "Preview environments";

@@ -26,6 +26,7 @@ import {
 } from "@repo/ui/select";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
+import { SETTINGS_FIELD_ROW_CLASS } from "./settings-field-row";
 
 /** Two-up responsive grid for pairing short sections; stacks on narrow screens. */
 export function SettingsColumns({ children }: { children: ReactNode }) {
@@ -73,7 +74,16 @@ export function SettingsSection({
 	);
 }
 
-/** The bordered surface card that holds a section's content. */
+/**
+ * The bordered surface card that holds a section's content — and the QUERY CONTAINER its rows
+ * measure (`@container`).
+ *
+ * The rows below decide between stacked and side-by-side by THIS box's width, not the viewport's
+ * (#6135, F027). The viewport is the wrong variable twice over: on a 400px phone the panel is about
+ * 370px, and just above `lg` the page splits into `SettingsColumns`' two columns beside the sidebar,
+ * which leaves each panel NARROWER than that phone. A viewport `sm:` step fixes the first and
+ * re-breaks the second; a container step fixes both and any narrower host added later.
+ */
 export function SettingsPanel({
 	children,
 	className,
@@ -87,7 +97,7 @@ export function SettingsPanel({
 	return (
 		<div
 			className={cn(
-				"rounded-lg border bg-surface shadow-sm",
+				"@container rounded-lg border bg-surface shadow-sm",
 				danger ? "border-border-strong" : "border-border",
 				className,
 			)}
@@ -125,7 +135,23 @@ function useSettingsFieldLabelId(): string | null {
 	return useContext(SettingsFieldLabelContext);
 }
 
-/** A labeled form row: 200px label/hint column + a control column. */
+/**
+ * A labeled form row: label/hint above the control in a narrow panel, a 200px label column beside
+ * it from 32rem of PANEL width (`@lg:`, Tailwind's 32rem container step — the enclosing
+ * `SettingsPanel` is the container).
+ *
+ * 32rem because the side-by-side row needs 200px of label + 24px of gap + roughly 240px before a
+ * control stops being usable (~29rem); below that the old fixed `200px 1fr` grid squeezed inputs to
+ * ~90px on a phone, clipped the org URL and pushed buttons out of the card (F027).
+ *
+ * Every row renders inside a `SettingsPanel` today. One rendered outside any container has no
+ * container to measure, so `@lg:` never matches and it stays stacked at every width — legible,
+ * never squeezed, which is the safe direction to fail in.
+ *
+ * The root carries `data-slot="settings-field"` and the label column `data-slot="settings-field-label"`,
+ * so a test or a skeleton finds a row by what it IS rather than by its column template — a
+ * selector on `grid-cols-[200px_1fr]` silently matched nothing once the template moved behind `@lg:`.
+ */
 export function SettingsField({
 	label,
 	hint,
@@ -137,8 +163,8 @@ export function SettingsField({
 }) {
 	const labelId = useId();
 	return (
-		<div className="grid grid-cols-[200px_1fr] items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0">
-			<div className="flex flex-col gap-1">
+		<div data-slot="settings-field" className={SETTINGS_FIELD_ROW_CLASS}>
+			<div data-slot="settings-field-label" className="flex flex-col gap-1">
 				<span id={labelId} className="text-ui-md font-medium text-text-primary">
 					{label}
 				</span>
@@ -157,7 +183,11 @@ export function SettingsField({
 	);
 }
 
-/** A footer band inside a panel — a left note + right-aligned actions (e.g. Save). */
+/**
+ * A footer band inside a panel — a left note + right-aligned actions (e.g. Save). It WRAPS rather
+ * than squeezes: in a narrow panel the actions drop under the note and stay right-aligned
+ * (`ml-auto`), instead of the note and the button fighting for one line (#6135).
+ */
 export function SettingsCardFoot({
 	note,
 	children,
@@ -166,18 +196,21 @@ export function SettingsCardFoot({
 	children: ReactNode;
 }) {
 	return (
-		<div className="flex items-center justify-between gap-4 border-t border-border bg-surface-sunken px-[22px] py-[13px]">
+		<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border bg-surface-sunken px-[22px] py-[13px]">
 			{note ? (
 				<span className="text-ui-xs text-text-tertiary">{note}</span>
 			) : (
 				<span />
 			)}
-			<div className="flex items-center gap-2">{children}</div>
+			<div className="ml-auto flex items-center gap-2">{children}</div>
 		</div>
 	);
 }
 
-/** A danger-zone row inside a danger panel: title/description + a destructive action. */
+/**
+ * A danger-zone row inside a danger panel: title/description + a destructive action. The action
+ * wraps under the text in a narrow panel rather than squeezing the description to a sliver (#6135).
+ */
 export function SettingsDangerRow({
 	title,
 	description,
@@ -199,9 +232,12 @@ export function SettingsDangerRow({
 		<div
 			role="group"
 			aria-labelledby={titleId}
-			className="flex items-center justify-between gap-5 border-b border-border px-[22px] py-4 last:border-b-0"
+			className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-[22px] py-4 last:border-b-0"
 		>
-			<div className="min-w-0">
+			{/* `flex-[1_1_16rem]`: the text claims 16rem before the action is pushed to its own line,
+			    then grows to fill. Without a basis its max-content width decides, and a long
+			    description would drop the button below it even in a desktop-width panel. */}
+			<div className="min-w-0 flex-[1_1_16rem]">
 				<div id={titleId} className="mb-[3px] text-ui-md font-medium text-text-primary">
 					{title}
 				</div>

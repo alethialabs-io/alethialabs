@@ -12,6 +12,8 @@
 // one makes the page jump when it loads.
 
 import { Skeleton } from "@repo/ui/skeleton";
+import { SETTINGS_FIELD_ROW_CLASS } from "@/components/settings/settings-field-row";
+import { SettingsPanel } from "@/components/settings/settings-ui";
 
 /** A bordered panel: title bar + a few content lines. */
 export function PanelSkeleton({ lines = 4 }: { lines?: number }) {
@@ -37,8 +39,10 @@ export function PanelSkeleton({ lines = 4 }: { lines?: number }) {
  * takes the space the page will. Every section is drawn the way `SettingsSection` draws one: a
  * heading with a hairline rule beside it, then a bordered panel of label | control rows.
  *
- * The classes below mirror `settings-ui.tsx` by hand, because those components take real labels
- * and titles. Change one with the other.
+ * The panel IS `SettingsPanel` (the query container) and each row takes `SETTINGS_FIELD_ROW_CLASS`,
+ * the form row's own classes, so a row stacks below the panel's 32rem container step and is a
+ * `200px | 1fr` grid from it, as `SettingsField` is (#6135). The heading mirrors `settings-ui.tsx`
+ * by hand, because `SettingsSection` takes a real title. Change one with the other.
  *
  * @example
  * <SettingsColumnsSkeleton sections={[3, 2]} />
@@ -52,24 +56,19 @@ export function SettingsColumnsSkeleton({ sections = [3, 3] }: { sections?: numb
 						<Skeleton className="h-4 w-36" />
 						<span className="h-px flex-1 bg-border" />
 					</div>
-					<div className="rounded-lg border border-border bg-surface shadow-sm">
+					<SettingsPanel>
 						<div className="py-1">
 							{Array.from({ length: fields }, (_, f) => (
-								<div
-									key={f}
-									className="flex items-start gap-6 border-b border-border px-[22px] py-[15px] last:border-b-0"
-								>
-									{/* `SettingsField` is a `200px 1fr` grid at every width; a fixed
-									    200px column beside a flexible one is the same geometry. */}
-									<div className="flex w-[200px] shrink-0 flex-col gap-1.5">
+								<div key={f} data-slot="settings-field" className={SETTINGS_FIELD_ROW_CLASS}>
+									<div data-slot="settings-field-label" className="flex flex-col gap-1.5">
 										<Skeleton className="h-3.5 w-28" />
 										<Skeleton className="h-3 w-40 max-w-full" />
 									</div>
-									<Skeleton className="h-[38px] min-w-0 flex-1 rounded-sm" />
+									<Skeleton className="h-[38px] min-w-0 rounded-sm" />
 								</div>
 							))}
 						</div>
-					</div>
+					</SettingsPanel>
 				</div>
 			))}
 		</div>
