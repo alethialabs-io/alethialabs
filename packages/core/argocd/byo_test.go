@@ -617,15 +617,13 @@ func TestByoReserved_PlatformTemplatesMatchTheRenderedTemplates(t *testing.T) {
 		facts := &InfraFacts{}
 		v := reflect.ValueOf(facts).Elem()
 		for i := 0; i < v.NumField(); i++ {
-			switch f := v.Field(i); f.Kind() {
-			case reflect.String:
+			// Maps and slices keep their zero value. That leaves sections INSIDE an Application
+			// unrendered (`if .Labels`), never a namespace; an Application gated on one would be the
+			// boundary stated above.
+			if f := v.Field(i); f.Kind() == reflect.String {
 				f.SetString("placeholder")
-			case reflect.Bool:
+			} else if f.Kind() == reflect.Bool {
 				f.SetBool(true)
-			default:
-				// Maps and slices keep their zero value. That leaves sections INSIDE an Application
-				// unrendered (`if .Labels`), never a namespace; an Application gated on one would be
-				// the boundary stated above.
 			}
 		}
 		facts.Provider = provider
