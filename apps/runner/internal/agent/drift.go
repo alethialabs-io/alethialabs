@@ -16,7 +16,10 @@ import (
 // executeDriftDetection handles a DETECT_DRIFT job: it runs `tofu plan
 // -refresh-only` for the environment (cloud creds already activated in
 // executeJob), computes a drift Posture, and stores it on
-// execution_metadata.drift_posture. It mutates nothing in the cloud.
+// execution_metadata.drift_posture. It mutates nothing in the cloud. Its cluster refresh
+// (provisioner.InspectCluster) is not read-only: on a dedicated placement it requests deletion of
+// keyless bootstrap hooks whose ArgoCD operation ended without running a delete policy (see
+// packages/core/provisioner/bootstrap_reaper.go).
 func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider string, identity *CloudIdentity, stdout, stderr *JobLogger) error {
 	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
 	if err != nil {

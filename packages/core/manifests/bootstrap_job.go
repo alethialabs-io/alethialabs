@@ -30,6 +30,7 @@ package manifests
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -58,6 +59,38 @@ const (
 	bootstrapSQLFile   = "/sql/init.sql"
 	bootstrapTokenDir  = "/db-admin-token"
 	bootstrapTokenFile = "/db-admin-token/token"
+)
+
+// BootstrapOnlyLabelKey marks the bootstrap hooks that must exist only while a bootstrap PreSync phase
+// runs: the admin ExternalSecret (AWS/GCP) and the admin-federated ServiceAccount (Azure). The hook
+// delete policies below remove them when the phase completes; an operation that never completes its
+// phase (terminated by hand, or whose record is lost) runs neither policy, so the runner's post-sync
+// reconcile (provisioner.reapStrandedBootstrapHooks) selects them by this label and removes the ones
+// that outlived their operation. The Job is deliberately NOT labelled: it holds no credential and is
+// bounded by its own activeDeadlineSeconds and ttlSecondsAfterFinished.
+//
+// EXPORTED because the provisioner's label selector must name the same key; BootstrapOnlyLabelValue
+// is its value. The tests pin the rendered label on every credential-bearing hook.
+const (
+	BootstrapOnlyLabelKey   = "alethia.io/bootstrap-only"
+	BootstrapOnlyLabelValue = "true"
+)
+
+// The rest of a bootstrap-only hook's rendered identity, EXPORTED for the same reconcile. It reaps an
+// object only when it is exactly a rendered bootstrap hook: the label above, these annotations, and
+// one of these names. Each constant is the one the renderer below writes, so the two cannot drift.
+const (
+	// BootstrapHookPhase is the argocd.argoproj.io/hook value every bootstrap hook carries.
+	BootstrapHookPhase = "PreSync"
+	// BootstrapAdminHookDeletePolicy is the delete policy of the credential-bearing hooks.
+	BootstrapAdminHookDeletePolicy = adminHookDeletePolicy
+	// BootstrapJobNamePrefix starts every bootstrap Job name (BootstrapJobName), and so every admin
+	// ExternalSecret name.
+	BootstrapJobNamePrefix = "bootstrap-"
+	// BootstrapAdminSecretSuffix ends every admin ExternalSecret name: <Job name><suffix>.
+	BootstrapAdminSecretSuffix = "-admin"
+	// BootstrapServiceAccountName is the Azure admin-federated ServiceAccount's name.
+	BootstrapServiceAccountName = keylessBootstrapKSAName
 )
 
 // ArgoCD hook delete policies for the bootstrap hooks. The two differ on purpose:
@@ -178,7 +211,7 @@ type BootstrapJobResult struct {
 // time a name needed normalizing, and the test would then poll forever for an object that was never
 // going to appear — and report it as a keyless failure.
 func BootstrapJobName(t types.ServiceBindingTarget) string {
-	return dns1123("bootstrap-" + string(t.Kind) + "-" + t.Name)
+	return dns1123(BootstrapJobNamePrefix + string(t.Kind) + "-" + t.Name)
 }
 
 // RenderBootstrapJob renders the least-priv bootstrap Job (+ its admin ExternalSecret on AWS/GCP) for
@@ -267,7 +300,7 @@ func awsBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if remoteKey == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no rds_master_credentials_secret_name output for the bootstrap Job admin credentials")
 	}
-	adminSecretName := name + "-admin"
+	adminSecretName := name + BootstrapAdminSecretSuffix
 	esYAML, err := renderAdminExternalSecret(adminSecretName, ns, string(types.CloudProviderAws), remoteKey)
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
@@ -311,7 +344,7 @@ func gcpBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns strin
 	if remoteKey == "" {
 		return bootstrapJobSpec{}, "", fmt.Errorf("no cloud_sql_credentials_secret output for the bootstrap Job admin credentials")
 	}
-	adminSecretName := name + "-admin"
+	adminSecretName := name + BootstrapAdminSecretSuffix
 	esYAML, err := renderAdminExternalSecret(adminSecretName, ns, string(types.CloudProviderGcp), remoteKey)
 	if err != nil {
 		return bootstrapJobSpec{}, "", err
@@ -416,13 +449,16 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 		Namespace:      ns,
 		ServiceAccount: keylessBootstrapKSAName,
 		EmitSA:         true,
-		SALabels:       map[string]string{"azure.workload.identity/use": "true"},
+		SALabels: map[string]string{
+			"azure.workload.identity/use": "true",
+			BootstrapOnlyLabelKey:         BootstrapOnlyLabelValue,
+		},
 		// The SA federates the DEDICATED admin identity, so it is ephemeral like the admin secret on the
 		// other clouds: a PreSync hook one wave before the Job, deleted when the phase ends whether the
 		// Job succeeded or failed — a pod can't impersonate the admin-capable KSA between deploys.
 		SAAnnotations: map[string]string{
 			"azure.workload.identity/client-id":     adminClientID,
-			"argocd.argoproj.io/hook":               "PreSync",
+			"argocd.argoproj.io/hook":               BootstrapHookPhase,
 			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
@@ -541,13 +577,19 @@ func renderAdminExternalSecret(adminSecretName, namespace, provider, remoteKey s
 		Namespace: ns,
 		StoreName: store,
 		Data:      data,
+		// Selected by the runner's reconcile of hooks whose operation ended without running a
+		// delete policy (see BootstrapOnlyLabelKey). The shared template writes extra label values
+		// verbatim, and a bare `true` would decode as a YAML boolean, which Kubernetes rejects as a
+		// label value — so this one label is passed already quoted. Quoting here rather than in the
+		// template keeps every other ExternalSecret's rendering unchanged.
+		ExtraLabels: []esLabel{{Key: BootstrapOnlyLabelKey, Value: strconv.Quote(BootstrapOnlyLabelValue)}},
 		// Ephemeral, just-in-time admin credential: a PreSync hook one wave BEFORE the Job (so ESO has
 		// materialized the Secret — ArgoCD waits on the ExternalSecret's health), deleted when the
 		// PreSync phase ends, succeeded or failed. creationPolicy Owner sets an ownerRef, so deleting
 		// this ExternalSecret garbage-collects the admin Secret too — no standing superuser credential in
 		// the app namespace.
 		Annotations: map[string]string{
-			"argocd.argoproj.io/hook":               "PreSync",
+			"argocd.argoproj.io/hook":               BootstrapHookPhase,
 			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
