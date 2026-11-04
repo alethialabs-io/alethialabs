@@ -57,7 +57,24 @@ describe("rankMatch / rankItems (F038)", () => {
 			"workshop",
 			"shop",
 		]);
-		expect(rankItems(["shop", "billing"], "", (n) => n, off)).toEqual(["billing", "shop"]);
+	});
+
+	it("keeps input order AND group order on an empty search, disabled rows included", () => {
+		// The node palette's shape: "Compute" holds one row, a singleton already on the canvas.
+		const rows = [
+			{ g: "Workloads", name: "service", off: false },
+			{ g: "Compute", name: "cluster", off: true },
+			{ g: "Data", name: "database", off: false },
+			{ g: "Data", name: "cache", off: true },
+			{ g: "Data", name: "queue", off: false },
+		];
+		const ranked = rankItems(rows, "", (r) => r.name, (r) => r.off);
+		expect(ranked).toEqual(rows);
+		expect(groupResults(ranked, (r) => r.g).map((g) => g.group)).toEqual([
+			"Workloads",
+			"Compute",
+			"Data",
+		]);
 	});
 
 	it("matches the item's search text, not anything else about it", () => {

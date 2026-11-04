@@ -207,13 +207,23 @@ describe("Command", () => {
 		expect(screen.queryAllByRole("group")).toEqual([]);
 	});
 
-	it("keeps a pinned row reachable by keyboard on a miss, beside the empty text", async () => {
+	it("renders a pinned row after every result", () => {
+		render(<Harness onPick={() => {}} pinned="New row" />);
+		expect(listed().at(-1)).toBe("New row");
+	});
+
+	it("on a miss highlights nothing, so Enter runs nothing until ArrowDown reaches the pinned row", async () => {
 		const user = userEvent.setup({ delay: null });
 		const onPick = vi.fn();
 		render(<Harness onPick={onPick} pinned="New row" />);
 		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "zzz");
 		expect(screen.getByText("No row found.")).toBeInTheDocument();
-		await user.keyboard("{ArrowDown}{Enter}");
+		expect(document.querySelector("[data-highlighted]")).toBeNull();
+		await user.keyboard("{Enter}");
+		expect(onPick).not.toHaveBeenCalled();
+		await user.keyboard("{ArrowDown}");
+		expect(screen.getByRole("option", { name: "New row" })).toHaveAttribute("data-highlighted");
+		await user.keyboard("{Enter}");
 		expect(onPick).toHaveBeenCalledWith("New row");
 	});
 
