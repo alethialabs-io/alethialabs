@@ -9,11 +9,12 @@
 //
 // What is NOT this set, on purpose, and keeps its own name where it is used:
 // - PAID_SUBSCRIPTION_STATUSES (new-org-setup.ts): `active`, `trialing`, `past_due`, the statuses that
-//   mean the charge went through. `unpaid` and `paused` still exist but are not paid.
+//   mean a first charge went through. `unpaid` and `paused` still exist but are not paid.
 // - the org-plan PAID set (org-plan-row.ts): `active`, `trialing`.
 // - STORED_LIVE_STATUSES (org-plan-row.ts), LIVE_STATUSES (queries.ts) and LIVE_BILLING_STATUSES
 //   (pending-org-setup.ts): these read OUR billing row's `billing_status`, not a Stripe status. `mapStatus` folds `unpaid` into
-//   `past_due` and has no `paused`, so the row's live set is necessarily smaller.
+//   `past_due` and has no `paused`, so the row's live set is necessarily smaller. The `billing_status`
+//   enum (schema/enums.ts) and scripts/set-org-plan.mjs list that row's values, not a live set.
 // - `namesOtherLivePlan` (payment-holds/sweeper.ts): a row-status predicate that deliberately widens
 //   "live" to `past_due` for the link's refusal only.
 //
