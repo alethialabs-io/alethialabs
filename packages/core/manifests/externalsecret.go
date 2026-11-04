@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -114,13 +115,29 @@ type ExternalSecretParams struct {
 	Facets      []string
 	// Labels are extra metadata labels to stamp on the ExternalSecret (beyond the always-present
 	// name + managed-by:alethia). Empty by default — the caller (e.g. the BYO-chart binding lane)
-	// sets a marker label so it can prune its own runner-applied ExternalSecrets later.
+	// sets a marker label so it can prune its own runner-applied ExternalSecrets later. Each value
+	// renders as a quoted string (see quotedLabels), whatever it looks like.
 	Labels map[string]string
 }
 
 type esDatum struct{ SecretKey, RemoteKey, Property string }
 
 type esLabel struct{ Key, Value string }
+
+// quotedLabels turns a caller's extra labels into template rows, sorted by key, with every VALUE
+// rendered as a double-quoted YAML scalar. The template writes a row's value verbatim, so an
+// unquoted `true`, `false`, `null` or a bare number would reach the API server as a boolean, null or
+// integer — and a label value must be a string, so the whole object is rejected at apply. Quoting
+// here, at the one place caller-supplied labels enter the template, makes the rendered type a
+// property of the renderer rather than of whichever value a caller happened to pick.
+func quotedLabels(labels map[string]string) []esLabel {
+	out := make([]esLabel, 0, len(labels))
+	for k, v := range labels {
+		out = append(out, esLabel{Key: k, Value: strconv.Quote(v)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
 
 type esTemplateData struct {
 	Name        string
@@ -211,11 +228,7 @@ func RenderExternalSecret(p ExternalSecretParams) (string, []string, error) {
 	if ns == "" {
 		ns = "default"
 	}
-	var extraLabels []esLabel
-	for k, v := range p.Labels {
-		extraLabels = append(extraLabels, esLabel{Key: k, Value: v})
-	}
-	sort.Slice(extraLabels, func(i, j int) bool { return extraLabels[i].Key < extraLabels[j].Key })
+	extraLabels := quotedLabels(p.Labels)
 
 	var buf bytes.Buffer
 	if err := externalSecretTmpl.Execute(&buf, esTemplateData{
@@ -263,11 +276,7 @@ func RenderSecretBindingExternalSecret(p SecretBindingExternalSecretParams) (str
 	if ns == "" {
 		ns = "default"
 	}
-	var extraLabels []esLabel
-	for k, v := range p.Labels {
-		extraLabels = append(extraLabels, esLabel{Key: k, Value: v})
-	}
-	sort.Slice(extraLabels, func(i, j int) bool { return extraLabels[i].Key < extraLabels[j].Key })
+	extraLabels := quotedLabels(p.Labels)
 
 	var buf bytes.Buffer
 	if err := externalSecretTmpl.Execute(&buf, esTemplateData{

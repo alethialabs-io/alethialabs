@@ -1347,9 +1347,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
-		// The BYO binding ExternalSecrets this deploy (re)applies — the desired set for the prune
-		// below (declared out here so a fully-detached chart, vc.AddOns empty, still sweeps them).
-		var appliedBindingSecrets []string
+		// The BYO binding state for the prune below — declared out here, with its owner, so a
+		// fully-detached chart (vc.AddOns empty) still sweeps this environment's bindings.
+		bindingState := byoBindingState{Owner: byoBindingOwner(vc)}
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1376,7 +1376,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
 			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
 			// BEFORE the Applications render, so the write-back rides the same helm.values block.
-			appliedBindingSecrets = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
+			bindingState = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
 
 			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 			// Applications render — the same seam, and the same reason, as applyByoChartBindings
@@ -1425,9 +1425,10 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
 			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
 		}
-		// W5 Lane 2b: sweep any BYO binding ExternalSecret no longer desired (a removed binding or a
-		// detached chart) — they are runner-applied outside ArgoCD, so this is their only GC.
-		argocd.PruneChartBindingSecrets(appliedBindingSecrets, stdout, stderr)
+		// W5 Lane 2b: sweep this environment's BYO binding ExternalSecrets that its configuration no
+		// longer declares (a removed binding or a detached chart) — they are runner-applied outside
+		// ArgoCD, so this is their only GC. Skipped when any binding failed on this deploy.
+		pruneByoChartBindings(bindingState, stdout, stderr)
 		// And the runner-seeded secret of any disabled add-on (W4.5) — no Application owns
 		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
 		// prune them; this is their only GC.
