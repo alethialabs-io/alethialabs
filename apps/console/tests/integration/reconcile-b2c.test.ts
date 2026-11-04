@@ -436,12 +436,17 @@ describeIfDb("B2c reconcile — real Postgres", () => {
 				created_at: min(-1000),
 			});
 		}
+		// The GC is global: it deletes ANY fleet_actions row older than the window, oldest first. A
+		// zero window also takes rows other test files insert "now" against this shared database, so
+		// the counts below would depend on what else ran (a second pass once took our last row plus a
+		// foreign one: 2, not 1). Ours are 1000 minutes old; a 500-minute window reaches them and
+		// nothing written during the run.
 		const del1 = await db.execute<{ deleted: number }>(
-			sql`select public.gc_fleet_actions(make_interval(secs => 0), 2) as deleted`,
+			sql`select public.gc_fleet_actions(make_interval(mins => 500), 2) as deleted`,
 		);
 		expect(Number(del1[0].deleted)).toBe(2);
 		const del2 = await db.execute<{ deleted: number }>(
-			sql`select public.gc_fleet_actions(make_interval(secs => 0), 2) as deleted`,
+			sql`select public.gc_fleet_actions(make_interval(mins => 500), 2) as deleted`,
 		);
 		expect(Number(del2[0].deleted)).toBe(1);
 		const left = await db
