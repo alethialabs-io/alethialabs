@@ -667,11 +667,12 @@ func TestBootstrapJob_BootstrapOnlyLabel(t *testing.T) {
 	}
 }
 
-// TestBootstrapLabelQuoting_LeavesOtherExternalSecretsUnchanged pins that quoting the bootstrap-only
-// label did not change how the shared ExternalSecret template renders anyone else's extra labels: the
-// BYO-chart binding ExternalSecret renders byte-for-byte as it did before (its marker label value
-// unquoted). Changing that lane's rendering is a separate change with its own safety work.
-func TestBootstrapLabelQuoting_LeavesOtherExternalSecretsUnchanged(t *testing.T) {
+// TestBootstrapLabelQuoting_BindingExternalSecretRendersItsLabelAsAString pins the BYO-chart binding
+// ExternalSecret byte for byte. Its marker label value is the double-quoted string "true": the shared
+// template quotes every caller-supplied label value, so the bootstrap-only label (which passes its
+// rows pre-quoted) and the binding lane's marker both reach the API server as strings. An unquoted
+// `true` is a YAML boolean, and an object carrying one as a label value is rejected at apply.
+func TestBootstrapLabelQuoting_BindingExternalSecretRendersItsLabelAsAString(t *testing.T) {
 	got, skipped, err := RenderExternalSecret(ExternalSecretParams{
 		ServiceName: "web",
 		Namespace:   "ns",
@@ -684,7 +685,7 @@ func TestBootstrapLabelQuoting_LeavesOtherExternalSecretsUnchanged(t *testing.T)
 	if err != nil || len(skipped) != 0 {
 		t.Fatalf("render err=%v skipped=%v", err, skipped)
 	}
-	const want = "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: web-database-orders\n  namespace: ns\n  labels:\n    app.kubernetes.io/name: web-database-orders\n    app.kubernetes.io/managed-by: alethia\n    alethia.io/byo-binding: true\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    name: secretstore-aws\n    kind: ClusterSecretStore\n  target:\n    name: web-database-orders\n    creationPolicy: Owner\n  data:\n    - secretKey: username\n      remoteRef:\n        key: arn:secret\n        property: username\n    - secretKey: password\n      remoteRef:\n        key: arn:secret\n        property: password\n"
+	const want = "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: web-database-orders\n  namespace: ns\n  labels:\n    app.kubernetes.io/name: web-database-orders\n    app.kubernetes.io/managed-by: alethia\n    alethia.io/byo-binding: \"true\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    name: secretstore-aws\n    kind: ClusterSecretStore\n  target:\n    name: web-database-orders\n    creationPolicy: Owner\n  data:\n    - secretKey: username\n      remoteRef:\n        key: arn:secret\n        property: username\n    - secretKey: password\n      remoteRef:\n        key: arn:secret\n        property: password\n"
 	if got != want {
 		t.Errorf("BYO-chart binding ExternalSecret rendering changed:\n got %q\nwant %q", got, want)
 	}

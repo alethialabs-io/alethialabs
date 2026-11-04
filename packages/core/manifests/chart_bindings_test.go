@@ -24,9 +24,16 @@ func TestRenderExternalSecret_WithMarkerLabel(t *testing.T) {
 	if err != nil || len(skipped) != 0 {
 		t.Fatalf("render err=%v skipped=%v", err, skipped)
 	}
-	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there.
-	if !strings.Contains(yaml, "alethia.io/byo-binding: true") {
-		t.Fatalf("marker label not rendered:\n%s", yaml)
+	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there, and
+	// the marker is a STRING once parsed: a YAML boolean label value fails the apply outright.
+	docs := parseYAMLDocs(t, yaml)
+	if len(docs) != 1 {
+		t.Fatalf("want one document, got %d:\n%s", len(docs), yaml)
+	}
+	meta, _ := docs[0]["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	if got, ok := labels["alethia.io/byo-binding"].(string); !ok || got != "true" {
+		t.Fatalf("marker label = %#v, want the string \"true\":\n%s", labels["alethia.io/byo-binding"], yaml)
 	}
 	if !strings.Contains(yaml, "app.kubernetes.io/managed-by: alethia") {
 		t.Fatalf("fixed labels dropped when adding an extra one:\n%s", yaml)

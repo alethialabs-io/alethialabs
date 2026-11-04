@@ -9,9 +9,68 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
+
+// byoBindingState is what one deploy knows about its BYO chart binding ExternalSecrets, gathered by
+// applyByoChartBindings and consumed by pruneByoChartBindings.
+type byoBindingState struct {
+	// Owner is the environment's owner-label value, stamped on every binding ExternalSecret and the
+	// only owner the prune will delete for. Empty when the environment has no ID.
+	Owner string
+	// Declared is every binding ExternalSecret the configuration DECLARES — one per (chart namespace,
+	// workload, bound target) with at least one credential facet — whether or not it rendered or
+	// applied on this run. It is the prune's keep set.
+	Declared []argocd.BindingSecretRef
+	// Namespaces are the namespaces of every add-on that is a BYO chart or describes a workload —
+	// where a binding lives or recently lived. The prune adds the namespaces carrying the owner label.
+	Namespaces []string
+	// Failures counts the binding ExternalSecrets that failed to render or apply on this run. Any
+	// failure skips the prune for the whole deploy.
+	Failures int
+}
+
+// byoBindingOwner is the environment's owner-label value: the same rendering of the environment ID
+// that cloud.ClassificationLabels stamps on the BYO namespaces the runner creates, so the namespace
+// lookup and the ExternalSecret selector agree by construction.
+func byoBindingOwner(vc *types.ProjectConfig) string {
+	return cloud.ClassificationLabels(vc)[argocd.ByoBindingOwnerLabel]
+}
+
+// declaredByoBindings returns the binding ExternalSecrets vc declares and the namespaces the prune
+// should look in, read from the configuration alone — no tofu output, render or apply result enters it, so a
+// binding that failed on this run is still declared and still kept.
+func declaredByoBindings(vc *types.ProjectConfig) ([]argocd.BindingSecretRef, []string) {
+	var refs []argocd.BindingSecretRef
+	var namespaces []string
+	seenNS := map[string]bool{}
+	for _, a := range vc.AddOns {
+		if len(a.Workloads) == 0 && !a.IsGitSource() {
+			continue
+		}
+		ns := a.Namespace
+		if ns == "" {
+			ns = "default" // the renderer's default, so the ref names the object it creates
+		}
+		// The namespace is looked in even when no binding is declared there any more: that is
+		// exactly the case of a binding just removed from a chart that is still installed.
+		if !seenNS[ns] {
+			seenNS[ns] = true
+			namespaces = append(namespaces, ns)
+		}
+		for _, w := range a.Workloads {
+			for _, b := range w.Bindings {
+				if len(manifests.CredentialFacetNames(b)) == 0 {
+					continue
+				}
+				refs = append(refs, argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, b.Target)})
+			}
+		}
+	}
+	return refs, namespaces
+}
 
 // applyByoChartBindings resolves each BYO chart workload's W3 bindings (W5 Lane 2b) against the
 // provision's tofu `outputs` and writes them into the chart's Values BEFORE its Application renders:
@@ -21,9 +80,13 @@ import (
 // same pattern as EnsureAddOnSecrets is used). Never inlines a plaintext credential; a facet that
 // can't be resolved keylessly is logged and skipped, never referenced. Non-fatal — a bad binding
 // must not fail an otherwise-healthy deploy. Mutates each addon's Values in place.
-// Returns the names of the binding ExternalSecrets it successfully applied — the desired set the
-// caller passes to argocd.PruneChartBindingSecrets so a removed binding's Secret is swept.
-func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) []string {
+//
+// Each ExternalSecret carries the binding marker and the environment's owner label. The returned
+// state carries the DECLARED bindings (the prune's keep set) and how many failed on this run.
+func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) byoBindingState {
+	st := byoBindingState{Owner: byoBindingOwner(vc)}
+	st.Declared, st.Namespaces = declaredByoBindings(vc)
+
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
 	strOutputs := make(map[string]string, len(outputs))
 	for k, v := range outputs {
@@ -31,7 +94,6 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 			strOutputs[k] = s
 		}
 	}
-	var applied []string
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
 		if len(a.Workloads) == 0 {
@@ -52,10 +114,15 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 			}
 			for _, es := range res.ExternalSecrets {
 				// Mark it so PruneChartBindingSecrets can find + sweep it when the binding is removed
-				// (it is applied outside ArgoCD, so nothing else prunes it).
+				// (it is applied outside ArgoCD, so nothing else prunes it), and name its owner so a
+				// prune run by any OTHER environment on a shared host never selects it.
 				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true"}
+				if st.Owner != "" {
+					es.Labels[argocd.ByoBindingOwnerLabel] = st.Owner
+				}
 				yaml, skipped, err := manifests.RenderExternalSecret(es)
 				if err != nil {
+					st.Failures++
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
 					continue
 				}
@@ -66,14 +133,27 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 					continue
 				}
 				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
+					st.Failures++
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
 					continue
 				}
-				applied = append(applied, manifests.BindingSecretName(es.ServiceName, es.Target))
 			}
 		}
 	}
-	return applied
+	return st
+}
+
+// pruneByoChartBindings sweeps the environment's binding ExternalSecrets that its configuration no
+// longer declares. It is skipped outright when any binding failed to render or apply on this run:
+// that deploy's view of the bindings is incomplete, and a live binding must never be removed
+// because one run could not re-apply it. It is also skipped when the environment has no owner
+// label to scope by.
+func pruneByoChartBindings(st byoBindingState, stdout, stderr io.Writer) {
+	if st.Failures > 0 {
+		fmt.Fprintf(stderr, "Warning: skipping the BYO binding ExternalSecret prune: %d binding(s) failed to render or apply on this deploy\n", st.Failures)
+		return
+	}
+	argocd.PruneChartBindingSecrets(st.Owner, st.Namespaces, st.Declared, stdout, stderr)
 }
 
 // prepareByoCharts sets up the trust boundary for bring-your-own (git-source) charts BEFORE the

@@ -7,11 +7,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"gopkg.in/yaml.v3"
 )
 
 // TestApplyByoChartBindingsWritesNonSecretFacets drives the W5 Lane 2b binding write-back with a
@@ -46,9 +51,9 @@ func TestApplyByoChartBindingsWritesNonSecretFacets(t *testing.T) {
 		"node_count": 3,
 	}
 
-	applied := applyByoChartBindings(vc, outputs, "aws", io.Discard, io.Discard)
-	if len(applied) != 0 {
-		t.Fatalf("applied = %#v, want none (no credential facet was bound)", applied)
+	st := applyByoChartBindings(vc, outputs, "aws", io.Discard, io.Discard)
+	if len(st.Declared) != 0 || st.Failures != 0 {
+		t.Fatalf("state = %#v, want no declared binding Secret (no credential facet was bound)", st)
 	}
 	values := vc.AddOns[1].Values
 	if values == nil {
@@ -92,9 +97,9 @@ func TestApplyByoChartBindingsReportsUnsatisfiedKnobs(t *testing.T) {
 	}
 
 	var log strings.Builder
-	applied := applyByoChartBindings(vc, map[string]interface{}{}, "aws", &log, io.Discard)
-	if len(applied) != 0 {
-		t.Fatalf("applied = %#v, want none", applied)
+	st := applyByoChartBindings(vc, map[string]interface{}{}, "aws", &log, io.Discard)
+	if len(st.Declared) != 0 || st.Failures != 0 {
+		t.Fatalf("state = %#v, want no declared binding Secret", st)
 	}
 	if len(vc.AddOns[0].Values) != 0 {
 		t.Fatalf("Values = %#v, want untouched", vc.AddOns[0].Values)
@@ -204,5 +209,158 @@ func TestDeregisterVClusterAttemptsBothTeardowns(t *testing.T) {
 	clean := &fakeVClusterProvisioner{}
 	if err := deregisterVCluster(context.Background(), clean, spec, io.Discard, io.Discard); err != nil {
 		t.Fatalf("clean teardown returned %v", err)
+	}
+}
+
+// bindingCluster is a scripted `kubectl` standing in for one cluster during a deploy's binding
+// apply + prune: it records every call, captures applied manifests, fails `apply` on demand, and
+// answers the ExternalSecret listing in "apps" with a fixed set of live objects. It deliberately
+// IGNORES label selectors, so an owner check that relied on the API server alone would be caught.
+type bindingCluster struct {
+	log, applied string
+}
+
+// newBindingCluster installs the scripted kubectl. liveJSON is the `get externalsecrets -n apps`
+// answer; applyExit is the exit code of every `kubectl apply`.
+func newBindingCluster(t *testing.T, liveJSON string, applyExit int) *bindingCluster {
+	t.Helper()
+	dir := t.TempDir()
+	c := &bindingCluster{log: filepath.Join(dir, "calls.log"), applied: filepath.Join(dir, "applied.yaml")}
+	live := filepath.Join(dir, "live.json")
+	if err := os.WriteFile(live, []byte(liveJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> '" + c.log + "'\n" +
+		"case \"$*\" in\n" +
+		"  apply*) cat \"$3\" >> '" + c.applied + "'; exit " + strconv.Itoa(applyExit) + ";;\n" +
+		"  *'get namespaces'*) echo '{\"items\":[]}'; exit 0;;\n" +
+		"  *'get externalsecrets -n apps'*) cat '" + live + "'; exit 0;;\n" +
+		"esac\nexit 0\n"
+	provStubTool(t, "kubectl", script)
+	return c
+}
+
+// calls returns every recorded kubectl invocation.
+func (c *bindingCluster) calls() string {
+	b, _ := os.ReadFile(c.log)
+	return string(b)
+}
+
+// byoBindingConfig is one environment with one BYO chart workload in "apps", optionally bound to a
+// database through a credential facet.
+func byoBindingConfig(envID string, bound bool) *types.ProjectConfig {
+	w := types.ChartWorkloadBinding{Name: "api"}
+	if bound {
+		w.Bindings = []types.ServiceBinding{{
+			Target: types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"},
+			Inject: []types.ServiceBindingInjection{{Env: "DB_PASSWORD", From: "password"}},
+		}}
+		w.ValuePaths = map[string]string{"bind:database:primary:password": "api.existingSecret"}
+	}
+	return &types.ProjectConfig{
+		ID:            "proj-1",
+		EnvironmentID: envID,
+		AddOns:        []types.AddOnInstall{{ID: "acme-api", Namespace: "apps", Workloads: []types.ChartWorkloadBinding{w}}},
+	}
+}
+
+// liveBinding is the cluster's listing of one api-database-primary ExternalSecret in "apps".
+func liveBinding(labels string) string {
+	return `{"items":[{"metadata":{"name":"api-database-primary","namespace":"apps","labels":` + labels + `}}]}`
+}
+
+const bindingOutputsSecret = "acme/rds/master"
+
+// runBindingDeploy runs the binding half of a deploy: apply, then prune, as deploy.go does.
+func runBindingDeploy(vc *types.ProjectConfig, stderr io.Writer) {
+	st := applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", io.Discard, stderr)
+	pruneByoChartBindings(st, io.Discard, stderr)
+}
+
+// TestByoBindingDeploy_AppliedObjectCarriesStringLabels: the ExternalSecret that reaches the cluster
+// carries the marker and the owner label, both as strings once parsed.
+func TestByoBindingDeploy_AppliedObjectCarriesStringLabels(t *testing.T) {
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	runBindingDeploy(byoBindingConfig("env-1", true), io.Discard)
+
+	body, err := os.ReadFile(c.applied)
+	if err != nil {
+		t.Fatalf("no ExternalSecret was applied: %v", err)
+	}
+	var doc struct {
+		Metadata struct {
+			Labels map[string]interface{} `yaml:"labels"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("applied manifest does not parse: %v\n%s", err, body)
+	}
+	for key, want := range map[string]string{argocd.ByoBindingSecretLabel: "true", argocd.ByoBindingOwnerLabel: "env-1"} {
+		if got, ok := doc.Metadata.Labels[key].(string); !ok || got != want {
+			t.Errorf("label %s = %#v, want the string %q\n%s", key, doc.Metadata.Labels[key], want, body)
+		}
+	}
+}
+
+// TestByoBindingDeploy_TransientApplyFailureKeepsTheLiveBinding: the binding is still declared, its
+// apply fails this once, and the live ExternalSecret from the previous deploy survives — the prune
+// does not even list.
+func TestByoBindingDeploy_TransientApplyFailureKeepsTheLiveBinding(t *testing.T) {
+	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 1)
+	var errOut strings.Builder
+	runBindingDeploy(byoBindingConfig("env-1", true), &errOut)
+
+	if strings.Contains(c.calls(), "delete") {
+		t.Fatalf("a binding whose apply failed was pruned:\n%s", c.calls())
+	}
+	if strings.Contains(c.calls(), "get externalsecrets") {
+		t.Errorf("the prune ran on a deploy with a failed binding:\n%s", c.calls())
+	}
+	if !strings.Contains(errOut.String(), "skipping the BYO binding ExternalSecret prune") {
+		t.Errorf("the skipped prune was not reported:\n%s", errOut.String())
+	}
+}
+
+// TestByoBindingDeploy_RemovedDeclarationIsPruned: the workload no longer declares the binding, so
+// this environment's live ExternalSecret for it is deleted.
+func TestByoBindingDeploy_RemovedDeclarationIsPruned(t *testing.T) {
+	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
+	runBindingDeploy(byoBindingConfig("env-1", false), io.Discard)
+
+	if !strings.Contains(c.calls(), "delete externalsecret -n apps api-database-primary") {
+		t.Fatalf("the removed binding was not pruned:\n%s", c.calls())
+	}
+}
+
+// TestByoBindingDeploy_StillDeclaredBindingIsKept: the control for the case above — same live
+// object, binding still declared, nothing deleted.
+func TestByoBindingDeploy_StillDeclaredBindingIsKept(t *testing.T) {
+	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
+	runBindingDeploy(byoBindingConfig("env-1", true), io.Discard)
+
+	if strings.Contains(c.calls(), "delete") {
+		t.Fatalf("a still-declared binding was pruned:\n%s", c.calls())
+	}
+	if !strings.Contains(c.calls(), "get externalsecrets -n apps") {
+		t.Fatalf("the prune never listed the declared namespace:\n%s", c.calls())
+	}
+}
+
+// TestByoBindingDeploy_ForeignAndUnownedObjectsAreUntouched: on a shared host another environment's
+// labelled ExternalSecret, and a labelled one with no owner label at all, sit in the listed
+// namespace. This environment declares nothing there, and still deletes neither.
+func TestByoBindingDeploy_ForeignAndUnownedObjectsAreUntouched(t *testing.T) {
+	for name, labels := range map[string]string{
+		"foreign environment": `{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-2"}`,
+		"no owner label":      `{"alethia.io/byo-binding":"true"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newBindingCluster(t, liveBinding(labels), 0)
+			runBindingDeploy(byoBindingConfig("env-1", false), io.Discard)
+			if strings.Contains(c.calls(), "delete") {
+				t.Fatalf("an object this environment does not own was pruned:\n%s", c.calls())
+			}
+		})
 	}
 }
