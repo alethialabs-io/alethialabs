@@ -137,10 +137,14 @@ describe("the BYO chart schemas", () => {
 				byoChartFormSchema.safeParse(formValue(ns)),
 				byoChartAttachSchema.safeParse(attachValue(ns)),
 			]) {
-				expect(result.success, ns).toBe(false);
+				// The namespace rides in the compared value, so a failure names which one.
+				expect({ ns, success: result.success }).toEqual({ ns, success: false });
 				if (!result.success) {
 					const issue = result.error.issues.find((i) => i.path.join(".") === "namespace");
-					expect(issue?.message, ns).toContain("reserved for the platform");
+					expect({ ns, message: issue?.message ?? "" }).toEqual({
+						ns,
+						message: expect.stringContaining("reserved for the platform"),
+					});
 				}
 			}
 		}
@@ -157,8 +161,14 @@ describe("the BYO chart schemas", () => {
 
 	it("accept an ordinary namespace and a blank one (the default)", () => {
 		for (const ns of ["payments", ""]) {
-			expect(byoChartFormSchema.safeParse(formValue(ns)).success, ns).toBe(true);
-			expect(byoChartAttachSchema.safeParse(attachValue(ns)).success, ns).toBe(true);
+			expect({ ns, success: byoChartFormSchema.safeParse(formValue(ns)).success }).toEqual({
+				ns,
+				success: true,
+			});
+			expect({ ns, success: byoChartAttachSchema.safeParse(attachValue(ns)).success }).toEqual({
+				ns,
+				success: true,
+			});
 		}
 		expect(
 			byoChartAttachSchema.safeParse({
