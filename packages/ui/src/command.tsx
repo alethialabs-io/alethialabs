@@ -114,7 +114,7 @@ function Command({
   }, [miss, hasPinned, pinnedArmed])
   const navigable = React.useMemo(() => {
     if (!hasPinned || !pinnedItems) return filteredItems
-    if (miss) return pinnedArmed ? pinnedItems : NO_ITEMS
+    if (miss) return pinnedArmed || pinnedItems ? pinnedItems : NO_ITEMS
     return [...filteredItems, ...pinnedItems]
   }, [filteredItems, pinnedItems, hasPinned, miss, pinnedArmed])
   const context = React.useMemo(
@@ -129,7 +129,7 @@ function Command({
         items={navigable}
         // Base UI's own filtering is off: `filteredItems` is already the ranked result.
         filter={null}
-        autoHighlight={miss ? false : "always"}
+        autoHighlight={miss && !hasPinned ? false : "always"}
         keepHighlight
         loopFocus={loopFocus}
         value={search}
