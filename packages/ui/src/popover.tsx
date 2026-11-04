@@ -42,6 +42,7 @@ function PopoverContent({
   alignOffset,
   anchor,
   container,
+  nested = false,
   children,
   ...props
 }: Omit<React.ComponentProps<typeof PopoverPrimitive.Popup>, "children"> & {
@@ -65,6 +66,12 @@ function PopoverContent({
    * the dialog content, while its React floating-tree membership (and inert-exemption) is preserved.
    */
   container?: React.ComponentProps<typeof PopoverPrimitive.Portal>["container"];
+  /**
+   * An overlay opened from inside another overlay: the layer is `--z-overlay-nested` instead of
+   * `--z-overlay`. It is a prop rather than a `className` because the layer belongs on the
+   * Positioner (see below), and `className` reaches only the Popup.
+   */
+  nested?: boolean;
   children?: React.ReactNode;
 }) {
   return (
@@ -75,16 +82,18 @@ function PopoverContent({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        // The layer lives HERE, not on the Popup. From @base-ui/react 1.x the Positioner is placed
+        // with an inline `transform` (floating-ui's default; 1.0.0-rc.0 used top/left), and a
+        // transform makes the Positioner its own stacking context at `z-index: auto`. A z-index on
+        // the Popup then only orders it inside that context, and the whole popover paints at layer
+        // 0, BEHIND a fullscreen dialog at --z-overlay — the Elench pickers were unclickable (#6144).
+        className={nested ? "z-[var(--z-overlay-nested)]" : "z-[var(--z-overlay)]"}
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
-          // `relative` is load-bearing: base-ui positions the popup via the (absolute) Positioner and
-          // leaves the Popup itself `position: static`, on which `z-index` is a no-op. Without a
-          // position, the z-index (and any caller override) is silently ignored, so a popover opened from
-          // inside another positioned layer (e.g. the fullscreen Elench dialog) renders *behind* it. Making
-          // the Popup positioned lets its z-index actually apply.
+          // No z-index here: it would order the Popup only inside the Positioner's stacking context.
           className={cn(
-            "relative z-[var(--z-overlay)] w-72 origin-(--transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[open]:animate-in data-[open]:fade-in-0 data-[open]:zoom-in-95",
+            "w-72 origin-(--transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[open]:animate-in data-[open]:fade-in-0 data-[open]:zoom-in-95",
             className,
           )}
           {...props}

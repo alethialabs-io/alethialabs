@@ -145,6 +145,9 @@ function ContextMenuContent({
         side="bottom"
         align="start"
         sideOffset={0}
+        // The layer is on the Positioner: its inline `transform` makes it a stacking context, so a
+        // z-index on the Popup alone would only order it inside that context (#6144, popover.tsx).
+        className="z-[var(--z-overlay)]"
       >
         <MenuPrimitive.Popup
           data-slot="context-menu-content"

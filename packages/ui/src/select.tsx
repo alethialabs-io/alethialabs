@@ -171,6 +171,9 @@ function SelectContent({
         sideOffset={sideOffset}
         align={align}
         alignItemWithTrigger={false}
+        // The layer is on the Positioner: its inline `transform` makes it a stacking context, so a
+        // z-index on the Popup alone would only order it inside that context (#6144, popover.tsx).
+        className="z-[var(--z-overlay)]"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"
