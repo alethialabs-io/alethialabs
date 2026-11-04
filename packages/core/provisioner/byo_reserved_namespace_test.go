@@ -7,6 +7,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -233,11 +236,11 @@ func TestConfigureByoCharts_WarningSaysWhenTheDestinationCouldNotBeWithdrawn(t *
 
 // TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep drives the REAL add-on stage RunDeployV2
 // calls (runAddOnStage), against the scripted kubectl, with an ordinary BYO chart and one in a
-// reserved namespace. The refused chart gets nothing: no Application applied, no health wait, a deploy
-// warning naming it; the accepted chart is applied and waited on. Reverting any call site inside the
-// stage to the unfiltered add-on list fails this test.
+// reserved namespace. The refused chart gets nothing — no secret, no binding, no Application, no place
+// in the returned list the health wait reads — and a deploy warning naming it; the accepted chart gets
+// all of them. Each filter in the stage is pinned here, render and wave apply together (see
+// runAddOnStage).
 func TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep(t *testing.T) {
-	t.Setenv("ALETHIA_ADDON_CONVERGE_TIMEOUT", "0s")
 	c := newByoCluster(t, "")
 	vc := legacyByoConfig("kube-system")
 	// Both charts carry a seeded secret and a bound workload, so the secret-seeding and binding steps
@@ -303,17 +306,19 @@ func TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep(t *testing.T) {
 	if !applied[argocd.AddOnAppName("api")] {
 		t.Errorf("the accepted chart's Application was not applied; applied: %v", applied)
 	}
-	if _, waited := stage.Health[argocd.AddOnAppName("legacy")]; waited {
-		t.Error("the health wait spent its budget on the refused chart")
+	// The health wait RunDeployV2 runs after the prunes reads stage.Deployable.
+	waitNames := argocd.AllAddOnNames(stage.Deployable)
+	if containsName(waitNames, argocd.AddOnAppName("legacy")) {
+		t.Errorf("the health wait would spend its budget on the refused chart: %v", waitNames)
 	}
-	if _, waited := stage.Health[argocd.AddOnAppName("api")]; !waited {
-		t.Errorf("the accepted chart was not waited on: %v", stage.Health)
+	if !containsName(waitNames, argocd.AddOnAppName("api")) {
+		t.Errorf("the accepted chart would not be waited on: %v", waitNames)
 	}
 	if len(stage.Warnings) != 1 || !strings.Contains(stage.Warnings[0], `"legacy"`) {
 		t.Errorf("want one deploy warning naming the refused chart, got %v", stage.Warnings)
 	}
-	if !reflect.DeepEqual(refreshed, []string{"the add-on Applications", "the add-on health wait"}) {
-		t.Errorf("credential refreshes = %v, want one before the wave apply and one before the health wait", refreshed)
+	if !reflect.DeepEqual(refreshed, []string{"the add-on Applications"}) {
+		t.Errorf("credential refreshes = %v, want exactly one, before the wave apply", refreshed)
 	}
 	// What the prune that follows the stage keeps: the refused chart's Application is NOT deleted.
 	if keep := argocd.ManagedAddOnNames(vc.AddOns); !containsName(keep, argocd.AddOnAppName("legacy")) {
@@ -321,9 +326,82 @@ func TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep(t *testing.T) {
 	}
 }
 
-// TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt: a refused chart's Application can no
-// longer sync, so its binding secrets serve nothing and are withdrawn — the owner-scoped prune deletes
-// the one an earlier deploy applied, and nothing new is applied. The control: the same binding on an
+// TestRunDeployV2_PrunesBeforeTheHealthWait pins the order RunDeployV2 has always had around the add-on
+// stage: the stage, then every add-on prune, then the health wait. A disabled add-on's Application
+// must be gone before the wait measures the one replacing it, and a failed re-mint before the wait
+// must not skip the prunes. It also pins that the wait reads the stage's `deployable`, so a refused
+// BYO chart is not waited on. Read from the syntax tree, so a call moved into a closure or an `if` is
+// still located.
+func TestRunDeployV2_PrunesBeforeTheHealthWait(t *testing.T) {
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, "deploy.go", nil, 0)
+	if err != nil {
+		t.Fatalf("could not parse deploy.go, so this guard proved nothing: %v", err)
+	}
+	var body *ast.BlockStmt
+	for _, decl := range parsed.Decls {
+		if d, ok := decl.(*ast.FuncDecl); ok && d.Name.Name == "RunDeployV2" && d.Recv == nil {
+			body = d.Body
+		}
+	}
+	if body == nil {
+		t.Fatal("RunDeployV2 was not found in deploy.go — this guard proved nothing")
+	}
+	pos := map[string]token.Pos{}
+	waitReadsDeployable := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		// The wait must read the stage's `deployable`, not vc.AddOns: argocd.AllAddOnNames(deployable).
+		if f, ok := call.Fun.(*ast.SelectorExpr); ok && f.Sel.Name == "WaitAddOnsHealthy" && len(call.Args) > 1 {
+			if inner, ok := call.Args[1].(*ast.CallExpr); ok && len(inner.Args) == 1 {
+				if arg, ok := inner.Args[0].(*ast.Ident); ok && arg.Name == "deployable" {
+					waitReadsDeployable = true
+				}
+			}
+		}
+		name := ""
+		switch f := call.Fun.(type) {
+		case *ast.Ident:
+			name = f.Name
+		case *ast.SelectorExpr:
+			if pkg, ok := f.X.(*ast.Ident); ok {
+				name = pkg.Name + "." + f.Sel.Name
+			}
+		}
+		if _, seen := pos[name]; name != "" && !seen {
+			pos[name] = call.Pos()
+		}
+		return true
+	})
+	prunes := []string{
+		"argocd.PruneManagedAddOns", "pruneByoChartBindings", "argocd.PruneAddOnSecrets",
+		"argocd.PruneRegistryPullSecrets", "argocd.PruneHelmRepoCredentials", "argocd.PruneHelmRepoRefreshers",
+	}
+	for _, name := range append([]string{"runAddOnStage", "argocd.WaitAddOnsHealthy"}, prunes...) {
+		if _, ok := pos[name]; !ok {
+			t.Fatalf("%s is not called in RunDeployV2 — this guard proved nothing about the order", name)
+		}
+	}
+	if !waitReadsDeployable {
+		t.Error("argocd.WaitAddOnsHealthy no longer reads AllAddOnNames(deployable), so a refused BYO chart would be waited on")
+	}
+	for _, p := range prunes {
+		if pos[p] < pos["runAddOnStage"] {
+			t.Errorf("%s runs before the add-on stage", p)
+		}
+		if pos[p] > pos["argocd.WaitAddOnsHealthy"] {
+			t.Errorf("%s runs AFTER argocd.WaitAddOnsHealthy: the wait would measure what the prune removes", p)
+		}
+	}
+}
+
+// TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt: a refused chart's binding secrets are
+// withdrawn with it (deliberately, even though its running workloads lose the credential — see
+// declaredByoBindings) — the owner-scoped prune deletes the one an earlier deploy applied, and nothing
+// new is applied. The control: the same binding on an
 // ACCEPTED chart is kept. (The refusal is passed directly here; which namespaces are refused is
 // covered by the tests above.)
 func TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt(t *testing.T) {

@@ -24,7 +24,7 @@ type addOnStageInput struct {
 	GitRepoTokens     map[string]string
 	AddOnSecretValues map[string]map[string]string
 	// Refresh re-mints the cluster credential before a long wait (deployKubeRefresher.refresh). It is
-	// called before the wave apply and before the health wait, the two long waits in this stage.
+	// called before the wave apply, the long wait in this stage.
 	Refresh func(ctx context.Context, step string) error
 }
 
@@ -36,23 +36,31 @@ type addOnStageResult struct {
 	Refused []byoRefusal
 	// Warnings are the deploy warnings the console's Deploy tab shows — one per refusal.
 	Warnings []string
-	// Health is ArgoCD's health/sync for every add-on this deploy applied.
-	Health map[string]argocd.AddOnHealth
+	// Deployable is every add-on this deploy rendered and applied — vc.AddOns without the refused BYO
+	// charts. The health wait RunDeployV2 runs after the prunes reads exactly this list.
+	Deployable []types.AddOnInstall
 }
 
-// runAddOnStage is the add-on stage of a dedicated deploy, from configuring the BYO charts to the
-// health wait, in the order the cluster needs:
+// runAddOnStage is the add-on stage of a dedicated deploy, up to — NOT including — the health wait,
+// in the order the cluster needs:
 //
 //	configure BYO charts → seed add-on secrets → BYO bindings → cloud identity → render → wave
-//	apply → GitOps-mode write → one-shot bootstraps → health wait
+//	apply → GitOps-mode write → one-shot bootstraps
 //
-// # Why it is one function (#6439)
+// It returns the add-ons this deploy applied (`Deployable`). RunDeployV2 then runs the prunes and
+// only then the refresh and the health wait over `Deployable`, the order it always had: a disabled
+// add-on's Application must be gone before the wait measures the one replacing it, and a failed
+// re-mint before the wait must not skip the prunes.
 //
-// A BYO chart refused for its namespace must be left out of EVERY step that renders, applies,
-// seeds or waits — and a single unfiltered call site is enough to reopen the defect: the chart's
-// Application applied again, syncing into a namespace the platform owns. While these steps lived
-// inline in RunDeployV2, a test could only replay them, and reverting one call site to the
-// unfiltered list passed the whole suite. As one function, the test drives the real sequence.
+// # Why it is a function (#6439)
+//
+// A BYO chart refused for its namespace must be left out of every step that renders, applies, seeds
+// or waits. While these steps lived inline in RunDeployV2, a test could only replay them, and
+// reverting a call site to the unfiltered list passed the whole suite. Now the test drives this
+// function, and it pins each filter: EnsureAddOnSecrets, the binding apply, and the returned
+// `Deployable` the health wait reads. Render and wave apply are pinned TOGETHER, not separately: the
+// wave apply only applies files the render wrote, so unfiltering either one alone changes nothing on
+// the cluster — unfiltering both reopens the defect, and the test fails.
 //
 // What is NOT filtered, deliberately: writeAddOnGitOps (gitops-mode add-ons only; a BYO chart is
 // always attached `managed`) and EnsureAddOnBootstraps (catalogue add-ons only). The prunes that
@@ -120,25 +128,12 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// unsealing a marketplace Vault (#2717).
 	//
 	// HERE, and the position is load-bearing in both directions. AFTER the Applications are applied,
-	// because the Job talks to a Service that does not exist until then. BEFORE WaitAddOnsHealthy
-	// below, because a sealed Vault never becomes Healthy — waiting first would burn the whole add-on
+	// because the Job talks to a Service that does not exist until then. BEFORE the health wait
+	// RunDeployV2 runs after this stage, because a sealed Vault never becomes Healthy — waiting first would burn the whole add-on
 	// budget and then unseal it too late to be observed. The apply does not block on the Job
 	// finishing; the wait that follows is what sees the result.
 	argocd.EnsureAddOnBootstraps(vc.AddOns, selfimage.Ref(), stdout, stderr)
 
-	// Read ArgoCD health/sync for every add-on this deploy applied (managed + gitops) so the console
-	// shows real status (best-effort — a read failure just leaves status Unknown).
-	//
-	// WAIT for convergence first. The read used to run the instant after `kubectl apply`, when every
-	// Application is still Progressing/Missing — so a database that was about to come up perfectly
-	// was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh only updates
-	// project_addons rows, and the synthesized Hetzner data-service specs have none). The wait is
-	// bounded and best-effort: an add-on that never converges is reported honestly rather than
-	// failing an otherwise-healthy cluster. A refused BYO chart is not waited on: this deploy did not
-	// apply it, and its Application can no longer sync.
-	if err := in.Refresh(ctx, "the add-on health wait"); err != nil {
-		return out, err
-	}
-	out.Health = argocd.WaitAddOnsHealthy(ctx, argocd.AllAddOnNames(deployable), addonConvergeTimeout(), stdout, stderr)
+	out.Deployable = deployable
 	return out, nil
 }

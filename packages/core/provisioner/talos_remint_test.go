@@ -465,9 +465,10 @@ func TestDeployRefreshesBeforeEveryLongWait(t *testing.T) {
 		"argocd.EnsureExternalSecretsStore(",
 		"argocd.EnsureCertManagerIssuer(",
 		"argocd.ApplyManifestAddOns(",
-		// The wave apply and the health wait moved into runAddOnStage (#6439); RunDeployV2 hands it
-		// kube.refresh, and the second loop below pins the refreshes inside it.
+		// The wave apply moved into runAddOnStage (#6439); RunDeployV2 hands it kube.refresh, and the
+		// check after this loop pins the refresh inside it.
 		"runAddOnStage(",
+		"argocd.WaitAddOnsHealthy(",
 		"bootstrapInClusterVault(",
 	}
 	prev := 0
@@ -489,7 +490,7 @@ func TestDeployRefreshesBeforeEveryLongWait(t *testing.T) {
 		prev = at + len(w)
 	}
 
-	// Inside runAddOnStage: a refresh before each of its two long waits, in order.
+	// Inside runAddOnStage: a refresh before its long wait, the wave apply.
 	stageSrc, err := os.ReadFile("addon_stage.go")
 	if err != nil {
 		t.Fatal(err)
@@ -501,7 +502,7 @@ func TestDeployRefreshesBeforeEveryLongWait(t *testing.T) {
 		t.Fatal("addon_stage.go no longer defines runAddOnStage")
 	}
 	prev = 0
-	for _, w := range []string{"argocd.ApplyAddOnsInWaves(", "argocd.WaitAddOnsHealthy("} {
+	for _, w := range []string{"argocd.ApplyAddOnsInWaves("} {
 		at := strings.Index(stage[prev:], w)
 		if at < 0 {
 			t.Fatalf("%s is no longer in runAddOnStage, in order — update this list", w)

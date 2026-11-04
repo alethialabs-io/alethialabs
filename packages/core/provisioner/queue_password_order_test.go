@@ -58,22 +58,18 @@ func TestQueuePasswordConvergesAfterTheAddOnHealthWait(t *testing.T) {
 		if !ok {
 			return true
 		}
-		// The health wait runs inside runAddOnStage (#6439), so the call RunDeployV2 makes to the
-		// stage stands for it here; that the stage really ends in the wait is asserted below.
-		if f, isIdent := call.Fun.(*ast.Ident); isIdent {
-			switch f.Name {
-			case "runAddOnStage":
+		switch f := call.Fun.(type) {
+		case *ast.SelectorExpr: // argocd.WaitAddOnsHealthy(...)
+			if pkg, isIdent := f.X.(*ast.Ident); isIdent && pkg.Name == "argocd" && f.Sel.Name == "WaitAddOnsHealthy" {
 				wait = int(call.Pos())
-			case "convergeInClusterQueuePasswords":
+			}
+		case *ast.Ident: // convergeInClusterQueuePasswords(...)
+			if f.Name == "convergeInClusterQueuePasswords" {
 				converge = int(call.Pos())
 			}
 		}
 		return true
 	})
-	if !stageEndsInTheHealthWait(t) {
-		t.Fatal("runAddOnStage no longer calls argocd.WaitAddOnsHealthy as its last add-on step — " +
-			"this guard's stand-in for the wait is gone")
-	}
 
 	// EACH SUBJECT IS CHECKED FOR SEPARATELY. A renamed or deleted call would otherwise leave its
 	// position at notFound, and `notFound < anything` makes the ordering assertion pass — a guard
@@ -82,7 +78,7 @@ func TestQueuePasswordConvergesAfterTheAddOnHealthWait(t *testing.T) {
 		name string
 		pos  int
 	}{
-		{"runAddOnStage (which ends in argocd.WaitAddOnsHealthy)", wait},
+		{"argocd.WaitAddOnsHealthy", wait},
 		{"convergeInClusterQueuePasswords", converge},
 	} {
 		if s.pos == notFound {
@@ -94,54 +90,4 @@ func TestQueuePasswordConvergesAfterTheAddOnHealthWait(t *testing.T) {
 		t.Errorf("convergeInClusterQueuePasswords runs BEFORE argocd.WaitAddOnsHealthy: no broker is " +
 			"Ready yet, so it would skip on every deploy and never repair a pre-#3304 queue")
 	}
-}
-
-// stageEndsInTheHealthWait reports whether runAddOnStage (addon_stage.go) calls
-// argocd.WaitAddOnsHealthy AFTER every other argocd call it makes — the property that lets the call
-// to the stage stand for the wait in the ordering check above.
-func stageEndsInTheHealthWait(t *testing.T) bool {
-	t.Helper()
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, "addon_stage.go", nil, 0)
-	if err != nil {
-		t.Fatalf("could not parse addon_stage.go, so this guard proved nothing: %v", err)
-	}
-	for _, decl := range parsed.Decls {
-		d, ok := decl.(*ast.FuncDecl)
-		if !ok || d.Name.Name != "runAddOnStage" || d.Body == nil {
-			continue
-		}
-		var waitCall *ast.CallExpr
-		var others []*ast.CallExpr
-		ast.Inspect(d.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if f, ok := call.Fun.(*ast.SelectorExpr); ok {
-				if pkg, ok := f.X.(*ast.Ident); ok && pkg.Name == "argocd" {
-					if f.Sel.Name == "WaitAddOnsHealthy" {
-						waitCall = call
-					} else {
-						others = append(others, call)
-					}
-				}
-			}
-			return true
-		})
-		if waitCall == nil {
-			return false
-		}
-		for _, c := range others {
-			// A call inside the wait's own arguments (the names it waits on) is part of the wait.
-			if c.Pos() >= waitCall.Pos() && c.End() <= waitCall.End() {
-				continue
-			}
-			if c.Pos() > waitCall.Pos() {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }

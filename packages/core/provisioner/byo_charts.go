@@ -77,10 +77,13 @@ func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool)
 // binding that failed on this run is still declared and still kept. A binding to a keyless database
 // (keylessOn) declares no ExternalSecret: it gets no password secret, so any earlier one is not kept.
 //
-// A BYO chart in refused (#6439) declares NO binding: its Application can no longer sync, so the
-// secrets an earlier deploy bound into its namespace serve nothing — a refused chart's binding
-// secrets are withdrawn with it. Its namespace is still LOOKED IN, so the owner-scoped prune finds
-// and removes them; the chart's Application and everything else it deployed are left untouched.
+// A BYO chart in refused (#6439) declares NO binding, so a refused chart's binding secrets are
+// withdrawn with it: its namespace is still LOOKED IN, and the owner-scoped prune finds and removes
+// what an earlier deploy bound there. The chart's Application and the rest of what it deployed are
+// left untouched — which means its RUNNING workloads lose that credential: a Secret mounted as a
+// volume disappears at once, and an env value sourced from it on the next pod restart. That is
+// deliberate: the platform does not keep a live credential in a namespace it has refused, for a chart
+// whose Application can no longer sync anyway.
 func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool, refused []byoRefusal) ([]argocd.BindingSecretRef, []string) {
 	skip := byoRefusedIDs(refused)
 	var refs []argocd.BindingSecretRef
@@ -245,7 +248,8 @@ func (r byoRefusal) warning() string {
 		left = "The runner could not update its project (see the deploy log), so an Application an earlier deploy applied for it may still sync into that namespace."
 	}
 	return fmt.Sprintf("BYO chart %q was not deployed: %s. This deploy applied nothing for it. %s "+
-		"Its binding secrets are no longer declared, so they are withdrawn whenever the binding prune runs. "+
+		"Its binding secrets are withdrawn whenever the binding prune runs, so its running workloads lose those "+
+		"credentials (a mounted secret at once, an environment value on the next restart); this is deliberate. "+
 		"Attach the chart again with a namespace of your own.", r.ID, r.Reason, left)
 }
 

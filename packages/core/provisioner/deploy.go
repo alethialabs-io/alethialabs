@@ -1350,6 +1350,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// The BYO binding state for the prune below — declared out here, with its owner, so a
 		// fully-detached chart (vc.AddOns empty) still sweeps this environment's bindings.
 		bindingState := byoBindingState{Owner: byoBindingOwner(vc)}
+		// The add-ons this deploy applied — vc.AddOns without the BYO charts it refused (#6439). The
+		// health wait below reads this, after the prunes; the prunes read the full vc.AddOns.
+		var deployable []types.AddOnInstall
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1380,7 +1383,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			}
 			bindingState = stage.Bindings
 			manifestWarnings = append(manifestWarnings, stage.Warnings...)
-			result.AddOnStatus = stage.Health
+			deployable = stage.Deployable
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
@@ -1412,9 +1415,27 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// prune above). Desired = the refreshers applied above (empty when none / flag off), so removing
 		// an ECR chart-repo connector tears its refresher down. The shared KSA is left in place.
 		argocd.PruneHelmRepoRefreshers(desiredHelmRepoRefreshers, stdout, stderr)
-		// The health wait ran inside runAddOnStage, before the prunes above; these two read what
-		// it waited for.
+		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
+		// shows real status (best-effort — a read failure just leaves status Unknown).
+		//
+		// WAIT for convergence first. The read used to run the instant after `kubectl apply`, when
+		// every Application is still Progressing/Missing — so a database that was about to come up
+		// perfectly was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh
+		// only updates project_addons rows, and the synthesized Hetzner data-service specs have
+		// none). The wait is bounded and best-effort: an add-on that never converges is reported
+		// honestly rather than failing an otherwise-healthy cluster. It reads `deployable`, so a
+		// refused BYO chart (#6439), which this deploy did not apply, is not waited on.
 		if len(vc.AddOns) > 0 {
+			if err := kube.refresh(ctx, "the add-on health wait"); err != nil {
+				return nil, err
+			}
+			result.AddOnStatus = argocd.WaitAddOnsHealthy(
+				ctx,
+				argocd.AllAddOnNames(deployable),
+				addonConvergeTimeout(),
+				stdout,
+				stderr,
+			)
 			// Make each in-cluster RabbitMQ's BROKER accept the password its Secret holds (#3590).
 			//
 			// HERE, and both bounds are load-bearing. AFTER WaitAddOnsHealthy, because there is
