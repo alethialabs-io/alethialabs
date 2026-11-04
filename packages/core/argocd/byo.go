@@ -263,6 +263,10 @@ func validateByoNamespace(ns string) error {
 	return nil
 }
 
+// ValidateByoNamespace is validateByoNamespace for the runner's deploy step, which refuses a BYO
+// chart per chart (provisioner.configureByoCharts) before either renderer sees its namespace.
+func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
+
 // byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
 //
 // WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped

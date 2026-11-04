@@ -1350,6 +1350,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// The BYO binding state for the prune below — declared out here, with its owner, so a
 		// fully-detached chart (vc.AddOns empty) still sweeps this environment's bindings.
 		bindingState := byoBindingState{Owner: byoBindingOwner(vc)}
+		// The BYO charts refused on this deploy (#6439), declared out here too: the health wait below
+		// must not spend its budget on an Application this deploy deliberately did not apply.
+		var byoRefused []byoRefusal
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1364,19 +1367,27 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
 			// and register their per-repo credentials BEFORE rendering the Applications, so the
 			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
-			prepareByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
+			//
+			// A chart whose namespace is refused (malformed, or reserved for the platform — #6439) is
+			// refused PER CHART: it is left out of every render, apply and seed below (`deployable`),
+			// kept in the prune's keep list so nothing live is deleted, and reported as a deploy
+			// warning the console's Deploy tab shows.
+			_, byoRefused = configureByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
+			for _, r := range byoRefused {
+				manifestWarnings = append(manifestWarnings, r.warning())
+			}
 
 			// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs —
 			// managed or gitops mode. The values were fetched by the runner over the
 			// authenticated job channel and exist nowhere else: not in the snapshot, not in the
 			// rendered manifest, not in the customer's repo. The chart consumes them via the
 			// SecretKeyRef wiring the console resolved into helm.values.
-			argocd.EnsureAddOnSecrets(vc.AddOns, params.AddOnSecretValues, stdout, stderr)
+			argocd.EnsureAddOnSecrets(withoutByoRefusals(vc.AddOns, byoRefused), params.AddOnSecretValues, stdout, stderr)
 
 			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
 			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
 			// BEFORE the Applications render, so the write-back rides the same helm.values block.
-			bindingState = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
+			bindingState = applyByoChartBindingsExcept(vc, result.Outputs, params.Provider, byoRefusedIDs(byoRefused), stdout, stderr)
 
 			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 			// Applications render — the same seam, and the same reason, as applyByoChartBindings
@@ -1388,7 +1399,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				return nil, fmt.Errorf("external-dns identity resolution failed: %w", err)
 			}
 
-			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
+			// Computed AFTER the mutations above (bindings, cloud identity), so it carries their values.
+			deployable := withoutByoRefusals(vc.AddOns, byoRefused)
+			addonDir, addonErr := argocd.RenderManagedAddOns(deployable, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
 			} else {
@@ -1401,7 +1414,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				if err := kube.refresh(ctx, "the add-on Applications"); err != nil {
 					return nil, err
 				}
-				if applyErr := argocd.ApplyAddOnsInWaves(vc.AddOns, addonDir, stdout, stderr); applyErr != nil {
+				if applyErr := argocd.ApplyAddOnsInWaves(deployable, addonDir, stdout, stderr); applyErr != nil {
 					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
 				}
 			}
@@ -1465,7 +1478,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			}
 			result.AddOnStatus = argocd.WaitAddOnsHealthy(
 				ctx,
-				argocd.AllAddOnNames(vc.AddOns),
+				argocd.AllAddOnNames(withoutByoRefusals(vc.AddOns, byoRefused)),
 				addonConvergeTimeout(),
 				stdout,
 				stderr,

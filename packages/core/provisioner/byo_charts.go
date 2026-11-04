@@ -121,6 +121,14 @@ func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool) ([]argocd.Bind
 // Each ExternalSecret carries the binding marker and the environment's owner label. The returned
 // state carries the DECLARED bindings (the prune's keep set) and how many failed on this run.
 func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) byoBindingState {
+	return applyByoChartBindingsExcept(vc, outputs, provider, nil, stdout, stderr)
+}
+
+// applyByoChartBindingsExcept is applyByoChartBindings that writes NOTHING for the add-on ids in
+// skip — the BYO charts configureByoCharts refused, whose namespace the runner must not write into.
+// Their bindings stay DECLARED (the keep set is read from the whole configuration), so the prune
+// leaves any binding an earlier deploy applied for them in place rather than deleting it.
+func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, skip map[string]bool, stdout, stderr io.Writer) byoBindingState {
 	keylessOn := keylessDBAuthEnabled()
 	st := byoBindingState{Owner: byoBindingOwner(vc)}
 	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn)
@@ -134,7 +142,7 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 	}
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
-		if len(a.Workloads) == 0 {
+		if len(a.Workloads) == 0 || (a.IsGitSource() && skip[a.ID]) {
 			continue
 		}
 		if a.Values == nil {
@@ -202,47 +210,121 @@ func pruneByoChartBindings(st byoBindingState, stdout, stderr io.Writer) {
 	argocd.PruneChartBindingSecrets(st.Owner, st.Namespaces, st.Declared, stdout, stderr)
 }
 
-// prepareByoCharts sets up the trust boundary for bring-your-own (git-source) charts BEFORE the
+// byoRefusal is one BYO chart the runner declined to configure on this deploy, and why.
+type byoRefusal struct {
+	// ID is the add-on id; the chart's Application name is argocd.AddOnAppName(ID).
+	ID string
+	// Namespace is the destination the chart asked for ("" already defaulted to "default").
+	Namespace string
+	// Reason is the validator's refusal, naming the namespace.
+	Reason string
+}
+
+// warning is the deploy warning the console's Deploy tab shows for this refusal: what was not
+// deployed, why, and what the user changes. It carries no secret — an id, a namespace and the
+// validator's text, which echoes only the namespace.
+func (r byoRefusal) warning() string {
+	return fmt.Sprintf("BYO chart %q was not deployed: %s. Its existing Application and workloads were left in place, "+
+		"but they can no longer sync. Attach the chart again with a namespace of your own.", r.ID, r.Reason)
+}
+
+// byoRefusedIDs is the set of refused add-on ids, for the filters below.
+func byoRefusedIDs(refused []byoRefusal) map[string]bool {
+	out := make(map[string]bool, len(refused))
+	for _, r := range refused {
+		out[r.ID] = true
+	}
+	return out
+}
+
+// withoutByoRefusals returns the add-ons a deploy may RENDER, APPLY or seed into: every add-on
+// except the refused BYO charts. It is deliberately NOT what the prune is given — see deploy.go: a
+// refused chart stays in the prune's keep list, so its live Application is left alone rather than
+// deleted (with the resources-finalizer cascade) as a "disabled" add-on.
+func withoutByoRefusals(addons []types.AddOnInstall, refused []byoRefusal) []types.AddOnInstall {
+	if len(refused) == 0 {
+		return addons
+	}
+	skip := byoRefusedIDs(refused)
+	out := make([]types.AddOnInstall, 0, len(addons))
+	for _, a := range addons {
+		if a.IsGitSource() && skip[a.ID] {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// prepareByoCharts is configureByoCharts for callers that only need to know whether any BYO chart
+// was configured.
+func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
+	configured, _ := configureByoCharts(vc, token, repoTokens, commonLabels, stdout, stderr)
+	return configured
+}
+
+// configureByoCharts sets up the trust boundary for bring-your-own (git-source) charts BEFORE the
 // add-on renderer applies their ArgoCD Applications:
 //  1. pins every BYO chart to a hardened, per-project "byo-<slug>" AppProject (mutating vc.AddOns
 //     in place so RenderManagedAddOns places them there);
-//  2. renders + applies that AppProject, locked to exactly the BYO chart repos + namespaces
+//  2. REFUSES, per chart, every chart whose namespace argocd.ValidateByoNamespace refuses — malformed,
+//     or reserved for the platform (#6439) — and returns those refusals;
+//  3. renders + applies that AppProject, locked to exactly the ACCEPTED charts' repos + namespaces
 //     (default-deny cluster-scoped resources);
-//  3. registers a per-repo ArgoCD repository credential for each BYO repo (isolated Secret names
-//     so no BYO Application can read the apps repo's — or another tenant's — token).
+//  4. registers a per-repo ArgoCD repository credential for each accepted chart's repo (isolated
+//     Secret names so no BYO Application can read the apps repo's — or another tenant's — token).
+//
+// # Why per chart, and why the AppProject is re-applied even when every chart is refused (#6439)
+//
+// A refusal used to abandon the whole stage, which had two defects. One legacy chart froze the
+// AppProject for every other chart in the project. And the AppProject an EARLIER deploy applied —
+// still listing the now-refused destination — was left exactly as it was, while the refused chart's
+// Application was rendered and applied regardless, so it went on syncing into that namespace. Now
+// the AppProject is always re-applied from the accepted charts alone (kubectl apply of a custom
+// resource replaces the `destinations` list wholesale), which is what makes ArgoCD refuse any further
+// sync into a refused namespace; and the caller drops each refused chart from the render. Nothing
+// live is deleted: the refused chart stays in the prune's keep list.
 //
 // Marketplace (Helm-registry) add-ons are untouched: they keep Source=="" → the "infra" project.
 // Best-effort like the rest of the add-on path — a failure here surfaces as an un-synced
 // Application (fail-closed: no credential / no project ⇒ the chart simply doesn't deploy), never a
-// failed cluster. Returns whether any BYO charts were present (for logging). commonLabels are the
-// classification/sweep labels stamped onto the AppProject (BYOC B1.4); the BYO chart Applications
-// themselves are labelled by RenderManagedAddOns.
+// failed cluster. Returns whether any BYO chart was configured, and the refusals. commonLabels are
+// the classification/sweep labels stamped onto the AppProject (BYOC B1.4); the BYO chart
+// Applications themselves are labelled by RenderManagedAddOns.
 // repoTokens maps a chart repo URL → its git token (for BYO charts on a different provider than the
 // apps-destination repo); token is the fallback used when a repo has no dedicated entry.
-func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
+func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) (bool, []byoRefusal) {
 	projName := argocd.ByoProjectName(vc.ProjectName)
 
 	var repos, namespaces []string
+	var refused []byoRefusal
 	hasByo := false
 	for i := range vc.AddOns {
 		if !vc.AddOns[i].IsGitSource() {
 			continue
 		}
 		hasByo = true
-		// Pin the Application to the hardened project (the console leaves Project empty).
+		// Pin the Application to the hardened project (the console leaves Project empty). A refused
+		// chart is pinned too: if anything ever did render it, it would land in the hardened project,
+		// never the wide-open default one.
 		vc.AddOns[i].Project = projName
-		repos = append(repos, vc.AddOns[i].ChartRepo)
 		ns := vc.AddOns[i].Namespace
 		if ns == "" {
 			ns = "default"
 		}
+		if err := argocd.ValidateByoNamespace(ns); err != nil {
+			fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: chart %q: %v\n", vc.AddOns[i].ID, err)
+			refused = append(refused, byoRefusal{ID: vc.AddOns[i].ID, Namespace: ns, Reason: err.Error()})
+			continue
+		}
+		repos = append(repos, vc.AddOns[i].ChartRepo)
 		namespaces = append(namespaces, ns)
 	}
 	if !hasByo {
-		return false
+		return false, nil
 	}
 
-	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q\n", len(repos), projName)
+	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q (%d refused)\n", len(repos), projName, len(refused))
 
 	// The destination namespaces, created by the RUNNER because the chart cannot create them.
 	//
@@ -252,16 +334,12 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 	// health=Missing, forever. Creating them here (trusted runner, admin kubeconfig) is what makes
 	// the hardening and the sync option coexist; it does not widen what the chart may do.
 	//
-	// Fail-soft like everything else in this stage: a namespace we could not create surfaces as an
-	// unhealthy Application in the console, which is honest, rather than failing a good cluster.
-	// NOT fail-soft, unlike everything else in this stage (#2540). A namespace we could not CREATE
-	// still leaves a legible unhealthy Application, so warning is right there. A namespace the
-	// renderer REFUSES is a different thing: the configuration itself is rejected, and falling
-	// through applied the hardened AppProject built from the very value we just declined — which is
-	// how the validator added in #2576 came to gate nothing. Refuse the stage instead.
+	// Every namespace here has already passed the validator above, so a render error is not expected;
+	// it is still not fail-soft (#2540): falling through would apply an AppProject built from a value
+	// the renderer declined.
 	if ns, err := argocd.RenderByoNamespaces(namespaces, commonLabels); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
-		return false
+		return false, refused
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
@@ -269,7 +347,8 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 		}
 	}
 
-	// Hardened AppProject locked to the BYO repos + namespaces.
+	// Hardened AppProject locked to the ACCEPTED repos + namespaces — applied even when that is none,
+	// so a destination an earlier deploy granted is withdrawn (see the doc comment).
 	if proj, err := argocd.RenderByoAppProject(projName, repos, namespaces, commonLabels); err != nil {
 		fmt.Fprintf(stderr, "Warning: could not render BYO AppProject %s: %v\n", projName, err)
 	} else if err := argocd.ApplyManifest(proj, stdout, stderr); err != nil {
@@ -303,5 +382,5 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return true
+	return len(repos) > 0, refused
 }
