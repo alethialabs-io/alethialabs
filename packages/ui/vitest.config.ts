@@ -60,6 +60,7 @@ export default defineConfig({
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
 				"src/copy-text.ts",
+				"src/command-search.ts",
 				"src/status-badge.tsx",
 				"src/filter-bar.tsx",
 				"src/filter-chip.tsx",
