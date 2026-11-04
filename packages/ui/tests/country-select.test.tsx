@@ -12,7 +12,7 @@ import { CountrySelect, returnFocusToTrigger } from "../src/country-select";
 import { pasteQuery } from "./interactions";
 
 // CountrySelect renders one CommandItem per COUNTRY_OPTIONS entry, unvirtualized
-// (country-select.tsx:88), so every popover-open mounts the whole list. #1453 stubbed the flag SVGs
+// (`CountryCommand` in country-select.tsx), so every popover-open mounts the whole list. #1453 stubbed the flag SVGs
 // and took this file from ~78s to ~32s, but the residual is the ITEM COUNT rather than the SVG
 // payload: with the stub active, opening the popover and typing NOTHING still cost ~5.8s for 254
 // items, and each of the four popover tests paid it again.

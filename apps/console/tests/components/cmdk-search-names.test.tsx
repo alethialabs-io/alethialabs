@@ -192,6 +192,18 @@ describe("console command searches have an accessible name", () => {
 		).toHaveAttribute("placeholder", "Find project…");
 	});
 
+	it("leaves no orphan \"Projects\" heading under the project switcher's miss", async () => {
+		const user = userEvent.setup({ delay: null });
+		render(<ProjectSwitcher />);
+		await user.click(screen.getByRole("button", { name: /^Switch project/ }));
+		const search = await screen.findByRole("combobox", { name: "Find project" });
+		expect(screen.getByText("Projects")).toBeInTheDocument();
+		await user.click(search);
+		await user.paste("zzz");
+		expect(screen.getByText("No project found.")).toBeInTheDocument();
+		expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+	});
+
 	it("names the repository selector's search", async () => {
 		const user = userEvent.setup({ delay: null });
 		render(

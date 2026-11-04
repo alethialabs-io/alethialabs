@@ -24,8 +24,8 @@ import {
 import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 
-/** The "New Environment" action row, as `Command`'s `filteredItems` counts it. */
-const NEW_ENVIRONMENT = "__new-environment";
+/** The "New Environment" action row, as `Command`'s `pinnedItems` lists it. */
+const PINNED_ROWS = ["__new-environment"];
 
 /** An environment's search text: its name, for the shared ranker. */
 const envSearchText = (e: SwitcherEnv): string => e.name;
@@ -120,7 +120,7 @@ export function EnvSwitcher() {
 	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
 
 	// Ranked by the shared ranker; the query starts empty each time the popover opens.
-	const envSearch = useCommandSearch(envs, envSearchText, open);
+	const envSearch = useCommandSearch(envs, envSearchText, { open });
 
 	if (!isDrilldown || envs.length === 0) return null;
 
@@ -165,12 +165,9 @@ export function EnvSwitcher() {
 						label="Find environment"
 						search={envSearch.search}
 						onSearchChange={envSearch.onSearchChange}
-						// The "New Environment" row counts only beside a match, so a miss still says so.
-						filteredItems={
-							envSearch.results.length > 0
-								? [...envSearch.results, NEW_ENVIRONMENT]
-								: []
-						}
+						filteredItems={envSearch.results}
+						// Pinned: offered and keyboard-reachable on a miss too, never counted as a match.
+						pinnedItems={PINNED_ROWS}
 					>
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
@@ -192,7 +189,8 @@ export function EnvSwitcher() {
 								</CommandGroup>
 							)}
 							<CommandSeparator />
-							{/* Always offered, matching or not: it is an action, not an environment. */}
+							{/* Always offered, matching or not, by pointer and by keyboard: it is an action, not
+							    an environment (pinned above). */}
 							<CommandGroup>
 								<CommandItem
 									onSelect={() => {
