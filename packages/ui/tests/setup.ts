@@ -14,7 +14,7 @@ afterEach(() => cleanup());
 
 // RTL's async utilities (`waitFor` / `findBy*`) default to a 1000ms timeout that is INDEPENDENT of
 // vitest's per-test `testTimeout`. On a loaded CI runner the overlay-driven flows in these component
-// tests — a base-ui Popover portal mounting, cmdk's async list filtering, the PhoneInput onChange
+// tests — a base-ui Popover portal mounting, a command list re-rendering its matches, the PhoneInput onChange
 // settling a microtask after the last keystroke — routinely take longer than 1s to reach the settled
 // state, so an individual `findBy`/`waitFor` would time out and RED the required TypeScript job on
 // unrelated PRs (stalling the Mergify queue) even though the behaviour is correct.

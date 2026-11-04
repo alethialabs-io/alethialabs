@@ -1,15 +1,6 @@
 "use client";
 
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@repo/ui/command";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -1355,79 +1346,7 @@ export const PromptInputHoverCardContent = ({
 // a new home is not a fix, it is the drift with a shared import on it. Restore from git if a tabbed
 // prompt input is ever built; `@repo/ui/tabs` is the shared answer in the meantime.
 
-/**
- * `label` is REQUIRED here, unlike on cmdk's root: cmdk names its search input from it (through its
- * own visually hidden `<label>`), and an empty one leaves the input an unnamed combobox (#5824).
- */
-export type PromptInputCommandProps = Omit<
-  ComponentProps<typeof Command>,
-  "label"
-> & {
-  /** The accessible name of the command search — not shown on screen. */
-  label: string;
-};
-
-/** The prompt input's command menu: a named cmdk root. */
-export const PromptInputCommand = ({
-  className,
-  label,
-  ...props
-}: PromptInputCommandProps) => (
-  <Command label={label} className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandInputProps = ComponentProps<typeof CommandInput>;
-
-export const PromptInputCommandInput = ({
-  className,
-  ...props
-}: PromptInputCommandInputProps) => (
-  <CommandInput className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandListProps = ComponentProps<typeof CommandList>;
-
-export const PromptInputCommandList = ({
-  className,
-  ...props
-}: PromptInputCommandListProps) => (
-  <CommandList className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandEmptyProps = ComponentProps<typeof CommandEmpty>;
-
-export const PromptInputCommandEmpty = ({
-  className,
-  ...props
-}: PromptInputCommandEmptyProps) => (
-  <CommandEmpty className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandGroupProps = ComponentProps<typeof CommandGroup>;
-
-export const PromptInputCommandGroup = ({
-  className,
-  ...props
-}: PromptInputCommandGroupProps) => (
-  <CommandGroup className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandItemProps = ComponentProps<typeof CommandItem>;
-
-export const PromptInputCommandItem = ({
-  className,
-  ...props
-}: PromptInputCommandItemProps) => (
-  <CommandItem className={cn(className)} {...props} />
-);
-
-export type PromptInputCommandSeparatorProps = ComponentProps<
-  typeof CommandSeparator
->;
-
-export const PromptInputCommandSeparator = ({
-  className,
-  ...props
-}: PromptInputCommandSeparatorProps) => (
-  <CommandSeparator className={cn(className)} {...props} />
-);
+// The `PromptInputCommand*` family — Command / Input / List / Empty / Group / Item / Separator — was
+// deleted with cmdk (#6145). Nothing rendered it outside a test, and every `@repo/ui/command` list
+// now takes its ranked rows as data, which seven pass-through wrappers could not express. Restore
+// from git if a prompt command menu is ever built; `@repo/ui/command` is the shared answer.

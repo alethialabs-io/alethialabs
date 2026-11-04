@@ -10,6 +10,8 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
+import { groupResults, useCommandSearch } from "@repo/ui/command-search";
+import type { ReactNode } from "react";
 import { ArrowRight, Boxes, GitBranch } from "lucide-react";
 import {
 	PROVIDERS,
@@ -72,6 +74,24 @@ function keywordsFor(kind: NodeKind): string[] {
 		]),
 	);
 }
+
+/** The palette's groups, in the order they list for an empty search. */
+type PaletteGroup = "Sources" | "Core services" | "Periphery" | "Jump to" | "Actions";
+
+/** One palette row: what it shows, what it runs, and the ONE string its search matches. */
+interface PaletteCommand {
+	/** Stable id (the React key; also folded into the search text, as cmdk's `value` was). */
+	id: string;
+	group: PaletteGroup;
+	/** The visible label plus its keywords: what the shared ranker matches. */
+	searchText: string;
+	run: () => void;
+	disabledReason?: string | null;
+	content: ReactNode;
+}
+
+/** A row's search text, for the shared ranker. */
+const commandSearchText = (c: PaletteCommand): string => c.searchText;
 
 interface CanvasCommandPaletteProps {
 	open: boolean;
@@ -138,164 +158,174 @@ export function CanvasCommandPalette({
 		onOpenChange(false);
 	};
 
-	const serviceItem = (kind: NodeKind) => {
+	/** An "Add <service>" row for `kind`, in its classification's group. */
+	const serviceCommand = (kind: NodeKind, group: PaletteGroup): PaletteCommand => {
 		const def = NODE_REGISTRY[kind];
 		const Icon = def.icon;
 		const field = SERVICE_FIELD[kind];
 		const serviceName = field ? meta[field] : null;
-		return (
-			<CommandItem
-				key={kind}
-				value={`add-${kind}`}
-				keywords={keywordsFor(kind)}
-				onSelect={() => run(() => addNode(kind, dropPosition?.()))}
-			>
-				<Icon className="h-4 w-4" />
-				<span>Add {def.label}</span>
-				{serviceName && serviceName !== "—" && (
-					<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
-						{serviceName}
-					</span>
-				)}
-			</CommandItem>
-		);
+		return {
+			id: `add-${kind}`,
+			group,
+			searchText: [`Add ${def.label}`, `add-${kind}`, ...keywordsFor(kind)].join(" "),
+			run: () => addNode(kind, dropPosition?.()),
+			content: (
+				<>
+					<Icon className="h-4 w-4" />
+					<span>Add {def.label}</span>
+					{serviceName && serviceName !== "—" && (
+						<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
+							{serviceName}
+						</span>
+					)}
+				</>
+			),
+		};
 	};
 
+	/** A plain action row: its label is its content, and its id joins the label in the search. */
+	const action = (
+		id: string,
+		label: string,
+		fn: () => void,
+		disabledReason?: string | null,
+	): PaletteCommand => ({
+		id,
+		group: "Actions",
+		searchText: `${label} ${id}`,
+		run: fn,
+		disabledReason,
+		content: label,
+	});
+
 	const addableKinds = addableKindsFor(coreProvider);
-	const coreKinds = addableKinds.filter(
-		(k) => NODE_REGISTRY[k].classification === "core",
-	);
-	const peripheryKinds = addableKinds.filter(
-		(k) => NODE_REGISTRY[k].classification === "periphery",
-	);
 	const placedNodes = nodes.filter((n) => n.id !== PROJECT_NODE_ID);
 
+	const commands: PaletteCommand[] = [];
+	if (onAttachChart) {
+		commands.push({
+			id: "attach-helm-chart",
+			group: "Sources",
+			searchText: [
+				"Bring your own Helm chart attach-helm-chart",
+				"helm", "chart", "byo", "bring your own", "gitops", "argocd", "repo",
+			].join(" "),
+			run: onAttachChart,
+			content: (
+				<>
+					<GitBranch className="h-4 w-4" />
+					<span>Bring your own Helm chart</span>
+					<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
+						Helm · GitOps
+					</span>
+					<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+				</>
+			),
+		});
+	}
+	if (onAttachIac) {
+		commands.push({
+			id: "attach-iac-source",
+			group: "Sources",
+			searchText: [
+				"Bring your own IaC attach-iac-source",
+				"iac", "tofu", "opentofu", "terraform", "byo", "bring your own", "module", "repo",
+			].join(" "),
+			run: onAttachIac,
+			content: (
+				<>
+					<Boxes className="h-4 w-4" />
+					<span>Bring your own IaC</span>
+					<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
+						OpenTofu · replace
+					</span>
+					<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+				</>
+			),
+		});
+	}
+	if (!disableComponentAdd) {
+		for (const kind of addableKinds) {
+			const classification = NODE_REGISTRY[kind].classification;
+			if (classification === "core") commands.push(serviceCommand(kind, "Core services"));
+		}
+		for (const kind of addableKinds) {
+			const classification = NODE_REGISTRY[kind].classification;
+			if (classification === "periphery") commands.push(serviceCommand(kind, "Periphery"));
+		}
+	}
+	for (const n of placedNodes) {
+		const def = NODE_REGISTRY[n.data.kind];
+		const Icon = def.icon;
+		const name = configName(n.data) || def.label;
+		commands.push({
+			id: `jump-${n.id}`,
+			group: "Jump to",
+			searchText: `${name} ${def.label}`,
+			run: () => openInspector(n.id),
+			content: (
+				<>
+					<Icon className="h-4 w-4" />
+					<span>{name}</span>
+					<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
+						{def.label}
+					</span>
+				</>
+			),
+		});
+	}
+	commands.push(action("ask-ai", "Ask AI", onAskAi));
+	if (onSave) commands.push(action("save", "Save project", onSave));
+	if (onEnvSettings) {
+		commands.push(action("environment-settings", "Environment settings", onEnvSettings));
+	}
+	if (onActivity) commands.push(action("activity", "Activity", onActivity));
+	commands.push(
+		action("fit-view", "Fit view", onFitView, fitViewDisabled ? NOTHING_TO_FIT : null),
+		action("auto-arrange", "Auto-arrange", onArrange),
+		action("repair-overlaps", "Repair overlaps", repairOverlaps),
+		action(
+			"toggle-connections",
+			showConnections ? "Hide connections" : "Show connections",
+			toggleConnections,
+		),
+		action("undo", "Undo", undo),
+		action("redo", "Redo", redo),
+	);
+	if (onToggleView) commands.push(action("toggle-form", "Switch to form", onToggleView));
+
+	// Ranked by the shared ranker over each row's label + keywords; the best match's group leads.
+	const { search, onSearchChange, results } = useCommandSearch(
+		commands,
+		commandSearchText,
+		open,
+	);
+	const groups = groupResults(results, (c) => c.group);
+
 	return (
-		<CommandDialog open={open} onOpenChange={onOpenChange}>
+		<CommandDialog
+			open={open}
+			onOpenChange={onOpenChange}
+			search={search}
+			onSearchChange={onSearchChange}
+			filteredItems={groups.flatMap((g) => g.items)}
+		>
 			<CommandInput placeholder="Search services and actions…" />
 			<CommandList>
 				<CommandEmpty>No results.</CommandEmpty>
-
-				{(onAttachChart || onAttachIac) && (
-					<CommandGroup heading="Sources">
-						{onAttachChart && (
+				{groups.map(({ group, items }) => (
+					<CommandGroup key={group} heading={group}>
+						{items.map((c) => (
 							<CommandItem
-								value="attach-helm-chart"
-								keywords={["helm", "chart", "byo", "bring your own", "gitops", "argocd", "repo"]}
-								onSelect={() => run(onAttachChart)}
+								key={c.id}
+								disabledReason={c.disabledReason}
+								onSelect={() => run(c.run)}
 							>
-								<GitBranch className="h-4 w-4" />
-								<span>Bring your own Helm chart</span>
-								<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
-									Helm · GitOps
-								</span>
-								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+								{c.content}
 							</CommandItem>
-						)}
-						{onAttachIac && (
-							<CommandItem
-								value="attach-iac-source"
-								keywords={["iac", "tofu", "opentofu", "terraform", "byo", "bring your own", "module", "repo"]}
-								onSelect={() => run(onAttachIac)}
-							>
-								<Boxes className="h-4 w-4" />
-								<span>Bring your own IaC</span>
-								<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
-									OpenTofu · replace
-								</span>
-								<ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-							</CommandItem>
-						)}
+						))}
 					</CommandGroup>
-				)}
-
-				{!disableComponentAdd && (
-					<>
-						<CommandGroup heading="Core services">
-							{coreKinds.map(serviceItem)}
-						</CommandGroup>
-						<CommandGroup heading="Periphery">
-							{peripheryKinds.map(serviceItem)}
-						</CommandGroup>
-					</>
-				)}
-
-				{placedNodes.length > 0 && (
-					<CommandGroup heading="Jump to">
-						{placedNodes.map((n) => {
-							const def = NODE_REGISTRY[n.data.kind];
-							const Icon = def.icon;
-							const name =
-								configName(n.data) || def.label;
-							return (
-								<CommandItem
-									key={n.id}
-									value={`jump-${n.id}`}
-									keywords={[def.label, name]}
-									onSelect={() =>
-										run(() => {
-											openInspector(n.id);
-										})
-									}
-								>
-									<Icon className="h-4 w-4" />
-									<span>{name}</span>
-									<span className="ml-auto font-mono text-ui-xs text-muted-foreground">
-										{def.label}
-									</span>
-								</CommandItem>
-							);
-						})}
-					</CommandGroup>
-				)}
-
-				<CommandGroup heading="Actions">
-					<CommandItem value="ask-ai" onSelect={() => run(onAskAi)}>
-						Ask AI
-					</CommandItem>
-					{onSave && (
-						<CommandItem value="save" onSelect={() => run(onSave)}>
-							Save project
-						</CommandItem>
-					)}
-					{onEnvSettings && (
-						<CommandItem value="environment-settings" onSelect={() => run(onEnvSettings)}>
-							Environment settings
-						</CommandItem>
-					)}
-					{onActivity && (
-						<CommandItem value="activity" onSelect={() => run(onActivity)}>
-							Activity
-						</CommandItem>
-					)}
-					<CommandItem
-						value="fit-view"
-						disabledReason={fitViewDisabled ? NOTHING_TO_FIT : null}
-						onSelect={() => run(onFitView)}
-					>
-						Fit view
-					</CommandItem>
-					<CommandItem value="auto-arrange" onSelect={() => run(onArrange)}>
-						Auto-arrange
-					</CommandItem>
-					<CommandItem value="repair-overlaps" onSelect={() => run(repairOverlaps)}>
-						Repair overlaps
-					</CommandItem>
-					<CommandItem value="toggle-connections" onSelect={() => run(toggleConnections)}>
-						{showConnections ? "Hide connections" : "Show connections"}
-					</CommandItem>
-					<CommandItem value="undo" onSelect={() => run(undo)}>
-						Undo
-					</CommandItem>
-					<CommandItem value="redo" onSelect={() => run(redo)}>
-						Redo
-					</CommandItem>
-					{onToggleView && (
-						<CommandItem value="toggle-form" onSelect={() => run(onToggleView)}>
-							Switch to form
-						</CommandItem>
-					)}
-				</CommandGroup>
+				))}
 			</CommandList>
 		</CommandDialog>
 	);

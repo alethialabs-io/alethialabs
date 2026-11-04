@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Every console cmdk search must have an accessible name (#5824).
+// Every console command search must have an accessible name (#5824).
 //
-// cmdk points its input's `aria-labelledby` at its own visually hidden `<label cmdk-label>`, whose
-// text is the root's `label` prop. Left empty, that reference resolves to "" — and because an
+// Under cmdk, the input's `aria-labelledby` pointed at its own visually hidden `<label cmdk-label>`,
+// whose text was the root's `label` prop. Left empty, that reference resolved to "", and because an
 // `aria-labelledby` that resolves to nothing still wins over the placeholder, the search was an
-// unnamed combobox in all of these, with its placeholder sitting visibly inside it.
+// unnamed combobox in all of these, with its placeholder sitting visibly inside it. Since #6145 the
+// `@repo/ui/command` root is Base UI's Autocomplete and passes `label` to the input as its
+// `aria-label`; these tests are what prove the move kept every name.
 //
 // The REAL components are rendered and their popovers opened; only the server actions and stores
 // behind them are stubbed. The assertion is the computed NAME (`getByRole(..., { name })`), never
-// the attribute, because `aria-labelledby` was present the whole time.
+// an attribute, because cmdk's `aria-labelledby` was present the whole time it named nothing.
 //
 // The environment switcher reads its environments from the query cache the `[project]` layout
 // hydrates (#6114); here that cache is seeded, as the layout would. The repository selector renders
@@ -112,8 +114,6 @@ const { ProjectSwitcher } = await import("@/components/project-switcher");
 const { RepositorySelector } = await import("@/components/repository-selector");
 const { Combobox } = await import("@/components/settings/access/combobox");
 const { orpc } = await import("@/lib/rpc/client");
-const { PromptInputCommand, PromptInputCommandInput } =
-	await import("@/components/ai-elements/prompt-input");
 
 /** The mocked server actions whose results put a trigger on screen. */
 const loaders = [
@@ -149,7 +149,7 @@ async function settleServerActions(): Promise<void> {
 	});
 }
 
-describe("console cmdk searches have an accessible name", () => {
+describe("console command searches have an accessible name", () => {
 	it("names the environment switcher's search", async () => {
 		const user = userEvent.setup({ delay: null });
 		// What the `[project]` layout's prefetch hydrates for `/acme/shop`.
@@ -225,16 +225,5 @@ describe("console cmdk searches have an accessible name", () => {
 		expect(
 			await screen.findByRole("combobox", { name: "Select a permission" }),
 		).toHaveAttribute("placeholder", "Select a permission…");
-	});
-
-	it("names the prompt input's command search from its required label", () => {
-		render(
-			<PromptInputCommand label="Search commands">
-				<PromptInputCommandInput placeholder="Type a command…" />
-			</PromptInputCommand>,
-		);
-		expect(
-			screen.getByRole("combobox", { name: "Search commands" }),
-		).toBeInTheDocument();
 	});
 });

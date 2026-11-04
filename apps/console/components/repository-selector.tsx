@@ -14,6 +14,7 @@ import {
   CommandItem,
   CommandList,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -186,6 +187,9 @@ export function RepositorySelectorSkeleton({
   );
 }
 
+/** A repository's search text: its `owner/name`, for the shared ranker. */
+const repoSearchText = (repo: { full_name: string }): string => repo.full_name;
+
 export function RepositorySelector({
   value,
   onChange,
@@ -229,6 +233,9 @@ export function RepositorySelector({
   const [showLinkOptions, setShowLinkOptions] = useState(false);
   const [isManual, setIsManual] = useState(false);
   const [open, setOpen] = useState(false);
+  // Ranked by the shared ranker over each repository's full name; the query starts empty each
+  // time the popover opens.
+  const repoSearch = useCommandSearch(repositories, repoSearchText, open);
   const repositoryShellBorder = error
     ? variant === "settings"
       ? "border-border-strong ring-1 ring-border-strong"
@@ -654,15 +661,19 @@ export function RepositorySelector({
                 }
               />
               <PopoverContent className="w-[400px] p-0" align="start">
-                <Command label="Search repositories">
+                <Command
+                  label="Search repositories"
+                  search={repoSearch.search}
+                  onSearchChange={repoSearch.onSearchChange}
+                  filteredItems={repoSearch.results}
+                >
                   <CommandInput placeholder="Search repositories..." />
                   <CommandList>
                     <CommandEmpty>No repository found.</CommandEmpty>
                     <CommandGroup>
-                      {repositories.map((repo) => (
+                      {repoSearch.results.map((repo) => (
                         <CommandItem
                           key={repo.id}
-                          value={repo.full_name}
                           onSelect={() => {
                             onChange(repo.url);
                             onRepositorySelect?.(repo);
