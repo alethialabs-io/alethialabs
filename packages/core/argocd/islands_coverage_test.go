@@ -258,7 +258,7 @@ func TestReadDataEndpoints_NoClusterOmits(t *testing.T) {
 // to list), matching the best-effort discipline of its PruneAddOnSecrets sibling.
 func TestPruneChartBindingSecrets_FailClosedNoDelete(t *testing.T) {
 	var stdout, stderr strings.Builder
-	PruneChartBindingSecrets([]string{"binding-a", "binding-b"}, &stdout, &stderr)
+	PruneChartBindingSecrets("env-1", []string{"apps"}, []BindingSecretRef{{Namespace: "apps", Name: "binding-a"}}, &stdout, &stderr)
 
 	// Nothing is listable in the test env, so nothing may be reported as pruned.
 	if strings.Contains(stdout.String(), "Pruning") {

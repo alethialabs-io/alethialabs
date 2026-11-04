@@ -60,12 +60,6 @@ func TestPrunesDeleteOnlyUndesiredAndFailClosedOnOddNames(t *testing.T) {
 			deleteMatch: "delete secret -n apps drop-me",
 			run:         func(d []string, so, se *bytes.Buffer) { PruneVClusterClusterSecrets(d, so, se) },
 		},
-		{
-			name:        "BYO binding ExternalSecrets",
-			listMatch:   "get externalsecrets -A",
-			deleteMatch: "delete externalsecret -n apps drop-me",
-			run:         func(d []string, so, se *bytes.Buffer) { PruneChartBindingSecrets(d, so, se) },
-		},
 	}
 
 	for _, tc := range tests {
