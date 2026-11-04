@@ -364,10 +364,8 @@ export type SetupLinkResult =
  * trialing, or past_due. `past_due` is a deliberate widening of "live" for THIS refusal only (#5715
  * review): the sync's row guard also refuses an X that does not supersede a past_due Y, so without it
  * the link would mark X linked while X and Y both bill. Refusing here sends both to a person instead.
- * The open-setup guard and the resume lookup read "another live plan" through this same predicate, so
- * the three cannot disagree about it (ADR 0002 §5.6, §5.7, C120).
  */
-export function namesOtherLivePlan(billing: Awaited<ReturnType<typeof getOrgBilling>>, subscriptionId: string): boolean {
+function namesOtherLivePlan(billing: Awaited<ReturnType<typeof getOrgBilling>>, subscriptionId: string): boolean {
 	return (
 		!!billing?.stripeSubscriptionId &&
 		billing.stripeSubscriptionId !== subscriptionId &&

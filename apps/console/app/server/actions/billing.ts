@@ -104,7 +104,6 @@ import {
 	linkSetupToOrg,
 	liveSweepDeps,
 	machineDepsFor,
-	namesOtherLivePlan,
 	relinkAdoptedHold,
 } from "@/lib/billing/payment-holds/sweeper";
 import {
@@ -524,6 +523,21 @@ const LIVE_PLAN_REFUSAL = "This organization already has an active subscription 
 const NOT_PAYABLE_BESIDE_LIVE_PLAN = `This team already has an active plan, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at ${SUPPORT_EMAIL} if you meant to buy this plan for another team.`;
 
 /**
+ * Whether the org's billing row names a Stripe subscription other than `subscriptionId` that is `active`
+ * or `trialing` — a live plan beside the create-a-team subscription a setup is waiting on.
+ */
+function rowNamesAnotherLivePlan(
+	row: { stripeSubscriptionId: string | null; status: string } | null,
+	subscriptionId: string,
+): boolean {
+	return (
+		!!row?.stripeSubscriptionId &&
+		row.stripeSubscriptionId !== subscriptionId &&
+		(row.status === "active" || row.status === "trialing")
+	);
+}
+
+/**
  * What the org-plan flows tell the customer when the org's plan is `past_due` (ADR 0004 D7): the row names
  * a Stripe subscription and reads `past_due`, or the live check finds a `past_due` or `unpaid` one. The
  * path that charges once is fixing the card on that plan, so the copy names it.
@@ -660,33 +674,22 @@ const OPEN_SETUP_UNCHECKED =
  * the try-again clause: a failed read never passes it (fail closed).
  *
  * Guard order (ADR 0002 §5.7): the guard's copy appears only where a purchase could otherwise proceed.
- * An `incomplete` X the closer leaves open beside ANOTHER live plan on the org's row (C120), with no open
- * hold on X, refuses with the row predicate's copy instead — Checkout runs this guard before the row
- * predicate, so without this it read "the paid setup has not finished". Any other open setup keeps the
- * guard's copy, and an open hold on X keeps its clause (§5.5).
+ * A setup still open beside ANOTHER live plan on the org's row (an `incomplete` X the closer leaves open,
+ * C120) refuses with the live-plan copy instead, as the row predicate would — Checkout runs this guard
+ * before the row predicate, so without this it read "the paid setup has not finished".
  */
 async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
 	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
 	for (const row of rows) {
 		let verdict: Awaited<ReturnType<typeof settleOpenSetup>>;
-		let sub: Stripe.Subscription | null = null;
 		try {
-			try {
-				sub = await getStripe().subscriptions.retrieve(row.subscription_id);
-			} catch (e) {
-				// A missing X is the closer's to judge (it answers open, C97); any other failure fails closed.
-				if (!isStripeResourceMissing(e)) throw e;
-			}
-			verdict = await settleOpenSetup(row, sub ? { sub, orgId: actor.orgId } : { orgId: actor.orgId });
+			verdict = await settleOpenSetup(row, { orgId: actor.orgId });
 		} catch (e) {
 			console.error(`[billing] open-setup guard could not check ${row.subscription_id}:`, e);
 			return OPEN_SETUP_UNCHECKED;
 		}
 		if (verdict !== "open") continue;
-		if (sub?.status === "incomplete" && !(await openPaymentHoldOn(row.subscription_id))) {
-			const billing = await getOrgBilling(actor.orgId);
-			if (namesOtherLivePlan(billing, row.subscription_id)) return orgRowBlocksNewPlan(billing) ?? LIVE_PLAN_REFUSAL;
-		}
+		if (rowNamesAnotherLivePlan(await getOrgBilling(actor.orgId), row.subscription_id)) return LIVE_PLAN_REFUSAL;
 		// Message selection, not access control: the purchase is refused either way, and `actor` was
 		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
 		if (row.user_id === actor.userId) return creatorRefusal(row.subscription_id); // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
@@ -3127,14 +3130,12 @@ async function newOrgSetupStateFor(
 	const heldBefore = await openPaymentHoldOn(sub.id);
 	const report = await readNewOrgPlanState(sub);
 	const hold = heldBefore ?? (await openPaymentHoldOn(sub.id));
-	// A setup is never offered for payment beside another live plan (ADR 0002 §5.6, C120): an X whose
-	// first payment failed or was never made (`action_needed`, the only state with a payment link), and
-	// whose team's row names another live plan Y (`namesOtherLivePlan`, the link's own predicate), could
-	// only be linked into a refusal under a `needs_operator` hold. So the lookup reports it as not payable
-	// here, with no payment link; left unpaid, Stripe ends it. An X whose payment is in flight, or a paid
-	// X, is left to the link, whose refusal opens that hold and alerts (C80).
+	// A setup is never offered for payment beside another live plan (ADR 0002 §5.6, C120): an unpaid X
+	// whose team's row names another `active` or `trialing` plan Y could only be linked into a refusal
+	// under a `needs_operator` hold. So the lookup reports it as not payable here, with no payment link.
+	// A paid X is left to the link, whose refusal opens that hold and alerts (C80).
 	const besideLivePlan =
-		!hold && org && sub.status === "incomplete" && report.planState === "action_needed" && namesOtherLivePlan(await getOrgBilling(org.id), sub.id)
+		!hold && org && sub.status === "incomplete" && rowNamesAnotherLivePlan(await getOrgBilling(org.id), sub.id)
 			? { clause: NOT_PAYABLE_BESIDE_LIVE_PLAN }
 			: null;
 	return {
