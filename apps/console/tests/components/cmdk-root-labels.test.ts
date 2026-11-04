@@ -155,38 +155,20 @@ function rootTags(source: string): Map<string, NameProp> {
  */
 function openingTagAttributes(source: string, start: number): string {
 	let depth = 0;
-	let out = "";
-	let i = start;
-	while (i < source.length) {
+	let quote: string | null = null;
+	for (let i = start; i < source.length; i += 1) {
 		const ch = source[i];
-		const next = source[i + 1];
-		if (ch === "/" && next === "/") {
-			const end = source.indexOf("\n", i);
-			i = end === -1 ? source.length : end;
+		if (quote) {
+			if (ch === "\\") i += 1;
+			else if (ch === quote) quote = null;
 			continue;
 		}
-		if (ch === "/" && next === "*") {
-			const end = source.indexOf("*/", i + 2);
-			i = end === -1 ? source.length : end + 2;
-			continue;
-		}
-		const opensString =
-			(ch === '"' || ch === "'" || ch === "`") &&
-			(depth > 0 || /=\s*$/u.test(out));
-		if (opensString) {
-			let j = i + 1;
-			while (j < source.length && source[j] !== ch) j += source[j] === "\\" ? 2 : 1;
-			out += source.slice(i, j + 1);
-			i = j + 1;
-			continue;
-		}
-		if (ch === "{") depth += 1;
+		if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+		else if (ch === "{") depth += 1;
 		else if (ch === "}") depth -= 1;
-		else if (ch === ">" && depth === 0) return out;
-		out += ch;
-		i += 1;
+		else if (ch === ">" && depth === 0) return source.slice(start, i);
 	}
-	return out;
+	return source.slice(start);
 }
 
 /**

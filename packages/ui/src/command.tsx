@@ -259,7 +259,6 @@ function CommandGroup({
   heading?: React.ReactNode
   children?: React.ReactNode
 }) {
-  if (React.Children.toArray(children).length === 0) return null
   return (
     <Autocomplete.Group
       data-slot="command-group"

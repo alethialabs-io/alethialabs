@@ -198,15 +198,6 @@ describe("Command", () => {
 		expect(screen.getByText("No row found.")).toBeInTheDocument();
 	});
 
-	it("leaves no orphan group heading on a miss", async () => {
-		const user = userEvent.setup({ delay: null });
-		render(<Harness onPick={() => {}} />);
-		expect(screen.getByText("Rows")).toBeInTheDocument();
-		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "zzz");
-		expect(screen.queryByText("Rows")).not.toBeInTheDocument();
-		expect(screen.queryAllByRole("group")).toEqual([]);
-	});
-
 	it("keeps a pinned row reachable by keyboard on a miss, beside the empty text", async () => {
 		const user = userEvent.setup({ delay: null });
 		const onPick = vi.fn();
