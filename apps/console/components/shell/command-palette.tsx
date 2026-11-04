@@ -18,6 +18,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
+import { groupResults, useCommandSearch } from "@repo/ui/command-search";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { settingsNavItemsForScope } from "@/components/settings/settings-nav-items";
 import {
@@ -31,8 +32,12 @@ import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 
+/** The palette's three groups, in the order they list for an empty search. */
+type PaletteGroup = "Pages" | "Projects" | "Jobs";
+
 /** A flat, navigable palette entry. */
 interface PaletteEntry {
+	group: PaletteGroup;
 	label: string;
 	href: string;
 	icon: LucideIcon;
@@ -96,7 +101,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 		const push = (label: string, href: string, icon: LucideIcon) => {
 			if (seen.has(href)) return;
 			seen.add(href);
-			out.push({ label, href, icon });
+			out.push({ group: "Pages", label, href, icon });
 		};
 
 		const groups = buildSidebarNav(orgSlug, { selfRunners });
@@ -140,6 +145,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 		for (const p of projects) {
 			if (!p.slug) continue;
 			out.push({
+				group: "Projects",
 				label: p.project_name,
 				href: projectHref(orgSlug, p.slug),
 				icon: Box,
@@ -151,12 +157,26 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 	// Live jobs.
 	const jobEntries = useMemo<PaletteEntry[]>(() => {
 		return jobs.map((j) => ({
+			group: "Jobs",
 			label: JOB_TYPES[j.job_type]?.label ?? String(j.job_type),
 			href: globalHref(orgSlug, `jobs/${j.id}`),
 			icon: ClipboardList,
 			hint: j.id.slice(0, 8),
 		}));
 	}, [jobs, orgSlug]);
+
+	const entries = useMemo(
+		() => [...pages, ...projectEntries, ...jobEntries],
+		[pages, projectEntries, jobEntries],
+	);
+	// Ranked by the shared ranker (exact > prefix > word start > substring), so the best match is
+	// listed first and its group leads.
+	const { search, onSearchChange, results } = useCommandSearch(
+		entries,
+		paletteSearchText,
+		open,
+	);
+	const groups = groupResults(results, (e) => e.group);
 
 	/** Routes to an entry and dismisses the palette. */
 	const go = (href: string) => {
@@ -165,59 +185,37 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 	};
 
 	return (
-		<CommandDialog open={open} onOpenChange={setOpen}>
+		<CommandDialog
+			open={open}
+			onOpenChange={setOpen}
+			search={search}
+			onSearchChange={onSearchChange}
+			filteredItems={groups.flatMap((g) => g.items)}
+		>
 			<CommandInput placeholder="Search pages, projects, jobs…" />
 			<CommandList>
 				<CommandEmpty>No results found.</CommandEmpty>
-
-				<CommandGroup heading="Pages">
-					{pages.map((p) => (
-						<CommandItem
-							key={p.href}
-							value={`${p.label} ${p.href}`}
-							onSelect={() => go(p.href)}
-						>
-							<p.icon />
-							<span>{p.label}</span>
-						</CommandItem>
-					))}
-				</CommandGroup>
-
-				{projectEntries.length > 0 && (
-					<CommandGroup heading="Projects">
-						{projectEntries.map((p) => (
-							<CommandItem
-								key={p.href}
-								value={`${p.label} ${p.href}`}
-								onSelect={() => go(p.href)}
-							>
-								<p.icon />
-								<span>{p.label}</span>
-							</CommandItem>
-						))}
-					</CommandGroup>
-				)}
-
-				{jobEntries.length > 0 && (
-					<CommandGroup heading="Jobs">
-						{jobEntries.map((j) => (
-							<CommandItem
-								key={j.href}
-								value={`${j.label} ${j.hint ?? ""} ${j.href}`}
-								onSelect={() => go(j.href)}
-							>
-								<j.icon />
-								<span>{j.label}</span>
-								{j.hint && (
+				{groups.map(({ group, items }) => (
+					<CommandGroup key={group} heading={group}>
+						{items.map((e) => (
+							<CommandItem key={e.href} onSelect={() => go(e.href)}>
+								<e.icon />
+								<span>{e.label}</span>
+								{e.hint && (
 									<span className="ml-auto font-mono text-xs text-muted-foreground">
-										{j.hint}
+										{e.hint}
 									</span>
 								)}
 							</CommandItem>
 						))}
 					</CommandGroup>
-				)}
+				))}
 			</CommandList>
 		</CommandDialog>
 	);
+}
+
+/** An entry's search text: its label, its hint (a job id) and its href, as cmdk matched them. */
+function paletteSearchText(e: PaletteEntry): string {
+	return `${e.label} ${e.hint ?? ""} ${e.href}`;
 }

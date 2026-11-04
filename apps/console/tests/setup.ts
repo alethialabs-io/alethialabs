@@ -52,7 +52,7 @@ vi.mock("next-runtime-env", () => ({
   env: (key: string) => process.env[key],
 }));
 
-// jsdom lacks a few DOM APIs that Radix UI / cmdk touch on mount (ResizeObserver, layout
+// jsdom lacks a few DOM APIs that Base UI overlays and command lists touch on mount (ResizeObserver, layout
 // measurement, pointer capture). Stub them so dialog/command/select-based components render in
 // component tests. Purely additive — only fills gaps jsdom doesn't provide.
 if (!globalThis.ResizeObserver) {
