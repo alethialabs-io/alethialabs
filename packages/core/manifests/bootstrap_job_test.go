@@ -604,3 +604,88 @@ func TestBootstrapJob_Azure_TokenScratchIsMemoryBacked(t *testing.T) {
 		t.Errorf("Azure Job volumes = %v, want both admin-token and sql", vols)
 	}
 }
+
+// TestBootstrapJob_BootstrapOnlyLabel pins the label the runner's stranded-hook reconcile selects on:
+// it is on every credential-bearing hook (the admin ExternalSecret on AWS/GCP, the admin-federated
+// ServiceAccount on Azure) as the STRING "true", and NOT on the Job, which holds no credential and has
+// its own time bounds. The key and value are written out literally so a change to the constants fails
+// here as well as in the provisioner's selector test.
+func TestBootstrapJob_BootstrapOnlyLabel(t *testing.T) {
+	const key, value = "alethia.io/bootstrap-only", "true"
+	for provider, outputs := range map[string]map[string]string{
+		"aws": {
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		},
+		"gcp": {
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		},
+		"azure": {
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		},
+	} {
+		t.Run(provider, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+				Outputs:     outputs,
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			labelled := 0
+			for _, doc := range append(parseYAMLDocs(t, res.JobYAML), parseYAMLDocs(t, res.AdminSecretYAML)...) {
+				meta, _ := doc["metadata"].(map[string]any)
+				labels, _ := meta["labels"].(map[string]any)
+				got, present := labels[key]
+				switch doc["kind"] {
+				case "Job":
+					if present {
+						t.Errorf("the Job carries %s=%v; it holds no credential and must not be reaped", key, got)
+					}
+				case "ExternalSecret", "ServiceAccount":
+					if s, ok := got.(string); !ok || s != value {
+						t.Errorf("%v label %s = %#v, want the string %q", doc["kind"], key, got, value)
+					}
+					labelled++
+				default:
+					t.Errorf("unexpected object %v", doc["kind"])
+				}
+			}
+			if labelled != 1 {
+				t.Errorf("%s: %d credential-bearing hooks checked, want 1", provider, labelled)
+			}
+		})
+	}
+}
+
+// TestBootstrapLabelQuoting_LeavesOtherExternalSecretsUnchanged pins that quoting the bootstrap-only
+// label did not change how the shared ExternalSecret template renders anyone else's extra labels: the
+// BYO-chart binding ExternalSecret renders byte-for-byte as it did before (its marker label value
+// unquoted). Changing that lane's rendering is a separate change with its own safety work.
+func TestBootstrapLabelQuoting_LeavesOtherExternalSecretsUnchanged(t *testing.T) {
+	got, skipped, err := RenderExternalSecret(ExternalSecretParams{
+		ServiceName: "web",
+		Namespace:   "ns",
+		Target:      types.ServiceBindingTarget{Kind: "database", Name: "orders"},
+		Provider:    "aws",
+		RemoteKey:   "arn:secret",
+		Facets:      []string{"username", "password"},
+		Labels:      map[string]string{"alethia.io/byo-binding": "true"},
+	})
+	if err != nil || len(skipped) != 0 {
+		t.Fatalf("render err=%v skipped=%v", err, skipped)
+	}
+	const want = "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: web-database-orders\n  namespace: ns\n  labels:\n    app.kubernetes.io/name: web-database-orders\n    app.kubernetes.io/managed-by: alethia\n    alethia.io/byo-binding: true\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    name: secretstore-aws\n    kind: ClusterSecretStore\n  target:\n    name: web-database-orders\n    creationPolicy: Owner\n  data:\n    - secretKey: username\n      remoteRef:\n        key: arn:secret\n        property: username\n    - secretKey: password\n      remoteRef:\n        key: arn:secret\n        property: password\n"
+	if got != want {
+		t.Errorf("BYO-chart binding ExternalSecret rendering changed:\n got %q\nwant %q", got, want)
+	}
+}
