@@ -380,6 +380,7 @@ func TestTail_ResolveChartWorkloadBindingsReportsEmptyValues(t *testing.T) {
 		string(types.CloudProviderAws),
 		"default",
 		nil,
+		ChartBindingPolicy{},
 	)
 	if len(res.Unsatisfied) != 1 || res.Unsatisfied[0] != knob {
 		t.Fatalf("Unsatisfied = %v, want exactly %q", res.Unsatisfied, knob)

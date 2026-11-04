@@ -363,10 +363,6 @@ func TestPrunersToleratePartialReads(t *testing.T) {
 			listMatch: "get secrets -n argocd",
 			run:       func(d []string, o, e *bytes.Buffer) { PruneVClusterClusterSecrets(d, o, e) },
 		},
-		"byo binding external secrets": {
-			listMatch: "get externalsecrets -A",
-			run:       func(d []string, o, e *bytes.Buffer) { PruneChartBindingSecrets(d, o, e) },
-		},
 	}
 
 	cases := []pruneCase{

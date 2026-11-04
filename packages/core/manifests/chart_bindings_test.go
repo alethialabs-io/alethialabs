@@ -24,9 +24,16 @@ func TestRenderExternalSecret_WithMarkerLabel(t *testing.T) {
 	if err != nil || len(skipped) != 0 {
 		t.Fatalf("render err=%v skipped=%v", err, skipped)
 	}
-	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there.
-	if !strings.Contains(yaml, "alethia.io/byo-binding: true") {
-		t.Fatalf("marker label not rendered:\n%s", yaml)
+	// The marker (for PruneChartBindingSecrets) AND the always-present labels are both there, and
+	// the marker is a STRING once parsed: a YAML boolean label value fails the apply outright.
+	docs := parseYAMLDocs(t, yaml)
+	if len(docs) != 1 {
+		t.Fatalf("want one document, got %d:\n%s", len(docs), yaml)
+	}
+	meta, _ := docs[0]["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	if got, ok := labels["alethia.io/byo-binding"].(string); !ok || got != "true" {
+		t.Fatalf("marker label = %#v, want the string \"true\":\n%s", labels["alethia.io/byo-binding"], yaml)
 	}
 	if !strings.Contains(yaml, "app.kubernetes.io/managed-by: alethia") {
 		t.Fatalf("fixed labels dropped when adding an extra one:\n%s", yaml)
@@ -57,7 +64,7 @@ func TestResolveChartWorkloadBindings_Satisfiable(t *testing.T) {
 		"rds_master_credentials_secret_name": "arn:aws:secretsmanager:...:db-master",
 	}
 
-	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil)
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil, ChartBindingPolicy{})
 
 	wantPatches := map[string]any{
 		"externalDatabase.host": "db.internal:5432",
@@ -99,7 +106,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (a) No ESO store for the cloud (hetzner) → unsatisfied, no patch, no ExternalSecret.
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil)
+		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 || len(res.ExternalSecrets) != 0 {
 		t.Fatalf("hetzner should reference nothing: patches=%v es=%v", res.Patches, res.ExternalSecrets)
 	}
@@ -109,7 +116,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (b) Store exists but the resource exported no master secret → unsatisfied, no dangling ref.
 	res = ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{}, "aws", "ns", nil)
+		map[string]string{}, "aws", "ns", nil, ChartBindingPolicy{})
 	if _, referenced := res.Patches["auth.existingSecret"]; referenced {
 		t.Fatal("must not reference an existingSecret that will not be materialized")
 	}
@@ -121,7 +128,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 func TestResolveChartWorkloadBindings_MissingPath(t *testing.T) {
 	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"})
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding},
-		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil)
+		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 {
 		t.Fatalf("no value-path → no patch, got %v", res.Patches)
 	}
@@ -176,9 +183,63 @@ func TestResolveChartWorkloadBindings_EngineAwarePort(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-				map[string]string{}, "aws", "ns", tc.dbs)
+				map[string]string{}, "aws", "ns", tc.dbs, ChartBindingPolicy{})
 			if got := res.Patches["externalDatabase.port"]; got != tc.wantPort {
 				t.Errorf("port = %v, want %s", got, tc.wantPort)
+			}
+		})
+	}
+}
+
+// TestResolveChartWorkloadBindings_PolicyRefusals pins each ChartBindingPolicy refusal: the
+// credential facet is unsatisfied with its reason, gets no patch and no ExternalSecret, and the
+// non-secret facet beside it still resolves.
+func TestResolveChartWorkloadBindings_PolicyRefusals(t *testing.T) {
+	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"}, [2]string{"DB_PASS", "password"})
+	valuePaths := map[string]string{
+		ChartBindingKnob("database", "orders", "endpoint"): "db.host",
+		ChartBindingKnob("database", "orders", "password"): "db.existingSecret",
+	}
+	outputs := map[string]string{
+		"rds_cluster_endpoint":               "db.internal",
+		"rds_master_credentials_secret_name": "arn:secret",
+	}
+	iam := true
+	keylessDB := []types.ProjectDatabaseConfig{{Name: "orders", IamAuth: &iam}}
+	passKnob := ChartBindingKnob("database", "orders", "password")
+
+	cases := []struct {
+		name       string
+		dbs        []types.ProjectDatabaseConfig
+		policy     ChartBindingPolicy
+		wantReason string // "" → the password facet resolves
+	}{
+		{name: "no policy", policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{KeylessDBAuth: true}, wantReason: "keyless database"},
+		{name: "keyless flag off, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, password target", policy: ChartBindingPolicy{KeylessDBAuth: true}},
+		{name: "credential refusal", policy: ChartBindingPolicy{CredentialRefusal: "no owner"}, wantReason: "no owner"},
+		{name: "taken name", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"web-database-orders": true}}, wantReason: "already rendered by a first-class service"},
+		{name: "other name taken", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"other": true}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "ns", tc.dbs, tc.policy)
+			if res.Patches["db.host"] != "db.internal" {
+				t.Errorf("the non-secret facet stopped resolving: %v", res.Patches)
+			}
+			_, patched := res.Patches["db.existingSecret"]
+			if tc.wantReason == "" {
+				if !patched || len(res.ExternalSecrets) != 1 || len(res.Unsatisfied) != 0 {
+					t.Fatalf("password facet should resolve: patches=%v es=%v unsat=%v", res.Patches, res.ExternalSecrets, res.Unsatisfied)
+				}
+				return
+			}
+			if patched || len(res.ExternalSecrets) != 0 {
+				t.Fatalf("a refused facet produced a patch or ExternalSecret: patches=%v es=%v", res.Patches, res.ExternalSecrets)
+			}
+			if !reflect.DeepEqual(res.Unsatisfied, []string{passKnob}) || !strings.Contains(res.UnsatisfiedReasons[passKnob], tc.wantReason) {
+				t.Fatalf("unsat=%v reasons=%v, want %q with reason containing %q", res.Unsatisfied, res.UnsatisfiedReasons, passKnob, tc.wantReason)
 			}
 		})
 	}

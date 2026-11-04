@@ -23,6 +23,7 @@ package manifests
 //     at an `existingSecret` that will not exist).
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -39,7 +40,30 @@ type ChartBindingResult struct {
 	// Unsatisfied lists value_paths knob keys (`bind:{kind}:{name}:{facet}`) that could not be
 	// resolved — surfaced honestly rather than dropped or guessed.
 	Unsatisfied []string
+	// UnsatisfiedReasons names WHY a knob in Unsatisfied was refused, for the refusals a
+	// ChartBindingPolicy makes (keyless database, a Secret name another lane owns, no owner). A knob
+	// unsatisfied for the ordinary reasons (no value-path, no keyless secret output) has no entry.
+	UnsatisfiedReasons map[string]string
 }
+
+// ChartBindingPolicy carries the deploy-wide decisions the resolver must honour for credential
+// facets. The zero value refuses nothing.
+type ChartBindingPolicy struct {
+	// KeylessDBAuth is the service lane's keyless-DB flag (manifests.Options.KeylessDBAuth). When it
+	// is on, a credential facet on a database KeylessDBTarget reports as keyless is UNSATISFIED: BYO
+	// bindings follow the service lane, and a keyless database target gets no password secret.
+	KeylessDBAuth bool
+	// CredentialRefusal, when non-empty, refuses every credential facet with this reason. The caller
+	// sets it when the binding ExternalSecret could not be applied safely at all.
+	CredentialRefusal string
+	// TakenSecretNames are binding Secret names in this workload's namespace that another lane
+	// renders (a first-class service's ExternalSecret). A BYO binding resolving to one is refused, so
+	// two writers never share one object.
+	TakenSecretNames map[string]bool
+}
+
+// keylessReason is the reported reason for a credential facet on a keyless database target.
+const keylessReason = "keyless database: no password secret to bind (BYO bindings follow the service lane)"
 
 // ChartBindingKnob is the value_paths key for one binding facet — mirrors the console's convention
 // (apps/console/lib/addons/chart-overlay.ts `bindingKnob`). The two sides MUST agree on this string.
@@ -75,8 +99,13 @@ func ResolveChartWorkloadBindings(
 	provider string,
 	namespace string,
 	dbs []types.ProjectDatabaseConfig,
+	policy ChartBindingPolicy,
 ) ChartBindingResult {
-	res := ChartBindingResult{Patches: map[string]any{}}
+	res := ChartBindingResult{Patches: map[string]any{}, UnsatisfiedReasons: map[string]string{}}
+	refuse := func(knob, reason string) {
+		res.Unsatisfied = append(res.Unsatisfied, knob)
+		res.UnsatisfiedReasons[knob] = reason
+	}
 
 	// Accumulate satisfiable credential facets per target so one ExternalSecret carries all of them.
 	type credAcc struct {
@@ -97,6 +126,21 @@ func ResolveChartWorkloadBindings(
 				continue
 			}
 			if IsCredentialFacet(string(inj.From)) {
+				// Policy refusals come first: none of them may produce a patch or an ExternalSecret.
+				// The keyless check is the service lane's own predicate (writeBindingExternalSecrets:
+				// `keylessOn && KeylessDBTarget`), so the two lanes never disagree.
+				if policy.KeylessDBAuth && KeylessDBTarget(b.Target, dbs) {
+					refuse(knob, keylessReason)
+					continue
+				}
+				if policy.CredentialRefusal != "" {
+					refuse(knob, policy.CredentialRefusal)
+					continue
+				}
+				if name := BindingSecretName(workloadName, b.Target); policy.TakenSecretNames[name] {
+					refuse(knob, fmt.Sprintf("Secret name %q is already rendered by a first-class service in this namespace", name))
+					continue
+				}
 				remoteKey := outputs[chartCredentialSecretOutputKey(string(b.Target.Kind))]
 				_, hasProperty := facetProperty(provider, string(inj.From))
 				// Satisfiable only if the cloud has an ESO store, the resource exported a master
