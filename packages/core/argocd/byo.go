@@ -272,9 +272,11 @@ func validateByoNamespace(ns string) error {
 //
 // The console's BYO form refuses the same names up front from a mirrored copy
 // (apps/console/lib/validations/byo-reserved-namespaces.ts) whose parity test deep-equals this file;
-// each group is pinned to the thing it names by byo_reserved_namespaces_test.go and the console's
-// catalogue test. "default" is deliberately absent: it is where a BYO chart lands when no namespace is
-// given.
+// how each group is checked against its source (and which parts are hand-kept) is stated in the JSON's
+// own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is deliberately
+// absent: it is where a BYO chart lands when no namespace is given. Preview namespaces are not
+// reserved either: their prefix is a per-project setting (project_preview_config.namespace_prefix),
+// not a fixed platform name.
 //
 //go:embed byo_reserved_namespaces.json
 var byoReservedNamespacesJSON []byte

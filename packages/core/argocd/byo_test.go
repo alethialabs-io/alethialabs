@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -559,7 +560,7 @@ func TestValidateByoNamespace_RefusesEveryReservedNamespace(t *testing.T) {
 		}
 	}
 	// The issue names these explicitly; assert them by NAME so a group reshuffle cannot drop one.
-	for _, ns := range []string{"kube-system", "kube-public", "kube-node-lease", "argocd", "cert-manager", "external-secrets-operator", "ingress-nginx"} {
+	for _, ns := range []string{"kube-system", "kube-public", "kube-node-lease", "argocd", "cert-manager", "external-secrets-operator", "ingress-nginx", "datadog"} {
 		if validateByoNamespace(ns) == nil {
 			t.Errorf("namespace %q must be refused", ns)
 		}
@@ -701,10 +702,12 @@ func TestByoReserved_PlatformRuntimeMatchesTheRunnersNamespaces(t *testing.T) {
 	}
 }
 
-// TestByoReserved_CoversEveryCatalogueAddOnFixture checks, from a plain `go test`, that every namespace
-// in the generated add-on fixtures (test/e2e/fixtures/addon_catalog.<cloud>.json, which CI keeps equal
-// to the console's ADDON_CATALOG) is reserved. It is the subset direction only — a fixture omits
-// add-ons a cloud does not offer; the console's catalogue test owns equality.
+// TestByoReserved_CoversEveryCatalogueAddOnFixture checks, from a plain `go test`, that the
+// marketplaceAddOns group EQUALS the namespaces in the generated add-on fixtures
+// (test/e2e/fixtures/addon_catalog.<cloud>.json, which CI keeps in step with the console's
+// ADDON_CATALOG), unioned across every cloud. Both directions: an unreserved fixture namespace reds, and
+// so does a listed namespace no fixture installs into. BOUNDARY: an add-on offered on no fixture cloud
+// is absent from the union; the console's vitest, which reads ADDON_CATALOG itself, still sees it.
 func TestByoReserved_CoversEveryCatalogueAddOnFixture(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "test", "e2e", "fixtures", "addon_catalog.*.json"))
 	if err != nil || len(files) == 0 {
@@ -715,6 +718,7 @@ func TestByoReserved_CoversEveryCatalogueAddOnFixture(t *testing.T) {
 		group[n] = true
 	}
 	seen := 0
+	fixtureNamespaces := []string{}
 	for _, f := range files {
 		raw, err := os.ReadFile(f)
 		if err != nil {
@@ -729,6 +733,7 @@ func TestByoReserved_CoversEveryCatalogueAddOnFixture(t *testing.T) {
 		}
 		for _, a := range addons {
 			seen++
+			fixtureNamespaces = append(fixtureNamespaces, a.Namespace)
 			if a.Namespace == "" {
 				t.Errorf("%s: add-on %s has no namespace", filepath.Base(f), a.ID)
 				continue
@@ -740,5 +745,80 @@ func TestByoReserved_CoversEveryCatalogueAddOnFixture(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("the fixtures held no add-ons — nothing was checked")
+	}
+	if got, want := sortedSet(fixtureNamespaces), sortedSet(byoReservedGroup(t, "marketplaceAddOns")); !reflect.DeepEqual(got, want) {
+		t.Errorf("marketplaceAddOns in byo_reserved_namespaces.json = %v, the add-on fixtures install into %v", want, got)
+	}
+}
+
+// helmBlockStart opens a tofu block that installs or renders a Helm chart into a namespace.
+var helmBlockStart = regexp.MustCompile(`^(resource "helm_release"|data "helm_template") "[^"]+" \{\s*$`)
+
+// helmNamespaceAttr is the block's top-level `namespace = ...` attribute, with its value captured raw.
+var helmNamespaceAttr = regexp.MustCompile(`^\s*namespace\s*=\s*(.+?)\s*$`)
+
+// TestByoReserved_PlatformCategoriesMatchTheTofuHelmInstalls pins platformCategories to the Helm
+// charts the platform installs through tofu, in BOTH directions: every `resource "helm_release"` and
+// `data "helm_template"` block in infra/templates/**/*.tf contributes its `namespace` attribute.
+//
+// BOUNDARY, stated because it is a line scan rather than an HCL parse: a block is recognised only when
+// its header sits on one line in canonical `tofu fmt` form, and only its top-level `namespace` line is
+// read (depth 1, by counting braces). A NON-LITERAL namespace (a variable, a local) FAILS the test
+// rather than being skipped, so a value this scan cannot read is never counted as covered. A block
+// with no namespace attribute installs into "default", which is deliberately not reserved, and is
+// skipped. Other ways to create a namespace in tofu (kubernetes_namespace, a raw manifest) are not
+// read; none exist under infra/templates today.
+func TestByoReserved_PlatformCategoriesMatchTheTofuHelmInstalls(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "infra", "templates")
+	got := []string{}
+	blocks := 0
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".tf") {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		depth := 0
+		in := false
+		for i, line := range strings.Split(string(raw), "\n") {
+			if !in {
+				if helmBlockStart.MatchString(line) {
+					in, depth = true, 1
+					blocks++
+				}
+				continue
+			}
+			if depth == 1 {
+				if m := helmNamespaceAttr.FindStringSubmatch(line); m != nil {
+					v := m[1]
+					if len(v) < 2 || v[0] != '"' || v[len(v)-1] != '"' || strings.Contains(v[1:len(v)-1], "${") {
+						t.Errorf("%s:%d: helm namespace %s is not a string literal; this pin cannot read it", path, i+1, v)
+					} else {
+						got = append(got, v[1:len(v)-1])
+					}
+				}
+			}
+			depth += strings.Count(line, "{") - strings.Count(line, "}")
+			if depth <= 0 {
+				in = false
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocks == 0 {
+		t.Fatal("no helm_release / helm_template block found under infra/templates — the scan matched nothing")
+	}
+	if gotSet, want := sortedSet(got), sortedSet(byoReservedGroup(t, "platformCategories")); !reflect.DeepEqual(gotSet, want) {
+		t.Errorf("platformCategories in byo_reserved_namespaces.json = %v\n"+
+			"but the tofu Helm installs under infra/templates use %v.\n"+
+			"Edit the group to match (and its mirror in apps/console/lib/validations/byo-reserved-namespaces.ts).", want, gotSet)
 	}
 }

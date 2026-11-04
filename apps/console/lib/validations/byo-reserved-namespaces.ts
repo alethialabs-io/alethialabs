@@ -53,6 +53,12 @@ export const BYO_RESERVED_NAMESPACES: {
 			],
 		},
 		{
+			id: "platformCategories",
+			reason:
+				"the platform's own infrastructure modules (Datadog, Grafana, cluster networking and storage) install there",
+			namespaces: ["datadog", "kube-system", "monitoring"],
+		},
+		{
 			id: "platformRuntime",
 			reason: "the platform runs its own components there",
 			namespaces: [

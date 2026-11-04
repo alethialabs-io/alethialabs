@@ -1,10 +1,14 @@
 {
-  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test). Every group is pinned to the thing it names by a test that fails in BOTH directions: kubernetes is fixed; platformTemplates equals the destinations rendered from infra/templates/argocd; platformRuntime equals the namespace constants the runner installs into; marketplaceAddOns equals the namespaces in the console's ADDON_CATALOG. Kept sorted.",
+  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test in tests/lib/validations/byo-reserved-namespaces.test.ts). Each group is checked against its source as follows. kubernetes: fixed by hand, each name asserted refused. platformTemplates: EQUALITY (go test, byo_test.go) with the namespaces rendered from infra/templates/argocd/*.yaml. platformCategories: EQUALITY (go test, byo_test.go) with the literal namespace of every helm_release / helm_template block in infra/templates/**/*.tf. platformRuntime: EQUALITY (go test, byo_test.go) with a HAND-KEPT list of the runner's namespace constants in that test - a new constant is not seen until it is added there. marketplaceAddOns: EQUALITY with ADDON_CATALOG (console vitest) and EQUALITY with the union of test/e2e/fixtures/addon_catalog.*.json (go test). prefixes: hand-kept; vcluster- is pinned to the provisioner constant (go test). Kept sorted.",
   "groups": [
     {
       "id": "kubernetes",
       "reason": "it is a Kubernetes system namespace",
-      "namespaces": ["kube-node-lease", "kube-public", "kube-system"]
+      "namespaces": [
+        "kube-node-lease",
+        "kube-public",
+        "kube-system"
+      ]
     },
     {
       "id": "platformTemplates",
@@ -17,6 +21,15 @@
         "external-secrets-operator",
         "karpenter",
         "kube-system"
+      ]
+    },
+    {
+      "id": "platformCategories",
+      "reason": "the platform's own infrastructure modules (Datadog, Grafana, cluster networking and storage) install there",
+      "namespaces": [
+        "datadog",
+        "kube-system",
+        "monitoring"
       ]
     },
     {
@@ -56,7 +69,13 @@
     }
   ],
   "prefixes": [
-    { "prefix": "kube-", "reason": "Kubernetes reserves the kube- prefix for its system namespaces" },
-    { "prefix": "vcluster-", "reason": "the platform names every virtual cluster's host namespace vcluster-<name>" }
+    {
+      "prefix": "kube-",
+      "reason": "Kubernetes reserves the kube- prefix for its system namespaces"
+    },
+    {
+      "prefix": "vcluster-",
+      "reason": "the platform names every virtual cluster's host namespace vcluster-<name>"
+    }
   ]
 }
