@@ -23,6 +23,12 @@ registry. The remaining steps follow that choice — **Repository → Chart path
 **Registry → Version → Review** for OCI. On **Review** you set the target namespace; left blank, it is
 `default`.
 
+The namespace must be your own. The form refuses a namespace that the platform uses: the Kubernetes
+system namespaces (`kube-system` and any other `kube-` name), `argocd`, and the namespaces of the
+platform's controllers and marketplace add-ons, such as `cert-manager`, `external-secrets-operator`,
+`ingress-nginx` and `monitoring`. If a chart you attached earlier uses such a namespace, attach it
+again with a namespace of your own.
+
 For what the deployed chart may create, how it syncs, and how to remove it, see
 [Bring-your-own charts](/concepts/bring-your-own-charts).
 

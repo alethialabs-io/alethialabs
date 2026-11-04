@@ -13,6 +13,7 @@
 // mid-flow never validates the branch that is no longer on screen.
 
 import { z } from "zod";
+import { byoReservedNamespaceMessage } from "@/lib/validations/byo-reserved-namespaces";
 
 /** A git remote — an https:// or git@ address. */
 export function isPlausibleGitRepoUrl(url: string): boolean {
@@ -35,6 +36,18 @@ export function isPlausibleOciChartUrl(url: string): boolean {
 /** Either shape — what the server accepts as a chart repo. */
 export function isPlausibleChartRepoUrl(url: string): boolean {
 	return isPlausibleGitRepoUrl(url) || isPlausibleOciChartUrl(url);
+}
+
+/**
+ * Adds a `namespace` issue when the chart targets a namespace reserved for the platform (#6439).
+ * Shared by the form and the attach action so the two refuse exactly the same names; the runner
+ * refuses them again at deploy time from the same list.
+ */
+function refuseReservedNamespace(namespace: string | undefined, ctx: z.RefinementCtx): void {
+	const message = namespace ? byoReservedNamespaceMessage(namespace) : null;
+	if (message) {
+		ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["namespace"], message });
+	}
 }
 
 export const CHART_SOURCES = ["git", "oci"] as const;
@@ -64,6 +77,7 @@ export const byoChartFormSchema = z
 		valuesYaml: z.string().optional(),
 	})
 	.superRefine((value, ctx) => {
+		refuseReservedNamespace(value.namespace, ctx);
 		if (value.source === "oci") {
 			if (!isPlausibleOciChartUrl(value.repoUrl)) {
 				ctx.addIssue({
@@ -118,6 +132,9 @@ export const byoChartAttachSchema = z
 		values: z.record(z.string(), z.unknown()).optional(),
 	})
 	.superRefine((value, ctx) => {
+		// The action is a public entry point (the CLI route calls it too), so the form's refusal is
+		// not enough on its own.
+		refuseReservedNamespace(value.namespace, ctx);
 		// Re-checked server-side rather than trusted from the form: the action is a public entry
 		// point, and a git chart with no path silently renders an empty Application.
 		if (!value.repoUrl.startsWith("oci://") && !value.chartPath?.replace(/^\/+/, "")) {

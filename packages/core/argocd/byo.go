@@ -6,9 +6,12 @@ package argocd
 import (
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/names"
 	"gopkg.in/yaml.v3"
@@ -244,6 +247,9 @@ const dns1123LabelMaxLen = names.NamespaceMaxLength
 // list. Silently rewriting it in one place and not the other would produce a project whose
 // destination never matches the namespace the chart syncs into, and the failure would surface as an
 // ArgoCD permission error naming neither cause.
+//
+// It also REFUSES a reserved platform namespace (#6439) — see byoReservedNamespaceReason. The shape
+// checks run first so a hostile value is reported as malformed, never echoed back as "reserved".
 func validateByoNamespace(ns string) error {
 	if len(ns) > dns1123LabelMaxLen {
 		return fmt.Errorf("namespace %q is %d characters; Kubernetes allows at most %d", ns, len(ns), dns1123LabelMaxLen)
@@ -251,7 +257,98 @@ func validateByoNamespace(ns string) error {
 	if !dns1123Label.MatchString(ns) {
 		return fmt.Errorf("namespace %q is not a valid DNS-1123 label (lowercase alphanumerics and '-', starting and ending alphanumeric)", ns)
 	}
+	if reason := byoReservedNamespaceReason(ns); reason != "" {
+		return fmt.Errorf("namespace %q is reserved for the platform: %s. Choose a namespace of your own", ns, reason)
+	}
 	return nil
+}
+
+// byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
+//
+// WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
+// objects and in-namespace RBAC, but it allows the other namespaced kinds in its destinations, so a
+// chart's isolation from the platform rests on the namespace itself. These are the namespaces on the
+// platform's side of that line.
+//
+// The console's BYO form refuses the same names up front from a mirrored copy
+// (apps/console/lib/validations/byo-reserved-namespaces.ts) whose parity test deep-equals this file;
+// each group is pinned to the thing it names by byo_reserved_namespaces_test.go and the console's
+// catalogue test. "default" is deliberately absent: it is where a BYO chart lands when no namespace is
+// given.
+//
+//go:embed byo_reserved_namespaces.json
+var byoReservedNamespacesJSON []byte
+
+// byoReservedNamespaceList is the shape of byo_reserved_namespaces.json.
+type byoReservedNamespaceList struct {
+	Comment string `json:"$comment"`
+	Groups  []struct {
+		ID         string   `json:"id"`
+		Reason     string   `json:"reason"`
+		Namespaces []string `json:"namespaces"`
+	} `json:"groups"`
+	Prefixes []struct {
+		Prefix string `json:"prefix"`
+		Reason string `json:"reason"`
+	} `json:"prefixes"`
+}
+
+// byoReservedPrefix is one reserved namespace prefix and why it is reserved.
+type byoReservedPrefix struct{ prefix, reason string }
+
+// byoReserved holds the parsed list: exact names → reason, plus the prefixes.
+var byoReserved = mustParseByoReserved(byoReservedNamespacesJSON)
+
+// byoReservedIndex is byo_reserved_namespaces.json flattened for lookup.
+type byoReservedIndex struct {
+	exact    map[string]string
+	prefixes []byoReservedPrefix
+}
+
+// mustParseByoReserved parses the embedded list, PANICKING on a malformed one. The file is compiled
+// into the binary, so a parse failure is a build defect, and every test in this package reds on it —
+// an empty list would instead have silently reserved nothing. Unknown fields are refused too, so a
+// group added to the JSON in a shape this struct does not read cannot quietly reserve nothing.
+func mustParseByoReserved(raw []byte) byoReservedIndex {
+	var list byoReservedNamespaceList
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&list); err != nil {
+		panic(fmt.Sprintf("byo_reserved_namespaces.json: %v", err))
+	}
+	idx := byoReservedIndex{exact: map[string]string{}}
+	for _, g := range list.Groups {
+		if g.ID == "" || g.Reason == "" || len(g.Namespaces) == 0 {
+			panic(fmt.Sprintf("byo_reserved_namespaces.json: group %q needs an id, a reason and at least one namespace", g.ID))
+		}
+		for _, n := range g.Namespaces {
+			// A name in two groups keeps the FIRST group's reason; the order is the file's.
+			if _, seen := idx.exact[n]; !seen {
+				idx.exact[n] = g.Reason
+			}
+		}
+	}
+	for _, p := range list.Prefixes {
+		if p.Prefix == "" || p.Reason == "" {
+			panic("byo_reserved_namespaces.json: every prefix needs a prefix and a reason")
+		}
+		idx.prefixes = append(idx.prefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
+	}
+	return idx
+}
+
+// byoReservedNamespaceReason says why ns is reserved for the platform, or "" when a BYO chart may use
+// it. An exact name wins over a prefix, because its reason is the more specific one.
+func byoReservedNamespaceReason(ns string) string {
+	if reason, ok := byoReserved.exact[ns]; ok {
+		return reason
+	}
+	for _, p := range byoReserved.prefixes {
+		if strings.HasPrefix(ns, p.prefix) {
+			return p.reason
+		}
+	}
+	return ""
 }
 
 // RenderByoNamespaces renders the destination namespaces for a project's BYO charts, so the runner

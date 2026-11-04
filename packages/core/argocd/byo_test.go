@@ -5,11 +5,20 @@ package argocd
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/imagebuild"
+	"github.com/alethialabs-io/alethialabs/packages/core/kubeaccess"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -484,5 +493,252 @@ func TestEncodeByoDocsSeparatesEveryDocument(t *testing.T) {
 	}
 	if strings.Join(kinds, ",") != "A,B,C" {
 		t.Errorf("documents round-trip in order, got %v:\n%s", kinds, out)
+	}
+}
+
+// ─────────────────────────── reserved platform namespaces (#6439) ───────────────────────────
+
+// byoReservedGroup returns one group of byo_reserved_namespaces.json by id, failing when it is gone —
+// a renamed group must red here rather than make the pin below compare against nothing.
+func byoReservedGroup(t *testing.T, id string) []string {
+	t.Helper()
+	var list byoReservedNamespaceList
+	if err := json.Unmarshal(byoReservedNamespacesJSON, &list); err != nil {
+		t.Fatalf("byo_reserved_namespaces.json: %v", err)
+	}
+	for _, g := range list.Groups {
+		if g.ID == id {
+			return g.Namespaces
+		}
+	}
+	t.Fatalf("byo_reserved_namespaces.json has no %q group", id)
+	return nil
+}
+
+// sortedSet returns the distinct values of in, sorted, so two sets compare with reflect.DeepEqual.
+func sortedSet(in []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestValidateByoNamespace_RefusesEveryReservedNamespace is the property: a BYO chart's destination is
+// never a reserved platform namespace. EVERY name in EVERY group is driven through the validator and
+// through both renderers that call it, and each refusal must name the namespace and say "reserved", so
+// the person reading the deploy log or the form is told what to change.
+func TestValidateByoNamespace_RefusesEveryReservedNamespace(t *testing.T) {
+	var list byoReservedNamespaceList
+	if err := json.Unmarshal(byoReservedNamespacesJSON, &list); err != nil {
+		t.Fatalf("byo_reserved_namespaces.json: %v", err)
+	}
+	total := 0
+	for _, g := range list.Groups {
+		for _, ns := range g.Namespaces {
+			total++
+			err := validateByoNamespace(ns)
+			if err == nil {
+				t.Errorf("group %s: namespace %q accepted; it is reserved for the platform", g.ID, ns)
+				continue
+			}
+			if !strings.Contains(err.Error(), "reserved") || !strings.Contains(err.Error(), ns) {
+				t.Errorf("group %s: the refusal of %q must name it and say it is reserved, got: %v", g.ID, ns, err)
+			}
+			if _, err := RenderByoNamespaces([]string{"payments", ns}, nil); err == nil {
+				t.Errorf("RenderByoNamespaces accepted reserved %q", ns)
+			}
+			if _, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{ns}, nil); err == nil {
+				t.Errorf("RenderByoAppProject accepted reserved %q", ns)
+			}
+		}
+	}
+	// The issue names these explicitly; assert them by NAME so a group reshuffle cannot drop one.
+	for _, ns := range []string{"kube-system", "kube-public", "kube-node-lease", "argocd", "cert-manager", "external-secrets-operator", "ingress-nginx"} {
+		if validateByoNamespace(ns) == nil {
+			t.Errorf("namespace %q must be refused", ns)
+		}
+	}
+	if total < 20 {
+		t.Fatalf("only %d reserved names were exercised — the list did not load", total)
+	}
+}
+
+// TestValidateByoNamespace_RefusesReservedPrefixes covers the prefix half: a namespace Kubernetes
+// reserves by convention, and a virtual cluster's host namespace, are refused whatever follows.
+func TestValidateByoNamespace_RefusesReservedPrefixes(t *testing.T) {
+	for _, ns := range []string{"kube-flannel", "kube-anything", "vcluster-dev", "vcluster-a"} {
+		err := validateByoNamespace(ns)
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("namespace %q must be refused as reserved, got %v", ns, err)
+		}
+	}
+}
+
+// TestValidateByoNamespace_AcceptsOrdinaryNamespaces — the refusal must not reach ordinary names,
+// including the BYO default and names that merely CONTAIN a reserved word or prefix.
+func TestValidateByoNamespace_AcceptsOrdinaryNamespaces(t *testing.T) {
+	for _, ns := range []string{"default", "payments", "byo-e2e", "kubernetes-dashboard", "my-kube-system", "vault-client", "monitoring-team", "vcluster", "apps"} {
+		if err := validateByoNamespace(ns); err != nil {
+			t.Errorf("ordinary namespace %q refused: %v", ns, err)
+		}
+	}
+}
+
+// TestValidateByoNamespace_ShapeIsCheckedBeforeReservation — a hostile value is reported as malformed,
+// never echoed back as a "reserved" name.
+func TestValidateByoNamespace_ShapeIsCheckedBeforeReservation(t *testing.T) {
+	err := validateByoNamespace("kube-system\n---")
+	if err == nil || !strings.Contains(err.Error(), "DNS-1123") {
+		t.Fatalf("a malformed value must be refused for its shape first, got %v", err)
+	}
+}
+
+// TestByoReserved_PlatformTemplatesMatchTheRenderedTemplates pins the platformTemplates group to the
+// platform's own ArgoCD templates, in BOTH directions: a new platform add-on whose namespace is not in
+// the list reds here, and so does a list entry no template installs into any more.
+//
+// The templates are RENDERED, not grepped: every InfraFacts string is filled and every bool set true
+// by reflection, once per cloud, so each provider-gated Application renders; then every document is
+// decoded and its metadata.namespace, spec.destination.namespace and spec.destinations[].namespace are
+// read. BOUNDARY: an Application gated on a fact that a non-empty string / true bool does not satisfy
+// (an `eq .X "literal"` other than Provider, or a non-empty DNSConnector) is not rendered, and so not
+// seen — the equality below then reds on the listed namespace nothing rendered, which is how
+// cert-manager and external-dns were found missing from the first version of this test.
+func TestByoReserved_PlatformTemplatesMatchTheRenderedTemplates(t *testing.T) {
+	got := []string{}
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner", "digitalocean", "civo"} {
+		facts := &InfraFacts{}
+		v := reflect.ValueOf(facts).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			switch f := v.Field(i); f.Kind() {
+			case reflect.String:
+				f.SetString("placeholder")
+			case reflect.Bool:
+				f.SetBool(true)
+			}
+		}
+		facts.Provider = provider
+		// The DNS connector is the one string whose non-empty value DISABLES a branch: anything but
+		// ""/"native"/"cloudflare" turns the DNS provider off, and with it external-dns and cert-manager.
+		facts.DNSConnector = ""
+		outDir, err := RenderApplications(templatesDir(t), facts)
+		if err != nil {
+			t.Fatalf("%s: RenderApplications: %v", provider, err)
+		}
+		files, err := filepath.Glob(filepath.Join(outDir, "*.yaml"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("%s: no rendered templates in %s (%v)", provider, outDir, err)
+		}
+		for _, f := range files {
+			raw, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dec := yaml.NewDecoder(bytes.NewReader(raw))
+			for {
+				var doc struct {
+					Metadata struct {
+						Namespace string `yaml:"namespace"`
+					} `yaml:"metadata"`
+					Spec struct {
+						Destination struct {
+							Namespace string `yaml:"namespace"`
+						} `yaml:"destination"`
+						Destinations []struct {
+							Namespace string `yaml:"namespace"`
+						} `yaml:"destinations"`
+					} `yaml:"spec"`
+				}
+				if err := dec.Decode(&doc); err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					t.Fatalf("%s: %s: %v", provider, filepath.Base(f), err)
+				}
+				cands := []string{doc.Metadata.Namespace, doc.Spec.Destination.Namespace}
+				for _, d := range doc.Spec.Destinations {
+					cands = append(cands, d.Namespace)
+				}
+				for _, n := range cands {
+					if n != "" && n != "*" && n != "placeholder" {
+						got = append(got, n)
+					}
+				}
+			}
+		}
+		_ = os.RemoveAll(outDir)
+	}
+	want := sortedSet(byoReservedGroup(t, "platformTemplates"))
+	if gotSet := sortedSet(got); !reflect.DeepEqual(gotSet, want) {
+		t.Errorf("platformTemplates in byo_reserved_namespaces.json = %v\n"+
+			"but infra/templates/argocd renders into %v.\n"+
+			"Edit the group to match (and its mirror in apps/console/lib/validations/byo-reserved-namespaces.ts).", want, gotSet)
+	}
+}
+
+// TestByoReserved_PlatformRuntimeMatchesTheRunnersNamespaces pins platformRuntime to the namespace
+// constants the runner itself installs into, in both directions. BOUNDARY: Go cannot enumerate
+// constants, so this list is the one hand-kept part; the vcluster host prefix is pinned from
+// packages/core/provisioner, which owns that constant.
+func TestByoReserved_PlatformRuntimeMatchesTheRunnersNamespaces(t *testing.T) {
+	runtime := []string{
+		argoPreflightNamespace,       // ArgoCD itself
+		hetznerRegistryNamespace,     // in-cluster registry (harbor.go)
+		hetznerVaultNamespace,        // in-cluster secrets backend (vault.go)
+		hetznerQueueNamespace,        // in-cluster queue (rabbitmq.go)
+		secretsSaaSNamespaceForStore, // External Secrets' SaaS store
+		kubeaccess.DefaultReadOnlyNamespace,
+		imagebuild.DefaultNamespace,
+	}
+	if got, want := sortedSet(runtime), sortedSet(byoReservedGroup(t, "platformRuntime")); !reflect.DeepEqual(got, want) {
+		t.Errorf("platformRuntime in byo_reserved_namespaces.json = %v, the runner's namespace constants are %v", want, got)
+	}
+}
+
+// TestByoReserved_CoversEveryCatalogueAddOnFixture checks, from a plain `go test`, that every namespace
+// in the generated add-on fixtures (test/e2e/fixtures/addon_catalog.<cloud>.json, which CI keeps equal
+// to the console's ADDON_CATALOG) is reserved. It is the subset direction only — a fixture omits
+// add-ons a cloud does not offer; the console's catalogue test owns equality.
+func TestByoReserved_CoversEveryCatalogueAddOnFixture(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", "test", "e2e", "fixtures", "addon_catalog.*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no add-on catalogue fixtures found (%v)", err)
+	}
+	group := map[string]bool{}
+	for _, n := range byoReservedGroup(t, "marketplaceAddOns") {
+		group[n] = true
+	}
+	seen := 0
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var addons []struct {
+			ID        string `json:"id"`
+			Namespace string `json:"namespace"`
+		}
+		if err := json.Unmarshal(raw, &addons); err != nil {
+			t.Fatalf("%s: %v", filepath.Base(f), err)
+		}
+		for _, a := range addons {
+			seen++
+			if a.Namespace == "" {
+				t.Errorf("%s: add-on %s has no namespace", filepath.Base(f), a.ID)
+				continue
+			}
+			if !group[a.Namespace] {
+				t.Errorf("%s: add-on %s installs into %q, which marketplaceAddOns does not reserve", filepath.Base(f), a.ID, a.Namespace)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("the fixtures held no add-ons — nothing was checked")
 	}
 }

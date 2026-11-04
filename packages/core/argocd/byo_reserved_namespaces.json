@@ -1,0 +1,62 @@
+{
+  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test). Every group is pinned to the thing it names by a test that fails in BOTH directions: kubernetes is fixed; platformTemplates equals the destinations rendered from infra/templates/argocd; platformRuntime equals the namespace constants the runner installs into; marketplaceAddOns equals the namespaces in the console's ADDON_CATALOG. Kept sorted.",
+  "groups": [
+    {
+      "id": "kubernetes",
+      "reason": "it is a Kubernetes system namespace",
+      "namespaces": ["kube-node-lease", "kube-public", "kube-system"]
+    },
+    {
+      "id": "platformTemplates",
+      "reason": "the platform's own controllers (ArgoCD, cert-manager, External Secrets, ingress, DNS, autoscaling) install there",
+      "namespaces": [
+        "agic",
+        "argocd",
+        "cert-manager",
+        "external-dns",
+        "external-secrets-operator",
+        "karpenter",
+        "kube-system"
+      ]
+    },
+    {
+      "id": "platformRuntime",
+      "reason": "the platform runs its own components there",
+      "namespaces": [
+        "alethia-build",
+        "alethia-system",
+        "argocd",
+        "external-secrets-operator",
+        "queues",
+        "registries",
+        "secrets"
+      ]
+    },
+    {
+      "id": "marketplaceAddOns",
+      "reason": "a platform-managed add-on from the marketplace installs there",
+      "namespaces": [
+        "argo-rollouts",
+        "external-dns",
+        "falco",
+        "goldilocks",
+        "harbor",
+        "ingress-nginx",
+        "keda",
+        "kube-system",
+        "kyverno",
+        "minio",
+        "monitoring",
+        "observability",
+        "reloader",
+        "trivy-system",
+        "vault",
+        "velero"
+      ]
+    }
+  ],
+  "prefixes": [
+    { "prefix": "kube-", "reason": "Kubernetes reserves the kube- prefix for its system namespaces" },
+    { "prefix": "vcluster-", "reason": "the platform names every virtual cluster's host namespace vcluster-<name>" }
+  ]
+}

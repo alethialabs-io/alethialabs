@@ -466,7 +466,11 @@ export function ByoChartDialog({
 										{...register("namespace")}
 										placeholder="default"
 										className="font-mono"
+										aria-invalid={errors.namespace ? true : undefined}
 									/>
+									{errors.namespace ? (
+										<p className="text-xs text-destructive">{errors.namespace.message}</p>
+									) : null}
 								</div>
 							</div>
 							<div className="flex flex-col gap-1.5">
