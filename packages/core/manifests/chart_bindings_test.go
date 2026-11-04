@@ -190,3 +190,57 @@ func TestResolveChartWorkloadBindings_EngineAwarePort(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveChartWorkloadBindings_PolicyRefusals pins each ChartBindingPolicy refusal: the
+// credential facet is unsatisfied with its reason, gets no patch and no ExternalSecret, and the
+// non-secret facet beside it still resolves.
+func TestResolveChartWorkloadBindings_PolicyRefusals(t *testing.T) {
+	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"}, [2]string{"DB_PASS", "password"})
+	valuePaths := map[string]string{
+		ChartBindingKnob("database", "orders", "endpoint"): "db.host",
+		ChartBindingKnob("database", "orders", "password"): "db.existingSecret",
+	}
+	outputs := map[string]string{
+		"rds_cluster_endpoint":               "db.internal",
+		"rds_master_credentials_secret_name": "arn:secret",
+	}
+	iam := true
+	keylessDB := []types.ProjectDatabaseConfig{{Name: "orders", IamAuth: &iam}}
+	passKnob := ChartBindingKnob("database", "orders", "password")
+
+	cases := []struct {
+		name       string
+		dbs        []types.ProjectDatabaseConfig
+		policy     ChartBindingPolicy
+		wantReason string // "" → the password facet resolves
+	}{
+		{name: "no policy", policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{KeylessDBAuth: true}, wantReason: "keyless database"},
+		{name: "keyless flag off, keyless target", dbs: keylessDB, policy: ChartBindingPolicy{}},
+		{name: "keyless flag on, password target", policy: ChartBindingPolicy{KeylessDBAuth: true}},
+		{name: "credential refusal", policy: ChartBindingPolicy{CredentialRefusal: "no owner"}, wantReason: "no owner"},
+		{name: "taken name", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"web-database-orders": true}}, wantReason: "already rendered by a first-class service"},
+		{name: "other name taken", policy: ChartBindingPolicy{TakenSecretNames: map[string]bool{"other": true}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "ns", tc.dbs, tc.policy)
+			if res.Patches["db.host"] != "db.internal" {
+				t.Errorf("the non-secret facet stopped resolving: %v", res.Patches)
+			}
+			_, patched := res.Patches["db.existingSecret"]
+			if tc.wantReason == "" {
+				if !patched || len(res.ExternalSecrets) != 1 || len(res.Unsatisfied) != 0 {
+					t.Fatalf("password facet should resolve: patches=%v es=%v unsat=%v", res.Patches, res.ExternalSecrets, res.Unsatisfied)
+				}
+				return
+			}
+			if patched || len(res.ExternalSecrets) != 0 {
+				t.Fatalf("a refused facet produced a patch or ExternalSecret: patches=%v es=%v", res.Patches, res.ExternalSecrets)
+			}
+			if !reflect.DeepEqual(res.Unsatisfied, []string{passKnob}) || !strings.Contains(res.UnsatisfiedReasons[passKnob], tc.wantReason) {
+				t.Fatalf("unsat=%v reasons=%v, want %q with reason containing %q", res.Unsatisfied, res.UnsatisfiedReasons, passKnob, tc.wantReason)
+			}
+		})
+	}
+}
