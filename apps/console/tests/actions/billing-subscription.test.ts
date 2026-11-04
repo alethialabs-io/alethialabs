@@ -3800,6 +3800,17 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(emitAlertEvent).not.toHaveBeenCalled();
 		});
 
+		// The closer answers open for this X without reading the row (its metadata names no org yet), so the
+		// throw comes from the guard's own row read. Before round 4 that read sat outside the guard's try, and
+		// the raw database error escaped instead of the try-again clause.
+		it("fails closed: with an incomplete X, the guard's own billing-row read that throws refuses with the try-again clause and buys nothing", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete"));
+			orgBilling.mockRejectedValue(new Error("db down"));
+			await expect(createCheckoutSession("team")).rejects.toThrow(TRY_AGAIN);
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled();
+		});
+
 		it("control: metadata naming ANOTHER user is never adopted, and the guard refuses", async () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("active", { created_by: "user-9", organization_id: "org-1" }));
 			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));

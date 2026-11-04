@@ -327,12 +327,14 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 		expect(wroteAnything()).toBe(false);
 	});
 
-	// The lookup sets `besideLivePlan` only for an `action_needed` X. One whose first payment is in flight
-	// (`processing`) is not reported, so the run does not stop: it goes on to the link, which decides it
+	// The lookup sets `besideLivePlan` only for an `action_needed` X (the first payment failed or was never
+	// made). `processing` (the payment succeeded), `confirming` (in flight) and `unconfirmed` (the read
+	// failed) are not reported, because "an unpaid checkout closes on its own" is not known to be true in
+	// any of them. So for a `processing` X the run does not stop: it goes on to the link, which decides it
 	// beside the live plan (C80), and the browser record is still there when the link runs. This pins the
 	// sheet's half; the lookup's half (no `besideLivePlan` for a `processing` X) is in
 	// tests/actions/billing-new-org-link.test.ts, and fails at 047ca7e5d, where the lookup reported it.
-	it("C120: an X whose payment is in flight is not stopped — the run reaches the link with the record kept", async () => {
+	it("C120: an X whose payment succeeded but is not settled yet (processing) is not stopped — the run reaches the link with the record kept", async () => {
 		const sub = "sub_c120_processing";
 		const stored = runRecord(sub, "org-1");
 		writePendingPaidSetup(RUN_USER, stored);
