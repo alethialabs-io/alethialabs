@@ -43,7 +43,7 @@ export function ProjectSwitcher() {
 	// Prefetched by the `[org]` layout (#6114), so the active project is named on first paint.
 	const { data: projects = [], isSuccess: projectsLoaded } = useProjectsQuery();
 	// The query starts empty each time the popover opens.
-	const projectSearch = useCommandSearch(projects, projectSearchText, open);
+	const projectSearch = useCommandSearch(projects, projectSearchText, { open });
 
 	// Render across the whole org (overview, `~` global pages, project drilldowns) — never the
 	// legacy `/dashboard/*` tree. The active project is only the one in a `/{org}/{project}/…`

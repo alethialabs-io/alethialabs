@@ -147,25 +147,46 @@ function rootTags(source: string): Map<string, NameProp> {
 
 /**
  * The attribute text of the JSX opening tag that starts at `start` (just past the tag name), up to
- * the `>` that closes it. Braces are depth-counted and string literals skipped, so an arrow
- * function or a `>` inside an attribute expression does not end the tag early.
+ * the `>` that closes it, with comments blanked out. Braces are depth-counted; string literals are
+ * skipped; `//` line comments and `/* */` block comments are skipped too, so neither a `>` nor an
+ * apostrophe inside a comment ("Base UI's own filtering…") can end the tag early or open a string
+ * that runs on to a later tag's `label=`. A quote opens a string only where one can start: inside
+ * `{…}` (a JS string or template), or straight after `=` (a JSX attribute string).
  */
 function openingTagAttributes(source: string, start: number): string {
 	let depth = 0;
-	let quote: string | null = null;
-	for (let i = start; i < source.length; i += 1) {
+	let out = "";
+	let i = start;
+	while (i < source.length) {
 		const ch = source[i];
-		if (quote) {
-			if (ch === "\\") i += 1;
-			else if (ch === quote) quote = null;
+		const next = source[i + 1];
+		if (ch === "/" && next === "/") {
+			const end = source.indexOf("\n", i);
+			i = end === -1 ? source.length : end;
 			continue;
 		}
-		if (ch === '"' || ch === "'" || ch === "`") quote = ch;
-		else if (ch === "{") depth += 1;
+		if (ch === "/" && next === "*") {
+			const end = source.indexOf("*/", i + 2);
+			i = end === -1 ? source.length : end + 2;
+			continue;
+		}
+		const opensString =
+			(ch === '"' || ch === "'" || ch === "`") &&
+			(depth > 0 || /=\s*$/u.test(out));
+		if (opensString) {
+			let j = i + 1;
+			while (j < source.length && source[j] !== ch) j += source[j] === "\\" ? 2 : 1;
+			out += source.slice(i, j + 1);
+			i = j + 1;
+			continue;
+		}
+		if (ch === "{") depth += 1;
 		else if (ch === "}") depth -= 1;
-		else if (ch === ">" && depth === 0) return source.slice(start, i);
+		else if (ch === ">" && depth === 0) return out;
+		out += ch;
+		i += 1;
 	}
-	return source.slice(start);
+	return out;
 }
 
 /**
@@ -211,7 +232,7 @@ function unnamedRoots(source: string, file: string): string[] {
  * The one site allowed to render an unnamed root: the wrapper's own `Autocomplete.Root`, whose input
  * `CommandInput` names from the `label` its callers pass to `Command`.
  */
-const EXEMPT = ["packages/ui/src/command.tsx:68 <Autocomplete.Root"];
+const EXEMPT = ["packages/ui/src/command.tsx:97 <Autocomplete.Root"];
 
 const FILES = [...sourceFiles(UI_SRC), ...sourceFiles(CONSOLE_ROOT)];
 
@@ -292,6 +313,12 @@ describe("command-list root labels (#5824)", () => {
 			[`${UI}<Command label={title} className={cn(a)}>`, 0],
 			[`${UI}<Command onKeyDown={(e) => e.key === ">"} label="Search">`, 0],
 			[`${UI}<Command onKeyDown={() => a > b} label={purpose}>`, 0],
+			// A comment inside the tag is not attribute text: its apostrophe opens no string, so the
+			// scan cannot run on to the NEXT root's label and read this unnamed one as named.
+			[`${UI}<Command\n  // it's unnamed\n  className="a"\n>\n<Command label="Find">`, 1],
+			[`${UI}<Command\n  /* it's unnamed > still */\n  className="a"\n>\n<Command label="Find">`, 1],
+			[`${UI}<Command\n  // a comment's label="x" is not a label\n>`, 1],
+			[`${UI}<Command title="it's" label="Find">`, 0],
 			[`${UI}<Command label={undefinedFallback}>`, 0],
 			[`${UI}<CommandInput placeholder="x" />`, 0],
 			// Aliases and namespaces are followed.
