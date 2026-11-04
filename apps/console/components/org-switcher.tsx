@@ -69,6 +69,9 @@ export function switchTargetHref(
 /** An organization's search text: its name, for the shared ranker. */
 const orgSearchText = (o: { name: string }): string => o.name;
 
+/** An org with no slug has no URL to go to, so its row is disabled (and ranks after the rest). */
+const orgIsUnreachable = (o: { slug: string | null }): boolean => !o.slug;
+
 /** The header organization switcher: lists, searches and switches the user's organizations. */
 export function OrgSwitcher() {
 	const router = useRouter();
@@ -83,7 +86,10 @@ export function OrgSwitcher() {
 	// "Personal" or a default plan, which would be a claim about a tenant the page is not on.
 	const name = active?.name ?? orgSlug;
 	// Ranked by the shared ranker; the query starts empty each time the popover opens.
-	const orgSearch = useCommandSearch(organizations, orgSearchText, open);
+	const orgSearch = useCommandSearch(organizations, orgSearchText, {
+		open,
+		isDisabled: orgIsUnreachable,
+	});
 	const meta = active ? planMeta(active.plan) : null;
 
 	const handleSelect = (orgId: string) => {

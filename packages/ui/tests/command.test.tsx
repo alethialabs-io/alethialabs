@@ -20,6 +20,7 @@ import {
 	Command,
 	CommandDialog,
 	CommandEmpty,
+	CommandGroup,
 	CommandInput,
 	CommandItem,
 	CommandList,
@@ -32,39 +33,53 @@ const ROWS = ["workshop", "my-shop", "shopfront", "shop", "billing"];
 /** The rows' search text: the row itself. */
 const self = (row: string): string => row;
 
-/** A `Command` over `rows`, ranked by the shared ranker, reporting each chosen row. */
+/**
+ * A `Command` over `rows` in one "Rows" group, ranked by the shared ranker (with `disabled` rows
+ * ranked last, as consumers do), reporting each chosen row. `pinned` adds an action row that is
+ * shown whatever the search.
+ */
 function Harness({
 	rows = ROWS,
 	onPick,
 	loopFocus,
 	disabled = [],
+	pinned,
 }: {
 	rows?: string[];
 	onPick: (row: string) => void;
 	loopFocus?: boolean;
 	disabled?: string[];
+	pinned?: string;
 }) {
-	const s = useCommandSearch(rows, self);
+	const s = useCommandSearch(rows, self, { isDisabled: (row) => disabled.includes(row) });
 	return (
 		<Command
 			label="Find row"
 			search={s.search}
 			onSearchChange={s.onSearchChange}
 			filteredItems={s.results}
+			pinnedItems={pinned ? [pinned] : undefined}
 			loopFocus={loopFocus}
 		>
 			<CommandInput placeholder="Find row…" />
 			<CommandList>
 				<CommandEmpty>No row found.</CommandEmpty>
-				{s.results.map((row) => (
-					<CommandItem
-						key={row}
-						disabled={disabled.includes(row)}
-						onSelect={() => onPick(row)}
-					>
-						{row}
-					</CommandItem>
-				))}
+				<CommandGroup heading="Rows">
+					{s.results.map((row) => (
+						<CommandItem
+							key={row}
+							disabled={disabled.includes(row)}
+							onSelect={() => onPick(row)}
+						>
+							{row}
+						</CommandItem>
+					))}
+				</CommandGroup>
+				{pinned && (
+					<CommandGroup>
+						<CommandItem onSelect={() => onPick(pinned)}>{pinned}</CommandItem>
+					</CommandGroup>
+				)}
 			</CommandList>
 		</Command>
 	);
@@ -183,6 +198,35 @@ describe("Command", () => {
 		expect(screen.getByText("No row found.")).toBeInTheDocument();
 	});
 
+	it("leaves no orphan group heading on a miss", async () => {
+		const user = userEvent.setup({ delay: null });
+		render(<Harness onPick={() => {}} />);
+		expect(screen.getByText("Rows")).toBeInTheDocument();
+		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "zzz");
+		expect(screen.queryByText("Rows")).not.toBeInTheDocument();
+		expect(screen.queryAllByRole("group")).toEqual([]);
+	});
+
+	it("keeps a pinned row reachable by keyboard on a miss, beside the empty text", async () => {
+		const user = userEvent.setup({ delay: null });
+		const onPick = vi.fn();
+		render(<Harness onPick={onPick} pinned="New row" />);
+		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "zzz");
+		expect(screen.getByText("No row found.")).toBeInTheDocument();
+		await user.keyboard("{ArrowDown}{Enter}");
+		expect(onPick).toHaveBeenCalledWith("New row");
+	});
+
+	it("starts the highlight on the best ENABLED match, so Enter runs it", async () => {
+		const user = userEvent.setup({ delay: null });
+		const onPick = vi.fn();
+		render(<Harness onPick={onPick} disabled={["shop"]} />);
+		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "shop");
+		expect(listed()).toEqual(["shopfront", "my-shop", "workshop", "shop"]);
+		await user.keyboard("{Enter}");
+		expect(onPick).toHaveBeenCalledWith("shopfront");
+	});
+
 	it("runs the first match on Enter", async () => {
 		const user = userEvent.setup({ delay: null });
 		const onPick = vi.fn();
@@ -197,8 +241,20 @@ describe("Command", () => {
 		const onPick = vi.fn();
 		render(<Harness rows={["alpha", "beta"]} onPick={onPick} />);
 		await user.click(screen.getByRole("combobox", { name: "Find row" }));
-		await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{Enter}");
-		expect(onPick).toHaveBeenLastCalledWith("beta");
+		// The highlight starts on "alpha". One ArrowDown reaches "beta", the last row; the second
+		// would wrap back to "alpha" if the list looped, and stays on "beta" because it does not.
+		await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+		expect(onPick).toHaveBeenCalledTimes(1);
+		expect(onPick).toHaveBeenCalledWith("beta");
+	});
+
+	it("wraps when a caller asks for it (the control for the test above)", async () => {
+		const user = userEvent.setup({ delay: null });
+		const onPick = vi.fn();
+		render(<Harness rows={["alpha", "beta"]} onPick={onPick} loopFocus />);
+		await user.click(screen.getByRole("combobox", { name: "Find row" }));
+		await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+		expect(onPick).toHaveBeenCalledWith("alpha");
 	});
 
 	it("never runs a disabled row", async () => {

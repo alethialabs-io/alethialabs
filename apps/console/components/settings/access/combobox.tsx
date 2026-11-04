@@ -41,7 +41,7 @@ export function Combobox({
 }) {
   const [open, setOpen] = useState(false);
   // Ranked by the shared ranker; the query starts empty each time the popover opens.
-  const optionSearch = useCommandSearch(options, optionSearchText, open);
+  const optionSearch = useCommandSearch(options, optionSearchText, { open });
   const selected = options.find((o) => o.value === value);
   // The placeholder is an instruction ("Select a permission…"), so it doubles as the control's
   // purpose once the trailing ellipsis is dropped.

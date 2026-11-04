@@ -50,6 +50,16 @@ describe("rankMatch / rankItems (F038)", () => {
 		]);
 	});
 
+	it("ranks a disabled row after every enabled one, whatever its score", () => {
+		const off = (name: string) => name === "shop";
+		expect(rankItems(["workshop", "shop", "shopfront"], "shop", (n) => n, off)).toEqual([
+			"shopfront",
+			"workshop",
+			"shop",
+		]);
+		expect(rankItems(["shop", "billing"], "", (n) => n, off)).toEqual(["billing", "shop"]);
+	});
+
 	it("matches the item's search text, not anything else about it", () => {
 		const rows = [
 			{ id: "add-database", text: "Add Database postgres rds" },
