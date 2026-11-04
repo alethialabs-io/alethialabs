@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, type MockInstance, vi } from "vitest";
 
 // Stripe is the one boundary faked here (#5714's cases): the guard and the closer read the
 // subscription from it, and nothing in this file may reach the network. Every other module is real.
@@ -741,6 +741,147 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 	it("C81: once the last open setup is closed, the org's guard reads nothing", async () => {
 		await closePendingOrgSetup({ subscriptionId: SUB_OPEN, reason: "operator", closedBy: CO_OWNER, note: "it" });
 		expect(await openPendingOrgSetupsForOrg(ORG)).toEqual([]);
+	});
+});
+
+// ADR 0002 C120 (amendment 2026-11-04, slice S12 #6408). X is linked in Stripe to O and U, has no hold,
+// and O's row names another live Y. While X reads `incomplete` it can still be paid, so the closer the
+// guard and both resume lookups run writes nothing and answers `open`; the setup leaves only when X ends
+// (closed as `ended`) or is paid (then the live-X refusal, C96's variant). Real Postgres pins that no
+// compare-and-set ran: `closed_at`, `closed_reason` and `refused_reason` all stay null. On dev at
+// aed8b609b the closer closed the incomplete X's setup with `org_has_plan` and alerted, so (a) fails there.
+describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps its setup open until X ends or is paid", () => {
+	const U = randomUUID();
+	const O = randomUUID();
+	const sub = (tag: string) => `sub_it_c120_${tag}_${randomUUID().slice(0, 8)}`;
+	const SUB_Y = sub("y");
+	const SUB_EXPIRES = sub("exp"); // incomplete, then expires unpaid
+	const SUB_MOVED = sub("moved"); // incomplete, then expires with money not proven unmoved
+	const SUB_PAID = sub("paid"); // incomplete, then paid before it ends
+	const SUB_LIVE = sub("live"); // the control: live from the start
+	const ALL = [SUB_EXPIRES, SUB_MOVED, SUB_PAID, SUB_LIVE];
+	let savedStripeKey: string | undefined;
+	let info: MockInstance<typeof console.info>;
+	let error: MockInstance<typeof console.error>;
+
+	/** X as Stripe reads it: linked in Stripe to O and U, never marked linked on the setup. */
+	const x = (id: string, status: string, latestInvoice: string | null = null) => ({
+		id,
+		status,
+		customer: "cus_it_c120",
+		latest_invoice: latestInvoice,
+		currency: "eur",
+		items: { data: [] },
+		metadata: { created_by: U, organization_id: O },
+	});
+
+	/** The setup row for `subscriptionId`, which the fixture created. */
+	async function rowOf(subscriptionId: string) {
+		const row = await pendingOrgSetupFor(U, subscriptionId);
+		if (!row) throw new Error(`fixture: the setup for ${subscriptionId} is missing`);
+		return row;
+	}
+
+	/** The `billing.pending_org_setup.*` events logged for `subscriptionId`, in order. */
+	const eventsFor = (subscriptionId: string): string[] =>
+		info.mock.calls
+			.map((call) => String(call[0]))
+			.filter((line) => line.includes(subscriptionId) && line.includes("billing.pending_org_setup."))
+			.map((line) => String(Reflect.get(JSON.parse(line), "event")));
+
+	/** How many `alertPaymentNeedsSupport` calls named `subscriptionId` (it always logs before it emits). */
+	const alertsFor = (subscriptionId: string): number =>
+		error.mock.calls.filter((call) => String(call[0]).includes(`payment needs support — Subscription ${subscriptionId} `)).length;
+
+	beforeAll(async () => {
+		savedStripeKey = process.env.STRIPE_SECRET_KEY;
+		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		const db = getServiceDb();
+		await db.insert(user).values({ id: U, email: `it-c120-${U}@example.test` });
+		await db.insert(organization).values({ id: O, name: "C120", slug: `it-c120-${O.slice(0, 8)}` });
+		await db.insert(organizationBilling).values({ organizationId: O, stripeSubscriptionId: SUB_Y, status: "active" });
+		for (const s of ALL) {
+			await recordPendingOrgSetup({ userId: U, subscriptionId: s, customerId: "cus_it_c120", name: "C120", slug: "c120" });
+		}
+		await db.update(pendingOrgSetups).set({ created_org_id: O }).where(inArray(pendingOrgSetups.subscription_id, ALL));
+	});
+
+	beforeEach(() => {
+		info = vi.spyOn(console, "info");
+		error = vi.spyOn(console, "error");
+	});
+
+	afterEach(() => {
+		info.mockRestore();
+		error.mockRestore();
+	});
+
+	afterAll(async () => {
+		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, U));
+		await db.delete(organizationBilling).where(eq(organizationBilling.organizationId, O));
+		await db.delete(organization).where(eq(organization.id, O));
+		await db.delete(user).where(eq(user.id, U));
+	});
+
+	it("(a) beside an active or a trialing Y the closer answers open, writes nothing and raises nothing; the guard still reads the setup", async () => {
+		for (const yStatus of ["active", "trialing"] as const) {
+			await getServiceDb().update(organizationBilling).set({ status: yStatus }).where(eq(organizationBilling.organizationId, O));
+			for (const s of [SUB_EXPIRES, SUB_PAID]) {
+				await expect(settleOpenSetup(await rowOf(s), { sub: x(s, "incomplete") as never, orgId: O })).resolves.toBe("open");
+				expect(await rowOf(s)).toMatchObject({ closed_at: null, closed_reason: null, refused_reason: null, linked_at: null });
+				expect(eventsFor(s)).toEqual([]);
+				expect(alertsFor(s)).toBe(0);
+			}
+		}
+		await getServiceDb().update(organizationBilling).set({ status: "active" }).where(eq(organizationBilling.organizationId, O));
+		// The row still names Y: the sync of X was refused, not applied.
+		expect((await getServiceDb().select().from(organizationBilling).where(eq(organizationBilling.organizationId, O)))[0]).toMatchObject({
+			stripeSubscriptionId: SUB_Y,
+		});
+		const guarded = (await openPendingOrgSetupsForOrg(O)).map((r) => r.subscription_id);
+		expect(guarded).toEqual(expect.arrayContaining([SUB_EXPIRES, SUB_PAID]));
+	});
+
+	it("(b) X expires unpaid: the next reader closes it as ended, with no alert", async () => {
+		await expect(settleOpenSetup(await rowOf(SUB_EXPIRES), { sub: x(SUB_EXPIRES, "incomplete_expired") as never, orgId: O })).resolves.toBe(
+			"closed",
+		);
+		expect(await rowOf(SUB_EXPIRES)).toMatchObject({ closed_reason: "ended", refused_reason: null, linked_at: null });
+		expect((await rowOf(SUB_EXPIRES)).closed_at).toBeInstanceOf(Date);
+		expect(eventsFor(SUB_EXPIRES)).toEqual(["billing.pending_org_setup.closed"]);
+		expect(alertsFor(SUB_EXPIRES)).toBe(0);
+	});
+
+	it("(b) X expires with its first payment not proven unmoved: closed as ended, with one alert", async () => {
+		const invoice = `in_${SUB_MOVED}`;
+		await expect(settleOpenSetup(await rowOf(SUB_MOVED), { sub: x(SUB_MOVED, "incomplete", invoice) as never, orgId: O })).resolves.toBe("open");
+		fakeStripe.invoicePayments.list.mockResolvedValueOnce({
+			data: [{ status: "paid", payment: { type: "payment_intent", payment_intent: { status: "succeeded" } } }],
+			has_more: false,
+		});
+		await expect(settleOpenSetup(await rowOf(SUB_MOVED), { sub: x(SUB_MOVED, "incomplete_expired", invoice) as never, orgId: O })).resolves.toBe(
+			"closed",
+		);
+		expect(await rowOf(SUB_MOVED)).toMatchObject({ closed_reason: "ended", refused_reason: null });
+		expect(eventsFor(SUB_MOVED)).toEqual(["billing.pending_org_setup.closed"]);
+		expect(alertsFor(SUB_MOVED)).toBe(1);
+	});
+
+	it("(c) X is paid before it ends: the next guard or lookup closes it with org_has_plan and one alert, as for any live X", async () => {
+		await expect(settleOpenSetup(await rowOf(SUB_PAID), { sub: x(SUB_PAID, "active") as never, orgId: O })).resolves.toBe("closed");
+		expect(await rowOf(SUB_PAID)).toMatchObject({ closed_reason: "org_has_plan", refused_reason: "org_has_plan", linked_at: null });
+		expect(eventsFor(SUB_PAID)).toEqual(["billing.pending_org_setup.closed"]);
+		expect(alertsFor(SUB_PAID)).toBe(1);
+	});
+
+	it("control (C96's variant): the same fixture with X active from the start closes at once with org_has_plan and one alert", async () => {
+		await expect(settleOpenSetup(await rowOf(SUB_LIVE), { sub: x(SUB_LIVE, "active") as never, orgId: O })).resolves.toBe("closed");
+		expect(await rowOf(SUB_LIVE)).toMatchObject({ closed_reason: "org_has_plan", refused_reason: "org_has_plan" });
+		expect(eventsFor(SUB_LIVE)).toEqual(["billing.pending_org_setup.closed"]);
+		expect(alertsFor(SUB_LIVE)).toBe(1);
 	});
 });
 
