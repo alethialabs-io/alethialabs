@@ -35,21 +35,18 @@ const self = (row: string): string => row;
 
 /**
  * A `Command` over `rows` in one "Rows" group, ranked by the shared ranker (with `disabled` rows
- * ranked last, as consumers do), reporting each chosen row. `pinned` adds an action row that is
- * shown whatever the search.
+ * ranked last while a search is typed, as consumers do), reporting each chosen row.
  */
 function Harness({
 	rows = ROWS,
 	onPick,
 	loopFocus,
 	disabled = [],
-	pinned,
 }: {
 	rows?: string[];
 	onPick: (row: string) => void;
 	loopFocus?: boolean;
 	disabled?: string[];
-	pinned?: string;
 }) {
 	const s = useCommandSearch(rows, self, { isDisabled: (row) => disabled.includes(row) });
 	return (
@@ -58,7 +55,6 @@ function Harness({
 			search={s.search}
 			onSearchChange={s.onSearchChange}
 			filteredItems={s.results}
-			pinnedItems={pinned ? [pinned] : undefined}
 			loopFocus={loopFocus}
 		>
 			<CommandInput placeholder="Find row…" />
@@ -75,11 +71,6 @@ function Harness({
 						</CommandItem>
 					))}
 				</CommandGroup>
-				{pinned && (
-					<CommandGroup>
-						<CommandItem onSelect={() => onPick(pinned)}>{pinned}</CommandItem>
-					</CommandGroup>
-				)}
 			</CommandList>
 		</Command>
 	);
@@ -207,24 +198,14 @@ describe("Command", () => {
 		expect(screen.queryAllByRole("group")).toEqual([]);
 	});
 
-	it("renders a pinned row after every result", () => {
-		render(<Harness onPick={() => {}} pinned="New row" />);
-		expect(listed().at(-1)).toBe("New row");
-	});
-
-	it("on a miss highlights nothing, so Enter runs nothing until ArrowDown reaches the pinned row", async () => {
+	it("on a miss highlights nothing, so Enter runs nothing", async () => {
 		const user = userEvent.setup({ delay: null });
 		const onPick = vi.fn();
-		render(<Harness onPick={onPick} pinned="New row" />);
+		render(<Harness onPick={onPick} />);
 		await pasteQuery(user, screen.getByRole("combobox", { name: "Find row" }), "zzz");
-		expect(screen.getByText("No row found.")).toBeInTheDocument();
 		expect(document.querySelector("[data-highlighted]")).toBeNull();
 		await user.keyboard("{Enter}");
 		expect(onPick).not.toHaveBeenCalled();
-		await user.keyboard("{ArrowDown}");
-		expect(screen.getByRole("option", { name: "New row" })).toHaveAttribute("data-highlighted");
-		await user.keyboard("{Enter}");
-		expect(onPick).toHaveBeenCalledWith("New row");
 	});
 
 	it("starts the highlight on the best ENABLED match, so Enter runs it", async () => {
