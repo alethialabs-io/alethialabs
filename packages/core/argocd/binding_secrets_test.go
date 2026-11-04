@@ -64,6 +64,10 @@ func TestPruneChartBindingSecrets_DeletesOnlyUndeclaredOwnObjects(t *testing.T) 
 	stub := newKubectlStub(t, 0, noNamespaces, stubRule{
 		Match:  "get externalsecrets -n apps",
 		Stdout: listOf(t, esItem{"apps", "keep-me", owned("env-1")}, esItem{"apps", "drop-me", owned("env-1")}),
+	}, stubRule{
+		// A real raw delete answers with the deleted object; none of it may reach the log.
+		Match:  "delete --raw",
+		Stdout: `{"kind":"ExternalSecret","metadata":{"name":"drop-me"}}`,
 	})
 	var stdout, stderr bytes.Buffer
 	PruneChartBindingSecrets("env-1", []string{"apps"}, []BindingSecretRef{{Namespace: "apps", Name: "keep-me"}}, &stdout, &stderr)
@@ -76,6 +80,15 @@ func TestPruneChartBindingSecrets_DeletesOnlyUndeclaredOwnObjects(t *testing.T) 
 	}
 	if !strings.Contains(stub.appliedManifests(), `"preconditions":{"uid":"`+testUID+`"}`) {
 		t.Errorf("the delete was not pinned to the listed uid; options sent: %q", stub.appliedManifests())
+	}
+	if !strings.Contains(stub.appliedManifests(), `"propagationPolicy":"Foreground"`) {
+		t.Errorf("the delete does not remove the owned Secret first; options sent: %q", stub.appliedManifests())
+	}
+	if log := stdout.String() + stderr.String(); strings.Contains(log, `"kind":"ExternalSecret"`) {
+		t.Errorf("the deleted object's JSON reached the job log:\n%s", log)
+	}
+	if !strings.Contains(stdout.String(), "deletion requested for apps/drop-me") {
+		t.Errorf("the deletion was not logged:\n%s", stdout.String())
 	}
 	if stub.calledWith(" -A") {
 		t.Errorf("the prune listed across all namespaces; calls: %v", stub.calls())

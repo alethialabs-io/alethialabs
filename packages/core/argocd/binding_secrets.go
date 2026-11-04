@@ -25,9 +25,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
@@ -186,31 +187,27 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 	}
 
 	for _, s := range stale {
-		fmt.Fprintf(stdout, "Pruning removed BYO binding ExternalSecret: %s/%s\n", s.ref.Namespace, s.ref.Name)
-		if delErr := deleteBindingWithUID(s, stdout, stderr); delErr != nil {
+		if delErr := deleteBindingWithUID(s, stderr); delErr != nil {
 			fmt.Fprintf(stderr, "Warning: failed to prune BYO binding ExternalSecret %s/%s: %v\n",
 				s.ref.Namespace, s.ref.Name, delErr)
+			continue
 		}
+		fmt.Fprintf(stdout, "BYO binding ExternalSecret no longer declared: deletion requested for %s/%s\n", s.ref.Namespace, s.ref.Name)
 	}
 }
 
-// deleteBindingWithUID deletes one ExternalSecret through the raw API with a uid precondition (the
-// pattern of provisioner's bootstrap reaper): the API server refuses the delete when the object at
-// that name is no longer the one that was listed. Every interpolated value was validated by the
-// caller.
-func deleteBindingWithUID(s staleBinding, stdout, stderr io.Writer) error {
-	f, err := os.CreateTemp("", "byo-binding-delete-*.json")
-	if err != nil {
-		return fmt.Errorf("create delete options: %w", err)
-	}
-	defer os.Remove(f.Name())
-	opts := fmt.Sprintf(`{"kind":"DeleteOptions","apiVersion":"v1","preconditions":{"uid":%q}}`, s.uid)
-	if _, err := f.WriteString(opts); err != nil {
-		f.Close()
-		return fmt.Errorf("write delete options: %w", err)
-	}
-	f.Close()
-	cmd := fmt.Sprintf("kubectl delete --raw /apis/%s/namespaces/%s/externalsecrets/%s -f %s",
-		s.apiVersion, s.ref.Namespace, s.ref.Name, f.Name())
-	return utils.ExecuteCommand(cmd, ".", nil, stdout, stderr)
+// deleteBindingWithUID deletes one ExternalSecret through the raw API with a uid precondition and
+// Foreground propagation (the pattern of provisioner's bootstrap reaper): the API server refuses the
+// delete when the object at that name is no longer the one that was listed, and removes the Secret
+// it owns before the ExternalSecret itself. kubectl runs from an argument vector — no shell — with
+// the DeleteOptions on stdin. Its stdout (the deleted object's JSON) is discarded, so nothing of the
+// object reaches the job log; stderr is kept for errors.
+func deleteBindingWithUID(s staleBinding, stderr io.Writer) error {
+	opts := fmt.Sprintf(`{"kind":"DeleteOptions","apiVersion":"v1","propagationPolicy":"Foreground","preconditions":{"uid":%q}}`, s.uid)
+	path := fmt.Sprintf("/apis/%s/namespaces/%s/externalsecrets/%s", s.apiVersion, s.ref.Namespace, s.ref.Name)
+	cmd := exec.Command("kubectl", "delete", "--raw", path, "-f", "-")
+	cmd.Stdin = strings.NewReader(opts)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
