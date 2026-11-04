@@ -43,7 +43,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
-import { Marker, MarkerContent } from "@/components/ai-elements/marker";
+import { Marker, MarkerContent } from "@repo/ui/marker";
 import {
 	AGENT_STEP_PART_TYPE,
 	agentStepDataSchema,

@@ -398,13 +398,14 @@ dialog, sheet, popover, dropdown, tooltip and hover-card, then call
 the returned node is inside the overlay.
 
 Grepping for `z-[var(--z-overlay)]` matches a *rendering of the intent*, not the stacking that
-happened, and the two have already come apart in this codebase. `packages/ui/src/popover.tsx` carries
-the incident in a comment: base-ui positions the popup via an absolute Positioner and leaves the
-Popup itself `position: static`, on which **`z-index` is a no-op** — so a popover opened from inside
-another positioned layer (the fullscreen Elench dialog) rendered *behind* it, while the class name
-said `z-[var(--z-overlay)]` the whole time. The fix was a `relative`, which no z-index matcher looks
-at. A page can name every token correctly and still put its popover behind the chrome; only a
-hit-test knows.
+happened, and the two have already come apart in this codebase twice. Both times a popover opened
+from inside the fullscreen Elench dialog rendered *behind* it while its class name said
+`z-[var(--z-overlay)]` the whole time. The layer now sits on base-ui's **Positioner**, not the Popup,
+and `packages/ui/src/popover.tsx` says why: since `@base-ui/react` 1.x (#6144) the Positioner is
+placed with an inline `transform`, which makes it a stacking context at `z-index: auto`, so a
+z-index on the Popup only orders it inside that context. No z-index matcher reads an inline
+transform. A page can name every token correctly and still put its popover behind the chrome; only
+a hit-test knows.
 
 **R3's first two honest FAILs were both DECORATION, and the predicate was right to report them**
 (#3885). The support chip strip (`components/ai-elements/suggestion.tsx`) and the environments

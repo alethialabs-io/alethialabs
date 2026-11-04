@@ -5,7 +5,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { XIcon } from "lucide-react"
-import { Dialog as DialogPrimitive } from "@base-ui-components/react/dialog"
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "./utils"
 import { Button } from "./button"
