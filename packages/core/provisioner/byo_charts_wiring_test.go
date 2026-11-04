@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"gopkg.in/yaml.v3"
 )
@@ -267,8 +268,11 @@ func byoBindingConfig(envID string, bound bool) *types.ProjectConfig {
 
 // liveBinding is the cluster's listing of one api-database-primary ExternalSecret in "apps".
 func liveBinding(labels string) string {
-	return `{"items":[{"metadata":{"name":"api-database-primary","namespace":"apps","labels":` + labels + `}}]}`
+	return `{"items":[{"apiVersion":"external-secrets.io/v1beta1","metadata":{"name":"api-database-primary","namespace":"apps","uid":"0f8fad5b-d9cb-469f-a165-70867728950e","labels":` + labels + `}}]}`
 }
+
+// bindingDelete is the uid-pinned delete of api-database-primary in "apps".
+const bindingDelete = "delete --raw /apis/external-secrets.io/v1beta1/namespaces/apps/externalsecrets/api-database-primary"
 
 const bindingOutputsSecret = "acme/rds/master"
 
@@ -328,7 +332,7 @@ func TestByoBindingDeploy_RemovedDeclarationIsPruned(t *testing.T) {
 	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
 	runBindingDeploy(byoBindingConfig("env-1", false), io.Discard)
 
-	if !strings.Contains(c.calls(), "delete externalsecret -n apps api-database-primary") {
+	if !strings.Contains(c.calls(), bindingDelete) {
 		t.Fatalf("the removed binding was not pruned:\n%s", c.calls())
 	}
 }
@@ -362,5 +366,202 @@ func TestByoBindingDeploy_ForeignAndUnownedObjectsAreUntouched(t *testing.T) {
 				t.Fatalf("an object this environment does not own was pruned:\n%s", c.calls())
 			}
 		})
+	}
+}
+
+// passwordBinding binds workload api's DB_PASSWORD to database db at value-path <db>.existingSecret.
+func passwordBinding(db string) (types.ServiceBinding, string, string) {
+	return types.ServiceBinding{
+		Target: types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: db},
+		Inject: []types.ServiceBindingInjection{{Env: "DB_PASSWORD", From: "password"}},
+	}, "bind:database:" + db + ":password", db + ".existingSecret"
+}
+
+// appliedDocs parses every ExternalSecret the scripted cluster received, keyed by name.
+func appliedDocs(t *testing.T, c *bindingCluster) map[string]map[string]interface{} {
+	t.Helper()
+	out := map[string]map[string]interface{}{}
+	body, err := os.ReadFile(c.applied)
+	if err != nil {
+		return out
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(body)))
+	for {
+		var doc map[string]interface{}
+		if err := dec.Decode(&doc); err != nil {
+			break
+		}
+		meta, _ := doc["metadata"].(map[string]interface{})
+		name, _ := meta["name"].(string)
+		out[name] = meta
+	}
+	return out
+}
+
+// keylessConfig is env-1 with one BYO workload in "apps" bound by password to each named database;
+// iam marks which of them have iam_auth on.
+func keylessConfig(iam map[string]bool, dbs ...string) *types.ProjectConfig {
+	w := types.ChartWorkloadBinding{Name: "api", ValuePaths: map[string]string{}}
+	var databases []types.ProjectDatabaseConfig
+	for _, db := range dbs {
+		b, knob, path := passwordBinding(db)
+		w.Bindings = append(w.Bindings, b)
+		w.ValuePaths[knob] = path
+		databases = append(databases, types.ProjectDatabaseConfig{Name: db, IamAuth: boolPtr(iam[db])})
+	}
+	return &types.ProjectConfig{
+		ID: "proj-1", EnvironmentID: "env-1", Databases: databases,
+		AddOns: []types.AddOnInstall{{ID: "acme-api", Namespace: "apps", Workloads: []types.ChartWorkloadBinding{w}}},
+	}
+}
+
+// TestByoBindingKeyless covers BYO bindings following the service lane's keyless decision: with the
+// flag on, a keyless database target gets no password secret (no ExternalSecret, no value-path patch,
+// a reported reason, and not declared); with it off, the same target keeps the password path; a mixed
+// config splits per database.
+func TestByoBindingKeyless(t *testing.T) {
+	cases := []struct {
+		name        string
+		flag        string
+		iam         map[string]bool
+		dbs         []string
+		wantApplied []string
+		wantRefused []string
+	}{
+		{name: "keyless on", flag: "true", iam: map[string]bool{"primary": true}, dbs: []string{"primary"}, wantRefused: []string{"primary"}},
+		{name: "keyless off", flag: "", iam: map[string]bool{"primary": true}, dbs: []string{"primary"}, wantApplied: []string{"primary"}},
+		{name: "mixed", flag: "true", iam: map[string]bool{"primary": true}, dbs: []string{"primary", "reports"},
+			wantApplied: []string{"reports"}, wantRefused: []string{"primary"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED", tc.flag)
+			c := newBindingCluster(t, `{"items":[]}`, 0)
+			vc := keylessConfig(tc.iam, tc.dbs...)
+			var log strings.Builder
+			st := applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", &log, io.Discard)
+
+			applied := appliedDocs(t, c)
+			declared := map[string]bool{}
+			for _, d := range st.Declared {
+				declared[d.Name] = true
+			}
+			values := vc.AddOns[0].Values
+			for _, db := range tc.wantApplied {
+				name := "api-database-" + db
+				if applied[name] == nil {
+					t.Errorf("%s: no ExternalSecret applied for the password-mode database", db)
+				}
+				if !declared[name] {
+					t.Errorf("%s: a password-mode binding is not declared", db)
+				}
+				if m, _ := values[db].(map[string]interface{}); m == nil || m["existingSecret"] != name {
+					t.Errorf("%s: value path not patched: %#v", db, values[db])
+				}
+			}
+			for _, db := range tc.wantRefused {
+				name := "api-database-" + db
+				if applied[name] != nil {
+					t.Errorf("%s: an ExternalSecret was applied for a keyless database target", db)
+				}
+				if declared[name] {
+					t.Errorf("%s: a keyless binding was declared (an earlier password secret would be kept)", db)
+				}
+				if _, patched := values[db]; patched {
+					t.Errorf("%s: the value path was patched for a keyless database target: %#v", db, values[db])
+				}
+				if !strings.Contains(log.String(), "bind:database:"+db+":password unsatisfied (keyless database") {
+					t.Errorf("%s: the keyless refusal was not reported:\n%s", db, log.String())
+				}
+			}
+		})
+	}
+}
+
+// TestByoBindingEmptyEnvironmentIDAppliesNothing: with no environment ID the ExternalSecret could not
+// carry an owner label, so it is not applied at all, no value path points at it, and the reason is
+// reported.
+func TestByoBindingEmptyEnvironmentIDAppliesNothing(t *testing.T) {
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	vc := byoBindingConfig("", true)
+	var log strings.Builder
+	st := applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", &log, io.Discard)
+
+	if strings.Contains(c.calls(), "apply") {
+		t.Fatalf("an ExternalSecret was applied for an environment with no ID:\n%s", c.calls())
+	}
+	if _, patched := vc.AddOns[0].Values["api"]; patched {
+		t.Errorf("a value path was patched to a Secret that will not exist: %#v", vc.AddOns[0].Values)
+	}
+	if !strings.Contains(log.String(), "the environment has no ID") {
+		t.Errorf("the refusal was not reported:\n%s", log.String())
+	}
+	if st.Failures != 0 {
+		t.Errorf("a policy refusal is not a failure, got %d", st.Failures)
+	}
+}
+
+// TestByoBindingRefusesAServiceOwnedSecretName: a BYO add-on in the service lane's namespace whose
+// binding resolves to a Secret name a first-class service renders is refused (no apply, no patch,
+// reason reported), and stays DECLARED so the prune can never remove that name.
+func TestByoBindingRefusesAServiceOwnedSecretName(t *testing.T) {
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	b, knob, path := passwordBinding("primary")
+	vc := &types.ProjectConfig{
+		ID: "proj-1", EnvironmentID: "env-1",
+		Services: []types.ProjectServiceConfig{{Name: "api", Bindings: []types.ServiceBinding{b}}},
+		AddOns: []types.AddOnInstall{{ID: "acme-api", Workloads: []types.ChartWorkloadBinding{{
+			Name: "api", Bindings: []types.ServiceBinding{b}, ValuePaths: map[string]string{knob: path},
+		}}}},
+	}
+	var log strings.Builder
+	st := applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", &log, io.Discard)
+
+	if strings.Contains(c.calls(), "apply") {
+		t.Fatalf("the runner applied over a service's ExternalSecret:\n%s", c.calls())
+	}
+	if _, patched := vc.AddOns[0].Values["primary"]; patched {
+		t.Errorf("a value path was patched: %#v", vc.AddOns[0].Values)
+	}
+	if !strings.Contains(log.String(), "already rendered by a first-class service") {
+		t.Errorf("the refusal was not reported:\n%s", log.String())
+	}
+	want := argocd.BindingSecretRef{Namespace: "default", Name: "api-database-primary"}
+	if len(st.Declared) != 1 || st.Declared[0] != want {
+		t.Errorf("Declared = %#v, want the refused name kept as %#v", st.Declared, want)
+	}
+
+	// The same workload in its own namespace is not the service's object, and applies.
+	c2 := newBindingCluster(t, `{"items":[]}`, 0)
+	vc.AddOns[0].Namespace = "apps"
+	vc.AddOns[0].Values = nil
+	applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", io.Discard, io.Discard)
+	if appliedDocs(t, c2)["api-database-primary"] == nil {
+		t.Errorf("a binding outside the service namespace was refused:\n%s", c2.calls())
+	}
+}
+
+// TestByoBindingDeclaredRefMatchesTheRenderedObjectInDefault: an add-on with no namespace renders
+// into "default", and the declared ref names exactly that object — the prune's keep set and the
+// object on the cluster agree.
+func TestByoBindingDeclaredRefMatchesTheRenderedObjectInDefault(t *testing.T) {
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	vc := byoBindingConfig("env-1", true)
+	vc.AddOns[0].Namespace = ""
+	st := applyByoChartBindings(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws", io.Discard, io.Discard)
+
+	docs := appliedDocs(t, c)
+	if len(docs) != 1 || len(st.Declared) != 1 {
+		t.Fatalf("applied %d, declared %#v; want one of each", len(docs), st.Declared)
+	}
+	meta := docs[st.Declared[0].Name]
+	if meta == nil {
+		t.Fatalf("declared %q but applied %v", st.Declared[0].Name, docs)
+	}
+	if ns, _ := meta["namespace"].(string); ns != "default" || st.Declared[0].Namespace != "default" {
+		t.Errorf("rendered namespace %q, declared %q; want both \"default\"", ns, st.Declared[0].Namespace)
+	}
+	if want := manifests.BindingSecretName("api", types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"}); st.Declared[0].Name != want {
+		t.Errorf("declared name %q, want %q", st.Declared[0].Name, want)
 	}
 }

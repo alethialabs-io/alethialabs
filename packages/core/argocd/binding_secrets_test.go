@@ -16,22 +16,32 @@ type esItem struct {
 	labels   map[string]string
 }
 
+// testUID is the uid every listed ExternalSecret carries unless a test overrides the listing.
+const testUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+// rawDelete is the uid-pinned delete the prune issues for ns/name.
+func rawDelete(ns, name string) string {
+	return "delete --raw /apis/external-secrets.io/v1beta1/namespaces/" + ns + "/externalsecrets/" + name + " -f "
+}
+
 // listOf renders items as a kubectl list payload, labels included.
 func listOf(t *testing.T, items ...esItem) string {
 	t.Helper()
 	type meta struct {
 		Name      string            `json:"name"`
 		Namespace string            `json:"namespace,omitempty"`
+		UID       string            `json:"uid"`
 		Labels    map[string]string `json:"labels,omitempty"`
 	}
 	type item struct {
-		Metadata meta `json:"metadata"`
+		APIVersion string `json:"apiVersion"`
+		Metadata   meta   `json:"metadata"`
 	}
 	out := struct {
 		Items []item `json:"items"`
 	}{Items: []item{}}
 	for _, it := range items {
-		out.Items = append(out.Items, item{Metadata: meta{Name: it.name, Namespace: it.ns, Labels: it.labels}})
+		out.Items = append(out.Items, item{APIVersion: "external-secrets.io/v1beta1", Metadata: meta{Name: it.name, Namespace: it.ns, UID: testUID, Labels: it.labels}})
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -58,11 +68,14 @@ func TestPruneChartBindingSecrets_DeletesOnlyUndeclaredOwnObjects(t *testing.T) 
 	var stdout, stderr bytes.Buffer
 	PruneChartBindingSecrets("env-1", []string{"apps"}, []BindingSecretRef{{Namespace: "apps", Name: "keep-me"}}, &stdout, &stderr)
 
-	if !stub.calledWith("delete externalsecret -n apps drop-me") {
+	if !stub.calledWith(rawDelete("apps", "drop-me")) {
 		t.Errorf("the undeclared binding was not pruned; calls: %v", stub.calls())
 	}
-	if stub.calledWith("keep-me --ignore-not-found") {
+	if stub.calledWith("/keep-me ") {
 		t.Errorf("a declared binding was deleted; calls: %v", stub.calls())
+	}
+	if !strings.Contains(stub.appliedManifests(), `"preconditions":{"uid":"`+testUID+`"}`) {
+		t.Errorf("the delete was not pinned to the listed uid; options sent: %q", stub.appliedManifests())
 	}
 	if stub.calledWith(" -A") {
 		t.Errorf("the prune listed across all namespaces; calls: %v", stub.calls())
@@ -88,7 +101,7 @@ func TestPruneChartBindingSecrets_LeavesForeignAndUnownedObjects(t *testing.T) {
 	PruneChartBindingSecrets("env-1", []string{"apps"}, nil, &stdout, &stderr)
 
 	for _, name := range []string{"foreign", "unowned", "elsewhere"} {
-		if stub.calledWith(name + " --ignore-not-found") {
+		if stub.calledWith("/" + name + " ") {
 			t.Errorf("%s was deleted by an environment that does not own it; calls: %v", name, stub.calls())
 		}
 	}
@@ -108,7 +121,7 @@ func TestPruneChartBindingSecrets_FindsOwnedNamespaceOfADetachedChart(t *testing
 	var stdout, stderr bytes.Buffer
 	PruneChartBindingSecrets("env-1", nil, nil, &stdout, &stderr)
 
-	if !stub.calledWith("delete externalsecret -n old-charts gone") {
+	if !stub.calledWith(rawDelete("old-charts", "gone")) {
 		t.Errorf("a detached chart's binding was not swept; calls: %v", stub.calls())
 	}
 	if stub.calledWith("-n tenant-b") {
@@ -126,10 +139,10 @@ func TestPruneChartBindingSecrets_SameNameInTwoNamespaces(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	PruneChartBindingSecrets("env-1", []string{"apps", "other"}, []BindingSecretRef{{Namespace: "apps", Name: "web-db"}}, &stdout, &stderr)
 
-	if stub.calledWith("delete externalsecret -n apps web-db") {
+	if stub.calledWith(rawDelete("apps", "web-db")) {
 		t.Errorf("the declared apps/web-db was deleted; calls: %v", stub.calls())
 	}
-	if !stub.calledWith("delete externalsecret -n other web-db") {
+	if !stub.calledWith(rawDelete("other", "web-db")) {
 		t.Errorf("the undeclared other/web-db was kept; calls: %v", stub.calls())
 	}
 }
@@ -206,4 +219,48 @@ func TestPruneChartBindingSecrets_WarnsWhenADeleteFails(t *testing.T) {
 	if !strings.Contains(stderr.String(), "failed to prune BYO binding ExternalSecret apps/stale-one") {
 		t.Fatalf("stderr missing the delete-failure warning:\n%s", stderr.String())
 	}
+}
+
+// TestPruneChartBindingSecrets_NeverSelectsANonByoObject: an object carrying this environment's owner
+// label but NOT the binding marker (a first-class service's ExternalSecret, for instance) is never
+// deleted, even when the listing returns it.
+func TestPruneChartBindingSecrets_NeverSelectsANonByoObject(t *testing.T) {
+	stub := newKubectlStub(t, 0, noNamespaces, stubRule{
+		Match: "get externalsecrets -n default",
+		Stdout: listOf(t,
+			esItem{"default", "web-database-orders", map[string]string{ByoBindingOwnerLabel: "env-1"}},
+			esItem{"default", "marker-false", map[string]string{ByoBindingSecretLabel: "false", ByoBindingOwnerLabel: "env-1"}},
+		),
+	})
+	var stdout, stderr bytes.Buffer
+	PruneChartBindingSecrets("env-1", []string{"default"}, nil, &stdout, &stderr)
+	if stub.calledWith("delete") {
+		t.Fatalf("an object without the binding marker was deleted: %v", stub.calls())
+	}
+}
+
+// TestPruneChartBindingSecrets_RefusesWithoutAUsableUID: an object whose listing carries no uid
+// (or a malformed one) cannot be delete-pinned, so it is skipped rather than deleted unguarded.
+func TestPruneChartBindingSecrets_RefusesWithoutAUsableUID(t *testing.T) {
+	for name, uid := range map[string]string{"missing": "", "malformed": "x; rm -rf /"} {
+		t.Run(name, func(t *testing.T) {
+			list := `{"items":[{"apiVersion":"external-secrets.io/v1beta1","metadata":{"name":"drop-me","namespace":"apps","uid":` +
+				strconvQuote(uid) + `,"labels":{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}}}]}`
+			stub := newKubectlStub(t, 0, noNamespaces, stubRule{Match: "get externalsecrets -n apps", Stdout: list})
+			var stdout, stderr bytes.Buffer
+			PruneChartBindingSecrets("env-1", []string{"apps"}, nil, &stdout, &stderr)
+			if stub.calledWith("delete") {
+				t.Fatalf("a delete was issued without a usable uid: %v", stub.calls())
+			}
+			if !strings.Contains(stderr.String(), "no usable uid") {
+				t.Errorf("the refusal was not reported: %q", stderr.String())
+			}
+		})
+	}
+}
+
+// strconvQuote JSON-quotes s for a hand-built listing.
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

@@ -1491,6 +1491,7 @@ func TestProv_ByoChartBindingsApplyKeylessExternalSecrets(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\ncat \"$3\" >> "+applied+"\nexit 0\n")
 
 	vc := &types.ProjectConfig{
+		EnvironmentID: "env-1",
 		AddOns: []types.AddOnInstall{{
 			ID:        "acme-api",
 			Namespace: "apps",
@@ -1537,6 +1538,7 @@ func TestProv_ByoChartBindingsSurviveAFailedApply(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\nexit 1\n")
 
 	vc := &types.ProjectConfig{
+		EnvironmentID: "env-1",
 		AddOns: []types.AddOnInstall{{
 			ID:        "acme-api",
 			Namespace: "apps",

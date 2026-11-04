@@ -6,6 +6,7 @@ package provisioner
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
@@ -39,10 +40,43 @@ func byoBindingOwner(vc *types.ProjectConfig) string {
 	return cloud.ClassificationLabels(vc)[argocd.ByoBindingOwnerLabel]
 }
 
+// keylessDBAuthEnabled is the keyless per-cloud DB auth flag (#722), dark by default. The service
+// lane (generateAppManifests) and the BYO binding lane both read it here, so they cannot disagree.
+func keylessDBAuthEnabled() bool {
+	return os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
+}
+
+// serviceBindingSecretNames are the binding Secret names the first-class service lane renders into
+// appNamespace: one per (service, bound target), the names writeBindingExternalSecrets and the
+// workload's secretKeyRef use. Over-approximated on purpose (every bound target, credential facet or
+// not), so a BYO binding can only be refused too often, never allowed onto a service's object.
+func serviceBindingSecretNames(vc *types.ProjectConfig) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range vc.Services {
+		for _, b := range s.Bindings {
+			out[manifests.BindingSecretName(s.Name, b.Target)] = true
+		}
+	}
+	return out
+}
+
+// byoBindingPolicy is the resolver policy for one add-on in namespace ns (already defaulted).
+func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool) manifests.ChartBindingPolicy {
+	p := manifests.ChartBindingPolicy{KeylessDBAuth: keylessOn}
+	if owner == "" {
+		p.CredentialRefusal = "the environment has no ID, so its binding ExternalSecret could not carry an owner label and could never be pruned — not applied"
+	}
+	if ns == appNamespace {
+		p.TakenSecretNames = serviceBindingSecretNames(vc)
+	}
+	return p
+}
+
 // declaredByoBindings returns the binding ExternalSecrets vc declares and the namespaces the prune
 // should look in, read from the configuration alone — no tofu output, render or apply result enters it, so a
-// binding that failed on this run is still declared and still kept.
-func declaredByoBindings(vc *types.ProjectConfig) ([]argocd.BindingSecretRef, []string) {
+// binding that failed on this run is still declared and still kept. A binding to a keyless database
+// (keylessOn) declares no ExternalSecret: it gets no password secret, so any earlier one is not kept.
+func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool) ([]argocd.BindingSecretRef, []string) {
 	var refs []argocd.BindingSecretRef
 	var namespaces []string
 	seenNS := map[string]bool{}
@@ -65,6 +99,9 @@ func declaredByoBindings(vc *types.ProjectConfig) ([]argocd.BindingSecretRef, []
 				if len(manifests.CredentialFacetNames(b)) == 0 {
 					continue
 				}
+				if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
+					continue
+				}
 				refs = append(refs, argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, b.Target)})
 			}
 		}
@@ -84,8 +121,9 @@ func declaredByoBindings(vc *types.ProjectConfig) ([]argocd.BindingSecretRef, []
 // Each ExternalSecret carries the binding marker and the environment's owner label. The returned
 // state carries the DECLARED bindings (the prune's keep set) and how many failed on this run.
 func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) byoBindingState {
+	keylessOn := keylessDBAuthEnabled()
 	st := byoBindingState{Owner: byoBindingOwner(vc)}
-	st.Declared, st.Namespaces = declaredByoBindings(vc)
+	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn)
 
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
 	strOutputs := make(map[string]string, len(outputs))
@@ -102,24 +140,32 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 		if a.Values == nil {
 			a.Values = map[string]interface{}{}
 		}
+		ns := a.Namespace
+		if ns == "" {
+			ns = "default" // the renderer's default
+		}
+		policy := byoBindingPolicy(vc, ns, st.Owner, keylessOn)
 		for _, w := range a.Workloads {
 			res := manifests.ResolveChartWorkloadBindings(
-				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace, vc.Databases,
+				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace, vc.Databases, policy,
 			)
 			for path, val := range res.Patches {
 				manifests.SetByPath(a.Values, path, val)
 			}
 			for _, knob := range res.Unsatisfied {
+				if reason := res.UnsatisfiedReasons[knob]; reason != "" {
+					fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (%s) — not written.\n", a.ID, w.Name, knob, reason)
+					continue
+				}
 				fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (no value-path or no keyless secret) — not written.\n", a.ID, w.Name, knob)
 			}
 			for _, es := range res.ExternalSecrets {
 				// Mark it so PruneChartBindingSecrets can find + sweep it when the binding is removed
 				// (it is applied outside ArgoCD, so nothing else prunes it), and name its owner so a
 				// prune run by any OTHER environment on a shared host never selects it.
-				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true"}
-				if st.Owner != "" {
-					es.Labels[argocd.ByoBindingOwnerLabel] = st.Owner
-				}
+				// The owner is never empty here: an ownerless environment's credential facets are
+				// refused by the policy, so no ExternalSecret is ever rendered without one.
+				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true", argocd.ByoBindingOwnerLabel: st.Owner}
 				yaml, skipped, err := manifests.RenderExternalSecret(es)
 				if err != nil {
 					st.Failures++

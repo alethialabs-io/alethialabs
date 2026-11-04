@@ -64,7 +64,7 @@ func TestResolveChartWorkloadBindings_Satisfiable(t *testing.T) {
 		"rds_master_credentials_secret_name": "arn:aws:secretsmanager:...:db-master",
 	}
 
-	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil)
+	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths, outputs, "aws", "web-ns", nil, ChartBindingPolicy{})
 
 	wantPatches := map[string]any{
 		"externalDatabase.host": "db.internal:5432",
@@ -106,7 +106,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (a) No ESO store for the cloud (hetzner) → unsatisfied, no patch, no ExternalSecret.
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil)
+		map[string]string{"rds_master_credentials_secret_name": "arn:secret"}, "hetzner", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 || len(res.ExternalSecrets) != 0 {
 		t.Fatalf("hetzner should reference nothing: patches=%v es=%v", res.Patches, res.ExternalSecrets)
 	}
@@ -116,7 +116,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 
 	// (b) Store exists but the resource exported no master secret → unsatisfied, no dangling ref.
 	res = ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-		map[string]string{}, "aws", "ns", nil)
+		map[string]string{}, "aws", "ns", nil, ChartBindingPolicy{})
 	if _, referenced := res.Patches["auth.existingSecret"]; referenced {
 		t.Fatal("must not reference an existingSecret that will not be materialized")
 	}
@@ -128,7 +128,7 @@ func TestResolveChartWorkloadBindings_UnsatisfiableCredential(t *testing.T) {
 func TestResolveChartWorkloadBindings_MissingPath(t *testing.T) {
 	binding := chartDBBinding([2]string{"DB_HOST", "endpoint"})
 	res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding},
-		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil)
+		map[string]string{}, map[string]string{"rds_cluster_endpoint": "x"}, "aws", "ns", nil, ChartBindingPolicy{})
 	if len(res.Patches) != 0 {
 		t.Fatalf("no value-path → no patch, got %v", res.Patches)
 	}
@@ -183,7 +183,7 @@ func TestResolveChartWorkloadBindings_EngineAwarePort(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := ResolveChartWorkloadBindings("web", []types.ServiceBinding{binding}, valuePaths,
-				map[string]string{}, "aws", "ns", tc.dbs)
+				map[string]string{}, "aws", "ns", tc.dbs, ChartBindingPolicy{})
 			if got := res.Patches["externalDatabase.port"]; got != tc.wantPort {
 				t.Errorf("port = %v, want %s", got, tc.wantPort)
 			}

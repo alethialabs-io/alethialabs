@@ -25,6 +25,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"regexp"
 	"sort"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -51,12 +53,28 @@ type BindingSecretRef struct {
 // labelledList is the slice of a `kubectl get … -o json` list this file reads.
 type labelledList struct {
 	Items []struct {
-		Metadata struct {
+		APIVersion string `json:"apiVersion"`
+		Metadata   struct {
 			Name      string            `json:"name"`
 			Namespace string            `json:"namespace"`
+			UID       string            `json:"uid"`
 			Labels    map[string]string `json:"labels"`
 		} `json:"metadata"`
 	} `json:"items"`
+}
+
+// bindingUIDRe is a Kubernetes object UID (a UUID). It interpolates into a delete precondition, so
+// anything else is refused.
+var bindingUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// bindingAPIVersionRe is the ExternalSecret group/version the delete path is built from.
+var bindingAPIVersionRe = regexp.MustCompile(`^external-secrets\.io/v1(beta1)?$`)
+
+// staleBinding is one listed object the prune will delete, with what the delete is pinned to.
+type staleBinding struct {
+	ref        BindingSecretRef
+	uid        string
+	apiVersion string
 }
 
 // validOwner reports whether owner can be used as a label value in a selector. It interpolates into
@@ -121,7 +139,7 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 
 	// Read EVERY namespace before deleting in any: a listing that fails part-way must not leave the
 	// prune half-applied on the namespaces it happened to reach first.
-	var stale []BindingSecretRef
+	var stale []staleBinding
 	for _, ns := range namespaces {
 		if !k8sNameRe.MatchString(ns) {
 			fmt.Fprintf(stderr, "Warning: skipping prune in oddly-named namespace %q\n", ns)
@@ -157,16 +175,42 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 				fmt.Fprintf(stderr, "Warning: skipping prune of oddly-named ExternalSecret %q/%q\n", m.Namespace, m.Name)
 				continue
 			}
-			stale = append(stale, ref)
+			// The delete is pinned to the uid that was listed, so an object recreated between the
+			// list and the delete (by anyone) is never the one removed.
+			if !bindingUIDRe.MatchString(m.UID) || !bindingAPIVersionRe.MatchString(item.APIVersion) {
+				fmt.Fprintf(stderr, "Warning: skipping prune of ExternalSecret %s/%s: no usable uid or apiVersion in the listing\n", m.Namespace, m.Name)
+				continue
+			}
+			stale = append(stale, staleBinding{ref: ref, uid: m.UID, apiVersion: item.APIVersion})
 		}
 	}
 
-	for _, ref := range stale {
-		fmt.Fprintf(stdout, "Pruning removed BYO binding ExternalSecret: %s/%s\n", ref.Namespace, ref.Name)
-		cmd := fmt.Sprintf("kubectl delete externalsecret -n %s %s --ignore-not-found=true", ref.Namespace, ref.Name)
-		if delErr := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); delErr != nil {
+	for _, s := range stale {
+		fmt.Fprintf(stdout, "Pruning removed BYO binding ExternalSecret: %s/%s\n", s.ref.Namespace, s.ref.Name)
+		if delErr := deleteBindingWithUID(s, stdout, stderr); delErr != nil {
 			fmt.Fprintf(stderr, "Warning: failed to prune BYO binding ExternalSecret %s/%s: %v\n",
-				ref.Namespace, ref.Name, delErr)
+				s.ref.Namespace, s.ref.Name, delErr)
 		}
 	}
+}
+
+// deleteBindingWithUID deletes one ExternalSecret through the raw API with a uid precondition (the
+// pattern of provisioner's bootstrap reaper): the API server refuses the delete when the object at
+// that name is no longer the one that was listed. Every interpolated value was validated by the
+// caller.
+func deleteBindingWithUID(s staleBinding, stdout, stderr io.Writer) error {
+	f, err := os.CreateTemp("", "byo-binding-delete-*.json")
+	if err != nil {
+		return fmt.Errorf("create delete options: %w", err)
+	}
+	defer os.Remove(f.Name())
+	opts := fmt.Sprintf(`{"kind":"DeleteOptions","apiVersion":"v1","preconditions":{"uid":%q}}`, s.uid)
+	if _, err := f.WriteString(opts); err != nil {
+		f.Close()
+		return fmt.Errorf("write delete options: %w", err)
+	}
+	f.Close()
+	cmd := fmt.Sprintf("kubectl delete --raw /apis/%s/namespaces/%s/externalsecrets/%s -f %s",
+		s.apiVersion, s.ref.Namespace, s.ref.Name, f.Name())
+	return utils.ExecuteCommand(cmd, ".", nil, stdout, stderr)
 }
