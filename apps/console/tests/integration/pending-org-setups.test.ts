@@ -787,7 +787,10 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 		info.mock.calls
 			.map((call) => String(call[0]))
 			.filter((line) => line.includes(subscriptionId) && line.includes("billing.pending_org_setup."))
-			.map((line) => String(Reflect.get(JSON.parse(line), "event")));
+			.map((line) => {
+				const parsed: unknown = JSON.parse(line);
+				return typeof parsed === "object" && parsed !== null ? String(Reflect.get(parsed, "event")) : "";
+			});
 
 	/** How many `alertPaymentNeedsSupport` calls named `subscriptionId` (it always logs before it emits). */
 	const alertsFor = (subscriptionId: string): number =>
