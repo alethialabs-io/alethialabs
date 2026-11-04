@@ -924,13 +924,23 @@ describe("§5.6 — beside the org's other live, paid plan (C80)", () => {
 	});
 });
 
-// ADR 0002 C120, the resume lookups' half (amendment 2026-11-04, slice S12). X is linked in Stripe to
-// org-1 and user-1, no hold names it, and the org's row names a live Y. The lookups run the REAL closer
-// here. While X reads `incomplete` it can still be paid, so the closer answers `open` with nothing
+// ADR 0002 C120, the resume lookup's half (amendment 2026-11-04, slice S12). X is linked in Stripe to
+// org-1 and user-1, no hold names it, and the org's row names a live Y. `resolveNewOrgSetup` runs the REAL
+// closer here. While X reads `incomplete` it can still be paid, so the closer answers `open` with nothing
 // written. On dev at aed8b609b it went on to close the setup with org_has_plan: in this file that close
-// reaches the faked database, which has no transaction, so the closer threw and the lookup logged it —
-// the first assertion below (the verdict) fails there.
-describe("C120 — the resume lookups leave an incomplete X's setup open beside a live Y", () => {
+// reaches the faked database, which has no transaction, so the closer threw and the lookup logged it, and
+// the verdict assertion fails there. `findUnfinishedNewOrgSetup` reaches the closer only for an ended X,
+// so it never closed an incomplete X's setup, on dev or here; its case below is a pin, not a C120 case.
+//
+// And a setup is never offered for payment beside another live plan (§5.6): the lookup reports such an
+// unpaid X as not payable here, with no payment link, and the sheet stops on that sentence. At 9fb2f9920
+// the lookup still handed back X's hosted invoice page.
+const NOT_PAYABLE_BESIDE_LIVE_PLAN =
+	"This team already has an active plan, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at support@alethialabs.io if you meant to buy this plan for another team.";
+
+describe("C120 — the resume lookup leaves an incomplete X's setup open beside a live Y, and offers no payment", () => {
+	const HOSTED = "https://invoice.stripe.com/i/acct_1/test_inv";
+
 	/** Runs the real closer wherever the billing actions call it. */
 	async function useRealCloser(): Promise<void> {
 		const actual = await vi.importActual<typeof import("@/lib/billing/pending-org-setup")>("@/lib/billing/pending-org-setup");
@@ -945,14 +955,29 @@ describe("C120 — the resume lookups leave an incomplete X's setup open beside 
 	/** Whether a lookup logged that its closer could not check X. */
 	const closerFailed = () => vi.mocked(console.error).mock.calls.some((c) => String(c[0]).includes("setup closer could not check"));
 
+	/** X `incomplete` and awaiting the customer, linked in Stripe to org-1, with a hosted invoice page. */
+	function incompleteLinkedX(): FakeSub {
+		const x = subX("incomplete", ["requires_action"]);
+		x.metadata.organization_id = "org-1";
+		world.state.hosted.set(x.latest_invoice, HOSTED);
+		return x;
+	}
+
 	for (const yStatus of ["active", "trialing"]) {
-		it(`resolveNewOrgSetup beside a ${yStatus} Y: the closer answers open, closes nothing and alerts nothing`, async () => {
+		it(`resolveNewOrgSetup beside a ${yStatus} Y: the closer answers open, closes nothing and alerts nothing; no payment link, and the not-payable sentence`, async () => {
 			await useRealCloser();
-			subX("incomplete").metadata.organization_id = "org-1";
+			incompleteLinkedX();
 			setup();
 			world.state.row = { stripeSubscriptionId: "sub_y", status: yStatus, stripeCustomerId: "cus_y" };
 
-			await expect(resolved()).resolves.toMatchObject({ subscriptionId: "sub_x", paid: false, ended: null, hold: null });
+			await expect(resolved()).resolves.toMatchObject({
+				subscriptionId: "sub_x",
+				paid: false,
+				ended: null,
+				hold: null,
+				paymentUrl: null,
+				besideLivePlan: { clause: NOT_PAYABLE_BESIDE_LIVE_PLAN },
+			});
 			expect(settleOpenSetup).toHaveBeenCalledWith(expect.objectContaining({ subscription_id: "sub_x" }), expect.objectContaining({ orgId: "org-1" }));
 			await expect(verdicts()).resolves.toEqual(["open"]);
 			expect(closerFailed()).toBe(false);
@@ -963,9 +988,34 @@ describe("C120 — the resume lookups leave an incomplete X's setup open beside 
 		});
 	}
 
-	it("findUnfinishedNewOrgSetup does not close an incomplete X's setup either (it reaches the closer only for an ended X)", async () => {
+	it("control: with no live plan beside it, the same X keeps its payment link and is not reported", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "canceled", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ planState: "action_needed", paymentUrl: HOSTED, besideLivePlan: null });
+	});
+
+	it("control: a PAID X beside the live plan is not reported as not payable — the link decides it (C80)", async () => {
+		subX("active", ["succeeded"]).metadata.organization_id = "org-1";
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ paid: true, besideLivePlan: null });
+	});
+
+	it("control: an open hold on X is reported as the hold, not as the live plan", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+		seedHold({ state: "closing", last_pay: "awaiting" });
+
+		await expect(resolved()).resolves.toMatchObject({ paymentUrl: null, hold: { state: "closing" }, besideLivePlan: null });
+	});
+
+	it("pin: findUnfinishedNewOrgSetup leaves an incomplete X's setup open (it reaches the closer only for an ended X)", async () => {
 		await useRealCloser();
-		subX("incomplete").metadata.organization_id = "org-1";
+		incompleteLinkedX();
 		setup();
 		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
 
@@ -977,8 +1027,7 @@ describe("C120 — the resume lookups leave an incomplete X's setup open beside 
 
 	it("X is then paid before it ends: the creator's resumed link meets the open setup and refuses under a needs_operator hold (C80)", async () => {
 		await useRealCloser();
-		const x = subX("incomplete");
-		x.metadata.organization_id = "org-1";
+		const x = incompleteLinkedX();
 		setup();
 		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
 		await resolved();
