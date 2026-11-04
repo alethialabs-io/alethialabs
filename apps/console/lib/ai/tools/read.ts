@@ -11,9 +11,10 @@ import {
 } from "@/app/server/actions/billing";
 import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
 import { getClusters } from "@/app/server/actions/clusters";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getLatestDriftPosture } from "@/app/server/actions/drift";
-import { getJob, getJobs, getPlanResult } from "@/app/server/actions/jobs";
+import { getJobs } from "@/app/server/actions/jobs";
+import { readJob, readPlanResult } from "@/lib/rpc/procedures/jobs";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
 import { getProject, getProjects } from "@/app/server/actions/projects";
 
@@ -138,7 +139,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 			description: "Get one job's status + error by id. PDP-gated read.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const j = await getJob(jobId);
+				const j = await readJob(jobId);
 				if (!j) return { error: "Job not found." };
 				return {
 					id: j.id,
@@ -157,7 +158,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 				"Get a plan/deploy job's result: status, error, and the available output keys. PDP-gated read.",
 			inputSchema: z.object({ jobId: z.string() }),
 			execute: async ({ jobId }) => {
-				const r = await getPlanResult(jobId);
+				const r = await readPlanResult(jobId);
 				const meta = r.execution_metadata;
 				return {
 					status: r.status,
@@ -223,8 +224,11 @@ export function readTools(opts?: { environmentId?: string | null }) {
 			execute: async () => {
 				const clusters = await getClusters();
 				return {
+					// One entry per CLUSTER: a project runs one per environment, so the id is the cluster
+					// row's (the id an @-mention of a cluster carries) and the project's travels beside it.
 					clusters: clusters.map((c) => ({
-						id: c.id,
+						id: c.project_cluster ? c.project_cluster.id : c.id,
+						project_id: c.id,
 						name: c.project_name,
 						region: c.region,
 						environment: c.environment_stage,
@@ -261,7 +265,7 @@ export function readTools(opts?: { environmentId?: string | null }) {
 				"List pluggable provider connectors (dns/secrets/registry/observability/git/cloud) and whether the user has connected each. PDP-gated read.",
 			inputSchema: z.object({}),
 			execute: async () => {
-				const connectors = await getConnectorsWithStatus();
+				const connectors = await readConnectorsWithStatus();
 				return {
 					connectors: connectors.map((c) => ({
 						slug: c.slug,

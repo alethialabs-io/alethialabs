@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The cluster card's "Download kubeconfig (1h, read-only)" control (#5285): hidden without
-// `cluster:access_readonly`; with it, one click requests, polls, opens and saves — the real HPKE open
+// `cluster:access_readonly` (answered by the clusters read, #6122 — the control asks nothing itself); with it, one click requests, polls, opens and saves — the real HPKE open
 // over the Go-sealed vector blob, with the vector's key injected in place of the browser's random one.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +25,6 @@ const V: {
 ).alethia_mint;
 
 vi.mock("@/app/server/actions/kubeconfig-download", () => ({
-	canDownloadKubeconfig: vi.fn(),
 	requestKubeconfigDownload: vi.fn(),
 	pollKubeconfigDownload: vi.fn(),
 }));
@@ -53,19 +51,15 @@ vi.mock("@/components/clusters/kubeconfig-download/hpke", async (importActual) =
 });
 
 import {
-	canDownloadKubeconfig,
 	pollKubeconfigDownload,
 	requestKubeconfigDownload,
 } from "@/app/server/actions/kubeconfig-download";
 import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
 
-/** Renders under a fresh QueryClient (retries off). */
-function render() {
-	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+/** Renders the control as the cluster card does, with the read's answer for `allowed`. */
+function render(allowed = true) {
 	return rtlRender(
-		<QueryClientProvider client={client}>
-			<KubeconfigDownload clusterId={V.cluster_id} projectName="Shop" environment="dev" />
-		</QueryClientProvider>,
+		<KubeconfigDownload clusterId={V.cluster_id} projectName="Shop" environment="dev" allowed={allowed} />,
 	);
 }
 
@@ -76,22 +70,20 @@ describe("KubeconfigDownload", () => {
 		vi.clearAllMocks();
 	});
 
-	it("renders nothing for someone without cluster:access_readonly", async () => {
-		vi.mocked(canDownloadKubeconfig).mockResolvedValue(false);
-		const { container } = render();
-		await waitFor(() => expect(canDownloadKubeconfig).toHaveBeenCalledWith(V.cluster_id));
+	it("renders nothing for someone without cluster:access_readonly", () => {
+		const { container } = render(false);
 		expect(screen.queryByRole("button", { name: BUTTON })).toBeNull();
 		expect(container).toBeEmptyDOMElement();
 	});
 
-	it("renders nothing while the permission answer is still on its way", () => {
-		vi.mocked(canDownloadKubeconfig).mockReturnValue(new Promise(() => {}));
-		const { container } = render();
-		expect(container).toBeEmptyDOMElement();
+	it("paints the button on first render for someone who holds it — no request of its own", () => {
+		render(true);
+		expect(screen.getByRole("button", { name: BUTTON })).toBeInTheDocument();
+		expect(requestKubeconfigDownload).not.toHaveBeenCalled();
+		expect(pollKubeconfigDownload).not.toHaveBeenCalled();
 	});
 
 	it("downloads: requests read-only with only the public key, opens the seal, saves the file, says when it expires", async () => {
-		vi.mocked(canDownloadKubeconfig).mockResolvedValue(true);
 		vi.mocked(requestKubeconfigDownload).mockResolvedValue({
 			ok: true,
 			mintId: V.mint_id,
@@ -128,8 +120,20 @@ describe("KubeconfigDownload", () => {
 		expect(screen.getByText(/API endpoint is private/)).toBeInTheDocument();
 	});
 
+	it("over plain HTTP (not a secure context) says it needs HTTPS and requests nothing", async () => {
+		// jsdom does not report isSecureContext; a browser on a plain-HTTP origin reports false.
+		Object.defineProperty(window, "isSecureContext", { value: false, configurable: true });
+		try {
+			render();
+			await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+			expect(await screen.findByRole("alert")).toHaveTextContent(/needs HTTPS/);
+			expect(requestKubeconfigDownload).not.toHaveBeenCalled();
+		} finally {
+			Reflect.deleteProperty(window, "isSecureContext");
+		}
+	});
+
 	it("shows the refusal's message and saves nothing", async () => {
-		vi.mocked(canDownloadKubeconfig).mockResolvedValue(true);
 		vi.mocked(requestKubeconfigDownload).mockResolvedValue({ ok: false, status: 429 });
 		render();
 		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));

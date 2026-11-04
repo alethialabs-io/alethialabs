@@ -29,34 +29,39 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 
+// The alerts lists (#6125), the runners grid (#6123) and the people & access lists (#6129) read over
+// GET procedures: the seam is the read router's handler, reached through the same oRPC query
+// utilities the browser uses. ONE mock of the client carries every router — a second `vi.mock` of the
+// same module would replace the first.
 const getAlertChannelsPage = vi.fn();
+const getAccessGrantsPage = vi.fn();
+const getTeamsPage = vi.fn();
+const getMembersPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
 const getAlertDeliveriesPage = vi.fn();
-vi.mock("@/app/server/actions/alerts", () => ({
-	getAlertChannelsPage: (...a: unknown[]) => getAlertChannelsPage(...a),
-	getAlertPoliciesPage: (...a: unknown[]) => getAlertPoliciesPage(...a),
-	getAlertDeliveriesPage: (...a: unknown[]) => getAlertDeliveriesPage(...a),
-}));
-
-const getAccessGrantsPage = vi.fn();
-vi.mock("@/app/server/actions/grants", () => ({
-	getAccessGrantsPage: (...a: unknown[]) => getAccessGrantsPage(...a),
-}));
-
 const getRunnersPage = vi.fn();
-vi.mock("@/app/server/actions/runners", () => ({
-	getRunnersPage: (...a: unknown[]) => getRunnersPage(...a),
-}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { os, createRouterClient } = await import("@orpc/server");
+	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
+	const { z } = await import("zod");
+	const page = (fn: (input: unknown) => unknown) =>
+		os.input(z.record(z.string(), z.unknown())).handler(({ input }) => fn(input));
+	const router = {
+		alerts: {
+			channels: page((input) => getAlertChannelsPage(input)),
+			policies: page((input) => getAlertPoliciesPage(input)),
+			deliveries: page((input) => getAlertDeliveriesPage(input)),
+		},
+		runners: { page: page((input) => getRunnersPage(input)) },
+		members: {
+			grants: page((input) => getAccessGrantsPage(input)),
+			teams: page((input) => getTeamsPage(input)),
+			page: page((input) => getMembersPage(input)),
+		},
+	};
+	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
+});
 
-const getTeamsPage = vi.fn();
-vi.mock("@/app/server/actions/teams", () => ({
-	getTeamsPage: (...a: unknown[]) => getTeamsPage(...a),
-}));
-
-const getMembersPage = vi.fn();
-vi.mock("@/app/server/actions/members", () => ({
-	getMembersPage: (...a: unknown[]) => getMembersPage(...a),
-}));
 
 const {
 	useAlertChannelsPageQuery,
@@ -97,45 +102,70 @@ interface PageResult {
 interface Subject {
 	usePage: (query: Record<string, unknown>) => PageResult;
 	action: ReturnType<typeof vi.fn>;
-	/** The key prefix `qk` gives this resource, ahead of the query object. */
+	/** The key prefix `qk` (or the read procedure's path) gives this resource, ahead of the query. */
 	prefix: readonly unknown[];
+	/** Where the query sits in a key: the last element (`qk`), or an oRPC key's `input`. */
+	queryOf?: (key: readonly unknown[]) => unknown;
 }
+
+/** The input of an oRPC query key (`[path, { input, type }]`). */
+function orpcInput(key: readonly unknown[]): unknown {
+	const last = key[key.length - 1];
+	return typeof last === "object" && last !== null && "input" in last ? last.input : undefined;
+}
+
+
 
 const SUBJECTS: Record<string, Subject> = {
 	useAlertChannelsPageQuery: {
 		usePage: (q) => useAlertChannelsPageQuery(q),
 		action: getAlertChannelsPage,
-		prefix: ["alerts", "channels", "org-1"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["alerts", "channels"]],
+		queryOf: orpcInput,
 	},
 	useAlertPoliciesPageQuery: {
 		usePage: (q) => useAlertPoliciesPageQuery(q),
 		action: getAlertPoliciesPage,
-		prefix: ["alerts", "policies", "org-1"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["alerts", "policies"]],
+		queryOf: orpcInput,
 	},
 	useAlertDeliveriesPageQuery: {
 		usePage: (q) => useAlertDeliveriesPageQuery(q),
 		action: getAlertDeliveriesPage,
-		prefix: ["alerts", "deliveries", "org-1"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["alerts", "deliveries"]],
+		queryOf: orpcInput,
 	},
 	useAccessGrantsPageQuery: {
 		usePage: (q) => useAccessGrantsPageQuery(q),
 		action: getAccessGrantsPage,
-		prefix: ["access", "grants", "org-1"],
+		prefix: [["members", "grants"]],
+		queryOf: orpcInput,
 	},
 	useRunnersPageQuery: {
 		usePage: (q) => useRunnersPageQuery(q),
 		action: getRunnersPage,
-		prefix: ["runners", "org-1", "page"],
+		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
+		// browser keeps one QueryClient per org instead (lib/query/client.ts).
+		prefix: [["runners", "page"]],
+		queryOf: orpcInput,
 	},
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
 		action: getTeamsPage,
-		prefix: ["teams", "org-1"],
+		prefix: [["members", "teams"]],
+		queryOf: orpcInput,
 	},
 	useMembersPageQuery: {
 		usePage: (q) => useMembersPageQuery(q),
 		action: getMembersPage,
-		prefix: ["members", "org-1"],
+		prefix: [["members", "page"]],
+		queryOf: orpcInput,
 	},
 };
 
@@ -158,7 +188,7 @@ beforeEach(() => {
 	}
 });
 
-/** A fresh client per test — `refetchInterval: false` so the runners poll cannot race. */
+/** A fresh client per test, without retries. */
 function harness() {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false, refetchInterval: false } },
@@ -197,7 +227,8 @@ describe.each(Object.entries(SUBJECTS))("%s", (name, subject) => {
 		for (const key of keys) {
 			expect(key.slice(0, subject.prefix.length)).toEqual([...subject.prefix]);
 		}
-		expect(keys.map((k) => k[k.length - 1])).toEqual([PRISTINE, FILTERED]);
+		const queryOf = subject.queryOf ?? ((k: readonly unknown[]) => k[k.length - 1]);
+		expect(keys.map(queryOf)).toEqual([PRISTINE, FILTERED]);
 	});
 
 	it("keeps the previous rows across a filter change and marks them stale (F6)", async () => {

@@ -11,9 +11,9 @@
 // refuses the OTP log fallback and nothing can sign in"). So on the leg that measures this file the
 // console is SELF-MANAGED, and therefore:
 //
-//   · the byoRunners entitlement gate is INERT. `runners-client.tsx` renders `<FeatureUpsell>` only
-//     when `isHosted && !canByoRunners`, so the Hobby persona is not gated — see runners.negative.spec.ts.
-//   · the warm-Pools column IS rendered (`{!isHosted && …}`) and `getFleetPoolViews()` returns rows,
+//   · the byoRunners entitlement gate is INERT. The route (`page.tsx`) renders `<FeatureUpsell>` only
+//     when hosted and the plan lacks byoRunners, so the Hobby persona is not gated — see runners.negative.spec.ts.
+//   · the warm-Pools column IS rendered (`{!hosted && <PoolsSection />}`) and `readFleetPoolViews()` returns rows,
 //     so `PoolCard` and its delete confirmation are reachable. On hosted they are not.
 //
 // Isolation: every runner a test creates is swept in `afterEach` BY ITS OWN ID (or, for the two the

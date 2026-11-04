@@ -16,7 +16,7 @@ import {
 	VerifySection,
 } from "@/components/connectors/connection-ui";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { connectorAssetUrl } from "@/components/connectors/connector-assets";
@@ -29,9 +29,9 @@ interface GcpConnectionProps {
 	onCompleteFromIds: (
 		projectId: string,
 		projectNumber: string,
-	) => Promise<VerifyOutcome>;
+	) => ReturnType<ConnectSave>;
 	/** Advanced path — verify a pasted raw WIF config JSON (Terraform / custom setups). */
-	onComplete: (wifConfigJson: string) => Promise<VerifyOutcome>;
+	onComplete: (wifConfigJson: string) => ReturnType<ConnectSave>;
 }
 
 export function GcpConnection({

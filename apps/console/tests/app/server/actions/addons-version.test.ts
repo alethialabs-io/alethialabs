@@ -16,7 +16,7 @@ vi.mock("@/app/server/actions/resolve", () => ({
 	resolveActiveEnvironmentId: vi.fn(),
 }));
 
-import { enableAddon } from "@/app/server/actions/addons";
+import { disableAddonAction, enableAddon, enableAddonAction } from "@/app/server/actions/addons";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { CHART_VERSION_REFUSAL } from "@/lib/addons/chart-version";
 import { authorize } from "@/lib/authz/guard";
@@ -111,5 +111,65 @@ describe("enableAddon — chart version pin", () => {
 		).rejects.toThrow(/^Invalid chart version:/);
 		expect(withActorScope).not.toHaveBeenCalled();
 		expect(upsert.values).toBeNull();
+	});
+});
+
+// #6119: the board calls `enableAddonAction` / `disableAddonAction` (the mutation contract). A
+// refusal only the server can decide arrives keyed by the action's own input, so the card can put
+// each sentence under the box that caused it; an environment that does not resolve is not-found.
+describe("enableAddonAction / disableAddonAction — the mutation contract", () => {
+	const PROJECT = "11111111-1111-4111-8111-111111111111";
+	const ENV = "22222222-2222-4222-8222-222222222222";
+	const TARGET = { projectId: PROJECT, environmentId: ENV, addonId: "kube-prometheus-stack" };
+
+	it("answers the add-on's id when it lands", async () => {
+		setupDb();
+		expect(await enableAddonAction({ ...TARGET, version: "58.2.1" })).toEqual({
+			ok: true,
+			data: { addonId: "kube-prometheus-stack" },
+		});
+	});
+
+	it("refuses an invalid version as a field error on `version`, writing nothing", async () => {
+		const upsert = setupDb();
+		const result = await enableAddonAction({ ...TARGET, version: "^58" });
+		expect(result).toEqual({
+			ok: false,
+			error: {
+				kind: "validation",
+				message: `Invalid chart version: ${CHART_VERSION_REFUSAL}`,
+				fields: { version: [CHART_VERSION_REFUSAL] },
+			},
+		});
+		expect(upsert.values).toBeNull();
+	});
+
+	it("refuses an Advanced override that is not a YAML mapping as a field error on `valuesYaml`", async () => {
+		setupDb();
+		const result = await enableAddonAction({ ...TARGET, valuesYaml: "- just\n- a list" });
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error.kind === "validation" && result.error.fields).toHaveProperty(
+			"valuesYaml",
+		);
+	});
+
+	it("refuses an unknown add-on as not-found, with its sentence", async () => {
+		setupDb();
+		expect(await enableAddonAction({ ...TARGET, addonId: "no-such-addon" })).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Unknown add-on: no-such-addon" },
+		});
+	});
+
+	it("refuses an environment that does not resolve for the actor as not-found", async () => {
+		setupDb();
+		vi.mocked(resolveActiveEnvironmentId).mockRejectedValue(
+			new Error("Project has no default environment"),
+		);
+		expect(await disableAddonAction(TARGET)).toEqual({
+			ok: false,
+			error: { kind: "not-found", message: "Environment not found." },
+		});
+		expect(withActorScope).not.toHaveBeenCalled();
 	});
 });

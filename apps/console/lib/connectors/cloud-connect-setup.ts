@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import {
-	getConnectorsWithStatus,
-	type ConnectorWithConnection,
-} from "@/app/server/actions/connectors";
+import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { asGitProvider } from "@/lib/connectors/git-providers";
 import { getValidProviderToken } from "@/app/server/actions/identities";
 import {
@@ -110,7 +108,7 @@ async function resolveCanManage(): Promise<boolean> {
 export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 	const [initialIntegrations, awsStatus, gcpStatus, azureStatus, canManage] =
 		await Promise.all([
-			getConnectorsWithStatus(),
+			readConnectorsWithStatus(),
 			getAwsConnectionStatus(),
 			getGcpConnectionStatus(),
 			getAzureConnectionStatus(),
@@ -128,7 +126,7 @@ export async function getCloudConnectSetup(): Promise<CloudConnectSetup> {
 				getValidProviderToken(asGitProvider(i.slug)).catch(() => null),
 			),
 		);
-		integrations = await getConnectorsWithStatus();
+		integrations = await readConnectorsWithStatus();
 	}
 
 	// Pending-identity init is a manage action — only do it for members who can add connections.

@@ -5,18 +5,17 @@
 // "Download kubeconfig (1h, read-only)" — the cluster card's stage-2 access action (#5285, design
 // #5250 decisions 4, 6, 7). It sits under the stage-1 command in the card's "Cluster access" block.
 //
-// Rendered only for a person holding `cluster:access_readonly` (asked of the server; the request
-// re-checks). The key is generated, the seal opened and the file built in THIS browser; the console
+// Rendered only for a person holding `cluster:access_readonly` — the clusters read answers that per
+// cluster (`can_download_kubeconfig`, lib/rpc/procedures/clusters.ts), so the button paints with the
+// card and asks nothing of its own; the request re-checks. The key is generated, the seal opened and the file built in THIS browser; the console
 // relays ciphertext it cannot open. See flow.ts for the sequence and hpke.ts for the construction.
 
 import { formatDate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { Spinner } from "@repo/ui/spinner";
-import { useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
-	canDownloadKubeconfig,
 	pollKubeconfigDownload,
 	requestKubeconfigDownload,
 } from "@/app/server/actions/kubeconfig-download";
@@ -35,23 +34,20 @@ const PRIVATE_ENDPOINT_NOTICE =
 	"This cluster's API endpoint is private. The kubeconfig works only from a network that can reach it, such as over a VPN or through a bastion.";
 
 /**
- * The download control for one cluster. Hidden (renders nothing) until the server confirms the caller
- * holds `cluster:access_readonly`, and for anyone who does not.
+ * The download control for one cluster. Renders nothing unless `allowed` — the server's answer to
+ * whether the viewer holds `cluster:access_readonly` on this cluster, carried by the clusters read.
  */
 export function KubeconfigDownload({
 	clusterId,
 	projectName,
 	environment,
+	allowed,
 }: {
 	clusterId: string;
 	projectName: string;
 	environment: string;
+	allowed: boolean;
 }) {
-	const { data: allowed = false } = useQuery({
-		queryKey: ["clusters", "kubeconfig-download", "allowed", clusterId],
-		queryFn: () => canDownloadKubeconfig(clusterId),
-		staleTime: 5 * 60_000,
-	});
 	const [state, setState] = useState<DownloadState>({ phase: "idle" });
 	const [privateEndpoint, setPrivateEndpoint] = useState(false);
 	const abort = useRef<AbortController | null>(null);
@@ -68,7 +64,12 @@ export function KubeconfigDownload({
 		const controller = new AbortController();
 		abort.current = controller;
 		let outcome: DownloadOutcome;
-		if (!(await x25519Supported())) {
+		// WebCrypto (`crypto.subtle`) exists only in a secure context, so a console served over plain
+		// HTTP can never seal the download. Say that, rather than blaming the browser. (Compared with
+		// `false` so an environment that does not report the flag at all falls to the probe below.)
+		if (window.isSecureContext === false) {
+			outcome = { kind: "insecure-context" };
+		} else if (!(await x25519Supported())) {
 			outcome = { kind: "unsupported" };
 		} else {
 			try {

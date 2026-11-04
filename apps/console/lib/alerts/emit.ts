@@ -19,7 +19,7 @@ import {
 	type NewAlertDelivery,
 } from "@/lib/db/schema";
 import type { Action, Resource } from "@/lib/authz/registry";
-import type { Actor } from "@/lib/authz/types";
+import type { ResolvedScope } from "@/lib/authz/types";
 import type { AlertEventContext } from "@/types/jsonb.types";
 import { authzEventKey, eventMatches, isSecurityKey, labelForKey } from "./catalog";
 import { dispatchDeliveries } from "./dispatch";
@@ -133,7 +133,7 @@ export function emitAlertEventSafe(
  * universal action seam (enforceDecision). Cheap when the org has no rules (cached).
  */
 export function emitActionEvent(
-	actor: Actor,
+	actor: ResolvedScope,
 	action: Action,
 	resource: { type: Resource; id?: string },
 	allowed: boolean,

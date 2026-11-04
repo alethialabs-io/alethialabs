@@ -141,6 +141,12 @@ export async function seedCloudIdentity(
 			is_verified: verified,
 			status: verified ? "connected" : "pending",
 			verified_account_id: verified ? seedAccountId(provider) : null,
+			// Stamped as just verified and synced, so the background health sweep
+			// (lib/cloud-providers/sweep.ts — due when either stamp is null or past its TTL) does not
+			// re-probe the seeded fake credentials mid-run and flip a "connected" fixture to
+			// disconnected between two loads a spec compares.
+			last_tested_at: verified ? new Date() : null,
+			inventory_synced_at: verified ? new Date() : null,
 		})}
 		returning id`;
 	return row;

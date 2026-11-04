@@ -5,7 +5,7 @@
 import { listArtifacts } from "@/app/server/actions/artifacts";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { getClusters } from "@/app/server/actions/clusters";
-import { getConnectorsWithStatus } from "@/app/server/actions/connectors";
+import { readConnectorsWithStatus } from "@/lib/rpc/procedures/connectors";
 import { getJobs } from "@/app/server/actions/jobs";
 import { getProjects } from "@/app/server/actions/projects";
 import { getRunnersWithReleases } from "@/app/server/actions/runners";
@@ -56,10 +56,12 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 				})),
 			),
 			safe(async () =>
+				// One per CLUSTER (a project runs one per environment), keyed on the cluster row so two
+				// environments of one project are two mentions — the id `list_clusters` reports.
 				(await getClusters()).map((c) => ({
-					id: c.id,
+					id: c.project_cluster.id,
 					type: "cluster" as const,
-					label: c.project_name,
+					label: `${c.project_name} · ${c.environment_stage}`,
 					sublabel: [c.cloud_identities?.provider, c.status]
 						.filter(Boolean)
 						.join(" · "),
@@ -76,7 +78,7 @@ export async function searchMentions(query = ""): Promise<MentionResult[]> {
 			safe(async () =>
 				// Only connected connectors are taggable — an unconnected connector has no
 				// account/data behind it, so tagging it tells the agent nothing.
-				(await getConnectorsWithStatus())
+				(await readConnectorsWithStatus())
 					.filter((c) => c.connected)
 					.map((c) => ({
 						id: c.name,

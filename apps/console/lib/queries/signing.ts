@@ -4,7 +4,7 @@
 // Typed reads for org receipt-signing keys (#884) + the pure "honest posture" resolver the receipt
 // panel uses to say WHICH key would sign a project's receipts (and why it's not the org's key yet).
 
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
 import { orgSigningKey } from "@/lib/db/schema";
 
@@ -43,13 +43,19 @@ function toView(r: typeof orgSigningKey.$inferSelect): OrgSigningKeyView {
 }
 
 /**
- * All of an org's signing keys (active + pending + the retained rotation history), newest first.
- * `tx` is an actor-scoped transaction — RLS gates it to the caller's org.
+ * All of `orgId`'s signing keys (active + pending + the retained rotation history), newest first.
+ * `tx` is an actor-scoped transaction; the explicit `org_id` predicate names the addressed org, so
+ * the listing is that org's keys alone — not every row the scope's RLS policy also admits (the
+ * caller's personal org).
  */
-export async function getOrgSigningKeys(tx: Tx): Promise<OrgSigningKeyView[]> {
+export async function getOrgSigningKeys(
+	tx: Tx,
+	orgId: string,
+): Promise<OrgSigningKeyView[]> {
 	const rows = await tx
 		.select()
 		.from(orgSigningKey)
+		.where(eq(orgSigningKey.org_id, orgId))
 		.orderBy(desc(orgSigningKey.created_at));
 	return rows.map(toView);
 }

@@ -169,154 +169,51 @@ import {
 	pendingOrgSetups,
 	user,
 } from "@/lib/db/schema";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
+import {
+	type AiSpendLimits,
+	aiSpendLimitsInput,
+} from "@/components/settings/usage/spend-limits";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
+import {
+	type BillingSummary,
+	getBillingSummary as readBillingSummary,
+} from "@/lib/rpc/procedures/billing";
+import {
+	type AiUsageSummary,
+	getAiUsageSummary as readAiUsageSummary,
+	getOrgUsage as readOrgUsage,
+	type UsageReport,
+} from "@/lib/rpc/procedures/usage";
 
-/**
- * The single, coherent plan lifecycle state the billing card renders off — derived from the
- * live subscription so the badge, period wording, "next charge" line, and CTA can never
- * disagree. `canceling` = live but set to cancel at period end (show "Cancels …" + "Resume");
- * the rest map straight from `BillingStatus`.
- */
-export type PlanState =
-	| "none"
-	| "trialing"
-	| "active"
-	| "canceling"
-	| "past_due"
-	| "canceled";
+// ── Reads moved to the read router (#6127, ADR 0005 D1) ─────────────────────────────────────────
+// The billing and usage READS live in `lib/rpc/procedures/billing.ts` and `procedures/usage.ts`,
+// served over GET. The three below stay callable as server actions ONLY because callers outside
+// the billing pages still reach them this way: the agent's AI-tier hooks and chat error
+// (`getAiUsageSummary`), the AI read tools and member invites (`getBillingSummary`, `getOrgUsage`).
+// Each is the moved body, called in-process — not a second implementation.
 
-/** Collapses status + the cancel-at-period-end flag into one coherent lifecycle state. */
-function derivePlanState(
-	status: BillingStatus,
-	cancelAtPeriodEnd: boolean,
-): PlanState {
-	if (cancelAtPeriodEnd && (status === "active" || status === "trialing")) {
-		return "canceling";
-	}
-	return status;
-}
+export type {
+	AiUsageSummary,
+	UsageReport,
+} from "@/lib/rpc/procedures/usage";
+export type {
+	BillingSummary,
+	InvoiceInfo,
+	InvoiceListParams,
+	PaymentMethodInfo,
+	PlanHistoryEntry,
+	PlanState,
+	TransactionInfo,
+} from "@/lib/rpc/procedures/billing";
 
-/** Read-only billing state for the active org, for the /settings/billing page. */
-export interface BillingSummary {
-	/** Stripe is wired on this deployment (hosted). Self-managed → no upgrade UI. */
-	hosted: boolean;
-	/** The actor has a real workspace (org), not just their personal scope. */
-	hasOrg: boolean;
-	plan: BillingPlan;
-	status: BillingStatus;
-	/** The one coherent lifecycle state that drives every label + CTA on the plan card. */
-	state: PlanState;
-	/** ISO timestamp the current paid period ends, if subscribed. */
-	currentPeriodEnd: string | null;
-	/** A Stripe customer exists → cards/invoices are available. */
-	canManage: boolean;
-	/** The subscription is set to cancel at period end (show "resume"). */
-	cancelAtPeriodEnd: boolean;
-	/** Subscribed seat count (Team's per-seat quantity), or null for flat plans. */
-	seats: number | null;
-	/** Current members in the org — the "used" side of the seats meter. */
-	memberCount: number;
-	/**
-	 * The actual per-seat (or flat) monthly amount the org is billed, in MINOR units WITH ITS
-	 * CURRENCY — read live from the subscription's Stripe price (so a grandfathered sub shows its
-	 * real amount), or the live plan price when there's no sub. null = custom/unknown. Stripe is
-	 * authoritative; never compute the displayed amount from the catalog.
-	 *
-	 * THIS WAS `unitAmountUsd: number` PLUS A SEPARATE `currency: string` (#4176 part b). The name
-	 * was false from the day the live-subscription branch read the price's own currency — a EUR
-	 * subscription put euros in a field called `Usd` — and the separate `currency` was a second
-	 * field a renderer had to remember to read. It is one value now, because the two halves were
-	 * only ever meaningful together.
-	 *
-	 * IT ALSO DROPPED A `/ 100`. The old field held MAJOR units, divided out of Stripe's
-	 * `unit_amount` by a hardcoded 100 right here and multiplied back up by a hardcoded 100 three
-	 * renders later in `billing-panel.tsx`. The two cancelled for a two-decimal currency and
-	 * nothing else: a ¥124,000 subscription would have travelled as 1240 and rendered as ¥124,000
-	 * only because the second 100 undid the first. Minor units all the way through means the
-	 * conversion has no halves to keep in step.
-	 */
-	unitAmount: Money | null;
-}
-
-/** Resolves the active org's billing state for display (read-only; any member). */
+/** The active org's billing summary (body: `lib/rpc/procedures/billing.ts`). */
 export async function getBillingSummary(): Promise<BillingSummary> {
-	const actor = await currentActor();
-	const hasOrg = actor.orgId !== actor.userId;
-	const billing = hasOrg ? await getOrgBilling(actor.orgId) : null;
-
-	// Member count seeds the seats meter; only meaningful in a real org.
-	let memberCount = 0;
-	if (hasOrg) {
-		const [c] = await getServiceDb()
-			.select({ n: count() })
-			.from(member)
-			.where(eq(member.organizationId, actor.orgId));
-		memberCount = c?.n ?? 0;
-	}
-
-	const plan = billing?.plan ?? "community";
-	// Default to the DB row, then let a readable live subscription override the fields the
-	// card renders (status / period / cancel flag) — so a stale or half-synced DB row can
-	// never produce a self-contradictory card (e.g. "Canceled" next to "Renews …").
-	let status: BillingStatus = billing?.status ?? "none";
-	let cancelAtPeriodEnd = false;
-	let currentPeriodEnd: string | null =
-		billing?.currentPeriodEnd?.toISOString() ?? null;
-	// Authoritative price: the subscription's OWN flat (non-metered) Stripe price — this
-	// reflects what the org is actually charged, including grandfathered amounts.
-	let unitAmount: Money | null = null;
-	if (billing?.stripeSubscriptionId && isStripeConfigured()) {
-		try {
-			const sub = await getStripe().subscriptions.retrieve(
-				billing.stripeSubscriptionId,
-			);
-			status = mapStatus(sub.status);
-			cancelAtPeriodEnd = sub.cancel_at_period_end;
-			const flat = sub.items.data.find(
-				(i) => i.price.recurring?.usage_type !== "metered",
-			);
-			// Only a LIVE (active/trialing) sub reflects what the org is actually billed. A
-			// canceled/past_due sub has reverted to Hobby, so its old price must NOT leak
-			// through (otherwise a canceled org shows "Hobby · $20/mo"). Same gate applies to
-			// the period end — a lapsed sub shows no renewal/cancellation date.
-			const live = status === "active" || status === "trialing";
-			if (live && typeof flat?.price.unit_amount === "number") {
-				// Stripe's `unit_amount` is already minor units, and so is `Money.minor` — no
-				// conversion, which is the point of #4176 part (b). The currency is the price's
-				// own, whatever Stripe says it is; nothing here narrows it.
-				unitAmount = money(flat.price.unit_amount, flat.price.currency);
-			}
-			currentPeriodEnd =
-				live && flat?.current_period_end
-					? new Date(flat.current_period_end * 1000).toISOString()
-					: null;
-		} catch {
-			// Subscription unreadable (deleted upstream) — fall back to the DB row.
-		}
-	}
-	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price, in the
-	// currency that price is denominated in. `amounts[currency]` rather than a `usd` field: the
-	// fallback used to read `LivePlanPrice.unitAmountUsd` and label it `"usd"` by hand, which is
-	// the same assumption one layer up. An org with no live sub sees the plan's base-currency
-	// price; which currency it will actually be BILLED in is settled at checkout, not here.
-	if (unitAmount === null && plan !== "community") {
-		const price = await getPlanPrice(plan);
-		unitAmount = price.amounts[price.currency] ?? null;
-	}
-
-	return {
-		hosted: isStripeConfigured(),
-		hasOrg,
-		plan,
-		status,
-		state: derivePlanState(status, cancelAtPeriodEnd),
-		currentPeriodEnd,
-		canManage: Boolean(billing?.stripeCustomerId),
-		cancelAtPeriodEnd,
-		seats: billing?.seats ?? null,
-		memberCount,
-		unitAmount,
-	};
+	return readBillingSummary();
 }
+
 
 /** Live prices for every plan (Stripe-authoritative, catalog fallback) — the buy-flow's
  *  single fetch, consumed client-side via useLivePlanPrice. Any SIGNED-IN caller: the prices are
@@ -328,309 +225,79 @@ export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
 	return getAllPlanPrices();
 }
 
-/** Live prices for every standalone AI tier (Stripe-authoritative, catalog fallback) —
- *  consumed client-side via useLiveAiPrice. Degrades to the placeholder catalog prices when
- *  the AI Stripe prices aren't configured (pre-cutover). Any signed-in caller. */
-export async function getLiveAiPrices(): Promise<LiveAiPriceMap> {
-	// Signed-in only, for the same Stripe-rate-limit reason as getLivePlanPrices.
-	await currentActor();
-	return getAllAiPrices();
-}
-
-/** Managed-runner usage for the active org's current period (read-only; any member). */
-export interface UsageReport extends UsageSummary {
-	periodStart: string;
-	periodEnd: string;
-	plan: BillingPlan;
-	/** "Pause at the included allowance instead of billing overage" is enabled. */
-	hardCap: boolean;
-	/** Jobs currently in flight (CLAIMED/PROCESSING) — the concurrency gauge "used". */
-	runningJobs: number;
-	/** The plan's max concurrent jobs, or null when unlimited (Enterprise). */
-	maxConcurrentJobs: number | null;
-}
-
-/**
- * Job-minutes consumed on managed runners this period vs the plan's included
- * allowance, with the overage estimate. The customer-facing usage meter
- * (lib/billing/usage). Self-hosted runners never count.
- */
+/** Managed-runner usage this period (body: `lib/rpc/procedures/usage.ts`). */
 export async function getOrgUsage(): Promise<UsageReport> {
-	const actor = await currentActor();
-	const billing = await getOrgBilling(actor.orgId).catch(() => null);
-	const plan = billing?.plan ?? "community";
-	const status = billing?.status ?? "none";
-	const quotas = resolvePlanEntitlements(plan, status).quotas;
-	const included = quotas.includedRunnerMinutes;
-
-	const now = new Date();
-	const from = effectiveBillingPeriodStart(
-		billing?.currentPeriodStart,
-		billing?.currentPeriodEnd,
-		now,
-	);
-
-	const hasOrg = actor.orgId !== actor.userId;
-	const [rows, runningJobs] = await Promise.all([
-		queryJobMinutesByOrg(getServiceDb(), { from, to: now, orgId: actor.orgId }),
-		hasOrg ? queryRunningJobs(actor.orgId) : Promise.resolve(0),
-	]);
-	const used = rows[0]?.job_minutes ?? 0;
-
-	return {
-		...computeUsage(used, included),
-		periodStart: from.toISOString(),
-		periodEnd: (billing?.currentPeriodEnd ?? now).toISOString(),
-		plan,
-		hardCap: billing?.usageHardCap ?? false,
-		runningJobs,
-		maxConcurrentJobs: quotas.maxConcurrentJobs,
-	};
+	return readOrgUsage();
 }
 
-// ── Usage page: resource counts, over-time series, AI summary ───────────────
-
-/** Point-in-time resource counts for the active org's Usage page (read-only; any member). */
-export type ResourceCountsReport = ResourceCounts;
-
-/** Projects / clusters counts + estimated spend under management for the active org. */
-export async function getResourceCounts(): Promise<ResourceCountsReport> {
-	const actor = await currentActor();
-	if (actor.orgId === actor.userId) {
-		return { projects: 0, clusters: 0, spendUnderManagement: 0 };
-	}
-	return queryResourceCounts(actor.orgId);
-}
-
-/** One day of cumulative usage for the over-time chart. */
-export interface UsagePoint {
-	/** ISO date (YYYY-MM-DD), the bucket's UTC day. */
-	date: string;
-	runnerMinutes: number;
-	jobs: number;
-	aiCredits: number;
-}
-
-/** Range-windowed cumulative usage (the picker-driven section of the Usage page). */
-export interface UsageOverTime {
-	series: UsagePoint[];
-	totals: { runnerMinutes: number; jobs: number; aiCredits: number };
-}
-
-/** Inclusive list of UTC day keys (YYYY-MM-DD) spanning [from, to], to fill chart gaps. */
-function utcDayKeys(from: Date, to: Date): string[] {
-	const keys: string[] = [];
-	const cursor = new Date(
-		Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
-	);
-	const end = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
-	// Guard against an inverted range; cap at ~13 months so a 12-month preset is safe.
-	for (let i = 0; cursor.getTime() <= end && i < 400; i++) {
-		keys.push(cursor.toISOString().slice(0, 10));
-		cursor.setUTCDate(cursor.getUTCDate() + 1);
-	}
-	return keys;
-}
-
-/**
- * Cumulative usage over an arbitrary window for the active org — runner-minutes, jobs,
- * and AI credits, day-bucketed onto a continuous axis (empty days are zero-filled).
- * Read-only (any member); managed-runner basis only, matching getOrgUsage. The window
- * is supplied by the client's time-range picker as ISO timestamps.
- */
-export async function getUsageOverTime(input: {
-	from: string;
-	to: string;
-}): Promise<UsageOverTime> {
-	const actor = await currentActor();
-	const from = new Date(input.from);
-	const to = new Date(input.to);
-	if (
-		Number.isNaN(from.getTime()) ||
-		Number.isNaN(to.getTime()) ||
-		from >= to ||
-		actor.orgId === actor.userId
-	) {
-		return { series: [], totals: { runnerMinutes: 0, jobs: 0, aiCredits: 0 } };
-	}
-
-	const [minuteRows, aiRows] = await Promise.all([
-		queryJobMinutesSeries(getServiceDb(), { from, to, orgId: actor.orgId }),
-		aiCreditsSeries(actor.orgId, from, to),
-	]);
-	const minuteByDay = new Map(minuteRows.map((r) => [r.day, r]));
-	const aiByDay = new Map(aiRows.map((r) => [r.day, r.credits]));
-
-	const series: UsagePoint[] = utcDayKeys(from, to).map((date) => {
-		const m = minuteByDay.get(date);
-		return {
-			date,
-			runnerMinutes: Math.round(m?.job_minutes ?? 0),
-			jobs: m?.job_count ?? 0,
-			aiCredits: aiByDay.get(date) ?? 0,
-		};
-	});
-	const totals = series.reduce(
-		(acc, p) => ({
-			runnerMinutes: acc.runnerMinutes + p.runnerMinutes,
-			jobs: acc.jobs + p.jobs,
-			aiCredits: acc.aiCredits + p.aiCredits,
-		}),
-		{ runnerMinutes: 0, jobs: 0, aiCredits: 0 },
-	);
-	return { series, totals };
-}
-
-/**
- * The active org's STANDALONE AI standing — rolling 5-hour session + fixed weekly included
- * spend vs the AI tier's caps (the % denominators), on the SAME windows the guard
- * (ai-guard.ts) enforces, plus the remaining purchased top-up balance and the tier.
- * Read-only; any member. The single canonical AI-usage action (drives the overview card,
- * the Usage panel, and the billing AI section).
- */
-export interface AiUsageSummary {
-	/** AI enabled for this org's tier (always true today; future-proofs a disabled tier). */
-	enabled: boolean;
-	/** The org's standalone AI tier (independent of the org plan). */
-	tier: AiTier;
-	/** Included credits used inside the rolling 5-hour session window. */
-	sessionUsed: number;
-	/** The tier's session included-credit cap (the session-% denominator). */
-	sessionBudget: number;
-	/**
-	 * When the current session fully clears: oldest in-window usage + 5h (ISO). `null`
-	 * when there is no usage in the window — no active session (the UI shows an idle
-	 * state instead of a countdown).
-	 */
-	sessionResetAt: string | null;
-	/** Included credits used in the current fixed week. */
-	weeklyUsed: number;
-	/** The tier's weekly included-credit cap (the weekly-% denominator). */
-	weeklyBudget: number;
-	/** When the weekly bucket resets (ISO). */
-	weeklyResetAt: string;
-	/** Remaining purchased top-up credits (Σ grants − Σ purchased usage). */
-	purchasedBalance: number;
-	/**
-	 * Whether the paid AI tiers + credit packs are self-serve on this deployment (both
-	 * Stripe AI prices configured). Drives the upgrade UI's "Coming soon" gate — the only
-	 * config signal that crosses to the client (a plain boolean, never the price ids).
-	 */
-	paidTiersEnabled: boolean;
-	/** Admin org-wide weekly spend limit in credits (null = tier default). Reflected in weeklyBudget. */
-	orgWeeklyCapCredits: number | null;
-	/** Admin per-seat weekly spend limit in credits (null = tier default). */
-	perUserWeeklyCapCredits: number | null;
-	/** Whether the current actor may edit these spend limits (manage_billing). */
-	canManageCaps: boolean;
-}
-
-const AI_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
+/** The active org's AI standing (body: `lib/rpc/procedures/usage.ts`). */
 export async function getAiUsageSummary(): Promise<AiUsageSummary> {
-	const actor = await currentActor();
-	const plan = await resolveAiPlan(actor.orgId).catch((): AiPlanContext => ({
-		tier: "ai_free",
-		hardCap: false,
-		orgWeeklyCapCredits: null,
-		perUserWeeklyCapCredits: null,
-	}));
-	// Budgets shown reflect any admin spend limits (min(tier, cap)).
-	const spec = effectiveAiTierSpec(aiTierSpec(plan.tier), plan);
-	const paidTiersEnabled = aiPaidTiersEnabled();
-
-	// Spend limits are an org-admin control — never offered in personal scope.
-	let canManageCaps = false;
-	if (actor.orgId !== actor.userId) {
-		canManageCaps = await authorizeQuiet("manage_billing", { type: "billing" })
-			.then(() => true)
-			.catch(() => false);
-	}
-	const capFields = {
-		orgWeeklyCapCredits: plan.orgWeeklyCapCredits,
-		perUserWeeklyCapCredits: plan.perUserWeeklyCapCredits,
-		canManageCaps,
-	};
-
-	const now = Date.now();
-	const sessionSince = new Date(now - AI_SESSION_WINDOW_MS);
-	const weekStart = new Date(Math.floor(now / AI_WEEK_MS) * AI_WEEK_MS);
-	const weeklyResetAt = new Date(weekStart.getTime() + AI_WEEK_MS).toISOString();
-
-	if (actor.orgId === actor.userId) {
-		return {
-			enabled: spec.enabled,
-			tier: plan.tier,
-			sessionUsed: 0,
-			sessionBudget: spec.sessionCredits,
-			sessionResetAt: null,
-			weeklyUsed: 0,
-			weeklyBudget: spec.weeklyCredits,
-			weeklyResetAt,
-			purchasedBalance: 0,
-			paidTiersEnabled,
-			...capFields,
-		};
-	}
-
-	const [sessionUsed, weeklyUsed, purchased, oldestInWindow] =
-		await Promise.all([
-			sumCredits(actor.orgId, "included", sessionSince),
-			sumCredits(actor.orgId, "included", weekStart),
-			purchasedBalance(actor.orgId),
-			oldestUsageSince(actor.orgId, "included", sessionSince),
-		]);
-	return {
-		enabled: spec.enabled,
-		tier: plan.tier,
-		sessionUsed,
-		sessionBudget: spec.sessionCredits,
-		sessionResetAt: oldestInWindow
-			? new Date(oldestInWindow.getTime() + AI_SESSION_WINDOW_MS).toISOString()
-			: null,
-		weeklyUsed,
-		weeklyBudget: spec.weeklyCredits,
-		weeklyResetAt,
-		purchasedBalance: purchased,
-		paidTiersEnabled,
-		...capFields,
-	};
+	return readAiUsageSummary();
 }
 
+// ── Usage controls (ADR 0005 D4: defineAction → ActionResult) ───────────────────────────────────
+
+const usagePauseInput = z.object({ enabled: z.boolean() });
+
 /**
- * Toggle the active org's "pause at included instead of overage" policy
- * (owner-gated). A pure usage-policy flag — independent of Stripe.
+ * Toggle the active org's "pause at included instead of overage" policy (billing admins only). A
+ * pure usage-policy flag — independent of Stripe. Refuses an org with no billing record rather
+ * than reporting a save that wrote nothing.
  */
-export async function setUsageHardCap(enabled: boolean): Promise<void> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	await getServiceDb()
-		.update(organizationBilling)
-		.set({ usageHardCap: enabled, updatedAt: new Date() })
-		.where(eq(organizationBilling.organizationId, actor.orgId));
+export async function setUsageHardCap(
+	raw: z.input<typeof usagePauseInput>,
+): Promise<ActionResult<{ enabled: boolean }>> {
+	return defineAction({
+		input: usagePauseInput,
+		run: async ({ input }) => {
+			const actor = await authorize("manage_billing", { type: "billing" });
+			const updated = await getServiceDb()
+				.update(organizationBilling)
+				.set({ usageHardCap: input.enabled, updatedAt: new Date() })
+				.where(eq(organizationBilling.organizationId, actor.orgId))
+				.returning({ id: organizationBilling.id });
+			if (updated.length === 0) throw new ActionRefusal("conflict", NO_BILLING_RECORD);
+			return { enabled: input.enabled };
+		},
+	})(raw);
 }
 
 /**
  * Set the org's admin AI-spend limits (credits/week) — Claude-Enterprise-style ceilings that
  * only ever TIGHTEN the tier's caps (min(tier, limit)): an org-wide weekly cap and a per-seat
- * weekly cap. Pass `null` to clear a limit (back to the tier default). Owner-gated. A no-op
- * for an org with no billing row (implicitly free — its caps are already the floor).
+ * weekly cap. `null` clears a limit (back to the tier default). Billing admins only.
+ *
+ * The input is VALIDATED, not normalised (F047): a negative or out-of-range value is a
+ * `validation` result naming the field, where it used to be silently turned into "no limit" (and
+ * an overflowing one into an unhandled 500). An org with no billing record is refused rather than
+ * told a save succeeded that wrote no row.
  */
-export async function setAiSpendCaps(
-	orgWeeklyCapCredits: number | null,
-	perUserWeeklyCapCredits: number | null,
-): Promise<void> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	const norm = (v: number | null): number | null =>
-		v == null || !Number.isFinite(v) || v < 0 ? null : Math.floor(v);
-	await getServiceDb()
-		.update(organizationBilling)
-		.set({
-			aiOrgWeeklyCapCredits: norm(orgWeeklyCapCredits),
-			aiPerUserWeeklyCapCredits: norm(perUserWeeklyCapCredits),
-			updatedAt: new Date(),
-		})
-		.where(eq(organizationBilling.organizationId, actor.orgId));
+export async function saveAiSpendLimits(
+	raw: z.input<typeof aiSpendLimitsInput>,
+): Promise<ActionResult<AiSpendLimits>> {
+	return defineAction({
+		input: aiSpendLimitsInput,
+		run: async ({ input }) => {
+			const actor = await authorize("manage_billing", { type: "billing" });
+			const updated = await getServiceDb()
+				.update(organizationBilling)
+				.set({
+					aiOrgWeeklyCapCredits: input.orgWeeklyCapCredits,
+					aiPerUserWeeklyCapCredits: input.perUserWeeklyCapCredits,
+					updatedAt: new Date(),
+				})
+				.where(eq(organizationBilling.organizationId, actor.orgId))
+				.returning({ id: organizationBilling.id });
+			if (updated.length === 0) throw new ActionRefusal("conflict", NO_BILLING_RECORD);
+			return input;
+		},
+	})(raw);
 }
+
+/** The refusal for a usage control on an org that has never had a billing record. */
+const NO_BILLING_RECORD =
+	"This organization has no billing account yet, so there is nothing to save this on.";
+
 
 /** Guards that billing is actually wired (hosted control plane) before any Stripe call. */
 function requireHostedBilling(): void {
@@ -1329,6 +996,10 @@ async function cancelNeverPaid(
 			});
 			return unsettled(alerted);
 		}
+	} finally {
+		// Whether the cancel landed, failed, or the subscription had already ended, what the plan
+		// card cached about it may now be wrong (lib/billing/subscription-cache.ts).
+		forgetSubscription(sub.id);
 	}
 	const outcome = await settleCancelledSubscription(sub, customerId, fence);
 	return outcome === "settled" ? "cancelled" : outcome;
@@ -2310,6 +1981,7 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: Mi
 	if (voided) {
 		try {
 			await stripe.subscriptions.cancel(sub.id, { cancellation_details: { comment: CLOSEOUT_STAMP } });
+			forgetSubscription(sub.id); // the plan card's cached read of it is now stale (lib/billing/subscription-cache.ts)
 			cancelled = true;
 		} catch (e) {
 			console.error(`[billing] close-out could not cancel ${sub.id}; it stays incomplete:`, e);
@@ -3819,24 +3491,12 @@ export async function createCreditPackIntent(
 
 // ── Payment methods (embedded card management) ──────────────────────────────
 
-/** A saved card for the active org's billing UI. */
-export interface PaymentMethodInfo {
-	id: string;
-	brand: string;
-	last4: string;
-	expMonth: number;
-	expYear: number;
-	isDefault: boolean;
-	/** Backup order (0-based) for dunning failover; null when this card isn't a backup. */
-	backupRank: number | null;
-}
-
 /** Creates a SetupIntent to add/save a card via the embedded Payment Element. */
 export async function createSetupIntent(): Promise<{ clientSecret: string }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
-		throw new Error("Create an organization before adding a card.");
+		throw new ActionRefusal("conflict", "Create an organization before adding a card.");
 	}
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	const si = await getStripe().setupIntents.create({
@@ -3859,44 +3519,6 @@ export async function createSetupIntent(): Promise<{ clientSecret: string }> {
 	return { clientSecret: si.client_secret };
 }
 
-/** Lists the active org's saved cards (with which one is the default). */
-export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
-	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) return [];
-
-	const stripe = getStripe();
-	const customer = await stripe.customers.retrieve(billing.stripeCustomerId);
-	const defaultRef =
-		"deleted" in customer
-			? null
-			: customer.invoice_settings.default_payment_method;
-	const defaultId =
-		typeof defaultRef === "string" ? defaultRef : (defaultRef?.id ?? null);
-
-	const pms = await stripe.paymentMethods.list({
-		customer: billing.stripeCustomerId,
-		type: "card",
-	});
-	return pms.data
-		.map((pm) => ({
-			id: pm.id,
-			brand: pm.card?.brand ?? "card",
-			last4: pm.card?.last4 ?? "••••",
-			expMonth: pm.card?.exp_month ?? 0,
-			expYear: pm.card?.exp_year ?? 0,
-			isDefault: pm.id === defaultId,
-			backupRank: backupRankOf(pm),
-		}))
-		// Default (primary) first, then ranked backups ascending, then any unranked cards.
-		.sort((a, b) => {
-			if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-			const ar = a.backupRank ?? Number.MAX_SAFE_INTEGER;
-			const br = b.backupRank ?? Number.MAX_SAFE_INTEGER;
-			return ar - br;
-		});
-}
 
 /**
  * Sets the org's backup-card order (for dunning failover) — the given ids become the
@@ -3908,7 +3530,7 @@ export async function setBackupCards(
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+	if (!billing?.stripeCustomerId) throw new ActionRefusal("conflict", "No billing account yet.");
 	await setBackupOrder(billing.stripeCustomerId, orderedPmIds);
 	return { ok: true };
 }
@@ -3920,7 +3542,7 @@ export async function setDefaultPaymentMethod(
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+	if (!billing?.stripeCustomerId) throw new ActionRefusal("conflict", "No billing account yet.");
 
 	const stripe = getStripe();
 	// A default payment method is what future off-session charges run on, so promoting one is the
@@ -3934,7 +3556,8 @@ export async function setDefaultPaymentMethod(
 	// perfectly good source, and requiring the customer-level one as well would refuse a setup that
 	// is actually complete.
 	if (!(await hasAcceptedCurrentDocuments(actor.userId))) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"Accept the current Terms of Service before setting a default payment method — " +
 				"renewals charged against it need an agreement that covers them.",
 		);
@@ -3947,11 +3570,12 @@ export async function setDefaultPaymentMethod(
 	if (pmOwner !== billing.stripeCustomerId) {
 		// Same check detachPaymentMethod makes, and for the same reason: without it one org could
 		// promote another org's card by id.
-		throw new Error("Payment method not found.");
+		throw new ActionRefusal("not-found", "Payment method not found.");
 	}
 	const cardCountry = pmForDefault.billing_details?.address?.country ?? null;
 	if (!cardCountry && !billing.billingCountry) {
-		throw new Error(
+		throw new ActionRefusal(
+			"conflict",
 			"Add a billing address before setting a default payment method — without one we cannot " +
 				"determine the tax due on a renewal.",
 		);
@@ -3972,14 +3596,14 @@ export async function detachPaymentMethod(pmId: string): Promise<{ ok: true }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
+	if (!billing?.stripeCustomerId) throw new ActionRefusal("conflict", "No billing account yet.");
 
 	const stripe = getStripe();
 	const pm = await stripe.paymentMethods.retrieve(pmId);
 	const ownerId =
 		typeof pm.customer === "string" ? pm.customer : (pm.customer?.id ?? null);
 	if (ownerId !== billing.stripeCustomerId) {
-		throw new Error("Payment method not found.");
+		throw new ActionRefusal("not-found", "Payment method not found.");
 	}
 	await stripe.paymentMethods.detach(pmId);
 	return { ok: true };
@@ -3991,7 +3615,7 @@ export async function detachPaymentMethod(pmId: string): Promise<{ ok: true }> {
 async function requireSubscriptionId(orgId: string): Promise<string> {
 	const billing = await getOrgBilling(orgId);
 	if (!billing?.stripeSubscriptionId) {
-		throw new Error("No active subscription.");
+		throw new ActionRefusal("conflict", "No active subscription.");
 	}
 	return billing.stripeSubscriptionId;
 }
@@ -4002,6 +3626,7 @@ export async function cancelSubscription(): Promise<{ ok: true }> {
 	requireHostedBilling();
 	const subId = await requireSubscriptionId(actor.orgId);
 	await getStripe().subscriptions.update(subId, { cancel_at_period_end: true });
+	forgetSubscription(subId); // the plan card reads its own write back, not the cached state
 	return { ok: true };
 }
 
@@ -4011,6 +3636,7 @@ export async function resumeSubscription(): Promise<{ ok: true }> {
 	requireHostedBilling();
 	const subId = await requireSubscriptionId(actor.orgId);
 	await getStripe().subscriptions.update(subId, { cancel_at_period_end: false });
+	forgetSubscription(subId); // the plan card reads its own write back, not the cached state
 	return { ok: true };
 }
 
@@ -4051,215 +3677,63 @@ export async function changeSubscriptionPlan(
 		items,
 		proration_behavior: "create_prorations",
 	});
+	forgetSubscription(subId); // the plan card reads its own write back, not the cached state
 	return { ok: true };
 }
 
-// ── Invoices + billing details / VAT ────────────────────────────────────────
+// ── The billing page's writes, through the mutation contract (ADR 0005 D4, #6127) ───────────────
+// Each wraps the action above in `defineAction`, so the page gets an `ActionResult` it can route
+// by kind — a refusal it can act on (no subscription, card not found, Terms not accepted) comes
+// back as its own sentence and anything else as an error with a reference, never a raw message.
+// The throwing functions above stay: other server code (consumer rights, the tests) calls them.
 
-/** An invoice row for the billing UI — sourced from our locally-mirrored `invoice` table
- *  (only invoices for which money moved), never a live Stripe API call. */
-export interface InvoiceInfo {
-	/** Our invoice id (used for the preview + PDF-download route). */
-	id: string;
-	number: string | null;
-	/** Total in the smallest currency unit (e.g. cents). */
-	total: number;
-	currency: string;
-	status: InvoiceStatus;
-	/** ISO instant the invoice was paid — the primary display/sort date. */
-	paidAt: string;
-	/** Billing period the invoice covers (ISO), if known. */
-	periodStart: string | null;
-	periodEnd: string | null;
-	description: string | null;
-	/** A self-hosted PDF is available at the download route. */
-	hasPdf: boolean;
-	/** Stripe's hosted invoice URL — a fallback link only. */
-	hostedInvoiceUrl: string | null;
+const noInput = z.object({});
+const cardInput = z.object({ pmId: z.string().min(1).max(255) });
+const backupsInput = z.object({ pmIds: z.array(z.string().min(1).max(255)).max(20) });
+
+/** {@link createSetupIntent} through the mutation contract: opens the add-card form. */
+export async function startAddCard(
+	raw: z.input<typeof noInput>,
+): Promise<ActionResult<{ clientSecret: string }>> {
+	return defineAction({ input: noInput, run: () => createSetupIntent() })(raw);
 }
 
-/** Maps a mirrored invoice row to the UI shape. */
-function toInvoiceInfo(row: Invoice): InvoiceInfo {
-	return {
-		id: row.id,
-		number: row.number,
-		total: row.amountTotal,
-		currency: row.currency,
-		status: row.status,
-		paidAt: (row.paidAt ?? row.createdAt).toISOString(),
-		periodStart: row.periodStart?.toISOString() ?? null,
-		periodEnd: row.periodEnd?.toISOString() ?? null,
-		description: row.description,
-		hasPdf: Boolean(row.pdfKey) || Boolean(row.hostedInvoiceUrl),
-		hostedInvoiceUrl: row.hostedInvoiceUrl,
-	};
+/** {@link setDefaultPaymentMethod} through the mutation contract. */
+export async function makeDefaultCard(
+	raw: z.input<typeof cardInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: cardInput, run: ({ input }) => setDefaultPaymentMethod(input.pmId) })(raw);
 }
 
-/** Optional filters for the invoices list (period range + status). */
-export interface InvoiceListParams {
-	status?: InvoiceStatus[];
-	paidFrom?: string;
-	paidTo?: string;
-	limit?: number;
+/** {@link setBackupCards} through the mutation contract. */
+export async function saveBackupCards(
+	raw: z.input<typeof backupsInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: backupsInput, run: ({ input }) => setBackupCards(input.pmIds) })(raw);
 }
 
-// NO `requireHostedBilling()` on either read below, and its absence is the fix for the HTTP 500
-// the UI conformance audit recorded on `~/settings/billing/invoices` (#3731).
-//
-// That guard's own contract is "before any Stripe call" — and these two make none: they read the
-// MIRRORED `invoice` table this deployment already owns. It threw whenever STRIPE_SECRET_KEY is
-// unset, which is every self-managed install and every sandbox env, turning a plain table read
-// into an unhandled server-action rejection → 500. Both of the audit's two 500s per visit were
-// `listInvoices` — the panel's filtered rows query and its unfiltered facet-count query.
-//
-// The main billing panel never showed it because it returns a "Self-managed deployment" card
-// before it mounts anything that calls these; the dedicated invoices page has no such gate, so it
-// called straight through. Refusing to READ mirrored history because Stripe is not wired is also
-// wrong on its own terms — an org that once paid keeps its invoices, and an org that never did
-// simply has none, which is an empty list, not an error.
-
-/**
- * Lists the active org's mirrored invoices (newest paid first), from the local table — no
- * Stripe call, so it's fast and only ever shows real paid invoices. Filterable by period
- * range + status.
- */
-export async function listInvoices(
-	params: InvoiceListParams = {},
-): Promise<InvoiceInfo[]> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	const rows = await listOrgInvoices(actor.orgId, params);
-	return rows.map(toInvoiceInfo);
+/** {@link detachPaymentMethod} through the mutation contract. */
+export async function removeCard(
+	raw: z.input<typeof cardInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: cardInput, run: ({ input }) => detachPaymentMethod(input.pmId) })(raw);
 }
 
-/**
- * Loads one invoice for the active org, or null if it isn't theirs.
- *
- * NO PRODUCTION CALLER TODAY — `git grep getInvoice` finds this definition and its tests, nothing
- * else. It used to say "(preview dialog)", which is wrong and was worth correcting rather than
- * inheriting: `InvoicePreviewDialog` is presentational and takes an `InvoiceInfo` PROP that both
- * its parents already hold from `listInvoices`, and the PDF route calls `getOrgInvoice` directly.
- * So this action contributed NONE of the 500s in #3731 — both were `listInvoices`. It is kept and
- * fixed alongside its sibling because it is the same read over the same table and an inconsistent
- * guard between the two is the next reader's trap; if it still has no caller when someone next
- * touches this file, delete it rather than re-explaining it.
- */
-export async function getInvoice(id: string): Promise<InvoiceInfo | null> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	const row = await getOrgInvoice(actor.orgId, id);
-	return row ? toInvoiceInfo(row) : null;
+/** {@link cancelSubscription} through the mutation contract (only ever reached from the dialog). */
+export async function cancelPlan(
+	raw: z.input<typeof noInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: noInput, run: () => cancelSubscription() })(raw);
 }
 
-// ── Transactions (Stripe charges) ───────────────────────────────────────────
-
-/** A charge row for the transaction-history table. */
-export interface TransactionInfo {
-	id: string;
-	/** What the charge was for (Stripe description, or a sensible fallback). */
-	description: string;
-	/** Normalized outcome driving the status badge. */
-	status: "paid" | "pending" | "failed" | "refunded";
-	/** Smallest-unit amount; negative for refunds. */
-	amount: number;
-	currency: string;
-	created: string;
-	/** "Visa ···· 4242", or null when the method isn't a card. */
-	method: string | null;
+/** {@link resumeSubscription} through the mutation contract. */
+export async function resumePlan(
+	raw: z.input<typeof noInput>,
+): Promise<ActionResult<{ ok: true }>> {
+	return defineAction({ input: noInput, run: () => resumeSubscription() })(raw);
 }
 
-/** Maps a Stripe charge to our normalized transaction shape. */
-function toTransaction(charge: Stripe.Charge): TransactionInfo {
-	const card = charge.payment_method_details?.card;
-	const method = card
-		? `${card.brand ?? "card"} ···· ${card.last4 ?? "••••"}`
-		: null;
-	const refunded = charge.refunded || charge.amount_refunded > 0;
-	const status: TransactionInfo["status"] = refunded
-		? "refunded"
-		: charge.status === "succeeded"
-			? "paid"
-			: charge.status === "failed"
-				? "failed"
-				: "pending";
-	return {
-		id: charge.id,
-		description: charge.description ?? "Subscription payment",
-		status,
-		amount: refunded ? -charge.amount_refunded : charge.amount,
-		currency: charge.currency,
-		created: new Date(charge.created * 1000).toISOString(),
-		method,
-	};
-}
-
-/** Lists the active org's recent charges (paid / failed / refunded) for the ledger. */
-export async function listTransactions(): Promise<TransactionInfo[]> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
-	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) return [];
-
-	const charges = await getStripe().charges.list({
-		customer: billing.stripeCustomerId,
-		limit: 24,
-	});
-	return charges.data.map(toTransaction);
-}
-
-// ── Plan history (minimal — derived, no event log yet) ──────────────────────
-
-/** A plan-history timeline entry. */
-export interface PlanHistoryEntry {
-	when: string;
-	title: string;
-	detail: string;
-	/** The current (most recent) entry — rendered as the active node. */
-	current: boolean;
-}
-
-/**
- * A best-effort plan-history timeline for the active org. We don't keep a billing
- * event log yet, so this is derived honestly from what we know: when the org was
- * created, and the plan it's on now. (A real ledger is future work.)
- */
-export async function getPlanHistory(): Promise<PlanHistoryEntry[]> {
-	const actor = await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
-	if (actor.orgId === actor.userId) return [];
-
-	const [org] = await getServiceDb()
-		.select({ name: organization.name, createdAt: organization.createdAt })
-		.from(organization)
-		.where(eq(organization.id, actor.orgId))
-		.limit(1);
-	if (!org) return [];
-
-	const billing = await getOrgBilling(actor.orgId);
-	const entries: PlanHistoryEntry[] = [
-		{
-			when: org.createdAt.toISOString(),
-			title: "Organization created",
-			detail: `${org.name} started on the Free plan.`,
-			current: false,
-		},
-	];
-	const isLive =
-		billing && (billing.status === "active" || billing.status === "trialing");
-	if (isLive && billing.plan !== "community") {
-		const meta = planMeta(billing.plan);
-		const since =
-			billing.currentPeriodEnd?.toISOString() ?? new Date().toISOString();
-		entries.push({
-			when: since,
-			title: `On the ${meta.name} plan`,
-			detail: meta.tagline,
-			current: true,
-		});
-	} else {
-		// No live paid plan → the "created" entry is the current state.
-		entries[0].current = true;
-	}
-	return entries.reverse(); // newest first
-}
+// ── Billing details / VAT ───────────────────────────────────────────────────
 
 /** The active org's billing contact + address + VAT id (for Stripe Tax). */
 export interface BillingDetails {

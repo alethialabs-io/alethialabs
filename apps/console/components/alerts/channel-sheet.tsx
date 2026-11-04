@@ -6,16 +6,24 @@
 // Transport selector → Separator → Configure. "Add channel" calls addChannel, which
 // verifies the endpoint and only persists the channel if it works (a channel never exists
 // unverified). Editing an existing channel stays inline.
+//
+// #6125: the write goes through `useActionMutation` (pending state, one toast for a refusal,
+// invalidation of every alert key); a destination that does not verify is rendered inline. The
+// sheet tracks whether the form is dirty: closing it with something typed asks before discarding.
+// When "Add channel" cannot be pressed, the reason is named ON the button (aria-describedby) and
+// beside it, not only mid-sheet (F056).
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertCircle, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { z } from "zod";
-import { type AlertsBootstrap, addChannel } from "@/app/server/actions/alerts";
+import { addChannel } from "@/app/server/actions/alerts";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { alertsKeys } from "@/lib/query/use-alerts-query";
 import {
 	CHANNEL_TYPE_META,
 	CHANNEL_TYPE_ORDER,
@@ -176,24 +184,31 @@ const DEFAULTS: ConfigValues = {
 	routingKey: "",
 };
 
+/** The sheet's field a server validation path is about (`secret.url` → `url`), or null. */
+function channelFieldOf(path: string): keyof ConfigValues | null {
+	const [head, sub] = path.split(".");
+	if (head === "name" || head === "recipients") return head;
+	if (head === "secret" && (sub === "url" || sub === "signingSecret" || sub === "routingKey")) return sub;
+	return null;
+}
+
 interface ChannelSheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	bootstrap: AlertsBootstrap;
-	onSaved: () => void;
+	/** Whether secret-bearing transports can be stored (ALETHIA_CRED_ENCRYPTION_KEY is set). */
+	encryptionConfigured: boolean;
 }
 
 /** Guided, single-form create flow for an alert channel. */
 export function ChannelSheet({
 	open,
 	onOpenChange,
-	bootstrap,
-	onSaved,
+	encryptionConfigured,
 }: ChannelSheetProps) {
-	const { encryptionConfigured } = bootstrap;
-	const [saving, setSaving] = useState(false);
 	const [submitError, setSubmitError] = useState<string | null>(null);
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
 	const wasOpen = useRef(false);
+	const blockedReasonId = useId();
 
 	const form = useForm<ConfigValues>({
 		resolver: zodResolver(configSchema),
@@ -218,12 +233,42 @@ export function ChannelSheet({
 		setSubmitError(null);
 	};
 
-	const create = form.handleSubmit(async (values) => {
-		setSaving(true);
+	const mutation = useActionMutation(addChannel, {
+		invalidates: alertsKeys(),
+		successMessage: (outcome) => (outcome.added ? "Channel verified and added" : ""),
+		onSuccess: (outcome) => {
+			if (outcome.added) onOpenChange(false);
+			else setSubmitError(outcome.error);
+		},
+		// The server's validation lands on the field it is about; the rest under the form.
+		onValidationError: (fields) => {
+			for (const [path, messages] of Object.entries(fields)) {
+				const message = messages?.[0];
+				if (!message) continue;
+				const field = channelFieldOf(path);
+				if (field) form.setError(field, { message });
+				else setSubmitError(message);
+			}
+		},
+	});
+	const saving = mutation.isPending;
+	// Read during render: react-hook-form tracks `isDirty` only for a formState field read here.
+	const dirty = form.formState.isDirty;
+
+	// Closing with something typed asks first; closing a pristine sheet just closes it. Nothing
+	// closes it while the verification is in flight — its answer is about to land here.
+	const requestOpenChange = (next: boolean) => {
+		if (next) return onOpenChange(true);
+		if (saving) return;
+		if (dirty) setConfirmDiscard(true);
+		else onOpenChange(false);
+	};
+
+	const create = form.handleSubmit((values) => {
+		if (saving) return;
 		setSubmitError(null);
 		const cred = CHANNEL_TYPE_META[values.type].credential;
-		try {
-			const res = await addChannel({
+		mutation.mutate({
 				type: values.type,
 				name: values.name.trim(),
 				enabled: true,
@@ -240,23 +285,12 @@ export function ChannelSheet({
 						: cred === "routingKey"
 							? { routingKey: values.routingKey.trim() || undefined }
 							: undefined,
-			});
-			if (res.ok) {
-				toast.success("Channel verified and added");
-				onOpenChange(false);
-				onSaved();
-			} else {
-				setSubmitError(res.error);
-			}
-		} catch (err) {
-			setSubmitError(err instanceof Error ? err.message : "Failed to add channel");
-		} finally {
-			setSaving(false);
-		}
+		});
 	});
 
 	return (
-		<Sheet open={open} onOpenChange={onOpenChange}>
+		<>
+		<Sheet open={open} onOpenChange={requestOpenChange}>
 			<SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
 				<SheetHeader className="gap-3 border-b border-border/60 p-5">
 					<div className="flex items-center gap-3">
@@ -437,21 +471,45 @@ export function ChannelSheet({
 					</div>
 				</div>
 
-				<SheetFooter className="flex-row items-center justify-between border-t border-border/60 p-4">
+				<SheetFooter className="flex-row items-center justify-between gap-3 border-t border-border/60 p-4">
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => onOpenChange(false)}
+						onClick={() => requestOpenChange(false)}
 						disabled={saving}
 					>
 						Cancel
 					</Button>
-					<Button size="sm" onClick={create} disabled={saving || needsKey}>
-						{saving ? "Verifying…" : "Add channel"}
-					</Button>
+					<div className="flex min-w-0 items-center gap-3">
+						{needsKey && (
+							<p id={blockedReasonId} className="text-right text-muted-foreground text-ui-xs">
+								Needs an encryption key — or pick Email.
+							</p>
+						)}
+						<Button
+							size="sm"
+							onClick={create}
+							disabled={saving || needsKey}
+							aria-describedby={needsKey ? blockedReasonId : undefined}
+						>
+							{saving ? "Verifying…" : "Add channel"}
+						</Button>
+					</div>
 				</SheetFooter>
 			</SheetContent>
 		</Sheet>
+		<ConfirmDialog
+			open={confirmDiscard}
+			onOpenChange={setConfirmDiscard}
+			title="Discard this channel?"
+			description="What you entered has not been saved."
+			confirmLabel="Discard"
+			onConfirm={() => {
+				setConfirmDiscard(false);
+				onOpenChange(false);
+			}}
+		/>
+		</>
 	);
 }
 

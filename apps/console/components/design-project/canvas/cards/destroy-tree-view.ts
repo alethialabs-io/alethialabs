@@ -3,7 +3,7 @@
 
 // The console's reading of an environment's DESTROY TREE (#5261, from #5249/#5259).
 //
-// The tree comes from `getDestroyTree` and is READ BEFORE the destroy is queued, never parsed out
+// The tree comes from `canvas.destroyTree` and is READ BEFORE the destroy is queued, never parsed out
 // of a refusal: a production build redacts a server action's error text, so the
 // `FabricHasLiveTenantsError` that names the tenants reaches the browser as a digest. Asking first
 // is the only way the user ever sees the list.
@@ -21,8 +21,18 @@ export interface DestroyEnvironmentControl {
 	projectName: string | null;
 	/** Reads the active environment's destroy tree. Must be referentially stable across renders. */
 	loadTree: () => Promise<DestroyTreeNode[]>;
-	/** Queues the destroy; `cascade` also queues every live tenant, tenants first. */
-	destroy: (options: { cascade: boolean }) => Promise<void>;
+	/**
+	 * Queues the destroy of `environmentId` — the environment the tree just read names, never one
+	 * resolved again on the way (a stale id must not fall back onto the default environment).
+	 * `cascade` also queues every live tenant, tenants first.
+	 */
+	destroy: (options: DestroyOptions) => Promise<void>;
+}
+
+/** What a confirmed destroy asks for: the environment the tree named, and whether to cascade. */
+export interface DestroyOptions {
+	cascade: boolean;
+	environmentId: string;
 }
 
 /** A tree split into the environments placed on the cluster and the environment destroyed last. */

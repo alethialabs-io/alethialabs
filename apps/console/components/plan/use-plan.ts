@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
-import { getPlanResult, getProjectJobs } from "@/app/server/actions/jobs";
+import { rpcClient } from "@/lib/rpc/client";
 import {
 	parsePlanJSON,
 	type PlanSummary,
@@ -58,7 +58,7 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 
 		async function loadExistingPlan() {
 			try {
-				const projectJobs = await getProjectJobs(projectId!);
+				const projectJobs = await rpcClient.jobs.project({ projectId: projectId! });
 				const latestPlan = projectJobs
 					.filter(
 						(j) =>
@@ -72,7 +72,7 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 
 				if (!latestPlan || cancelled) return;
 
-				const result = await getPlanResult(latestPlan.id);
+				const result = await rpcClient.jobs.planResult({ id: latestPlan.id });
 				if (cancelled) return;
 
 				const meta = result.execution_metadata;
@@ -112,7 +112,7 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 		}
 
 		if (job.status === "SUCCESS") {
-			getPlanResult(planJobId).then((result) => {
+			rpcClient.jobs.planResult({ id: planJobId }).then((result) => {
 				const meta = result.execution_metadata;
 				if (meta?.plan_result) {
 					setPlanResult(parsePlanJSON(meta.plan_result));

@@ -5,7 +5,6 @@
 import { Button } from "@repo/ui/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { caseLabel } from "@repo/support/status";
-import { format } from "date-fns";
 import { ArrowLeft, Building2, Download, Mail, Paperclip } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
@@ -21,6 +20,7 @@ import { CaseStatusBadge } from "./case-status-badge";
 import { StaffCaseActions } from "./staff-case-actions";
 import { StaffCaseComposer } from "./staff-case-composer";
 import { StaffCaseThread } from "./staff-case-thread";
+import { CaseTime } from "./staff-case-time";
 
 /** One message row in the staff cache (full SupportMessage incl. is_internal). */
 type StaffMessage = StaffCaseDetailData["messages"][number];
@@ -139,8 +139,7 @@ export function StaffCaseDetail({
 							<span>{SUPPORT_CATEGORY_LABELS[supportCase.category]}</span>
 							<span aria-hidden>·</span>
 							<span>
-								Opened{" "}
-								{format(new Date(supportCase.created_at), "MMM d, yyyy")}
+								Opened <CaseTime at={supportCase.created_at} style="date" />
 							</span>
 						</div>
 						<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

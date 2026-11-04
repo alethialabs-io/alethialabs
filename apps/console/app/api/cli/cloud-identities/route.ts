@@ -2,22 +2,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, asc, eq } from "drizzle-orm";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+import { identityScopeWhere } from "@/lib/runners/claim-identity";
 import type { CloudCredentials } from "@/types/jsonb.types";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliCloudIdentitiesResponse } from "@/lib/validations/cli-contract";
 
-/** Lists verified cloud identities for the CLI user. */
+/**
+ * Lists the verified cloud identities the CLI caller may use: the active org's shared (`org`)
+ * identities, plus — for a signed-in person — their own `personal` ones. The same rule the console's
+ * identity reads apply through RLS, so a member never sees another member's personal identity and a
+ * service token sees only the org's.
+ */
 export async function GET(req: Request) {
 	const auth = await authorizeCli(req, "view", { type: "cloud_identity" });
 	if ("error" in auth) return auth.error;
 	const { actor } = auth;
 
 	try {
-		// Service connection (no RLS) — scoped explicitly by the actor's org.
+		// Service connection (no RLS) — scoped explicitly by `identityScopeWhere`.
 		const identities = await getServiceDb()
 			.select({
 				id: cloudIdentities.id,
@@ -28,7 +35,10 @@ export async function GET(req: Request) {
 			.from(cloudIdentities)
 			.where(
 				and(
-					eq(cloudIdentities.org_id, actor.orgId),
+					identityScopeWhere(
+						actor.orgId,
+						personalIdentityAuthor(actor),
+					),
 					eq(cloudIdentities.is_verified, true),
 				),
 			)

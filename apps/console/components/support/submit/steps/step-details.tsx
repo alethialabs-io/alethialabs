@@ -9,6 +9,7 @@ import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Textarea } from "@repo/ui/textarea";
+import { FieldMessage } from "@/components/support/field-message";
 
 interface StepDetailsProps {
 	/** Selected attachment files (owned by the parent form). */
@@ -41,9 +42,7 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 					placeholder="Short summary of the issue"
 					{...register("subject")}
 				/>
-				{errors.subject && (
-					<p className="text-xs text-destructive">{errors.subject.message}</p>
-				)}
+				<FieldMessage message={errors.subject?.message} />
 			</div>
 
 			<div className="space-y-2">
@@ -54,9 +53,7 @@ export function StepDetails({ files, onFilesChange, onFileReject }: StepDetailsP
 					placeholder="What happened, what you expected, and any steps to reproduce…"
 					{...register("description")}
 				/>
-				{errors.description && (
-					<p className="text-xs text-destructive">{errors.description.message}</p>
-				)}
+				<FieldMessage message={errors.description?.message} />
 			</div>
 
 			<div className="space-y-2">

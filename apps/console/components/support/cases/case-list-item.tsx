@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import Link from "next/link";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { SUPPORT_CATEGORY_LABELS } from "@/lib/validations/support";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
+import { CaseTime } from "./case-time";
 import { formatCaseNumber } from "./case-query";
 
 // `formatCaseNumber` moved to the pure `case-query` module (the search predicate there
@@ -16,6 +16,14 @@ import { formatCaseNumber } from "./case-query";
 // components/shell/notifications-popover.tsx and hooks/use-support-toasts.ts — still import
 // it from this path; delete this line once they point at ./case-query.
 export { formatCaseNumber };
+
+/**
+ * The list's frame and one row's box. The rule between rows is the list's (`divide-y`), not each
+ * row's, because every row is now the only child of its `li` — a row's own `last:border-b-0` would
+ * fire on all of them. `CaseListSkeletonRows` draws the same two, so its rows are these rows (#6354).
+ */
+export const CASE_ROWS = "divide-y divide-border/60 overflow-hidden rounded-md border";
+export const CASE_ROW = "flex items-start gap-4 px-4 py-3.5";
 
 /**
  * A single row in the "My cases" list: the case reference + subject, its status and
@@ -33,7 +41,7 @@ export function CaseListItem({
 	return (
 		<Link
 			href={`/${orgSlug}/~/support/cases/${item.id}`}
-			className="flex items-start gap-4 border-b border-border/60 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-muted/40"
+			className={cn(CASE_ROW, "transition-colors hover:bg-muted/40")}
 		>
 			{/* Unread indicator — a single dot, no colour. */}
 			<span
@@ -62,7 +70,7 @@ export function CaseListItem({
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<span>{SUPPORT_CATEGORY_LABELS[item.category]}</span>
 					<span aria-hidden>·</span>
-					<span>{formatRelative(item.last_message_at)}</span>
+					<CaseTime value={item.last_message_at} style="relative" />
 					{/* Whose case — shown only on rows the caller didn't open (i.e. an admin
 					    viewing the whole org's cases); their own rows stay uncluttered. */}
 					{!item.is_mine && item.requester_name && (

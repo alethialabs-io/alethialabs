@@ -1,27 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Mocked-boundary tests for getSsoProviders: stub the actor + a thenable drizzle chain (so
-// `await db.select()…where()` resolves to seeded rows), keep the real JSON parsing + X509
-// fingerprint logic, and assert the oidc/saml type derivation, IdP-detail extraction, and the
+// Mocked-boundary tests for the `sso.providers` read's body (`readSsoProviders`, moved from the
+// `getSsoProviders`/`listSsoProviders` actions by #6129): stub the actor + a thenable drizzle chain
+// (so `await db.select()…where()…orderBy()` resolves to seeded rows), keep the real JSON parsing +
+// X509 fingerprint logic, and assert the oidc/saml type derivation, IdP-detail extraction, and the
 // org-scoped query.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
-// sso.ts now reaches better-auth (auth.handler) + the PDP for its mutation/bootstrap paths; stub
-// them so this read-path suite stays I/O-free and doesn't boot the auth stack at import time.
-vi.mock("@/lib/auth", () => ({ auth: { handler: vi.fn() } }));
+// The procedure module reaches the PDP for its bootstrap path; stub it so this read-path suite stays
+// I/O-free and doesn't boot the authz stack at import time.
 vi.mock("@/lib/authz", () => ({
 	getPdp: () => ({ can: vi.fn().mockResolvedValue({ allowed: true }) }),
 }));
-vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
-vi.mock("@/lib/authz/activity", () => ({ recordActivity: vi.fn() }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 
-import { getSsoProviders } from "@/app/server/actions/sso";
+import { readSsoProviders as getSsoProviders } from "@/lib/rpc/procedures/sso";
 import { authorizeQuiet } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 
@@ -43,6 +39,7 @@ function mockDb(rows: unknown[]) {
 			whereSpy(...a);
 			return db;
 		},
+		orderBy: () => db,
 		then: (resolve: (v: unknown) => void) => resolve(rows),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
@@ -57,7 +54,7 @@ beforeEach(() => {
 	} as never);
 });
 
-describe("getSsoProviders", () => {
+describe("readSsoProviders (sso.providers)", () => {
 	it("returns an empty list when no providers are registered", async () => {
 		mockDb([]);
 		expect(await getSsoProviders()).toEqual([]);

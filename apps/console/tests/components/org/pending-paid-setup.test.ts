@@ -295,7 +295,7 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 
 	it("C107: on a resume whose org exists, an ended X stops the run before the link, writing nothing", async () => {
 		const sub = "sub_c107_resume";
-		const clause = `${ENDED_CLAUSE} A team already created for it stays on the free plan.`;
+		const clause = `${ENDED_CLAUSE} A team already created for it stays on the Hobby plan.`;
 		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub, { org: true, ended: clause }), paid: false, planState: "not_charged" });
 
 		const outcome = await finishPaidSetup(RUN_USER, runRecord(sub, "org-1"), runHooks);

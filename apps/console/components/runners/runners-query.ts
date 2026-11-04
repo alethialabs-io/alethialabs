@@ -43,7 +43,7 @@ function normalizeList(values: string[]): string[] | undefined {
 
 /**
  * The normalize step (lib/query/README.md, step 4): store state → the stable query object
- * that goes into `qk.runnersPage(org, q)` AND to `getRunnersPage(q)`.
+ * that is the `runners.page` read's input — and so its query key — on the client AND the server.
  *
  * The runners page had no such step — the store's raw shape reached neither, because nothing
  * reached the server at all, and the key was the org (#4890). Trimming the search and sorting

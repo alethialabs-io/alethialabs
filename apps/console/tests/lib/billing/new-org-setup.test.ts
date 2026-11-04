@@ -20,7 +20,7 @@ const UNCONFIRMED =
 const ALERT_RAISED = " We have raised an alert.";
 const REFUNDED =
 	"This checkout was closed, so it was not linked to a team. An earlier payment was refunded in full; it can take 5–10 business days to reach you.";
-const FREE_PLAN = " A team already created for it stays on the free plan.";
+const FREE_PLAN = " A team already created for it stays on the Hobby plan.";
 
 describe("C106: endedSetupRead", () => {
 	const reasons: Array<PaymentHoldReleaseReason | null> = [...PAYMENT_HOLD_RELEASE_REASONS, null];
@@ -69,7 +69,7 @@ describe("C106: endedSetupClause", () => {
 		for (const read of reads) {
 			for (const alerted of [true, false]) {
 				const clause = endedSetupClause(read, { alerted, teamExists: true });
-				expect(clause.split("stays on the free plan").length - 1).toBe(1);
+				expect(clause.split("stays on the Hobby plan").length - 1).toBe(1);
 			}
 		}
 	});

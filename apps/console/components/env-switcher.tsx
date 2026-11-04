@@ -4,13 +4,13 @@
 
 import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
-import {
-	getEnvironmentsForSlug,
-	type SwitcherEnv,
-} from "@/app/server/actions/resolve";
+import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
+import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { orpc } from "@/lib/rpc/client";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import {
 	Command,
@@ -22,6 +22,9 @@ import {
 	CommandSeparator,
 } from "@repo/ui/command";
 import { Popover, PopoverContent } from "@repo/ui/popover";
+
+/** A stable empty list, so effects keyed on `envs` do not re-run on every render before data. */
+const NO_ENVS: SwitcherEnv[] = [];
 
 /**
  * Header environment switcher — the Vercel combobox after org + project. Lists the current
@@ -36,7 +39,6 @@ export function EnvSwitcher() {
 	const searchParams = useSearchParams();
 	const [open, setOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
-	const [envs, setEnvs] = useState<SwitcherEnv[]>([]);
 
 	// Parse `/{org}/{project}` — never the legacy /dashboard or `~` global tree. The active
 	// environment lives in the `?environment_id=` query param, so switching envs keeps the current
@@ -69,22 +71,18 @@ export function EnvSwitcher() {
 		[],
 	);
 
-	/** Fetches the project's environments (never throws — resolves to [] on failure). */
-	const loadEnvs = useCallback(
-		() => getEnvironmentsForSlug(project).catch(() => Array<SwitcherEnv>()),
-		[project],
-	);
-
-	useEffect(() => {
-		if (!isDrilldown) return;
-		let live = true;
-		loadEnvs().then((rows) => {
-			if (live) setEnvs(rows);
-		});
-		return () => {
-			live = false;
-		};
-	}, [isDrilldown, loadEnvs]);
+	// The project's environments, over the read router (#6114). The `[project]` layout prefetches
+	// them for a project that resolves, so the switcher paints with the active env. It asks only for
+	// a slug the org's (layout-prefetched) project list contains: a 404 project route makes no
+	// request beyond its layout.
+	const { data: projects } = useProjectsQuery();
+	const knownProject = isDrilldown && !!projects?.some((p) => p.slug === project);
+	const envsQuery = useQuery({
+		...orpc.workspace.environments.queryOptions({ input: { project: project ?? "" } }),
+		enabled: knownProject,
+	});
+	const envs = envsQuery.data ?? NO_ENVS;
+	const refetchEnvs = envsQuery.refetch;
 
 	// Shift+Tab cycles environments for fast switching (skips while typing in a field so
 	// normal reverse-tab focus still works).
@@ -129,8 +127,7 @@ export function EnvSwitcher() {
 
 	/** After creating an env: refresh the list and switch to the new env in the current view. */
 	const handleCreated = async (name: string) => {
-		const rows = await loadEnvs();
-		setEnvs(rows);
+		const { data: rows = [] } = await refetchEnvs();
 		const created = rows.find((e) => e.name === name);
 		if (created) {
 			syncElench(created.id, rows);

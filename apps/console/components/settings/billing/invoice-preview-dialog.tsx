@@ -10,7 +10,7 @@
 
 import { Download, ExternalLink } from "lucide-react";
 import { useParams } from "next/navigation";
-import type { InvoiceInfo } from "@/app/server/actions/billing";
+import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {

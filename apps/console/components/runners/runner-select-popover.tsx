@@ -38,11 +38,8 @@ export function RunnerSelectPopover({
   description,
   excludeId,
 }: RunnerSelectPopoverProps) {
-  const {
-    data: runnersData,
-    isPending: isLoading,
-    refetch,
-  } = useRunnersQuery();
+  // Live through the `runners` topic, so opening the popover needs no refetch of its own.
+  const { data: runnersData, isPending: isLoading } = useRunnersQuery();
   const allRunners = runnersData?.runners ?? [];
   const runners = useMemo(
     () =>
@@ -55,13 +52,12 @@ export function RunnerSelectPopover({
 
   useEffect(() => {
     if (open) {
-      void refetch();
       const defaultRunner = runners.find(
         (w) => w.is_default && w.status === "ONLINE",
       );
       setSelected(defaultRunner?.id ?? null);
     }
-  }, [open, refetch, runners]);
+  }, [open, runners]);
 
   const handleConfirm = () => {
     setOpen(false);

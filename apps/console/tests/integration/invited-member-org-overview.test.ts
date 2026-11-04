@@ -18,13 +18,13 @@
 // actor an accepted invitation produces. So the fixture calls the SAME function the ee
 // `afterAcceptInvitation` hook calls (`core.ensureMemberGrant(org.id, user.id, member.role)`) with
 // the SAME role string better-auth stores, then drives `queryProjects` / `getProjects` /
-// `getConnectedCloudProviders` — the three awaits in `app/(private)/[org]/page.tsx` — through the
+// `readConnectedCloudProviders` — the three awaits in `app/(private)/[org]/page.tsx` — through the
 // real actor seam and the real community PDP.
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { getConnectedCloudProviders } from "@/app/server/actions/connectors";
+import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 import { getProjects, queryProjects } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { ensureMemberGrant } from "@/lib/authz/grants";
@@ -66,7 +66,7 @@ const ENTITLEMENTS: Entitlements = {
 
 /** The actor `[org]/layout.tsx` resolves for this user on `/{org}` (org scope, not personal). */
 function actorFor(userId: string): Actor {
-	return { userId, orgId: ORG, entitlements: ENTITLEMENTS };
+	return { credential: "session", userId, orgId: ORG, entitlements: ENTITLEMENTS };
 }
 
 /** The org-wide grants held by `userId`, as `role_id`s (empty ⇒ the PDP denies everything). */
@@ -155,7 +155,7 @@ describeIfDb("an invited member can load /{org} (#3730)", () => {
 				Promise.all([
 					queryProjects({ q: "", clouds: [], repos: [], sort: "activity" }),
 					getProjects(),
-					getConnectedCloudProviders(),
+					readConnectedCloudProviders(),
 				]),
 		);
 		expect(Array.isArray(projects)).toBe(true);

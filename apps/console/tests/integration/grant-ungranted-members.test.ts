@@ -35,7 +35,7 @@ import {
 	runGrantPass,
 	type UngrantedMember,
 } from "../../scripts/grant-ungranted-members";
-import { describeIfDb, purgeAuthzActivityLog } from "./db";
+import { describeIfDb, insertStoredGrants, purgeAuthzActivityLog } from "./db";
 
 const ORG = randomUUID(); // no revocation recorded in it
 const ORG_REVOKED = randomUUID(); // one grant revocation recorded after its member joined
@@ -56,7 +56,7 @@ const pdp = new PostgresRbacPDP();
 
 /** Can this user view projects in this org, per the real community PDP? */
 async function canView(userId: string, orgId: string): Promise<boolean> {
-	return (await pdp.can({ userId, orgId }, "view", { type: "project" })).allowed;
+	return (await pdp.can({ credential: "session", userId, orgId }, "view", { type: "project" })).allowed;
 }
 
 /** The user's grant rows in one org, as the columns an org-wide member grant is made of. */
@@ -101,14 +101,16 @@ describeIfDb("the #3754 grant-ungranted-members operator command", () => {
 			{ organizationId: ORG, userId: U.unmappable, role: "auditor-typo", createdAt: joined },
 			{ organizationId: ORG_REVOKED, userId: U.revoked, role: "member", createdAt: joined },
 		]);
-		await db.insert(grants).values([
-			{
-				org_id: ORG,
-				principal_type: "user",
-				principal_id: U.granted,
-				role_id: BUILTIN_ROLE_IDS.operator,
-				resource_type: "org",
-			},
+		await db.insert(grants).values({
+			org_id: ORG,
+			principal_type: "user",
+			principal_id: U.granted,
+			role_id: BUILTIN_ROLE_IDS.operator,
+			resource_type: "org",
+		});
+		// A STORED row: PROJECT resolves to nothing, which the `grants_org_binding` trigger now
+		// refuses at write time; the control is about the command's reading of a scoped row.
+		await insertStoredGrants([
 			{
 				org_id: ORG,
 				principal_type: "user",

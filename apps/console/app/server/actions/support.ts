@@ -8,9 +8,16 @@
 // org's cases, everyone else only the ones they opened). Staff answer out of band (Slack +
 // the service-role ingest path); notifications here are best-effort so a failed email/Slack
 // never fails the customer's submit or reply.
+//
+// WRITES ONLY (ADR 0005 D1/D4, #6130). The reads moved to `lib/rpc/procedures/support.ts` and are
+// served over GET; every export here is a `defineAction` returning `ActionResult<T>`, called from
+// the client through `useActionMutation`.
 
 import { eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { auth } from "@/lib/auth";
 import { authorizeQuiet } from "@/lib/authz/guard";
@@ -27,17 +34,9 @@ import {
 	sendCaseResolvedEmail,
 	wantsEmail,
 } from "@/lib/email/support-email";
-import {
-	type CaseListItem,
-	type CaseWithThread,
-	getCaseWithThread,
-	listCasesForOwner,
-	type PublicMessage,
-} from "@/lib/queries/support";
 import { globalHref } from "@/lib/routing";
 import { slackCaseCreated, slackCaseReplied } from "@/lib/support/slack-notify";
 import {
-	type PostMessageInput,
 	postMessageSchema,
 	type SubmitCaseInput,
 	submitCaseSchema,
@@ -48,9 +47,11 @@ import {
 	nextStatusAfterCustomerReply,
 } from "@/lib/support/case-status";
 import type { AlertSeverity } from "@/lib/db/schema/enums";
-import type { SupportCase } from "@/lib/db/schema";
 import type { SupportContactPrefs } from "@/types/jsonb.types";
 import { getActiveOrgSlug } from "./resolve";
+
+/** The one argument the per-case actions take. */
+const caseIdInput = z.object({ id: z.string().uuid() });
 
 /** The session user's display name + email, for the message author snapshot. */
 async function sessionAuthor(): Promise<{ name: string; email: string }> {
@@ -109,15 +110,35 @@ function emitCaseEvent(
 	});
 }
 
+/** What a refused case lookup says: the same words whether it never existed or is not yours. */
+const CASE_NOT_FOUND = "This case doesn't exist, or you don't have access to it.";
+
+/**
+ * Checks a status transition, turning an illegal one into a CONFLICT the customer can read —
+ * the case moved under them (staff closed it, another tab resolved it) — instead of an
+ * unexpected error.
+ */
+function assertCaseTransition(from: SupportCaseStatus, to: SupportCaseStatus): void {
+	try {
+		assertTransition(from, to);
+	} catch {
+		throw new ActionRefusal("conflict", "This case changed while you were looking at it. Refresh and try again.");
+	}
+}
+
 /**
  * Opens a new support case: inserts the case plus its first (customer) thread message,
  * then fires the acknowledgement email + Slack/inbox notifications best-effort. Returns
  * the new case's id and human-facing case number.
  */
 export async function submitCase(
-	input: SubmitCaseInput,
-): Promise<{ id: string; caseNumber: number }> {
-	const data = submitCaseSchema.parse(input);
+	raw: z.input<typeof submitCaseSchema>,
+): Promise<ActionResult<{ id: string; caseNumber: number }>> {
+	return defineAction({ input: submitCaseSchema, run: ({ input }) => openCase(input) })(raw);
+}
+
+/** The body of {@link submitCase}, on already-validated input. */
+async function openCase(data: SubmitCaseInput): Promise<{ id: string; caseNumber: number }> {
 	const actor = await authorizeQuiet("create", { type: "support_case" });
 	const author = await sessionAuthor();
 
@@ -199,38 +220,38 @@ export async function submitCase(
 	return { id: created.id, caseNumber: created.case_number };
 }
 
-/** Lists the caller's cases (newest activity first), optionally by lifecycle bucket. */
-export async function listMyCases(filter?: {
-	status?: "active" | "resolved";
-}): Promise<CaseListItem[]> {
-	const actor = await authorizeQuiet("view", { type: "support_case" });
-	return withSupportScope(actor, (tx) =>
-		listCasesForOwner(tx, actor.userId, filter ?? {}),
-	);
-}
-
 /**
- * Loads one case with its customer-visible thread + attachments, and advances the
- * caller's read watermark. Returns null when the case isn't visible.
+ * Advances the caller's read watermark on a case — what clears its unread dot in "My cases" and
+ * the bell. The case view fires it once it has the case and again when a newer message lands;
+ * before #6130 the case READ wrote this as a side effect, which a GET procedure must not do.
  */
-export async function getCase(id: string): Promise<{
-	case: SupportCase;
-	messages: PublicMessage[];
-	attachments: CaseWithThread["attachments"];
-} | null> {
-	const actor = await authorizeQuiet("view", { type: "support_case", id });
-	return withSupportScope(actor, async (tx) => {
-		const result = await getCaseWithThread(tx, id);
-		if (!result) return null;
-		await tx
-			.insert(supportCaseReads)
-			.values({ case_id: id, user_id: actor.userId, last_read_at: new Date() })
-			.onConflictDoUpdate({
-				target: [supportCaseReads.case_id, supportCaseReads.user_id],
-				set: { last_read_at: new Date() },
+export async function markCaseRead(
+	raw: z.input<typeof caseIdInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: caseIdInput,
+		run: async ({ input }) => {
+			const actor = await authorizeQuiet("view", { type: "support_case", id: input.id });
+			await withSupportScope(actor, async (tx) => {
+				// Visible first: the watermark table's policy would refuse the write anyway, but as
+				// an RLS error rather than the not-found a missing case is.
+				const [visible] = await tx
+					.select({ id: supportCases.id })
+					.from(supportCases)
+					.where(eq(supportCases.id, input.id))
+					.limit(1);
+				if (!visible) throw new ActionRefusal("not-found", CASE_NOT_FOUND);
+				await tx
+					.insert(supportCaseReads)
+					.values({ case_id: input.id, user_id: actor.userId, last_read_at: new Date() })
+					.onConflictDoUpdate({
+						target: [supportCaseReads.case_id, supportCaseReads.user_id],
+						set: { last_read_at: new Date() },
+					});
 			});
-		return result;
-	});
+			return { id: input.id };
+		},
+	})(raw);
 }
 
 /**
@@ -239,9 +260,13 @@ export async function getCase(id: string): Promise<{
  * support (email + Slack) best-effort. Returns the new message id.
  */
 export async function postCaseMessage(
-	input: PostMessageInput,
-): Promise<{ id: string }> {
-	const data = postMessageSchema.parse(input);
+	raw: z.input<typeof postMessageSchema>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({ input: postMessageSchema, run: ({ input }) => replyToCase(input) })(raw);
+}
+
+/** The body of {@link postCaseMessage}, on already-validated input. */
+async function replyToCase(data: z.output<typeof postMessageSchema>): Promise<{ id: string }> {
 	const actor = await authorizeQuiet("reply", {
 		type: "support_case",
 		id: data.caseId,
@@ -264,10 +289,10 @@ export async function postCaseMessage(
 			.from(supportCases)
 			.where(eq(supportCases.id, data.caseId))
 			.limit(1);
-		if (!caseRow) throw new Error("Case not found");
+		if (!caseRow) throw new ActionRefusal("not-found", CASE_NOT_FOUND);
 
 		const nextStatus = nextStatusAfterCustomerReply(caseRow.status);
-		assertTransition(caseRow.status, nextStatus);
+		assertCaseTransition(caseRow.status, nextStatus);
 
 		const [msg] = await tx
 			.insert(supportMessages)
@@ -377,8 +402,8 @@ async function transitionCase(
 			.from(supportCases)
 			.where(eq(supportCases.id, id))
 			.limit(1);
-		if (!caseRow) throw new Error("Case not found");
-		assertTransition(caseRow.status, to);
+		if (!caseRow) throw new ActionRefusal("not-found", CASE_NOT_FOUND);
+		assertCaseTransition(caseRow.status, to);
 		await tx
 			.update(supportCases)
 			.set({ status: to, updated_at: sql`now()`, ...extra })
@@ -394,7 +419,20 @@ async function transitionCase(
 }
 
 /** Marks a case resolved (stamps resolved_at) + notifies the customer. */
-export async function resolveCase(id: string): Promise<void> {
+export async function resolveCase(
+	raw: z.input<typeof caseIdInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: caseIdInput,
+		run: async ({ input }) => {
+			await resolveImpl(input.id);
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** The body of {@link resolveCase}. */
+async function resolveImpl(id: string): Promise<void> {
 	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "resolved", {
 		resolved_at: new Date(),
 	});
@@ -412,7 +450,20 @@ export async function resolveCase(id: string): Promise<void> {
 }
 
 /** Reopens a resolved/closed case back to `open` + notifies the customer. */
-export async function reopenCase(id: string): Promise<void> {
+export async function reopenCase(
+	raw: z.input<typeof caseIdInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: caseIdInput,
+		run: async ({ input }) => {
+			await reopenImpl(input.id);
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** The body of {@link reopenCase}. */
+async function reopenImpl(id: string): Promise<void> {
 	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "open");
 	const url = await caseUrl(id);
 	if (wantsEmail(contact)) {
@@ -428,7 +479,20 @@ export async function reopenCase(id: string): Promise<void> {
 }
 
 /** Closes a case (stamps closed_at) + notifies the customer. */
-export async function closeCase(id: string): Promise<void> {
+export async function closeCase(
+	raw: z.input<typeof caseIdInput>,
+): Promise<ActionResult<{ id: string }>> {
+	return defineAction({
+		input: caseIdInput,
+		run: async ({ input }) => {
+			await closeImpl(input.id);
+			return { id: input.id };
+		},
+	})(raw);
+}
+
+/** The body of {@link closeCase}. */
+async function closeImpl(id: string): Promise<void> {
 	const { caseNumber, subject, contact, orgId } = await transitionCase(id, "closed", {
 		closed_at: new Date(),
 	});

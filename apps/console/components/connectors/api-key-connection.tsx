@@ -16,9 +16,9 @@ import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
 import { StatusCallout, StoredNote } from "@/components/connectors/connection-ui";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
+import { connectorKeys } from "@/components/connectors/connectors-board";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -27,28 +27,20 @@ interface ApiKeyConnectionProps {
 	onConnected?: () => void;
 }
 
-type SubmitState =
-	| { phase: "idle" }
-	| { phase: "saving" }
-	| { phase: "success"; verified: boolean; message?: string }
-	| { phase: "failed"; error: string };
-
 /**
- * Generic credential form for any api_key connector provider — fields are
- * rendered from the provider's registry credential project, so adding a new provider
- * needs no new component. Submits to saveConnectorCredential (which encrypts the
- * secret fields and pings the provider to verify).
+ * Generic credential form for any api_key connector provider — fields are rendered from the
+ * provider's registry credential project, so adding a new provider needs no new component. Submits
+ * to `saveConnectorCredential` (which encrypts the secret fields and pings the provider to verify)
+ * through `useActionMutation`: the submit is disabled while it runs, a required field the server
+ * finds empty is reported under that field, and the board is invalidated when it settles.
  */
 export function ApiKeyConnection({
 	provider,
 	onConnected,
 }: ApiKeyConnectionProps) {
-	const router = useRouter();
-	const [state, setState] = useState<SubmitState>({ phase: "idle" });
-
-	// Defaults from the declarative field project. Validation is per-field below —
-	// the dynamic field set has no static shape, so we validate on submit rather
-	// than via a schema resolver, and the server action re-validates + verifies.
+	// Defaults from the declarative field project. Validation is per-field below — the dynamic field
+	// set has no static shape, so it is validated on submit rather than via a schema resolver, and
+	// the server action re-validates + verifies.
 	const defaults: Record<string, string> = {};
 	for (const f of provider.credentialFields) defaults[f.key] = "";
 
@@ -59,7 +51,31 @@ export function ApiKeyConnection({
 		mode: "onSubmit",
 	});
 
-	const onSubmit = async (values: FormValues) => {
+	const save = useActionMutation(saveConnectorCredential, {
+		invalidates: connectorKeys(),
+		// The server reports a field as `fields.<key>`; the form names it `<key>`.
+		onValidationError: (fields) => {
+			for (const [path, messages] of Object.entries(fields)) {
+				const message = messages?.[0];
+				if (!message) continue;
+				const key = path.startsWith("fields.") ? path.slice("fields.".length) : path;
+				if (key in defaults) form.setError(key, { message });
+				else form.setError("root", { message });
+			}
+		},
+		onSuccess: (result) => {
+			if (result.verified) {
+				toast.success(`${provider.name} connected and verified.`);
+			} else {
+				toast.warning(
+					`${provider.name} saved, but verification failed${result.message ? `: ${result.message}` : "."}`,
+				);
+			}
+			onConnected?.();
+		},
+	});
+
+	const onSubmit = (values: FormValues) => {
 		// Required-field validation (registry-driven) with inline messages.
 		let hasError = false;
 		for (const f of provider.credentialFields) {
@@ -68,59 +84,35 @@ export function ApiKeyConnection({
 				hasError = true;
 			}
 		}
-		if (hasError) return;
-
-		setState({ phase: "saving" });
-		try {
-			const result = await saveConnectorCredential(provider.slug, values);
-			if (!result.ok) {
-				setState({ phase: "failed", error: result.error });
-				return;
-			}
-			setState({
-				phase: "success",
-				verified: result.verified,
-				message: result.message,
-			});
-			if (result.verified) {
-				toast.success(`${provider.name} connected and verified.`);
-			} else {
-				toast.warning(
-					`${provider.name} saved, but verification failed${
-						result.message ? `: ${result.message}` : "."
-					}`,
-				);
-			}
-			router.refresh();
-			onConnected?.();
-		} catch (err) {
-			setState({
-				phase: "failed",
-				error:
-					err instanceof Error ? err.message : "Failed to save credential.",
-			});
-		}
+		if (hasError || save.isPending) return;
+		save.mutate({ slug: provider.slug, fields: values });
 	};
+
+	// A refusal shows here; a validation refusal shows under its field instead, so not twice.
+	const failure =
+		save.error && save.error.error.kind !== "validation"
+			? save.error.message
+			: form.formState.errors.root?.message;
 
 	return (
 		<div className="space-y-5">
 			<p className="text-sm text-muted-foreground">{provider.description}</p>
 
-			{state.phase === "success" && (
+			{save.data && (
 				<StatusCallout
 					variant="success"
-					title={state.verified ? "Connected and verified" : "Saved"}
+					title={save.data.verified ? "Connected and verified" : "Saved"}
 				>
-					{state.verified
+					{save.data.verified
 						? `${provider.name} is ready to use in a Project.`
-						: (state.message ??
+						: (save.data.message ??
 							"The credential was stored but could not be verified.")}
 				</StatusCallout>
 			)}
 
-			{state.phase === "failed" && (
+			{failure && (
 				<StatusCallout variant="error" title="Could not connect">
-					{state.error}
+					{failure}
 				</StatusCallout>
 			)}
 
@@ -165,12 +157,12 @@ export function ApiKeyConnection({
 					<Button
 						type="submit"
 						className="w-full h-9 text-xs font-medium"
-						disabled={state.phase === "saving"}
+						disabled={save.isPending}
 					>
-						{state.phase === "saving" && (
+						{save.isPending && (
 							<Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
 						)}
-						{state.phase === "success" ? "Update credential" : "Connect"}
+						{save.data ? "Update credential" : "Connect"}
 					</Button>
 				</form>
 			</Form>

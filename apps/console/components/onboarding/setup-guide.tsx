@@ -20,11 +20,13 @@ import {
 	Users,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect } from "react";
 import type { GettingStartedState } from "@/app/server/actions/onboarding";
 import { globalHref, orgHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { useSetupGuideStore } from "@/lib/stores/use-setup-guide-store";
+import {
+	useSetupGuideQuery,
+	useSetupGuideStore,
+} from "@/lib/stores/use-setup-guide-store";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
@@ -89,17 +91,14 @@ function getSetupSteps(
 }
 
 /**
- * Topbar entry for the setup guide: a circular progress ring + label. Fetches progress
- * on mount and on org switch, and renders nothing until loaded or once every step is
+ * Topbar entry for the setup guide: a circular progress ring + label. Reads the progress the
+ * `[org]` layout prefetched (#6114), and renders nothing until it is there or once every step is
  * done. Clicking it toggles the bottom-right card.
  */
 export function SetupGuideButton() {
 	const orgSlug = useActiveOrgSlug();
-	const { state, fetch, toggle } = useSetupGuideStore();
-
-	useEffect(() => {
-		if (orgSlug) fetch();
-	}, [orgSlug, fetch]);
+	const { data: state = null } = useSetupGuideQuery();
+	const toggle = useSetupGuideStore((s) => s.toggle);
 
 	const steps = getSetupSteps(orgSlug, state);
 	const total = steps.length;
@@ -127,7 +126,9 @@ export function SetupGuideButton() {
  */
 export function SetupGuideCard() {
 	const orgSlug = useActiveOrgSlug();
-	const { state, open, setOpen } = useSetupGuideStore();
+	const { data: state = null } = useSetupGuideQuery();
+	const open = useSetupGuideStore((s) => s.open);
+	const setOpen = useSetupGuideStore((s) => s.setOpen);
 
 	const steps = getSetupSteps(orgSlug, state);
 	const total = steps.length;
@@ -242,9 +243,11 @@ function ProgressRing({
 	return (
 		<span className="relative inline-flex shrink-0 items-center justify-center">
 			<svg width={size} height={size} className="-rotate-90">
-				<title>
-					{done} of {total} steps done
-				</title>
+				{/* ONE text node. `{done} of {total}` renders three, which React separates with `<!-- -->`
+				    markers; a `<title>` cannot hold those, so the browser keeps them as text and the
+				    hydrating render no longer matches — React #418 on every org page once this ring
+				    was server-rendered from the layout's seed (#6114). */}
+				<title>{`${done} of ${total} steps done`}</title>
 				<circle
 					cx={size / 2}
 					cy={size / 2}

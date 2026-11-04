@@ -72,7 +72,7 @@ export function Combobox({
         }
       />
       <PopoverContent
-        className="w-[--radix-popover-trigger-width] p-0"
+        className="w-[var(--anchor-width)] p-0"
         align="start"
       >
         {/* The search inside the popup is named for the same purpose as its trigger. cmdk names its

@@ -11,6 +11,16 @@
 @source "../../../packages/ui/src";
 @source "../../../packages/brand/src";
 @source "../../../packages/privacy/src";
+/* streamdown (the chat's markdown renderer) puts its own utility classes on the elements it
+   renders: `list-disc`, `list-inside`, `wrap-anywhere`, its heading and code-block styles. Tailwind
+   never scans node_modules on its own, so without this line none of them is generated and a chat
+   list renders with no markers (#6194). The path is streamdown's README form, relative to this
+   file, through the CONSOLE's node_modules: pnpm does not hoist streamdown to the repo root, it
+   links it at apps/console/node_modules/streamdown — locally and in the Dockerfile's
+   `pnpm install --filter console...` alike. Its plugins (@streamdown/cjk, math, mermaid) ship no
+   class names, so they need no entry. tests/styles/streamdown-source.test.ts compiles this file
+   and fails if the classes go missing. */
+@source "../node_modules/streamdown/dist/*.js";
 
 /* The shell header height — read by the topbar, the sidebar heads and the Elench panel header
    through `SHELL_HEADER` / `SHELL_VIEWPORT` (components/shell/shell-metrics.ts). Console-only:
@@ -92,4 +102,16 @@
   .cta-shine {
     animation: none;
   }
+}
+
+/* streamdown's code-block line numbers. Once its dist is scanned (the @source above), streamdown
+   sets them at a hardcoded `before:text-[13px]` in `before:text-muted-foreground/50` — a font size
+   off the --text-ui-* ladder and an alpha ink tier, the two things the console's shared-surface
+   guard refuses in console source. This puts them on the 13px rung and the tertiary ink, as the
+   console's own code block (components/ai-elements/code-block.tsx) does. One rule here rather than
+   a wrapper class at each <Streamdown> (the chat message, reasoning, release notes): unlayered CSS
+   outranks Tailwind's utilities layer, so it holds wherever streamdown renders a code block. */
+[data-streamdown="code-block-body"] code > span::before {
+  font-size: var(--text-ui-md);
+  color: var(--text-tertiary);
 }

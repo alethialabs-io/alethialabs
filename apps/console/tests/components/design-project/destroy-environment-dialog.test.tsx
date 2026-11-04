@@ -25,6 +25,7 @@ import {
 } from "@/lib/canvas/component-status";
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { queryWrapper } from "@/tests/helpers/query-wrapper";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
 
@@ -72,6 +73,7 @@ function renderCard(c: DestroyEnvironmentControl, status: Partial<EnvironmentSta
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...status }}>
 			<EnvSettingsCard destroyEnvironment={c} />
 		</EnvironmentStatusProvider>,
+		{ wrapper: queryWrapper() },
 	);
 }
 
@@ -86,6 +88,28 @@ beforeEach(() => {
 	useCanvasStore.getState().reset();
 });
 
+describe("a tree that could not be read", () => {
+	// A stale environment id used to reach the server as "destroy whatever resolves", which falls
+	// back to the project's DEFAULT environment. With no tree there is no environment to name, so
+	// the dialog says why and offers no destroy at all.
+	it("offers no destroy when the tree read fails", async () => {
+		const c: DestroyEnvironmentControl = {
+			projectName: "shop",
+			loadTree: vi.fn(async () => {
+				throw new Error("Environment not found.");
+			}),
+			destroy: vi.fn(async () => {}),
+		};
+		renderCard(c);
+		const dialog = await openDialog(c);
+		expect(await within(dialog).findByText(/can.t be destroyed from here/i)).toBeInTheDocument();
+		const confirm = within(dialog).getByRole("button", { name: "Destroy environment" });
+		expect(confirm).toBeDisabled();
+		fireEvent.click(confirm);
+		expect(c.destroy).not.toHaveBeenCalled();
+	});
+});
+
 describe("no live tenants — today's confirm, unchanged", () => {
 	it("reads the tree first, then destroys without cascading", async () => {
 		const c = control([node({ name: "prod", placement_mode: "dedicated", owns_fabric: true })]);
@@ -96,7 +120,8 @@ describe("no live tenants — today's confirm, unchanged", () => {
 		await waitFor(() => expect(confirm).toBeEnabled());
 		expect(within(dialog).queryByRole("list")).not.toBeInTheDocument();
 		fireEvent.click(confirm);
-		expect(c.destroy).toHaveBeenCalledWith({ cascade: false });
+		// The destroy names the environment the tree read, never one resolved again on the way.
+		expect(c.destroy).toHaveBeenCalledWith({ cascade: false, environmentId: "env-prod" });
 	});
 
 	it("holds the destroy button while the tree is still being read", async () => {
@@ -111,20 +136,6 @@ describe("no live tenants — today's confirm, unchanged", () => {
 		const dialog = await screen.findByRole("alertdialog");
 		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeDisabled();
 		await act(async () => resolve([node({ name: "prod" })]));
-		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeEnabled();
-	});
-
-	it("still lets the user destroy when the tree cannot be read — the server refuses if it must", async () => {
-		const c: DestroyEnvironmentControl = {
-			projectName: "shop",
-			loadTree: vi.fn(async () => {
-				throw new Error("boom");
-			}),
-			destroy: vi.fn(async () => {}),
-		};
-		renderCard(c);
-		const dialog = await openDialog(c);
-		expect(await within(dialog).findByText(/couldn.t check whether other environments/i)).toBeInTheDocument();
 		expect(within(dialog).getByRole("button", { name: "Destroy environment" })).toBeEnabled();
 	});
 });
@@ -180,7 +191,9 @@ describe("live tenants — the ordered list and two choices", () => {
 		await user.type(input, "p");
 		await waitFor(() => expect(cascade).toBeEnabled());
 		await user.click(cascade);
-		await waitFor(() => expect(c.destroy).toHaveBeenCalledWith({ cascade: true }));
+		await waitFor(() =>
+			expect(c.destroy).toHaveBeenCalledWith({ cascade: true, environmentId: "env-prod" }),
+		);
 		expect(c.destroy).toHaveBeenCalledTimes(1);
 	});
 
@@ -227,6 +240,7 @@ describe("a held destroy — waiting on its tenants", () => {
 			<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, ...held }}>
 				<ActivityStatusLine loadDestroyTree={loadTree} />
 			</EnvironmentStatusProvider>,
+			{ wrapper: queryWrapper() },
 		);
 		const line = screen.getByRole("button", { name: /open the activity log/i });
 		await waitFor(() => expect(line).toHaveTextContent("Waiting on dev-1 +1"));
@@ -241,6 +255,7 @@ describe("a held destroy — waiting on its tenants", () => {
 			>
 				<ActivityStatusLine loadDestroyTree={loadTree} />
 			</EnvironmentStatusProvider>,
+			{ wrapper: queryWrapper() },
 		);
 		expect(loadTree).not.toHaveBeenCalled();
 		expect(screen.getByRole("button", { name: /open the activity log/i })).toHaveTextContent(/running/i);

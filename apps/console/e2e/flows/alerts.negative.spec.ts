@@ -189,16 +189,19 @@ test.describe("Alerts — a secret-bearing transport, now that the leg promises 
 	);
 
 	// THE PATH THE MISSING KEY MADE UNREACHABLE. `addChannel` encrypts the secret and only THEN
-	// verifies the endpoint, so an error that names the endpoint proves the encryption step ran.
+	// verifies the endpoint, so the outbound guard's answer proves the encryption step ran.
 	//
 	// 198.51.100.9 is TEST-NET-2 (RFC 5737, reserved for documentation and guaranteed unroutable).
 	// lib/net/ssrf-guard.ts refuses it at CLASSIFICATION — `dns.lookup` short-circuits an IP
 	// literal, so this test opens no socket, waits on no resolver and cannot flake on either.
 	//
-	// ⚠ THE ASSERTION NAMES THE ADDRESS, and that is not decoration. TWO other failures reach this
-	// same rendering: the missing-key error, and the rate limiter's "Too many attempts". Both would
-	// satisfy a bare "an error appeared" — the first of them VACUOUSLY, since it is exactly the
-	// state this test exists to prove is over. Only the real path can echo back what was typed.
+	// ⚠ THE ASSERTION NAMES THE GUARD'S SENTENCE, and that is not decoration. TWO other failures reach
+	// this same rendering: the missing-key error, and the rate limiter's "Too many attempts". Both would
+	// satisfy a bare "an error appeared" — the first of them VACUOUSLY, since it is exactly the state
+	// this test exists to prove is over. Since #6125 the guard's refusal is reported as one fixed
+	// sentence (`UNREACHABLE_DESTINATION`, lib/net/ssrf-guard.ts) rather than echoing the address back;
+	// only the guard path produces that sentence, so it still tells the real path from the other two.
+	// The address must NOT appear: the sentence is the whole answer.
 	test(
 		"a webhook whose endpoint cannot be verified reports it, and creates nothing",
 		{ tag: "@needs:encryption" },
@@ -212,8 +215,9 @@ test.describe("Alerts — a secret-bearing transport, now that the leg promises 
 			await sheet.getByRole("button", { name: "Add channel" }).click();
 
 			await expect(
-				sheet.getByText(/198\.51\.100\.9/).first(),
+				sheet.getByText("This destination isn't publicly reachable over HTTPS."),
 			).toBeVisible({ timeout: 20_000 });
+			await expect(sheet.getByText(/198\.51\.100\.9/)).toHaveCount(0);
 			await expect(
 				sheet.getByText(/This transport stores a secret, which needs an encryption key/),
 			).toHaveCount(0);

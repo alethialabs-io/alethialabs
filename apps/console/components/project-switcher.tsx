@@ -24,6 +24,23 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, projectHref } from "@/lib/routing";
 
 /**
+ * How well a project name matches what was typed into the switcher's search, for cmdk's `filter`
+ * (higher sorts first; 0 hides the row). Exact, then prefix, then the start of a later word, then
+ * a plain substring — and NOTHING for a scattered-letter match. cmdk's default scorer is fuzzy, so
+ * "zz" listed htz3, htz2 and azdemo (F038): rows the user did not type and cannot see why.
+ */
+export function rankProjectMatch(name: string, search: string): number {
+	const query = search.trim().toLowerCase();
+	if (query === "") return 1;
+	const value = name.trim().toLowerCase();
+	if (value === query) return 1;
+	if (value.startsWith(query)) return 0.9;
+	if (value.split(/[\s\-_./]+/).some((word) => word.startsWith(query))) return 0.8;
+	if (value.includes(query)) return 0.5;
+	return 0;
+}
+
+/**
  * Header project switcher — the Vercel combobox between org and env. Lists the org's projects
  * (flat, from the projects store) and navigates to `/{org}/{project}`. Persistent across the
  * whole org (overview, `~` global pages, and project drilldowns) so you can jump into a project
@@ -35,7 +52,8 @@ export function ProjectSwitcher() {
 	const pathname = usePathname();
 	const orgSlug = useActiveOrgSlug();
 	const [open, setOpen] = useState(false);
-	const { data: projects = [] } = useProjectsQuery();
+	// Prefetched by the `[org]` layout (#6114), so the active project is named on first paint.
+	const { data: projects = [], isSuccess: projectsLoaded } = useProjectsQuery();
 
 	// Render across the whole org (overview, `~` global pages, project drilldowns) — never the
 	// legacy `/dashboard/*` tree. The active project is only the one in a `/{org}/{project}/…`
@@ -73,10 +91,12 @@ export function ProjectSwitcher() {
 						</span>
 					) : undefined
 				}
-				label={active?.project_name ?? "All projects"}
+				// On a project route whose list is not there yet (only after a failed prefetch), the
+				// address names the project — never "All projects", which is a different selection.
+				label={active?.project_name ?? (projectSlug && !projectsLoaded ? projectSlug : "All projects")}
 			/>
 			<PopoverContent className="w-72 p-0" align="start">
-				<Command label="Find project">
+				<Command label="Find project" filter={rankProjectMatch}>
 					{projects.length > 0 ? (
 						<>
 							<CommandInput placeholder="Find project…" className="h-9" />

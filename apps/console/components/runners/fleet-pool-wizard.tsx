@@ -263,8 +263,8 @@ export function FleetPoolWizard({
   };
 
   const onSubmit = async (v: FormValues) => {
+    const input = formToInput(v);
     try {
-      const input = formToInput(v);
       if (isEdit && pool) {
         await updatePool({ id: pool.id, input });
         toast.success("Pool updated");
@@ -273,8 +273,8 @@ export function FleetPoolWizard({
         toast.success("Pool created");
       }
       onOpenChange(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save pool");
+    } catch {
+      // The refusal is already on screen (useActionMutation's one toast); the sheet stays open.
     }
   };
 

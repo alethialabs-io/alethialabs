@@ -185,7 +185,6 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
 async function declareOrganizationPayer(page: import("@playwright/test").Page): Promise<void> {
 	const dialog = page.getByRole("dialog", { name: "Upgrade to Pro" });
 	await dialog.getByRole("radio", { name: /An organization/ }).check({ timeout: 30_000 });
-	await dialog.getByPlaceholder("Director").fill("Director");
 	await dialog.getByRole("button", { name: "Select a country" }).click();
 	// The country list is a popover portalled outside the sheet, so it is located on the page. Its
 	// search is named by cmdk's `label` ("Search country", #5803), so it is asked for by role.
@@ -193,6 +192,15 @@ async function declareOrganizationPayer(page: import("@playwright/test").Page): 
 	// Not `exact`: each row's flag carries the country's name as an SVG title, so the option's
 	// accessible name can read it twice. The search above has already narrowed the list to one.
 	await page.getByRole("option", { name: /Germany/ }).first().click();
+	// F033 (#6132): the authority is typed IMMEDIATELY after the pick, key by key, as a person does —
+	// while the country list is still animating out over this field. Typing here used to land on the
+	// country trigger (focus returned to it when the close finished) and the field stayed empty.
+	const authority = dialog.getByPlaceholder("Director");
+	await authority.click();
+	await page.keyboard.type("Director");
+	await expect(authority, "typing right after choosing a country reached the authority field").toHaveValue(
+		"Director",
+	);
 	const submit = dialog.getByRole("button", { name: /Continue to payment/ });
 	await submit.click();
 	await expect(submit, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeHidden({
@@ -323,11 +331,20 @@ test.describe("Billing settings — Pro trial (team)", () => {
 		await expect(team.page.getByText(/^Cancels /)).toHaveCount(0);
 	});
 
-	test("cloud-spend disclaimer is shown on the plan card", { tag: "@needs:stripe" }, async ({ team }) => {
+	// #6133, design decision A: Usage owns all of AI (tier, meters, credits, spend limits). The plan
+	// card states the AI tier as one row linking there, and neither the AI card nor the cloud-spend
+	// note (Usage's footnote to its cloud-spend figure) is on this page.
+	test("the plan card names the AI plan and links to Usage, which owns the AI controls", { tag: "@needs:stripe" }, async ({ team }) => {
 		await team.page.goto(billingPath(team.orgSlug));
-		await expect(
-			team.page.getByText(/cloud-resource spend is billed separately/i),
-		).toBeVisible({ timeout: 30_000 });
+		const aiRow = team.page.getByTestId("billing-ai-plan-row");
+		await expect(aiRow.getByText(/^AI (Free|Plus|Max)$/)).toBeVisible({ timeout: 30_000 });
+		await expect(aiRow.getByRole("link", { name: /usage & limits/i })).toHaveAttribute(
+			"href",
+			`/${team.orgSlug}/~/usage#ai`,
+		);
+		await expect(team.page.getByRole("heading", { name: "AI plan & usage" })).toHaveCount(0);
+		await expect(team.page.getByRole("button", { name: "Upgrade AI plan" })).toHaveCount(0);
+		await expect(team.page.getByText(/cloud-resource spend is billed separately/i)).toHaveCount(0);
 	});
 
 	test("a Stripe customer (trial) gets the in-app Payment methods section", { tag: "@needs:stripe" }, async ({ team }) => {
@@ -745,7 +762,10 @@ test.describe("Usage — Pro trial (team)", () => {
 		await team.page.goto(usagePath(team.orgSlug));
 		await expect(team.page.getByText("Pro plan")).toBeVisible({ timeout: 30_000 });
 		// Non-community → a Manage billing link (not an inline upgrade CTA).
-		await expect(team.page.getByRole("link", { name: /manage billing/i })).toBeVisible();
+		await expect(team.page.getByRole("link", { name: /manage billing/i })).toHaveAttribute(
+			"href",
+			`/${team.orgSlug}/~/settings/billing`,
+		);
 	});
 
 	test("plan & limits renders the seats / concurrency gauges", { tag: "@needs:stripe" }, async ({ team }) => {

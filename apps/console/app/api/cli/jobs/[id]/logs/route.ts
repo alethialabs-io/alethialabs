@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { authorizeCli } from "@/lib/authz/guard";
+import { jobVisibleTo } from "@/lib/jobs/visibility";
 import { getServiceDb } from "@/lib/db";
 import { jobLogs, jobs } from "@/lib/db/schema";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
@@ -23,6 +24,10 @@ export async function GET(
 	const { searchParams } = new URL(req.url);
 	const after = searchParams.get("after");
 
+	// Job visibility follows project visibility (lib/jobs/visibility.ts), as in the console: a job of a
+	// project the caller may not view is answered as one that does not exist.
+	const visible = await jobVisibleTo(auth.actor);
+
 	try {
 		const db = getServiceDb();
 
@@ -38,7 +43,7 @@ export async function GET(
 			// It is `auth.orgScope` and not a ternary on `auth.credential`: the values are the
 			// whole of #4154, and a per-route derivation is how the wide arm gets copied into a
 			// fourth file.
-			.where(and(eq(jobs.id, jobId), inArray(jobs.org_id, [...auth.orgScope])))
+			.where(and(eq(jobs.id, jobId), inArray(jobs.org_id, [...auth.orgScope]), visible))
 			.limit(1);
 
 		if (!job) {

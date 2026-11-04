@@ -6,19 +6,19 @@
 // env" protection summary, and a right rail (auto-heal + duplicate + delete). Presentational; the
 // mutations are handled by the orchestrator.
 
-import { formatMonthlyRate, formatRelative } from "@repo/format";
+import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { Switch } from "@repo/ui/switch";
 import { Check, Copy, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import type { EnvReconcileState } from "@/app/server/actions/reconcile";
 import type { ProtectionSummary } from "@/app/server/actions/protection";
+import type { EnvReconcileState } from "@/app/server/actions/reconcile";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { envHref } from "@/lib/routing";
-import type { EnvRow } from "./environments-view";
-import { StatusDot } from "./env-ui";
+import type { EnvRow } from "@/lib/rpc/procedures/environments";
+import { RelativeStamp, StatusDot } from "./env-ui";
 
 /**
  * Gates a classification value tagged on this env forces onto promotions into it (the label drives
@@ -134,7 +134,9 @@ export function EnvironmentCard({
 					{/* Inherits the row's tertiary ink at full strength — an alpha here composited to
 					    a grey below 4.5:1 that no token could rescue (#4197). */}
 					<span aria-hidden="true">·</span>
-					<span>Updated {formatRelative(env.updated_at)}</span>
+					<span>
+						Updated <RelativeStamp at={env.updated_at} />
+					</span>
 				</div>
 
 				{/* classification chips + picker */}

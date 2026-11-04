@@ -12,7 +12,12 @@
 //
 // Against the old dialog every case fails: it destructured `{ environment }` from the result, so a
 // refusal value reached `onCreated(undefined.name)` and toasted a TypeError instead.
+//
+// #6120: the create runs through `useActionMutation` — the refusal is a `validation` result on the
+// name field, handed to the form rather than to a toast — and a created environment invalidates the
+// topbar switcher's read and the Environments page's, so both list it without a reload.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +27,7 @@ const duplicateEnvironment = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 vi.mock("@/app/server/actions/projects", () => ({
 	addEnvironment: (...a: unknown[]) => addEnvironment(...a),
 	duplicateEnvironment: (...a: unknown[]) => duplicateEnvironment(...a),
@@ -34,6 +40,9 @@ vi.mock("sonner", () => ({
 }));
 
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
+import { orpc } from "@/lib/rpc/client";
+
+let client: QueryClient;
 
 const TAKEN = 'This project already has an environment named "staging". Choose another name.';
 
@@ -41,19 +50,22 @@ const TAKEN = 'This project already has an environment named "staging". Choose a
 function renderIt(onCreated = vi.fn()) {
 	const onOpenChange = vi.fn();
 	render(
-		<NewEnvironmentDialog
-			open
-			onOpenChange={onOpenChange}
-			projectId="p1"
-			envs={[{ id: "env-1", project_id: "p1", name: "production", is_default: true, stage: "production" }]}
-			onCreated={onCreated}
-		/>,
+		<QueryClientProvider client={client}>
+			<NewEnvironmentDialog
+				open
+				onOpenChange={onOpenChange}
+				projectId="p1"
+				envs={[{ id: "env-1", project_id: "p1", name: "production", is_default: true, stage: "production" }]}
+				onCreated={onCreated}
+			/>
+		</QueryClientProvider>,
 	);
 	return { onCreated, onOpenChange };
 }
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 
 describe("NewEnvironmentDialog — a refused name", () => {
@@ -114,5 +126,38 @@ describe("NewEnvironmentDialog — a refused name", () => {
 		await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("staging"));
 		expect(toastSuccess).toHaveBeenCalledWith("Environment duplicated");
 		expect(screen.queryByRole("alert")).toBeNull();
+	});
+
+	it("invalidates the switcher's environment list and the Environments page's read on success", async () => {
+		const switcher = [...orpc.workspace.environments.queryKey({ input: { project: "payments" } })];
+		const page = [...orpc.environments.overview.queryKey({ input: { project: "payments" } })];
+		client.setQueryData(switcher, []);
+		client.setQueryData(page, {});
+		addEnvironment.mockResolvedValue({ ok: true, environment: { id: "env-2", name: "qa" } });
+		const user = userEvent.setup();
+		const { onCreated } = renderIt();
+
+		await user.type(screen.getByLabelText("Environment name"), "qa");
+		await user.click(screen.getByRole("button", { name: /empty environment/i }));
+		await user.click(screen.getByRole("button", { name: "Create environment" }));
+
+		await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("qa"));
+		expect(client.getQueryState(switcher)?.isInvalidated).toBe(true);
+		expect(client.getQueryState(page)?.isInvalidated).toBe(true);
+	});
+
+	it("disables Create while the create is in flight, so a second click sends nothing", async () => {
+		let settle: (v: unknown) => void = () => {};
+		duplicateEnvironment.mockReturnValue(new Promise((r) => (settle = r)));
+		const user = userEvent.setup();
+		renderIt();
+
+		await user.type(screen.getByLabelText("Environment name"), "qa");
+		await user.click(screen.getByRole("button", { name: "Create environment" }));
+		const pending = await screen.findByRole("button", { name: "Creating…" });
+		expect(pending).toBeDisabled();
+		await user.click(pending);
+		expect(duplicateEnvironment).toHaveBeenCalledTimes(1);
+		settle({ ok: true, environment: { id: "env-2", name: "qa" } });
 	});
 });

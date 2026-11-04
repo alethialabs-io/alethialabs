@@ -4,6 +4,7 @@
 import "server-only";
 import {
 	and,
+	asc,
 	eq,
 	exists,
 	ilike,
@@ -79,6 +80,33 @@ function storedRoleFilter(roles: string[]): string[] {
 	}
 	return [...own];
 }
+
+/**
+ * The member rows' order — TOTAL, so the client's 20-row pages are stable across re-reads.
+ *
+ * Without an ORDER BY Postgres returns rows in whatever order the plan produced, and the table
+ * pages members-then-invitations by OFFSET on the client (`DataTable pageSize`), so a re-read (a
+ * filter change, a live invalidation) could move a row onto another page or off every page.
+ * Sorted by what the row DISPLAYS — the name, or the email when there is none — case-folded, then
+ * the email (unique per user, and a user is in an org once), then `member.id`, the primary key, so
+ * the order is total by construction rather than by the uniqueness of a business column.
+ */
+const MEMBER_ROW_ORDER = [
+	asc(sql`lower(coalesce(${user.name}, ${user.email}))`),
+	asc(user.email),
+	asc(member.id),
+] as const;
+
+/**
+ * The pending-invitation rows' order: the invited email case-folded (what the row displays), then
+ * the oldest invitation first when one address was invited more than once, then `invitation.id`,
+ * the primary key, as the final tie-breaker that makes the order total.
+ */
+const INVITATION_ROW_ORDER = [
+	asc(sql`lower(${invitation.email})`),
+	asc(invitation.createdAt),
+	asc(invitation.id),
+] as const;
 
 /** The Members list's normalized filter query (the `normalizeMembersQuery()` output). */
 export interface MembersQuery {
@@ -238,6 +266,7 @@ export async function queryMembersPage(
 						.from(member)
 						.innerJoin(user, eq(member.userId, user.id))
 						.where(and(...memberConditions.filter((c) => c !== undefined)))
+						.orderBy(...MEMBER_ROW_ORDER)
 				: [],
 			// ROWS (pending invitations): org scope + the query's predicates. Personal scope
 			// (orgId === the user's own id) has no invitations at all.
@@ -254,6 +283,7 @@ export async function queryMembersPage(
 						.from(invitation)
 						.leftJoin(user, eq(invitation.inviterId, user.id))
 						.where(and(...inviteConditions.filter((c) => c !== undefined)))
+						.orderBy(...INVITATION_ROW_ORDER)
 				: [],
 			// FACETS: the org predicate ONLY. Three light passes over the whole universe —
 			// none of them sees `search`, `statuses`, `roles` or `teams`. That is the invariant.

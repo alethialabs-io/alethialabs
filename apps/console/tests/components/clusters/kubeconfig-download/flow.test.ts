@@ -220,6 +220,7 @@ describe("outcomeMessage", () => {
 		[{ kind: "refused", status: 429 }, /Too many kubeconfig requests/],
 		[{ kind: "refused", status: 403 }, /read-only access/],
 		[{ kind: "unsupported" }, /alethia cluster kubeconfig/],
+		[{ kind: "insecure-context" }, /needs HTTPS.*alethia cluster kubeconfig/],
 		[{ kind: "expired", privateEndpoint: false }, /did not finish/],
 	] satisfies [Exclude<DownloadOutcome, { kind: "saved" } | { kind: "cancelled" }>, RegExp][])(
 		"%o → %s",

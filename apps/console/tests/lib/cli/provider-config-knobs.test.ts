@@ -138,6 +138,13 @@ vi.mock("@/lib/db", async () => {
 // The routes' own collaborators. The guard and the project resolver are not what this file tests
 // (component-update.test.ts drives the real guard); what is tested is that a refused knob reaches the
 // caller as a 400 naming the key, through the routes' real error mapping.
+// The addressed-project check (lib/cli/project-access.ts) asks the PDP about the resolved project;
+// this file is not about that decision, so it allows.
+// tests/integration/cli-project-routes-addressed.test.ts drives the real one.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 vi.mock("@/lib/authz/guard", () => ({
 	authorizeCli: vi.fn(async () => ({
 		actor: { userId: "u-1", orgId: "org-a" },

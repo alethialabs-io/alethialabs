@@ -5,9 +5,11 @@
 // (lib/query/README.md → "Server-side filters").
 //
 // The deviation this file used to record — the org's teams fetched once under `qk.teams(org)`
-// and narrowed HERE, because `getTeams()` took no query — is closed (#4890). `getTeamsPage(q)`
+// and narrowed HERE, because `getTeams()` took no query — is closed (#4890). The teams page read (`members.teams`, formerly `getTeamsPage(q)`)
 // narrows in SQL and counts the size facet over the org's unfiltered teams, so `filterTeams`
 // and `teamsFacetCounts` are gone and this module is the normalize step and nothing else.
+
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 
 /** The teams list's filter state (a type alias, for the store's `Record` constraint). */
 export type TeamsFilters = {
@@ -29,7 +31,7 @@ export const TEAM_SIZE_OPTIONS = [
 	{ value: "large", label: "6+ members" },
 ] as const;
 
-/** The stable query object placed in `qk.teams`. */
+/** The stable query object that IS the `members.teams` read's input — and so its query key. */
 export interface NormalizedTeamsQuery {
 	search?: string;
 	sizes?: string[];
@@ -45,4 +47,13 @@ export function normalizeTeamsQuery(
 	if (trimmed) query.search = trimmed;
 	if (filters.sizes.length) query.sizes = [...new Set(filters.sizes)].sort();
 	return query;
+}
+
+/**
+ * The teams list's query for a URL — the key the client settles on once `useFilterUrlSync` has read
+ * the link, so it is the key the route prefetches for a pasted filtered link (#4999's rule, #6129).
+ */
+export function teamsQueryFromUrl(params: ParamReader): NormalizedTeamsQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_TEAMS_FILTERS);
+	return normalizeTeamsQuery(filters, filters.search);
 }

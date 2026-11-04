@@ -7,6 +7,9 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import { addEnvironment, duplicateEnvironment } from "@/app/server/actions/projects";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
+import { settleFieldRefusal } from "./settle-action";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -29,6 +32,13 @@ import { cn } from "@repo/ui/utils";
 
 type Mode = "duplicate" | "empty";
 
+/** What the create button sends: the mode, the typed name, and (for a duplicate) its base. */
+interface CreateRequest {
+	mode: Mode;
+	name: string;
+	baseId: string;
+}
+
 /** Docs entry for the "Learn More" link in the dialog header. */
 const ENV_DOCS_HREF = "/docs/concepts/domain-model#environments";
 
@@ -37,6 +47,12 @@ const ENV_DOCS_HREF = "/docs/concepts/domain-model#environments";
  * **Duplicate** (copy an existing environment's services/variables/config — choose the base) or
  * **Empty** (a fresh environment with nothing in it). On success it calls `onCreated` with the new
  * environment name so the caller can refresh + navigate to it.
+ *
+ * The create goes through the mutation contract (`useActionMutation`, ADR 0005 D4): the button is
+ * disabled while it is in flight (the double-submit guard), a refused name lands under the field,
+ * and a created environment invalidates every read that lists environments — the topbar switcher
+ * (`workspace.environments`) and the Environments page (`environments.*`) — so both show it at once,
+ * without a reload, wherever the dialog was opened from.
  */
 export function NewEnvironmentDialog({
 	open,
@@ -66,7 +82,6 @@ export function NewEnvironmentDialog({
 	const [name, setName] = useState("");
 	const [mode, setMode] = useState<Mode>("duplicate");
 	const [baseId, setBaseId] = useState<string>(defaultBase?.id ?? "");
-	const [submitting, setSubmitting] = useState(false);
 	/**
 	 * Why the server refused the name, shown under the field it is about. The action RETURNS this
 	 * (#5445); it used to throw it, and a production build replaced the sentence with a digest
@@ -91,7 +106,35 @@ export function NewEnvironmentDialog({
 		setBaseId(defaultBase?.id ?? "");
 	}
 
-	async function submit() {
+	const create = useActionMutation(
+		(request: CreateRequest) =>
+			settleFieldRefusal(async () => {
+				const res =
+					request.mode === "duplicate"
+						? await duplicateEnvironment(projectId, request.baseId, request.name)
+						: await addEnvironment(projectId, { name: request.name, stage: "development" });
+				if (!res.ok) return res;
+				return { ok: true, value: res.environment.name };
+			}, "name"),
+		{
+			invalidates: [orpc.workspace.environments.key(), orpc.environments.key()],
+			onValidationError: (fields) =>
+				setNameError(fields.name?.[0] ?? "Check the environment name."),
+			onSuccess: (createdName, request) => {
+				toast.success(
+					request.mode === "duplicate" ? "Environment duplicated" : "Environment created",
+				);
+				onOpenChange(false);
+				reset();
+				void onCreated(createdName);
+			},
+		},
+	);
+	const submitting = create.isPending;
+
+	/** Validates the form locally, then sends the create (a pending one is never sent twice). */
+	function submit() {
+		if (submitting) return;
 		if (!name.trim()) {
 			setNameError("Environment name is required");
 			return;
@@ -100,29 +143,8 @@ export function NewEnvironmentDialog({
 			toast.error("Pick a base environment to duplicate");
 			return;
 		}
-		setSubmitting(true);
 		setNameError(null);
-		try {
-			const res =
-				mode === "duplicate"
-					? await duplicateEnvironment(projectId, baseId, name)
-					: await addEnvironment(projectId, { name, stage: "development" });
-			if (!res.ok) {
-				setNameError(res.error);
-				return;
-			}
-			const { environment } = res;
-			toast.success(
-				mode === "duplicate" ? "Environment duplicated" : "Environment created",
-			);
-			onOpenChange(false);
-			reset();
-			await onCreated(environment.name);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Failed to create environment");
-		} finally {
-			setSubmitting(false);
-		}
+		create.mutate({ mode, name, baseId });
 	}
 
 	return (

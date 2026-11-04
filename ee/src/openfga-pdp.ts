@@ -8,7 +8,7 @@
 
 import type { Action, Resource } from "@/lib/authz/registry";
 import type {
-	Actor,
+	ResolvedScope,
 	BulkCheck,
 	Decision,
 	Pdp,
@@ -53,7 +53,7 @@ export class OpenFgaPdp implements Pdp {
 	 * `PostgresRbacPDP` applies the same rule in its grant query, so the two engines agree.
 	 */
 	async can(
-		actor: Actor,
+		actor: ResolvedScope,
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
@@ -90,7 +90,7 @@ export class OpenFgaPdp implements Pdp {
 	}
 
 	async enforce(
-		actor: Actor,
+		actor: ResolvedScope,
 		action: Action,
 		resource: ResourceRef,
 	): Promise<void> {
@@ -98,12 +98,12 @@ export class OpenFgaPdp implements Pdp {
 		this.core.fga.enforceDecision(actor, action, resource, decision);
 	}
 
-	async bulkCheck(actor: Actor, checks: BulkCheck[]): Promise<Decision[]> {
+	async bulkCheck(actor: ResolvedScope, checks: BulkCheck[]): Promise<Decision[]> {
 		return Promise.all(checks.map((c) => this.can(actor, c.action, c.resource)));
 	}
 
 	async listAccessible(
-		actor: Actor,
+		actor: ResolvedScope,
 		action: Action,
 		resourceType: Resource,
 	): Promise<string[]> {

@@ -11,8 +11,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Download, Eye } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useMemo } from "react";
-import type { InvoiceInfo } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
+import { ClockText } from "@/components/settings/usage/clock-text";
+import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 
@@ -82,9 +83,13 @@ export function InvoicesTable({
 				accessorKey: "paidAt",
 				header: "Paid",
 				cell: ({ row }) => (
-					<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-						{formatDate(row.original.paidAt)}
-					</span>
+					// A date in the VIEWER's zone, rendered after hydration (this table is
+					// server-rendered with its rows since #6127 — see ClockText).
+					<ClockText
+						className="font-mono text-xs text-muted-foreground"
+						sizer="30 Sept 2026"
+						text={() => formatDate(row.original.paidAt)}
+					/>
 				),
 			},
 			{
@@ -92,9 +97,11 @@ export function InvoicesTable({
 				header: "Billing period",
 				enableSorting: false,
 				cell: ({ row }) => (
-					<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-						{formatBillingPeriod(row.original)}
-					</span>
+					<ClockText
+						className="font-mono text-xs text-muted-foreground"
+						sizer="30 Sept 2026 – 30 Sept 2026"
+						text={() => formatBillingPeriod(row.original)}
+					/>
 				),
 			},
 			{

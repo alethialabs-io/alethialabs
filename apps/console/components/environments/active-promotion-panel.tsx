@@ -10,8 +10,7 @@
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { ArrowRight, Check, TriangleAlert } from "lucide-react";
-import { useState } from "react";
-import type { PromotionDetail } from "@/app/server/actions/promotions";
+import type { PromotionDetail } from "@/lib/rpc/procedures/environments";
 import {
 	Avatar,
 	gateView,
@@ -44,16 +43,18 @@ export function ActivePromotionPanel({
 	onReject,
 	onCancel,
 	onOpenDetail,
+	busy,
 }: {
 	detail: PromotionDetail;
 	canApprove: boolean;
 	canCancel: boolean;
-	onApprove: () => Promise<void>;
+	onApprove: () => void;
 	onReject: () => void;
 	onCancel: () => void;
 	onOpenDetail: () => void;
+	/** A decision on this promotion is in flight: its buttons are disabled (the double-submit guard). */
+	busy: boolean;
 }) {
-	const [approving, setApproving] = useState(false);
 	const status = promoStatus(detail.status);
 	const steps = pipelineSteps(detail.status);
 	const gates = detail.gates.map(gateView);
@@ -75,7 +76,7 @@ export function ActivePromotionPanel({
 				</div>
 				<div className="flex items-center gap-2">
 					{canCancel && (
-						<Button variant="ghost" size="sm" onClick={onCancel}>
+						<Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
 							Cancel
 						</Button>
 					)}
@@ -201,15 +202,8 @@ export function ActivePromotionPanel({
 							<Button
 								size="sm"
 								className="flex-1 gap-1.5"
-								disabled={approving}
-								onClick={async () => {
-									setApproving(true);
-									try {
-										await onApprove();
-									} finally {
-										setApproving(false);
-									}
-								}}
+								disabled={busy}
+								onClick={onApprove}
 							>
 								<Check className="size-3.5" />
 								Approve
@@ -218,7 +212,7 @@ export function ActivePromotionPanel({
 								size="sm"
 								variant="outline"
 								className="flex-1"
-								disabled={approving}
+								disabled={busy}
 								onClick={onReject}
 							>
 								Reject

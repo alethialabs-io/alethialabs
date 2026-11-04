@@ -8,8 +8,9 @@
 // sections and highlight via the shared use-alerts-section store. Each section opens with
 // the shared `SectionHeading` (icon + title + description + a Docs link), carrying the filtered
 // result count in its count pill — where the console filter standard requires counts to be.
-// The whole surface is gated behind the `alerting` entitlement (Pro+); below that we show
-// the upsell.
+// The whole surface is gated behind the `alerting` entitlement (Pro+) and `view_alerts`; the
+// ROUTE decides both on the server (page.tsx) and renders this only past them. Its reads are
+// prefetched there, so every section paints with its rows (#6125).
 //
 // This page also OWNS the filter pipeline for all three panels (alerts-filters.ts): the
 // hooks mount once here, so the URL-sync effects don't run per panel, and each panel is
@@ -23,40 +24,51 @@ import {
 	ShieldAlert,
 	Webhook,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import type { AlertsBootstrap } from "@/app/server/actions/alerts";
 import { ActivityPanel } from "@/components/alerts/activity-panel";
 import {
 	useActivityView,
 	useChannelsView,
 	usePoliciesView,
 } from "@/components/alerts/alerts-filters";
+import type { AlertsHub } from "@/components/alerts/alerts-hub";
+import { AlertsSkeleton } from "@/components/alerts/alerts-skeleton";
 import { ChannelsPanel } from "@/components/alerts/channels-panel";
 import { PoliciesPanel } from "@/components/alerts/policies-panel";
+import { RegionError } from "@/components/errors/region-error";
+import { isForbidden } from "@/components/overview/overview-reads";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
+import {
+	useAlertChannelsPageQuery,
+	useAlertPoliciesPageQuery,
+	useAlertsSettingsQuery,
+} from "@/lib/query/use-alerts-query";
 import {
 	type AlertsSection,
 	useAlertsSection,
 } from "@/lib/stores/use-alerts-section";
+import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { SectionHeading } from "@repo/ui/section-heading";
 
 const SECTIONS: AlertsSection[] = ["policies", "channels", "activity"];
 
-export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
-	const router = useRouter();
-	const queryClient = useQueryClient();
-	const { alerting } = bootstrap;
+/** The Alerts hub: Policies, Channels and Activity, stacked, each with its own read state. */
+export function AlertsPage() {
+	const settings = useAlertsSettingsQuery();
+	// The pristine pages: the universes the panels select and cross-reference against. They are the
+	// same keys as each panel's unfiltered view, so these are not extra reads.
+	const policiesUniverse = useAlertPoliciesPageQuery({});
+	const channelsUniverse = useAlertChannelsPageQuery({});
+	const alerting = settings.data?.alerting ?? false;
 	const setActive = useAlertsSection((s) => s.setActive);
 	const setSelectedPolicyId = useAlertsSection((s) => s.setSelectedPolicyId);
 	const setSelectedChannelId = useAlertsSection((s) => s.setSelectedChannelId);
 	const visible = useRef<Map<string, boolean>>(new Map());
 
 	// The console filter standard, resolved once for the whole hub (see alerts-filters.ts).
-	const policiesView = usePoliciesView(alerting);
-	const channelsView = useChannelsView(alerting);
-	const activityView = useActivityView(alerting);
+	const policiesView = usePoliciesView();
+	const channelsView = useChannelsView();
+	const activityView = useActivityView();
 
 	// Scroll-spy: the top-most in-view section drives the sidebar highlight. Also honour a
 	// deep-link hash (e.g. arriving at …/alerts#channels) once on mount.
@@ -88,19 +100,32 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 		return () => observer.disconnect();
 	}, [alerting, setActive]);
 
-	// The plan doesn't unlock alerting — show the upsell instead of the surface.
+	// The settings are what every section needs (`canManage`, the catalog); they are prefetched, so
+	// this is a client-side safety net — a permission revoked or a plan changed while the tab was
+	// open, or a prefetch that failed. Each answer is its own render (RUBRIC B4).
+	if (settings.data === undefined) {
+		if (!settings.isError) return <AlertsSkeleton />;
+		if (isForbidden(settings.error)) {
+			return (
+				<Alert>
+					<AlertTitle>No access to alerts</AlertTitle>
+					<AlertDescription>
+						You don&apos;t have permission to view alerting for this organization.
+					</AlertDescription>
+				</Alert>
+			);
+		}
+		return <RegionError title="Couldn't load alerts" onRetry={() => void settings.refetch()} />;
+	}
 	if (!alerting) {
 		return <FeatureUpsell feature="alerting" />;
 	}
 
-	// A write on this hub has to reach BOTH halves of it. `router.refresh()` re-runs the RSC and
-	// gives the page a new `bootstrap` — the entitlement, `canManage`, the catalogs, the
-	// universes the panels select against — while the three filtered lists come off the TanStack
-	// cache, which a refresh cannot see. #2878 refused converting the lists precisely because
-	// only the first half would have run; invalidating the hub's key prefix is the other half.
-	const refresh = () => {
-		router.refresh();
-		void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+	const hub: AlertsHub = {
+		...settings.data,
+		policies: policiesUniverse.data?.rows ?? [],
+		policiesKnown: policiesUniverse.data !== undefined,
+		channels: channelsUniverse.data?.rows ?? [],
 	};
 	const scrollTo = (id: AlertsSection) => {
 		document
@@ -137,12 +162,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					count={policiesView.count}
 					actions={<DocsLink href="/docs/guides/alerts#policies" />}
 				/>
-				<PoliciesPanel
-					bootstrap={bootstrap}
-					view={policiesView}
-					onChanged={refresh}
-					onOpenChannel={openChannel}
-				/>
+				<PoliciesPanel hub={hub} view={policiesView} onOpenChannel={openChannel} />
 			</section>
 
 			<section id="channels" className="scroll-mt-4" aria-busy={channelsView.busy}>
@@ -153,12 +173,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					count={channelsView.count}
 					actions={<DocsLink href="/docs/guides/alerts#channels" />}
 				/>
-				<ChannelsPanel
-					bootstrap={bootstrap}
-					view={channelsView}
-					onChanged={refresh}
-					onOpenPolicy={openPolicy}
-				/>
+				<ChannelsPanel hub={hub} view={channelsView} onOpenPolicy={openPolicy} />
 			</section>
 
 			<section id="activity" className="scroll-mt-4" aria-busy={activityView.busy}>

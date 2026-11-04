@@ -4,13 +4,20 @@
 
 // GET /api/cli/projects/:id/destroy-tree (#5249) — what `alethia project destroy --cascade` prints and
 // confirms before it queues anything. Pins the route's resolution and its refusals; the tree itself is
-// built by getDestroyTree, tested in tests/actions/projects.test.ts.
+// built by readDestroyTree (lib/rpc/procedures/canvas.ts), tested in tests/lib/rpc/canvas-destroy-tree.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/server/actions/projects", () => ({ getDestroyTree: vi.fn() }));
+vi.mock("@/lib/rpc/procedures/canvas", () => ({ readDestroyTree: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({
 	runWithActor: vi.fn((_actor: unknown, fn: () => unknown) => fn()),
+}));
+// The addressed-project check (lib/cli/project-access.ts) asks the PDP about the resolved project;
+// this file is not about that decision, so it allows.
+// tests/integration/cli-project-routes-addressed.test.ts drives the real one.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
 }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/cli/resolve-project", () => ({
@@ -19,7 +26,7 @@ vi.mock("@/lib/cli/resolve-project", () => ({
 }));
 
 import { GET } from "@/app/api/cli/projects/[id]/destroy-tree/route";
-import { getDestroyTree } from "@/app/server/actions/projects";
+import { readDestroyTree } from "@/lib/rpc/procedures/canvas";
 import { authorizeCli } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { resolveCliProject, resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
@@ -59,7 +66,7 @@ describe("GET /api/cli/projects/:id/destroy-tree", () => {
 				waiting_on: [{ name: "dev-1", status: "ACTIVE" }],
 			},
 		] as const;
-		vi.mocked(getDestroyTree).mockResolvedValue({ tree: tree.map((n) => ({ ...n, waiting_on: [...n.waiting_on] })) });
+		vi.mocked(readDestroyTree).mockResolvedValue({ environmentId: OWNER_ENV, tree: tree.map((n) => ({ ...n, waiting_on: [...n.waiting_on] })) });
 
 		const res = await get(`?env=${OWNER_ENV}`);
 
@@ -67,7 +74,7 @@ describe("GET /api/cli/projects/:id/destroy-tree", () => {
 		expect(authorizeCli).toHaveBeenCalledWith(expect.anything(), "view", { type: "project" });
 		expect(resolveCliProject).toHaveBeenCalledWith("org-1", "boutique");
 		expect(resolveCliWriteEnvironment).toHaveBeenCalledWith(PROJECT_ID, OWNER_ENV);
-		expect(getDestroyTree).toHaveBeenCalledWith(PROJECT_ID, OWNER_ENV);
+		expect(readDestroyTree).toHaveBeenCalledWith(PROJECT_ID, OWNER_ENV);
 		expect(await res.json()).toEqual({ tree });
 	});
 
@@ -75,11 +82,11 @@ describe("GET /api/cli/projects/:id/destroy-tree", () => {
 		vi.mocked(resolveCliProject).mockResolvedValue(null as never);
 		const res = await get();
 		expect(res.status).toBe(404);
-		expect(getDestroyTree).not.toHaveBeenCalled();
+		expect(readDestroyTree).not.toHaveBeenCalled();
 	});
 
 	it("404s when the PDP denies `view` on the project", async () => {
-		vi.mocked(getDestroyTree).mockRejectedValue(
+		vi.mocked(readDestroyTree).mockRejectedValue(
 			new ForbiddenError("view", { type: "project", id: PROJECT_ID }),
 		);
 		const res = await get();
@@ -90,6 +97,6 @@ describe("GET /api/cli/projects/:id/destroy-tree", () => {
 		vi.mocked(resolveCliWriteEnvironment).mockResolvedValue({ ok: false, reason: "not-found", requested: "nope" });
 		const res = await get("?env=nope");
 		expect(res.status).toBe(404);
-		expect(getDestroyTree).not.toHaveBeenCalled();
+		expect(readDestroyTree).not.toHaveBeenCalled();
 	});
 });

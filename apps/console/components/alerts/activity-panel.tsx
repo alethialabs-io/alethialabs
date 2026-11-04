@@ -16,6 +16,12 @@
 //
 // The result count is NOT in the bar: it renders in the count pill beside the section
 // heading, which is where the console filter standard puts it.
+//
+// #6125: the ledger is server-rendered with its rows now, so "When" — which reads the browser's
+// time zone — renders after hydration in a width-reserving slot (React #418 otherwise). And the
+// panel follows its view's READ STATE: the ledger's skeleton while the first answer is in flight, a
+// region error when it failed, so "No activity yet" is only ever the answer to a read that found
+// nothing.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { Activity, SearchX } from "lucide-react";
@@ -36,6 +42,9 @@ import { useAlertActivityFilters } from "@/lib/stores/use-alerts-filters";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { formatDate } from "@repo/format";
+import { ClockSlot } from "@/components/overview/clock-slot";
+import { RegionError } from "@/components/errors/region-error";
+import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
@@ -50,6 +59,9 @@ import { cn } from "@repo/ui/utils";
  */
 const NO_ASSIGNMENTS: Record<string, AssignedValue[]> = {};
 
+/** The widest "When" the ledger prints (`formatDate(…, "datetime")` in the console's locale). */
+const WHEN_SIZER = "Sep 30, 2026, 12:00 PM";
+
 /** Delivery activity log. */
 export function ActivityPanel({
 	view,
@@ -57,7 +69,7 @@ export function ActivityPanel({
 	/** The filter standard's resolved view — rows, facets, result count, staleness. */
 	view: ActivityView;
 }) {
-	const { rows, facets, stale } = view;
+	const { rows, facets, stale, state } = view;
 	const filters = useAlertActivityFilters((s) => s.filters);
 	const resetFilters = useAlertActivityFilters((s) => s.reset);
 	const filtered =
@@ -77,6 +89,12 @@ export function ActivityPanel({
 
 	return (
 		<div>
+			{state === "loading" ? (
+				<AlertsPanelSkeleton kind="activity" />
+			) : state === "error" ? (
+				<RegionError title="Couldn't load activity" onRetry={view.retry} />
+			) : (
+				<>
 			<ActivityFilterBar facets={facets} />
 
 			{/* `stale` is the filter standard's `isPlaceholderData` dim: these rows are the
@@ -112,6 +130,8 @@ export function ActivityPanel({
 					<DataTable columns={columns} data={rows} />
 				)}
 			</div>
+				</>
+			)}
 		</div>
 	);
 }
@@ -194,7 +214,10 @@ function buildColumns(
 			enableSorting: false,
 			cell: ({ row }) => (
 				<div className="text-right font-mono text-ui-2xs text-muted-foreground">
-					{formatDate(row.original.created_at, "datetime")}
+					<ClockSlot
+						sizer={WHEN_SIZER}
+						render={() => formatDate(row.original.created_at, "datetime")}
+					/>
 				</div>
 			),
 		},

@@ -30,9 +30,6 @@
     "app/server/actions/privacy/cases.ts": [
       "files"
     ],
-    "app/server/actions/verify.ts": [
-      "files"
-    ],
     "components/agent/chat-top-bar.tsx": [
       "files"
     ],

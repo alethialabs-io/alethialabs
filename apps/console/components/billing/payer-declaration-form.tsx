@@ -20,6 +20,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
+import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import type { PayerCapacity } from "@repo/legal/commerce";
@@ -107,6 +108,13 @@ interface PayerDeclarationFormProps {
 	 */
 	refusal: string | null;
 	submitLabel: string;
+	/**
+	 * Called whenever any declared fact changes, so a sheet can drop a refusal about the PREVIOUS
+	 * answer (F031): the refusal names the capacity and country it judged, and left on screen after
+	 * the payer changes them it describes a declaration nobody is making any more. Pass a stable
+	 * function (`useCallback`) — the form subscribes once per identity.
+	 */
+	onEdit?: () => void;
 	/** Back to the step before this one, when the sheet has one. */
 	onBack?: () => void;
 	onDeclare: (declaration: PayerDeclaration) => void;
@@ -120,6 +128,7 @@ export function PayerDeclarationForm({
 	busy,
 	refusal,
 	submitLabel,
+	onEdit,
 	onBack,
 	onDeclare,
 }: PayerDeclarationFormProps) {
@@ -134,6 +143,14 @@ export function PayerDeclarationForm({
 		mode: "onSubmit",
 	});
 	const capacity = form.watch("capacity");
+
+	// Every change to a declared fact — capacity, country, attestation — tells the sheet its refusal
+	// (if any) is about an answer that no longer stands.
+	useEffect(() => {
+		if (!onEdit) return;
+		const subscription = form.watch(() => onEdit());
+		return () => subscription.unsubscribe();
+	}, [form, onEdit]);
 
 	/** Normalises the validated values into the shape both server actions accept. */
 	function submit(values: FormData) {

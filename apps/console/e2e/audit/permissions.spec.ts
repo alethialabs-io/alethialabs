@@ -87,11 +87,11 @@ import {
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { closeDb, db, orgIdBySlug } from "../helpers/db";
-import { signUpWithOtp } from "../fixtures/auth";
 import { materialize, needsOnlyOrg, type AuditContext } from "./context";
 import { consoleRoutes, repoRoot } from "./manifest";
-import { rendersSharedErrorState, visibleText } from "./error-state";
+import { rendersRegionError, rendersSharedErrorState, visibleText } from "./error-state";
 import { createReport } from "./report";
+import { signUpWithRetry } from "./signup";
 
 const manifest = consoleRoutes();
 const ctx: AuditContext = { orgSlug: "", owner: { userId: "", orgId: "" } };
@@ -159,74 +159,6 @@ let personaEmail = "";
 // and answering it needs the same route driven by somebody who is not the persona.
 let ownerContext: BrowserContext | null = null;
 let ownerPage: Page | null = null;
-
-/**
- * Signs an account up, retrying the whole walk — WITH A FRESH ADDRESS EACH TIME.
- *
- * `signUpWithOtp` waits 5s for the consent banner and 30s for the OTP, and on a contended runner
- * the first of those is genuinely tight; `e2e/global-setup.ts` wraps every persona in the same
- * shape for the same reason ("transient recompile 500s, slow OTP"). A T7 persona that fails to be
- * born takes the whole predicate with it.
- *
- * THE ADDRESS MUST CHANGE PER ATTEMPT, and this is not tidiness. `signUpWithOtp` creates the
- * account at OTP verification and then still has to walk onboarding, the clickwrap and the org
- * hand-off. A failure in any of those — precisely the transient case the retry exists for — leaves
- * a REAL account behind. Retried on the same address the flow is a SIGN-IN, `/onboarding` never
- * appears, and the fixture's `waitForURL(/\/onboarding/)` times out after 30s. Every later attempt
- * is then guaranteed to fail, and the run spends two 35s sleeps and two 30s timeouts proving it
- * inside a 180s test budget. So the caller gets back the address that actually worked.
- */
-async function signUpWithRetry(
-	page: Page,
-	emailFor: (attempt: number) => string,
-	attempts = 3,
-): Promise<{ email: string; orgSlug: string }> {
-	let last: unknown;
-	for (let i = 1; i <= attempts; i++) {
-		const email = emailFor(i);
-		try {
-			const { orgSlug } = await withTestEmail(email, () => signUpWithOtp(page));
-			return { email, orgSlug };
-		} catch (err) {
-			last = err;
-			const why = err instanceof Error ? err.message : String(err);
-			// WHERE it stopped, not just that it did. A bare "locator timed out" sends the reader to
-			// the locator; the URL and the first line of the page say whether the walk was on the
-			// signup form at all — which is how the "already signed in, so /signup redirected"
-			// case tells itself apart from "the consent button was renamed".
-			const where = await page
-				.evaluate(() => `${location.pathname} :: ${document.body.innerText.trim().slice(0, 160)}`)
-				.catch(() => "(page unreadable)");
-			console.warn(`[audit/T7] signup ${email} attempt ${i}/${attempts}: ${why}\n    at ${where}`);
-			await page.context().clearCookies();
-			// 35s, not 2s. Better Auth caps OTP issuance at 5 sends / 60s per IP
-			// (`lib/config/auth.ts`), and a retry inside that window gets "Too many requests" and
-			// burns an attempt without ever asking for a code. Measured: three attempts, 2s apart,
-			// all three refused by the rate limiter.
-			await page.waitForTimeout(35_000);
-		}
-	}
-	throw last;
-}
-
-/**
- * Runs `fn` with `signUpWithOtp` pointed at `email`.
- *
- * `fixtures/auth.ts` reads `TEST_USER_EMAIL` and otherwise invents an address. Setting it around
- * the call is how this spec reuses the whole vetted signup walk — consent, OTP, onboarding, the
- * clickwrap — for an address it has to choose, instead of writing a second copy of it that would
- * drift the first time the gate changes.
- */
-async function withTestEmail<T>(email: string, fn: () => Promise<T>): Promise<T> {
-	const prior = process.env.TEST_USER_EMAIL;
-	process.env.TEST_USER_EMAIL = email;
-	try {
-		return await fn();
-	} finally {
-		if (prior === undefined) delete process.env.TEST_USER_EMAIL;
-		else process.env.TEST_USER_EMAIL = prior;
-	}
-}
 
 /**
  * Calls a better-auth organization endpoint from inside the page, so the request carries the
@@ -370,12 +302,15 @@ interface Observation {
 	text: string;
 	length: number;
 	sharedErrorState: boolean;
+	/** `RegionError` (or a `role="alert"`) in `main` — the region-level error render since #6117. */
+	regionError: boolean;
 	sharedEmpty: boolean;
 	denialCopy: boolean;
 }
 
 async function observe(page: Page): Promise<Observation> {
 	const sharedErrorState = await rendersSharedErrorState(page);
+	const regionError = await rendersRegionError(page);
 	// `visibleText` (innerText), NOT textContent: the document carries tens of kilobytes of inline
 	// script source, so a textContent-based "is this blank?" answers "no" for a genuinely blank
 	// page — which is the entire question T7 asks. Measured, see e2e/audit/error-state.ts.
@@ -389,6 +324,7 @@ async function observe(page: Page): Promise<Observation> {
 		length: text.length,
 		sharedEmpty,
 		sharedErrorState,
+		regionError,
 		denialCopy:
 			// NOT a bare /permission/: `~/settings/roles` is a page ABOUT permissions and says the
 			// word all over its ordinary content, so the loose form would read a page the persona is
@@ -526,6 +462,7 @@ test.describe(`T7 · what the ${PERSONA_ROLE} persona gets on each route`, () =>
 			const redirectedAway = personaRedirected && !ownerRedirectedSameWay;
 			const deniedWhereOwnerIsNot =
 				(seen.sharedErrorState && !(byOwner?.sharedErrorState ?? false)) ||
+				(seen.regionError && !(byOwner?.regionError ?? false)) ||
 				(seen.denialCopy && !(byOwner?.denialCopy ?? false));
 			const restricted = redirectedAway || deniedWhereOwnerIsNot;
 			const evidence = { persona: seen, owner: byOwner, redirectedAway, deniedWhereOwnerIsNot };
@@ -563,7 +500,9 @@ test.describe(`T7 · what the ${PERSONA_ROLE} persona gets on each route`, () =>
 				return;
 			}
 			// A blank is never a deliberate state — that is the whole of T7.
-			const deliberate = redirectedAway || seen.sharedErrorState || seen.sharedEmpty || seen.length >= 20;
+			// BOTH error renders count: `ErrorState` for a route boundary, `RegionError` for a data region
+			// (#6117). Knowing only the first would read a refused region's deliberate error as a blank.
+			const deliberate = redirectedAway || seen.sharedErrorState || seen.regionError || seen.sharedEmpty || seen.length >= 20;
 			record({
 				route: route.route,
 				url,

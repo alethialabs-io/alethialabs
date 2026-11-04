@@ -19,6 +19,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
+import { FieldMessage } from "@/components/support/field-message";
 
 interface StepContactProps {
 	/** Attachment count, surfaced in the review summary. */
@@ -61,11 +62,9 @@ export function StepContact({ attachmentCount }: StepContactProps) {
 					className="max-w-md"
 					{...register("contact.notifyEmail")}
 				/>
-				{errors.contact?.notifyEmail && (
-					<p className="text-xs text-destructive">
-						Enter a valid email address.
-					</p>
-				)}
+				<FieldMessage
+					message={errors.contact?.notifyEmail ? "Enter a valid email address." : undefined}
+				/>
 			</div>
 
 			<div className="space-y-2">

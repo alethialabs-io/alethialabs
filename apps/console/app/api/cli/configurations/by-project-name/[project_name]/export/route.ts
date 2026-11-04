@@ -23,10 +23,8 @@ import { NextResponse } from "next/server";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
-import {
-	resolveCliEnvironment,
-	resolveCliProject,
-} from "@/lib/cli/resolve-project";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
+import { resolveCliEnvironment } from "@/lib/cli/resolve-project";
 
 /** Formats this route can emit. `legacy-yaml` is refused BY NAME: it is what the CLI defaulted to, and
  *  a caller who pinned it deserves to be told it never existed rather than handed JSON labelled YAML. */
@@ -53,7 +51,7 @@ export async function GET(
 
 	try {
 		const { project_name } = await params;
-		const project = await resolveCliProject(actor.orgId, project_name);
+		const project = await resolveCliProjectAuthorized(actor, project_name, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

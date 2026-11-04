@@ -135,8 +135,9 @@ func (w *Runner) executeDeployRunner(ctx context.Context, job *Job, provider str
 	}
 
 	// Persist the redeploy-able config, but NEVER the runner_token: it is a live bearer credential
-	// and runners.metadata is plaintext JSONB. The console holds only its SHA-256 hash and re-mints a
-	// fresh token for each UPDATE/DESTROY job, so nothing needs the plaintext at rest (#945).
+	// and runners.metadata is plaintext JSONB. The console holds only its SHA-256 hash and mints a
+	// fresh token when each DEPLOY_RUNNER/UPDATE_RUNNER job is claimed, handing it over in the claim
+	// response alone, so nothing needs the plaintext at rest (#945).
 	if err := w.api.UpdateRunnerMetadata(cfg.RunnerID, map[string]any{
 		"deploy_config": map[string]any{
 			"region":           cfg.Region,

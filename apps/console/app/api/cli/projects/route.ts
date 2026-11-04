@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
+import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
+import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
@@ -125,7 +126,7 @@ export async function POST(req: Request) {
 					actorIdentityWhere(
 						body.cloud_identity_id,
 						actor.orgId,
-						userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+						personalIdentityAuthor(actor),
 					),
 				)
 				.limit(1);

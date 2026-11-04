@@ -28,6 +28,20 @@ vi.mock("@/components/shell/app-shell", () => ({ AppShell: () => null }));
 vi.mock("@/components/org/upgrade-sheet-provider", () => ({
 	UpgradeSheetProvider: () => null,
 }));
+// The shell's prefetch (#6114) goes through the in-process read router; here every procedure
+// answers null without touching a database — what is under test is the scope failure, not the data.
+vi.mock("@/lib/rpc/server", () => ({
+	serverOrpc: () => ({
+		workspace: new Proxy(
+			{},
+			{
+				get: (_target, name) => ({
+					queryOptions: () => ({ queryKey: [["workspace", String(name)]], queryFn: async () => null }),
+				}),
+			},
+		),
+	}),
+}));
 
 import OrgLayout from "@/app/(private)/[org]/layout";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
@@ -70,7 +84,8 @@ describe("[org]/layout — what a resolveOrgScope failure renders", () => {
 		// Community, a team-org URL: the real org's id would be refused by the turn resolver.
 		vi.mocked(resolveOrgScope).mockResolvedValue({ orgId: "org-1", isPersonal: false });
 		const tree = await OrgLayout({ children: null, params: Promise.resolve({ org: "acme" }) });
-		const shell: unknown = tree.props.children;
+		// HydrationBoundary (the shell's prefetch, #6114) → UpgradeSheetProvider → AppShell.
+		const shell: unknown = tree.props.children.props.children;
 		expect(shell).toMatchObject({ props: { pageOrgId: "user-1" } });
 	});
 

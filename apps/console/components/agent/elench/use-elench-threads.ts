@@ -25,6 +25,7 @@ import type { DraftsView } from "@/lib/stores/elench-drafts/store";
 import type { DraftEntry, DraftScope } from "@/lib/stores/elench-drafts/types";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import { randomUuid } from "@/lib/random-id";
 import { type DraftsTab, useDraftsTab } from "./elench-drafts-root";
 
 /**
@@ -243,7 +244,7 @@ export function useElenchThreads() {
 				setInitialRevision(null);
 				const s = useElenchStore.getState();
 				if (skipped.includes(s.conversationId))
-					useElenchStore.setState({ threadId: null, conversationId: crypto.randomUUID(), epoch: s.epoch + 1 });
+					useElenchStore.setState({ threadId: null, conversationId: randomUuid(), epoch: s.epoch + 1 });
 			}
 			setInitialResolved(true);
 		})();

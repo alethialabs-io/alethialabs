@@ -12,8 +12,9 @@
 // behind them are stubbed. The assertion is the computed NAME (`getByRole(..., { name })`), never
 // the attribute, because `aria-labelledby` was present the whole time.
 //
-// The environment switcher and the repository selector render their trigger only after a server
-// action resolves, and that is where #5927's flake lived. The trigger arrived from a promise, i.e.
+// The environment switcher reads its environments from the query cache the `[project]` layout
+// hydrates (#6114); here that cache is seeded, as the layout would. The repository selector renders
+// its trigger only after a server action resolves, and that is where #5927's flake lived. The trigger arrived from a promise, i.e.
 // OUTSIDE `act`, so React committed it and then left its passive effects for a later scheduler task.
 // base-ui's trigger first renders against a placeholder floating context; the root publishes the
 // real one in a layout effect, and the trigger only re-reads it when its `useSyncExternalStore`
@@ -24,6 +25,7 @@
 // `settleServerActions` lets the loads resolve INSIDE `act`, which flushes those effects before the
 // test clicks — and the test then asserts the popover is open before it asks for the combobox.
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -32,17 +34,6 @@ vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 	usePathname: () => "/acme/shop",
 	useSearchParams: () => new URLSearchParams(),
-}));
-vi.mock("@/app/server/actions/resolve", () => ({
-	getEnvironmentsForSlug: vi.fn(async () => [
-		{
-			id: "env_1",
-			project_id: "proj_1",
-			name: "production",
-			stage: "production",
-			is_default: true,
-		},
-	]),
 }));
 vi.mock("@/components/environments/new-environment-dialog", () => ({
 	NewEnvironmentDialog: () => null,
@@ -70,6 +61,8 @@ vi.mock("@/lib/stores/use-workspace-store", () => {
 	return {
 		useWorkspaceStore: () => state,
 		useActiveOrgSlug: () => "acme",
+		useWorkspaceContextQuery: () => ({ data: state }),
+		useActiveWorkspaceOrg: () => state.organizations[0],
 	};
 });
 vi.mock("@/lib/query/use-projects-query", () => ({
@@ -109,9 +102,6 @@ vi.mock("@/components/design-project/repository-context", () => ({
 	useRepositoryContext: () => null,
 }));
 
-const { getEnvironmentsForSlug } = await import(
-	"@/app/server/actions/resolve"
-);
 const { getLinkedProviders } = await import("@/app/server/actions/identities");
 const { fetchRepositoriesByProvider } = await import(
 	"@/app/server/actions/git/repositories"
@@ -121,12 +111,12 @@ const { OrgSwitcher } = await import("@/components/org-switcher");
 const { ProjectSwitcher } = await import("@/components/project-switcher");
 const { RepositorySelector } = await import("@/components/repository-selector");
 const { Combobox } = await import("@/components/settings/access/combobox");
+const { orpc } = await import("@/lib/rpc/client");
 const { PromptInputCommand, PromptInputCommandInput } =
 	await import("@/components/ai-elements/prompt-input");
 
 /** The mocked server actions whose results put a trigger on screen. */
 const loaders = [
-	vi.mocked(getEnvironmentsForSlug),
 	vi.mocked(getLinkedProviders),
 	vi.mocked(fetchRepositoriesByProvider),
 ];
@@ -162,8 +152,16 @@ async function settleServerActions(): Promise<void> {
 describe("console cmdk searches have an accessible name", () => {
 	it("names the environment switcher's search", async () => {
 		const user = userEvent.setup({ delay: null });
-		render(<EnvSwitcher />);
-		await settleServerActions();
+		// What the `[project]` layout's prefetch hydrates for `/acme/shop`.
+		const client = new QueryClient();
+		client.setQueryData(orpc.workspace.environments.queryKey({ input: { project: "shop" } }), [
+			{ id: "env_1", project_id: "proj_1", name: "production", stage: "production", is_default: true },
+		]);
+		render(
+			<QueryClientProvider client={client}>
+				<EnvSwitcher />
+			</QueryClientProvider>,
+		);
 		const trigger = screen.getByRole("button", {
 			name: /^Switch environment/,
 		});

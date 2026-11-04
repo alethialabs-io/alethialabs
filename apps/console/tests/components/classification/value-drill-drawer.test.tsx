@@ -12,12 +12,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { ValueDrillDrawer } from "@/components/classification/value-drill-drawer";
 
+// The breakdown is the `classification.valueBreakdown` GET read since #6129.
 const { getValueResourceBreakdown } = vi.hoisted(() => ({
 	getValueResourceBreakdown: vi.fn(),
 }));
-vi.mock("@/app/server/actions/classification/assignments", () => ({
-	getValueResourceBreakdown,
-}));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return {
+		orpc: fakeOrpc({ "classification.valueBreakdown": (input) => getValueResourceBreakdown(input) }).orpc,
+	};
+});
 
 /** Renders under a fresh QueryClient (retries off so a mock rejection fails fast). */
 function render(ui: React.ReactElement) {
@@ -66,5 +70,7 @@ describe("ValueDrillDrawer fetch-error state", () => {
 			expect(screen.getByText(/No resources use this value/i)).toBeInTheDocument(),
 		);
 		expect(screen.getByText(/safe to delete/i)).toBeInTheDocument();
+		// The read is addressed by the value's id.
+		expect(getValueResourceBreakdown).toHaveBeenCalledWith({ valueId: "v1" });
 	});
 });

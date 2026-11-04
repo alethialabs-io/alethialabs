@@ -3,23 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
-	initAwsIdentity,
-	saveAwsIdentity,
-} from "@/app/(private)/dashboard/providers/actions";
-import {
-	initAzureIdentity,
-	saveAzureIdentity,
-} from "@/app/(private)/dashboard/providers/azure-actions";
-import {
-	initGcpIdentity,
-	saveGcpFromIds,
-	saveGcpIdentity,
-} from "@/app/(private)/dashboard/providers/gcp-actions";
-import {
-	initExtraCloudIdentity,
-	saveAlibaba,
-	saveTokenCloud,
-} from "@/app/(private)/dashboard/providers/extra-cloud-actions";
+	connectCloudAccount,
+	startCloudConnect,
+} from "@/app/server/actions/identities";
+import type { ConnectSave } from "@/components/connectors/use-connection-test";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { isEnumMember } from "@/lib/coerce";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { CONNECTOR_DOCS_BASE } from "@/components/connectors/connector-assets";
@@ -43,7 +31,6 @@ import {
 import { BookOpen, ExternalLink } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { toast } from "sonner";
 
 /**
  * The connectors-docs page for a connector — the Alethia connect guide (mirrors the
@@ -72,7 +59,9 @@ function connectorDocsHref(integration: ConnectorWithConnection): string {
 export const TOKEN_CLOUDS = ["digitalocean", "hetzner", "civo"] as const;
 export type TokenCloud = (typeof TOKEN_CLOUDS)[number];
 /** Clouds that use the extra-cloud connect flow (token clouds + Alibaba's RAM role). */
-export const EXTRA_CLOUDS = [...TOKEN_CLOUDS, "alibaba"] as const;
+const EXTRA_CLOUDS = [...TOKEN_CLOUDS, "alibaba"] as const;
+/** Every cloud this hook opens a connect sheet for. */
+const CONNECTABLE_CLOUDS = ["aws", "gcp", "azure", ...EXTRA_CLOUDS] as const;
 
 export const TOKEN_CLOUD_META: Record<
 	TokenCloud,
@@ -152,10 +141,20 @@ export function ConnectSheetHeader({
 
 interface UseCloudConnectArgs {
 	integrations: ConnectorWithConnection[];
-	awsSetup: { identityId: string } | null;
-	gcpSetup: { identityId: string } | null;
-	azureSetup: { identityId: string } | null;
+	/**
+	 * Pending identities the host already created, so the first sheet opens without a round trip.
+	 * Optional: without one, opening a sheet starts its own (`startCloudConnect`).
+	 */
+	awsSetup?: { identityId: string } | null;
+	gcpSetup?: { identityId: string } | null;
+	azureSetup?: { identityId: string } | null;
 	extraSetup?: Record<string, { identityId: string; externalId?: string }>;
+	/**
+	 * Re-render the route when a sheet closes. Right for a host whose server component renders the
+	 * connector list (the create-project form); a host that reads the list through a query (the
+	 * connectors board) passes `false` — a connect invalidates that query itself.
+	 */
+	refreshRouteOnClose?: boolean;
 }
 
 /**
@@ -180,12 +179,17 @@ export function useCloudConnect({
 	gcpSetup: gcpSetupProp,
 	azureSetup: azureSetupProp,
 	extraSetup: extraSetupProp,
+	refreshRouteOnClose = true,
 }: UseCloudConnectArgs): CloudConnectResult {
 	const router = useRouter();
+	/** What closing a connect sheet does to the host (see `refreshRouteOnClose`). */
+	const onSheetClosed = () => {
+		if (refreshRouteOnClose) router.refresh();
+	};
 
-	const [awsSetup, setAwsSetup] = useState(awsSetupProp);
-	const [gcpSetup, setGcpSetup] = useState(gcpSetupProp);
-	const [azureSetup, setAzureSetup] = useState(azureSetupProp);
+	const [awsSetup, setAwsSetup] = useState(awsSetupProp ?? null);
+	const [gcpSetup, setGcpSetup] = useState(gcpSetupProp ?? null);
+	const [azureSetup, setAzureSetup] = useState(azureSetupProp ?? null);
 	const [extraSetup, setExtraSetup] = useState(extraSetupProp ?? {});
 
 	const [awsSheetOpen, setAwsSheetOpen] = useState(false);
@@ -198,91 +202,112 @@ export function useCloudConnect({
 	const bySlug = (slug: string | null | undefined) =>
 		slug ? integrations.find((i) => i.slug === slug) : undefined;
 
+	// Starting a connect creates (or reuses) the pending identity the sheet binds to. It shows no
+	// data, so it invalidates nothing; a refusal is toasted by the mutation's policy.
+	const start = useActionMutation(startCloudConnect, { invalidates: [] });
+
 	const openConnect = async (integration: ConnectorWithConnection) => {
 		const slug = integration.slug;
-		// Cloud providers bind the connect sheet to a pending identity. The page already seeded
-		// one for the first connect, so reuse it — opening the sheet is then instant. Only
-		// (re)initialise a fresh pending row when ADDING ANOTHER account, or if no seed exists.
+		if (start.isPending) return;
+		// Cloud providers bind the connect sheet to a pending identity. Reuse one the host seeded for
+		// the first connect, so opening the sheet is instant. Start a fresh one when ADDING ANOTHER
+		// account, or when none was seeded.
 		const addingAnother = integration.connected;
-		try {
-			if (slug === "aws") {
-				if (!awsSetup || addingAnother) {
-					setConnectingSlug(slug);
-					setAwsSetup(await initAwsIdentity());
-				}
-				setAwsSheetOpen(true);
-			} else if (slug === "gcp") {
-				if (!gcpSetup || addingAnother) {
-					setConnectingSlug(slug);
-					setGcpSetup(await initGcpIdentity());
-				}
-				setGcpSheetOpen(true);
-			} else if (slug === "azure") {
-				if (!azureSetup || addingAnother) {
-					setConnectingSlug(slug);
-					setAzureSetup(await initAzureIdentity());
-				}
-				setAzureSheetOpen(true);
-			} else if (isEnumMember(slug, EXTRA_CLOUDS)) {
-				if (!extraSetup?.[slug] || addingAnother) {
-					setConnectingSlug(slug);
-					const init = await initExtraCloudIdentity(slug);
-					setExtraSetup((prev) => ({
-						...prev,
-						[slug]: { identityId: init.identityId, externalId: init.externalId },
-					}));
-				}
-				setExtraCloudSlug(slug);
+		const begin = async () => {
+			if (!isEnumMember(slug, CONNECTABLE_CLOUDS)) return null;
+			setConnectingSlug(slug);
+			try {
+				return await start.mutateAsync({ provider: slug });
+			} catch {
+				return null; // refused or failed — already reported by the mutation
+			} finally {
+				setConnectingSlug(null);
 			}
-		} catch (err) {
-			toast.error(
-				err instanceof Error ? err.message : `Failed to start ${integration.name}`,
-			);
-		} finally {
-			setConnectingSlug(null);
+		};
+		if (slug === "aws") {
+			const setup = !awsSetup || addingAnother ? await begin() : awsSetup;
+			if (!setup) return;
+			setAwsSetup({ identityId: setup.identityId });
+			setAwsSheetOpen(true);
+		} else if (slug === "gcp") {
+			const setup = !gcpSetup || addingAnother ? await begin() : gcpSetup;
+			if (!setup) return;
+			setGcpSetup({ identityId: setup.identityId });
+			setGcpSheetOpen(true);
+		} else if (slug === "azure") {
+			const setup = !azureSetup || addingAnother ? await begin() : azureSetup;
+			if (!setup) return;
+			setAzureSetup({ identityId: setup.identityId });
+			setAzureSheetOpen(true);
+		} else if (isEnumMember(slug, EXTRA_CLOUDS)) {
+			const existing = extraSetup?.[slug];
+			const setup = !existing || addingAnother ? await begin() : existing;
+			if (!setup) return;
+			setExtraSetup((prev) => ({
+				...prev,
+				[slug]: { identityId: setup.identityId, externalId: setup.externalId },
+			}));
+			setExtraCloudSlug(slug);
 		}
 	};
 
-	const handleAwsConnect = async (roleArn: string) => {
-		if (!awsSetup) throw new Error("AWS setup not initialized");
-		return saveAwsIdentity(awsSetup.identityId, roleArn);
-	};
-	const handleGcpConnect = async (wifConfigJson: string) => {
-		if (!gcpSetup) throw new Error("GCP setup not initialized");
-		return saveGcpIdentity(gcpSetup.identityId, wifConfigJson);
-	};
-	const handleGcpFromIds = async (projectId: string, projectNumber: string) => {
-		if (!gcpSetup) throw new Error("GCP setup not initialized");
-		return saveGcpFromIds(gcpSetup.identityId, projectId, projectNumber);
-	};
-	const handleAzureConnect = async (
-		tenantId: string,
-		clientId: string,
-		subscriptionId: string,
-	) => {
-		if (!azureSetup) throw new Error("Azure setup not initialized");
-		return saveAzureIdentity(azureSetup.identityId, tenantId, clientId, subscriptionId);
-	};
-	const handleTokenCloudConnect = (provider: TokenCloud) => async (token: string) => {
-		const setup = extraSetup?.[provider];
-		if (!setup) throw new Error(`${provider} setup not initialized`);
-		return saveTokenCloud(setup.identityId, provider, token);
-	};
+	/** The save of a sheet whose connect session never started — reported in the sheet, not thrown. */
+	const noSession = (provider: string): ReturnType<ConnectSave> =>
+		Promise.resolve({
+			ok: false,
+			error: { kind: "conflict", message: `The ${provider} connect session was not started. Close the sheet and try again.` },
+		});
+
+	const handleAwsConnect = (roleArn: string): ReturnType<ConnectSave> =>
+		awsSetup
+			? connectCloudAccount({ method: "aws", identityId: awsSetup.identityId, roleArn })
+			: noSession("AWS");
+	const handleGcpConnect = (wifConfigJson: string): ReturnType<ConnectSave> =>
+		gcpSetup
+			? connectCloudAccount({ method: "gcp-wif", identityId: gcpSetup.identityId, wifConfigJson })
+			: noSession("GCP");
+	const handleGcpFromIds = (projectId: string, projectNumber: string): ReturnType<ConnectSave> =>
+		gcpSetup
+			? connectCloudAccount({ method: "gcp-ids", identityId: gcpSetup.identityId, projectId, projectNumber })
+			: noSession("GCP");
+	const handleAzureConnect = (tenantId: string, clientId: string, subscriptionId: string): ReturnType<ConnectSave> =>
+		azureSetup
+			? connectCloudAccount({
+						method: "azure",
+						identityId: azureSetup.identityId,
+						tenantId,
+						clientId,
+						subscriptionId,
+					})
+			: noSession("Azure");
+	const handleTokenCloudConnect =
+		(provider: TokenCloud) =>
+		(token: string): ReturnType<ConnectSave> => {
+			const setup = extraSetup?.[provider];
+			return setup
+				? connectCloudAccount({ method: "token", identityId: setup.identityId, provider, token })
+				: noSession(TOKEN_CLOUD_META[provider].name);
+		};
 	// Hetzner also accepts an optional Object Storage S3 key pair (manual, no mint API),
 	// threaded through the same token-cloud save so bucket provisioning has S3 credentials.
-	const handleHetznerConnect = async (
-		token: string,
-		s3AccessKey?: string,
-		s3SecretKey?: string,
-	) => {
+	const handleHetznerConnect = (token: string, s3AccessKey?: string, s3SecretKey?: string): ReturnType<ConnectSave> => {
 		const setup = extraSetup?.hetzner;
-		if (!setup) throw new Error("hetzner setup not initialized");
-		return saveTokenCloud(setup.identityId, "hetzner", token, s3AccessKey, s3SecretKey);
+		return setup
+			? connectCloudAccount({
+						method: "token",
+						identityId: setup.identityId,
+						provider: "hetzner",
+						token,
+						s3AccessKey,
+						s3SecretKey,
+					})
+			: noSession("Hetzner");
 	};
-	const handleAlibabaConnect = async (roleArn: string) => {
+	const handleAlibabaConnect = (roleArn: string): ReturnType<ConnectSave> => {
 		const setup = extraSetup?.alibaba;
-		if (!setup) throw new Error("Alibaba setup not initialized");
-		return saveAlibaba(setup.identityId, roleArn);
+		return setup
+			? connectCloudAccount({ method: "alibaba", identityId: setup.identityId, roleArn })
+			: noSession("Alibaba Cloud");
 	};
 
 	const sheets = (
@@ -292,7 +317,7 @@ export function useCloudConnect({
 				open={awsSheetOpen}
 				onOpenChange={(open) => {
 					setAwsSheetOpen(open);
-					if (!open) router.refresh();
+					if (!open) onSheetClosed();
 				}}
 			>
 				<SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
@@ -312,7 +337,7 @@ export function useCloudConnect({
 				open={gcpSheetOpen}
 				onOpenChange={(open) => {
 					setGcpSheetOpen(open);
-					if (!open) router.refresh();
+					if (!open) onSheetClosed();
 				}}
 			>
 				<SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
@@ -337,7 +362,7 @@ export function useCloudConnect({
 				open={azureSheetOpen}
 				onOpenChange={(open) => {
 					setAzureSheetOpen(open);
-					if (!open) router.refresh();
+					if (!open) onSheetClosed();
 				}}
 			>
 				<SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-2xl">
@@ -358,7 +383,7 @@ export function useCloudConnect({
 				onOpenChange={(open) => {
 					if (!open) {
 						setExtraCloudSlug(null);
-						router.refresh();
+						onSheetClosed();
 					}
 				}}
 			>

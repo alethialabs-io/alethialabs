@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure filter plumbing for Settings · Billing › Invoices — the console filter standard's
-// "normalize" step (lib/query/README.md → "Server-side filters"). `listInvoices` filters
+// "normalize" step (lib/query/README.md → "Server-side filters"). `billing.invoices` filters
 // server-side by status + paid-date range, so this produces the stable object that is both the
-// TanStack key and the action's params.
+// procedure's input (and so its query key) and the reader's params. No "use client": the RSC
+// page builds its prefetch input from this same function, so the two keys are one value.
 //
 // There is deliberately NO free-text search here: `InvoiceListParams` has no `search`, and the
 // standard forbids inventing a client-side filter over a server-paged list. Adding one means
 // adding it to the action first (see the follow-up on #2877).
 
-import type { InvoiceInfo, InvoiceListParams } from "@/app/server/actions/billing";
+import type { InvoiceInfo, InvoiceListParams } from "@/lib/rpc/procedures/billing";
 
 /** The invoices list's filter state (a type alias, for the store's `Record` constraint). */
 export type InvoiceFilters = {
@@ -29,6 +30,9 @@ export const DEFAULT_INVOICE_FILTERS: InvoiceFilters = {
 	to: "",
 	rangeLabel: "",
 };
+
+/** The Billing page's Invoices section: the five newest, no filter. Shared with the route's prefetch. */
+export const RECENT_INVOICES_INPUT: InvoiceListParams = { limit: 5 };
 
 /** The label shown when no date window is set. */
 export const ALL_TIME_LABEL = "All time";

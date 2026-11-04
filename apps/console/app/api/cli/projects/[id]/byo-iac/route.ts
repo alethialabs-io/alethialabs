@@ -12,10 +12,10 @@ import { z } from "zod";
 import { attachIacSource, detachIacSource } from "@/app/server/actions/byo-iac";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { byoWriteError, resolveByoScope } from "@/lib/cli/byo-write";
 import {
 	resolveCliEnvironment,
-	resolveCliProject,
 	resolveDefaultEnvironmentId,
 } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
@@ -42,7 +42,7 @@ export async function GET(
 	const envParam = new URL(req.url).searchParams.get("env");
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
@@ -166,7 +166,7 @@ export async function POST(
 	const b = parsed.data;
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		const result = await runWithActor(actor, () =>
@@ -202,7 +202,7 @@ export async function DELETE(
 	const { id } = await params;
 
 	try {
-		const scope = await resolveByoScope(actor.orgId, id, req);
+		const scope = await resolveByoScope(actor, id, req, "edit");
 		if ("error" in scope) return scope.error;
 
 		await runWithActor(actor, () =>

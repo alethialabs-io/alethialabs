@@ -11,6 +11,7 @@
 import { Loader2, ScrollText } from "lucide-react";
 import { useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
 import { formatDate, formatRelative } from "@repo/format";
@@ -20,17 +21,25 @@ import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
 
-/** Group rows into month buckets, preserving the incoming (newest-first) order. */
-function byMonth(rows: ActivityRow[]): { month: string; rows: ActivityRow[] }[] {
+/**
+ * Group rows into month buckets, preserving the incoming (newest-first) order. `timeZone` is "UTC"
+ * until hydration is over: the route prefetches the first page, so these rows are SERVER-rendered,
+ * and a month named in the server's zone and again in the browser's is text React refuses to
+ * hydrate (#418). The browser's own zone takes over a commit later.
+ */
+function byMonth(rows: ActivityRow[], timeZone?: string): { month: string; rows: ActivityRow[] }[] {
 	const out: { month: string; rows: ActivityRow[] }[] = [];
 	for (const row of rows) {
-		const month = formatDate(row.ts, "month");
+		const month = formatDate(row.ts, "month", timeZone);
 		const last = out[out.length - 1];
 		if (last && last.month === month) last.rows.push(row);
 		else out.push({ month, rows: [row] });
 	}
 	return out;
 }
+
+/** The widest relative time a row prints, so its slot has that width before the clock is read. */
+const RELATIVE_SIZER = "about 11 months ago";
 
 export function ActivityFeed({
 	rows,
@@ -48,7 +57,8 @@ export function ActivityFeed({
 	/** Whether the next page is in flight (button spinner + disabled). */
 	loadingMore?: boolean;
 }) {
-	const groups = useMemo(() => byMonth(rows), [rows]);
+	const hydrated = useHydrated();
+	const groups = useMemo(() => byMonth(rows, hydrated ? undefined : "UTC"), [rows, hydrated]);
 	// Auto-pull the next page as the tail scrolls into view; the button below stays as an
 	// explicit fallback.
 	const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
@@ -128,12 +138,20 @@ export function ActivityFeed({
 											</>
 										)}
 									</span>
+									{/* "3 hours ago" reads the clock, and the title the browser's zone: both
+									    wait for hydration (#418), in a slot that already has the text's
+									    width, so the row does not reflow when they land. */}
 									<time
 										dateTime={row.ts}
-										title={formatDate(row.ts, "datetime")}
-										className="shrink-0 whitespace-nowrap font-mono text-ui-xs text-text-tertiary"
+										title={hydrated ? formatDate(row.ts, "datetime") : undefined}
+										className="inline-grid shrink-0 whitespace-nowrap font-mono text-ui-xs text-text-tertiary"
 									>
-										{formatRelative(row.ts)}
+										<span aria-hidden className="invisible col-start-1 row-start-1">
+											{RELATIVE_SIZER}
+										</span>
+										<span className="col-start-1 row-start-1 text-right">
+											{hydrated ? formatRelative(row.ts) : null}
+										</span>
 									</time>
 								</li>
 							);

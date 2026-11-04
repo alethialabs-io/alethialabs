@@ -6,7 +6,7 @@
 //
 // The deviation this file used to record — members and invitations fetched once under
 // `qk.members(org)` and narrowed HERE, because `getMembers()` took no query — is closed
-// (#4890). `getMembersPage(q)` narrows both record kinds in SQL and counts the status, role and
+// (#4890). The members page read (`members.page`, formerly `getMembersPage(q)`) narrows both record kinds in SQL and counts the status, role and
 // team facets over the org's unfiltered universe, so `filterMembers` and `membersFacetCounts`
 // are gone and this module is the normalize step and nothing else.
 //
@@ -80,7 +80,7 @@ export const MEMBER_ROLE_FILTER_OPTIONS = BUILT_IN_ROLE_NAMES.map((value) => ({
 /** The roles a member's inline role picker may assign. Never includes `owner`. */
 export const ASSIGNABLE_ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
 
-/** The stable query object placed in `qk.members`. */
+/** The stable query object that IS the `members.page` read's input — and so its query key. */
 export interface NormalizedMembersQuery {
 	search?: string;
 	statuses?: string[];

@@ -3,7 +3,7 @@
 
 // The "My cases" filter store — the console filter standard's per-page state (see
 // lib/query/README.md → "Server-side filters"). URL-synced by CaseList via
-// useFilterUrlSync, and fed into qk.supportCases through normalizeSupportCaseQuery.
+// useFilterUrlSync, and fed into the `support.cases` read through normalizeSupportCaseQuery.
 
 import {
 	DEFAULT_SUPPORT_CASE_FILTERS,

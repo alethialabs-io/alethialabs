@@ -1,32 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Skeleton } from "@repo/ui/skeleton";
-
-/** Instant skeleton shown while the runners route prefetches runners + fleet on the server. */
+/**
+ * What the runners route shows before the server has decided what the page IS (F021).
+ *
+ * The page is plan-gated: a hosted plan without BYO runners renders an upsell card, every other
+ * viewer the pools / versions / runner grid. Which one is a per-org fact this file cannot know — it
+ * is the instant fallback Next shows on navigation, before `page.tsx` has resolved the actor — so it
+ * promises neither shape: a busy region and nothing in it. The page's own skeleton (the grid's real
+ * layout) is the `<Suspense>` fallback `page.tsx` renders once the gate has said the grid is coming.
+ * The gate itself is one membership lookup, so this is on screen for a moment, if at all.
+ */
 export default function RunnersLoading() {
 	return (
-		<div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(320px,0.36fr)_minmax(0,0.64fr)]">
-			<div className="flex flex-col gap-6">
-				<div className="space-y-3">
-					<Skeleton className="h-5 w-24" />
-					<Skeleton className="h-40 w-full rounded-lg" />
-					<Skeleton className="h-40 w-full rounded-lg" />
-				</div>
-				<Skeleton className="h-48 w-full rounded-lg" />
-			</div>
-			<div className="min-w-0 space-y-4">
-				<div className="flex items-center justify-between">
-					<Skeleton className="h-6 w-28" />
-					<Skeleton className="h-8 w-28 rounded-md" />
-				</div>
-				<Skeleton className="h-9 w-full rounded-md" />
-				<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
-					{[1, 2, 3, 4].map((i) => (
-						<Skeleton key={i} className="h-44 w-full rounded-lg" />
-					))}
-				</div>
-			</div>
+		<div role="status" aria-busy="true">
+			<span className="sr-only">Loading runners</span>
 		</div>
 	);
 }

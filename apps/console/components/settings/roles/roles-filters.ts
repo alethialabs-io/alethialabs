@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure filter plumbing for Settings · Roles — the console filter standard's "normalize" step
-// (lib/query/README.md → "Server-side filters"). `listRoles(search)` filters custom roles
+// (lib/query/README.md → "Server-side filters"). `members.roles` (`listRoles(search)`) filters custom roles
 // server-side; the four built-ins arrive with the page bootstrap and are narrowed here, which
 // is why `filterBuiltins` exists at all.
 
 import type { RoleRow } from "@/app/server/actions/roles";
+import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
 
 /** The roles rail's filter state (a type alias, for the store's `Record` constraint). */
 export type RolesFilters = {
@@ -27,7 +28,7 @@ export const ROLE_KIND_OPTIONS = [
 	{ value: "custom", label: "Custom" },
 ] as const;
 
-/** The stable query object placed in `qk.roles`. */
+/** The rail's normalized filter state; its `search` is the `members.roles` read's input. */
 export interface NormalizedRolesQuery {
 	search?: string;
 	kinds?: string[];
@@ -102,4 +103,13 @@ export function hasNoMatches(input: NoMatchesInput): boolean {
 export function noMatchesDescription(total: number | undefined): string {
 	if (total === undefined) return "No roles match these filters.";
 	return `None of the ${total} ${total === 1 ? "role matches" : "roles match"} these filters.`;
+}
+
+/**
+ * The custom-role search a link asks for — the `members.roles` input the rail settles on once
+ * `useFilterUrlSync` has read the link, so the route can prefetch it (#4999's rule, #6129).
+ */
+export function rolesSearchFromUrl(params: ParamReader): string | undefined {
+	const filters = filterStateFromUrl(params, DEFAULT_ROLES_FILTERS);
+	return normalizeRolesQuery(filters, filters.search).search;
 }

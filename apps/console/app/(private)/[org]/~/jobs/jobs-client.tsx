@@ -6,16 +6,15 @@
 // filtering + facet counts (getJobsPage), the normalized query in the TanStack key, and
 // keepPreviousData dimming instead of client-side .filter() over the whole cache.
 
-import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
-import { ErrorState } from "@/components/errors/error-state";
-import { buildJobColumns } from "@/components/jobs/columns";
+import { RegionError } from "@/components/errors/region-error";
+import { buildJobColumns, jobHref } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
+import { JOBS_DEFAULT_RANGE_LABEL, JobsFilterBar } from "@/components/jobs/jobs-filter-bar";
 import {
 	DEFAULT_JOBS_FILTERS,
 	normalizeJobsQuery,
 } from "@/components/jobs/jobs-query";
-import { JOB_TYPES } from "@/lib/jobs/format";
 import { displayName } from "@/lib/user-display";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -23,9 +22,8 @@ import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { useJobsPageQuery } from "@/lib/query/use-jobs-page-query";
 import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import type { JobsFacetOption, JobWithMeta } from "@/app/server/actions/jobs";
+import { isDefinedError } from "@orpc/client";
 import { Button } from "@repo/ui/button";
-import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import {
 	Empty,
 	EmptyContent,
@@ -34,11 +32,7 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@repo/ui/empty";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
 	formatRangeLabel,
@@ -47,41 +41,17 @@ import {
 } from "@repo/ui/range";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
-import { countActiveFilters } from "@/lib/stores/create-filter-store";
-import {
-	Activity,
-	Boxes,
-	ClipboardList,
-	Layers,
-	SearchX,
-	Users,
-	Wrench,
-} from "lucide-react";
+import { ClipboardList, Lock, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-/** Jobs default to a wide window so history isn't hidden; users narrow with the range picker. */
-const JOBS_DEFAULT_PRESET = "12mo";
-
-const STATUS_LABELS = new Map(
-	["QUEUED", "CLAIMED", "PROCESSING", "SUCCESS", "FAILED", "CANCELLED"].map((s) => [
-		s,
-		s.charAt(0) + s.slice(1).toLowerCase(),
-	]),
-);
-
-/** Facet options → MultiCombobox options: label fallback + the count as the hint. */
-function comboOptions(
-	facet: JobsFacetOption[] | undefined,
-	label: (o: JobsFacetOption) => string = (o) => o.label ?? o.value,
-) {
-	return (facet ?? []).map((o) => ({
-		value: o.value,
-		label: label(o),
-		hint: String(o.count),
-	}));
-}
+import {
+	JOBS_DEFAULT_PRESET,
+	type JobsRange,
+	jobsPageInputFrom,
+	jobsPresetForLabel,
+} from "@/lib/rpc/inputs/jobs";
 
 /**
  * Jobs list UI. Filters live in the jobs filter store (URL-synced); rows + facet counts
@@ -103,10 +73,10 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const [range, setRange] = useState<DateRange>(() =>
 		presetRange(JOBS_DEFAULT_PRESET),
 	);
-	const [rangeLabel, setRangeLabel] = useState(
-		RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
-			"Last 12 months",
-	);
+	// What the READ asks for: the preset while one is picked (resolved on the server at read time,
+	// so the server's prefetch key and this key are identical), explicit bounds otherwise (#6113).
+	const [rangeSpec, setRangeSpec] = useState<JobsRange>({ preset: JOBS_DEFAULT_PRESET });
+	const [rangeLabel, setRangeLabel] = useState(JOBS_DEFAULT_RANGE_LABEL);
 	// "Show more" window — grows client-side over the already server-filtered rows (like the
 	// Activity log), instead of page-number pagination.
 	const [visibleCount, setVisibleCount] = useState(20);
@@ -116,18 +86,21 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// object (and so the structural TanStack key) is stable until the debounced value moves.
 	const debouncedSearch = useDebouncedValue(filters.search, 300, { urlRead });
 
-	// The normalized query IS the key: equal filters hit the cache, and the range's
-	// concrete ISO bounds only change when the user picks a range.
-	const query = useMemo(
+	// The normalized query IS the key: equal filters hit the cache, and the range changes the key
+	// only when the user picks a different range.
+	const input = useMemo(
 		() =>
-			normalizeJobsQuery(
-				{ ...filters, search: debouncedSearch },
-				{ from: range.from.toISOString(), to: range.to.toISOString() },
-				projectId,
+			jobsPageInputFrom(
+				normalizeJobsQuery(
+					{ ...filters, search: debouncedSearch },
+					{ from: range.from.toISOString(), to: range.to.toISOString() },
+					projectId,
+				),
+				rangeSpec,
 			),
-		[filters, debouncedSearch, range, projectId],
+		[filters, debouncedSearch, range, rangeSpec, projectId],
 	);
-	const page = useJobsPageQuery(query);
+	const page = useJobsPageQuery(input);
 	const rows = useMemo(() => page.data?.rows ?? [], [page.data]);
 	const facets = page.data?.facets;
 
@@ -164,15 +137,17 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// Reset the visible window whenever the filters change (the set may shrink).
 	useEffect(() => {
 		setVisibleCount(20);
-	}, [query]);
+	}, [input]);
 
 	const columns = useMemo(
 		() => buildJobColumns({ showProject: !projectId, authorById, orgSlug }),
 		[projectId, authorById, orgSlug],
 	);
 
-	const handleRowClick = (job: JobWithMeta) => {
-		router.push(`/${orgSlug}/~/jobs/${job.id}`);
+	// A plain click anywhere on a row opens the job; the row's Type cell is the job's real link
+	// (`buildJobColumns`), which is what a cmd-, ctrl- or middle-click and "copy link" act on.
+	const handleRowClick = (job: { id: string }) => {
+		router.push(jobHref(orgSlug, job.id));
 	};
 
 	// `total` is the count over the UNFILTERED universe, so total === 0 means the org has
@@ -193,27 +168,38 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const clearAll = () => {
 		reset();
 		setRange(presetRange(JOBS_DEFAULT_PRESET));
-		setRangeLabel(
-			RANGE_PRESETS.find((p) => p.id === JOBS_DEFAULT_PRESET)?.label ??
-				"Last 12 months",
-		);
+		setRangeSpec({ preset: JOBS_DEFAULT_PRESET });
+		setRangeLabel(JOBS_DEFAULT_RANGE_LABEL);
 	};
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
-			{page.isError ? (
-					// A fetch failure must NOT fall through to the empty state — that would tell the
-					// user they have no jobs when the request actually failed.
-					<ErrorState
+			{page.isError && page.data === undefined ? (
+				// Four distinct renders (RUBRIC B4): a refusal, a failure, an empty org and rows. A
+				// failed read must NOT fall through to the empty state — that would tell the user they
+				// have no jobs when the request failed. A failed REFRESH behind rows already on screen
+				// is the table's own stale notice (`DataTable` `query`), not this.
+				isDefinedError(page.error) && page.error.code === "FORBIDDEN" ? (
+					<Empty className="min-h-[60vh]" data-state="forbidden">
+						<EmptyHeader>
+							<EmptyMedia variant="icon">
+								<Lock />
+							</EmptyMedia>
+							<EmptyTitle>You can&apos;t view jobs here</EmptyTitle>
+							<EmptyDescription>
+								Your role in this organization does not include viewing jobs. An admin can grant it.
+							</EmptyDescription>
+						</EmptyHeader>
+					</Empty>
+				) : (
+					<RegionError
+						className="min-h-[60vh]"
 						title="Couldn't load jobs"
 						description="Something went wrong fetching your jobs. Check your connection and try again."
-						actions={
-							<Button variant="outline" size="sm" onClick={() => page.refetch()}>
-								Retry
-							</Button>
-						}
+						onRetry={() => void page.refetch()}
 					/>
-				) : !page.isPending && total === 0 ? (
+				)
+			) : !page.isPending && total === 0 ? (
 				<Empty className="min-h-[60vh]">
 					<EmptyHeader>
 						<EmptyMedia variant="icon">
@@ -239,89 +225,40 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 					    above is the unfiltered universe and is what tells onboarding apart from a
 					    filter that excludes everything. */}
 					<PageToolbar
-						description="Every provision, deploy and destroy this organization has run."
+						description={
+							projectId
+								? "Every provision, deploy and destroy this project has run."
+								: "Every provision, deploy and destroy this organization has run."
+						}
 						count={page.isPending ? null : rows.length}
 					/>
-					<FilterBar
-						end={
-							<FilterBarReset
-								count={countActiveFilters(filters, DEFAULT_JOBS_FILTERS)}
-								onReset={reset}
-							/>
-						}
-					>
-						<FilterSearch
-							value={filters.search}
-							onChange={(v) => set("search", v)}
-							placeholder="Filter by project, environment, or error…"
-							ariaLabel="Search jobs"
-							className="w-[220px] max-w-[340px] flex-1"
-						/>
-						<QuickRangeFilter
-							label={rangeLabel}
-							value={range}
-							onChange={(r, l) => {
-								setRange(r);
-								if (l !== undefined) setRangeLabel(l);
-							}}
-						/>
-						<DateRangeFilter
-							value={range}
-							onChange={(r) => {
-								setRange(r);
-								setRangeLabel(formatRangeLabel(r));
-							}}
-						/>
-						<MultiCombobox
-							placeholder="All authors"
-							icon={Users}
-							options={userOptions}
-							value={filters.authors}
-							onChange={(next) => set("authors", next)}
-							withAvatar
-							loading={membersLoading}
-						/>
-						<MultiCombobox
-							placeholder="All environments"
-							icon={Layers}
-							options={comboOptions(facets?.envs)}
-							value={filters.envs}
-							onChange={(next) => set("envs", next)}
-						/>
-						{!projectId && (
-							<MultiCombobox
-								placeholder="All projects"
-								icon={Boxes}
-								options={comboOptions(facets?.projects)}
-								value={filters.projects}
-								onChange={(next) => set("projects", next)}
-								emptyAction={{
-									label: "Create project",
-									onSelect: () => router.push(`/${orgSlug}/~/new`),
-								}}
-							/>
-						)}
-						<MultiCombobox
-							placeholder="All statuses"
-							icon={Activity}
-							options={comboOptions(
-								facets?.statuses,
-								(o) => STATUS_LABELS.get(o.value) ?? o.value,
-							)}
-							value={filters.statuses}
-							onChange={(next) => set("statuses", next)}
-						/>
-						<MultiCombobox
-							placeholder="All types"
-							icon={Wrench}
-							options={comboOptions(
-								facets?.types,
-								(o) => lookup(JOB_TYPES, o.value)?.label ?? o.value,
-							)}
-							value={filters.types}
-							onChange={(next) => set("types", next)}
-						/>
-					</FilterBar>
+					<JobsFilterBar
+						showProject={!projectId}
+						filters={filters}
+						onFilter={set}
+						onReset={reset}
+						range={range}
+						rangeLabel={rangeLabel}
+						onQuickRange={(r, l) => {
+							setRange(r);
+							setRangeLabel(l);
+							setRangeSpec(
+								jobsPresetForLabel(l, RANGE_PRESETS) ?? {
+									from: r.from.toISOString(),
+									to: r.to.toISOString(),
+								},
+							);
+						}}
+						onDateRange={(r) => {
+							setRange(r);
+							setRangeLabel(formatRangeLabel(r));
+							setRangeSpec({ from: r.from.toISOString(), to: r.to.toISOString() });
+						}}
+						authorOptions={userOptions}
+						authorsLoading={membersLoading}
+						facets={facets}
+						onCreateProject={() => router.push(`/${orgSlug}/~/new`)}
+					/>
 
 					{noMatch ? (
 						<Empty className="min-h-[50vh]">
@@ -354,6 +291,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 								<DataTable
 									columns={columns}
 									data={rows}
+									query={page}
 									onRowClick={handleRowClick}
 									pageSize={visibleCount}
 									loadMore={{

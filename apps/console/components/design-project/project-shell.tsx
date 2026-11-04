@@ -2,50 +2,37 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The project workspace shell: a full-bleed frame around the routed view. It owns the ONE
-// environment-status query every project view reads, and the content frame for the document views.
+// The project workspace shell: a full-bleed frame around the routed view, and the content frame for
+// the document views. The environment-status read the board needs used to live here; only the board
+// reads it, and a layout never receives the `?environment_id=` it is keyed on, so it moved into the
+// canvas (`canvas/environment-status-scope.tsx`), where the Architecture page prefetches it (#6119).
 // The workspace rail (inspector, environment settings, add-on config, scan verdicts) used to be
 // docked here so it could outlive a view switch; it is canvas-only and now lives inside the canvas,
 // where every card sits under the providers it needs and closes with it.
 
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import { CONTENT_FRAME } from "@/components/shell/content-frame";
 import { SHELL_VIEWPORT } from "@/components/shell/shell-metrics";
-import { EMPTY_ENVIRONMENT_STATUS } from "@/lib/canvas/component-status";
-import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
-import { useEnvironmentStatusQuery } from "@/lib/query/use-environment-status-query";
 import { cn } from "@repo/ui/utils";
 
-/** The project workspace frame: env status for every view, full-bleed on Architecture. */
+/** The project workspace frame: full-bleed on Architecture, the content frame elsewhere. */
 export function ProjectShell({
-	projectId,
 	children,
 }: {
+	/** Kept for the layout's call site (another unit's file). */
 	projectId: string;
 	/** Kept for the layout's call site; the canvas seeds identities into its store itself. */
 	identities?: CloudIdentityOption[];
 	children: React.ReactNode;
 }) {
 	const pathname = usePathname();
-	const searchParams = useSearchParams();
 
 	// Architecture is the only env-scoped design surface.
 	const onArchitecture = pathname.endsWith("/architecture");
 
-	// The environment's server truth (component lifecycles, the in-flight job, drift, cluster
-	// liveness) — fetched ONCE here, because the shell is the only place that wraps every project
-	// view. Forty cards each running their own query would be forty round-trips and forty poll
-	// timers; instead every node picks its row out of this by `nodeStatusKey()`. An absent
-	// `environment_id` resolves to the project's default env server-side, exactly as the
-	// Architecture page does.
-	const envStatus = useEnvironmentStatusQuery(
-		projectId,
-		searchParams.get("environment_id"),
-	);
-
 	return (
-		<EnvironmentStatusProvider value={envStatus.data ?? EMPTY_ENVIRONMENT_STATUS}>
+		<>
 			{/* THE CANVAS IS PINNED TO ONE VIEWPORT; A DOCUMENT IS NOT.
 			    `SHELL_VIEWPORT` is one viewport less the topbar — it reads the shell's header
 			    height, where this used to reserve 3.5rem (56px) against a 53px topbar and
@@ -86,6 +73,6 @@ export function ProjectShell({
 					)}
 				</div>
 			</div>
-		</EnvironmentStatusProvider>
+		</>
 	);
 }

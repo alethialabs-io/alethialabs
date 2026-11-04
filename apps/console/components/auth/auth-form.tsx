@@ -88,6 +88,9 @@ function digitsOnly(pasted: string): string {
 	return pasted.replace(/\D/g, "").slice(0, 6);
 }
 
+/** Shown when the sign-in code email could not be sent (or the request failed outright). */
+const SEND_FAILED_MESSAGE = "We couldn’t send the code — try again.";
+
 /** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
  *  text is never rendered (anti-phishing) — unknown codes show no banner. */
 const AUTH_MESSAGES: Record<string, string> = {
@@ -327,12 +330,22 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
+	/**
+	 * Asks the server to email a sign-in code. Throws when it was not sent, so neither
+	 * caller advances to (or resets) the code step on a send that never happened. A
+	 * provider failure answers SIGN_IN_CODE_SEND_FAILED (lib/auth/index.ts), and the
+	 * message is fixed here rather than read off the response.
+	 */
 	const sendCode = async () => {
 		const { error } = await authClient.emailOtp.sendVerificationOtp({
 			email,
 			type: "sign-in",
 		});
-		if (error) throw new Error(error.message ?? "Failed to send code");
+		if (!error) return;
+		if (error.code === "SIGN_IN_CODE_SEND_FAILED") {
+			throw new Error(SEND_FAILED_MESSAGE);
+		}
+		throw new Error(error.message ?? SEND_FAILED_MESSAGE);
 	};
 
 	const handleSendCode = async (e: React.FormEvent) => {

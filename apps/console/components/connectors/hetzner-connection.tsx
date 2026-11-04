@@ -21,7 +21,7 @@ import {
 	VerifySection,
 } from "@/components/connectors/connection-ui";
 import {
-	type VerifyOutcome,
+	type ConnectSave,
 	useConnectionTest,
 } from "@/components/connectors/use-connection-test";
 import { Archive, ExternalLink, ServerCog } from "lucide-react";
@@ -50,7 +50,7 @@ type HetznerFormValues = z.infer<typeof tokenSchema>;
 
 interface HetznerConnectionProps {
 	/**
-	 * Persists + server-side-verifies the scoped token (saveTokenCloud → saveTokenCloudIdentity).
+	 * Persists + server-side-verifies the scoped token (connectCloudAccount → saveTokenCloudIdentity).
 	 * The optional Object Storage S3 keys are stored encrypted alongside the token and used only
 	 * to provision buckets on Hetzner.
 	 */
@@ -58,7 +58,7 @@ interface HetznerConnectionProps {
 		token: string,
 		s3AccessKey?: string,
 		s3SecretKey?: string,
-	) => Promise<VerifyOutcome>;
+	) => ReturnType<ConnectSave>;
 }
 
 /**

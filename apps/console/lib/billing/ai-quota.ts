@@ -10,6 +10,7 @@ import { costToCredits } from "@/lib/billing/ai-credits";
 import { type AiMessage, captureAiGeneration } from "@/lib/analytics/server";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 import { log } from "@/lib/observability/log";
+import { emitUsageHint } from "@/lib/realtime/usage-hint";
 
 export type AiUsageKind = "scan" | "agent" | "support";
 export type CreditSource = "included" | "purchased";
@@ -227,6 +228,8 @@ export async function grantAiCredits(input: {
 			stripe_ref: input.stripeRef,
 		})
 		.onConflictDoNothing({ target: aiCreditGrant.stripe_ref });
+	// The purchased balance moved (the insert has committed: no transaction here) (#6127).
+	emitUsageHint(input.orgId);
 }
 
 /**
@@ -416,6 +419,10 @@ function runSideEffects(
 	credits: number,
 	costMicros: number | null,
 ): void {
+	// The org's AI meters moved. This runs after the ledger write committed — at once without a
+	// transaction, or from the caller's after-commit hook with one — so the hint is never sent from
+	// inside a transaction or a lock (#6127; lib/realtime/usage-hint.ts).
+	emitUsageHint(input.orgId);
 	// Preserve the generation hook at the metering chokepoint, but the server analytics boundary
 	// deliberately no-ops it because a worker cannot prove browser consent. It remains fire-and-forget
 	// so metering and the user response never depend on optional telemetry.

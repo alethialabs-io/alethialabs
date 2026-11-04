@@ -1,27 +1,31 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
-import { Skeleton } from "@repo/ui/skeleton";
+import { SelfManagedUsageNotice } from "@/components/settings/usage/self-managed-usage-notice";
+import { UsageSkeleton } from "@/components/settings/usage/usage-skeleton";
+import { isStripeConfigured } from "@/lib/billing/config";
 
 /**
- * Instant skeleton for the org usage route.
+ * Instant loading state for the org usage route, in the shape of the page that replaces it (F008,
+ * RUBRIC B2).
  *
- * NOT `HeaderSkeleton`: that shape is a 28px title bar over a description line, and this page has
- * no title — the breadcrumb names it and `PageToolbar` carries a single line of copy plus one
- * action. A skeleton that draws a heading the page will never render makes the content jump when
- * it resolves, which is the whole thing a skeleton exists to avoid.
+ * WHICH page that is depends first on the deployment, and this file can know that: the billing
+ * summary's `hosted` is `isStripeConfigured()`, a fact of the instance rather than of the viewer or
+ * the org, and this renders on the server at request time like the page does. On a self-managed
+ * instance the page is ONE card, so that card is what paints here — the panel's own component, so
+ * the two cannot drift. Drawing the hosted report's skeleton there (#6355) promised three gauges and
+ * four sections and was replaced by a 96px notice. On a hosted instance it is the panel's own pending
+ * render: the toolbar, Plan & limits' three gauges, the over-time card with its pickers, Resources,
+ * and the AI section. Every hosted plan draws those sections; a plan without a feature refuses inside
+ * its section, not in place of the page.
  */
 export default function UsageLoading() {
-	return (
-		<div className="space-y-6">
-			{/* The toolbar: one description line, one action, on a row. */}
-			<div className="flex items-start justify-between gap-4 pb-2">
-				<Skeleton className="h-4 w-64" />
-				<Skeleton className="h-8 w-28 rounded-md" />
+	if (!isStripeConfigured()) {
+		return (
+			<div aria-busy="true">
+				<SelfManagedUsageNotice />
 			</div>
-			<PanelSkeleton lines={4} />
-			<PanelSkeleton lines={6} />
-		</div>
-	);
+		);
+	}
+	return <UsageSkeleton />;
 }

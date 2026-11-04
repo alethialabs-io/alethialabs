@@ -13,11 +13,12 @@
 // Sheet: the verdict reads beside the chart it is about.
 
 import { Loader2, RotateCw, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import { scanByoChart } from "@/app/server/actions/byo-charts";
+import { scanByoChartAction } from "@/app/server/actions/byo-charts";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { SheetCard } from "./sheet-card";
@@ -138,6 +139,14 @@ export function ChartScanCard({ chartId }: { chartId: string }) {
 		s.nodes.find((n) => n.data.kind === "chart" && n.data.config.id === chartId),
 	);
 	const ctx = useByoChartCanvas();
+	// The rescan, on the mutation contract. No follow-up refetches: the scan's progress and its
+	// verdict are writes to the chart's row, which arrive as `addons` hints on the org's change stream
+	// and re-read the chart nodes (lib/query/topics.ts) — the two timed re-reads this used to fire
+	// guessed at when the runner would be done.
+	const scan = useActionMutation(scanByoChartAction, {
+		invalidates: [orpc.canvas.byoCharts.key()],
+		successMessage: "Scanning chart…",
+	});
 
 	if (!node || node.data.kind !== "chart") {
 		return (
@@ -151,18 +160,10 @@ export function ChartScanCard({ chartId }: { chartId: string }) {
 	}
 	const c = node.data.config;
 
-	/** Queue a (re)scan and nudge the chart refresh as the runner finishes (best-effort, no socket). */
-	const rescan = async () => {
-		if (!ctx) return;
-		try {
-			await scanByoChart({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
-			toast.message("Scanning chart…");
-			ctx.refresh();
-			setTimeout(ctx.refresh, 4000);
-			setTimeout(ctx.refresh, 10000);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
-		}
+	/** Queue a (re)scan — once: a press while one is being queued is dropped. */
+	const rescan = () => {
+		if (!ctx || scan.isPending) return;
+		scan.mutate({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
 	};
 
 	return (
@@ -173,7 +174,7 @@ export function ChartScanCard({ chartId }: { chartId: string }) {
 			chartRef={c.ref}
 			scanStatus={c.scanStatus ?? "unscanned"}
 			report={c.scanReport ?? null}
-			scanning={c.scanStatus === "scanning"}
+			scanning={c.scanStatus === "scanning" || scan.isPending}
 			onRescan={rescan}
 			onClose={closeCard}
 		/>

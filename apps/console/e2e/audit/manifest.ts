@@ -29,16 +29,30 @@ export interface RouteParam {
 	optional: boolean;
 }
 
+/** One special-file boundary as the seam reports it: the nearest file of that kind in the chain. */
+export interface RouteBoundary {
+	/** Repo-relative path of the nearest `loading.tsx` / `error.tsx` / …, or `null` when none covers the route. */
+	file: string | null;
+	own: boolean;
+	distance: number | null;
+}
+
 /** One record out of `collectConsoleRoutes()`. Only the fields the live audit reads are named. */
 export interface RouteRecord {
 	route: string;
 	file: string;
 	dir: string;
+	/** The route's URL segments, route groups removed (`["[org]", "~", "jobs"]`). */
+	urlSegments: string[];
 	params: RouteParam[];
+	/** The nearest boundary of each kind — family B reads `loading` (B2's skeleton). */
+	boundaries: Record<string, RouteBoundary>;
 	isRedirectOnly: boolean;
 	hasMetadata: boolean;
 	shell: string | null;
 	shellChain: string[];
+	/** Repo-relative layout files above the page, outermost first — family B reads their prefetches. */
+	layoutChain: string[];
 }
 
 export interface RouteManifest {
@@ -81,6 +95,13 @@ function isRouteManifest(value: unknown): value is RouteManifest {
 			typeof r.route === "string" &&
 			"params" in r &&
 			Array.isArray(r.params) &&
+			"urlSegments" in r &&
+			Array.isArray(r.urlSegments) &&
+			"layoutChain" in r &&
+			Array.isArray(r.layoutChain) &&
+			"boundaries" in r &&
+			typeof r.boundaries === "object" &&
+			r.boundaries !== null &&
 			"isRedirectOnly" in r &&
 			typeof r.isRedirectOnly === "boolean",
 	);

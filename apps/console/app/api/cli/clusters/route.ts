@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { type SQL, and, eq } from "drizzle-orm";
+import { type SQL, and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
+import { cliViewableProjectIds } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -38,6 +39,10 @@ const CLUSTERS_LIST = "clusters";
  * CHECK makes NULL unstorable (see the tenancy note in lib/db/schema/project-components.ts). So the
  * predicate is now the column, and the count and the rows query receive the identical fragment;
  * `paginate` hands it to both, and the rows query adds only the keyset predicate on top.
+ *
+ * The scope ALSO carries a visibility predicate — `project_cluster.project_id` among the projects
+ * the caller may view — on the same table and for the same reason. It narrows within the tenancy
+ * boundary; it is not part of it.
  *
  * WHY ONE COLUMN MATTERS HERE. These routes read through `getServiceDb()`, whose role bypasses
  * RLS, so this predicate is the entire tenancy boundary. A boundary that spans two tables has a
@@ -129,11 +134,19 @@ export async function GET(req: Request) {
 	try {
 		const db = getServiceDb();
 
-		// The tenancy boundary, on ONE column of the table being paged — the column the database
-		// derives from the parent project (#4116). It is the SAME object the count and the rows
-		// query receive.
+		// The scope, as TWO predicates on columns of the table being paged, and the SAME object the
+		// count and the rows query receive:
+		//   1. tenancy — `project_cluster.org_id`, the column the database derives from the parent
+		//      project (#4116). This is the boundary; nothing else here widens or replaces it.
+		//   2. visibility — `project_cluster.project_id` among the projects the caller may view, so a
+		//      project-scoped deny hides that project's clusters.
+		// Both name `project_cluster` alone, so the single-table count sees exactly the rows the page
+		// returns.
+		const viewable = await cliViewableProjectIds(actor);
 		const scope: [SQL, ...(SQL | undefined)[]] = [
 			eq(projectCluster.org_id, actor.orgId),
+			// `inArray` over an empty set renders `false`: a caller who may view no project lists none.
+			inArray(projectCluster.project_id, viewable),
 		];
 
 		const { items, page } = await paginate({
@@ -170,7 +183,8 @@ export async function GET(req: Request) {
 						region: projects.region,
 					})
 					.from(projectCluster)
-					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is `org_id` above.
+					// PROJECTION JOINS, NOT SCOPE JOINS — the scope is `org_id` and `project_id` on
+					// `project_cluster` above.
 					// `project_id` is NOT NULL and references `projects.id`, so this innerJoin is
 					// 1:1 and cannot drop a row the count included. The leftJoin cannot duplicate
 					// one either: `project_environments_one_default` is a partial UNIQUE index on

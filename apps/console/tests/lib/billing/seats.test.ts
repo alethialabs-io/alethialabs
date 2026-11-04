@@ -11,12 +11,14 @@ vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: vi.fn() }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/billing/subscription-cache", () => ({ forgetSubscription: vi.fn() }));
 
 import { countBillableSeats, syncOrgSeats } from "@/lib/billing/seats";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
+import { forgetSubscription } from "@/lib/billing/subscription-cache";
 
 /** drizzle-ish chain resolving the seat-count select to `rows`. */
 function mockSeatCount(n: number | null) {
@@ -85,6 +87,7 @@ describe("syncOrgSeats — guards (no Stripe write)", () => {
 	});
 
 	it("skips the write when the flat quantity already matches", async () => {
+		vi.mocked(forgetSubscription).mockClear();
 		vi.mocked(getOrgBilling).mockResolvedValue({
 			stripeSubscriptionId: "sub_1",
 			status: "active",
@@ -109,6 +112,8 @@ describe("syncOrgSeats — reconcile", () => {
 			items: [{ id: "si_flat", quantity: 2 }],
 			proration_behavior: "create_prorations",
 		});
+		// The seat count is on the plan card: its cached subscription read is dropped (#6127).
+		expect(forgetSubscription).toHaveBeenCalledWith("sub_1");
 	});
 
 	it("floors the quantity at 1 even when zero billable seats remain", async () => {

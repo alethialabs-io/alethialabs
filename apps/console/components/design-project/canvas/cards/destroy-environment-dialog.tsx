@@ -30,6 +30,7 @@ import {
 import { Input } from "@repo/ui/input";
 import { StatusBadge } from "@repo/ui/status-badge";
 import {
+	type DestroyOptions,
 	type DestroyTreeNode,
 	joinNames,
 	placementLabel,
@@ -50,7 +51,7 @@ interface DestroyEnvironmentDialogProps {
 	/** What a cascade asks the user to type. Falls back to the target environment's name when null. */
 	projectName: string | null;
 	/** Queue the destroy. `cascade` is true only from the type-to-confirm form. */
-	onDestroy: (options: { cascade: boolean }) => void;
+	onDestroy: (options: DestroyOptions) => void;
 	/** The user chose to destroy the tenants themselves; they are passed back, in order. */
 	onChildrenFirst: (tenants: DestroyTreeNode[]) => void;
 }
@@ -88,6 +89,7 @@ export function DestroyEnvironmentDialog({
 				) : (
 					<SingleConfirm
 						phase={state.phase}
+						targetId={split?.target.environment_id ?? null}
 						onOpenChange={onOpenChange}
 						onDestroy={onDestroy}
 					/>
@@ -98,17 +100,22 @@ export function DestroyEnvironmentDialog({
 }
 
 /**
- * Nothing else is placed on this environment's cluster: today's confirmation, unchanged. While the
- * tree is still being read the destroy button waits, so a click cannot outrun the question.
+ * Nothing else is placed on this environment's cluster: today's confirmation. The destroy button is
+ * offered only once the tree has ANSWERED: while it is being read a click cannot outrun the question,
+ * and when the read failed there is no environment the tree named — and destroying "whatever the
+ * server resolves" is how a stale environment id once reached the project's default environment.
  */
 function SingleConfirm({
 	phase,
+	targetId,
 	onOpenChange,
 	onDestroy,
 }: {
 	phase: DestroyTreeState["phase"];
+	/** The environment the tree named (its last node); null until it answers. */
+	targetId: string | null;
 	onOpenChange: (open: boolean) => void;
-	onDestroy: (options: { cascade: boolean }) => void;
+	onDestroy: (options: DestroyOptions) => void;
 }) {
 	return (
 		<>
@@ -126,18 +133,19 @@ function SingleConfirm({
 			)}
 			{phase === "error" && (
 				<p className="text-ui-md text-muted-foreground">
-					Couldn&apos;t check whether other environments are placed on this environment&apos;s
-					cluster. If any are, the destroy is refused and nothing is queued.
+					Couldn&apos;t read this environment, so it can&apos;t be destroyed from here. Close this
+					and try again.
 				</p>
 			)}
 			<AlertDialogFooter>
 				<AlertDialogCancel>Cancel</AlertDialogCancel>
 				<AlertDialogAction
 					variant="destructive"
-					disabled={phase === "loading"}
+					disabled={phase !== "ready" || !targetId}
 					onClick={() => {
+						if (!targetId) return;
 						onOpenChange(false);
-						onDestroy({ cascade: false });
+						onDestroy({ cascade: false, environmentId: targetId });
 					}}
 				>
 					Destroy environment
@@ -166,7 +174,7 @@ function CascadeConfirm({
 	phrase: string;
 	phraseIsProject: boolean;
 	onOpenChange: (open: boolean) => void;
-	onDestroy: (options: { cascade: boolean }) => void;
+	onDestroy: (options: DestroyOptions) => void;
 	onChildrenFirst: (tenants: DestroyTreeNode[]) => void;
 }) {
 	const total = tenants.length + 1;
@@ -192,7 +200,7 @@ function CascadeConfirm({
 	/** The typed name matched: close, then queue every environment in the tree. */
 	function onSubmit() {
 		onOpenChange(false);
-		onDestroy({ cascade: true });
+		onDestroy({ cascade: true, environmentId: target.environment_id });
 	}
 
 	return (

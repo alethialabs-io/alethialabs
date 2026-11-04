@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { toast } from "sonner";
-import { configurePreviewEnvironments } from "@/app/server/actions/preview";
+import { Controller, type FieldPath, useForm, useWatch } from "react-hook-form";
+import { savePreviewConfig } from "@/app/server/actions/preview";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { RegionError } from "@/components/errors/region-error";
+import { GeneralRefusal } from "@/components/settings/general/general-states";
 import { RepositorySelector } from "@/components/repository-selector";
 import {
 	SettingsCardFoot,
@@ -19,11 +20,14 @@ import {
 	settingsControl,
 	settingsControlSize,
 } from "@/components/settings/settings-ui";
+import { useActionMutation } from "@/lib/actions/use-action-mutation";
+import { orpc } from "@/lib/rpc/client";
 import type {
-	getPreviewConfig,
-	listProjectFabrics,
-	listProjectGitCredentials,
-} from "@/app/server/actions/preview";
+	PreviewConfigRow as StoredPreviewConfig,
+	PreviewFabricOption,
+	PreviewGitCredentialOption,
+} from "@/lib/rpc/procedures/settings";
+import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import {
 	parsePreviewRepositoryUrl,
 	previewRepositoryPartsFromRepository,
@@ -46,12 +50,32 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
+import type { GitProvider } from "@/lib/db/schema";
+import { PREVIEW_ROWS, PREVIEW_SAVE_NOTE, PREVIEW_SECTION_TITLE } from "./preview-copy";
+import { PreviewSettingsSkeleton, linkedFromProviders } from "./preview-settings-skeleton";
 
-type PreviewConfigRow = Awaited<ReturnType<typeof getPreviewConfig>> | null;
-type FabricOption = Awaited<ReturnType<typeof listProjectFabrics>>[number];
-type GitCredentialOption = Awaited<
-	ReturnType<typeof listProjectGitCredentials>
->[number];
+type PreviewConfigRow = StoredPreviewConfig | null;
+type FabricOption = PreviewFabricOption;
+type GitCredentialOption = PreviewGitCredentialOption;
+
+/** The form's fields — the keys a server field error may name (after its `config.` prefix). */
+const PREVIEW_FIELDS: readonly FieldPath<PreviewConfigInput>[] = [
+	"enabled",
+	"git_provider",
+	"repo_owner",
+	"repo_name",
+	"apps_path",
+	"placement_mode",
+	"namespace_prefix",
+	"fabric_id",
+	"git_credential_id",
+];
+
+/** Narrows a server field-error key (`config.repo_owner`) to one of the form's fields. */
+function previewField(key: string): FieldPath<PreviewConfigInput> | null {
+	const name = key.startsWith("config.") ? key.slice("config.".length) : key;
+	return PREVIEW_FIELDS.find((field) => field === name) ?? null;
+}
 
 const PLACEMENT_MODE_LABELS: Record<
 	(typeof PREVIEW_PLACEMENT_MODES)[number],
@@ -139,6 +163,7 @@ export function PreviewSettings({
 	gitCredentials,
 	gitlabBaseUrl,
 	providerAvailability,
+	linkedProviders,
 }: {
 	projectId: string;
 	initialConfig: PreviewConfigRow;
@@ -147,8 +172,13 @@ export function PreviewSettings({
 	gitlabBaseUrl: string;
 	/** Which git providers this instance can link (server-computed) — passed to the repo picker. */
 	providerAvailability: GitProviderAvailability;
+	/**
+	 * The viewer's linked git providers, as the route prefetched them (`projects.linkedGitProviders`).
+	 * Handed to the repo picker, whose FIRST render is then the settled branch: the repository row,
+	 * or the "No Git accounts linked" panel. Omitted, the picker reads the list itself after mount.
+	 */
+	linkedProviders?: GitProvider[];
 }) {
-	const router = useRouter();
 	const defaults = useMemo(() => configDefaults(initialConfig), [initialConfig]);
 	const [repoUrl, setRepoUrl] = useState(() =>
 		repositoryUrl(defaults, gitlabBaseUrl),
@@ -181,21 +211,36 @@ export function PreviewSettings({
 		applyRepositoryParts(form, parts);
 	}
 
-	async function onSave(values: PreviewConfigInput) {
-		try {
-			const saved = await configurePreviewEnvironments(projectId, values);
+	// The save in the mutation contract (#6128): pending and double-submit guarded, a field the
+	// server refuses under its field, and the page's read invalidated so a return visit shows what
+	// was saved (it replaced a `router.refresh()` of the whole route).
+	const save = useActionMutation(savePreviewConfig, {
+		invalidates: [orpc.settings.preview.key()],
+		successMessage: "Preview settings saved.",
+		onValidationError: (fields) => {
+			for (const [key, messages] of Object.entries(fields)) {
+				const field = previewField(key);
+				const message = messages?.[0];
+				if (field && message) form.setError(field, { type: "server", message });
+			}
+		},
+		onSuccess: (saved) => {
 			const next = configDefaults(saved.config);
 			form.reset(next);
 			setRepoUrl(repositoryUrl(next, gitlabBaseUrl));
 			setRepoError(null);
-			toast.success("Preview settings saved.");
-			router.refresh();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Couldn't save preview settings.");
-		}
-	}
+		},
+	});
 
-	const saveDisabled = form.formState.isSubmitting || !form.formState.isDirty;
+	// `mutateAsync` inside `handleSubmit` keeps `isSubmitting` true until the save settles; a failure
+	// is routed by the mutation itself (field errors, or one toast), so it is not rethrown.
+	const onSave = form.handleSubmit(async (values) => {
+		if (save.isPending) return;
+		await save.mutateAsync({ projectId, config: values }).catch(() => undefined);
+	});
+
+	const busy = form.formState.isSubmitting || save.isPending;
+	const saveDisabled = busy || !form.formState.isDirty;
 	const [selectedProvider, enabled, credentialId, repoOwner, repoName] = useWatch({
 		control: form.control,
 		name: [
@@ -208,14 +253,11 @@ export function PreviewSettings({
 	});
 
 	return (
-		<SettingsSection title="Preview environments" className="mb-0">
+		<SettingsSection title={PREVIEW_SECTION_TITLE} className="mb-0">
 			<SettingsPanel>
-				<form onSubmit={form.handleSubmit(onSave)}>
+				<form noValidate onSubmit={onSave}>
 					<div className="py-1">
-						<SettingsField
-							label="Enable"
-							hint="Saved settings render the pull request preview generator."
-						>
+						<SettingsField label={PREVIEW_ROWS.enable.label} hint={PREVIEW_ROWS.enable.hint}>
 							<Controller
 								control={form.control}
 								name="enabled"
@@ -242,10 +284,7 @@ export function PreviewSettings({
 							/>
 						</SettingsField>
 
-						<SettingsField
-							label="Source"
-							hint="The repository whose pull requests create preview environments."
-						>
+						<SettingsField label={PREVIEW_ROWS.source.label} hint={PREVIEW_ROWS.source.hint}>
 							<RepositorySelector
 								label=""
 								value={repoUrl}
@@ -262,6 +301,7 @@ export function PreviewSettings({
 								placeholder="Select repository..."
 								variant="settings"
 								providerAvailability={providerAvailability}
+								linkedProviders={linkedProviders}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
 								<GitProviderIcon provider={selectedProvider} size={14} mono={false} />
@@ -292,8 +332,8 @@ export function PreviewSettings({
 						</SettingsField>
 
 						<SettingsField
-							label="Placement"
-							hint="How each pull request is isolated on the selected fabric."
+							label={PREVIEW_ROWS.placement.label}
+							hint={PREVIEW_ROWS.placement.hint}
 						>
 							<Controller
 								control={form.control}
@@ -369,11 +409,14 @@ export function PreviewSettings({
 									)}
 								/>
 							</div>
-							{fabrics.length === 0 && (
-								<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
-									No project fabrics found. Default fabric will be used when one exists.
-								</div>
-							)}
+							{/* Always rendered, with a line for each case, as the Credentials row's note is: the
+							    row keeps one height whatever the project's fabrics, so the route skeleton can
+							    reserve it exactly (RUBRIC B2, #6335). */}
+							<div className="rounded-sm border border-dashed border-border-strong bg-surface-sunken px-3 py-2 text-ui-sm text-text-tertiary">
+								{fabrics.length === 0
+									? "No project fabrics found. Default fabric will be used when one exists."
+									: "Pick a project fabric, or keep Default fabric to use the project's default."}
+							</div>
 							<FieldError
 								message={
 									form.formState.errors.placement_mode?.message ??
@@ -384,8 +427,8 @@ export function PreviewSettings({
 						</SettingsField>
 
 						<SettingsField
-							label="Credentials"
-							hint="Optional ArgoCD credential for polling private repositories."
+							label={PREVIEW_ROWS.credentials.label}
+							hint={PREVIEW_ROWS.credentials.hint}
 						>
 							<Controller
 								control={form.control}
@@ -419,13 +462,75 @@ export function PreviewSettings({
 							<FieldError message={form.formState.errors.git_credential_id?.message} />
 						</SettingsField>
 					</div>
-					<SettingsCardFoot note="Saved changes apply on the next preview reconciliation">
+					<SettingsCardFoot note={PREVIEW_SAVE_NOTE}>
 						<Button type="submit" size="sm" disabled={saveDisabled}>
-							{form.formState.isSubmitting ? "Saving..." : "Save changes"}
+							{busy ? "Saving…" : "Save changes"}
 						</Button>
 					</SettingsCardFoot>
 				</form>
 			</SettingsPanel>
 		</SettingsSection>
+	);
+}
+
+/**
+ * The Preview environments page body (#6128): the read the route prefetched (`settings.preview`),
+ * in its four renders — the form, a refusal, an error with a retry, and "gone" (a project deleted
+ * while the page was open). The skeleton shows only if the server's prefetch did not land.
+ *
+ * The viewer's linked git providers (`projects.linkedGitProviders`) are prefetched with it and
+ * handed to the repo picker (#6335). That decides the Source row's layout: the "No Git accounts
+ * linked" panel or the repository row. It was read by the picker after mount, so the first paint
+ * showed a loading row that the answer then replaced.
+ */
+export function PreviewSettingsPage({
+	project,
+	gitlabBaseUrl,
+	providerAvailability,
+}: {
+	/** The project's slug, as the URL carries it. */
+	project: string;
+	gitlabBaseUrl: string;
+	providerAvailability: GitProviderAvailability;
+}) {
+	const query = useQuery(
+		orpc.settings.preview.queryOptions({ input: { project }, retry: retryUnlessRefused }),
+	);
+	const linked = useQuery(orpc.projects.linkedGitProviders.queryOptions());
+
+	if (query.data === undefined) {
+		if (query.isError) {
+			const refusal = readRefusalOf(query.error);
+			if (refusal) return <GeneralRefusal refusal={refusal} />;
+			return (
+				<RegionError
+					title="Couldn't load preview settings"
+					onRetry={() => void query.refetch()}
+				/>
+			);
+		}
+		return <PreviewSettingsSkeleton linked={linkedFromProviders(linked.data)} />;
+	}
+
+	if (query.data === null) {
+		return (
+			<GeneralRefusal
+				refusal="not-found"
+				title="This project is gone"
+				description="It was deleted, or its address changed, while this page was open."
+			/>
+		);
+	}
+
+	return (
+		<PreviewSettings
+			projectId={query.data.projectId}
+			initialConfig={query.data.config}
+			fabrics={query.data.fabrics}
+			gitCredentials={query.data.gitCredentials}
+			gitlabBaseUrl={gitlabBaseUrl}
+			providerAvailability={providerAvailability}
+			linkedProviders={linked.data}
+		/>
 	);
 }

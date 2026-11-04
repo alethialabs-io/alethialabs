@@ -7,9 +7,9 @@
 // when the wiring failed before the health read, service rows show Unknown — never a
 // stale pass — and the failure banner says which step died and how to fix it.
 
-import { formatDistanceToNow } from "date-fns";
 import { ExternalLink } from "lucide-react";
 import { PANEL_EMPTY } from "@/components/agent/panel-empty";
+import { formatRelative } from "@repo/format";
 import { EmptyState } from "@repo/ui/empty";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import type {
@@ -164,9 +164,11 @@ export function DeployPane({ status }: { status: GitopsDeployStatus | null }) {
 	}
 
 	const gitops = status.mode === "gitops";
-	const lastDeploy = status.lastDeployAt
-		? formatDistanceToNow(new Date(status.lastDeployAt), { addSuffix: true })
-		: null;
+	// Reads the clock during render, with no hydration gate. That holds only while no server
+	// render carries a status: the artifact panel fetches it in an effect (null on the server),
+	// and the canvas inspector mounts only for a node the user opened. A mount that prefetches a
+	// status on the server must gate this behind `useHydrated()` (see `jobs/columns.tsx`).
+	const lastDeploy = status.lastDeployAt ? formatRelative(status.lastDeployAt) : null;
 
 	return (
 		<div className="space-y-4">

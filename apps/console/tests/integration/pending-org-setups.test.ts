@@ -573,7 +573,7 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 	let savedStripeKey: string | undefined;
 
 	/** An owner-member actor in `orgId`, as the PDP sees one. */
-	const actorIn = (userId: string, orgId: string): Actor => ({ userId, orgId, entitlements: ENTITLEMENTS });
+	const actorIn = (userId: string, orgId: string): Actor => ({ credential: "session", userId, orgId, entitlements: ENTITLEMENTS });
 
 	beforeAll(async () => {
 		savedStripeKey = process.env.STRIPE_SECRET_KEY;

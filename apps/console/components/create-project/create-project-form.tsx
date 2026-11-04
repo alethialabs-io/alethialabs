@@ -15,18 +15,14 @@ import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
 
+import { ColHead, IMPORT_COLUMN_TITLE, SCRATCH_COLUMN_TITLE } from "./chooser-parts";
+import { EXAMPLE_PROMPTS, examplePromptLabel } from "./example-prompts";
 import { RepoImportPanel } from "./repo-import-panel";
 import {
 	StartFromScratchCards,
 	type ScratchKind,
 } from "./start-from-scratch-cards";
 
-/** Example prompts seeding the agent hero. */
-const EXAMPLE_PROMPTS = [
-	"An EKS cluster for an AI inference API — autoscaling GPU node pool, Postgres + pgvector, Redis.",
-	"A GPU training cluster on AWS — spot node pool, shared storage, a Postgres metadata database.",
-	"Postgres + pgvector, Redis, and an object store wired into a small cluster for a RAG backend.",
-];
 
 interface CreateProjectChooserProps {
 	orgSlug: string;
@@ -162,7 +158,7 @@ export function CreateProjectForm({
 							onClick={() => setPrompt(ex)}
 							className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 						>
-							{ex.split(" — ")[0]}
+							{examplePromptLabel(ex)}
 						</button>
 					))}
 				</div>
@@ -171,11 +167,11 @@ export function CreateProjectForm({
 			{/* ===== the two source on-ramps ===== */}
 			<div className="grid gap-6 lg:grid-cols-2">
 				<div className="space-y-3">
-					<ColHead>Import Git Repository</ColHead>
+					<ColHead>{IMPORT_COLUMN_TITLE}</ColHead>
 					<RepoImportPanel providerAvailability={providerAvailability} />
 				</div>
 				<div className="space-y-3">
-					<ColHead>Start from scratch</ColHead>
+					<ColHead>{SCRATCH_COLUMN_TITLE}</ColHead>
 					<StartFromScratchCards
 						byoHelmEnabled={byoHelmEnabled ?? false}
 						byoIacEnabled={byoIacEnabled ?? false}
@@ -183,16 +179,6 @@ export function CreateProjectForm({
 					/>
 				</div>
 			</div>
-		</div>
-	);
-}
-
-/** A small column heading with a trailing hairline rule. */
-function ColHead({ children }: { children: React.ReactNode }) {
-	return (
-		<div className="flex items-center gap-3">
-			<span className="text-ui-md font-semibold tracking-tight">{children}</span>
-			<span className="h-px flex-1 bg-border" />
 		</div>
 	);
 }

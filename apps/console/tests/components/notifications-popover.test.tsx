@@ -8,12 +8,12 @@ import { NotificationsPopover } from "@/components/shell/notifications-popover";
 import { useNotificationsStore } from "@/lib/stores/use-notifications-store";
 import { makeJob } from "../fixtures/jobs";
 
-const { useJobsQuery, useSupportNotifications } = vi.hoisted(() => ({
-	useJobsQuery: vi.fn(),
+const { useRecentJobsQuery, useSupportNotifications } = vi.hoisted(() => ({
+	useRecentJobsQuery: vi.fn(),
 	useSupportNotifications: vi.fn(),
 }));
 vi.mock("@/lib/query/use-jobs-query", () => ({
-	useJobsQuery: () => useJobsQuery(),
+	useRecentJobsQuery: () => useRecentJobsQuery(),
 }));
 // The popover composes support notifications too; default it to an empty feed so these
 // job-focused tests stay isolated (support wiring is covered in its own hook test).
@@ -32,14 +32,14 @@ const EMPTY_SUPPORT = {
 beforeEach(() => {
 	localStorage.clear();
 	useNotificationsStore.setState({ readJobIds: [], readSupportCaseIds: [] });
-	useJobsQuery.mockReset();
+	useRecentJobsQuery.mockReset();
 	useSupportNotifications.mockReset();
 	useSupportNotifications.mockReturnValue(EMPTY_SUPPORT);
 });
 
 describe("NotificationsPopover", () => {
 	it("renders a row per notifiable job and filters internal types", async () => {
-		useJobsQuery.mockReturnValue({
+		useRecentJobsQuery.mockReturnValue({
 			data: [
 				makeJob({ id: "j1", job_type: "DEPLOY", status: "SUCCESS" }),
 				makeJob({ id: "j2", job_type: "DETECT_DRIFT", status: "SUCCESS" }),
@@ -53,7 +53,7 @@ describe("NotificationsPopover", () => {
 	});
 
 	it("shows an unread count for unacknowledged terminal jobs", async () => {
-		useJobsQuery.mockReturnValue({
+		useRecentJobsQuery.mockReturnValue({
 			data: [makeJob({ id: "j1", status: "FAILED" })],
 		});
 		render(<NotificationsPopover />);
@@ -62,7 +62,7 @@ describe("NotificationsPopover", () => {
 	});
 
 	it("does not count in-flight jobs as unread", async () => {
-		useJobsQuery.mockReturnValue({
+		useRecentJobsQuery.mockReturnValue({
 			data: [makeJob({ id: "j1", status: "PROCESSING" })],
 		});
 		render(<NotificationsPopover />);
@@ -71,7 +71,7 @@ describe("NotificationsPopover", () => {
 	});
 
 	it("links org-scoped and marks the job read on click", async () => {
-		useJobsQuery.mockReturnValue({
+		useRecentJobsQuery.mockReturnValue({
 			data: [makeJob({ id: "j1", status: "SUCCESS" })],
 		});
 		render(<NotificationsPopover />);
@@ -85,7 +85,7 @@ describe("NotificationsPopover", () => {
 	});
 
 	it("clears the unread count when Mark all read is pressed", async () => {
-		useJobsQuery.mockReturnValue({
+		useRecentJobsQuery.mockReturnValue({
 			data: [makeJob({ id: "j1", status: "SUCCESS" })],
 		});
 		render(<NotificationsPopover />);
@@ -95,7 +95,7 @@ describe("NotificationsPopover", () => {
 	});
 
 	it("renders the empty state when there are no notifiable jobs", async () => {
-		useJobsQuery.mockReturnValue({ data: [] });
+		useRecentJobsQuery.mockReturnValue({ data: [] });
 		render(<NotificationsPopover />);
 		await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
 		expect(screen.getByText(/all caught up!/i)).toBeInTheDocument();

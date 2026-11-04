@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // GET /api/cli/projects/:id/probes — each environment's latest cluster-alive probe (the "is it
-// still up?" day-2 signal). Gated on project `view`; org-scoped via getLatestProbesByEnv's own
-// explicit org filter plus the resolveCliProject org lookup. Reuses the same read the console
-// reconcile badges use.
+// still up?" day-2 signal). Gated on project `view` of the addressed project
+// (resolveCliProjectAuthorized); org-scoped via getLatestProbesByEnv's own explicit org filter plus
+// that helper's org lookup. Reuses the same read the console reconcile badges use.
 //
 // THE COLLECTION PAGED HERE IS `project_environments`, NOT `environment_probes`. One row out per
 // environment is the response's contract, so the cursor walks environments — over the same
@@ -16,6 +16,7 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import {
 	type CursorScope,
 	MAX_PAGE_SIZE,
@@ -23,7 +24,6 @@ import {
 	paginate,
 	parsePageOpts,
 } from "@/lib/cli/paging";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments } from "@/lib/db/schema";
@@ -61,7 +61,7 @@ export async function GET(
 			: parsed.opts;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

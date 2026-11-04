@@ -1,13 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// The cloud-provider selection, and the selected identity's live network inventory.
+//
+// SPLIT (ADR 0005 D5, #6119). WHICH identity and provider are selected is UI state and stays in this
+// Zustand store. The identity's INVENTORY is server state: it is the `canvas.cloudInventory` GET
+// procedure, read through the query cache by `useCloudProviderResources()`. The store used to fetch
+// it itself, with its own loading flag, error slot and staleness clock — a hand-rolled query.
+
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { create } from "zustand";
-import { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
+import type { getCloudIdentityInventory } from "@/app/server/actions/cloud-resources";
+import { orpc } from "@/lib/rpc/client";
 import {
 	type CloudProviderSlug,
 	PROVIDERS,
 } from "@/lib/cloud-providers/generated/catalog";
-import { CACHE_TTL_HOURS } from "@/lib/cloud-providers/provider-slug";
 import type {
 	CachedResources,
 	GcpCachedResources,
@@ -101,117 +110,82 @@ function inventoryToAzureCached(inv: Inventory): AzureCachedResources {
 	};
 }
 
+/** The clouds whose identities carry a VPC/subnet inventory. Token clouds (Hetzner, …) have none. */
+const INVENTORY_PROVIDERS: ReadonlySet<CloudProviderSlug> = new Set(["aws", "gcp", "azure", "alibaba"]);
+
+/**
+ * Adapts an identity's normalized inventory into the per-provider `*CachedResources` shape the
+ * consumers read. Alibaba's VPC/VSwitch inventory is upserted in the AWS shape
+ * (lib/cloud-providers/inventory/alibaba.ts), so it maps through the AWS adapter. Null for a token
+ * cloud, which has no VPCs to reuse.
+ */
+export function adaptInventory(
+	provider: CloudProviderSlug,
+	inv: Inventory,
+): AnyCachedResources | null {
+	if (!INVENTORY_PROVIDERS.has(provider)) return null;
+	if (provider === "gcp") return inventoryToGcpCached(inv);
+	if (provider === "azure") return inventoryToAzureCached(inv);
+	return inventoryToAwsCached(inv);
+}
+
 interface CloudProviderStore {
 	provider: CloudProviderSlug;
 	identityId: string | null;
-	cachedResources: AnyCachedResources | null;
-	cachedAt: string | null;
-	isStale: boolean;
-	isLoading: boolean;
-	error: string | null;
-	_cleanup: (() => void) | null;
-
-	setIdentity: (
-		identityId: string,
-		provider: CloudProviderSlug,
-	) => Promise<void>;
-	updateResources: (
-		resources: AnyCachedResources | null,
-		cachedAt: string,
-	) => void;
-	subscribe: () => () => void;
+	/** Selects an identity (and its provider); its inventory is then read by the query below. */
+	setIdentity: (identityId: string, provider: CloudProviderSlug) => void;
 }
 
-export const useCloudProviderStore = create<CloudProviderStore>()(
-	(set, get) => ({
-		provider: "aws",
-		identityId: null,
-		cachedResources: null,
-		cachedAt: null,
-		isStale: true,
-		isLoading: false,
-		error: null,
-		_cleanup: null,
+/** The selected cloud identity and provider — UI state only. */
+export const useCloudProviderStore = create<CloudProviderStore>()((set) => ({
+	provider: "aws",
+	identityId: null,
+	setIdentity: (identityId, provider) => set({ identityId, provider }),
+}));
 
-		setIdentity: async (identityId, provider) => {
-			const prevCleanup = get()._cleanup;
-			if (prevCleanup) {
-				prevCleanup();
-				set({ _cleanup: null });
-			}
+/** The selected identity's resources, as its consumers read them. */
+export interface CloudProviderResources {
+	provider: CloudProviderSlug;
+	identityId: string | null;
+	/** The adapted inventory; null before an identity is selected, for a token cloud, or on error. */
+	cachedResources: AnyCachedResources | null;
+	isLoading: boolean;
+	/** A human sentence when the read failed, else null. */
+	error: string | null;
+}
 
-			set({ identityId, provider, isLoading: true, error: null });
+/**
+ * The selected identity's live inventory, through the query cache. Only the clouds that carry an
+ * inventory issue the read; a token cloud answers null without a request.
+ */
+export function useCloudProviderResources(): CloudProviderResources {
+	const provider = useCloudProviderStore((s) => s.provider);
+	const identityId = useCloudProviderStore((s) => s.identityId);
+	const enabled = identityId !== null && INVENTORY_PROVIDERS.has(provider);
+	const query = useQuery({
+		...orpc.canvas.cloudInventory.queryOptions({ input: { identityId: identityId ?? "" } }),
+		enabled,
+	});
+	const { data } = query;
+	const cachedResources = useMemo(
+		() => (data ? adaptInventory(provider, data) : null),
+		[provider, data],
+	);
+	return {
+		provider,
+		identityId,
+		cachedResources,
+		isLoading: enabled && query.isPending,
+		error: query.isError ? "Failed to load cloud resources" : null,
+	};
+}
 
-			try {
-				// AWS/GCP/Azure/Alibaba read the LIVE normalized inventory (kept fresh by the
-				// server-side sweep), adapted to the legacy per-provider shape. Alibaba's VPC/VSwitch
-				// inventory is upserted AWS-shaped (see lib/cloud-providers/inventory/alibaba.ts), so
-				// it maps through the AWS adapter. Token clouds (no VPCs) keep the old reader.
-				let resources: AnyCachedResources | null;
-				let cachedAt: string | null;
-				if (
-					provider === "aws" ||
-					provider === "gcp" ||
-					provider === "azure" ||
-					provider === "alibaba"
-				) {
-					const inv = await getCloudIdentityInventory(identityId);
-					resources =
-						provider === "gcp"
-							? inventoryToGcpCached(inv)
-							: provider === "azure"
-								? inventoryToAzureCached(inv)
-								: inventoryToAwsCached(inv);
-					cachedAt = new Date().toISOString();
-				} else {
-					// Token clouds (Hetzner; future DigitalOcean/Civo) have no VPCs to reuse.
-					resources = null;
-					cachedAt = null;
-				}
-				const isStale = cachedAt
-					? Date.now() - new Date(cachedAt).getTime() >
-						CACHE_TTL_HOURS * 3600 * 1000
-					: true;
-				set({
-					cachedResources: resources,
-					cachedAt,
-					isStale,
-					isLoading: false,
-					error: null,
-				});
-			} catch (err) {
-				set({
-					cachedResources: null,
-					cachedAt: null,
-					isStale: true,
-					isLoading: false,
-					error: err instanceof Error ? err.message : "Failed to load cloud resources",
-				});
-			}
-
-			const cleanup = get().subscribe();
-			set({ _cleanup: cleanup });
-		},
-
-		updateResources: (resources, cachedAt) => {
-			const isStale =
-				Date.now() - new Date(cachedAt).getTime() >
-				CACHE_TTL_HOURS * 3600 * 1000;
-			set({ cachedResources: resources, cachedAt, isStale });
-		},
-
-		subscribe: () => {
-			// AWS inventory is kept fresh server-side (the reconciliation sweep + event ingester);
-			// the store re-reads on identity switch. No client live channel needed.
-			return () => {};
-		},
-	}),
-);
-
+/** The selected provider's slug. */
 export function useProviderSlug(): CloudProviderSlug {
 	return useCloudProviderStore((s) => s.provider);
 }
 
+/** The selected provider's catalog metadata. */
 export function useProviderMeta() {
 	const provider = useProviderSlug();
 	return PROVIDERS[provider];

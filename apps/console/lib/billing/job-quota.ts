@@ -85,7 +85,7 @@ export async function assertJobQuotaAllowed(orgId: string): Promise<void> {
 	if (used < cap) return;
 
 	throw new UsageLimitError(
-		`Free plan allows ${cap} provisioning jobs per day. You've hit the limit — it clears over the next 24 hours, or upgrade to remove it.`,
+		`The Hobby plan allows ${cap} provisioning jobs per day. You've hit the limit — it clears over the next 24 hours, or upgrade to remove it.`,
 		true,
 	);
 }

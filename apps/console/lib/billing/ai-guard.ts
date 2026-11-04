@@ -25,6 +25,7 @@ import {
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getServiceDb, type Tx } from "@/lib/db";
 import { aiCreditGrant, aiUsageLedger } from "@/lib/db/schema";
+import { emitUsageHint } from "@/lib/realtime/usage-hint";
 
 /**
  * Credits a metered (settle) turn HOLDS while it is in flight (≈$0.10). Written to the ledger
@@ -320,7 +321,12 @@ export async function assertAiAllowed(
 	);
 
 	// Lock released — safe to spend a pooled connection on the reset-time reads before throwing.
-	if (decision.outcome === "charge") return decision.charge;
+	if (decision.outcome === "charge") {
+		// The hold moved the org's AI meters. Announced HERE — after the commit, outside the
+		// AI-budget lock — never from inside the transaction (#6127; lib/realtime/usage-hint.ts).
+		emitUsageHint(orgId);
+		return decision.charge;
+	}
 	throw await aiBudgetRefusalError(orgId, seatId, decision.refusal);
 }
 

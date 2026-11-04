@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Request-scoped context the canvas provides so the external-IaC overlay (rendered without props
-// of its own) can reach the project/environment it belongs to, read the currently attached source,
-// and refresh itself after attach / detach / rescan. Kept out of the persisted canvas store on
+// of its own) can reach the project/environment it belongs to and read the currently attached
+// source. Its writes re-read the source through the mutation contract's invalidation, so the context
+// carries no refresh of its own. Kept out of the persisted canvas store on
 // purpose — these ids are per-page, not draft state (mirrors ByoChartCanvasContext). A BYO IaC
 // source is single-per-environment (v1 replace mode), so this carries ONE source, not a list.
 
@@ -16,8 +17,6 @@ export interface IacSourceCanvasContextValue {
 	environmentId: string | null;
 	/** The environment's attached IaC source, or null when none is attached. */
 	source: IacSourceState | null;
-	/** Re-fetch the attached IaC source (after attach / detach / rescan). */
-	refresh: () => void;
 }
 
 const IacSourceCanvasContext = createContext<IacSourceCanvasContextValue | null>(null);

@@ -18,9 +18,9 @@ import { cn } from "@repo/ui/utils";
  * unknown.
  *
  * Two sources, cheapest first. `useEnvironmentStatus()` is free — it is the environment the
- * canvas already fetched — but it only answers under `ProjectShell`'s provider, and the Elench
- * surface is mounted in the app shell as a SIBLING of `<main>` (so the panel can squeeze the main
- * column), which is outside it. So the common case falls through to the same server action the
+ * board already read — but it only answers under the canvas's `EnvironmentStatusScope` (#6119),
+ * and the Elench surface is mounted in the app shell as a SIBLING of `<main>` (so the panel can
+ * squeeze the main column), which is outside it. So the common case falls through to the same server action the
  * topbar switcher uses, resolved by the project slug in the path. Both degrade to null rather
  * than throwing: a chip that cannot name the environment says "project", never a wrong name.
  */

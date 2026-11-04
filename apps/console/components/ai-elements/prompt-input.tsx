@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from "@repo/ui/select";
 import { toStr } from "@/lib/coerce";
+import { randomUuid } from "@/lib/random-id";
 import { Spinner } from "@repo/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
@@ -46,7 +47,6 @@ import {
   SquareIcon,
   XIcon,
 } from "lucide-react";
-import { nanoid } from "nanoid";
 import type {
   ChangeEvent,
   ChangeEventHandler,
@@ -270,7 +270,7 @@ export const PromptInputProvider = ({
       ...prev,
       ...incoming.map((file) => ({
         filename: file.name,
-        id: nanoid(),
+        id: randomUuid(),
         mediaType: file.type,
         type: "file" as const,
         url: URL.createObjectURL(file),
@@ -613,7 +613,7 @@ export const PromptInput = ({
         for (const file of capped) {
           next.push({
             filename: file.name,
-            id: nanoid(),
+            id: randomUuid(),
             mediaType: file.type,
             type: "file",
             url: URL.createObjectURL(file),
@@ -828,7 +828,7 @@ export const PromptInput = ({
         const array = Array.isArray(incoming) ? incoming : [incoming];
         setReferencedSources((prev) => [
           ...prev,
-          ...array.map((s) => ({ ...s, id: nanoid() })),
+          ...array.map((s) => ({ ...s, id: randomUuid() })),
         ]);
       },
       clear: clearReferencedSources,

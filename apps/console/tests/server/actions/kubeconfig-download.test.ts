@@ -17,9 +17,7 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 	authorizeQuiet: vi.fn(),
-	currentActor: vi.fn(),
 }));
-vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/request", () => ({ requestKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/poll", () => ({ pollKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/gates", () => ({
@@ -32,12 +30,10 @@ vi.mock("@/lib/observability/log", () => {
 });
 
 import {
-	canDownloadKubeconfig,
 	pollKubeconfigDownload,
 	requestKubeconfigDownload,
 } from "@/app/server/actions/kubeconfig-download";
-import { getPdp } from "@/lib/authz";
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeQuiet } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { collectGate, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
@@ -51,34 +47,11 @@ const PUB = "hufrF92CG1HA7VvGLgUKrklVI-A4E6RmImXDhK_s9Rg";
 const ACTOR = { userId: "u1", orgId: "o1" };
 const SEALED = "S".repeat(80);
 
-/** A PDP whose `can` answers `allowed`. */
-function pdp(allowed: boolean) {
-	return { can: vi.fn(async () => ({ allowed })), enforce: vi.fn() };
-}
-
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(authorize).mockResolvedValue(ACTOR as never);
 	vi.mocked(authorizeQuiet).mockResolvedValue(ACTOR as never);
-	vi.mocked(currentActor).mockResolvedValue(ACTOR as never);
 	vi.mocked(takeMintRateLimit).mockResolvedValue(true);
-});
-
-describe("canDownloadKubeconfig", () => {
-	it("asks the PDP for exactly cluster:access_readonly on the cluster", async () => {
-		const p = pdp(true);
-		vi.mocked(getPdp).mockReturnValue(p as never);
-		expect(await canDownloadKubeconfig(CLUSTER)).toBe(true);
-		expect(p.can).toHaveBeenCalledWith(ACTOR, "access_readonly", { type: "cluster", id: CLUSTER });
-	});
-
-	it("is false when denied, on any error, and for a malformed id", async () => {
-		vi.mocked(getPdp).mockReturnValue(pdp(false) as never);
-		expect(await canDownloadKubeconfig(CLUSTER)).toBe(false);
-		vi.mocked(currentActor).mockRejectedValue(new Error("no session"));
-		expect(await canDownloadKubeconfig(CLUSTER)).toBe(false);
-		expect(await canDownloadKubeconfig("not-a-uuid")).toBe(false);
-	});
 });
 
 describe("requestKubeconfigDownload", () => {

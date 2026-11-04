@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The two distinct page-level empty states. An org with zero environments gets
+// The page-level states that are not rows. An org with zero environments gets
 // onboarding (evidence appears once something is provisioned); an over-filtered
-// view gets a one-click way back. Never the same string for both.
+// view gets a one-click way back; a refused read says so. Never the same string twice.
 //
 // Both render through the shared `EmptyState` from `@repo/ui/empty` rather than the
 // local `StateFrame` they used to share, so the icon tile, the type scale and the
@@ -19,7 +19,7 @@ import { EvIcon } from "./evidence-status";
 /** The card the posture table would have occupied — an empty state has to hold the same space. */
 const CARD = "border border-solid bg-surface p-12 shadow-sm md:p-14";
 
-/** Zero environments in the org (also personal scope) — onboarding, not "no match". */
+/** Zero environments the reader can see — onboarding, not "no match". */
 export function EvidenceOnboarding({ org }: { org: string }) {
 	return (
 		<EmptyState
@@ -53,6 +53,22 @@ export function EvidenceNoMatch({ onClear }: { onClear: () => void }) {
 					Clear filters
 				</Button>
 			}
+		/>
+	);
+}
+
+/**
+ * The read was REFUSED (a typed FORBIDDEN from the read router) — not empty, and not a failure.
+ * A refusal answers the same on a retry, so there is no retry to offer; the way forward is access.
+ */
+export function EvidenceForbidden() {
+	return (
+		<EmptyState
+			className={CARD}
+			data-state="forbidden"
+			icon={<EvIcon name="shield-alert" size={22} />}
+			title="You can't view evidence here"
+			description="Your role in this organization doesn't include its projects' evidence. Ask an owner or admin for access."
 		/>
 	);
 }

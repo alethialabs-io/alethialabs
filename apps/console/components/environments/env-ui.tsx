@@ -6,6 +6,7 @@
 // avatar, and the mappings that turn a promotion's real data (status, gate results, protection
 // rules) into pipeline / gate / chip views.
 
+import { formatRelative } from "@repo/format";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import {
 	Clock,
@@ -15,7 +16,32 @@ import {
 	UserCheck,
 	type LucideIcon,
 } from "lucide-react";
+import { useHydrated } from "@/hooks/use-hydrated";
 import type { GateResult } from "@/types/jsonb.types";
+
+/** The widest relative time `formatRelative` prints, so the slot is that wide before it is read. */
+const RELATIVE_SIZER = "less than a minute ago";
+
+/**
+ * "3 minutes ago", read against the browser's clock only after hydration. The page is rendered on
+ * the server now (#6120), and the server's clock and the browser's disagree by however long the
+ * HTML took to arrive — text that differs between the two is React #418 and throws the server HTML
+ * away. Until hydration the slot is blank but already as wide as the widest text it can hold (the
+ * invisible-sizer pattern of `ClockSlot` in components/jobs/columns.tsx, which this file does not
+ * import: that module's import graph carries the jobs table). `<time>` carries the instant itself
+ * for assistive tech meanwhile.
+ */
+export function RelativeStamp({ at }: { at: string }) {
+	const hydrated = useHydrated();
+	return (
+		<time dateTime={at} className="inline-grid whitespace-nowrap">
+			<span aria-hidden className="invisible col-start-1 row-start-1">
+				{RELATIVE_SIZER}
+			</span>
+			<span className="col-start-1 row-start-1">{hydrated ? formatRelative(at) : null}</span>
+		</time>
+	);
+}
 
 /**
  * The status tiers, re-exported from the one place that defines them.

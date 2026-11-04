@@ -50,19 +50,11 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 		select({ activeOrgId: "org_1", fetchWorkspace: vi.fn() }),
 }));
 vi.mock("@/app/server/actions/org-settings", () => ({
-	getOrgSettings: vi.fn(async () => ({
-		name: "Acme",
-		slug: "acme",
-		logo: null,
-		description: "",
-		primaryAddress: null,
-		region: "eu-west-1",
-		defaultEnv: "production",
-		terraformVersion: "1.9.0",
-	})),
+	saveOrgGeneral: vi.fn(),
+	deleteOrganization: vi.fn(),
 }));
 vi.mock("@/app/server/actions/preview", () => ({
-	configurePreviewEnvironments: vi.fn(),
+	savePreviewConfig: vi.fn(),
 }));
 // RepositorySelector is rendered FOR REAL — inside PreviewSettings and inside ConfigFields — so
 // only the two server actions behind it are stubbed. Returning a linked provider is the whole
@@ -90,7 +82,7 @@ vi.mock("@/components/design-project/repository-context", () => ({
 	useRepositoryContext: () => null,
 }));
 
-const { OrgGeneral } = await import("@/components/settings/general/org-general");
+const { renderOrgGeneral, withQueryClient } = await import("../support/general-settings");
 const { PreviewSettings } = await import(
 	"@/components/settings/preview/preview-settings"
 );
@@ -248,8 +240,8 @@ describe("the sweep's subject set is derived, not typed", () => {
 
 describe("settings pages — accessible names", () => {
 	it("names every control on Settings · General", async () => {
-		const { container } = render(<OrgGeneral />);
-		// The panel renders skeletons until `getOrgSettings` resolves — without the wait this
+		const { container } = renderOrgGeneral();
+		// The panel renders a skeleton when its read has not answered — without the wait this
 		// asserts against a tree that contains no select at all and passes for the wrong reason.
 		await screen.findByText("Data region");
 		expect(container.querySelectorAll(NAME_REQUIRED).length).toBeGreaterThan(0);
@@ -257,7 +249,7 @@ describe("settings pages — accessible names", () => {
 	});
 
 	it("takes the two Defaults selects' names from their visible row labels", async () => {
-		render(<OrgGeneral />);
+		renderOrgGeneral();
 		// Neither call site passes an `aria-label`; both are named by `SettingsField` publishing the
 		// id of the label the user can already read. Asserting the NAME (not the attribute) is what
 		// makes this a claim about what a screen reader says.
@@ -271,27 +263,29 @@ describe("settings pages — accessible names", () => {
 
 	it("names every control on Settings · Preview environments", async () => {
 		const { container } = render(
-			<PreviewSettings
-				projectId="proj-1"
-				initialConfig={null}
-				fabrics={[
-					{
-						id: "11111111-1111-4111-8111-111111111111",
-						name: "shared",
-						region: "eu-west-1",
-						status: "ACTIVE",
-					},
-				]}
-				gitCredentials={[
-					{
-						id: "22222222-2222-4222-8222-222222222222",
-						purpose: "argocd",
-						method: "oauth",
-					},
-				]}
-				gitlabBaseUrl="https://gitlab.com"
-				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
-			/>,
+			withQueryClient(
+				<PreviewSettings
+					projectId="proj-1"
+					initialConfig={null}
+					fabrics={[
+						{
+							id: "11111111-1111-4111-8111-111111111111",
+							name: "shared",
+							region: "eu-west-1",
+							status: "ACTIVE",
+						},
+					]}
+					gitCredentials={[
+						{
+							id: "22222222-2222-4222-8222-222222222222",
+							purpose: "argocd",
+							method: "oauth",
+						},
+					]}
+					gitlabBaseUrl="https://gitlab.com"
+					providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
+				/>,
+			),
 		);
 		// RepositorySelector loads its provider list asynchronously; the icon-only git-provider
 		// select does not exist until it resolves, and it is one of the controls under test.
@@ -301,14 +295,16 @@ describe("settings pages — accessible names", () => {
 
 	it("keeps the visible row label inside each name where one row holds several selects", async () => {
 		render(
-			<PreviewSettings
-				projectId="proj-1"
-				initialConfig={null}
-				fabrics={[]}
-				gitCredentials={[]}
-				gitlabBaseUrl="https://gitlab.com"
-				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
-			/>,
+			withQueryClient(
+				<PreviewSettings
+					projectId="proj-1"
+					initialConfig={null}
+					fabrics={[]}
+					gitCredentials={[]}
+					gitlabBaseUrl="https://gitlab.com"
+					providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
+				/>,
+			),
 		);
 		// "Placement" is the row label and cannot name two controls, so each says which half it is —
 		// and each still contains the visible label, so "placement" reaches both (WCAG 2.5.3).

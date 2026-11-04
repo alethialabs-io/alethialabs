@@ -211,7 +211,9 @@ const STORE_DIR = "apps/console/lib/stores";
 const STORE_FILE = /^use-[a-z0-9-]+-filters\.ts$/;
 
 /** Where a facet-bearing server builder may live. */
-const BUILDER_DIRS = ["apps/console/lib/queries", "apps/console/app/server/actions"];
+// `lib/rpc/procedures` since #6121: a list page's reader moves there from `app/server/actions` with
+// its facets (ADR 0005 D1), and a builder in a directory this does not read is a builder it cannot see.
+const BUILDER_DIRS = ["apps/console/lib/queries", "apps/console/app/server/actions", "apps/console/lib/rpc/procedures"];
 
 /** The F7 unit test — the instrument for the one predicate this file does not match. */
 export const F7_TEST = "apps/console/tests/lib/queries/filter-standard-facets.test.ts";
@@ -288,11 +290,11 @@ const ANCHORS = [
  * of these score NOT MEASURED on F7 — the honest verdict for a behaviour nothing ran.
  */
 export const F7_UNDRIVEN = /** @type {const} */ ({
-	getJobsPage: {
-		file: "apps/console/app/server/actions/jobs.ts",
+	readJobsPage: {
+		file: "apps/console/lib/rpc/procedures/jobs.ts",
 		owner: "#3796",
 		why:
-			"a `\"use server\"` action that opens its own transaction and resolves the actor before it " +
+			"a read procedure's reader that opens its own transaction and resolves the actor before it " +
 			"reads, rather than a `lib/queries` builder taking `(orgId, query)`. Driving it needs the " +
 			"auth bootstrap `tests/actions/list-page-reads.test.ts` mocks, which is a second fixture " +
 			"shape, not a second row in this one.",
@@ -945,6 +947,23 @@ export function keysOnQuery(file, text) {
 		const roots = [...m[1].matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
 		if (roots.some((r) => normalized.has(r))) return true;
 	}
+	// THE READ ROUTER'S KEY (ADR 0005 D1, #6113). A read through `orpc.<domain>.<proc>` is keyed
+	// `[path, { input, type }]` BY CONSTRUCTION, so the question is the same one asked of `qk`:
+	// does the `input` it is handed carry the normalized query? In the hop module the input is the
+	// caller's normalized object arriving as a parameter (the README's division of labour); outside
+	// it, provenance is read exactly as above — the input's roots must include a binding from this
+	// module's own `normalize*Query(`. `{ input }` shorthand is the identifier `input`.
+	// `infiniteOptions` is the same key (#6129, the Activity feed): `[path, { input: input(first
+	// page param), type: "infinite" }]`, its `input` a function of the cursor whose body carries the
+	// normalized query — so its roots are read exactly as a plain input's.
+	for (const m of text.matchAll(/\.(?:queryOptions|infiniteOptions)\(\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)) {
+		const field = /\binput\b\s*(?::\s*([^,}]+))?/.exec(m[1]);
+		if (!field) continue;
+		if (hop) return true;
+		const expr = field[1] ?? "input";
+		const roots = [...expr.matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
+		if (roots.some((r) => normalized.has(r))) return true;
+	}
 	return false;
 }
 
@@ -1509,6 +1528,34 @@ export function positiveControl() {
 		"F3 fires when the normalized query is not in the key",
 		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "qk.widgets(org)") },
 		(v) => v.F3.verdict === "FAIL" && v.F2.verdict === "PASS",
+	);
+	drive(
+		"F3 accepts a read-router key that carries the normalized query (ADR 0005, #6113)",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "orpc.widgets.page.queryOptions({ input: q })") },
+		(v) => v.F3.verdict === "PASS",
+	);
+	drive(
+		"...and still fires when the read-router input is NOT the normalized query",
+		{ [CLIENT]: clean.readFile(CLIENT).replace("qk.widgets(org, q)", "orpc.widgets.page.queryOptions({ input: {} })") },
+		(v) => v.F3.verdict === "FAIL",
+	);
+	drive(
+		"F3 accepts a read-router INFINITE key whose cursor input carries the normalized query (#6129)",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("qk.widgets(org, q)", "orpc.widgets.page.infiniteOptions({ input: (c) => ({ ...q, cursor: c }), initialPageParam: null })"),
+		},
+		(v) => v.F3.verdict === "PASS",
+	);
+	drive(
+		"...and still fires when the infinite input is NOT the normalized query",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("qk.widgets(org, q)", "orpc.widgets.page.infiniteOptions({ input: (c) => ({ cursor: c }), initialPageParam: null })"),
+		},
+		(v) => v.F3.verdict === "FAIL",
 	);
 	drive(
 		"F3 fires when a free-text surface never debounces",

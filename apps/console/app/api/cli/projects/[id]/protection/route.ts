@@ -4,12 +4,12 @@
 // GET /api/cli/projects/:id/protection — each environment's promotion protection rules
 // (predecessor / verify-pass / approval / soak / cost gates). Gated on project `view`;
 // org-scoped via an explicit projects.org_id filter (RLS is bypassed here — the predicate is
-// the tenancy wall). Mirrors listProtectionRules (web).
+// the tenancy wall). Mirrors the web protection summaries (lib/rpc/procedures/environments.ts).
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { authorizeCli } from "@/lib/authz/guard";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
+import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -29,7 +29,7 @@ export async function GET(
 	const { id } = await params;
 
 	try {
-		const project = await resolveCliProject(actor.orgId, id);
+		const project = await resolveCliProjectAuthorized(actor, id, "view");
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}

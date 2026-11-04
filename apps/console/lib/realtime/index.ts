@@ -4,15 +4,21 @@
 import postgres from "postgres";
 import { getDatabaseConfig } from "@/lib/config/database";
 import { log } from "@/lib/observability/log";
+import {
+	type ChangeNotice,
+	keysFor,
+	parseNotice,
+	type SelfTestNotice,
+} from "./routing";
 
 const rtlog = log.child({ component: "realtime" });
 
-// Realtime fan-out over Postgres LISTEN/NOTIFY. A Postgres trigger does
-// pg_notify('<channel>', json) on insert; each app instance holds ONE dedicated LISTEN
-// connection per channel and dispatches to its SSE subscribers — so it scales to
-// multiple instances with no Redis. Two channels are wired today: `job_logs` (the
-// runner's insert_job_log() RPC → {jobId, logId}) and `support_messages`
-// (notify_support_message() → {caseId, messageId}). The ee/ tier swaps a Redis-backed
+// Realtime fan-out over Postgres LISTEN/NOTIFY. A Postgres trigger or RPC does
+// pg_notify('<channel>', json); each app instance holds ONE dedicated LISTEN connection
+// per channel and dispatches to its SSE subscribers — so it scales to multiple instances
+// with no Redis. Channels wired here: `job_logs` (insert_job_log() → {jobId, logId}), `runner_cancel`,
+// `runner_wake`, and `alethia_change` — the console's change bus (#6115: emit_change() →
+// {t, id, o, u, p}, consumed by lib/realtime/bus.ts). The ee/ tier swaps a Redis-backed
 // impl in behind these interfaces (see dataroom/spec/mvp/07-auth-rbac-sso.md).
 
 /**
@@ -30,57 +36,123 @@ export interface JobLogPayload {
 	logId: number;
 }
 
-/** The support_messages notify payload: a message uuid keyed by caseId. */
-export interface SupportMessagePayload {
-	caseId: string;
-	messageId: string;
-}
+/**
+ * A parsed notify → the routing key(s) and the `value` handed to their subscribers. A notice may
+ * route to several keys (the change bus: an org arm and an owner arm); a subscriber registered on
+ * more than one of them is still called ONCE per notice.
+ */
+type Route<TValue> = (
+	payload: unknown,
+) => { key: string | readonly string[]; value: TValue } | null;
 
-/** A parsed notify → the routing `key` and the `value` handed to that key's subscribers. */
-type Route<TValue> = (payload: unknown) => { key: string; value: TValue } | null;
+/** Where a transport's LISTEN connection points, read when the connection is opened. */
+interface TransportOptions {
+	url?: () => string;
+}
 
 /**
  * Generic single-LISTEN-connection transport: one dedicated `max:1` Postgres LISTEN
  * per channel per app instance, keyed fan-out to subscribers, and lazy start with a
  * retry-on-failed-LISTEN reset. Parameterised by channel + a payload router so each
- * channel (job_logs, support_messages, …) reuses the exact same plumbing.
+ * channel (job_logs, alethia_change, …) reuses the exact same plumbing.
+ *
+ * Two hooks exist for the change bus (lib/realtime/bus.ts), which needs to hear EVERY notice (its
+ * cursor counts notices for keys nobody is subscribed to right now) and needs to know when it may
+ * have missed some:
+ *
+ * - {@link tap} sees every routed notice, whatever its keys.
+ * - {@link onReconnect} fires on every successful LISTEN after the first one — postgres-js re-LISTENs
+ *   by itself when the connection drops (and calls `onlisten` again), and {@link restart} opens a new
+ *   connection. Either way NOTIFY is fire-and-forget to current listeners, so the gap is unknowable
+ *   and the only honest answer is a resync.
+ *
+ * What it CANNOT see: postgres-js swallows a failed re-LISTEN (`.catch(() => {})` in its `onclose`),
+ * after which this transport is deaf and says nothing. Only a round trip proves it is listening —
+ * lib/realtime/self-test.ts sends one every 30 s and calls {@link restart} when it does not come back.
  */
 class PgListenTransport<TValue> implements ChannelTransport<TValue> {
 	private readonly listeners = new Map<string, Set<(value: TValue) => void>>();
+	private readonly taps = new Set<(value: TValue) => void>();
+	private readonly reconnectHooks = new Set<() => void>();
+	private readonly listenWaiters = new Set<() => void>();
 	private started = false;
+	private listening = false;
+	private everListened = false;
 	private sql: ReturnType<typeof postgres> | null = null;
 
 	constructor(
 		private readonly channel: string,
 		private readonly route: Route<TValue>,
+		private readonly options: TransportOptions = {},
 	) {}
 
 	/** Lazily opens the single LISTEN connection on first subscribe. */
 	private ensureStarted(): void {
 		if (this.started) return;
 		this.started = true;
-		this.sql = postgres(getDatabaseConfig().serviceUrl, {
+		const url = this.options.url?.() ?? getDatabaseConfig().serviceUrl;
+		const sql = postgres(url, {
 			max: 1,
 			prepare: false,
 		});
-		this.sql
-			.listen(this.channel, (payload) => {
-				let parsed: unknown;
-				try {
-					parsed = JSON.parse(payload);
-				} catch {
-					return; // ignore malformed payloads
-				}
-				const routed = this.route(parsed);
-				if (!routed) return;
-				const subs = this.listeners.get(routed.key);
-				if (!subs) return;
-				for (const cb of subs) cb(routed.value);
-			})
+		this.sql = sql;
+		sql
+			.listen(
+				this.channel,
+				(payload) => this.dispatch(payload),
+				() => this.onListen(sql),
+			)
 			.catch((err) => {
 				rtlog.error("LISTEN failed", { channel: this.channel, err });
+				if (this.sql !== sql) return; // a restart already replaced this client
 				this.started = false; // allow a retry on the next subscribe
+				this.listening = false;
+				this.sql = null;
+				// Close the client that failed: it holds a connection (or a connect attempt) of its own,
+				// and the retry opens a fresh one. Without this every failed LISTEN leaked a client.
+				void sql.end({ timeout: 1 }).catch(() => {});
 			});
+	}
+
+	/** A LISTEN succeeded on `sql` (the first one, or a re-LISTEN after a dropped connection). */
+	private onListen(sql: ReturnType<typeof postgres>): void {
+		if (this.sql !== sql) return;
+		this.listening = true;
+		for (const resolve of this.listenWaiters) resolve();
+		this.listenWaiters.clear();
+		if (this.everListened) {
+			for (const hook of this.reconnectHooks) hook();
+		}
+		this.everListened = true;
+	}
+
+	/** Parse, route and fan out one NOTIFY payload. */
+	private dispatch(payload: string): void {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(payload);
+		} catch {
+			return; // ignore malformed payloads
+		}
+		const routed = this.route(parsed);
+		if (!routed) return;
+		for (const tap of this.taps) tap(routed.value);
+		if (typeof routed.key === "string") {
+			const subs = this.listeners.get(routed.key);
+			if (!subs) return;
+			for (const cb of subs) cb(routed.value);
+			return;
+		}
+		const called = new Set<(value: TValue) => void>();
+		for (const key of routed.key) {
+			const subs = this.listeners.get(key);
+			if (!subs) continue;
+			for (const cb of subs) {
+				if (called.has(cb)) continue;
+				called.add(cb);
+				cb(routed.value);
+			}
+		}
 	}
 
 	subscribe(key: string, cb: (value: TValue) => void): () => void {
@@ -97,6 +169,62 @@ class PgListenTransport<TValue> implements ChannelTransport<TValue> {
 			current.delete(cb);
 			if (current.size === 0) this.listeners.delete(key);
 		};
+	}
+
+	/** Hear every routed notice, whatever its keys. Opens the connection. Returns the removal. */
+	tap(cb: (value: TValue) => void): () => void {
+		this.ensureStarted();
+		this.taps.add(cb);
+		return () => {
+			this.taps.delete(cb);
+		};
+	}
+
+	/** Called after every LISTEN that follows the first (a reconnect). Returns the removal. */
+	onReconnect(cb: () => void): () => void {
+		this.reconnectHooks.add(cb);
+		return () => {
+			this.reconnectHooks.delete(cb);
+		};
+	}
+
+	/**
+	 * Resolves true once the connection is LISTENing, false if it is not within `timeoutMs`. Opens
+	 * the connection if it is not open.
+	 */
+	whenListening(timeoutMs: number): Promise<boolean> {
+		this.ensureStarted();
+		if (this.listening) return Promise.resolve(true);
+		return new Promise((resolve) => {
+			const done = () => {
+				clearTimeout(timer);
+				resolve(true);
+			};
+			const timer = setTimeout(() => {
+				this.listenWaiters.delete(done);
+				resolve(false);
+			}, timeoutMs);
+			this.listenWaiters.add(done);
+		});
+	}
+
+	/**
+	 * Close the connection and open a new one. For a LISTEN that is provably deaf (the self-test's
+	 * nonce never came back): the new connection's first LISTEN counts as a reconnect, so every
+	 * {@link onReconnect} hook fires once it is up.
+	 */
+	restart(): void {
+		this.close();
+		this.ensureStarted();
+	}
+
+	/** Close the connection. The next subscribe, tap or wait opens a new one. */
+	close(): void {
+		const old = this.sql;
+		this.sql = null;
+		this.started = false;
+		this.listening = false;
+		if (old) void old.end({ timeout: 1 }).catch(() => {});
 	}
 }
 
@@ -132,20 +260,6 @@ function routeRunnerCancel(payload: unknown): { key: string; value: string } | n
 }
 
 /**
- * Parses a `support_messages` notify into {key: caseId, value: messageId}. Returns
- * null (ignored) for a malformed payload or one missing the two uuid string fields.
- */
-function routeSupportMessage(payload: unknown): { key: string; value: string } | null {
-	if (typeof payload !== "object" || payload === null) return null;
-	if (!("caseId" in payload) || !("messageId" in payload)) return null;
-	const caseId = payload.caseId;
-	const messageId = payload.messageId;
-	if (typeof caseId !== "string" || caseId.length === 0) return null;
-	if (typeof messageId !== "string" || messageId.length === 0) return null;
-	return { key: caseId, value: messageId };
-}
-
-/**
  * The job-log realtime transport. `subscribe(jobId, cb)` delivers new numeric log ids
  * for a job. Kept as its own named interface for back-compat with existing callers.
  */
@@ -157,8 +271,8 @@ export interface RealtimeTransport {
 declare global {
 	var __alethiaRealtime: RealtimeTransport | undefined;
 	var __alethiaWake: WakeTransport | undefined;
-	var __alethiaSupport: ChannelTransport<string> | undefined;
 	var __alethiaCancel: ChannelTransport<string> | undefined;
+	var __alethiaChange: ChangeTransport | undefined;
 }
 
 /** The process-wide job-log realtime transport (HMR/instance-safe singleton). */
@@ -170,21 +284,6 @@ export function getRealtimeTransport(): RealtimeTransport {
 		);
 	}
 	return globalThis.__alethiaRealtime;
-}
-
-/**
- * The process-wide support-message realtime transport (HMR/instance-safe singleton).
- * `subscribe(caseId, cb)` delivers the messageId of each new row inserted on that case;
- * the SSE route then fetches the row (visible messages only) and emits it.
- */
-export function getSupportMessageTransport(): ChannelTransport<string> {
-	if (!globalThis.__alethiaSupport) {
-		globalThis.__alethiaSupport = new PgListenTransport<string>(
-			"support_messages",
-			routeSupportMessage,
-		);
-	}
-	return globalThis.__alethiaSupport;
 }
 
 /**
@@ -201,6 +300,66 @@ export function getCancelTransport(): ChannelTransport<string> {
 		);
 	}
 	return globalThis.__alethiaCancel;
+}
+
+// ── The console's change bus (#6115) ─────────────────────────────────────────
+
+/** One notice on `alethia_change`: a row change, or the bus's own self-test echo. */
+export type ChangeValue = ChangeNotice | SelfTestNotice;
+
+/** The `alethia_change` transport, as lib/realtime/bus.ts and self-test.ts use it. */
+export interface ChangeTransport extends ChannelTransport<ChangeValue> {
+	/** Hear every notice, whatever its keys. Returns the removal. */
+	tap(cb: (value: ChangeValue) => void): () => void;
+	/** Called after every LISTEN that follows the first. Returns the removal. */
+	onReconnect(cb: () => void): () => void;
+	/** True once LISTENing, false if not within `timeoutMs`. */
+	whenListening(timeoutMs: number): Promise<boolean>;
+	/** Close the connection and open a new one. */
+	restart(): void;
+	/** Close the connection (a later subscribe, tap or wait reopens it). */
+	close(): void;
+}
+
+/** The channel the change triggers NOTIFY on (lib/db/programmables.sql `emit_change`). */
+export const CHANGE_CHANNEL = "alethia_change";
+
+/**
+ * Where the change bus LISTENs: `ALETHIA_LISTEN_DATABASE_URL`, else the service URL.
+ *
+ * The override exists for ONE deployment shape: a Postgres reached through a TRANSACTION-mode
+ * pooler (PgBouncer, Supavisor). LISTEN is session state, and a transaction pooler hands the session
+ * to someone else after each statement, so the LISTEN silently stops hearing anything. Point this at
+ * a direct (or session-mode) connection. Nothing in the bundled deploy uses a pooler; the self-test
+ * (lib/realtime/self-test.ts) names this variable when it finds the LISTEN deaf.
+ */
+function listenDatabaseUrl(): string {
+	return process.env.ALETHIA_LISTEN_DATABASE_URL || getDatabaseConfig().serviceUrl;
+}
+
+/** Parses an `alethia_change` notify into its keys (lib/realtime/routing.ts) and the notice itself. */
+function routeChange(
+	payload: unknown,
+): { key: readonly string[]; value: ChangeValue } | null {
+	const notice = parseNotice(payload);
+	if (!notice) return null;
+	if (notice.kind === "selftest") return { key: [], value: notice };
+	return { key: keysFor(notice).map((r) => r.key), value: notice };
+}
+
+/**
+ * The process-wide change transport (HMR/instance-safe singleton): ONE LISTEN connection on
+ * `alethia_change` per process, whatever the number of streams. lib/realtime/bus.ts is its consumer.
+ */
+export function getChangeTransport(): ChangeTransport {
+	if (!globalThis.__alethiaChange) {
+		globalThis.__alethiaChange = new PgListenTransport<ChangeValue>(
+			CHANGE_CHANNEL,
+			routeChange,
+			{ url: listenDatabaseUrl },
+		);
+	}
+	return globalThis.__alethiaChange;
 }
 
 // ── Runner wake fan-out ──────────────────────────────────────────────────────

@@ -9,6 +9,7 @@
 // (scripts/check-ee-boundary.mjs) allowlists ONLY this file. See project 12.
 
 import { createRequire } from "node:module";
+import { requireFromWorkingDirectory } from "@/lib/enterprise-require";
 import {
   parseAlethiaEdition,
   type EnterpriseEntrypoint,
@@ -40,7 +41,7 @@ import {
 import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
-import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
+import type { Entitlements, Pdp, ResolvedScope } from "@/lib/authz/types";
 import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
@@ -209,7 +210,7 @@ export interface EnterpriseModule {
    * session selected (validate membership before honoring it); fall back to the
    * user's primary org, then the personal org. Community = personal org.
    */
-  resolveScope?: (userId: string, activeOrgId?: string) => Promise<Actor>;
+  resolveScope?: (userId: string, activeOrgId?: string) => Promise<ResolvedScope>;
   /** Extra Better Auth plugins (organization, SSO). Community = none. */
   authPlugins?: NonNullable<BetterAuthOptions["plugins"]>;
   /**
@@ -226,8 +227,19 @@ export type EnterpriseRegister = EnterpriseEntrypoint<
   EnterpriseModule
 >;
 
+/**
+ * What the one-time load decided. Recorded as an OUTCOME, not a boolean (#6149, R2): the old
+ * boolean was latched before the attempt, so a `register()` that threw once left every later
+ * `getEnterprise()` answering null — the community edition — in a process configured as enterprise,
+ * and `currentActor()` then served every org address from the personal scope with a 200.
+ */
+export type EditionState =
+  | { kind: "community"; reason: "configured" | "not-installed" }
+  | { kind: "enterprise" }
+  | { kind: "failed"; error: unknown };
+
 let registered: EnterpriseModule | null = null;
-let loaded = false;
+let state: EditionState | null = null;
 
 /** Whether an unknown error is Node's missing-module error for the optional package. */
 function isMissingEnterprisePackage(error: unknown): boolean {
@@ -265,16 +277,23 @@ function isEnterprisePackage(
  * resolve (and fail to find) it in a community build.
  */
 function loadEnterprise(): void {
-  if (loaded) return;
-  loaded = true;
+  if (state) return;
   const edition = parseAlethiaEdition(process.env.ALETHIA_EDITION);
   if (edition === "community") {
     registered = null;
+    state = { kind: "community", reason: "configured" };
     return;
   }
   const pkg = "@alethia/ee";
   try {
-    const mod: unknown = createRequire(import.meta.url)(pkg);
+    let mod: unknown;
+    try {
+      mod = createRequire(import.meta.url)(pkg);
+    } catch (error) {
+      if (!isMissingEnterprisePackage(error)) throw error;
+      mod = requireFromWorkingDirectory(pkg);
+      if (mod === undefined) throw error;
+    }
     if (!isEnterprisePackage(mod)) {
       throw new Error("@alethia/ee does not export register(core).");
     }
@@ -320,11 +339,22 @@ function loadEnterprise(): void {
         getConfig: getOpenFgaConfig,
       },
     });
+    state = { kind: "enterprise" };
   } catch (error) {
     if (edition !== "enterprise" && isMissingEnterprisePackage(error)) {
+      // `auto` concluding "community" is a legitimate answer for an AGPL install, but it is also
+      // what a resolution failure looks like (F049) — so it is SAID, once per process, rather than
+      // left for a scope collapse three layers up to reveal.
+      console.warn(
+        "[enterprise] ALETHIA_EDITION is unset (auto) and @alethia/ee could not be resolved — " +
+          "running as the community edition. Set ALETHIA_EDITION explicitly to make this a decision.",
+      );
       registered = null;
+      state = { kind: "community", reason: "not-installed" };
       return;
     }
+    registered = null;
+    state = { kind: "failed", error };
     throw error;
   }
 }
@@ -332,11 +362,28 @@ function loadEnterprise(): void {
 /** Explicit registration hook (tests / non-bundler hosts). Marks load complete. */
 export function registerEnterprise(mod: EnterpriseModule): void {
   registered = mod;
-  loaded = true;
+  state = { kind: "enterprise" };
+}
+
+/**
+ * The edition this process decided on, loading it on first call. Unlike {@link getEnterprise} this
+ * does not throw for a failed load: it reports it, so a caller can name the misconfiguration.
+ */
+export function editionState(): EditionState {
+  if (!state) {
+    try {
+      loadEnterprise();
+    } catch {
+      // Recorded in `state` as `failed`; reported to the caller rather than thrown here.
+    }
+  }
+  return state ?? { kind: "failed", error: new Error("edition load did not record an outcome") };
 }
 
 /** The registered enterprise module, or null in a community build. */
 export function getEnterprise(): EnterpriseModule | null {
-  if (!loaded) loadEnterprise();
+  if (!state) loadEnterprise();
+  // A failed load is rethrown on EVERY call, never degraded to community after the first (R2).
+  if (state?.kind === "failed") throw state.error;
   return registered;
 }

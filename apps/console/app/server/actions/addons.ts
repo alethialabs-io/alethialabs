@@ -5,26 +5,29 @@
 // Marketplace add-on server actions — enable / configure / disable free OSS Helm charts on a
 // project environment, and read the catalog + install state for the Add-ons page. Add-ons are
 // applied by the runner on the next DEPLOY (managed mode renders an ArgoCD Application); this
-// layer only persists intent + the tuned knobs into project_addons.
+// layer only persists intent + the tuned knobs into project_addons. The READ (the catalog joined
+// with an environment's install state) is `canvas.addons` in lib/rpc/procedures/canvas.ts (#6119).
 
 import { asRecord } from "@/lib/records";
 import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+import { defineAction } from "@/lib/actions/define-action";
+import { ActionRefusal, FieldRefusal, type FieldErrors } from "@/lib/actions/result";
+import { refusingCanvasWrite } from "@/lib/canvas/write-refusals";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withActorScope } from "@/lib/db";
+import { withActorScope } from "@/lib/db";
 import {
 	type AddonMode,
+	addonMode,
 	type ComponentStatus,
 	projectAddons,
-	projectRepositories,
-	projects,
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
-import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
-import { chartVersionIntent } from "@/lib/addons/chart-version";
+import { getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { chartVersionError, chartVersionIntent } from "@/lib/addons/chart-version";
 import {
 	generateAddonSecrets,
 	mergeAddonSecrets,
-	redactAddonSecrets,
 } from "@/lib/addons/secrets";
 import type {
 	AddOnCategory,
@@ -73,99 +76,9 @@ export interface ProjectAddonsView {
 	hasAppsRepo: boolean;
 }
 
-/**
- * The catalog joined with an environment's install state — the Add-ons page payload. Resolves
- * the active environment (the given one, else the project default) since add-ons are
- * environment-scoped.
- */
-export async function getProjectAddons(
-	projectId: string,
-	environmentId?: string | null,
-): Promise<ProjectAddonsView> {
-	const actor = await authorize("view", { type: "project", id: projectId });
-	const envId = await resolveActiveEnvironmentId(projectId, environmentId);
-
-	// `project_addons` / `project_repositories` are RLS-less project-child tables, so the
-	// org boundary is enforced HERE, not by a policy: join to the parent project and filter
-	// on the caller's org (mirrors lib/queries/evidence.ts queryOrgEvidence and drift.ts).
-	// The service db bypasses RLS, so the explicit `projects.org_id = actor.orgId` predicate
-	// is the tenancy wall — a foreign project UUID yields no rows even though the org-blind
-	// PDP grant let authorize() through. Using actor.orgId (not withActorScope on
-	// actor.userId) keeps it correct for Teams orgs (project owned by another member).
-	const db = getServiceDb();
-	const rows = await db
-		.select({
-			addon_id: projectAddons.addon_id,
-			enabled: projectAddons.enabled,
-			mode: projectAddons.mode,
-			values: projectAddons.values,
-			values_yaml: projectAddons.values_yaml,
-			version: projectAddons.version,
-			status: projectAddons.status,
-			health: projectAddons.health,
-			sync_status: projectAddons.sync_status,
-			last_synced_at: projectAddons.last_synced_at,
-		})
-		.from(projectAddons)
-		.innerJoin(projects, eq(projectAddons.project_id, projects.id))
-		.where(
-			and(
-				eq(projectAddons.project_id, projectId),
-				eq(projectAddons.environment_id, envId),
-				eq(projects.org_id, actor.orgId),
-			),
-		);
-	// GitOps mode needs a destination apps repo on this environment.
-	const [repo] = await db
-		.select({ repo: projectRepositories.apps_destination_repo })
-		.from(projectRepositories)
-		.innerJoin(projects, eq(projectRepositories.project_id, projects.id))
-		.where(
-			and(
-				eq(projectRepositories.project_id, projectId),
-				eq(projectRepositories.environment_id, envId),
-				eq(projects.org_id, actor.orgId),
-			),
-		)
-		.limit(1);
-	const hasAppsRepo = Boolean(repo?.repo);
-	const byId = new Map(rows.map((r) => [r.addon_id, r]));
-
-	const items: AddonMarketItem[] = ADDON_CATALOG.map((def) => {
-		const row = byId.get(def.id);
-		const install: AddonInstallState | null = row
-			? {
-					enabled: row.enabled,
-					mode: row.mode,
-					// Secrets redacted for the client — a set/unset marker, never the stored ciphertext.
-					values: redactAddonSecrets(def, row.values ?? {}),
-					valuesYaml: row.values_yaml,
-					version: row.version,
-					status: row.status,
-					health: row.health,
-					sync: row.sync_status,
-					lastSyncedAt: row.last_synced_at?.toISOString() ?? null,
-				}
-			: null;
-		return {
-			id: def.id,
-			name: def.name,
-			category: def.category,
-			icon: def.icon,
-			summary: def.summary,
-			docsUrl: def.docsUrl,
-			license: def.license,
-			chart: def.chart,
-			version: def.version,
-			namespace: def.namespace,
-			requires: def.requires ?? [],
-			fields: def.fields,
-			install,
-		};
-	});
-
-	return { environmentId: envId, items, hasAppsRepo };
-}
+/** The sentence for an Advanced values override that is not a YAML mapping. */
+const ADVANCED_VALUES_REFUSAL =
+	"Advanced values must be valid YAML describing a mapping (key: value).";
 
 /**
  * Enables (or reconfigures) an add-on on an environment: validates the knobs against the
@@ -192,7 +105,7 @@ export async function enableAddon(input: {
 		id: input.projectId,
 	});
 	const def = getAddOn(input.addonId);
-	if (!def) throw new Error(`Unknown add-on: ${input.addonId}`);
+	if (!def) throw new ActionRefusal("not-found", `Unknown add-on: ${input.addonId}`);
 	// Validate + normalise the knobs (defaults filled) so a bad value is rejected here, not
 	// mid-deploy.
 	const parsed = def.configSchema.safeParse(input.values ?? {});
@@ -206,16 +119,34 @@ export async function enableAddon(input: {
 		const detail = parsed.error.issues
 			.map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
 			.join("; ");
-		throw new Error(`Invalid add-on configuration: ${detail}`);
+		// A FieldRefusal (an Error, same message — the CLI reads the prefix): the console puts each
+		// sentence under its knob, keyed `values.<path>` like the input it came from.
+		const fields: FieldErrors = {};
+		for (const issue of parsed.error.issues) {
+			const key = issue.path.length > 0 ? `values.${issue.path.join(".")}` : "values";
+			fields[key] = [...(fields[key] ?? []), issue.message];
+		}
+		throw new FieldRefusal(fields, `Invalid add-on configuration: ${detail}`);
 	}
 	// Validate the raw YAML override parses to a mapping (reject a scalar/list/garbage here).
 	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;
 	if (valuesYaml && !parseValuesYaml(valuesYaml)) {
-		throw new Error(
-			"Advanced values must be valid YAML describing a mapping (key: value).",
+		throw new FieldRefusal(
+			{ valuesYaml: [ADVANCED_VALUES_REFUSAL] },
+			ADVANCED_VALUES_REFUSAL,
 		);
 	}
 	// Refused here, before anything is written — this is the injection boundary for targetRevision.
+	// Asked first as a field refusal so the console can put it under the version box;
+	// `chartVersionIntent` below refuses the same value with the same sentence for any other caller.
+	const versionProblem =
+		typeof input.version === "string" ? chartVersionError(input.version) : null;
+	if (versionProblem) {
+		throw new FieldRefusal(
+			{ version: [versionProblem] },
+			`Invalid chart version: ${versionProblem}`,
+		);
+	}
 	const versionIntent = chartVersionIntent(input.version);
 	// `keep` writes nothing: a fresh row gets NULL (the catalog default), an existing one keeps its
 	// pin because the column is absent from the conflict update.
@@ -319,4 +250,50 @@ export async function disableAddon(input: {
 			);
 	});
 	return { ok: true };
+}
+
+// ── The console's mutation contract (ADR 0005 §D4, #6119) ───────────────────────────────────────
+//
+// The Architecture board's add-on card calls these, through `useActionMutation`, never the
+// functions above directly: each parses its input, runs the SAME function the CLI route calls (so
+// every authorize / environment-resolution check above is the one that runs — the environment is
+// resolved inside the actor's org, so a foreign project's id writes nothing), and answers an
+// `ActionResult` whose refusals the card renders by kind. Each is a plain async function whose body
+// builds its contract inline, so the action-boundary guard can follow it to `authorize`.
+
+const uuid = z.string().uuid();
+
+const addonTargetInput = z.object({
+	projectId: uuid,
+	environmentId: uuid.nullable().optional(),
+	addonId: z.string().min(1).max(128),
+});
+
+const enableAddonInput = addonTargetInput.extend({
+	mode: z.enum(addonMode.enumValues).optional(),
+	values: z.record(z.string(), z.unknown()).optional(),
+	valuesYaml: z.string().max(200_000).nullable().optional(),
+	version: z.string().max(128).nullable().optional(),
+});
+
+/** Enables or reconfigures an add-on on the environment; answers the add-on's id. */
+export async function enableAddonAction(raw: z.input<typeof enableAddonInput>) {
+	return defineAction({
+		input: enableAddonInput,
+		run: async ({ input }) => {
+			await refusingCanvasWrite(() => enableAddon(input));
+			return { addonId: input.addonId };
+		},
+	})(raw);
+}
+
+/** Removes an add-on from the environment (pruned on the next Deploy); answers the add-on's id. */
+export async function disableAddonAction(raw: z.input<typeof addonTargetInput>) {
+	return defineAction({
+		input: addonTargetInput,
+		run: async ({ input }) => {
+			await refusingCanvasWrite(() => disableAddon(input));
+			return { addonId: input.addonId };
+		},
+	})(raw);
 }

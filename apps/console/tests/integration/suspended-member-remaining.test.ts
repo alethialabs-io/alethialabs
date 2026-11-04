@@ -75,7 +75,7 @@ const pdp = new PostgresRbacPDP();
  * viewer, only the team's admin grant allows it.
  */
 async function canManageMembers(userId: string): Promise<boolean> {
-	return (await pdp.can({ userId, orgId: ORG }, "manage_members", { type: "member" })).allowed;
+	return (await pdp.can({ credential: "session", userId, orgId: ORG }, "manage_members", { type: "member" })).allowed;
 }
 
 /** An invitation's status. */

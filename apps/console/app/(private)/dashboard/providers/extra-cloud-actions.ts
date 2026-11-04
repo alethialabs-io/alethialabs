@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
+import { authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import * as conn from "@/lib/cloud-providers/connections";
 
 /**
@@ -31,48 +31,4 @@ export async function initExtraCloudIdentity(provider: ExtraCloud) {
 		type: "cloud_identity",
 	});
 	return conn.initIdentity(actor, provider);
-}
-
-/** Persists a DigitalOcean/Hetzner/Civo scoped API token and verifies it server-side. */
-export async function saveTokenCloud(
-	identityId: string,
-	provider: "digitalocean" | "hetzner" | "civo",
-	apiToken: string,
-	// Hetzner-only, optional: the manually-generated Object Storage S3 key pair (both-or-neither).
-	s3AccessKey?: string,
-	s3SecretKey?: string,
-) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.saveTokenCloudIdentity(
-		actor,
-		identityId,
-		provider,
-		apiToken,
-		s3AccessKey,
-		s3SecretKey,
-	);
-}
-
-/** Persists an Alibaba RAM-role ARN and verifies it server-side (STS AssumeRole). */
-export async function saveAlibaba(identityId: string, roleArn: string) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.saveAlibabaIdentity(actor, identityId, roleArn);
-}
-
-/** Resets an extra-cloud identity to its pending state. */
-export async function disconnectExtraCloud(
-	identityId: string,
-	provider: ExtraCloud,
-) {
-	const actor = await authorize("manage_identities", {
-		type: "cloud_identity",
-		id: identityId,
-	});
-	return conn.disconnectIdentity(actor, identityId, provider);
 }

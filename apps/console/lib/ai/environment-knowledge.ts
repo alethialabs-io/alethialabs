@@ -14,7 +14,7 @@
 import { formatDate, formatMonthlyRate } from "@repo/format";
 import { and, desc, eq } from "drizzle-orm";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
-import { type Tx, withActorScope, withOwnerScope } from "@/lib/db";
+import { type Tx, withActorScope } from "@/lib/db";
 import {
 	environmentCost,
 	environmentDrift,
@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/schema";
 import { structuralHash } from "@/lib/promotions/diff";
 import { orgAgentContextEnabled } from "./org-agent-context-flag";
+import { isOwnProject } from "./project-knowledge";
 
 /** Actor scope for the reads — the real `{ userId, orgId }` (community: equal). */
 type ReadActor = { userId: string; orgId: string };
@@ -164,9 +165,9 @@ export function formatEnvironmentKnowledge(facts: EnvironmentFacts | null): stri
 
 /**
  * Read the scoped environment's live facts. The environment row is read FIRST, joined to its
- * project under the caller's scope (the same `withActorScope` / `withOwnerScope` split
- * `buildProjectKnowledge` uses) — that is the tenancy gate. Only once it resolves are the
- * RLS-less children (cost, drift, staged changes) read, and each is keyed on BOTH the project
+ * project under the caller's actor scope, with the same per-user test `buildProjectKnowledge`
+ * applies when the org agent-context flag is off — that is the tenancy gate. Only once it resolves
+ * are the RLS-less children (cost, drift, staged changes) read, and each is keyed on BOTH the project
  * and the environment id the gate returned, never on a caller-supplied id alone. Returns null
  * when the environment is not visible in scope.
  */
@@ -188,6 +189,8 @@ export async function readEnvironmentFacts(
 				isDefault: projectEnvironments.is_default,
 				deployedHash: projectEnvironments.deployed_config_hash,
 				projectRegion: projects.region,
+				projectUserId: projects.user_id,
+				projectOrgId: projects.org_id,
 			})
 			.from(projectEnvironments)
 			.innerJoin(projects, eq(projectEnvironments.project_id, projects.id))
@@ -199,6 +202,12 @@ export async function readEnvironmentFacts(
 			)
 			.limit(1);
 		if (!env) return null;
+		if (
+			!orgAgentContextEnabled() &&
+			!isOwnProject(actor, { user_id: env.projectUserId, org_id: env.projectOrgId })
+		) {
+			return null;
+		}
 
 		const [[cost], [drift], recent, staged] = await Promise.all([
 			tx
@@ -278,9 +287,7 @@ export async function readEnvironmentFacts(
 		};
 	};
 
-	const scoped = orgAgentContextEnabled()
-		? await withActorScope(actor, read)
-		: await withOwnerScope(actor.userId, read);
+	const scoped = await withActorScope(actor, read);
 	if (!scoped) return null;
 	const { deployedHash, ...facts } = scoped;
 	if (!deployedHash) return facts;

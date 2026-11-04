@@ -16,6 +16,7 @@ import {
 } from "@repo/ui/command";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
+import { Skeleton } from "@repo/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -53,6 +54,16 @@ interface RepositorySelectorProps {
    * Omitted: every provider is offered, as before.
    */
   providerAvailability?: GitProviderAvailability;
+  /**
+   * The caller's linked git providers, already read on the server (the `/~/new` route prefetches
+   * `projects.linkedGitProviders`). Given, the selector's FIRST render is already the right branch —
+   * the provider + repository row, or the "No Git accounts linked" panel — and it never fetches the
+   * list itself. Omitted, it reads the list on mount and shows its loading row until then.
+   *
+   * Read once, at mount, like `value`'s initial provider: a later change of this prop is not
+   * followed, so an array rebuilt on every parent render cannot re-trigger the load.
+   */
+  linkedProviders?: PublicGitProvider[];
 }
 
 /** The order the Link buttons are offered in. */
@@ -92,6 +103,19 @@ const GIT_PROVIDERS = [
   "gitlab",
 ] as const satisfies readonly PublicGitProvider[];
 
+/**
+ * The provider the selector opens on: the one a saved repo URL names when that provider is linked,
+ * else the first linked one; null when none is linked.
+ */
+function initialProviderFor(
+  providers: PublicGitProvider[],
+  savedUrl: string | undefined,
+): PublicGitProvider | null {
+  const detected = savedUrl ? providerFromRepoUrl(savedUrl) : null;
+  if (detected && providers.includes(detected)) return detected;
+  return providers[0] ?? null;
+}
+
 function providerFromRepoUrl(url: string): PublicGitProvider | null {
   try {
     const host = new URL(url).hostname.toLowerCase();
@@ -104,6 +128,64 @@ function providerFromRepoUrl(url: string): PublicGitProvider | null {
   return null;
 }
 
+/**
+ * The selector's settled layout in loading form, for a skeleton drawn before the page's data
+ * arrives (RUBRIC B2). The selector has two layouts with no shared geometry. One is the
+ * "No Git accounts linked" panel, about 178px tall with its three Link buttons and the manual-entry
+ * link. The other is the 40px provider and repository row. So the caller says which one it expects:
+ * `linked: false` draws the panel, and anything else draws the row. The classes are the ones the
+ * two branches below use. Change them together.
+ */
+export function RepositorySelectorSkeleton({
+  linked,
+  variant = "default",
+}: {
+  /** Whether the viewer has a git account linked. `undefined` (not known) draws the row. */
+  linked: boolean | undefined;
+  variant?: "default" | "settings";
+}) {
+  if (linked === false) {
+    return (
+      <div
+        data-slot="git-accounts-skeleton"
+        className={cn(
+          "space-y-3 border p-4",
+          variant === "settings"
+            ? "rounded-sm border-dashed border-border-strong bg-surface-sunken"
+            : "rounded-lg bg-muted/30",
+        )}
+      >
+        <div className="flex h-[1lh] items-center gap-2 text-sm">
+          <Skeleton className="size-4" />
+          <Skeleton className="h-3.5 w-36" />
+        </div>
+        <div className="flex h-[1lh] items-center text-sm">
+          <Skeleton className="h-3 w-full max-w-md" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {LINK_ORDER.map((p) => (
+            <Skeleton key={p} className="h-8 w-28" />
+          ))}
+          <div className="mt-2 w-full">
+            <Skeleton className="h-8 w-52" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div data-slot="repository-row-skeleton" className="flex items-center gap-1.5">
+      <Skeleton
+        className={cn(
+          "min-w-0 flex-1",
+          variant === "settings" ? "h-10 rounded-sm" : "h-[38px]",
+        )}
+      />
+      <Skeleton className="size-9 shrink-0" />
+    </div>
+  );
+}
+
 export function RepositorySelector({
   value,
   onChange,
@@ -113,22 +195,39 @@ export function RepositorySelector({
   variant = "default",
   onRepositorySelect,
   providerAvailability,
+  linkedProviders: seededProviders,
 }: RepositorySelectorProps) {
   const sharedCtx = useRepositoryContext();
+  // THE FIRST RENDER IS THE SETTLED LAYOUT WHEN ANYTHING ALREADY KNOWS THE ANSWER (F034). This used
+  // to start at `loading: false` with no providers, so the first frame — the server render
+  // included — was the "No Git accounts linked" panel with three Link buttons, swapped a moment
+  // later for the skeleton and then for the repository row. Now the state starts from the server
+  // seed or the shared context when there is one, and from the loading row when there is not: the
+  // row a user sees first is never one the data is about to take away.
+  const [seed] = useState(() => sharedCtx?.linkedProviders ?? seededProviders);
+  const [initialValue] = useState(value);
   const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchingRepos, setFetchingRepos] = useState(false);
+  const [loading, setLoading] = useState(() =>
+    sharedCtx ? sharedCtx.loadingProviders : seededProviders === undefined,
+  );
+  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
+    seed ?? [],
+  );
+  const [selectedProvider, setSelectedProvider] =
+    useState<PublicGitProvider | null>(() =>
+      seed ? initialProviderFor(seed, initialValue) : null,
+    );
+  // What the mount knew, kept so `loadInitialData` can skip the provider read it no longer needs.
+  const [seededAtMount] = useState(() => !sharedCtx && seededProviders !== undefined);
+  const [selectedAtMount] = useState(selectedProvider);
+  // A provider known at mount has its repositories in flight from the first frame, so the row reads
+  // "Fetching repositories..." rather than "No repositories found" until the list lands.
+  const [fetchingRepos, setFetchingRepos] = useState(() => selectedProvider !== null);
   const [error, setError] = useState<string | null>(null);
   const [authRecoveryProvider, setAuthRecoveryProvider] =
     useState<PublicGitProvider | null>(null);
-  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
-    [],
-  );
-  const [selectedProvider, setSelectedProvider] =
-    useState<PublicGitProvider | null>(null);
   const [showLinkOptions, setShowLinkOptions] = useState(false);
   const [isManual, setIsManual] = useState(false);
-  const [initialValue] = useState(value);
   const [open, setOpen] = useState(false);
   const repositoryShellBorder = error
     ? variant === "settings"
@@ -210,6 +309,11 @@ export function RepositorySelector({
 
   const loadInitialData = useCallback(async () => {
     if (sharedCtx) return; // Skip — using shared context
+    // Seeded by the server: the provider list is already on screen; only its repositories are left.
+    if (seededAtMount) {
+      if (selectedAtMount) await fetchRepositories(selectedAtMount);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -237,7 +341,7 @@ export function RepositorySelector({
     } finally {
       setLoading(false);
     }
-  }, [initialValue, sharedCtx]);
+  }, [initialValue, sharedCtx, seededAtMount, selectedAtMount]);
 
   useEffect(() => {
     if (!sharedCtx) loadInitialData();
@@ -302,10 +406,13 @@ export function RepositorySelector({
   };
 
   if (loading) {
+    // The loading row in the settled row's shape: a label bar only when there IS a label, and the
+    // provider + repository row at its own height (h-9). With `label=""` (the import panel) the old
+    // label bar was a line the settled layout does not have.
     return (
-      <div className="space-y-2 animate-pulse">
-        <div className="h-4 w-24 bg-muted rounded" />
-        <div className="h-10 w-full bg-muted rounded" />
+      <div className={cn("animate-pulse", label && "space-y-1.5")}>
+        {label && <div className="h-4 w-24 bg-muted rounded" />}
+        <div className="h-9 w-full bg-muted rounded" />
       </div>
     );
   }
