@@ -18,9 +18,8 @@ import (
 func TestKeylessDecision_CarriesTheCellState(t *testing.T) {
 	t.Run("excluded cell records excluded", func(t *testing.T) {
 		_, _, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-			Provider:      providerHetzner,
-			KeylessDBAuth: true,
-			Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+			Provider:  providerHetzner,
+			Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
 		})
 		d, ok := findKeylessDecision(decisions, "orders-db")
 		if !ok {
@@ -37,11 +36,10 @@ func TestKeylessDecision_CarriesTheCellState(t *testing.T) {
 
 	t.Run("live cell records live", func(t *testing.T) {
 		_, _, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-			Provider:      providerAWS,
-			KeylessDBAuth: true,
-			Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-			Outputs:       map[string]string{"rds_endpoint": "db.example.com"},
-			RunnerImage:   "ghcr.io/alethialabs-io/runner-aws:test",
+			Provider:    providerAWS,
+			Databases:   []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+			Outputs:     map[string]string{"rds_endpoint": "db.example.com"},
+			RunnerImage: "ghcr.io/alethialabs-io/runner-aws:test",
 		})
 		d, ok := findKeylessDecision(decisions, "orders-db")
 		if !ok {
@@ -57,10 +55,9 @@ func TestKeylessDecision_CarriesTheCellState(t *testing.T) {
 	// Recording it as anything else would put a real defect back under a successful deploy.
 	t.Run("live cell that cannot render records live AND failed_closed", func(t *testing.T) {
 		_, _, decisions := FromServices([]types.ProjectServiceConfig{keylessService()}, Options{
-			Provider:      providerAWS,
-			KeylessDBAuth: true,
-			Databases:     []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
-			Outputs:       map[string]string{"rds_endpoint": "db.example.com"},
+			Provider:  providerAWS,
+			Databases: []types.ProjectDatabaseConfig{{Name: "orders-db", IamAuth: boolPtr(true)}},
+			Outputs:   map[string]string{"rds_endpoint": "db.example.com"},
 			// RunnerImage deliberately empty — keyless_aws.go fails closed on it.
 		})
 		d, ok := findKeylessDecision(decisions, "orders-db")

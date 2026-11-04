@@ -505,9 +505,6 @@ type Options struct {
 	// service→database binding uses keyless IAM/AAD auth (db.IamAuth) instead of a password secret
 	// (#722). The binding target names the database; matched by Name.
 	Databases []types.ProjectDatabaseConfig
-	// KeylessDBAuth enables the keyless-DB binding path (dark flag ALETHIA_KEYLESS_DB_AUTH_ENABLED,
-	// read by the provisioner). Off → every credential facet keeps the ExternalSecret path unchanged.
-	KeylessDBAuth bool
 	// RunnerImage is the alethia runner image ref (it carries the `db-token` refresher subcommand
 	// the Azure keyless sidecar runs). Empty → Azure keyless fails closed (reported), never a
 	// half-wired pod.
@@ -753,11 +750,11 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 	var r bindingResolution
 	proxied := map[string]bool{} // one auth proxy per keyless target (dedup across bindings)
 	for _, b := range bindings {
-		// A binding uses keyless auth when the flag is on AND the operator marked the bound database
-		// `iam_auth`. Whether this cloud × engine cell CAN honor that is a separate question, asked by
+		// A binding uses keyless auth whenever the operator marked the bound database `iam_auth`
+		// (unconditional since #1513 — there is no flag). Whether this cloud × engine cell CAN honor that is a separate question, asked by
 		// keylessDBSidecar below — it fails the binding closed with the cell's reason rather than
 		// falling back to a password the operator never asked for.
-		keyless := opts.KeylessDBAuth && KeylessDBTarget(b.Target, opts.Databases)
+		keyless := KeylessDBTarget(b.Target, opts.Databases)
 		if keyless {
 			// The workload connects to a LOCAL auth proxy sidecar. Build it first: if it can't be
 			// wired (a missing tofu output — connection name / runner image), the whole binding

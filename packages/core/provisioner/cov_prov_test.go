@@ -1821,7 +1821,6 @@ func TestProv_GenerateAppManifestsAttachesTheRegistryPullSecret(t *testing.T) {
 // decision reaches the JOB LOG, not only the returned record. A fail-closed keyless binding is the
 // one outcome nobody should have to go digging through execution_metadata for.
 func TestProv_GenerateAppManifestsLogsKeylessBindingDecisions(t *testing.T) {
-	t.Setenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED", "true")
 	bare := newBareAppsRepo(t, nil)
 
 	iam := true
@@ -1852,11 +1851,10 @@ func TestProv_GenerateAppManifestsLogsKeylessBindingDecisions(t *testing.T) {
 // endpoint, its database name and the master-credentials secret the admin ExternalSecret reads.
 func provKeylessBootstrapOpts() manifests.Options {
 	return manifests.Options{
-		Namespace:     appNamespace,
-		Provider:      "aws",
-		KeylessDBAuth: true,
-		RunnerImage:   "ghcr.io/alethialabs-io/runner:cov",
-		Databases:     []types.ProjectDatabaseConfig{{Name: "primary", EngineFamily: "postgres"}},
+		Namespace:   appNamespace,
+		Provider:    "aws",
+		RunnerImage: "ghcr.io/alethialabs-io/runner:cov",
+		Databases:   []types.ProjectDatabaseConfig{{Name: "primary", EngineFamily: "postgres"}},
 		Outputs: map[string]string{
 			"rds_cluster_endpoint":               "db.example.internal",
 			"rds_database_name":                  "appdb",
@@ -1920,12 +1918,16 @@ func TestProv_WriteBootstrapJobsRendersOnePerKeylessDatabase(t *testing.T) {
 // an unrenderable Job is REPORTED (the app still deploys, its binding fail-closes in lock-step),
 // and a Job that cannot be WRITTEN is fatal — a half-written manifest set must not be committed.
 func TestProv_WriteBootstrapJobsReportsWhatItCannotRender(t *testing.T) {
-	t.Run("keyless off renders nothing", func(t *testing.T) {
+	t.Run("no iam_auth database renders nothing", func(t *testing.T) {
 		opts := provKeylessBootstrapOpts()
-		opts.KeylessDBAuth = false
-		skips, count, err := writeBootstrapJobs(t.TempDir(), provKeylessBoundProject(), opts, io.Discard)
+		vc := provKeylessBoundProject()
+		noIam := false
+		for i := range vc.Databases {
+			vc.Databases[i].IamAuth = &noIam
+		}
+		skips, count, err := writeBootstrapJobs(t.TempDir(), vc, opts, io.Discard)
 		if err != nil || count != 0 || len(skips) != 0 {
-			t.Fatalf("keyless off must be a no-op, got skips=%v count=%d err=%v", skips, count, err)
+			t.Fatalf("a password-auth database must be a no-op, got skips=%v count=%d err=%v", skips, count, err)
 		}
 	})
 
@@ -2185,7 +2187,7 @@ func TestProv_WriteBindingExternalSecretsSkipsFacetlessBindings(t *testing.T) {
 			provBoundService("api", types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"}, "endpoint"),
 		},
 	}
-	skips, count, err := writeBindingExternalSecrets(dir, vc, nil, false, nil, io.Discard)
+	skips, count, err := writeBindingExternalSecrets(dir, vc, nil, nil, io.Discard)
 	if err != nil {
 		t.Fatalf("writeBindingExternalSecrets: %v", err)
 	}
@@ -2211,7 +2213,7 @@ func TestProv_WriteBindingExternalSecretsFailsOnAnUnwritableManifest(t *testing.
 			Services: []types.ProjectServiceConfig{provBoundService("web", target, "value")},
 		}
 		stores := map[string]manifests.SecretStoreRef{"api-key": {StoreName: "secretstore-vault", ValueProperty: "value"}}
-		if _, _, err := writeBindingExternalSecrets(dir, vc, nil, false, stores, io.Discard); err == nil {
+		if _, _, err := writeBindingExternalSecrets(dir, vc, nil, stores, io.Discard); err == nil {
 			t.Fatal("want the ExternalSecret write failure to propagate")
 		}
 	})
@@ -2226,7 +2228,7 @@ func TestProv_WriteBindingExternalSecretsFailsOnAnUnwritableManifest(t *testing.
 			Services: []types.ProjectServiceConfig{provBoundService("web", target, "password")},
 		}
 		outputs := map[string]string{"rds_master_credentials_secret_name": "acme/rds/master"}
-		if _, _, err := writeBindingExternalSecrets(dir, vc, outputs, false, nil, io.Discard); err == nil {
+		if _, _, err := writeBindingExternalSecrets(dir, vc, outputs, nil, io.Discard); err == nil {
 			t.Fatal("want the ExternalSecret write failure to propagate")
 		}
 	})

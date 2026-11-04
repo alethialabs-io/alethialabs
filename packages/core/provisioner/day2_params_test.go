@@ -328,15 +328,19 @@ func TestWriteBootstrapJobsOffAndFailClosed(t *testing.T) {
 		}},
 	}
 
-	t.Run("keyless off is a no-op", func(t *testing.T) {
+	t.Run("no iam_auth database is a no-op", func(t *testing.T) {
 		dir := t.TempDir()
-		skips, count, err := writeBootstrapJobs(dir, vc, manifests.Options{KeylessDBAuth: false}, io.Discard)
+		noIam := false
+		pw := *vc
+		pw.Databases = []types.ProjectDatabaseConfig{{Name: "primary", IamAuth: &noIam}}
+		opts := manifests.Options{Provider: "aws", Databases: pw.Databases}
+		skips, count, err := writeBootstrapJobs(dir, &pw, opts, io.Discard)
 		if err != nil || count != 0 || len(skips) != 0 {
-			t.Fatalf("writeBootstrapJobs off: skips=%v count=%d err=%v", skips, count, err)
+			t.Fatalf("writeBootstrapJobs password-auth: skips=%v count=%d err=%v", skips, count, err)
 		}
 		entries, _ := os.ReadDir(dir)
 		if len(entries) != 0 {
-			t.Fatalf("wrote %d file(s) with keyless off", len(entries))
+			t.Fatalf("wrote %d file(s) with no keyless database", len(entries))
 		}
 	})
 
@@ -345,7 +349,7 @@ func TestWriteBootstrapJobsOffAndFailClosed(t *testing.T) {
 		var log strings.Builder
 		// RunnerImage "" makes RenderBootstrapJob fail — the platform-plumbing defect the lane
 		// reports rather than crashing the deploy.
-		opts := manifests.Options{KeylessDBAuth: true, Provider: "aws", Databases: vc.Databases}
+		opts := manifests.Options{Provider: "aws", Databases: vc.Databases}
 		skips, count, err := writeBootstrapJobs(dir, vc, opts, &log)
 		if err != nil {
 			t.Fatalf("writeBootstrapJobs returned a fatal error: %v", err)
