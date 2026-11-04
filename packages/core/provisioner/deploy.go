@@ -1512,6 +1512,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// never a fabricated pass. Always non-nil after a real apply so the console can
 		// tell "direct mode" from "pre-#574 job with no data".
 		result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
+		// Bootstrap-only hooks whose operation ended without running a delete policy (#6413). Only
+		// on this dedicated path: it is the only one that renders the keyless bootstrap into the apps
+		// Application, in appNamespace. Best-effort; see bootstrap_reaper.go.
+		if gitopsRequested {
+			reapStrandedBootstrapHooks(ctx, argocd.UserAppsApplicationName, appNamespace, stdout, stderr)
+		}
 		// Attach the manifest-generation warnings (skipped services, unresolved bindings,
 		// unsatisfiable credential facets) so the console's Deploy tab can surface WHY a service
 		// may be misconfigured, instead of the operator digging through raw deploy logs (#717).

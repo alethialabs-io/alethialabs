@@ -607,7 +607,12 @@ export function componentRevision(row: unknown): string | null {
  * Not gated, and why. None of them writes a component's settings, and none of their snapshots
  * reaches a DEPLOY or a DESTROY:
  * - `DETECT_DRIFT`, `PROBE_CLUSTER`, `AUDIT` and `MINT_KUBECONFIG` read the environment, mostly
- *   through the last successful DEPLOY's snapshot.
+ *   through the last successful DEPLOY's snapshot. One exception writes: `DETECT_DRIFT`'s cluster
+ *   refresh requests deletion of keyless bootstrap hooks whose ArgoCD operation ended without running
+ *   a delete policy (packages/core/provisioner/bootstrap_reaper.go). That still needs no gate. It acts
+ *   only when the apps Application has no live operation and no bootstrap Job is active, and only on
+ *   hooks created before the Application's last write. A DEPLOY's sync is a live operation, so the
+ *   refresh skips while it runs, and any hook the sync creates later postdates that cutoff.
  * - `CHART_SCAN` and `IAC_SCAN` write scan results to add-on and IaC-source rows, not to components.
  * - `STATE_SURGERY` repairs tofu state with the job it re-runs.
  * - `ANALYZE_REPO`, `DEPLOY_RUNNER`, `UPDATE_RUNNER` and `DESTROY_RUNNER` do not act on an
