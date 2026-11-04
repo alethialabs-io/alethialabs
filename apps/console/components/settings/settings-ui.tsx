@@ -26,6 +26,7 @@ import {
 } from "@repo/ui/select";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
+import { SETTINGS_FIELD_ROW_CLASS } from "./settings-field-row";
 
 /** Two-up responsive grid for pairing short sections; stacks on narrow screens. */
 export function SettingsColumns({ children }: { children: ReactNode }) {
@@ -146,6 +147,10 @@ function useSettingsFieldLabelId(): string | null {
  * Every row renders inside a `SettingsPanel` today. One rendered outside any container has no
  * container to measure, so `@lg:` never matches and it stays stacked at every width — legible,
  * never squeezed, which is the safe direction to fail in.
+ *
+ * The root carries `data-slot="settings-field"` and the label column `data-slot="settings-field-label"`,
+ * so a test or a skeleton finds a row by what it IS rather than by its column template — a
+ * selector on `grid-cols-[200px_1fr]` silently matched nothing once the template moved behind `@lg:`.
  */
 export function SettingsField({
 	label,
@@ -158,8 +163,8 @@ export function SettingsField({
 }) {
 	const labelId = useId();
 	return (
-		<div className="grid grid-cols-1 items-start gap-2 border-b border-border px-[22px] py-[15px] last:border-b-0 @lg:grid-cols-[200px_1fr] @lg:gap-6">
-			<div className="flex flex-col gap-1">
+		<div data-slot="settings-field" className={SETTINGS_FIELD_ROW_CLASS}>
+			<div data-slot="settings-field-label" className="flex flex-col gap-1">
 				<span id={labelId} className="text-ui-md font-medium text-text-primary">
 					{label}
 				</span>

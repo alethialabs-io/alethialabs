@@ -15,9 +15,9 @@
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import {
-	OrgGeneralSkeleton,
-} from "@/components/settings/general/general-states";
+import { ProjectGeneralSkeleton } from "@/components/settings/general/general-states";
+import { OrgGeneralSkeleton } from "@/components/settings/general/org-general-skeleton";
+import { SettingsColumnsSkeleton } from "@/components/skeletons/page-skeletons";
 import {
 	SettingsCardFoot,
 	SettingsDangerRow,
@@ -40,10 +40,24 @@ function containerOf(el: Element): Element | null {
 	return null;
 }
 
-/** The SettingsField row (the grid) holding the label `text`. */
+/** The SettingsField row holding the label `text`, found by its `data-slot`. */
 function rowOf(text: string): Element {
-	const row = screen.getByText(text).closest(".grid");
-	if (!row) throw new Error(`no grid row around "${text}"`);
+	const row = screen.getByText(text).closest('[data-slot="settings-field"]');
+	if (!row) throw new Error(`no settings row around "${text}"`);
+	return row;
+}
+
+/** The form row's class tokens, read from a real `SettingsField` inside a `SettingsPanel`. */
+function formRowClasses(): string[] {
+	const { unmount } = render(
+		<SettingsPanel>
+			<SettingsField label="Reference row">
+				<input aria-label="ref" />
+			</SettingsField>
+		</SettingsPanel>,
+	);
+	const row = classes(rowOf("Reference row"));
+	unmount();
 	return row;
 }
 
@@ -107,23 +121,33 @@ describe("the sibling rows wrap instead of squeezing", () => {
 	});
 });
 
-describe("the General skeleton mirrors the same container geometry (B2)", () => {
-	it("each skeleton panel is a container and its rows go side by side only behind @lg:", () => {
-		const { container } = render(<OrgGeneralSkeleton />);
-		const panels = [...container.querySelectorAll("div")].filter((d) =>
-			classes(d).includes("@container"),
-		);
-		// Organization profile, Defaults, Danger zone.
-		expect(panels).toHaveLength(3);
-		const rows = [...container.querySelectorAll("div")].filter((d) =>
-			classes(d).includes("py-[15px]"),
-		);
-		expect(rows.length).toBe(8);
-		for (const r of rows) {
-			const c = classes(r);
-			expect(c).toContain("flex-col");
-			expect(c).toContain("@lg:flex-row");
-			expect(c).not.toContain("flex-row");
-		}
-	});
+describe("every settings skeleton takes the form row's container geometry (B2)", () => {
+	// The skeletons used to hand-draw a fixed `w-[200px]` label column beside a flexible bar, which
+	// is the form's geometry only at desktop panel widths. Each one now renders its rows inside a
+	// `SettingsPanel` with the form row's own classes, so below the 32rem step both stack. (The
+	// Preview environments skeleton is built from `SettingsField` itself; `preview-settings.test.tsx`
+	// matches its rows against the form's.)
+	const skeletons = {
+		OrgGeneralSkeleton: () => <OrgGeneralSkeleton />,
+		ProjectGeneralSkeleton: () => <ProjectGeneralSkeleton />,
+		SettingsColumnsSkeleton: () => <SettingsColumnsSkeleton sections={[3, 2]} />,
+	};
+	for (const [name, draw] of Object.entries(skeletons)) {
+		it(`${name}: every row is the form row, inside a query container`, () => {
+			const expected = [...formRowClasses()].sort();
+			const { container } = render(draw());
+			const rows = [...container.querySelectorAll('[data-slot="settings-field"]')];
+			expect(rows.length).toBeGreaterThan(0);
+			for (const r of rows) {
+				expect([...classes(r)].sort()).toEqual(expected);
+				expect(containerOf(r)).not.toBeNull();
+				expect(r.querySelector(':scope > [data-slot="settings-field-label"]')).not.toBeNull();
+			}
+			// No hand-rolled fixed label column survives anywhere in the skeleton.
+			const fixed = [...container.querySelectorAll("div")].filter((d) =>
+				classes(d).some((c) => c.endsWith("w-[200px]")),
+			);
+			expect(fixed).toHaveLength(0);
+		});
+	}
 });
