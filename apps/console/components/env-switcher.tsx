@@ -21,9 +21,7 @@ import {
 	CommandList,
 } from "@repo/ui/command";
 import { useCommandSearch } from "@repo/ui/command-search";
-import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent } from "@repo/ui/popover";
-import { Separator } from "@repo/ui/separator";
 
 /** An environment's search text: its name, for the shared ranker. */
 const envSearchText = (e: SwitcherEnv): string => e.name;
@@ -184,24 +182,18 @@ export function EnvSwitcher() {
 									))}
 								</CommandGroup>
 							)}
+							<CommandGroup>
+								<CommandItem
+									onSelect={() => {
+										setOpen(false);
+										setCreateOpen(true);
+									}}
+								>
+									<Plus className="h-4 w-4 shrink-0" />
+									<span>New Environment</span>
+								</CommandItem>
+							</CommandGroup>
 						</CommandList>
-						<Separator />
-						{/* An action, not an environment, so a footer button OUTSIDE the listbox: offered on a
-						    miss too, reached by click or Tab from the search, never an arrow-key row and
-						    never counted as a match (so Enter on a miss runs nothing). */}
-						<div className="p-1">
-							<Button
-								variant="ghost"
-								onClick={() => {
-									setOpen(false);
-									setCreateOpen(true);
-								}}
-								className="w-full justify-start gap-2 px-2 text-muted-foreground"
-							>
-								<Plus className="h-4 w-4 shrink-0" />
-								<span className="flex-1 text-left">New Environment</span>
-							</Button>
-						</div>
 					</Command>
 				</PopoverContent>
 			</Popover>
