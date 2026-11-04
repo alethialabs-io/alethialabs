@@ -199,7 +199,6 @@ describe("ProtectionRulesDialog — the promotion gates are named", () => {
 		// tree, "no guard is a candidate" would pass vacuously.
 		const guards = Array.from(document.querySelectorAll(FOCUS_GUARD));
 		expect(guards.length).toBeGreaterThan(0);
-		for (const g of guards) g.setAttribute("role", "button"); // MUTATION (#6412 review, reverted next commit)
 		// None of them is in the sweep's denominator (see FOCUS_GUARD for why that holds on 1.9.0).
 		expect(
 			namedControlCandidates(document.body, NAMED_CONTROLS).filter((el) =>
