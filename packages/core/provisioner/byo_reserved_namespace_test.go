@@ -218,10 +218,10 @@ func TestByoRefusal_DeployStepRendersNothingForTheRefusedChartAndDeletesNothing(
 	if _, err := os.Stat(filepath.Join(dir, argocd.AddOnAppName("api")+".yaml")); err != nil {
 		t.Errorf("the accepted chart's Application was not rendered: %v", err)
 	}
-	if names := argocd.AllAddOnNames(deployable); contains(names, argocd.AddOnAppName("legacy")) {
+	if names := argocd.AllAddOnNames(deployable); containsName(names, argocd.AddOnAppName("legacy")) {
 		t.Errorf("the health wait would spend its budget on the refused chart: %v", names)
 	}
-	if keep := argocd.ManagedAddOnNames(vc.AddOns); !contains(keep, argocd.AddOnAppName("legacy")) {
+	if keep := argocd.ManagedAddOnNames(vc.AddOns); !containsName(keep, argocd.AddOnAppName("legacy")) {
 		t.Errorf("the prune keep list %v omits the refused chart, so its live Application would be deleted", keep)
 	}
 }
@@ -258,8 +258,8 @@ func TestByoReservedPrefixCoversVClusterHostNamespaces(t *testing.T) {
 	}
 }
 
-// contains reports whether want is in list.
-func contains(list []string, want string) bool {
+// containsName reports whether want is in list.
+func containsName(list []string, want string) bool {
 	for _, v := range list {
 		if v == want {
 			return true
