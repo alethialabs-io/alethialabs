@@ -69,7 +69,8 @@ function Command({
         open
         inline
         items={filteredItems}
-        // Base UI's own filtering is off: `filteredItems` is already the ranked result.
+        // Filtering inside Base UI is off: `filteredItems` is already the ranked result. (No
+        // apostrophe in this comment: the #5824 guard reads these attributes as text.)
         filter={null}
         autoHighlight="always"
         keepHighlight
