@@ -2039,6 +2039,7 @@ describe("resolveNewOrgSetup", () => {
 			planState: "active",
 			paymentUrl: null,
 			hold: null,
+			besideLivePlan: null,
 			ended: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
