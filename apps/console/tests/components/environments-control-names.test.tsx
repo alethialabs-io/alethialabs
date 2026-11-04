@@ -75,7 +75,11 @@ function render(ui: ReactElement) {
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { PromoteDialog } from "@/components/environments/promote-dialog";
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
-import { NAME_REQUIRED, unnamedControls } from "../support/accessible-names";
+import {
+	NAME_REQUIRED,
+	namedControlCandidates,
+	unnamedControls,
+} from "../support/accessible-names";
 
 /**
  * The denominator for a TOGGLE's name — axe's `aria-toggle-field-name` (serious), verbatim.
@@ -91,30 +95,21 @@ const TOGGLE_ROLES =
 const NAMED_CONTROLS = `${NAME_REQUIRED}, ${TOGGLE_ROLES}`;
 
 /**
- * `NAMED_CONTROLS` with base-ui's own focus guards subtracted — the one thing in the rendered tree
- * this unit is not answerable for.
+ * base-ui's own focus guards: the visually-hidden `<span tabIndex={0}>` `FocusGuard` renders at
+ * each end of a popup. Two of them bracket every `Sheet`.
  *
- * `FocusGuard` renders a visually-hidden `<span tabIndex={0}>` at each end of a popup. On
- * `@base-ui-components/react@1.0.0-rc.0`, under Safari — which its UA sniff also reported for
- * jsdom — it stamped `role="button"` on it and dropped the `aria-hidden` that would otherwise keep
- * it out of the tree. Two of them bracket every `Sheet`, so the sweep saw two unnamed commands
- * that no file this unit may touch produces; they come from base-ui, not from `@repo/ui` and not
- * from the console. On `@base-ui/react@1.9.0` (#6144) the role is stamped only when
- * `platform.screenReader.voiceOver && platform.engine.webkit` (`utils/FocusGuard.js`), which
- * jsdom does not report (its `navigator.platform` is empty), so here the spans stay `aria-hidden`
- * with no role and this subtraction removes nothing the role selectors would have matched. It is
- * kept so a base-ui release that widens the sniff again does not turn the sweep red for base-ui's
- * own spans.
- *
- * The subtraction is per-clause and keyed on base-ui's own data attribute, which nothing we author
- * carries — narrow enough that a real unnamed control cannot hide behind it. It is NOT a filter on
- * the reported outerHTML: `unnamedControls` truncates that to 200 characters, and the attribute
- * falls outside the window on exactly these spans, so such a filter would match nothing and read
- * as a clean sweep that had quietly stopped subtracting.
+ * On `@base-ui-components/react@1.0.0-rc.0` they were in this sweep's denominator: under Safari,
+ * which its UA sniff also reported for jsdom, `FocusGuard` stamped `role="button"` on them and
+ * dropped their `aria-hidden`, so the sweep saw two unnamed commands no file this unit may touch
+ * produces, and it subtracted them by this attribute. On `@base-ui/react@1.9.0` (#6144) the role
+ * is stamped only when `platform.screenReader.voiceOver && platform.engine.webkit`
+ * (`utils/FocusGuard.js`), which jsdom does not report, so the spans stay `aria-hidden` with no
+ * role and match no selector in `NAMED_CONTROLS`. A subtraction kept for them would exclude
+ * nothing while still claiming to, so the sweep below runs over the full denominator and the
+ * test asserts instead that no guard is in it. If a base-ui release widens the sniff again, that
+ * assertion fails first and names the cause, rather than the sweep failing on base-ui's spans.
  */
-const OWN_NAMED_CONTROLS = NAMED_CONTROLS.split(/,\s*/)
-	.map((clause) => `${clause}:not([data-base-ui-focus-guard])`)
-	.join(", ");
+const FOCUS_GUARD = "[data-base-ui-focus-guard]";
 
 /** The elements an `aria-labelledby` resolves to; `[]` when the attribute is absent or dangling. */
 function labelledBy(control: Element): HTMLElement[] {
@@ -200,13 +195,17 @@ describe("ProtectionRulesDialog — the promotion gates are named", () => {
 		await user.click(await screen.findByRole("switch", { name: "Require approval" }));
 		await screen.findByRole("spinbutton", { name: "Approvals required" });
 
-		// The subtraction above is only honest while it still has a subject. If base-ui stops
-		// rendering focus guards (or stops sniffing jsdom as Safari), this must fail rather than
-		// quietly become a `:not()` that excludes nothing while still claiming to.
+		// The guards must be rendered for the next assertion to say anything: with none in the
+		// tree, "no guard is a candidate" would pass vacuously.
+		const guards = Array.from(document.querySelectorAll(FOCUS_GUARD));
+		expect(guards.length).toBeGreaterThan(0);
+		// None of them is in the sweep's denominator (see FOCUS_GUARD for why that holds on 1.9.0).
 		expect(
-			document.querySelectorAll("[data-base-ui-focus-guard]").length,
-		).toBeGreaterThan(0);
-		expect(unnamedControls(document.body, OWN_NAMED_CONTROLS)).toEqual([]);
+			namedControlCandidates(document.body, NAMED_CONTROLS).filter((el) =>
+				el.matches(FOCUS_GUARD),
+			),
+		).toEqual([]);
+		expect(unnamedControls(document.body, NAMED_CONTROLS)).toEqual([]);
 	});
 });
 
