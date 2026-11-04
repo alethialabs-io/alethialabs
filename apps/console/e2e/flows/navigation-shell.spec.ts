@@ -375,6 +375,8 @@ test.describe("Navigation shell — org switcher", () => {
 		await expect(owner.page.getByRole("dialog", { name: "Create a team" })).toBeVisible({
 			timeout: 10_000,
 		});
+		// ...and the switcher it came from has gone, rather than staying open behind the sheet.
+		await expect(owner.page.getByPlaceholder(/find organization/i)).toBeHidden();
 	});
 });
 

@@ -232,7 +232,7 @@ function unnamedRoots(source: string, file: string): string[] {
  * The one site allowed to render an unnamed root: the wrapper's own `Autocomplete.Root`, whose input
  * `CommandInput` names from the `label` its callers pass to `Command`.
  */
-const EXEMPT = ["packages/ui/src/command.tsx:97 <Autocomplete.Root"];
+const EXEMPT = ["packages/ui/src/command.tsx:126 <Autocomplete.Root"];
 
 const FILES = [...sourceFiles(UI_SRC), ...sourceFiles(CONSOLE_ROOT)];
 

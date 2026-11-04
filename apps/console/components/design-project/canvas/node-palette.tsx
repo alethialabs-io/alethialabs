@@ -318,7 +318,8 @@ export function NodePalette({
 	}
 
 	// Whichever step is showing, ranked by the shared ranker.
-	// A disabled row ("Soon", already on the canvas) ranks after every row that can be added.
+	// While a search is typed, a disabled row ("Soon", already on the canvas) ranks after every row
+	// that can be added. An empty search keeps PALETTE_GROUP_ORDER exactly, whatever is placed.
 	const results = rankItems(
 		variantDef ? variantRows : serviceRows,
 		search,
