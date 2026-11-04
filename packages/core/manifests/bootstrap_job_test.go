@@ -60,7 +60,7 @@ func TestBootstrapJob_AWS(t *testing.T) {
 		t.Errorf("kind = %v, want Job", job["kind"])
 	}
 	ann := job["metadata"].(map[string]any)["annotations"].(map[string]any)
-	if ann["argocd.argoproj.io/hook"] != "PreSync" || ann["argocd.argoproj.io/hook-delete-policy"] != "HookSucceeded" {
+	if ann["argocd.argoproj.io/hook"] != "PreSync" || ann["argocd.argoproj.io/hook-delete-policy"] != "BeforeHookCreation,HookSucceeded" {
 		t.Errorf("missing ArgoCD PreSync hook annotations: %v", ann)
 	}
 	// db-bootstrap init container writes to the shared volume; psql reads PG creds from the admin ES.
@@ -396,6 +396,114 @@ func TestBootstrapJob_Postgres_RendersUnchanged_OnAWSAndGCP(t *testing.T) {
 				if strings.Contains(res.JobYAML, bad) {
 					t.Errorf("%s postgres Job must not contain the MySQL construct %q:\n%s", tc.provider, bad, res.JobYAML)
 				}
+			}
+		})
+	}
+}
+
+// hookDeletePolicies returns the set of ArgoCD hook-delete-policy values on a parsed object, failing
+// the test when the object is not a PreSync hook or carries no policy at all.
+func hookDeletePolicies(t *testing.T, doc map[string]any) map[string]bool {
+	t.Helper()
+	meta, _ := doc["metadata"].(map[string]any)
+	ann, _ := meta["annotations"].(map[string]any)
+	if ann["argocd.argoproj.io/hook"] != "PreSync" {
+		t.Fatalf("%v %v is not a PreSync hook: %v", doc["kind"], meta["name"], ann)
+	}
+	raw, _ := ann["argocd.argoproj.io/hook-delete-policy"].(string)
+	if raw == "" {
+		t.Fatalf("%v %v carries no hook-delete-policy", doc["kind"], meta["name"])
+	}
+	set := map[string]bool{}
+	for _, p := range strings.Split(raw, ",") {
+		set[strings.TrimSpace(p)] = true
+	}
+	return set
+}
+
+// assertPolicyExactly fails unless the object's delete policy is exactly want — no member missing,
+// none extra.
+func assertPolicyExactly(t *testing.T, doc map[string]any, want ...string) {
+	t.Helper()
+	got := hookDeletePolicies(t, doc)
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("%v hook-delete-policy %v is missing %s", doc["kind"], got, w)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%v hook-delete-policy = %v, want exactly %v", doc["kind"], got, want)
+	}
+}
+
+// TestBootstrapJob_HookDeletePolicies pins the delete policy on every bootstrap hook. An object that
+// is or confers an admin credential (the AWS/GCP admin ExternalSecret, the Azure admin-federated
+// ServiceAccount) must be removed whatever the Job's outcome, and recreated fresh on a retry; the Job
+// itself keeps a failed run for its logs but must be replaced on the next sync.
+func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
+	adminPolicy := []string{"BeforeHookCreation", "HookSucceeded", "HookFailed"}
+	jobPolicy := []string{"BeforeHookCreation", "HookSucceeded"}
+	for _, tc := range []struct {
+		provider string
+		outputs  map[string]string
+	}{
+		{"aws", map[string]string{
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		}},
+		{"gcp", map[string]string{
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		}},
+		{"azure", map[string]string{
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		}},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    tc.provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+				Outputs:     tc.outputs,
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			credentialHooks := 0
+			for _, doc := range parseYAMLDocs(t, res.JobYAML) {
+				switch doc["kind"] {
+				case "Job":
+					assertPolicyExactly(t, doc, jobPolicy...)
+				case "ServiceAccount":
+					credentialHooks++
+					assertPolicyExactly(t, doc, adminPolicy...)
+				default:
+					t.Errorf("unexpected object %v in the bootstrap Job YAML", doc["kind"])
+				}
+			}
+			if res.AdminSecretYAML != "" {
+				for _, doc := range parseYAMLDocs(t, res.AdminSecretYAML) {
+					credentialHooks++
+					assertPolicyExactly(t, doc, adminPolicy...)
+					// The materialized Secret is owned by the ExternalSecret, so it is
+					// garbage-collected when the hook is deleted.
+					spec, _ := doc["spec"].(map[string]any)
+					target, _ := spec["target"].(map[string]any)
+					if target["creationPolicy"] != "Owner" {
+						t.Errorf("admin ExternalSecret target.creationPolicy = %v, want Owner", target["creationPolicy"])
+					}
+				}
+			}
+			// Every provider has exactly one credential-bearing hook; zero means the loop above
+			// asserted nothing about it.
+			if credentialHooks != 1 {
+				t.Errorf("%s: %d credential-bearing hooks checked, want 1", tc.provider, credentialHooks)
 			}
 		})
 	}

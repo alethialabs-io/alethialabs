@@ -6,8 +6,7 @@
 // role/user with working privileges — a Postgres ROLE, or on Azure MySQL an Entra AADUSER — which is
 // SQL the cloud API can't perform. So alongside the app manifests we emit a one-shot ArgoCD PreSync Job
 // that, connected as the database ADMIN, runs `alethia db-bootstrap` to create/scope the app's login,
-// then exits (hook-delete-policy: HookSucceeded). Because it is a PreSync hook it completes before the
-// app syncs, so the app's very first connection already has its grants.
+// then exits. Because it is a PreSync hook it completes before the app syncs, so the app's very first connection already has its grants.
 //
 // The Job is why the app never needs admin: it is the alternative to registering the app identity as a
 // superuser / Entra administrator. Its OWN admin credential is sourced per cloud, keyless where the
@@ -61,6 +60,25 @@ const (
 	bootstrapTokenFile = "/db-admin-token/token"
 )
 
+// ArgoCD hook delete policies for the bootstrap hooks. The two differ on purpose:
+//
+//   - adminHookDeletePolicy is carried by every hook that IS an admin credential or confers one — the
+//     AWS/GCP admin ExternalSecret (whose materialized Secret is garbage-collected with it through the
+//     Owner reference) and the Azure ServiceAccount federated to the dedicated admin identity. They are
+//     removed when the PreSync phase ends in EITHER outcome (HookSucceeded, HookFailed), so no admin
+//     credential remains in the app namespace whatever the Job's outcome. BeforeHookCreation removes a
+//     copy left by an operation that ended without running either policy before the next sync
+//     recreates it, so a retry always starts from a freshly materialized credential.
+//   - bootstrapJobHookDeletePolicy is the Job's. It holds no credential (only secretKeyRefs or a token
+//     file inside its own pod), so a FAILED Job is deliberately kept: its pod logs are where a cloud
+//     trust error is readable. BeforeHookCreation is what makes the retry possible — the Job's name is
+//     fixed and its pod template immutable, so without it a re-sync would find the failed Job still
+//     present instead of starting a new run.
+const (
+	adminHookDeletePolicy        = "BeforeHookCreation,HookSucceeded,HookFailed"
+	bootstrapJobHookDeletePolicy = "BeforeHookCreation,HookSucceeded"
+)
+
 // Database engine families the bootstrap Job branches on (matches types.ProjectDatabaseConfig.
 // EngineFamily). An unset/unknown engine defaults to postgres — the pre-MySQL behaviour.
 const (
@@ -101,6 +119,10 @@ type bootstrapJobSpec struct {
 	Main           bootstrapContainer
 	Volumes        []Volume
 }
+
+// JobDeletePolicy is the Job's ArgoCD hook-delete-policy, exposed to the template so the rendered
+// annotation and the constant the tests assert on are one value.
+func (bootstrapJobSpec) JobDeletePolicy() string { return bootstrapJobHookDeletePolicy }
 
 // BootstrapJobResult is the rendered artifacts for one keyless database's bootstrap.
 type BootstrapJobResult struct {
@@ -359,12 +381,12 @@ func azureBootstrapSpec(opts Options, t types.ServiceBindingTarget, name, ns str
 		EmitSA:         true,
 		SALabels:       map[string]string{"azure.workload.identity/use": "true"},
 		// The SA federates the DEDICATED admin identity, so it is ephemeral like the admin secret on the
-		// other clouds: a PreSync hook one wave before the Job, deleted after the phase — a pod can't
-		// impersonate the admin-capable KSA between deploys.
+		// other clouds: a PreSync hook one wave before the Job, deleted when the phase ends whether the
+		// Job succeeded or failed — a pod can't impersonate the admin-capable KSA between deploys.
 		SAAnnotations: map[string]string{
 			"azure.workload.identity/client-id":     adminClientID,
 			"argocd.argoproj.io/hook":               "PreSync",
-			"argocd.argoproj.io/hook-delete-policy": "HookSucceeded",
+			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
 		// The azure-workload-identity webhook injects the federated token when the POD carries this
@@ -483,12 +505,13 @@ func renderAdminExternalSecret(adminSecretName, namespace, provider, remoteKey s
 		StoreName: store,
 		Data:      data,
 		// Ephemeral, just-in-time admin credential: a PreSync hook one wave BEFORE the Job (so ESO has
-		// materialized the Secret — ArgoCD waits on the ExternalSecret's health), deleted after the
-		// PreSync phase. creationPolicy Owner sets an ownerRef, so deleting this ExternalSecret
-		// garbage-collects the admin Secret too — no standing superuser credential in the app namespace.
+		// materialized the Secret — ArgoCD waits on the ExternalSecret's health), deleted when the
+		// PreSync phase ends, succeeded or failed. creationPolicy Owner sets an ownerRef, so deleting
+		// this ExternalSecret garbage-collects the admin Secret too — no standing superuser credential in
+		// the app namespace.
 		Annotations: map[string]string{
 			"argocd.argoproj.io/hook":               "PreSync",
-			"argocd.argoproj.io/hook-delete-policy": "HookSucceeded",
+			"argocd.argoproj.io/hook-delete-policy": adminHookDeletePolicy,
 			"argocd.argoproj.io/sync-wave":          "-1",
 		},
 	}); err != nil {
@@ -528,7 +551,7 @@ metadata:
     app.kubernetes.io/managed-by: alethia
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+    argocd.argoproj.io/hook-delete-policy: {{ .JobDeletePolicy }}
     argocd.argoproj.io/sync-wave: "0"
 spec:
   backoffLimit: 2
