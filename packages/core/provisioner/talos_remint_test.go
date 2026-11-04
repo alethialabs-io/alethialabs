@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -464,8 +465,9 @@ func TestDeployRefreshesBeforeEveryLongWait(t *testing.T) {
 		"argocd.EnsureExternalSecretsStore(",
 		"argocd.EnsureCertManagerIssuer(",
 		"argocd.ApplyManifestAddOns(",
-		"argocd.ApplyAddOnsInWaves(",
-		"argocd.WaitAddOnsHealthy(",
+		// The wave apply and the health wait moved into runAddOnStage (#6439); RunDeployV2 hands it
+		// kube.refresh, and the second loop below pins the refreshes inside it.
+		"runAddOnStage(",
 		"bootstrapInClusterVault(",
 	}
 	prev := 0
@@ -475,8 +477,38 @@ func TestDeployRefreshesBeforeEveryLongWait(t *testing.T) {
 			t.Fatalf("%s is no longer after %s in RunDeployV2 — update this list", w, waits[max(i-1, 0)])
 		}
 		at += prev
-		if i > 0 && !strings.Contains(body[prev:at], "kube.refresh(") && !strings.Contains(body[prev:at], "kube.configure(") {
+		// runAddOnStage refreshes before its OWN first long wait, so the boundary in front of it is
+		// that it is handed the refresher, not a call in RunDeployV2.
+		if w == "runAddOnStage(" {
+			if end := strings.Index(body[at:], "}, stdout, stderr)"); end < 0 || !regexp.MustCompile(`Refresh:\s+kube\.refresh\b`).MatchString(body[at:at+end]) {
+				t.Errorf("RunDeployV2 no longer hands runAddOnStage kube.refresh")
+			}
+		} else if i > 0 && !strings.Contains(body[prev:at], "kube.refresh(") && !strings.Contains(body[prev:at], "kube.configure(") {
 			t.Errorf("no kube.refresh between %s and %s — the second starts on the first's certificate", waits[i-1], w)
+		}
+		prev = at + len(w)
+	}
+
+	// Inside runAddOnStage: a refresh before each of its two long waits, in order.
+	stageSrc, err := os.ReadFile("addon_stage.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := string(stageSrc)
+	if s := strings.Index(stage, "func runAddOnStage("); s >= 0 {
+		stage = stage[s:]
+	} else {
+		t.Fatal("addon_stage.go no longer defines runAddOnStage")
+	}
+	prev = 0
+	for _, w := range []string{"argocd.ApplyAddOnsInWaves(", "argocd.WaitAddOnsHealthy("} {
+		at := strings.Index(stage[prev:], w)
+		if at < 0 {
+			t.Fatalf("%s is no longer in runAddOnStage, in order — update this list", w)
+		}
+		at += prev
+		if !strings.Contains(stage[prev:at], "in.Refresh(") {
+			t.Errorf("no in.Refresh before %s in runAddOnStage — it starts on the previous step's certificate", w)
 		}
 		prev = at + len(w)
 	}

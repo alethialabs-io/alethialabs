@@ -1350,9 +1350,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// The BYO binding state for the prune below — declared out here, with its owner, so a
 		// fully-detached chart (vc.AddOns empty) still sweeps this environment's bindings.
 		bindingState := byoBindingState{Owner: byoBindingOwner(vc)}
-		// The BYO charts refused on this deploy (#6439), declared out here too: the health wait below
-		// must not spend its budget on an Application this deploy deliberately did not apply.
-		var byoRefused []byoRefusal
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1364,74 +1361,26 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				fmt.Fprintf(stderr, "Warning: operator manifest add-ons failed: %v\n", mErr)
 			}
 
-			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
-			// and register their per-repo credentials BEFORE rendering the Applications, so the
-			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
-			//
-			// A chart whose namespace is refused (malformed, or reserved for the platform — #6439) is
-			// refused PER CHART: it is left out of every render, apply and seed below (`deployable`),
-			// kept in the prune's keep list so nothing live is deleted, and reported as a deploy
-			// warning the console's Deploy tab shows.
-			_, byoRefused = configureByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
-			for _, r := range byoRefused {
-				manifestWarnings = append(manifestWarnings, r.warning())
+			// The rest of the add-on stage — BYO charts, secrets, bindings, render, wave apply,
+			// bootstraps and the health wait — is ONE function, so a test drives the real sequence
+			// (#6439: a refused BYO chart must be left out of every step, and one unfiltered call
+			// site reopens the defect). See runAddOnStage.
+			stage, stageErr := runAddOnStage(ctx, addOnStageInput{
+				VC:                vc,
+				Facts:             facts,
+				Outputs:           result.Outputs,
+				Provider:          params.Provider,
+				GitAccessToken:    params.GitAccessToken,
+				GitRepoTokens:     params.GitRepoTokens,
+				AddOnSecretValues: params.AddOnSecretValues,
+				Refresh:           kube.refresh,
+			}, stdout, stderr)
+			if stageErr != nil {
+				return nil, stageErr
 			}
-
-			// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs —
-			// managed or gitops mode. The values were fetched by the runner over the
-			// authenticated job channel and exist nowhere else: not in the snapshot, not in the
-			// rendered manifest, not in the customer's repo. The chart consumes them via the
-			// SecretKeyRef wiring the console resolved into helm.values.
-			argocd.EnsureAddOnSecrets(withoutByoRefusals(vc.AddOns, byoRefused), params.AddOnSecretValues, stdout, stderr)
-
-			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
-			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
-			// BEFORE the Applications render, so the write-back rides the same helm.values block.
-			bindingState = applyByoChartBindingsExcept(vc, result.Outputs, params.Provider, byoRefusedIDs(byoRefused), stdout, stderr)
-
-			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
-			// Applications render — the same seam, and the same reason, as applyByoChartBindings
-			// above: the value exists only in this run's tofu outputs, and the console that stored
-			// the knob could not have known it. Mutating vc.AddOns rather than the rendered output
-			// also means writeAddOnGitOps below writes the resolved value into the customer's repo,
-			// which is correct and free.
-			if err := argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr); err != nil {
-				return nil, fmt.Errorf("external-dns identity resolution failed: %w", err)
-			}
-
-			// Computed AFTER the mutations above (bindings, cloud identity), so it carries their values.
-			deployable := withoutByoRefusals(vc.AddOns, byoRefused)
-			addonDir, addonErr := argocd.RenderManagedAddOns(deployable, facts.Labels)
-			if addonErr != nil {
-				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
-			} else {
-				defer os.RemoveAll(addonDir)
-				// Apply the Applications in ascending sync-wave order, waiting after each wave for
-				// the CRDs it establishes. ArgoCD's sync-wave annotation does NOT order separate
-				// top-level Applications, so a Helm operator (CloudNativePG) and an Application
-				// carrying a CR that needs its schema (a CNPG Cluster) would otherwise race — the
-				// CR's first sync failing with `no matches for kind`.
-				if err := kube.refresh(ctx, "the add-on Applications"); err != nil {
-					return nil, err
-				}
-				if applyErr := argocd.ApplyAddOnsInWaves(deployable, addonDir, stdout, stderr); applyErr != nil {
-					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
-				}
-			}
-			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
-				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
-			}
-			// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising
-			// and unsealing a marketplace Vault (#2717).
-			//
-			// HERE, and the position is load-bearing in both directions. AFTER the Applications are
-			// applied, because the Job talks to a Service that does not exist until then. BEFORE
-			// WaitAddOnsHealthy below, because a sealed Vault never becomes Healthy — waiting first
-			// would burn the whole add-on budget and then unseal it too late to be observed. The
-			// apply does not block on the Job finishing; the wait that follows is what sees the
-			// result.
-			argocd.EnsureAddOnBootstraps(vc.AddOns, selfimage.Ref(), stdout, stderr)
+			bindingState = stage.Bindings
+			manifestWarnings = append(manifestWarnings, stage.Warnings...)
+			result.AddOnStatus = stage.Health
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
@@ -1463,26 +1412,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// prune above). Desired = the refreshers applied above (empty when none / flag off), so removing
 		// an ECR chart-repo connector tears its refresher down. The shared KSA is left in place.
 		argocd.PruneHelmRepoRefreshers(desiredHelmRepoRefreshers, stdout, stderr)
-		// Read ArgoCD health/sync for every enabled add-on (managed + gitops) so the console
-		// shows real status (best-effort — a read failure just leaves status Unknown).
-		//
-		// WAIT for convergence first. The read used to run the instant after `kubectl apply`, when
-		// every Application is still Progressing/Missing — so a database that was about to come up
-		// perfectly was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh
-		// only updates project_addons rows, and the synthesized Hetzner data-service specs have
-		// none). The wait is bounded and best-effort: an add-on that never converges is reported
-		// honestly rather than failing an otherwise-healthy cluster.
+		// The health wait ran inside runAddOnStage, before the prunes above; these two read what
+		// it waited for.
 		if len(vc.AddOns) > 0 {
-			if err := kube.refresh(ctx, "the add-on health wait"); err != nil {
-				return nil, err
-			}
-			result.AddOnStatus = argocd.WaitAddOnsHealthy(
-				ctx,
-				argocd.AllAddOnNames(withoutByoRefusals(vc.AddOns, byoRefused)),
-				addonConvergeTimeout(),
-				stdout,
-				stderr,
-			)
 			// Make each in-cluster RabbitMQ's BROKER accept the password its Secret holds (#3590).
 			//
 			// HERE, and both bounds are load-bearing. AFTER WaitAddOnsHealthy, because there is

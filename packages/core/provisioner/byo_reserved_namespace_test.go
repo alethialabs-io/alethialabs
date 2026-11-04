@@ -5,6 +5,7 @@ package provisioner
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -27,6 +28,17 @@ type byoCluster struct{ applied string }
 // EARLIER deploy; it is recorded first, as though an earlier run had applied it.
 func newByoCluster(t *testing.T, prior string) *byoCluster {
 	t.Helper()
+	return newByoClusterFailing(t, prior, false)
+}
+
+// newByoClusterFailing is newByoCluster whose `kubectl apply` of an AppProject fails (and records
+// nothing) when failAppProject is set — the case where a refused destination cannot be withdrawn.
+func newByoClusterFailing(t *testing.T, prior string, failAppProject bool) *byoCluster {
+	t.Helper()
+	failGuard := ""
+	if failAppProject {
+		failGuard = "grep -q 'kind: AppProject' \"$3\" && exit 1; "
+	}
 	dir := t.TempDir()
 	c := &byoCluster{applied: filepath.Join(dir, "applied.yaml")}
 	if prior != "" {
@@ -36,7 +48,7 @@ func newByoCluster(t *testing.T, prior string) *byoCluster {
 	}
 	script := "#!/bin/sh\n" +
 		"case \"$1 $2\" in\n" +
-		"  'apply -f') cat \"$3\" >> '" + c.applied + "'; printf '\\n---\\n' >> '" + c.applied + "';;\n" +
+		"  'apply -f') " + failGuard + "cat \"$3\" >> '" + c.applied + "'; printf '\\n---\\n' >> '" + c.applied + "';;\n" +
 		"esac\ncat >/dev/null 2>&1\nexit 0\n"
 	provStubTool(t, "kubectl", script)
 	return c
@@ -46,7 +58,8 @@ func newByoCluster(t *testing.T, prior string) *byoCluster {
 type byoDoc struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name string `yaml:"name"`
+		Name      string `yaml:"name"`
+		Namespace string `yaml:"namespace"`
 	} `yaml:"metadata"`
 	Spec struct {
 		Destinations []struct {
@@ -145,7 +158,7 @@ func TestConfigureByoCharts_RefusesPerChartAndWithdrawsTheDestination(t *testing
 				t.Fatalf("refused = %+v, want exactly the legacy chart in %q", refused, ns)
 			}
 			msg := errOut.String()
-			if !strings.Contains(msg, "refusing to configure BYO charts") || !strings.Contains(msg, `"legacy"`) || !strings.Contains(msg, ns) {
+			if !strings.Contains(msg, "refusing BYO chart") || !strings.Contains(msg, `"legacy"`) || !strings.Contains(msg, ns) {
 				t.Errorf("the refusal must name the chart and %q, got:\n%s", ns, msg)
 			}
 			if w := refused[0].warning(); !strings.Contains(w, "not deployed") || !strings.Contains(w, ns) || !strings.Contains(w, "reserved") {
@@ -193,60 +206,153 @@ func TestConfigureByoCharts_WithdrawsAReservedDestinationAnEarlierDeployGranted(
 	}
 }
 
-// TestByoRefusal_DeployStepRendersNothingForTheRefusedChartAndDeletesNothing runs the add-on stage in
-// the order deploy.go does — configure, bindings, the `deployable` filter, render — and checks what a
-// refused chart gets: no Application rendered (so none is applied, and the live one is not updated),
-// no wait on its health, and still a place in the prune's keep list, so the live Application is not
-// deleted as a "disabled" add-on. BOUNDARY: deploy.go itself is not driven (it needs a real
-// provision); this is the same sequence of the same functions, and the filter is one helper used at
-// every call site.
-func TestByoRefusal_DeployStepRendersNothingForTheRefusedChartAndDeletesNothing(t *testing.T) {
-	newByoCluster(t, "")
-	vc := legacyByoConfig("kube-system")
-	_, refused := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
-	applyByoChartBindingsExcept(vc, map[string]interface{}{}, "aws", byoRefusedIDs(refused), io.Discard, io.Discard)
+// TestConfigureByoCharts_WarningSaysWhenTheDestinationCouldNotBeWithdrawn: when the AppProject
+// apply fails, the destination an earlier deploy granted is still there, and the deploy warning must
+// not claim otherwise.
+func TestConfigureByoCharts_WarningSaysWhenTheDestinationCouldNotBeWithdrawn(t *testing.T) {
+	newByoClusterFailing(t, "", true)
+	_, refused := configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+	if len(refused) != 1 || refused[0].ProjectUpdated {
+		t.Fatalf("refused = %+v, want one refusal whose project was NOT updated", refused)
+	}
+	w := refused[0].warning()
+	if !strings.Contains(w, "could not update its project") || strings.Contains(w, "can no longer sync") {
+		t.Errorf("with the AppProject apply failed, the warning must not claim the chart can no longer sync, got: %s", w)
+	}
 
-	deployable := withoutByoRefusals(vc.AddOns, refused)
-	dir, err := argocd.RenderManagedAddOns(deployable, nil)
+	newByoCluster(t, "")
+	_, refused = configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+	if len(refused) != 1 || !refused[0].ProjectUpdated {
+		t.Fatalf("refused = %+v, want one refusal whose project WAS updated", refused)
+	}
+	// True on a first deploy too, when there is no earlier Application: nothing claims there is one.
+	if w := refused[0].warning(); !strings.Contains(w, "Anything an earlier deploy applied for it") || !strings.Contains(w, "This deploy applied nothing for it") {
+		t.Errorf("the warning must be true whether or not an earlier deploy applied the chart, got: %s", w)
+	}
+}
+
+// TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep drives the REAL add-on stage RunDeployV2
+// calls (runAddOnStage), against the scripted kubectl, with an ordinary BYO chart and one in a
+// reserved namespace. The refused chart gets nothing: no Application applied, no health wait, a deploy
+// warning naming it; the accepted chart is applied and waited on. Reverting any call site inside the
+// stage to the unfiltered add-on list fails this test.
+func TestRunAddOnStage_LeavesTheRefusedChartOutOfEveryStep(t *testing.T) {
+	t.Setenv("ALETHIA_ADDON_CONVERGE_TIMEOUT", "0s")
+	c := newByoCluster(t, "")
+	vc := legacyByoConfig("kube-system")
+	// Both charts carry a seeded secret and a bound workload, so the secret-seeding and binding steps
+	// are observable too.
+	vc.EnvironmentID = "env-1"
+	for i := range vc.AddOns {
+		vc.AddOns[i].Workloads = byoBindingConfig("env-1", true).AddOns[0].Workloads
+		vc.AddOns[i].SecretRef = &types.AddOnSecretRef{
+			SecretName: "alethia-addon-" + vc.AddOns[i].ID,
+			Namespace:  vc.AddOns[i].Namespace,
+			StaticData: map[string]string{"user": "admin"},
+		}
+	}
+	refreshed := []string{}
+	stage, err := runAddOnStage(context.Background(), addOnStageInput{
+		VC:             vc,
+		Facts:          &argocd.InfraFacts{},
+		Outputs:        map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret},
+		Provider:       "aws",
+		GitAccessToken: "tok",
+		Refresh: func(_ context.Context, step string) error {
+			refreshed = append(refreshed, step)
+			return nil
+		},
+	}, io.Discard, io.Discard)
 	if err != nil {
-		t.Fatalf("RenderManagedAddOns: %v", err)
+		t.Fatalf("runAddOnStage: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	if _, err := os.Stat(filepath.Join(dir, argocd.AddOnAppName("legacy")+".yaml")); err == nil {
-		t.Error("the refused chart's Application was rendered, so the deploy would apply it")
+
+	applied := map[string]bool{}
+	seeded := map[string]bool{}
+	bound := map[string]bool{}
+	for _, d := range c.docs(t) {
+		switch d.Kind {
+		case "Application":
+			applied[d.Metadata.Name] = true
+		case "Secret":
+			seeded[d.Metadata.Name] = true
+		case "ExternalSecret":
+			bound[d.Metadata.Namespace] = true
+		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, argocd.AddOnAppName("api")+".yaml")); err != nil {
-		t.Errorf("the accepted chart's Application was not rendered: %v", err)
+	if bound["kube-system"] {
+		t.Error("a binding ExternalSecret was applied into the refused chart's reserved namespace")
 	}
-	if names := argocd.AllAddOnNames(deployable); containsName(names, argocd.AddOnAppName("legacy")) {
-		t.Errorf("the health wait would spend its budget on the refused chart: %v", names)
+	if !bound["payments"] {
+		t.Errorf("the accepted chart's binding was not applied; bound namespaces: %v", bound)
 	}
+	for _, d := range stage.Bindings.Declared {
+		if d.Namespace == "kube-system" {
+			t.Errorf("the refused chart's binding is still declared (%+v), so the prune would keep it", d)
+		}
+	}
+	if seeded["alethia-addon-legacy"] {
+		t.Error("a secret was seeded into the refused chart's reserved namespace")
+	}
+	if !seeded["alethia-addon-api"] {
+		t.Errorf("the accepted chart's secret was not seeded; seeded: %v", seeded)
+	}
+	if applied[argocd.AddOnAppName("legacy")] {
+		t.Error("the refused chart's Application was applied")
+	}
+	if !applied[argocd.AddOnAppName("api")] {
+		t.Errorf("the accepted chart's Application was not applied; applied: %v", applied)
+	}
+	if _, waited := stage.Health[argocd.AddOnAppName("legacy")]; waited {
+		t.Error("the health wait spent its budget on the refused chart")
+	}
+	if _, waited := stage.Health[argocd.AddOnAppName("api")]; !waited {
+		t.Errorf("the accepted chart was not waited on: %v", stage.Health)
+	}
+	if len(stage.Warnings) != 1 || !strings.Contains(stage.Warnings[0], `"legacy"`) {
+		t.Errorf("want one deploy warning naming the refused chart, got %v", stage.Warnings)
+	}
+	if !reflect.DeepEqual(refreshed, []string{"the add-on Applications", "the add-on health wait"}) {
+		t.Errorf("credential refreshes = %v, want one before the wave apply and one before the health wait", refreshed)
+	}
+	// What the prune that follows the stage keeps: the refused chart's Application is NOT deleted.
 	if keep := argocd.ManagedAddOnNames(vc.AddOns); !containsName(keep, argocd.AddOnAppName("legacy")) {
 		t.Errorf("the prune keep list %v omits the refused chart, so its live Application would be deleted", keep)
 	}
 }
 
-// TestApplyByoChartBindingsExcept_RefusedChartWritesNothingAndKeepsItsBinding: a refused chart's
-// binding ExternalSecret is not re-applied into its namespace, and — because it is still declared —
-// the prune leaves the one an earlier deploy applied in place.
-func TestApplyByoChartBindingsExcept_RefusedChartWritesNothingAndKeepsItsBinding(t *testing.T) {
-	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
-	vc := byoBindingConfig("env-1", true)
-	vc.AddOns[0].Source = "git"
+// TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt: a refused chart's Application can no
+// longer sync, so its binding secrets serve nothing and are withdrawn — the owner-scoped prune deletes
+// the one an earlier deploy applied, and nothing new is applied. The control: the same binding on an
+// ACCEPTED chart is kept. (The refusal is passed directly here; which namespaces are refused is
+// covered by the tests above.)
+func TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt(t *testing.T) {
+	live := liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`)
+	outputs := map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}
 
-	st := applyByoChartBindingsExcept(vc, map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}, "aws",
-		map[string]bool{"acme-api": true}, io.Discard, io.Discard)
-	pruneByoChartBindings(st, io.Discard, io.Discard)
-
-	if _, err := os.Stat(c.applied); err == nil {
-		t.Error("a binding ExternalSecret was applied for a refused chart")
-	}
-	if len(st.Declared) == 0 {
-		t.Error("the refused chart's binding is no longer declared, so the prune would delete it")
-	}
-	if strings.Contains(c.calls(), "delete") {
-		t.Errorf("the refused chart's live binding was deleted:\n%s", c.calls())
-	}
+	t.Run("refused chart: withdrawn", func(t *testing.T) {
+		c := newBindingCluster(t, live, 0)
+		vc := byoBindingConfig("env-1", true)
+		vc.AddOns[0].Source = "git"
+		st := applyByoChartBindingsExcept(vc, outputs, "aws", []byoRefusal{{ID: "acme-api", Namespace: "apps"}}, io.Discard, io.Discard)
+		pruneByoChartBindings(st, io.Discard, io.Discard)
+		if _, err := os.Stat(c.applied); err == nil {
+			t.Error("a binding ExternalSecret was applied for a refused chart")
+		}
+		if !strings.Contains(c.calls(), bindingDelete) {
+			t.Errorf("the refused chart's earlier binding was not withdrawn:\n%s", c.calls())
+		}
+	})
+	t.Run("accepted chart: kept", func(t *testing.T) {
+		c := newBindingCluster(t, live, 0)
+		vc := byoBindingConfig("env-1", true)
+		vc.AddOns[0].Source = "git"
+		st := applyByoChartBindingsExcept(vc, outputs, "aws", nil, io.Discard, io.Discard)
+		pruneByoChartBindings(st, io.Discard, io.Discard)
+		if strings.Contains(c.calls(), "delete") {
+			t.Errorf("an accepted chart's binding was deleted:\n%s", c.calls())
+		}
+	})
 }
 
 // TestByoReservedPrefixCoversVClusterHostNamespaces pins the "vcluster-" prefix in

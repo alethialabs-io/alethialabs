@@ -76,7 +76,13 @@ func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool)
 // should look in, read from the configuration alone — no tofu output, render or apply result enters it, so a
 // binding that failed on this run is still declared and still kept. A binding to a keyless database
 // (keylessOn) declares no ExternalSecret: it gets no password secret, so any earlier one is not kept.
-func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool) ([]argocd.BindingSecretRef, []string) {
+//
+// A BYO chart in refused (#6439) declares NO binding: its Application can no longer sync, so the
+// secrets an earlier deploy bound into its namespace serve nothing — a refused chart's binding
+// secrets are withdrawn with it. Its namespace is still LOOKED IN, so the owner-scoped prune finds
+// and removes them; the chart's Application and everything else it deployed are left untouched.
+func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool, refused []byoRefusal) ([]argocd.BindingSecretRef, []string) {
+	skip := byoRefusedIDs(refused)
 	var refs []argocd.BindingSecretRef
 	var namespaces []string
 	seenNS := map[string]bool{}
@@ -93,6 +99,9 @@ func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool) ([]argocd.Bind
 		if !seenNS[ns] {
 			seenNS[ns] = true
 			namespaces = append(namespaces, ns)
+		}
+		if a.IsGitSource() && skip[a.ID] {
+			continue
 		}
 		for _, w := range a.Workloads {
 			for _, b := range w.Bindings {
@@ -124,14 +133,15 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 	return applyByoChartBindingsExcept(vc, outputs, provider, nil, stdout, stderr)
 }
 
-// applyByoChartBindingsExcept is applyByoChartBindings that writes NOTHING for the add-on ids in
-// skip — the BYO charts configureByoCharts refused, whose namespace the runner must not write into.
-// Their bindings stay DECLARED (the keep set is read from the whole configuration), so the prune
-// leaves any binding an earlier deploy applied for them in place rather than deleting it.
-func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, skip map[string]bool, stdout, stderr io.Writer) byoBindingState {
+// applyByoChartBindingsExcept is applyByoChartBindings that writes NOTHING for the BYO charts in
+// refused — the ones configureByoCharts refused, whose namespace the runner must not write into —
+// and declares none of their bindings, so the prune that follows withdraws any an earlier deploy
+// applied (see declaredByoBindings).
+func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, stdout, stderr io.Writer) byoBindingState {
 	keylessOn := keylessDBAuthEnabled()
+	skip := byoRefusedIDs(refused)
 	st := byoBindingState{Owner: byoBindingOwner(vc)}
-	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn)
+	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn, refused)
 
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
 	strOutputs := make(map[string]string, len(outputs))
@@ -218,14 +228,25 @@ type byoRefusal struct {
 	Namespace string
 	// Reason is the validator's refusal, naming the namespace.
 	Reason string
+	// ProjectUpdated is whether this deploy re-applied the chart's AppProject without the refused
+	// destination. False when that render or apply failed, in which case a destination an earlier
+	// deploy granted is still there.
+	ProjectUpdated bool
 }
 
 // warning is the deploy warning the console's Deploy tab shows for this refusal: what was not
-// deployed, why, and what the user changes. It carries no secret — an id, a namespace and the
-// validator's text, which echoes only the namespace.
+// deployed, why, what is left on the cluster, and what the user changes. It is worded to be true
+// whether or not an earlier deploy ever applied the chart, and whether or not the AppProject update
+// succeeded. It carries no secret — an id, a namespace and the validator's text, which echoes only
+// the namespace.
 func (r byoRefusal) warning() string {
-	return fmt.Sprintf("BYO chart %q was not deployed: %s. Its existing Application and workloads were left in place, "+
-		"but they can no longer sync. Attach the chart again with a namespace of your own.", r.ID, r.Reason)
+	left := "Anything an earlier deploy applied for it stays in place but can no longer sync, because its project no longer permits that namespace."
+	if !r.ProjectUpdated {
+		left = "The runner could not update its project (see the deploy log), so an Application an earlier deploy applied for it may still sync into that namespace."
+	}
+	return fmt.Sprintf("BYO chart %q was not deployed: %s. This deploy applied nothing for it. %s "+
+		"Its binding secrets are no longer declared, so they are withdrawn whenever the binding prune runs. "+
+		"Attach the chart again with a namespace of your own.", r.ID, r.Reason, left)
 }
 
 // byoRefusedIDs is the set of refused add-on ids, for the filters below.
@@ -313,7 +334,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			ns = "default"
 		}
 		if err := argocd.ValidateByoNamespace(ns); err != nil {
-			fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: chart %q: %v\n", vc.AddOns[i].ID, err)
+			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %v\n", vc.AddOns[i].ID, err)
 			refused = append(refused, byoRefusal{ID: vc.AddOns[i].ID, Namespace: ns, Reason: err.Error()})
 			continue
 		}
@@ -349,10 +370,16 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 
 	// Hardened AppProject locked to the ACCEPTED repos + namespaces — applied even when that is none,
 	// so a destination an earlier deploy granted is withdrawn (see the doc comment).
+	projectUpdated := false
 	if proj, err := argocd.RenderByoAppProject(projName, repos, namespaces, commonLabels); err != nil {
 		fmt.Fprintf(stderr, "Warning: could not render BYO AppProject %s: %v\n", projName, err)
 	} else if err := argocd.ApplyManifest(proj, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "Warning: could not apply BYO AppProject %s (charts will not sync until it exists): %v\n", projName, err)
+	} else {
+		projectUpdated = true
+	}
+	for i := range refused {
+		refused[i].ProjectUpdated = projectUpdated
 	}
 
 	// Every git token in play (shared + per-repo) — used to redact any of them from the credential

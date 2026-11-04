@@ -2538,7 +2538,7 @@ func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	if prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
 		t.Fatal("a namespace Kubernetes would reject must be REFUSED, not configured")
 	}
-	if !strings.Contains(errOut.String(), "refusing to configure BYO charts") {
+	if !strings.Contains(errOut.String(), "refusing BYO chart") {
 		t.Errorf("the refusal must say so, got:\n%s", errOut.String())
 	}
 	// Fail-closed: the Application is still pinned to the hardened project, which now grants it no
