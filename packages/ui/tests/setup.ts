@@ -40,6 +40,20 @@ if (typeof window !== "undefined") {
   };
 }
 
+// jsdom's `focus()` never reads its FocusOptions argument (jsdom@29 has no FocusOptions at all).
+// Base UI's focus manager feature-detects `preventScroll` by passing an object whose
+// `preventScroll` is a getter and checking whether it was read (verified in @base-ui/react@1.9.0,
+// `floating-ui-react/components/FloatingFocusManager.js`). Unread, it concludes restoring focus
+// would scroll the page, as on Chrome for Android, and skips returning focus to the trigger after
+// an outside press. Desktop browsers do read it. Copying the options with a spread reads every own
+// property, the getter included, so jsdom answers the probe as those browsers do. (#6144)
+if (typeof HTMLElement !== "undefined") {
+  const nativeFocus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function focusReadingOptions(options?: FocusOptions) {
+    nativeFocus.call(this, options && { ...options });
+  };
+}
+
 // jsdom doesn't implement `PointerEvent`. base-ui's overlays open on pointer interactions (Floating UI
 // listens for `pointerdown`), so without a `PointerEvent` constructor a `userEvent.click`/focus-open
 // never drives the popup to mount. Polyfill a minimal one (extends `MouseEvent`).
