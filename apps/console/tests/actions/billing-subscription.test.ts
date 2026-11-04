@@ -3788,6 +3788,18 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(events()).toEqual([]);
 		});
 
+		// One definition of "another live plan" (the link's `namesOtherLivePlan`, which counts past_due): beside
+		// a past_due Y the incomplete X's setup stays open too, and Checkout reads the row predicate's own
+		// unpaid-invoice copy for that row.
+		it("C120 beside a past_due Y: nothing written or raised, and Checkout reads the row predicate's unpaid-invoice copy", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete", { created_by: "user-1", organization_id: "org-1" }));
+			orgBilling.mockResolvedValue(rowNames("sub_y", "past_due"));
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+			await expect(createCheckoutSession("team")).rejects.toThrow(/^This team's plan has an unpaid invoice, so a second plan was not started\./);
+			expect(db.update).not.toHaveBeenCalled();
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
 		it("control: metadata naming ANOTHER user is never adopted, and the guard refuses", async () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("active", { created_by: "user-9", organization_id: "org-1" }));
 			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));

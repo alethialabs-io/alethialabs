@@ -327,6 +327,28 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 		expect(wroteAnything()).toBe(false);
 	});
 
+	// The lookup sets `besideLivePlan` only for an `action_needed` X. One whose first payment is in flight
+	// (`processing`) is not reported, so the run does not stop: it goes on to the link, which decides it
+	// beside the live plan (C80), and the browser record is still there when the link runs. This pins the
+	// sheet's half; the lookup's half (no `besideLivePlan` for a `processing` X) is in
+	// tests/actions/billing-new-org-link.test.ts, and fails at 047ca7e5d, where the lookup reported it.
+	it("C120: an X whose payment is in flight is not stopped — the run reaches the link with the record kept", async () => {
+		const sub = "sub_c120_processing";
+		const stored = runRecord(sub, "org-1");
+		writePendingPaidSetup(RUN_USER, stored);
+		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub, { org: true }), paid: false, planState: "processing", besideLivePlan: null });
+		let keptAtLink: string | null = null;
+		actions.linkSubscriptionToNewOrg.mockImplementation(async () => {
+			keptAtLink = readStoredPaidSetup(RUN_USER).kind;
+			return { kind: "refused", clause: "This team already has an active plan, so this payment was not linked to it." };
+		});
+
+		await finishPaidSetup(RUN_USER, stored, runHooks);
+
+		expect(actions.linkSubscriptionToNewOrg).toHaveBeenCalledTimes(1);
+		expect(keptAtLink).toBe("ok");
+	});
+
 	it("C107 control: `ended` null, no hold, X paid — the run creates the org and links", async () => {
 		const sub = "sub_c107_control";
 		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub), planState: "active" });

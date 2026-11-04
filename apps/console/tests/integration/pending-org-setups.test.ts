@@ -31,7 +31,7 @@ const fakeStripe = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => fakeStripe }));
 
-import { createSubscriptionIntent } from "@/app/server/actions/billing";
+import { createCheckoutSession, createSubscriptionIntent } from "@/app/server/actions/billing";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import type { Actor, Entitlements } from "@/lib/authz/types";
@@ -760,7 +760,8 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 	const SUB_MOVED = sub("moved"); // incomplete, then expires with money not proven unmoved
 	const SUB_PAID = sub("paid"); // incomplete, then paid before it ends
 	const SUB_LIVE = sub("live"); // the control: live from the start
-	const ALL = [SUB_EXPIRES, SUB_MOVED, SUB_PAID, SUB_LIVE];
+	const SUB_HELD = sub("held"); // live, refused by the link under a link_refused hold (C80)
+	const ALL = [SUB_EXPIRES, SUB_MOVED, SUB_PAID, SUB_LIVE, SUB_HELD];
 	let savedStripeKey: string | undefined;
 	let info: MockInstance<typeof console.info>;
 	let error: MockInstance<typeof console.error>;
@@ -817,6 +818,17 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 			await recordPendingOrgSetup({ userId: U, subscriptionId: s, customerId: "cus_it_c120", name: "C120", slug: "c120" });
 		}
 		await db.update(pendingOrgSetups).set({ created_org_id: O }).where(inArray(pendingOrgSetups.subscription_id, ALL));
+		await seedAuthz();
+		await db.insert(member).values({ organizationId: O, userId: U, role: "owner" });
+		await db.insert(grants).values({
+			org_id: O,
+			principal_type: "user",
+			principal_id: U,
+			effect: "allow",
+			role_id: BUILTIN_ROLE_IDS.owner,
+			resource_type: "org",
+			resource_id: null,
+		});
 	});
 
 	beforeEach(() => {
@@ -833,8 +845,11 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 		if (savedStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
 		else process.env.STRIPE_SECRET_KEY = savedStripeKey;
 		const db = getServiceDb();
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, O));
+		await db.delete(paymentHolds).where(inArray(paymentHolds.subscription_id, ALL));
 		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, U));
 		await db.delete(organizationBilling).where(eq(organizationBilling.organizationId, O));
+		await db.delete(grants).where(eq(grants.org_id, O));
 		await db.delete(organization).where(eq(organization.id, O));
 		await db.delete(user).where(eq(user.id, U));
 	});
@@ -895,6 +910,33 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 		expect(await rowOf(SUB_LIVE)).toMatchObject({ closed_reason: "org_has_plan", refused_reason: "org_has_plan" });
 		expect(eventsFor(SUB_LIVE)).toEqual(["billing.pending_org_setup.closed"]);
 		expect(alertsFor(SUB_LIVE)).toBe(1);
+	});
+
+	// Guard order, narrowed (round 3 of #6414): the live-plan copy is for an `incomplete` X with no hold
+	// (C120). A live X the link refused beside Y under a `link_refused` hold (C80, then C120 (c)) keeps
+	// the hold's clause on Checkout (§5.5). At 047ca7e5d Checkout answered "change the plan instead" here.
+	it("C80 beside a live Y: Checkout refuses with the open hold's clause, not the live-plan copy, and closes nothing", async () => {
+		await getServiceDb()
+			.insert(paymentHolds)
+			.values({
+				subscription_id: SUB_HELD,
+				customer_id: "cus_it_c120",
+				payer_key: U,
+				invoice_id: `in_${SUB_HELD}`,
+				state: "needs_operator",
+				next_check_at: new Date(),
+				opened_by: "link",
+				open_note: "link_refused",
+			});
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce(x(SUB_HELD, "active"));
+		const actor: Actor = { credential: "session", userId: U, orgId: O, entitlements: ENTITLEMENTS };
+
+		await expect(runWithActor(actor, () => createCheckoutSession("team"))).rejects.toThrow(
+			/^We could not settle an earlier checkout's payment automatically, so nothing new was started\./,
+		);
+		expect(await rowOf(SUB_HELD)).toMatchObject({ closed_at: null, linked_at: null });
+		expect(alertsFor(SUB_HELD)).toBe(0);
+		expect(fakeStripe.checkout.sessions.create).not.toHaveBeenCalled();
 	});
 });
 

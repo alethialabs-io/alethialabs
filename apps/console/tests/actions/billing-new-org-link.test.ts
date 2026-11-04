@@ -988,6 +988,31 @@ describe("C120 — the resume lookup leaves an incomplete X's setup open beside 
 		});
 	}
 
+	it("beside a past_due Y (the link's own definition of another live plan): reported as not payable, with no payment link", async () => {
+		incompleteLinkedX();
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "past_due", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ paymentUrl: null, besideLivePlan: { clause: NOT_PAYABLE_BESIDE_LIVE_PLAN } });
+	});
+
+	// Round 3 blocker: the sentence is true only for a payment that failed or was never made. With the
+	// first payment in flight (`processing`) X stays `incomplete` with no 23h bound, so the lookup does not
+	// report it, and the link decides it — under a needs_operator hold, alerted (C80). At 047ca7e5d the
+	// lookup reported `besideLivePlan` here too.
+	it("an X whose first payment is processing (confirming) is NOT reported as not payable; the link then refuses it under a hold (C80)", async () => {
+		await useRealCloser();
+		subX("incomplete", ["processing"]).metadata.organization_id = "org-1";
+		setup();
+		world.state.row = { stripeSubscriptionId: "sub_y", status: "active", stripeCustomerId: "cus_y" };
+
+		await expect(resolved()).resolves.toMatchObject({ planState: "confirming", paymentUrl: null, besideLivePlan: null });
+		expect(await refusedClause()).toMatch(ORG_HAS_PLAN);
+		expect(holdOn()).toMatchObject({ state: "needs_operator", open_note: "link_refused", opened_by: "link" });
+		expect(world.state.setups.get("sub_x")).toMatchObject({ closed_at: null, linked_at: null, refused_reason: "org_has_plan" });
+		expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+	});
+
 	it("control: with no live plan beside it, the same X keeps its payment link and is not reported", async () => {
 		incompleteLinkedX();
 		setup();
