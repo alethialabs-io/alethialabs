@@ -55,7 +55,7 @@ export function rankItems<T>(
       item,
       index,
       score: blank ? 1 : rankMatch(toSearchText(item), search),
-      disabled: isDisabled?.(item) ? 1 : 0,
+      disabled: 0,
     }))
     .filter((row) => row.score > 0)
     .sort((a, b) => a.disabled - b.disabled || b.score - a.score || a.index - b.index)

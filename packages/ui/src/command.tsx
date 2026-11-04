@@ -77,7 +77,7 @@ function Command({
   pinnedItems,
   search,
   onSearchChange,
-  loopFocus = false,
+  loopFocus = true,
   className,
   children,
   ...props
@@ -85,7 +85,7 @@ function Command({
   // Base UI's highlight is only kept on an index below the length of `items`, so every row the
   // list renders (pinned ones too) has to be in it, in rendered order.
   const navigable = React.useMemo(
-    () => (pinnedItems?.length ? [...filteredItems, ...pinnedItems] : filteredItems),
+    () => filteredItems,
     [filteredItems, pinnedItems]
   )
   const context = React.useMemo(
@@ -259,7 +259,6 @@ function CommandGroup({
   heading?: React.ReactNode
   children?: React.ReactNode
 }) {
-  if (React.Children.toArray(children).length === 0) return null
   return (
     <Autocomplete.Group
       data-slot="command-group"
