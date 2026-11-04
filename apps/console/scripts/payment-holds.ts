@@ -127,6 +127,7 @@ import type * as SweeperModule from "@/lib/billing/payment-holds/sweeper";
 import type { PendingOrgSetupRow } from "@/lib/billing/pending-org-setup";
 import type * as LockModule from "@/lib/billing/purchase-lock";
 import type * as LeaseModule from "@/lib/billing/purchase-lease";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import type * as SyncModule from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -1091,9 +1092,6 @@ async function holdFromBackfill(
 	}
 }
 
-/** Statuses under which a subscription still exists and may bill (ADR 0002 §2, "Live subscription"). */
-const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
-
 /**
  * §8's S1-era listing: prints every setup closed with `closed_reason = org_has_plan` whose subscription
  * reads live or `incomplete`, with its user and team, and returns how many. An `incomplete` one is not
@@ -1119,7 +1117,7 @@ export async function listLiveOrgHasPlanClosures(
 			continue;
 		}
 		const incomplete = status === "incomplete";
-		if (!incomplete && !LIVE_STATUSES.has(status)) continue;
+		if (!incomplete && !isLiveSubscriptionStatus(status)) continue;
 		listed += 1;
 		const guidance = incomplete
 			? "Not live yet, and it can still be paid until it ends. If it ends unpaid, nothing is needed. " +

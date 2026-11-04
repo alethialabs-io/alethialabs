@@ -178,6 +178,7 @@ import {
 	aiSpendLimitsInput,
 } from "@/components/settings/usage/spend-limits";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import {
 	type BillingSummary,
 	getBillingSummary as readBillingSummary,
@@ -1162,7 +1163,7 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
 		return TOO_MANY_SUBSCRIPTIONS_TO_CHECK;
 	}
 	const live = new Set(
-		listed.subs.filter((s) => LIVE_SUBSCRIPTION_STATUSES.has(s.status) && isOrgPlanSubscription(s)).map((s) => s.status),
+		listed.subs.filter((s) => isLiveSubscriptionStatus(s.status) && isOrgPlanSubscription(s)).map((s) => s.status),
 	);
 	if (live.has("active") || live.has("trialing")) return LIVE_PLAN_REFUSAL;
 	if (live.has("past_due") || live.has("unpaid")) return UNPAID_PLAN_REFUSAL;
@@ -2270,15 +2271,6 @@ async function closeOrKeep(
 	return null;
 }
 
-/** Statuses under which a subscription still exists and may bill (ADR 0002 §2, "Live subscription"). */
-const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
-	"active",
-	"trialing",
-	"past_due",
-	"unpaid",
-	"paused",
-]);
-
 /**
  * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94): every subscription, of every status, on each of
  * `customers` — the customers of the user's unlinked records (`liveCheckSetupCustomers`, whether or not
@@ -2307,7 +2299,7 @@ async function liveCreateATeamSubscription(
 		}
 		if (listed.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 		const live = listed.subs.find(
-			(s) => isCreateATeamSubscriptionOf(s, userId) && LIVE_SUBSCRIPTION_STATUSES.has(s.status),
+			(s) => isCreateATeamSubscriptionOf(s, userId) && isLiveSubscriptionStatus(s.status),
 		);
 		if (live) return { kind: "live", sub: live };
 	}
