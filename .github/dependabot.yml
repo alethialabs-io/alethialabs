@@ -35,6 +35,27 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The console's OpenTelemetry stack is held on the generation @sentry/nextjs 10.x accepts
+      # (#6427). Sentry 10.77+ declares `@opentelemetry/api` `>=1.9.1 <1.10.0` (and its node SDK
+      # `@opentelemetry/exporter-trace-otlp-http` `<0.300.0`), while api 1.10.0 and the 0.300.0
+      # exporters belong to the 3.x SDK generation. #6284 moved only api and the three exporters, so
+      # the lock carried two `@opentelemetry/api` copies and `lib/observability/otel.ts` failed
+      # check-types on two distinct `Resource` types. `api-logs` 0.300 is the same generation.
+      # Root package.json `pnpm.overrides` also forces api to 1.9.1: without it a fresh resolve (no
+      # lockfile) splits it again, because auto-installed peers take the newest api, 1.10.0, even
+      # under the otel 2.x packages whose own peer range excludes it.
+      # Lift these five ignores, that override and the sdk-* 2.x ranges TOGETHER, by hand, once a
+      # Sentry release on the current major accepts api 1.10.
+      - dependency-name: "@opentelemetry/api"
+        versions: [">=1.10.0"]
+      - dependency-name: "@opentelemetry/api-logs"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/exporter-logs-otlp-http"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/exporter-metrics-otlp-http"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/exporter-trace-otlp-http"
+        versions: [">=0.300.0"]
     groups:
       # The Vercel AI SDK family moves as ONE unit, in its own PR. Each release of `ai`,
       # `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@ai-sdk/react` and `@ai-sdk/gateway` pins an EXACT
