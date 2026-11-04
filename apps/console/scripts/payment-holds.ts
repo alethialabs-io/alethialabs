@@ -1096,9 +1096,8 @@ const LIVE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_
 
 /**
  * §8's S1-era listing: prints every setup closed with `closed_reason = org_has_plan` whose subscription
- * reads live or `incomplete`, with its user and team, and returns how many. An `incomplete` one is not
- * live yet but can still be paid until it ends (amendment 2026-11-04, C121), so it is printed with its
- * own guidance and counted. A read that fails is printed as such. It holds nothing and writes nothing.
+ * reads live, with its user and team, and returns how many. A read that fails is printed as such. It
+ * holds nothing and writes nothing.
  */
 export async function listLiveOrgHasPlanClosures(
 	stripe: Pick<SweeperModule.HoldStripe, "subscriptions">,
@@ -1109,7 +1108,7 @@ export async function listLiveOrgHasPlanClosures(
 		.from(pendingOrgSetups)
 		.where(eq(pendingOrgSetups.closed_reason, "org_has_plan"))
 		.orderBy(desc(pendingOrgSetups.closed_at));
-	let listed = 0;
+	let live = 0;
 	for (const s of closed) {
 		let status: string;
 		try {
@@ -1118,20 +1117,15 @@ export async function listLiveOrgHasPlanClosures(
 			print(`S1-ERA ${s.subscription_id}: could not read it (${err instanceof Error ? err.message : String(err)})`);
 			continue;
 		}
-		const incomplete = status === "incomplete";
-		if (!incomplete && !LIVE_STATUSES.has(status)) continue;
-		listed += 1;
-		const guidance = incomplete
-			? "Not live yet, and it can still be paid until it ends. If it ends unpaid, nothing is needed. " +
-				"If the payer agrees, cancel it in Stripe now. If a later run shows it live, refund it or move it by hand."
-			: "Paid, live and unlinked: refund it or move it by hand.";
+		if (!LIVE_STATUSES.has(status)) continue;
+		live += 1;
 		print(
 			`S1-ERA ${s.subscription_id}: reads ${status}, setup ${s.id} of user ${s.user_id}, team ${s.created_org_id ?? "none"}, ` +
-				`closed ${s.closed_at?.toISOString() ?? "-"} as org_has_plan. ${guidance}`,
+				`closed ${s.closed_at?.toISOString() ?? "-"} as org_has_plan. Paid, live and unlinked: refund it or move it by hand.`,
 		);
 	}
-	print(`S1-era closures: ${listed} of ${closed.length} read live or incomplete.`);
-	return listed;
+	print(`S1-era closures: ${live} of ${closed.length} read live.`);
+	return live;
 }
 
 /** `reconcile`: the backfill and the S1-era listing when asked, then one sweeper pass, printing its counts. */
