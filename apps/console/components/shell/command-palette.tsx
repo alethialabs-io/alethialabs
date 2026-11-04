@@ -174,7 +174,7 @@ export function CommandPalette({ selfRunners = false }: { selfRunners?: boolean 
 	const { search, onSearchChange, results } = useCommandSearch(
 		entries,
 		paletteSearchText,
-		open,
+		{ open },
 	);
 	const groups = groupResults(results, (e) => e.group);
 
