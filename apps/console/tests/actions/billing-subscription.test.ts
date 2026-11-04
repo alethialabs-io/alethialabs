@@ -3764,6 +3764,26 @@ describe("ADR 0002 S1 (#5714)", () => {
 			expect(events()).toEqual(["billing.pending_org_setup.closed"]);
 		});
 
+		// C120 (amendment 2026-11-04, slice S12): the refusal above applies only to a LIVE X. An `incomplete`
+		// X can still be paid, so the guard's closer writes nothing and the guard refuses as for any open
+		// setup. On dev at aed8b609b the closer closed it with org_has_plan and alerted, and the purchase
+		// then met the row predicate's "change the plan instead".
+		it("C120: X incomplete beside a live Y — the guard's closer writes nothing and raises nothing, and the guard refuses", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			for (const yStatus of ["active", "trialing"]) {
+				stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete", { created_by: "user-1", organization_id: "org-1" }));
+				orgBilling.mockResolvedValue(rowNames("sub_y", yStatus));
+				vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+				await expect(createCheckoutSession("team")).rejects.toThrow(CREATOR_REFUSAL);
+			}
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled();
+			expect(db.transaction).not.toHaveBeenCalled();
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+			expect(events()).toEqual([]);
+		});
+
 		it("control: metadata naming ANOTHER user is never adopted, and the guard refuses", async () => {
 			stripe.subscriptions.retrieve.mockResolvedValue(subX("active", { created_by: "user-9", organization_id: "org-1" }));
 			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));
