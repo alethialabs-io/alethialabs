@@ -668,6 +668,8 @@ const OPEN_SETUP_UNCHECKED =
 async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
 	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
 	for (const row of rows) {
+		// Closed or linked already: it blocks nothing, and X need not be read (the closer answers the same).
+		if (row.closed_at || row.linked_at) continue;
 		let verdict: Awaited<ReturnType<typeof settleOpenSetup>>;
 		let sub: Stripe.Subscription | null = null;
 		try {
