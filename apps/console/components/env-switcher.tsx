@@ -21,7 +21,14 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
+
+/** The "New Environment" action row, as `Command`'s `filteredItems` counts it. */
+const NEW_ENVIRONMENT = "__new-environment";
+
+/** An environment's search text: its name, for the shared ranker. */
+const envSearchText = (e: SwitcherEnv): string => e.name;
 
 /** A stable empty list, so effects keyed on `envs` do not re-run on every render before data. */
 const NO_ENVS: SwitcherEnv[] = [];
@@ -112,6 +119,9 @@ export function EnvSwitcher() {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
 
+	// Ranked by the shared ranker; the query starts empty each time the popover opens.
+	const envSearch = useCommandSearch(envs, envSearchText, open);
+
 	if (!isDrilldown || envs.length === 0) return null;
 
 	const active =
@@ -151,29 +161,40 @@ export function EnvSwitcher() {
 					label={active?.name ?? ""}
 				/>
 				<PopoverContent className="w-64 p-0" align="start">
-					<Command label="Find environment">
+					<Command
+						label="Find environment"
+						search={envSearch.search}
+						onSearchChange={envSearch.onSearchChange}
+						// The "New Environment" row counts only beside a match, so a miss still says so.
+						filteredItems={
+							envSearch.results.length > 0
+								? [...envSearch.results, NEW_ENVIRONMENT]
+								: []
+						}
+					>
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No environment found.</CommandEmpty>
-							<CommandGroup heading="Environments">
-								{envs.map((e) => (
-									<CommandItem
-										key={e.id}
-										value={e.name}
-										onSelect={() => handleSelect(e.id)}
-										className="gap-2"
-									>
-										<span className="flex-1 truncate">{e.name}</span>
-										{e.id === active?.id && (
-											<Check className="h-4 w-4 shrink-0" />
-										)}
-									</CommandItem>
-								))}
-							</CommandGroup>
+							{envSearch.results.length > 0 && (
+								<CommandGroup heading="Environments">
+									{envSearch.results.map((e) => (
+										<CommandItem
+											key={e.id}
+											onSelect={() => handleSelect(e.id)}
+											className="gap-2"
+										>
+											<span className="flex-1 truncate">{e.name}</span>
+											{e.id === active?.id && (
+												<Check className="h-4 w-4 shrink-0" />
+											)}
+										</CommandItem>
+									))}
+								</CommandGroup>
+							)}
 							<CommandSeparator />
+							{/* Always offered, matching or not: it is an action, not an environment. */}
 							<CommandGroup>
 								<CommandItem
-									value="__new-environment"
 									onSelect={() => {
 										setOpen(false);
 										setCreateOpen(true);
