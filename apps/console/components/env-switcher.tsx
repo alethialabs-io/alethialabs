@@ -19,13 +19,11 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-	CommandSeparator,
 } from "@repo/ui/command";
 import { useCommandSearch } from "@repo/ui/command-search";
+import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent } from "@repo/ui/popover";
-
-/** The "New Environment" action row, as `Command`'s `pinnedItems` lists it. */
-const PINNED_ROWS = ["__new-environment"];
+import { Separator } from "@repo/ui/separator";
 
 /** An environment's search text: its name, for the shared ranker. */
 const envSearchText = (e: SwitcherEnv): string => e.name;
@@ -166,8 +164,6 @@ export function EnvSwitcher() {
 						search={envSearch.search}
 						onSearchChange={envSearch.onSearchChange}
 						filteredItems={envSearch.results}
-						// Pinned: offered and keyboard-reachable on a miss too, never counted as a match.
-						pinnedItems={PINNED_ROWS}
 					>
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
@@ -188,22 +184,24 @@ export function EnvSwitcher() {
 									))}
 								</CommandGroup>
 							)}
-							<CommandSeparator />
-							{/* Always offered, matching or not, by pointer and by keyboard: it is an action, not
-							    an environment (pinned above). */}
-							<CommandGroup>
-								<CommandItem
-									onSelect={() => {
-										setOpen(false);
-										setCreateOpen(true);
-									}}
-									className="gap-2 text-muted-foreground"
-								>
-									<Plus className="h-4 w-4 shrink-0" />
-									<span className="flex-1">New Environment</span>
-								</CommandItem>
-							</CommandGroup>
 						</CommandList>
+						<Separator />
+						{/* An action, not an environment, so a footer button OUTSIDE the listbox: offered on a
+						    miss too, reached by click or Tab from the search, never an arrow-key row and
+						    never counted as a match (so Enter on a miss runs nothing). */}
+						<div className="p-1">
+							<Button
+								variant="ghost"
+								onClick={() => {
+									setOpen(false);
+									setCreateOpen(true);
+								}}
+								className="w-full justify-start gap-2 px-2 text-muted-foreground"
+							>
+								<Plus className="h-4 w-4 shrink-0" />
+								<span className="flex-1 text-left">New Environment</span>
+							</Button>
+						</div>
 					</Command>
 				</PopoverContent>
 			</Popover>

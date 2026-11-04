@@ -444,7 +444,11 @@ test.describe("Navigation shell — env switcher", () => {
 		await owner.page.getByRole("button", { name: /switch environment: production/i }).click({ timeout: 20_000 });
 		await expect(owner.page.getByPlaceholder(/find environment/i)).toBeVisible();
 		await expect(owner.page.getByRole("option", { name: "production" })).toBeVisible();
-		await expect(owner.page.getByRole("option", { name: /new environment/i })).toBeVisible();
+		// The action is a footer BUTTON in the switcher's popover, outside the listbox (#6145): never
+		// an arrow-key row, never counted as a match.
+		const popover = owner.page.locator('[data-slot="popover-content"]');
+		await expect(popover.getByRole("button", { name: /new environment/i })).toBeVisible();
+		await expect(owner.page.getByRole("option", { name: /new environment/i })).toHaveCount(0);
 	});
 
 	test("selecting an environment pins it via the ?environment_id query", async ({ owner }) => {

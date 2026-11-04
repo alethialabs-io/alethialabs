@@ -38,7 +38,9 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/components/environments/new-environment-dialog", () => ({
-	NewEnvironmentDialog: () => null,
+	// A marker while open, so the footer button's effect can be asserted without the real dialog.
+	NewEnvironmentDialog: ({ open }: { open: boolean }) =>
+		open ? <div role="dialog" aria-label="New environment" /> : null,
 }));
 vi.mock("@/components/org/create-org-sheet", () => ({
 	CreateOrgSheet: () => null,
@@ -170,6 +172,50 @@ describe("console command searches have an accessible name", () => {
 		expect(
 			screen.getByRole("combobox", { name: "Find environment" }),
 		).toHaveAttribute("placeholder", "Find environment…");
+	});
+
+	describe("the environment switcher's New Environment action is a footer, not a row", () => {
+		/** Renders the switcher over one hydrated environment and opens it; returns the search box. */
+		async function openEnvSwitcher(user: ReturnType<typeof userEvent.setup>) {
+			const client = new QueryClient();
+			client.setQueryData(orpc.workspace.environments.queryKey({ input: { project: "shop" } }), [
+				{ id: "env_1", project_id: "proj_1", name: "production", stage: "production", is_default: true },
+			]);
+			render(
+				<QueryClientProvider client={client}>
+					<EnvSwitcher />
+				</QueryClientProvider>,
+			);
+			await user.click(screen.getByRole("button", { name: /^Switch environment/ }));
+			return screen.getByRole("combobox", { name: "Find environment" });
+		}
+
+		it("on a miss highlights nothing and Enter opens nothing; Tab reaches the button, which opens the dialog", async () => {
+			const user = userEvent.setup({ delay: null });
+			const search = await openEnvSwitcher(user);
+			await user.click(search);
+			await user.paste("zzz");
+			expect(screen.getByText("No environment found.")).toBeInTheDocument();
+			expect(document.querySelector("[data-highlighted]")).toBeNull();
+			await user.keyboard("{Enter}");
+			expect(screen.queryByRole("dialog", { name: "New environment" })).not.toBeInTheDocument();
+			await user.tab();
+			const action = screen.getByRole("button", { name: /new environment/i });
+			expect(action).toHaveFocus();
+			await user.keyboard("{Enter}");
+			expect(screen.getByRole("dialog", { name: "New environment" })).toBeInTheDocument();
+		});
+
+		it("on a hit, ArrowDown never lands on it: it is no option of the list", async () => {
+			const user = userEvent.setup({ delay: null });
+			const search = await openEnvSwitcher(user);
+			await user.click(search);
+			await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+			expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["production"]);
+			expect(screen.getByRole("option", { name: "production" })).toHaveAttribute("data-highlighted");
+			expect(search).toHaveFocus();
+			expect(screen.queryByRole("option", { name: /new environment/i })).not.toBeInTheDocument();
+		});
 	});
 
 	it("names the organization switcher's search", async () => {
