@@ -622,6 +622,10 @@ func TestByoReserved_PlatformTemplatesMatchTheRenderedTemplates(t *testing.T) {
 				f.SetString("placeholder")
 			case reflect.Bool:
 				f.SetBool(true)
+			default:
+				// Maps and slices keep their zero value. That leaves sections INSIDE an Application
+				// unrendered (`if .Labels`), never a namespace; an Application gated on one would be
+				// the boundary stated above.
 			}
 		}
 		facts.Provider = provider

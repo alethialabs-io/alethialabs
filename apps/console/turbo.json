@@ -50,6 +50,7 @@
 				"$TURBO_ROOT$/infra/templates/runner/**",
 				"$TURBO_ROOT$/packages/core/api/testdata/*",
 				"$TURBO_ROOT$/packages/core/argocd/addon_identity.go",
+				"$TURBO_ROOT$/packages/core/argocd/byo_reserved_namespaces.json",
 				"$TURBO_ROOT$/packages/core/catalog/catalog.json",
 				"$TURBO_ROOT$/packages/core/catalog/testdata/nearest-instance-parity.json",
 				"$TURBO_ROOT$/packages/core/cloud/hetzner_provider.go",
