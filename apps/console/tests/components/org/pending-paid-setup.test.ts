@@ -306,6 +306,27 @@ describe("the sheet stops where the link would refuse (ADR 0002 S10)", () => {
 		expect(readStoredPaidSetup(RUN_USER)).toEqual({ kind: "none" });
 	});
 
+	// ADR 0002 §5.6, C120 (slice S12): an unpaid X whose team already has another live plan is reported
+	// with `besideLivePlan`. The run stops on that sentence before the link, which could only refuse it
+	// under a hold, and offers no payment. At 9fb2f9920 the run went on to the link.
+	it("C120: an unpaid X beside another live plan stops the run on a resume before the link, writing nothing", async () => {
+		const sub = "sub_c120_resume";
+		const clause = "This team already has an active plan, so this checkout cannot be completed here.";
+		actions.resolveNewOrgSetup.mockResolvedValue({
+			...lookup(sub, { org: true }),
+			paid: false,
+			planState: "action_needed",
+			paymentUrl: null,
+			besideLivePlan: { clause },
+		});
+
+		const outcome = await finishPaidSetup(RUN_USER, runRecord(sub, "org-1"), runHooks);
+
+		expect(outcome).toMatchObject({ kind: "failed", retryable: false, message: clause });
+		expect(actions.linkSubscriptionToNewOrg).not.toHaveBeenCalled();
+		expect(wroteAnything()).toBe(false);
+	});
+
 	it("C107 control: `ended` null, no hold, X paid — the run creates the org and links", async () => {
 		const sub = "sub_c107_control";
 		actions.resolveNewOrgSetup.mockResolvedValue({ ...lookup(sub), planState: "active" });

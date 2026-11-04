@@ -517,6 +517,27 @@ const TOO_MANY_EARLIER_CHECKOUTS = `This account has more unfinished checkouts t
 const LIVE_PLAN_REFUSAL = "This organization already has an active subscription — change the plan instead.";
 
 /**
+ * What the resume lookup tells the creator about an unpaid create-a-team checkout whose team already has
+ * another live plan (ADR 0002 §5.5 style, C120): it is not payable here, and left unpaid it closes itself.
+ */
+const NOT_PAYABLE_BESIDE_LIVE_PLAN = `This team already has an active plan, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at ${SUPPORT_EMAIL} if you meant to buy this plan for another team.`;
+
+/**
+ * Whether the org's billing row names a Stripe subscription other than `subscriptionId` that is `active`
+ * or `trialing` — a live plan beside the create-a-team subscription a setup is waiting on.
+ */
+function rowNamesAnotherLivePlan(
+	row: { stripeSubscriptionId: string | null; status: string } | null,
+	subscriptionId: string,
+): boolean {
+	return (
+		!!row?.stripeSubscriptionId &&
+		row.stripeSubscriptionId !== subscriptionId &&
+		(row.status === "active" || row.status === "trialing")
+	);
+}
+
+/**
  * What the org-plan flows tell the customer when the org's plan is `past_due` (ADR 0004 D7): the row names
  * a Stripe subscription and reads `past_due`, or the live check finds a `past_due` or `unpaid` one. The
  * path that charges once is fixing the card on that plan, so the copy names it.
@@ -651,6 +672,11 @@ const OPEN_SETUP_UNCHECKED =
  * Create a team or support, anyone else is told who started it. Only the creator's display name, from
  * the org's own member list, leaves the creator's row. A closer that THROWS refuses the purchase with
  * the try-again clause: a failed read never passes it (fail closed).
+ *
+ * Guard order (ADR 0002 §5.7): the guard's copy appears only where a purchase could otherwise proceed.
+ * A setup still open beside ANOTHER live plan on the org's row (an `incomplete` X the closer leaves open,
+ * C120) refuses with the live-plan copy instead, as the row predicate would — Checkout runs this guard
+ * before the row predicate, so without this it read "the paid setup has not finished".
  */
 async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
 	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
@@ -663,6 +689,7 @@ async function openSetupRefusal(actor: { userId: string; orgId: string }): Promi
 			return OPEN_SETUP_UNCHECKED;
 		}
 		if (verdict !== "open") continue;
+		if (rowNamesAnotherLivePlan(await getOrgBilling(actor.orgId), row.subscription_id)) return LIVE_PLAN_REFUSAL;
 		// Message selection, not access control: the purchase is refused either way, and `actor` was
 		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
 		if (row.user_id === actor.userId) return creatorRefusal(row.subscription_id); // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
@@ -3103,13 +3130,22 @@ async function newOrgSetupStateFor(
 	const heldBefore = await openPaymentHoldOn(sub.id);
 	const report = await readNewOrgPlanState(sub);
 	const hold = heldBefore ?? (await openPaymentHoldOn(sub.id));
+	// A setup is never offered for payment beside another live plan (ADR 0002 §5.6, C120): an unpaid X
+	// whose team's row names another `active` or `trialing` plan Y could only be linked into a refusal
+	// under a `needs_operator` hold. So the lookup reports it as not payable here, with no payment link.
+	// A paid X is left to the link, whose refusal opens that hold and alerts (C80).
+	const besideLivePlan =
+		!hold && org && sub.status === "incomplete" && rowNamesAnotherLivePlan(await getOrgBilling(org.id), sub.id)
+			? { clause: NOT_PAYABLE_BESIDE_LIVE_PLAN }
+			: null;
 	return {
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
 		...report,
-		...(hold ? { paymentUrl: null } : {}),
+		...(hold || besideLivePlan ? { paymentUrl: null } : {}),
 		hold: hold && hold.state !== "released" ? { state: hold.state, notice: await heldNotice(hold, userId) } : null,
+		besideLivePlan,
 		ended:
 			hold && hold.state !== "released"
 				? null

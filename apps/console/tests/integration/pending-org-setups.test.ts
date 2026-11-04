@@ -745,11 +745,12 @@ describeIfDb("pending_org_setups — the open-setup guard, its closer and their 
 });
 
 // ADR 0002 C120 (amendment 2026-11-04, slice S12 #6408). X is linked in Stripe to O and U, has no hold,
-// and O's row names another live Y. While X reads `incomplete` it can still be paid, so the closer the
-// guard and both resume lookups run writes nothing and answers `open`; the setup leaves only when X ends
-// (closed as `ended`) or is paid (then the live-X refusal, C96's variant). Real Postgres pins that no
-// compare-and-set ran: `closed_at`, `closed_reason` and `refused_reason` all stay null. On dev at
-// aed8b609b the closer closed the incomplete X's setup with `org_has_plan` and alerted, so (a) fails there.
+// and O's row names another live Y. While X reads `incomplete` it can still be paid, so the closer writes
+// nothing and answers `open`; the setup leaves only when X ends (closed as `ended`) or is paid (then the
+// live-X refusal, C96's variant). Real Postgres pins that no compare-and-set ran: `closed_at`,
+// `closed_reason` and `refused_reason` all stay null. On dev at aed8b609b the closer closed the incomplete
+// X's setup with `org_has_plan` and alerted — reached through the guard and `resolveNewOrgSetup`;
+// `findUnfinishedNewOrgSetup` runs the closer only for an ended X — so (a) fails there.
 describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps its setup open until X ends or is paid", () => {
 	const U = randomUUID();
 	const O = randomUUID();
@@ -780,6 +781,15 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 		const row = await pendingOrgSetupFor(U, subscriptionId);
 		if (!row) throw new Error(`fixture: the setup for ${subscriptionId} is missing`);
 		return row;
+	}
+
+	/**
+	 * Runs the closer on `subscriptionId`'s setup with X reading `status`: the closer retrieves X itself,
+	 * through the faked Stripe, so the fixture needs no cast to `Stripe.Subscription`.
+	 */
+	async function settleAs(subscriptionId: string, status: string, latestInvoice: string | null = null) {
+		fakeStripe.subscriptions.retrieve.mockResolvedValueOnce(x(subscriptionId, status, latestInvoice));
+		return settleOpenSetup(await rowOf(subscriptionId), { orgId: O });
 	}
 
 	/** The `billing.pending_org_setup.*` events logged for `subscriptionId`, in order. */
@@ -833,7 +843,7 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 		for (const yStatus of ["active", "trialing"] as const) {
 			await getServiceDb().update(organizationBilling).set({ status: yStatus }).where(eq(organizationBilling.organizationId, O));
 			for (const s of [SUB_EXPIRES, SUB_PAID]) {
-				await expect(settleOpenSetup(await rowOf(s), { sub: x(s, "incomplete") as never, orgId: O })).resolves.toBe("open");
+				await expect(settleAs(s, "incomplete")).resolves.toBe("open");
 				expect(await rowOf(s)).toMatchObject({ closed_at: null, closed_reason: null, refused_reason: null, linked_at: null });
 				expect(eventsFor(s)).toEqual([]);
 				expect(alertsFor(s)).toBe(0);
@@ -849,7 +859,7 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 	});
 
 	it("(b) X expires unpaid: the next reader closes it as ended, with no alert", async () => {
-		await expect(settleOpenSetup(await rowOf(SUB_EXPIRES), { sub: x(SUB_EXPIRES, "incomplete_expired") as never, orgId: O })).resolves.toBe(
+		await expect(settleAs(SUB_EXPIRES, "incomplete_expired")).resolves.toBe(
 			"closed",
 		);
 		expect(await rowOf(SUB_EXPIRES)).toMatchObject({ closed_reason: "ended", refused_reason: null, linked_at: null });
@@ -860,12 +870,12 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 
 	it("(b) X expires with its first payment not proven unmoved: closed as ended, with one alert", async () => {
 		const invoice = `in_${SUB_MOVED}`;
-		await expect(settleOpenSetup(await rowOf(SUB_MOVED), { sub: x(SUB_MOVED, "incomplete", invoice) as never, orgId: O })).resolves.toBe("open");
+		await expect(settleAs(SUB_MOVED, "incomplete", invoice)).resolves.toBe("open");
 		fakeStripe.invoicePayments.list.mockResolvedValueOnce({
 			data: [{ status: "paid", payment: { type: "payment_intent", payment_intent: { status: "succeeded" } } }],
 			has_more: false,
 		});
-		await expect(settleOpenSetup(await rowOf(SUB_MOVED), { sub: x(SUB_MOVED, "incomplete_expired", invoice) as never, orgId: O })).resolves.toBe(
+		await expect(settleAs(SUB_MOVED, "incomplete_expired", invoice)).resolves.toBe(
 			"closed",
 		);
 		expect(await rowOf(SUB_MOVED)).toMatchObject({ closed_reason: "ended", refused_reason: null });
@@ -874,14 +884,14 @@ describeIfDb("pending_org_setups — C120: an incomplete X beside a live Y keeps
 	});
 
 	it("(c) X is paid before it ends: the next guard or lookup closes it with org_has_plan and one alert, as for any live X", async () => {
-		await expect(settleOpenSetup(await rowOf(SUB_PAID), { sub: x(SUB_PAID, "active") as never, orgId: O })).resolves.toBe("closed");
+		await expect(settleAs(SUB_PAID, "active")).resolves.toBe("closed");
 		expect(await rowOf(SUB_PAID)).toMatchObject({ closed_reason: "org_has_plan", refused_reason: "org_has_plan", linked_at: null });
 		expect(eventsFor(SUB_PAID)).toEqual(["billing.pending_org_setup.closed"]);
 		expect(alertsFor(SUB_PAID)).toBe(1);
 	});
 
 	it("control (C96's variant): the same fixture with X active from the start closes at once with org_has_plan and one alert", async () => {
-		await expect(settleOpenSetup(await rowOf(SUB_LIVE), { sub: x(SUB_LIVE, "active") as never, orgId: O })).resolves.toBe("closed");
+		await expect(settleAs(SUB_LIVE, "active")).resolves.toBe("closed");
 		expect(await rowOf(SUB_LIVE)).toMatchObject({ closed_reason: "org_has_plan", refused_reason: "org_has_plan" });
 		expect(eventsFor(SUB_LIVE)).toEqual(["billing.pending_org_setup.closed"]);
 		expect(alertsFor(SUB_LIVE)).toBe(1);

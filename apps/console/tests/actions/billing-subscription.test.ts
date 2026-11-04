@@ -3765,17 +3765,20 @@ describe("ADR 0002 S1 (#5714)", () => {
 		});
 
 		// C120 (amendment 2026-11-04, slice S12): the refusal above applies only to a LIVE X. An `incomplete`
-		// X can still be paid, so the guard's closer writes nothing and the guard refuses as for any open
-		// setup. On dev at aed8b609b the closer closed it with org_has_plan and alerted, and the purchase
-		// then met the row predicate's "change the plan instead".
-		it("C120: X incomplete beside a live Y — the guard's closer writes nothing and raises nothing, and the guard refuses", async () => {
+		// X can still be paid, so the guard's closer writes nothing and raises nothing, and the setup stays
+		// open. Guard order (§5.7): the org's row names a live Y, so Checkout still reads the live-plan copy,
+		// not the open-setup copy. On dev at aed8b609b the closer closed the setup with org_has_plan and
+		// alerted; at 9fb2f9920 it stayed open but Checkout answered with the open-setup copy.
+		it("C120: X incomplete beside a live Y — the guard's closer writes nothing and raises nothing, and Checkout reads 'change the plan instead'", async () => {
 			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
 			vi.mocked(emitAlertEvent).mockResolvedValue(1);
 			for (const yStatus of ["active", "trialing"]) {
 				stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete", { created_by: "user-1", organization_id: "org-1" }));
 				orgBilling.mockResolvedValue(rowNames("sub_y", yStatus));
 				vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
-				await expect(createCheckoutSession("team")).rejects.toThrow(CREATOR_REFUSAL);
+				await expect(createCheckoutSession("team")).rejects.toThrow(
+					/^This organization already has an active subscription — change the plan instead\.$/,
+				);
 			}
 			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
 			expect(db.update).not.toHaveBeenCalled();
