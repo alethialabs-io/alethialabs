@@ -69,7 +69,8 @@ export function switchTargetHref(
 /** An organization's search text: its name, for the shared ranker. */
 const orgSearchText = (o: { name: string }): string => o.name;
 
-/** An org with no slug has no URL to go to, so its row is disabled (and ranks after the rest). */
+/** An org with no slug has no URL to go to, so its row is disabled (and, while a search is typed,
+ * ranks after the rest). */
 const orgIsUnreachable = (o: { slug: string | null }): boolean => !o.slug;
 
 /** The header organization switcher: lists, searches and switches the user's organizations. */

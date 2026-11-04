@@ -14,8 +14,10 @@
 // Keyboard: arrow keys move the highlight, Enter runs the highlighted row's `onSelect`. The
 // highlight does NOT wrap from the last row to the first unless a caller asks (`loopFocus`), which
 // is what cmdk did. cmdk's Ctrl+N/P/J/K bindings have no Base UI counterpart and are gone. The
-// first rendered row is highlighted; callers rank disabled rows last (`isDisabled` on the ranker)
-// so that row is one Enter can run, as cmdk skipped disabled rows.
+// first rendered result is highlighted; while a search is typed, callers rank disabled rows last
+// (`isDisabled` on the ranker) so that row is one Enter can run, as cmdk skipped disabled rows. On a
+// miss NOTHING is highlighted, pinned rows included, so Enter does nothing until the user arrows to
+// a pinned row.
 
 import * as React from "react"
 import { Autocomplete } from "@base-ui/react/autocomplete"
@@ -44,6 +46,9 @@ const CommandContext = React.createContext<CommandContextValue>({
   resultCount: 0,
 })
 
+/** A stable empty row list, so a missing or empty `filteredItems` does not re-render the list. */
+const NO_ITEMS: readonly unknown[] = []
+
 /** What every `Command` root takes, whether rendered bare or inside `CommandDialog`. */
 interface CommandSearchProps {
   /**
@@ -54,9 +59,13 @@ interface CommandSearchProps {
   /** The rows being shown, already ranked against `search`. `CommandEmpty` shows when it is empty. */
   filteredItems: readonly unknown[]
   /**
-   * Rows rendered AFTER the results whatever the search, such as a "New environment" action. They
-   * are reachable with the arrow keys even on a miss, and never count as results, so the empty text
-   * still shows beside them.
+   * Rows shown whatever the search, such as a "New environment" action. They never count as
+   * results, so the empty text still shows beside them; on a miss none of them is highlighted
+   * (Enter does nothing), and ArrowDown reaches them.
+   *
+   * RENDER THEM LAST, after every result row. Base UI maps its highlight to rows in rendered order,
+   * and this list is `[...filteredItems, ...pinnedItems]`; a pinned row rendered earlier would put
+   * the highlight, and Enter, on the wrong row.
    */
   pinnedItems?: readonly unknown[]
   /** What is typed in the search box. Omit for an uncontrolled search. */
@@ -73,7 +82,7 @@ interface CommandSearchProps {
  */
 function Command({
   label,
-  filteredItems,
+  filteredItems = NO_ITEMS,
   pinnedItems,
   search,
   onSearchChange,
@@ -82,12 +91,32 @@ function Command({
   children,
   ...props
 }: CommandSearchProps & React.ComponentProps<"div">) {
-  // Base UI's highlight is only kept on an index below the length of `items`, so every row the
+  // Base UI keeps its highlight only on an index below the length of `items`, so every row the
   // list renders (pinned ones too) has to be in it, in rendered order.
-  const navigable = React.useMemo(
-    () => (pinnedItems?.length ? [...filteredItems, ...pinnedItems] : filteredItems),
-    [filteredItems, pinnedItems]
-  )
+  //
+  // A MISS WITH PINNED ROWS takes two renders. The highlight sat on the first result; left alone it
+  // would land on the first pinned row, and Enter on a misspelt query would run it. So the miss
+  // first hands Base UI NO items (it clears the highlight because the index is out of range), and
+  // only then the pinned rows, with auto-highlight off. ArrowDown then reaches them.
+  const miss = filteredItems.length === 0
+  const hasPinned = (pinnedItems?.length ?? 0) > 0
+  const [pinnedArmed, setPinnedArmed] = React.useState(false)
+  if (!miss && pinnedArmed) setPinnedArmed(false)
+  React.useEffect(() => {
+    if (!miss || !hasPinned || pinnedArmed) return
+    let live = true
+    queueMicrotask(() => {
+      if (live) setPinnedArmed(true)
+    })
+    return () => {
+      live = false
+    }
+  }, [miss, hasPinned, pinnedArmed])
+  const navigable = React.useMemo(() => {
+    if (!hasPinned || !pinnedItems) return filteredItems
+    if (miss) return pinnedArmed ? pinnedItems : NO_ITEMS
+    return [...filteredItems, ...pinnedItems]
+  }, [filteredItems, pinnedItems, hasPinned, miss, pinnedArmed])
   const context = React.useMemo(
     () => ({ label, resultCount: filteredItems.length }),
     [label, filteredItems.length]
@@ -100,7 +129,7 @@ function Command({
         items={navigable}
         // Base UI's own filtering is off: `filteredItems` is already the ranked result.
         filter={null}
-        autoHighlight="always"
+        autoHighlight={miss ? false : "always"}
         keepHighlight
         loopFocus={loopFocus}
         value={search}

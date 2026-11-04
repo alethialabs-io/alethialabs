@@ -38,10 +38,13 @@ export function rankMatch(text: string, search: string): number {
  * rendered text. Items with equal scores keep their input order, and an empty search keeps every
  * item in input order.
  *
- * `isDisabled`, when given, sinks every row that cannot be run below every row that can (each side
- * keeping its own order). `Command` highlights the first row it renders, and Enter runs the
- * highlighted row, so a disabled best match would otherwise sit under the highlight and swallow
- * Enter; cmdk skipped such rows, and this keeps that.
+ * `isDisabled`, when given and only while something is typed, sinks every row that cannot be run
+ * below every row that can (each side keeping its own order). `Command` highlights the first row it
+ * renders, and Enter runs the highlighted row, so a disabled best match would otherwise sit under
+ * the highlight and swallow Enter; cmdk skipped such rows, and this keeps that. An EMPTY search
+ * returns the input order exactly, disabled rows included: a list's deliberate order (the node
+ * palette's group order, say) must not shift with which rows happen to be disabled, and with
+ * nothing typed there is no best match to protect.
  */
 export function rankItems<T>(
   items: readonly T[],
@@ -55,7 +58,7 @@ export function rankItems<T>(
       item,
       index,
       score: blank ? 1 : rankMatch(toSearchText(item), search),
-      disabled: isDisabled?.(item) ? 1 : 0,
+      disabled: !blank && isDisabled?.(item) ? 1 : 0,
     }))
     .filter((row) => row.score > 0)
     .sort((a, b) => a.disabled - b.disabled || b.score - a.score || a.index - b.index)

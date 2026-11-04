@@ -94,7 +94,8 @@ interface PaletteCommand {
 /** A row's search text, for the shared ranker. */
 const commandSearchText = (c: PaletteCommand): string => c.searchText;
 
-/** A row that cannot run ranks after every row that can, so Enter never lands on it first. */
+/** While a search is typed, a row that cannot run ranks after every row that can, so Enter never
+ * lands on it first. An empty search keeps the palette's own order. */
 const commandIsDisabled = (c: PaletteCommand): boolean => Boolean(c.disabledReason);
 
 interface CanvasCommandPaletteProps {
