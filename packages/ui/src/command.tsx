@@ -85,7 +85,7 @@ function Command({
   // Base UI's highlight is only kept on an index below the length of `items`, so every row the
   // list renders (pinned ones too) has to be in it, in rendered order.
   const navigable = React.useMemo(
-    () => filteredItems,
+    () => (pinnedItems ? filteredItems : filteredItems),
     [filteredItems, pinnedItems]
   )
   const context = React.useMemo(
