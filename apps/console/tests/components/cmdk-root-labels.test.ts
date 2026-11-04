@@ -148,7 +148,7 @@ function rootTags(source: string): Map<string, NameProp> {
 /**
  * The attribute text of the JSX opening tag that starts at `start` (just past the tag name), up to
  * the `>` that closes it, with comments blanked out. Braces are depth-counted; string literals are
- * skipped; `//` line comments and `/* */` block comments are skipped too, so neither a `>` nor an
+ * skipped; `//` line comments and slash-star block comments are skipped too, so neither a `>` nor an
  * apostrophe inside a comment ("Base UI's own filtering…") can end the tag early or open a string
  * that runs on to a later tag's `label=`. A quote opens a string only where one can start: inside
  * `{…}` (a JS string or template), or straight after `=` (a JSX attribute string).
