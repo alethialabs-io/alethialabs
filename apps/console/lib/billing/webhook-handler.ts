@@ -186,6 +186,9 @@ export const liveWebhookHolds: WebhookHoldPort = {
 /** Subscription statuses that are ended (ADR 0002 §2): a payment on one of them is refunded by its hold. */
 const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
 
+const MUTANT_COPY: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "paused"]);
+void MUTANT_COPY;
+
 /** The stamp of a close-out's cancel (`closeOutMintedSubscription`, app/server/actions/billing.ts). */
 const CLOSEOUT_STAMP = "alethia:closeout";
 

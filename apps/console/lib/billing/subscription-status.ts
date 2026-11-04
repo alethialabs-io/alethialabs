@@ -32,7 +32,6 @@ export const LIVE_SUBSCRIPTION_STATUSES = [
 	"trialing",
 	"past_due",
 	"unpaid",
-	"paused",
 ] as const satisfies ReadonlyArray<Stripe.Subscription.Status>;
 
 /** A Stripe subscription status that is live (ADR 0002 §2). */

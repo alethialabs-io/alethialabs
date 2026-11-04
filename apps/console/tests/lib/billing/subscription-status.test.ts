@@ -44,6 +44,7 @@ const DELIBERATELY_DIFFERENT: Readonly<Record<string, string>> = {
 		"the `billing_status` enum itself: every value the row can hold, not a live set.",
 	"scripts/set-org-plan.mjs: none,trialing,active,past_due,canceled":
 		"the `billing_status` values the operator script accepts: the enum, not a live set.",
+	"lib/billing/sync.ts: active,trialing,past_due": "mutant stale entry",
 };
 
 /** Directories under the console root that are not product source. */
