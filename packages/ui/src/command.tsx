@@ -39,11 +39,14 @@ interface CommandContextValue {
   label: string | undefined
   /** `filteredItems.length` (never the pinned rows), read by `CommandEmpty`. */
   resultCount: number
+  /** Changes when the list's rows must re-register with Base UI (see `Command`); keys `CommandList`. */
+  rowsGeneration: number
 }
 
 const CommandContext = React.createContext<CommandContextValue>({
   label: undefined,
   resultCount: 0,
+  rowsGeneration: 0,
 })
 
 /** A stable empty row list, so a missing or empty `filteredItems` does not re-render the list. */
@@ -97,7 +100,10 @@ function Command({
   // A MISS WITH PINNED ROWS takes two renders. The highlight sat on the first result; left alone it
   // would land on the first pinned row, and Enter on a misspelt query would run it. So the miss
   // first hands Base UI NO items (it clears the highlight because the index is out of range), and
-  // only then the pinned rows, with auto-highlight off. ArrowDown then reaches them.
+  // only then the pinned rows, with auto-highlight off. ArrowDown then reaches them. Handing Base UI
+  // an empty list also truncates its row-element registry, and nothing re-registers rows that did
+  // not move, so `CommandList` remounts its rows when the pinned rows come back (`rowsGeneration`);
+  // without that, Enter on the highlighted pinned row clicked nothing.
   const miss = filteredItems.length === 0
   const hasPinned = (pinnedItems?.length ?? 0) > 0
   const [pinnedArmed, setPinnedArmed] = React.useState(false)
@@ -117,9 +123,10 @@ function Command({
     if (miss) return pinnedArmed ? pinnedItems : NO_ITEMS
     return [...filteredItems, ...pinnedItems]
   }, [filteredItems, pinnedItems, hasPinned, miss, pinnedArmed])
+  const rowsGeneration = pinnedArmed ? 1 : 0
   const context = React.useMemo(
-    () => ({ label, resultCount: filteredItems.length }),
-    [label, filteredItems.length]
+    () => ({ label, resultCount: filteredItems.length, rowsGeneration }),
+    [label, filteredItems.length, rowsGeneration]
   )
   return (
     <CommandContext.Provider value={context}>
@@ -232,11 +239,13 @@ function CommandInput({
 /** The scrolling list of rows. */
 function CommandList({
   className,
+  children,
   ...props
 }: Omit<React.ComponentProps<typeof Autocomplete.List>, "className" | "children"> & {
   className?: string
   children?: React.ReactNode
 }) {
+  const { rowsGeneration } = React.useContext(CommandContext)
   return (
     <Autocomplete.List
       data-slot="command-list"
@@ -245,7 +254,9 @@ function CommandList({
         className
       )}
       {...props}
-    />
+    >
+      <React.Fragment key={rowsGeneration}>{children}</React.Fragment>
+    </Autocomplete.List>
   )
 }
 
