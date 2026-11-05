@@ -77,6 +77,10 @@ const (
 // anyway; the pattern keeps it to a shape a real environment ID has.
 var byoEnvIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
+// byoResultPathPattern is the only shape of --result-path accepted: absolute, and no byte psql's \o
+// would read as anything but a file name (no '|', whitespace, quote or backslash).
+var byoResultPathPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
+
 // byoAlphanumeric is the only password alphabet accepted (tofu's `special = false`).
 var byoAlphanumeric = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 
@@ -368,8 +372,10 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 	if err := validateByoDBName(in.DBName); err != nil {
 		return "", err
 	}
-	if in.ResultPath == "" || strings.ContainsAny(in.ResultPath, " \t\r\n'\"\\") {
-		return "", errors.New("db-bootstrap --byo-users: --result-path is missing or not a plain path")
+	// The path follows psql's \o, which treats a leading '|' as a shell command to pipe into: only a
+	// plain absolute path is accepted, so the result line can never become a command.
+	if !byoResultPathPattern.MatchString(in.ResultPath) {
+		return "", errors.New("db-bootstrap --byo-users: --result-path must be a plain absolute path")
 	}
 	users, err := validateByoUsers(in.Users)
 	if err != nil {

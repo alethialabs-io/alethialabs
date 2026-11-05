@@ -300,6 +300,8 @@ func TestByoUsers_Refusals(t *testing.T) {
 		"dollar in env id":  func(in *byoUsersInput) { in.EnvironmentID = "env$alethia_byo$" },
 		"no result path":    func(in *byoUsersInput) { in.ResultPath = "" },
 		"result path space": func(in *byoUsersInput) { in.ResultPath = "/tmp/a b" },
+		"result path pipe":  func(in *byoUsersInput) { in.ResultPath = "|sh" },
+		"result path rel":   func(in *byoUsersInput) { in.ResultPath = "result" },
 	}
 	for name, mut := range cases {
 		in := oneUserInput()
