@@ -217,6 +217,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	// `pageSize`); otherwise honor the external page index.
 	const effectivePageIndex = loadMore ? 0 : externalPageIndex;
 
+	// eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns a mutable instance the compiler cannot memoize; the console does not run the React Compiler.
 	const table = useReactTable({
 		data,
 		columns,

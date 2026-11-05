@@ -27,7 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getProvider, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
 import type { ActionResult } from "@/lib/actions/result";
@@ -236,8 +236,7 @@ function OpenDuplicateProjectDialog({
 	// Read during render so react-hook-form's proxy actually subscribes this component to them —
 	// `form.formState.x` inside a callback alone does not.
 	const { dirtyFields, isSubmitting } = form.formState;
-	const cloudIdentityId = form.watch("cloudIdentityId");
-	const region = form.watch("region");
+	const [cloudIdentityId, region] = useWatch({ control: form.control, name: ["cloudIdentityId", "region"] });
 
 	/** Resets every field to its initial state (on close + after a successful duplicate). */
 	const reset = useCallback(() => {

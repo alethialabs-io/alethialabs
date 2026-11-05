@@ -28,7 +28,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { type UseFormReturn, useForm } from "react-hook-form";
+import { type UseFormReturn, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -168,8 +168,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		defaultValues: { name: "", slug: "" },
 		mode: "onChange",
 	});
-	const name = form.watch("name");
-	const slug = form.watch("slug");
+	const [name, slug] = useWatch({ control: form.control, name: ["name", "slug"] });
 
 	const [slugTouched, setSlugTouched] = useState(false);
 	const [showUrl, setShowUrl] = useState(false);

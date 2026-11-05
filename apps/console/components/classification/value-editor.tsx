@@ -23,7 +23,7 @@ import { Input } from "@repo/ui/input";
 import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createValue,
@@ -83,8 +83,7 @@ export function ValueEditor({
 		}
 	}, [open, value, form]);
 
-	const label = form.watch("label");
-	const enforcement = form.watch("enforcement");
+	const [label, enforcement] = useWatch({ control: form.control, name: ["label", "enforcement"] });
 	const enforceOn = Boolean(enforcement);
 
 	/** Toggles the enforcement policy on/off, seeding a sensible default (require approval). */

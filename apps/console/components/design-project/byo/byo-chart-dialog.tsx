@@ -17,7 +17,7 @@
 // speak both; this is the surface that could only ever produce the git one.
 
 import { useCallback, useMemo, useState } from "react";
-import { Controller, useForm, type FieldPath } from "react-hook-form";
+import { Controller, useForm, useWatch, type FieldPath } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	ArrowLeft,
@@ -178,7 +178,6 @@ export function ByoChartDialog({
 		trigger,
 		reset,
 		setValue,
-		watch,
 		formState: { errors, isSubmitting },
 	} = form;
 
@@ -209,12 +208,10 @@ export function ByoChartDialog({
 
 	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
 	// (which differ per source) are rebuilt when it changes.
-	const source = watch("source");
-	const repoUrl = watch("repoUrl");
-	const chartPath = watch("chartPath");
-	const name = watch("name");
-	const namespace = watch("namespace");
-	const ref = watch("ref");
+	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({
+		control,
+		name: ["source", "repoUrl", "chartPath", "name", "namespace", "ref"],
+	});
 
 	const isOci = source === "oci";
 	const steps = STEPS[source];

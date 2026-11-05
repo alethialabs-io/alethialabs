@@ -21,7 +21,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useEffect } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { Button } from "@repo/ui/button";
@@ -142,14 +142,13 @@ export function PayerDeclarationForm({
 		},
 		mode: "onSubmit",
 	});
-	const capacity = form.watch("capacity");
+	const capacity = useWatch({ control: form.control, name: "capacity" });
 
 	// Every change to a declared fact — capacity, country, attestation — tells the sheet its refusal
 	// (if any) is about an answer that no longer stands.
 	useEffect(() => {
 		if (!onEdit) return;
-		const subscription = form.watch(() => onEdit());
-		return () => subscription.unsubscribe();
+		return form.subscribe({ formState: { values: true }, callback: () => onEdit() });
 	}, [form, onEdit]);
 
 	/** Normalises the validated values into the shape both server actions accept. */

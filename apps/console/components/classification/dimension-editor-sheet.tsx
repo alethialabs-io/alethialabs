@@ -28,7 +28,7 @@ import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 import { Plus, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createDimension,
@@ -134,8 +134,11 @@ export function DimensionEditorSheet({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open, dimension, initialTemplateKey]);
 
-	const multi = form.watch("multi");
-	const appliesTo = form.watch("applies_to") ?? [];
+	const [multi, watchedAppliesTo, watchedLabel] = useWatch({
+		control: form.control,
+		name: ["multi", "applies_to", "label"],
+	});
+	const appliesTo = watchedAppliesTo ?? [];
 	const toggleKind = (kind: ResourceKind) => {
 		const set = new Set(appliesTo);
 		if (set.has(kind)) set.delete(kind);
@@ -435,7 +438,7 @@ export function DimensionEditorSheet({
 							Cancel
 						</Button>
 						{/* An edit with nothing changed has nothing to save; a create always does. */}
-						<Button type="submit" disabled={submitting || !form.watch("label") || (isEdit && !dirty)}>
+						<Button type="submit" disabled={submitting || !watchedLabel || (isEdit && !dirty)}>
 							{submitting && <Spinner />}
 							{isEdit ? "Save changes" : "Create dimension"}
 						</Button>

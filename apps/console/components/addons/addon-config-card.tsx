@@ -16,7 +16,7 @@
 import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
 import { useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
@@ -244,7 +244,7 @@ export function AddonConfigForm({
     onRefusal: (error) => setRefusal(error.message),
     successMessage: `${item.name} removed`,
   });
-  const mode = form.watch("_mode");
+  const mode = useWatch({ control: form.control, name: "_mode" });
   // The env's Kubernetes version as it will DEPLOY — above the early return, since hooks must run in
   // the same order every render. An unset version resolves to the catalog default (#5314); only a
   // design with no cluster yields undefined → `not_evaluable`, never a false pass. On BYO-IaC an

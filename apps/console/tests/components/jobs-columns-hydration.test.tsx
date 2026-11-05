@@ -44,6 +44,7 @@ const ROWS: JobWithMeta[] = [
 
 /** Every cell of every row, rendered through the shipped column definitions. */
 function JobsRows() {
+	// eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns a mutable instance the compiler cannot memoize; the console does not run the React Compiler.
 	const table = useReactTable({
 		data: ROWS,
 		columns: buildJobColumns({ authorById: new Map(), orgSlug: "acme" }),
@@ -110,6 +111,7 @@ describe("the jobs table hydrates server-rendered rows whatever the clock says (
 	it("a created_at that is not a date renders a dash instead of crashing the table", () => {
 		const bad = makeJob({ id: "job-bad", created_at: new Date(Number.NaN) });
 		function BadRow() {
+			// eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns a mutable instance the compiler cannot memoize; the console does not run the React Compiler.
 			const table = useReactTable({
 				data: [bad],
 				columns: buildJobColumns({ authorById: new Map(), orgSlug: "acme" }),

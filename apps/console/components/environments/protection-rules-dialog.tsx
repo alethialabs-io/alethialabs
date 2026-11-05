@@ -35,7 +35,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { type Control, Controller, useForm } from "react-hook-form";
+import { type Control, Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { setProtectionRules } from "@/app/server/actions/protection";
 import { RegionError } from "@/components/errors/region-error";
@@ -92,7 +92,7 @@ export function ProtectionRulesDialog({
 }) {
 	const minCountLabelId = useId();
 	const minCountErrorId = useId();
-	const { control, handleSubmit, reset, watch, setError } = useForm<RulesForm>({
+	const { control, handleSubmit, reset, setError } = useForm<RulesForm>({
 		resolver: zodResolver(rulesSchema),
 		defaultValues: DEFAULTS,
 	});
@@ -134,7 +134,7 @@ export function ProtectionRulesDialog({
 		setSeeded(true);
 	}, [fresh, seeded, reset]);
 
-	const requireApproval = watch("require_approval");
+	const requireApproval = useWatch({ control, name: "require_approval" });
 
 	const save = useActionMutation(setProtectionRules, {
 		// The rules editor's own read, and the page's (the env card's "gates into this env" chips).
