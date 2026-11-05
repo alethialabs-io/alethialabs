@@ -218,7 +218,10 @@ func renderBootstrapSQL(in bootstrapInput) (string, error) {
 // so the bootstrap Job can pipe it into psql (`alethia db-bootstrap … | psql "$ADMIN_DSN"`). Keeping
 // generation here (not in the Job's shell) means the SQL is one reviewed, injection-guarded source of
 // truth shared with the unit tests. Executing it against the DB as admin is the Job's job.
-func RunDBBootstrap(_ context.Context, args []string) error {
+func RunDBBootstrap(ctx context.Context, args []string) error {
+	if isByoUsersInvocation(args) { // per-binding BYO users (db_bootstrap_byo.go, #6438)
+		return runDBBootstrapByoUsers(ctx, args, os.LookupEnv, os.Stdout)
+	}
 	fs := flag.NewFlagSet("db-bootstrap", flag.ContinueOnError)
 	provider := fs.String("provider", "", "cloud provider (aws|azure|gcp)")
 	engine := fs.String("engine", "", "database engine (postgres|mysql; default postgres)")
