@@ -47,6 +47,44 @@ func keylessDBAuthEnabled() bool {
 	return os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
 }
 
+// byoDBUsersEnabled is the per-binding database user flag (docs/adr/byo-binding-db-users.md), dark by
+// default. With it on, every BYO database credential facet reads its binding's own user, and an
+// ExternalSecret an earlier deploy pointed at the administrative credential is withdrawn.
+//
+// Do not turn it on before the BYO users Job ships (the ADR's slice 4): until then no user is ever
+// provisioned, so every BYO database credential facet is unsatisfied.
+func byoDBUsersEnabled() bool {
+	return os.Getenv("ALETHIA_BYO_DB_USERS_ENABLED") == "true"
+}
+
+// provisionedByoDBUsers is the set of per-binding database users (manifests.ByoBindingDBUser) the BYO
+// users Job created or confirmed on this deploy. That Job is the ADR's slice 4 and has not shipped, so
+// no user is provisioned and the set is empty: with the flag on, every BYO database credential facet
+// is unsatisfied. It is a variable so the binding lane's handling of a provisioned user is tested now.
+var provisionedByoDBUsers = func(*types.ProjectConfig) map[string]bool { return map[string]bool{} }
+
+// customSecretNames reads the tofu output `custom_secret_names` — each `custom_secrets` key mapped to
+// the secret's name in the environment's store — as a string map. An absent or malformed output is
+// an empty map: no per-binding key then resolves, so the facets are unsatisfied, never guessed.
+func customSecretNames(outputs map[string]interface{}) map[string]string {
+	out := map[string]string{}
+	switch m := outputs["custom_secret_names"].(type) {
+	case map[string]interface{}:
+		for k, v := range m {
+			if s, ok := v.(string); ok && s != "" {
+				out[k] = s
+			}
+		}
+	case map[string]string:
+		for k, v := range m {
+			if v != "" {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
 // serviceBindingSecretNames are the binding Secret names the first-class service lane renders into
 // appNamespace: one per (service, bound target), the names writeBindingExternalSecrets and the
 // workload's secretKeyRef use. Over-approximated on purpose (every bound target, credential facet or
@@ -61,9 +99,10 @@ func serviceBindingSecretNames(vc *types.ProjectConfig) map[string]bool {
 	return out
 }
 
-// byoBindingPolicy is the resolver policy for one add-on in namespace ns (already defaulted).
-func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool) manifests.ChartBindingPolicy {
-	p := manifests.ChartBindingPolicy{KeylessDBAuth: keylessOn}
+// byoBindingPolicy is the resolver policy for one add-on in namespace ns (already defaulted). dbUsers
+// is the per-binding-user state, nil when that mode is off.
+func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool, dbUsers *manifests.ByoDBUsers) manifests.ChartBindingPolicy {
+	p := manifests.ChartBindingPolicy{KeylessDBAuth: keylessOn, DBUsers: dbUsers}
 	if owner == "" {
 		p.CredentialRefusal = "the environment has no ID, so its binding ExternalSecret could not carry an owner label and could never be pruned — not applied"
 	}
@@ -85,7 +124,12 @@ func byoBindingPolicy(vc *types.ProjectConfig, ns, owner string, keylessOn bool)
 // volume disappears at once, and an env value sourced from it on the next pod restart. That is
 // deliberate: the platform does not keep a live credential in a namespace it has refused, for a chart
 // whose Application can no longer sync anyway.
-func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool, refused []byoRefusal) ([]argocd.BindingSecretRef, []string) {
+//
+// With dbUsersOn, a database binding is declared with the db-user source: the prune keeps its live
+// object only when that object reads the binding's own user, so one an earlier deploy pointed at the
+// administrative credential is withdrawn even though the binding is still declared. The source is a
+// function of the configuration and the flag, so this is still read from the configuration alone.
+func declaredByoBindings(vc *types.ProjectConfig, keylessOn, dbUsersOn bool, refused []byoRefusal) ([]argocd.BindingSecretRef, []string) {
 	skip := byoRefusedIDs(refused)
 	var refs []argocd.BindingSecretRef
 	var namespaces []string
@@ -115,7 +159,11 @@ func declaredByoBindings(vc *types.ProjectConfig, keylessOn bool, refused []byoR
 				if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
 					continue
 				}
-				refs = append(refs, argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, b.Target)})
+				ref := argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, b.Target)}
+				if dbUsersOn && b.Target.Kind == types.ServiceBindingKindDatabase {
+					ref.Source = argocd.ByoBindingSourceDBUser
+				}
+				refs = append(refs, ref)
 			}
 		}
 	}
@@ -143,9 +191,14 @@ func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface
 // applied (see declaredByoBindings).
 func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, stdout, stderr io.Writer) byoBindingState {
 	keylessOn := keylessDBAuthEnabled()
+	dbUsersOn := byoDBUsersEnabled()
 	skip := byoRefusedIDs(refused)
 	st := byoBindingState{Owner: byoBindingOwner(vc)}
-	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn, refused)
+	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn, dbUsersOn, refused)
+	var dbUsers *manifests.ByoDBUsers
+	if dbUsersOn {
+		dbUsers = &manifests.ByoDBUsers{Environment: st.Owner, SecretNames: customSecretNames(outputs), Provisioned: provisionedByoDBUsers(vc)}
+	}
 
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
 	strOutputs := make(map[string]string, len(outputs))
@@ -166,7 +219,7 @@ func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]int
 		if ns == "" {
 			ns = "default" // the renderer's default
 		}
-		policy := byoBindingPolicy(vc, ns, st.Owner, keylessOn)
+		policy := byoBindingPolicy(vc, ns, st.Owner, keylessOn, dbUsers)
 		for _, w := range a.Workloads {
 			res := manifests.ResolveChartWorkloadBindings(
 				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace, vc.Databases, policy,
@@ -198,6 +251,26 @@ func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]int
 					fmt.Fprintf(stdout, "BYO binding facet skipped (%s/%s): %s\n", a.ID, w.Name, reason)
 				}
 				if yaml == "" {
+					continue
+				}
+				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
+					st.Failures++
+					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
+					continue
+				}
+			}
+			for _, es := range res.DBUserSecrets {
+				// The same marker and owner as above, plus the source label the prune requires of a
+				// declared database binding in this mode.
+				es.Labels = map[string]string{
+					argocd.ByoBindingSecretLabel: "true",
+					argocd.ByoBindingOwnerLabel:  st.Owner,
+					argocd.ByoBindingSourceLabel: argocd.ByoBindingSourceDBUser,
+				}
+				yaml, err := manifests.RenderByoDBUserExternalSecret(es)
+				if err != nil {
+					st.Failures++
+					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
 					continue
 				}
 				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {

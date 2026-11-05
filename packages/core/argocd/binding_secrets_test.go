@@ -277,3 +277,45 @@ func strconvQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// TestPruneChartBindingSecrets_KeepsADeclaredSourceOnlyWhenTheObjectReadsIt: a binding declared with
+// the db-user source is kept only when its live object carries that source label. The same binding
+// read from the administrative credential (no label, or another value) is deleted even though it is
+// declared, and the log says why; a binding declared with no source is kept whatever it carries.
+func TestPruneChartBindingSecrets_KeepsADeclaredSourceOnlyWhenTheObjectReadsIt(t *testing.T) {
+	withSource := func(v string) map[string]string {
+		l := owned("env-1")
+		l[ByoBindingSourceLabel] = v
+		return l
+	}
+	stub := newKubectlStub(t, 0, noNamespaces, stubRule{
+		Match: "get externalsecrets -n apps",
+		Stdout: listOf(t,
+			esItem{"apps", "own-user", withSource(ByoBindingSourceDBUser)},
+			esItem{"apps", "admin-cred", owned("env-1")},
+			esItem{"apps", "other-source", withSource("something-else")},
+			esItem{"apps", "no-source-declared", owned("env-1")},
+		),
+	})
+	var stdout, stderr bytes.Buffer
+	PruneChartBindingSecrets("env-1", []string{"apps"}, []BindingSecretRef{
+		{Namespace: "apps", Name: "own-user", Source: ByoBindingSourceDBUser},
+		{Namespace: "apps", Name: "admin-cred", Source: ByoBindingSourceDBUser},
+		{Namespace: "apps", Name: "other-source", Source: ByoBindingSourceDBUser},
+		{Namespace: "apps", Name: "no-source-declared"},
+	}, &stdout, &stderr)
+
+	for _, kept := range []string{"own-user", "no-source-declared"} {
+		if stub.calledWith("/" + kept + " ") {
+			t.Errorf("%s was deleted; calls: %v", kept, stub.calls())
+		}
+	}
+	for _, dropped := range []string{"admin-cred", "other-source"} {
+		if !stub.calledWith(rawDelete("apps", dropped)) {
+			t.Errorf("%s was kept although it does not read the declared source; calls: %v", dropped, stub.calls())
+		}
+		if !strings.Contains(stdout.String(), "does not read its binding's own credential: deletion requested for apps/"+dropped) {
+			t.Errorf("the reason for deleting %s was not logged:\n%s", dropped, stdout.String())
+		}
+	}
+}
