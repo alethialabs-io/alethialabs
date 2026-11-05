@@ -103,6 +103,17 @@ output "custom_secret_ids" {
   value       = module.key_vault.secret_ids
 }
 
+# Each custom_secrets entry's key mapped to its Key Vault secret name — the shape aws and gcp
+# already export under this name, and the map the BYO binding resolver looks a per-binding
+# database user's password up by (docs/adr/byo-binding-db-users.md §4). modules/key-vault names
+# each secret by its entry key (`name = each.key`), so the name IS the key; the value is still
+# read from the module's own map so a key with no secret has no entry. Pinned by
+# packages/core/cloud/byo_db_users_test.go.
+output "custom_secret_names" {
+  description = "Map of custom secret keys to their Key Vault secret names"
+  value       = { for k, _ in module.key_vault.secret_ids : k => k }
+}
+
 #########################################################################
 ##                     Azure Cache Outputs                             ##
 #########################################################################

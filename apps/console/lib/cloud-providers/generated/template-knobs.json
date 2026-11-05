@@ -6726,7 +6726,7 @@
 			"ceiling": false,
 			"reachable": false,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": {}
 		},
 		{
@@ -8999,7 +8999,7 @@
 			"ceiling": false,
 			"reachable": false,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": {}
 		},
 		{
