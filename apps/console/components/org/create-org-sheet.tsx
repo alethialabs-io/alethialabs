@@ -66,6 +66,7 @@ import {
 	pendingPaidSetupInPageOnly,
 	type PendingPaidSetup,
 	readStoredPaidSetup,
+	type StoredPaidSetup,
 	recoverUnfinishedPaidSetup,
 	SLUG_TAKEN,
 	pollSettlingPlanState,
@@ -278,9 +279,12 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		};
 	}, [open]);
 
-	/** Restores the sheet from this tab's record and attaches to (or offers to retry) its run. */
-	function resumeFromRecord(stored: PendingPaidSetup) {
-		form.reset({ name: stored.name, slug: stored.slug });
+	/**
+	 * The sheet's own state restored from this tab's record — called while rendering, on the open
+	 * transition below. It only sets state; the form (an external store) and the run it attaches to
+	 * or restarts are the resume effect's, further down.
+	 */
+	function restoreFromRecord(stored: PendingPaidSetup, running: Promise<PaidSetupOutcome> | undefined) {
 		setSlugTouched(true);
 		setCheckoutOrgName(stored.name);
 		setSubscriptionId(stored.subscriptionId);
@@ -290,25 +294,53 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setCreatedSlug(stored.createdSlug);
 		setCreatedOrgId(stored.createdOrgId);
 		setPending(stored);
-		if (stored.slugRefusal) {
-			form.setError("slug", { message: stored.slugRefusal });
-			setSlugClaimedAfterPayment(true);
-		}
+		if (stored.slugRefusal) setSlugClaimedAfterPayment(true);
 		setView("pay");
-		const running = paidSetupInFlight(stored.subscriptionId);
 		if (running) {
-			const gen = generation.current;
 			setBusy(true);
-			void running.then((outcome) => {
-				if (generation.current === gen) applyOutcome(outcome);
-			});
 		} else if (stored.stopped) {
-			// An earlier run stopped this setup for support. Its sentence may no longer be true (support
-			// can have fixed it), so it is not replayed: the run asks the server again, first, and either
-			// stops with what is true now or finishes. No retry is offered for it (§5.6 rule 4).
-			void runSetup(stored);
+			// What `beginSetupState` sets before a run; the run itself starts in the resume effect.
+			setBusy(true);
+			setNeedsSetupRetry(false);
+			setStopped(null);
+			setSlugClaimedAfterPayment(false);
 		} else {
 			setNeedsSetupRetry(true);
+		}
+	}
+
+	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
+	// first step the record says has not completed (each run re-checks that with the server). Only
+	// when nothing is in flight in memory: an open intent of this session wins. A run still in flight
+	// from before the close is ATTACHED to, never started a second time beside it.
+	//
+	// The open transition is handled while rendering, against the viewer it was last handled for
+	// (`null` while closed, so a mount that is already open is handled too). The sheet is closed on the
+	// server render, so the storage read here only ever runs in the browser. With a usable record the
+	// sheet's state is restored at once and `resume` hands the record to the resume effect; without
+	// one, `recoverFrom` hands what the tab holds to the recovery effect, which asks the SERVER whether
+	// this user has a paid setup that never finished — a charge must not be offered a second purchase
+	// because one tab lost its copy.
+	const openedKey = open && viewerId ? viewerId : null;
+	const [openedFor, setOpenedFor] = useState<string | null>(null);
+	const [resume, setResume] = useState<{
+		record: PendingPaidSetup;
+		running: Promise<PaidSetupOutcome> | undefined;
+	} | null>(null);
+	const [recoverFrom, setRecoverFrom] = useState<StoredPaidSetup | null>(null);
+	if (openedKey !== openedFor) {
+		setOpenedFor(openedKey);
+		setResume(null);
+		setRecoverFrom(null);
+		if (openedKey !== null && !subscriptionId) {
+			const stored = readStoredPaidSetup(openedKey);
+			if (stored.kind === "ok") {
+				const running = paidSetupInFlight(stored.record.subscriptionId);
+				restoreFromRecord(stored.record, running);
+				setResume({ record: stored.record, running });
+			} else {
+				setRecoverFrom(stored);
+			}
 		}
 	}
 
@@ -839,11 +871,21 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * been reset since the run started.
 	 */
 	async function runSetup(record: PendingPaidSetup) {
-		const gen = generation.current;
+		beginSetupState();
+		await runSetupSteps(record);
+	}
+
+	/** The state a run of the post-payment steps starts from: busy, with no retry, stop or slug ask. */
+	function beginSetupState() {
 		setBusy(true);
 		setNeedsSetupRetry(false);
 		setStopped(null);
 		setSlugClaimedAfterPayment(false);
+	}
+
+	/** Runs the post-payment steps and shows how they ended, unless the sheet was reset meanwhile. */
+	async function runSetupSteps(record: PendingPaidSetup) {
+		const gen = generation.current;
 		const outcome = await finishPaidSetup(viewerId, record, {
 			onProgress: (next) => {
 				if (generation.current === gen) setPending(next);
@@ -946,21 +988,33 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const heading =
 		view === "pay" || view === "declare" ? `Create ${name || "team"}` : "Create a team";
 
-	// Declared below the functions it calls (the React Compiler's immutability rule).
-	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
-	// first step the record says has not completed (each run re-checks that with the server). Only
-	// when nothing is in flight in memory: an open intent of this session wins. A run still in flight
-	// from before the close is ATTACHED to, never started a second time beside it.
-	//
-	// With no usable record, the SERVER is asked whether this user has a paid setup that never
-	// finished — a charge must not be offered a second purchase because one tab lost its copy.
+	// The resume effect: the record's form values (an external store) and the run it attaches to, or
+	// restarts when an earlier run stopped it for support. That sentence may no longer be true (support
+	// can have fixed it), so it is not replayed: the run asks the server again, first, and either stops
+	// with what is true now or finishes. No retry is offered for it (§5.6 rule 4). Declared below the
+	// functions it calls (the React Compiler's immutability rule).
 	useEffect(() => {
-		if (!open || !viewerId || subscriptionId) return;
-		const stored = readStoredPaidSetup(viewerId);
-		if (stored.kind === "ok") {
-			resumeFromRecord(stored.record);
-			return;
+		if (!resume) return;
+		const { record, running } = resume;
+		form.reset({ name: record.name, slug: record.slug });
+		if (record.slugRefusal) form.setError("slug", { message: record.slugRefusal });
+		if (running) {
+			const gen = generation.current;
+			void running.then((outcome) => {
+				if (generation.current === gen) applyOutcome(outcome);
+			});
+		} else if (record.stopped) {
+			void runSetupSteps(record);
 		}
+		// Once per resumed record: re-running it on any other change would attach twice or start a
+		// second run beside the first. `form` is stable for the component's life.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [resume]);
+
+	// The recovery effect: with no usable record in this tab, ask the server.
+	useEffect(() => {
+		if (!recoverFrom) return;
+		const stored = recoverFrom;
 		let active = true;
 		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
 			(found) => {
@@ -989,10 +1043,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		return () => {
 			active = false;
 		};
-		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
-		// storage after every intent. The read is for the moment the sheet opens.
+		// Once per open with no usable record (`recoverFrom` is reset on every open transition): the
+		// question is for the moment the sheet opens, not for every later render.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, viewerId]);
+	}, [recoverFrom]);
 
 	return (
 		<Sheet open={open} onOpenChange={handleOpenChange}>

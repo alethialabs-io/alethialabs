@@ -331,3 +331,40 @@ describe("CreateOrgSheet — a stop for support is checked again, not replayed",
 		);
 	});
 });
+
+describe("CreateOrgSheet — opening with a stored record resumes it (#6459)", () => {
+	// The open transition is handled while rendering (not in an effect), so a sheet that stays MOUNTED
+	// across the close — the parents keep it mounted — must still resume when `open` flips to true.
+	it("a mounted, closed sheet that opens over a stored record restores it, and asks nothing new", async () => {
+		window.sessionStorage.setItem(
+			pendingPaidSetupKey("user-holds"),
+			JSON.stringify({
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				name: "Acme Cloud",
+				slug: "acme-cloud",
+				currency: "eur",
+				declaration: { capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
+				billing: null,
+				customerDetailsSaved: true,
+				createdOrgId: null,
+				createdSlug: "",
+				linked: false,
+				slugRefusal: null,
+				stopped: null,
+			}),
+		);
+		const view = render(<CreateOrgSheet open={false} onOpenChange={vi.fn()} />);
+		expect(screen.queryByRole("button", { name: /complete setup/i })).toBeNull();
+
+		view.rerender(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		// The sheet's state (render half): the pay view, on the failed-setup retry.
+		expect(await screen.findByText(/couldn't finish setting up the team/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /complete setup/i })).toBeEnabled();
+		// The form (effect half): the record's name, which the heading reads through `useWatch`.
+		expect(await screen.findByText("Create Acme Cloud")).toBeInTheDocument();
+		// The record was usable: no server lookup for an unfinished setup, and no second purchase.
+		expect(m.findUnfinished).not.toHaveBeenCalled();
+		expect(m.createIntent).not.toHaveBeenCalled();
+	});
+});
