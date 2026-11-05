@@ -52,6 +52,9 @@ export const nextJsConfig = [
     },
     settings: { react: { version: "detect" } },
     rules: {
+      // eslint-plugin-react-hooks 7's recommended preset at its own severities — the same set
+      // eslint-config-next 16 ships, React-Compiler rules (purity, refs, set-state-in-effect …)
+      // included. Do not soften one here; fix the finding.
       ...pluginReactHooks.configs.recommended.rules,
       // React scope no longer necessary with new JSX transform.
       "react/react-in-jsx-scope": "off",
