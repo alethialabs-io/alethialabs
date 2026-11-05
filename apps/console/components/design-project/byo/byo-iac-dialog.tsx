@@ -10,7 +10,7 @@
 // IAC_SCAN so provisioning can unlock. Mirrors ByoChartDialog; react-hook-form + zod throughout.
 
 import { useCallback, useState } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowLeft, ArrowRight, Boxes, Check, Loader2, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@repo/ui/alert";
@@ -55,6 +55,9 @@ interface ByoIacDialogProps {
 
 const STEPS = ["Repository", "Path & ref", "Variables", "Review"] as const;
 
+/** The fields the dialog renders from. */
+const WATCHED = ["repo_url", "path", "ref"] as const;
+
 /** The four-step "attach an IaC source" dialog. Self-contained: owns the RHF form + resets on close. */
 export function ByoIacDialog({
 	open,
@@ -74,7 +77,6 @@ export function ByoIacDialog({
 		handleSubmit,
 		trigger,
 		reset,
-		watch,
 		formState: { errors, isSubmitting },
 	} = form;
 	const { fields, append, remove } = useFieldArray({ control, name: "variables" });
@@ -99,9 +101,7 @@ export function ByoIacDialog({
 		successMessage: "IaC source attached — scanning the module now.",
 	});
 
-	const repoUrl = watch("repo_url");
-	const path = watch("path");
-	const ref = watch("ref");
+	const [repoUrl, path, ref] = useWatch({ control, name: WATCHED });
 
 	const close = useCallback(
 		(next: boolean) => {

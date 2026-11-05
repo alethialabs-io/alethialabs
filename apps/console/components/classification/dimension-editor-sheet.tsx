@@ -28,7 +28,7 @@ import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
 import { Plus, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import type { DimensionDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createDimension,
@@ -52,6 +52,24 @@ import {
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
 import { RESOURCE_KIND_LABELS } from "./resource-kind-labels";
+
+/** The blank dimension a create starts from. */
+const BLANK_DIMENSION: DimensionInput = {
+	key: "",
+	label: "",
+	description: "",
+	multi: false,
+	applies_to: [],
+	position: 0,
+};
+
+/** The form values a template seeds (its values are staged separately). */
+function templateFormValues(t: ClassificationTemplate): DimensionInput {
+	return { key: t.key, label: t.label, description: t.description, multi: t.multi, applies_to: [], position: 0 };
+}
+
+/** The fields the sheet renders from. */
+const WATCHED = ["multi", "applies_to", "label"] as const;
 
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
 export function DimensionEditorSheet({
@@ -80,31 +98,40 @@ export function DimensionEditorSheet({
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
-		defaultValues: { key: "", label: "", description: "", multi: false, applies_to: [], position: 0 },
+		defaultValues: BLANK_DIMENSION,
 	});
 
 	// Apply a template's fields + stage its values (create mode only).
 	const applyTemplate = (t: ClassificationTemplate) => {
-		form.reset({
-			key: t.key,
-			label: t.label,
-			description: t.description,
-			multi: t.multi,
-			applies_to: [],
-			position: 0,
-		});
+		form.reset(templateFormValues(t));
 		setStaged(t.values);
 		setTemplateKey(t.key);
 	};
 
 	// Deselect the active template, back to a blank form.
 	const clearTemplate = () => {
-		form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
+		form.reset(BLANK_DIMENSION);
 		setStaged([]);
 		setTemplateKey(null);
 	};
 
-	// Reset when (re)opening.
+	// Reset when (re)opening, or when what the sheet was opened for changes while it is open. The
+	// sheet's own state is reset during render, against the props it was last reset for; the form
+	// is an external store, so its reset stays in an effect.
+	const openTemplate = !dimension && initialTemplateKey
+		? CLASSIFICATION_TEMPLATES.find((x) => x.key === initialTemplateKey)
+		: undefined;
+	// Keyed by the dimension's ID, not the object: a refetch that hands the open sheet a new object for
+	// the same row must not wipe what is being typed.
+	const dimensionId = dimension?.id;
+	const [resetFor, setResetFor] = useState<{ dimensionId?: string; templateKey?: string } | null>(null);
+	if (!open && resetFor !== null) setResetFor(null);
+	if (open && (resetFor === null || resetFor.dimensionId !== dimensionId || resetFor.templateKey !== initialTemplateKey)) {
+		setResetFor({ dimensionId, templateKey: initialTemplateKey });
+		setStaged(openTemplate ? openTemplate.values : []);
+		setTemplateKey(openTemplate ? openTemplate.key : null);
+		setAddLabel("");
+	}
 	useEffect(() => {
 		if (!open) return;
 		if (dimension) {
@@ -116,26 +143,18 @@ export function DimensionEditorSheet({
 				applies_to: dimension.appliesTo,
 				position: dimension.position,
 			});
-			setStaged([]);
-			setTemplateKey(null);
+		} else if (openTemplate) {
+			form.reset(templateFormValues(openTemplate));
 		} else {
-			const t = initialTemplateKey
-				? CLASSIFICATION_TEMPLATES.find((x) => x.key === initialTemplateKey)
-				: undefined;
-			if (t) {
-				applyTemplate(t);
-			} else {
-				form.reset({ key: "", label: "", description: "", multi: false, applies_to: [], position: 0 });
-				setStaged([]);
-				setTemplateKey(null);
-			}
+			form.reset(BLANK_DIMENSION);
 		}
-		setAddLabel("");
+		// Keyed like the state reset above: by the dimension's ID. `openTemplate` is derived from
+		// `initialTemplateKey`, and `form` is stable for the sheet's life.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, dimension, initialTemplateKey]);
+	}, [open, dimensionId, initialTemplateKey]);
 
-	const multi = form.watch("multi");
-	const appliesTo = form.watch("applies_to") ?? [];
+	const [multi, watchedAppliesTo, watchedLabel] = useWatch({ control: form.control, name: WATCHED });
+	const appliesTo = watchedAppliesTo ?? [];
 	const toggleKind = (kind: ResourceKind) => {
 		const set = new Set(appliesTo);
 		if (set.has(kind)) set.delete(kind);
@@ -435,7 +454,7 @@ export function DimensionEditorSheet({
 							Cancel
 						</Button>
 						{/* An edit with nothing changed has nothing to save; a create always does. */}
-						<Button type="submit" disabled={submitting || !form.watch("label") || (isEdit && !dirty)}>
+						<Button type="submit" disabled={submitting || !watchedLabel || (isEdit && !dirty)}>
 							{submitting && <Spinner />}
 							{isEdit ? "Save changes" : "Create dimension"}
 						</Button>

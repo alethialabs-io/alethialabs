@@ -17,7 +17,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertCircle, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { addChannel } from "@/app/server/actions/alerts";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
@@ -199,6 +199,9 @@ interface ChannelSheetProps {
 	encryptionConfigured: boolean;
 }
 
+/** The fields the sheet renders from. */
+const WATCHED = ["type", "recipients"] as const;
+
 /** Guided, single-form create flow for an alert channel. */
 export function ChannelSheet({
 	open,
@@ -215,8 +218,8 @@ export function ChannelSheet({
 		defaultValues: DEFAULTS,
 		mode: "onChange",
 	});
-	const v = form.watch();
-	const meta = CHANNEL_TYPE_META[v.type];
+	const [channelType, recipients] = useWatch({ control: form.control, name: WATCHED });
+	const meta = CHANNEL_TYPE_META[channelType];
 	const isSecret = meta.credential !== "email";
 	const needsKey = isSecret && !encryptionConfigured;
 
@@ -295,7 +298,7 @@ export function ChannelSheet({
 				<SheetHeader className="gap-3 border-b border-border/60 p-5">
 					<div className="flex items-center gap-3">
 						<span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
-							<ChannelIcon type={v.type} active size={22} />
+							<ChannelIcon type={channelType} active size={22} />
 						</span>
 						<div>
 							<SheetTitle className="font-display text-base">
@@ -315,7 +318,7 @@ export function ChannelSheet({
 						<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
 							{CHANNEL_TYPE_ORDER.map((type) => {
 								const m = CHANNEL_TYPE_META[type];
-								const on = v.type === type;
+								const on = channelType === type;
 								return (
 									<button
 										key={type}
@@ -364,7 +367,7 @@ export function ChannelSheet({
 									<FieldHelp title="Recipients">{HELP.email}</FieldHelp>
 								</div>
 								<RecipientsEditor
-									recipients={v.recipients}
+									recipients={recipients}
 									editable
 									onChange={(r) =>
 										form.setValue("recipients", r, { shouldValidate: true })
@@ -383,11 +386,11 @@ export function ChannelSheet({
 								<div className="space-y-2">
 									<div className="flex items-center gap-1.5">
 										<Label htmlFor="ch-url">
-											{v.type === "webhook"
+											{channelType === "webhook"
 												? "Payload URL"
 												: `${meta.name} webhook URL`}
 										</Label>
-										<FieldHelp title="Where to find this">{HELP[v.type]}</FieldHelp>
+										<FieldHelp title="Where to find this">{HELP[channelType]}</FieldHelp>
 									</div>
 									<Input
 										id="ch-url"
@@ -401,7 +404,7 @@ export function ChannelSheet({
 										</p>
 									)}
 								</div>
-								{v.type === "webhook" && (
+								{channelType === "webhook" && (
 									<div className="space-y-2">
 										<div className="flex items-center gap-1.5">
 											<Label htmlFor="ch-secret">
@@ -431,7 +434,7 @@ export function ChannelSheet({
 							<div className="space-y-2">
 								<div className="flex items-center gap-1.5">
 									<Label htmlFor="ch-rk">Integration routing key</Label>
-									<FieldHelp title="Routing key">{HELP[v.type]}</FieldHelp>
+									<FieldHelp title="Routing key">{HELP[channelType]}</FieldHelp>
 								</div>
 								<Input
 									id="ch-rk"

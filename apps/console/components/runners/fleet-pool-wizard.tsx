@@ -50,7 +50,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -228,7 +228,6 @@ export function FleetPoolWizard({
     handleSubmit,
     reset,
     trigger,
-    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -245,7 +244,10 @@ export function FleetPoolWizard({
     wasOpen.current = open;
   }, [open, pool, reset]);
 
-  const values = watch();
+  // Every field is in DEFAULTS, so the spread only gives the watched (deep-partial) type its
+  // required keys back; at runtime the watched values win.
+  const watched = useWatch({ control });
+  const values: FormValues = { ...DEFAULTS, ...watched };
   const allProvidersUsed =
     !isEdit && cloudProvider.enumValues.every((p) => usedProviders.includes(p));
   const providerLabel = PROVIDER_LABELS[values.provider] ?? values.provider;

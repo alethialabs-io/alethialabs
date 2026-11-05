@@ -4,7 +4,7 @@
 // F031 (#6132): the declaration form tells its sheet when a declared fact changes, so a refusal
 // about the PREVIOUS answer can be dropped. Both purchase sheets wire `onEdit` to clearing it.
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -60,5 +60,28 @@ describe("PayerDeclarationForm — onEdit (F031)", () => {
 		onEdit.mockClear();
 		await user.type(screen.getByPlaceholderText("Director"), "D");
 		expect(onEdit).toHaveBeenCalled();
+	});
+});
+
+describe("PayerDeclarationForm — what does NOT fire onEdit (#6459)", () => {
+	// `onEdit` clears the refusal on screen, so firing it for anything but a changed answer would wipe
+	// the sentence that explains why the purchase was refused.
+	it("neither a submit nor a new server refusal calls onEdit", async () => {
+		const user = userEvent.setup();
+		const onEdit = vi.fn();
+		const onDeclare = vi.fn();
+		const props = { busy: false, submitLabel: "Continue to payment", onEdit, onDeclare };
+		const { rerender } = render(<PayerDeclarationForm {...props} refusal={null} />);
+		await user.click(screen.getByRole("radio", { name: /An individual/ }));
+		await user.selectOptions(screen.getByRole("combobox", { name: "Billing country" }), "DE");
+		onEdit.mockClear();
+
+		await user.click(screen.getByRole("button", { name: "Continue to payment" }));
+		await waitFor(() => expect(onDeclare).toHaveBeenCalledTimes(1));
+		expect(onEdit).not.toHaveBeenCalled();
+
+		rerender(<PayerDeclarationForm {...props} refusal="Not on sale in this country." />);
+		expect(screen.getByText("Not on sale in this country.")).toBeInTheDocument();
+		expect(onEdit).not.toHaveBeenCalled();
 	});
 });
