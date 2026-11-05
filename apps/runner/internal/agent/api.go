@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 type RunnerAPIClient struct {
@@ -115,6 +116,9 @@ func (c *RunnerAPIClient) setRunnerHeaders(req *http.Request) {
 	req.Header.Set("X-Runner-Token", c.runnerToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", fmt.Sprintf("runner/%s", version.Version))
+	// Which config_snapshot keys this build decodes, so the console serves a new key only to a runner
+	// that can read it (see types.RunnerCapabilitiesHeader).
+	req.Header.Set(types.RunnerCapabilitiesHeader, strings.Join(types.RunnerSnapshotCapabilities, ","))
 }
 
 func (c *RunnerAPIClient) Heartbeat() ([]string, error) {

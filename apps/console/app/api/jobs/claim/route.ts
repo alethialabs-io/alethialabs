@@ -21,6 +21,11 @@ import {
 	snapshotWithRunnerToken,
 } from "@/lib/runners/lifecycle-token";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
+import {
+	RUNNER_CAPABILITIES_HEADER,
+	parseRunnerCapabilities,
+	snapshotForRunner,
+} from "@/lib/runners/snapshot-capabilities";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -148,13 +153,20 @@ export async function POST(req: Request) {
 				{ status: 409 },
 			);
 		}
-		const servedJob =
+		const issuedSnapshot =
 			tokenIssue.kind === "issued"
-				? {
-						...job,
-						config_snapshot: snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token),
-					}
-				: job;
+				? snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token)
+				: job.config_snapshot;
+		// A runner decodes the snapshot strictly, so it is served only the keys it says it reads
+		// (lib/runners/snapshot-capabilities.ts). One that predates the header gets the snapshot as it
+		// was before those keys existed. The stored row — and the signature checked above — are untouched.
+		const servedJob = {
+			...job,
+			config_snapshot: snapshotForRunner(
+				issuedSnapshot,
+				parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER)),
+			),
+		};
 
 		// Least privilege (#5308): what rides along with the row is decided per job type by an
 		// allow-list, not by what the snapshot happens to reference. A MINT_KUBECONFIG job carries

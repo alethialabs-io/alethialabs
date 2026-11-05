@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strings"
 
@@ -144,17 +145,45 @@ func ByoProjectName(slug string) string {
 }
 
 // ByoChartNamespace is the namespace a BYO chart deploys into when none of its own is chosen:
-// "byo-<chart id>", capped at 63 characters (#6446). The chart id is the add-on id the console
-// derives (chartSlug), so this is the same name the console's attach form offers as the default
-// (byoChartNamespace in apps/console/lib/validations/byo-charts.ts — the two are pinned to the same
-// table of cases on each side).
+// "byo-<chart id>" (#6446). The chart id is the add-on id the console derives (chartSlug), so this is
+// the same name the console's attach form offers as the default (byoChartNamespace in
+// apps/console/lib/validations/byo-charts.ts — the two are pinned to the same table of cases on each
+// side).
+//
+// DISTINCT PER CHART, past the 63-character cap too. A plain cut would give two stored ids that
+// share their first 59 characters the same namespace, so a name that does not fit is cut further
+// and ends in "-" + 8 hex of the FNV-1a 32 hash of the WHOLE id. A new chart's id (at most 57
+// characters) always fits, so the hash only ever appears for an id stored before that cap.
 //
 // A chart gets its own namespace rather than a shared one because the namespace is what isolates it:
 // the hardened AppProject allows the namespaced kinds in its destinations, so two charts in one
 // namespace can read each other's Secrets, and a chart in "default" sat beside the platform's own
-// workloads. No reserved name or prefix starts with "byo-".
+// workloads. No reserved name or prefix starts with "byo-", and a namespace a chart CHOOSES may not
+// start with it either (ValidateByoChartNamespace), so a derived name is never another chart's.
 func ByoChartNamespace(chartID string) string {
-	return names.Bounded(byoProjectPrefix + chartID)
+	full := byoProjectPrefix + chartID
+	if len(full) <= names.SlugMaxLength {
+		return full
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(chartID)) // a hash.Hash never returns an error from Write
+	suffix := fmt.Sprintf("%08x", h.Sum32())
+	head := strings.TrimRight(full[:names.SlugMaxLength-len(suffix)-1], "-")
+	return head + "-" + suffix
+}
+
+// ValidateByoChartNamespace is ValidateByoNamespace for the namespace of the chart chartID, plus the
+// one rule that needs the chart: a namespace starting with "byo-" is accepted only when it is this
+// chart's own derived one (ByoChartNamespace). The prefix is reserved for those, so a chart cannot
+// choose a namespace that another chart is given by default.
+func ValidateByoChartNamespace(chartID, ns string) error {
+	if err := validateByoNamespace(ns); err != nil {
+		return err
+	}
+	if own := ByoChartNamespace(chartID); strings.HasPrefix(ns, byoProjectPrefix) && ns != own {
+		return fmt.Errorf("namespace %q starts with %q, which is reserved for the namespace each chart gets by default (this chart's is %q). Choose a namespace of your own, or leave it blank", ns, byoProjectPrefix, own)
+	}
+	return nil
 }
 
 // ByoLegacyDefaultNamespace is where a BYO chart attached before #6446 deployed when no namespace

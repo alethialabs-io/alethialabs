@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import { byoReservedNamespaceMessage } from "@/lib/validations/byo-reserved-namespaces";
+import { chartSlug } from "@/lib/validations/names";
 
 /** A git remote — an https:// or git@ address. */
 export function isPlausibleGitRepoUrl(url: string): boolean {
@@ -43,8 +44,14 @@ export function isPlausibleChartRepoUrl(url: string): boolean {
  * Shared by the form and the attach action so the two refuse exactly the same names; the runner
  * refuses them again at deploy time from the same list.
  */
-function refuseReservedNamespace(namespace: string | undefined, ctx: z.RefinementCtx): void {
-	const message = namespace ? byoReservedNamespaceMessage(namespace) : null;
+function refuseReservedNamespace(
+	namespace: string | undefined,
+	ctx: z.RefinementCtx,
+	chartId?: string,
+): void {
+	const message = namespace
+		? (byoReservedNamespaceMessage(namespace) ?? byoNamespacePrefixMessage(namespace, chartId))
+		: null;
 	if (message) {
 		ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["namespace"], message });
 	}
@@ -56,15 +63,42 @@ const BYO_CHART_NAMESPACE_PREFIX = "byo-";
 /** Kubernetes' cap on a namespace name. */
 const NAMESPACE_MAX_LENGTH = 63;
 
+/** FNV-1a 32 of `s`'s UTF-8 bytes, as 8 hex digits. Mirrors Go's `hash/fnv` New32a. */
+function fnv1a32Hex(s: string): string {
+	let h = 0x811c9dc5;
+	for (const byte of new TextEncoder().encode(s)) {
+		h ^= byte;
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return h.toString(16).padStart(8, "0");
+}
+
 /**
- * The namespace a BYO chart deploys into when none of its own is chosen: `byo-<chart id>`, capped at
- * 63 characters with a dash the cut exposes trimmed (#6446). Mirrors the Go `argocd.ByoChartNamespace`;
- * both sides pin the same table of cases (tests/lib/validations/byo-charts-namespace.test.ts and
+ * The namespace a BYO chart deploys into when none of its own is chosen: `byo-<chart id>` (#6446).
+ * Past 63 characters it is cut further and ends in `-` + an 8-hex hash of the WHOLE id, so two long
+ * ids that share a prefix still get two namespaces. Mirrors the Go `argocd.ByoChartNamespace`; both
+ * sides pin the same table of literal cases (tests/lib/validations/byo-charts-namespace.test.ts and
  * packages/core/argocd/byo_oci_test.go). `chartId` is the add-on id — `chartSlug` of the name.
  */
 export function byoChartNamespace(chartId: string): string {
-	const ns = `${BYO_CHART_NAMESPACE_PREFIX}${chartId}`;
-	return ns.slice(0, NAMESPACE_MAX_LENGTH).replace(/-+$/, "");
+	const full = `${BYO_CHART_NAMESPACE_PREFIX}${chartId}`;
+	if (full.length <= NAMESPACE_MAX_LENGTH) return full;
+	const suffix = fnv1a32Hex(chartId);
+	const head = full.slice(0, NAMESPACE_MAX_LENGTH - suffix.length - 1).replace(/-+$/, "");
+	return `${head}-${suffix}`;
+}
+
+/**
+ * Why `namespace` may not be chosen for the chart `chartId` because of its `byo-` prefix, or `null`.
+ * The prefix is reserved for each chart's own derived namespace, so a chart cannot take another's;
+ * its own is accepted. Mirrors the prefix half of Go `argocd.ValidateByoChartNamespace`. With no
+ * `chartId` (the form, before the id is derived), any `byo-` name is refused: leaving the field
+ * blank is how a chart gets its own.
+ */
+export function byoNamespacePrefixMessage(namespace: string, chartId?: string): string | null {
+	if (!namespace.startsWith(BYO_CHART_NAMESPACE_PREFIX)) return null;
+	if (chartId !== undefined && namespace === byoChartNamespace(chartId)) return null;
+	return `Namespaces starting with “${BYO_CHART_NAMESPACE_PREFIX}” are reserved for the namespace each chart gets by default. Leave it blank to use this chart's, or choose one of your own.`;
 }
 
 export const CHART_SOURCES = ["git", "oci"] as const;
@@ -150,8 +184,9 @@ export const byoChartAttachSchema = z
 	})
 	.superRefine((value, ctx) => {
 		// The action is a public entry point (the CLI route calls it too), so the form's refusal is
-		// not enough on its own.
-		refuseReservedNamespace(value.namespace, ctx);
+		// not enough on its own. The id is the one the action stores (`chartSlug`), so a chart's own
+		// derived namespace — what the form sends for a blank field — is accepted.
+		refuseReservedNamespace(value.namespace, ctx, chartSlug(value.id));
 		// Re-checked server-side rather than trusted from the form: the action is a public entry
 		// point, and a git chart with no path silently renders an empty Application.
 		if (!value.repoUrl.startsWith("oci://") && !value.chartPath?.replace(/^\/+/, "")) {

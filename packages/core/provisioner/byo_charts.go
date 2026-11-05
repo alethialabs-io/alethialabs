@@ -272,6 +272,7 @@ func (m byoMove) warning() string {
 	return fmt.Sprintf("BYO chart %q now deploys into its own namespace %q instead of %q, which is reserved for the platform. "+
 		"Its project now permits only %q, so ArgoCD no longer manages anything an earlier deploy created for it in %q: "+
 		"those resources are not deleted, not updated, and not removed if you detach the chart. "+
+		"They keep running in the platform's namespace until you delete them. "+
 		"Once the chart is running in %q, delete them yourself; ArgoCD marked each one with an %s annotation beginning %q. "+
 		"Its binding secrets in %q are withdrawn, and applied again in %q. "+
 		"To keep this namespace in the chart's settings, attach it again with this namespace or one of your own.",
@@ -324,8 +325,7 @@ func withoutByoRefusals(addons []types.AddOnInstall, refused []byoRefusal) []typ
 // prepareByoCharts is configureByoCharts for callers that only need to know whether any BYO chart
 // was configured.
 func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) bool {
-	configured, _, _ := configureByoCharts(vc, token, repoTokens, commonLabels, stdout, stderr)
-	return configured
+	return configureByoCharts(vc, token, repoTokens, commonLabels, stdout, stderr).Configured
 }
 
 // configureByoCharts sets up the trust boundary for bring-your-own charts — git-source AND OCI
@@ -380,12 +380,13 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 // chart Applications themselves are labelled by RenderManagedAddOns.
 // repoTokens maps a chart repo URL → its git token (for BYO charts on a different provider than the
 // apps-destination repo); token is the fallback used when a repo has no dedicated entry.
-func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) (bool, []byoRefusal, []byoMove) {
+func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[string]string, commonLabels map[string]string, stdout, stderr io.Writer) byoConfigured {
 	projName := argocd.ByoProjectName(vc.ProjectName)
 
 	var repos, gitRepos, namespaces []string
 	var refused []byoRefusal
 	var moved []byoMove
+	var leftProject []byoProjectChange
 	hasByo := false
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
@@ -404,7 +405,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stdout, "BYO chart %q: moving from namespace %q to %q\n", a.ID, argocd.ByoLegacyDefaultNamespace, to)
 		}
 		ns := a.Namespace
-		if err := argocd.ValidateByoNamespace(ns); err != nil {
+		if err := argocd.ValidateByoChartNamespace(a.ID, ns); err != nil {
 			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %v\n", a.ID, err)
 			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: err.Error()})
 			continue
@@ -412,11 +413,16 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		repos = append(repos, a.ChartRepo)
 		if a.IsGitSource() {
 			gitRepos = append(gitRepos, a.ChartRepo)
+		} else if from := liveByoProject(a.ID, stderr); from != "" && from != projName {
+			// An OCI chart an earlier deploy applied under another project (the catalogue's, before
+			// #6445): this deploy moves it, and the user is told what that changes. A git chart has
+			// always been pinned, so it is not read.
+			leftProject = append(leftProject, byoProjectChange{ID: a.ID, From: from, To: projName})
 		}
 		namespaces = append(namespaces, ns)
 	}
 	if !hasByo {
-		return false, nil, nil
+		return byoConfigured{}
 	}
 
 	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q (%d refused)\n", len(repos), projName, len(refused))
@@ -434,7 +440,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// the renderer declined.
 	if ns, err := argocd.RenderByoNamespaces(namespaces, commonLabels); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
-		return false, refused, moved
+		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject}
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
@@ -454,6 +460,18 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	}
 	for i := range refused {
 		refused[i].ProjectUpdated = projectUpdated
+	}
+
+	// "default" no longer holds any of this environment's charts once they have moved. An earlier
+	// runner labelled it as a BYO namespace when it created the destinations (RenderByoNamespaces);
+	// those two labels are removed, so nothing keyed on them selects the platform's namespace. Only
+	// when the AppProject no longer lists it, and only those two keys (ReleaseLegacyByoNamespaceLabels).
+	if len(moved) > 0 && projectUpdated {
+		if owner := byoBindingOwner(vc); owner != "" {
+			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, stdout); err != nil {
+				fmt.Fprintf(stderr, "Warning: could not remove the BYO chart labels from namespace %q: %v\n", argocd.ByoLegacyDefaultNamespace, err)
+			}
+		}
 	}
 
 	// Every git token in play (shared + per-repo) — used to redact any of them from the credential
@@ -483,5 +501,44 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return len(repos) > 0, refused, moved
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject}
+}
+
+// byoConfigured is what configureByoCharts did.
+type byoConfigured struct {
+	// Configured is whether any BYO chart was configured.
+	Configured bool
+	// Refused are the charts refused for their namespace.
+	Refused []byoRefusal
+	// Moved are the charts moved out of "default" (#6446).
+	Moved []byoMove
+	// ProjectChanges are the OCI charts whose live Application was under another project (#6445).
+	ProjectChanges []byoProjectChange
+}
+
+// liveByoProject is the project of the chart's live Application, or "" when it has none or the read
+// failed (logged): no warning is better than one that may be false.
+func liveByoProject(id string, stderr io.Writer) string {
+	p, err := argocd.LiveApplicationProject(argocd.AddOnAppName(id))
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: could not read the live project of BYO chart %q: %v\n", id, err)
+		return ""
+	}
+	return p
+}
+
+// byoProjectChange is one OCI BYO chart whose Application an earlier deploy applied under another
+// project — the catalogue's — and which this deploy moves to its hardened byo-<slug> project.
+type byoProjectChange struct {
+	ID, From, To string
+}
+
+// warning is the Deploy-tab warning for the change: what the chart now runs under, which of its
+// kinds will fail to sync, and that what it created earlier is left in place.
+func (c byoProjectChange) warning() string {
+	return fmt.Sprintf("BYO chart %q now deploys under its hardened project %q instead of %q, like every chart you bring. "+
+		"That project permits only namespaced resources in the chart's own namespace, and no ServiceAccount, Role or RoleBinding: "+
+		"a chart that declares a cluster-scoped resource or one of those kinds fails its sync, naming the resource. "+
+		"Anything it created earlier that the project does not permit is left in place and no longer managed; delete it yourself if you no longer need it.",
+		c.ID, c.To, c.From)
 }

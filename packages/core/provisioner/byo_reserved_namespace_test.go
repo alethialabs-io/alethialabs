@@ -153,7 +153,7 @@ func TestConfigureByoCharts_RefusesPerChartAndWithdrawsTheDestination(t *testing
 			c := newByoCluster(t, "")
 			vc := legacyByoConfig(ns)
 			var errOut strings.Builder
-			configured, refused, _ := configureByoCharts(vc, "tok", nil, nil, io.Discard, &errOut)
+			configured, refused, _ := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, &errOut))
 			if !configured {
 				t.Fatal("one refused chart must not stop the project's other BYO chart from being configured")
 			}
@@ -197,7 +197,7 @@ func TestConfigureByoCharts_WithdrawsAReservedDestinationAnEarlierDeployGranted(
 
 	vc := legacyByoConfig("kube-system")
 	vc.AddOns = vc.AddOns[1:] // only the legacy chart
-	configured, refused, _ := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+	configured, refused, _ := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard))
 	if configured {
 		t.Error("with its only chart refused, nothing was configured — the result must say so")
 	}
@@ -214,7 +214,7 @@ func TestConfigureByoCharts_WithdrawsAReservedDestinationAnEarlierDeployGranted(
 // not claim otherwise.
 func TestConfigureByoCharts_WarningSaysWhenTheDestinationCouldNotBeWithdrawn(t *testing.T) {
 	newByoClusterFailing(t, "", true)
-	_, refused, _ := configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+	_, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard))
 	if len(refused) != 1 || refused[0].ProjectUpdated {
 		t.Fatalf("refused = %+v, want one refusal whose project was NOT updated", refused)
 	}
@@ -224,7 +224,7 @@ func TestConfigureByoCharts_WarningSaysWhenTheDestinationCouldNotBeWithdrawn(t *
 	}
 
 	newByoCluster(t, "")
-	_, refused, _ = configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+	_, refused, _ = byoConfigureTuple(configureByoCharts(legacyByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard))
 	if len(refused) != 1 || !refused[0].ProjectUpdated {
 		t.Fatalf("refused = %+v, want one refusal whose project WAS updated", refused)
 	}

@@ -23,6 +23,12 @@ import (
 // #6445 (OCI BYO charts take the hardened path) and #6446 (a BYO chart runs in its own namespace;
 // "default" is reserved, and a chart already there moves on its next deploy).
 
+// byoConfigureTuple unpacks configureByoCharts' result for the tests written against its earlier
+// three-value form.
+func byoConfigureTuple(r byoConfigured) (bool, []byoRefusal, []byoMove) {
+	return r.Configured, r.Refused, r.Moved
+}
+
 // ociByoConfig is a project with an OCI BYO chart in ns and a catalogue chart from an OCI registry.
 func ociByoConfig(ns string) *types.ProjectConfig {
 	return &types.ProjectConfig{
@@ -87,7 +93,7 @@ func appliedObjects(t *testing.T, path string) map[string]appliedApp {
 func TestConfigureByoCharts_OCIByoChartTakesTheHardenedPath(t *testing.T) {
 	c := newByoCluster(t, "")
 	vc := ociByoConfig("payments")
-	configured, refused, moved := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+	configured, refused, moved := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard))
 	if !configured || len(refused) != 0 || len(moved) != 0 {
 		t.Fatalf("configured=%v refused=%+v moved=%+v, want the OCI chart configured as it is", configured, refused, moved)
 	}
@@ -116,7 +122,7 @@ func TestConfigureByoCharts_OCIByoChartTakesTheHardenedPath(t *testing.T) {
 // chart's namespace too, so the console's check is not the only one.
 func TestConfigureByoCharts_OCIByoChartInAReservedNamespaceIsRefused(t *testing.T) {
 	c := newByoCluster(t, "")
-	_, refused, _ := configureByoCharts(ociByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard)
+	_, refused, _ := byoConfigureTuple(configureByoCharts(ociByoConfig("kube-system"), "tok", nil, nil, io.Discard, io.Discard))
 	if len(refused) != 1 || refused[0].ID != "payments" || refused[0].Namespace != "kube-system" {
 		t.Fatalf("refused = %+v, want the OCI chart in kube-system", refused)
 	}
@@ -133,7 +139,7 @@ func TestConfigureByoCharts_MovesAChartOutOfDefault(t *testing.T) {
 		t.Run("stored="+stored, func(t *testing.T) {
 			c := newByoCluster(t, "")
 			vc := legacyByoConfig(stored)
-			_, refused, moved := configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+			_, refused, moved := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard))
 			if len(refused) != 0 {
 				t.Fatalf("refused = %+v: a chart in default is moved, not refused", refused)
 			}
@@ -165,7 +171,7 @@ func TestByoMove_WarningNamesTheChartItsNewNamespaceAndWhatIsLeft(t *testing.T) 
 	for _, want := range []string{
 		`"legacy"`, `"byo-legacy"`, `"default"`, "reserved for the platform",
 		"not deleted", "delete them yourself", "argocd.argoproj.io/tracking-id", `"addon-legacy:"`,
-		"binding secrets",
+		"binding secrets", "keep running in the platform's namespace until you delete them",
 	} {
 		if !strings.Contains(w, want) {
 			t.Errorf("the warning does not say %q:\n%s", want, w)
@@ -182,7 +188,18 @@ type moveCluster struct{ log, applied string }
 // newMoveCluster installs the scripted kubectl.
 func newMoveCluster(t *testing.T, live string) *moveCluster {
 	t.Helper()
+	return newMoveClusterWith(t, live, `{"metadata":{"name":"default","labels":{"kubernetes.io/metadata.name":"default"}}}`, "")
+}
+
+// newMoveClusterWith is newMoveCluster whose `get namespace default -o json` answers nsJSON and whose
+// read of an Application's live spec.project answers liveProject.
+func newMoveClusterWith(t *testing.T, live, nsJSON, liveProject string) *moveCluster {
+	t.Helper()
 	dir := t.TempDir()
+	nsPath := filepath.Join(dir, "ns.json")
+	if err := os.WriteFile(nsPath, []byte(nsJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	c := &moveCluster{log: filepath.Join(dir, "calls.log"), applied: filepath.Join(dir, "applied.yaml")}
 	livePath := filepath.Join(dir, "live.json")
 	if err := os.WriteFile(livePath, []byte(live), 0o600); err != nil {
@@ -195,6 +212,8 @@ func newMoveCluster(t *testing.T, live string) *moveCluster {
 		"  *'get namespaces'*) echo '{\"items\":[]}'; exit 0;;\n" +
 		"  *'get externalsecrets -n default'*) cat '" + livePath + "'; exit 0;;\n" +
 		"  *'get externalsecrets'*) echo '{\"items\":[]}'; exit 0;;\n" +
+		"  *'get namespace default -o json'*) cat '" + nsPath + "'; exit 0;;\n" +
+		"  *'get applications.argoproj.io'*) printf '%s' '" + liveProject + "'; exit 0;;\n" +
 		"esac\ncat >/dev/null 2>&1\nexit 0\n"
 	provStubTool(t, "kubectl", script)
 	return c
@@ -325,5 +344,102 @@ func TestByoReserved_AppNamespaceIsReservedForThePlatformsWorkloads(t *testing.T
 	}
 	if appNamespace != argocd.ByoLegacyDefaultNamespace {
 		t.Errorf("appNamespace = %q but the BYO move treats %q as the old shared namespace", appNamespace, argocd.ByoLegacyDefaultNamespace)
+	}
+}
+
+// TestConfigureByoCharts_ReleasesTheLegacyLabelsOnDefault: when this environment's charts move out
+// of "default", the two labels an earlier runner stamped on it are removed — only those two keys,
+// only with this environment's values — and nothing else on "default" is touched.
+func TestConfigureByoCharts_ReleasesTheLegacyLabelsOnDefault(t *testing.T) {
+	const remove = "label namespace default alethia.io/environment-id- alethia.io/managed-by-"
+	for _, tc := range []struct {
+		name, labels string
+		want         string // the expected label call, "" for none
+	}{
+		{"ours", `{"kubernetes.io/metadata.name":"default","alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-1","team":"x"}`, remove},
+		{"another environment's", `{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-2"}`, ""},
+		{"managed-by someone else", `{"alethia.io/managed-by":"helm","alethia.io/environment-id":"env-1"}`, "label namespace default alethia.io/environment-id-"},
+		{"never labelled", `{"kubernetes.io/metadata.name":"default"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newMoveClusterWith(t, `{"items":[]}`, `{"metadata":{"name":"default","labels":`+tc.labels+`}}`, "")
+			vc := legacyByoConfig("default")
+			vc.EnvironmentID = "env-1"
+			configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+			var labelCalls []string
+			for _, line := range strings.Split(c.calls(), "\n") {
+				if strings.HasPrefix(line, "label ") {
+					labelCalls = append(labelCalls, line)
+				}
+			}
+			want := []string{}
+			if tc.want != "" {
+				want = []string{tc.want}
+			}
+			if labelCalls == nil {
+				labelCalls = []string{}
+			}
+			if !reflect.DeepEqual(labelCalls, want) {
+				t.Errorf("label calls = %q, want %q", labelCalls, want)
+			}
+		})
+	}
+	// No move, no read of "default" at all.
+	c := newMoveCluster(t, `{"items":[]}`)
+	vc := legacyByoConfig("payments")
+	vc.EnvironmentID = "env-1"
+	configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
+	if strings.Contains(c.calls(), "namespace default") {
+		t.Errorf("default was read or edited with no chart moving out of it:\n%s", c.calls())
+	}
+}
+
+// TestRunAddOnStage_WarnsWhenAnOCIChartLeavesAnotherProject: an OCI BYO chart whose live Application
+// is under "infra" gets one Deploy-tab warning naming the chart, its hardened project and what that
+// changes. Already under its hardened project, or never applied: no warning.
+func TestRunAddOnStage_WarnsWhenAnOCIChartLeavesAnotherProject(t *testing.T) {
+	for _, tc := range []struct {
+		live string
+		warn bool
+	}{{"infra", true}, {"byo-acme-corp", false}, {"", false}} {
+		t.Run("live="+tc.live, func(t *testing.T) {
+			newMoveClusterWith(t, `{"items":[]}`, `{}`, tc.live)
+			stage, err := runAddOnStage(context.Background(), addOnStageInput{
+				VC: ociByoConfig("payments"), Facts: &argocd.InfraFacts{},
+				Refresh: func(context.Context, string) error { return nil },
+			}, io.Discard, io.Discard)
+			if err != nil {
+				t.Fatalf("runAddOnStage: %v", err)
+			}
+			if !tc.warn {
+				if len(stage.Warnings) != 0 {
+					t.Errorf("want no warning, got %v", stage.Warnings)
+				}
+				return
+			}
+			if len(stage.Warnings) != 1 {
+				t.Fatalf("want one warning, got %v", stage.Warnings)
+			}
+			w := stage.Warnings[0]
+			for _, want := range []string{`"payments"`, `"byo-acme-corp"`, `"infra"`, "ServiceAccount", "cluster-scoped", "left in place"} {
+				if !strings.Contains(w, want) {
+					t.Errorf("the warning does not say %q:\n%s", want, w)
+				}
+			}
+		})
+	}
+}
+
+// TestConfigureByoCharts_RefusesAChosenNamespaceWithTheByoPrefix: "byo-" is reserved for each chart's
+// derived namespace, so a chart that chose another chart's is refused, while its own is accepted.
+func TestConfigureByoCharts_RefusesAChosenNamespaceWithTheByoPrefix(t *testing.T) {
+	newByoCluster(t, "")
+	_, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("byo-api"), "tok", nil, nil, io.Discard, io.Discard))
+	if len(refused) != 1 || refused[0].ID != "legacy" || !strings.Contains(refused[0].Reason, "byo-legacy") {
+		t.Fatalf("refused = %+v, want the legacy chart refused for byo-api, naming its own byo-legacy", refused)
+	}
+	newByoCluster(t, "")
+	if _, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("byo-legacy"), "tok", nil, nil, io.Discard, io.Discard)); len(refused) != 0 {
+		t.Errorf("a chart's own derived namespace was refused: %+v", refused)
 	}
 }

@@ -33,7 +33,10 @@ Each deploy, Alethia:
 4. applies the **Application**, which then syncs on its own.
 
 A chart from an **OCI registry** follows the same contract. The one difference is step 2: its
-credential is the one from your registry connection, not a git token.
+credential is the one from your registry connection, not a git token. An OCI chart deployed before it
+followed this contract moves to the hardened project on its next deploy, and the **Deploy** tab says
+so: a resource the project does not permit then fails the chart's sync, and what the chart created
+earlier outside the project is left in place.
 
 Nothing about this is a one-time setup. The Application is re-applied on every deploy, so a change
 to any of the above takes effect on your next deploy rather than needing the add-on removed and
@@ -51,6 +54,9 @@ Some namespaces are reserved for the platform, and a chart that targets one is r
 - `default`, where the platform runs your environment's own services, with their Secrets and
   service accounts.
 
+A namespace you choose cannot start with `byo-` either, unless it is the chart's own: that prefix is
+kept for the namespace each chart gets by default.
+
 ### A chart that was attached in `default`
 
 Before this rule, a chart attached with no namespace ran in `default`. Such a chart, and a chart
@@ -61,8 +67,9 @@ attached with `default` itself, moves to its own namespace on the environment's 
    namespace.
 3. The chart's binding secrets are removed from `default` and created again in the new namespace.
 4. **What the chart created in `default` stays there.** Its project no longer permits `default`, so
-   ArgoCD no longer updates or deletes those resources, also when you remove the chart. Delete them
-   yourself when the chart runs in its new namespace. ArgoCD marked each one with an
+   ArgoCD no longer updates or deletes those resources, also when you remove the chart, and they keep
+   running in the platform's namespace until you delete them. Delete them yourself when the chart runs
+   in its new namespace. ArgoCD marked each one with an
    `argocd.argoproj.io/tracking-id` annotation that starts with `addon-<chart id>:`.
 
 Nothing else in `default` is changed. To keep the new namespace in the chart's settings, attach the

@@ -92,10 +92,10 @@ const claimBody = z.object({
 });
 
 /** Claims as `runnerId` and returns the status and body text. */
-async function claim(runnerId = EXECUTOR) {
+async function claim(runnerId = EXECUTOR, headers: Record<string, string> = {}) {
 	verifyRunnerToken.mockResolvedValue({ runnerId, tokenHash: "h", operator: "self", error: null });
 	const { POST } = await import("@/app/api/jobs/claim/route");
-	const res = await POST(new Request("http://localhost/api/jobs/claim", { method: "POST" }));
+	const res = await POST(new Request("http://localhost/api/jobs/claim", { method: "POST", headers }));
 	return { status: res.status, text: await res.text() };
 }
 
@@ -170,5 +170,36 @@ describe("POST /api/jobs/claim — runner-lifecycle token handoff", () => {
 			runner_name: "edge",
 		});
 		expect(updates).toEqual([]);
+	});
+});
+
+// #6445: a runner is served `addons[].byo` only when it advertises that it reads it. A runner built
+// before the marker decodes the snapshot strictly and would fail the job on the unknown key, so it is
+// served the snapshot as it was before the marker (lib/runners/snapshot-capabilities.ts).
+describe("POST /api/jobs/claim — snapshot keys gated on the runner's capabilities", () => {
+	const byoSnapshot = {
+		project_name: "acme",
+		addons: [
+			{ id: "payments", source: "helm", byo: true, chartRepo: "oci://ghcr.io/acme", namespace: "byo-payments" },
+			{ id: "reloader", chartRepo: "https://stakater.github.io/stakater-charts", namespace: "reloader" },
+		],
+	};
+	const addons = z.object({ addons: z.array(z.record(z.string(), z.unknown())) });
+
+	it("omits the BYO marker for a runner that does not advertise it, and stores nothing", async () => {
+		seed("DEPLOY", byoSnapshot);
+		const { status, text } = await claim();
+		expect(status).toBe(200);
+		const served = addons.parse(claimBody.parse(JSON.parse(text)).job.config_snapshot);
+		expect(served.addons.map((a) => "byo" in a)).toEqual([false, false]);
+		expect(served.addons[0]).toMatchObject({ id: "payments", namespace: "byo-payments" });
+		expect(updates.filter((u) => u.table === jobs)).toEqual([]);
+	});
+
+	it("keeps the BYO marker for a runner that advertises it", async () => {
+		seed("DEPLOY", byoSnapshot);
+		const { text } = await claim(EXECUTOR, { "X-Runner-Capabilities": "addon-byo-marker" });
+		const served = addons.parse(claimBody.parse(JSON.parse(text)).job.config_snapshot);
+		expect(served.addons[0]).toMatchObject({ id: "payments", byo: true });
 	});
 });
