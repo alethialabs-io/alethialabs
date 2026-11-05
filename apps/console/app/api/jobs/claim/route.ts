@@ -86,12 +86,21 @@ export async function POST(req: Request) {
 			.where(eq(runners.id, runnerId))
 			.limit(1);
 
+		// The capabilities this runner advertised (lib/runners/snapshot-capabilities.ts). They go INTO
+		// the claim, which stamps them on runners.capabilities and leaves a job needing one this runner
+		// lacks QUEUED while a live runner in the job's pool has it (programmables.sql,
+		// live_runner_has_capabilities). Joined into one text value and split in SQL, because a JS array
+		// in a drizzle `sql` template expands into a list of parameters, not one array. A capability name
+		// never contains a comma.
+		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
+		const capabilityList = [...capabilities].join(",");
+
 		// claim_next_job atomically claims + returns the row, but raw execute over the
 		// prepare:false client yields Postgres-format timestamp strings the runner can't
 		// decode (it wants RFC3339). Use it only for the id, then re-read via a typed
 		// select so Drizzle maps timestamptz → Date → ISO in the JSON response.
 		const claimed = await db.execute<{ id: string }>(
-			sql`select id from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid)`,
+			sql`select id from claim_next_job(${runnerId}::uuid, ${tokenHash}, ${runner?.cloud_identity_id ?? null}::uuid, string_to_array(${capabilityList}::text, ','))`,
 		);
 
 		const claimedId = claimed[0]?.id;
@@ -132,9 +141,11 @@ export async function POST(req: Request) {
 
 		// A runner is served only snapshot keys it reads (lib/runners/snapshot-capabilities.ts). One
 		// case cannot be served safely by stripping — a DEPLOY with an OCI BYO chart to a runner that
-		// does not read the marker — so that job fails here with the fix in its reason, rather than
-		// deploying the chart outside its hardened project or waiting in the queue forever.
-		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
+		// does not read the marker. claim_next_job does not hand such a job to such a runner, except in
+		// three cases, and each lands here and fails with the fix in its reason: the job is ASSIGNED to
+		// this runner (no other runner may take it), no live runner in the job's pool advertises the
+		// capability (nobody else could run it), or the SQL reading of the snapshot
+		// (job_required_capabilities) ever disagrees with this one — the defence this check is kept for.
 		const capabilityRefusal = refusalForRunner(job.job_type, job.config_snapshot, capabilities);
 		if (capabilityRefusal) {
 			await db
