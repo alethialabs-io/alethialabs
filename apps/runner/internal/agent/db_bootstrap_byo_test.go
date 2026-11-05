@@ -406,30 +406,65 @@ func TestByoUsers_SweepPatternScope(t *testing.T) {
 	}
 }
 
-// TestByoUsers_PreflightVersionBranch: the PUBLIC CREATE revocation runs only below 150000, grants the
-// administrator and alethia_app BEFORE revoking, and then checks the result so a refused REVOKE (a
-// WARNING in Postgres) fails the run.
-func TestByoUsers_PreflightVersionBranch(t *testing.T) {
+// TestByoUsers_VersionFloor: the first thing the script does is refuse a server older than Postgres
+// 15, with the reason the binding lane also reports, before the lockout or any user. The old pre-15
+// preflight, which rewrote public's ACL, is gone; what remains in phase 2 is a CHECK that PUBLIC holds
+// no CREATE on public (a database upgraded from before 15 keeps that grant), and nothing in the script
+// grants or revokes on schema public.
+func TestByoUsers_VersionFloor(t *testing.T) {
 	got, _ := renderByoUsersSQL(oneUserInput())
-	pre := got[:strings.Index(got, "-- "+byoTestUser)]
-	order := []string{
-		"IF current_setting('server_version_num')::int < 150000",
-		"GRANT CREATE ON SCHEMA public TO CURRENT_USER;",
-		`GRANT CREATE ON SCHEMA public TO "alethia_app";`,
-		"REVOKE CREATE ON SCHEMA public FROM PUBLIC;",
-		"a.grantee = 0 AND a.privilege_type = 'CREATE'",
-		"RAISE EXCEPTION 'alethia byo-users: CREATE on schema public could not be revoked from PUBLIC'",
+	floor := strings.Index(got, "IF current_setting('server_version_num')::int < 150000 THEN\n    RAISE EXCEPTION 'alethia byo-users: "+byoPGFloorReason)
+	if floor < 0 {
+		t.Fatalf("no version floor raising %q:\n%s", byoPGFloorReason, got)
 	}
-	at := 0
-	for _, s := range order {
-		i := strings.Index(pre[at:], s)
-		if i < 0 {
-			t.Fatalf("preflight missing %q after offset %d:\n%s", s, at, pre)
+	for _, later := range []string{"\nBEGIN;\n", "ALTER ROLE %I NOLOGIN", `CREATE ROLE "` + byoTestUser + `"`} {
+		if i := strings.Index(got, later); i < floor {
+			t.Errorf("%q comes before the version floor", later)
 		}
-		at += i + len(s)
 	}
-	if strings.Index(got, "REVOKE CREATE ON SCHEMA public FROM PUBLIC") > strings.Index(got, "CREATE ROLE") {
-		t.Error("the preflight must run before any user is created")
+	check := strings.Index(got, "a.grantee = 0 AND a.privilege_type = 'CREATE') THEN\n    RAISE EXCEPTION 'alethia byo-users: PUBLIC holds CREATE on schema public")
+	phase2 := strings.Index(got, "-- phase 2:")
+	if check < phase2 || check > strings.Index(got, `CREATE ROLE "`+byoTestUser+`"`) {
+		t.Error("the PUBLIC CREATE check is not in phase 2 ahead of every user")
+	}
+	for _, bad := range []string{"ON SCHEMA public FROM", "ON SCHEMA public TO", "alethia_app"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("the script still contains %q: it must not rewrite public's ACL", bad)
+		}
+	}
+}
+
+// TestByoUsers_SkipRevoke: with an incomplete declared set the runner passes --skip-revoke, and the
+// script provisions the declared users but renders no lockout, no sweep and no pending list, so an
+// undeclared-by-accident binding is never revoked.
+func TestByoUsers_SkipRevoke(t *testing.T) {
+	in := oneUserInput()
+	in.SkipRevoke = true
+	got, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"NOLOGIN', r.rolname", "pg_terminate_backend", "REASSIGN OWNED BY %I", "DROP ROLE %I", byoPendingPrefix, "<> ALL"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("--skip-revoke still renders %q", bad)
+		}
+	}
+	for _, want := range []string{byoPGFloorReason, `CREATE ROLE "` + byoTestUser + `" NOLOGIN;`, "\\o /dev/termination-log\nSELECT a.rolname"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("--skip-revoke dropped %q", want)
+		}
+	}
+	if strings.Count(got, "\\o /dev/termination-log") != 1 {
+		t.Error("--skip-revoke should write the result once")
+	}
+	// The CLI flag reaches it.
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	env := mapEnv(map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword})
+	if err := runDBBootstrapByoUsers(context.Background(), []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser, "--out", path, "--skip-revoke"}, env); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); bytes.Contains(b, []byte("pg_terminate_backend")) {
+		t.Error("--skip-revoke on the command line did not reach the renderer")
 	}
 }
 
@@ -459,6 +494,14 @@ func TestByoUsers_LeastPrivilege(t *testing.T) {
 // goldenOneUser is the reviewed script for oneUserInput (salt bytes all 0x01).
 const goldenOneUser = `-- alethia db-bootstrap --byo-users (postgres). Apply with psql -X -v ON_ERROR_STOP=1 -f (not --single-transaction).
 -- Passwords are carried as SCRAM-SHA-256 verifiers only.
+-- phase 0: refuse a server older than Postgres 15, before anything changes
+DO $alethia_byo$
+BEGIN
+  IF current_setting('server_version_num')::int < 150000 THEN
+    RAISE EXCEPTION 'alethia byo-users: per-binding database users need PostgreSQL 15 or newer (this server is %)', current_setting('server_version');
+  END IF;
+END
+$alethia_byo$;
 -- phase 1: lock out every revocation candidate, committed on its own
 BEGIN;
 DO $alethia_byo$
@@ -488,27 +531,13 @@ BEGIN
     ORDER BY a.rolname);
 END
 $alethia_byo$;
--- phase 2: the preflight and every declared user, in one transaction
+-- phase 2: every declared user, in one transaction
 BEGIN;
 DO $alethia_byo$
 BEGIN
-  IF current_setting('server_version_num')::int < 150000 AND to_regnamespace('public') IS NOT NULL THEN
-    GRANT CREATE ON SCHEMA public TO CURRENT_USER;
-    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'alethia_app') THEN
-      GRANT CREATE ON SCHEMA public TO "alethia_app";
-    END IF;
-    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-    IF EXISTS (SELECT FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
-               WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: CREATE on schema public could not be revoked from PUBLIC';
-    END IF;
-    IF NOT has_schema_privilege(CURRENT_USER, 'public', 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: the administrator lost CREATE on schema public';
-    END IF;
-    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'alethia_app')
-       AND NOT has_schema_privilege('alethia_app', 'public', 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: alethia_app lost CREATE on schema public';
-    END IF;
+  IF EXISTS (SELECT FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+             WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE') THEN
+    RAISE EXCEPTION 'alethia byo-users: PUBLIC holds CREATE on schema public in this database (kept from a Postgres older than 15); revoke it before per-binding users can be provisioned';
   END IF;
 END
 $alethia_byo$;
@@ -672,7 +701,7 @@ func TestByoUsers_ThreePhases(t *testing.T) {
 		"\nCOMMIT;\n",
 		"PERFORM pg_terminate_backend(s.pid)",
 		"\nBEGIN;\n",
-		"server_version_num",
+		"PUBLIC holds CREATE on schema public",
 		`CREATE ROLE "` + byoTestUser + `" NOLOGIN;`,
 		"\nCOMMIT;\n",
 		"\\o /dev/termination-log\nSELECT a.rolname",

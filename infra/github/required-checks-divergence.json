@@ -25,9 +25,7 @@
     "expose. Deleting this file does not silence the guard — absent means empty, so every undeclared",
     "lead becomes a failure.",
     "",
-    "EMPTY IS THE CORRECT STEADY STATE for a lead that is meant to reach the ruleset. The two",
-    "`BYO users SQL — real Postgres (…)` records are not that kind: .mergify.yml satisfies them through an",
-    "`or:` the ruleset cannot express, so they stay until the job always reports (see their reason).",
+    "EMPTY IS THE CORRECT STEADY STATE. It is empty today because the two lists agree exactly.",
     "Add a record only while a check is deliberately ahead of the ruleset, and delete it in the PR",
     "that lands the apply."
   ],
@@ -36,17 +34,6 @@
       "Contexts required by .mergify.yml that `protect-dev` does not require yet.",
       "Each record: {context, reason, issue} — the issue being the one that tracks the apply."
     ],
-    "records": [
-      {
-        "context": "BYO users SQL — real Postgres (17-alpine)",
-        "reason": "Path-filtered matrix job: on a PR that does not touch the runner it reports only its unexpanded skipped name, which .mergify.yml accepts through an `or:`. The ruleset has no `or`, so protect-dev must not require this per-leg context until the job always reports.",
-        "issue": "#6465"
-      },
-      {
-        "context": "BYO users SQL — real Postgres (14-alpine)",
-        "reason": "Path-filtered matrix job: on a PR that does not touch the runner it reports only its unexpanded skipped name, which .mergify.yml accepts through an `or:`. The ruleset has no `or`, so protect-dev must not require this per-leg context until the job always reports.",
-        "issue": "#6465"
-      }
-    ]
+    "records": []
   }
 }

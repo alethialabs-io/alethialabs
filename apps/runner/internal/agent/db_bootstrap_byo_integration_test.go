@@ -19,10 +19,11 @@ import (
 // BYO users Job does (`psql -X -v ON_ERROR_STOP=1 -f`) against the database named by
 // ALETHIA_TEST_PG_ADMIN_DSN, a postgres:// URI for an administrator. CI's `byo-users-postgres` job
 // points it at a NON-superuser admin (LOGIN CREATEROLE CREATEDB, owner of the database) on Postgres
-// 17 and 14, to model a managed server's admin. Without the variable or psql the tests skip, unless
+// 17 and 14, to model a managed server's admin. The script needs Postgres 15 or newer, so on 14 the only
+// test that runs is the one asserting that refusal; the rest skip there by version. Without the variable or psql the tests skip, unless
 // ALETHIA_TEST_PG_REQUIRED=1, which turns the skip into a failure so CI cannot pass by not running.
 // They create and remove only roles and schemas named alethia_byo_* with hashes no namer produces
-// (all 'e' digits), one untagged decoy, one public-owner role and one scratch database.
+// (all 'e' digits), one untagged decoy and one scratch database.
 //
 //	ALETHIA_TEST_PG_ADMIN_DSN=postgres://… go test -tags integration -run ByoUsers ./internal/agent/
 
@@ -34,8 +35,7 @@ const (
 	pgPasswordA1 = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA1"
 	pgPasswordA2 = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA2"
 	pgPasswordB  = "BbbbbbbbbbbbbbbbbbbbbbbbbbbbbbB1"
-	pgOtherDB    = "alethia_byo_ci_other"     // a second database a revoke candidate owns something in
-	pgPublicOwn  = "alethia_byo_ci_publicown" // takes schema public away from the admin (pre-15 test)
+	pgOtherDB    = "alethia_byo_ci_other" // a second database a revoke candidate owns something in
 )
 
 // pgAdmin is the admin DSN and the database it names.
@@ -73,6 +73,14 @@ func (a *pgAdmin) inDB(db string) string {
 	u := *a.dsn
 	u.Path = "/" + db
 	return u.String()
+}
+
+// requires15 skips a test on a server older than Postgres 15, which the script refuses.
+func (a *pgAdmin) requires15() {
+	a.t.Helper()
+	if a.below15() {
+		a.t.Skip("per-binding users need Postgres 15 or newer; TestByoUsersPostgres_RefusesBelow15 covers this server")
+	}
 }
 
 // below15 reports whether the server is older than Postgres 15.
@@ -123,9 +131,17 @@ func (a *pgAdmin) apply(env string, users ...byoUser) []string {
 // the run failed before its result line), psql's combined output, and its error.
 func (a *pgAdmin) applyErr(env string, users ...byoUser) ([]string, string, error) {
 	a.t.Helper()
+	return a.applyInput(byoUsersInput{EnvironmentID: env, Users: users})
+}
+
+// applyInput is applyErr for a full input; the database and result path are filled in.
+func (a *pgAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
+	a.t.Helper()
 	dir := a.t.TempDir()
 	result := filepath.Join(dir, "result")
-	sql, err := renderByoUsersSQL(byoUsersInput{EnvironmentID: env, DBName: a.db, Users: users, ResultPath: result})
+	in.DBName, in.ResultPath = a.db, result
+	users := in.Users
+	sql, err := renderByoUsersSQL(in)
 	if err != nil {
 		a.t.Fatal(err)
 	}
@@ -166,6 +182,7 @@ func (a *pgAdmin) cleanup() {
 // TestByoUsersPostgres_Lifecycle: create, re-run, env-scoped revoke, and re-adopt against a real server.
 func TestByoUsersPostgres_Lifecycle(t *testing.T) {
 	a := newPgAdmin(t)
+	a.requires15()
 	a.cleanup()
 	t.Cleanup(a.cleanup)
 
@@ -261,19 +278,13 @@ func TestByoUsersPostgres_Lifecycle(t *testing.T) {
 	if got := strings.TrimSpace(a.query("SELECT count(*) FROM pg_roles WHERE rolname = '" + pgUserA + byoHolderSuffix + "'")); got != "0" {
 		t.Error("the holder survived re-adoption")
 	}
-
-	// Below 15 the preflight must have taken CREATE on public away from PUBLIC.
-	if v := strings.TrimSpace(a.query("SELECT current_setting('server_version_num')::int < 150000")); v == "t" {
-		if got := strings.TrimSpace(a.query("SELECT has_schema_privilege('public', 'public', 'CREATE')")); got != "f" {
-			t.Error("PUBLIC still holds CREATE on schema public")
-		}
-	}
 }
 
 // TestByoUsersPostgres_RefusesForeignRole: a pre-existing role with a declared name that this
 // environment did not tag fails the whole run, and nothing is provisioned.
 func TestByoUsersPostgres_RefusesForeignRole(t *testing.T) {
 	a := newPgAdmin(t)
+	a.requires15()
 	a.cleanup()
 	t.Cleanup(a.cleanup)
 	a.query("CREATE ROLE " + pgUntagged + " NOLOGIN")
@@ -308,6 +319,7 @@ func TestByoUsersPostgres_RefusesForeignRole(t *testing.T) {
 // Once the object is gone, the next run completes the revocation.
 func TestByoUsersPostgres_RevokeFailsSafe(t *testing.T) {
 	a := newPgAdmin(t)
+	a.requires15()
 	a.cleanup()
 	t.Cleanup(a.cleanup)
 	a.apply("env-a", byoUser{pgUserA, pgPasswordA1}, byoUser{pgUserC, pgPasswordA1})
@@ -350,34 +362,74 @@ func TestByoUsersPostgres_RevokeFailsSafe(t *testing.T) {
 	}
 }
 
-// TestByoUsersPostgres_PreflightRefusedFailsClosed: below 15, when the admin may not revoke CREATE on
-// public from PUBLIC (public owned by another role — RDS's rdsadmin, say), Postgres only WARNS on the
-// REVOKE; the preflight's check must turn that into a failed run with no user provisioned.
-func TestByoUsersPostgres_PreflightRefusedFailsClosed(t *testing.T) {
+// TestByoUsersPostgres_RefusesBelow15: on a server older than Postgres 15 the run fails with the
+// floor's reason before it changes anything. Phase 0 runs ahead of the lockout, so even an
+// already-tagged undeclared role is left as it was, and no user is created.
+func TestByoUsersPostgres_RefusesBelow15(t *testing.T) {
 	a := newPgAdmin(t)
 	if !a.below15() {
-		t.Skip("the preflight acts only below Postgres 15")
+		t.Skip("this server is Postgres 15 or newer")
 	}
 	a.cleanup()
 	t.Cleanup(a.cleanup)
-	a.query("CREATE ROLE " + pgPublicOwn + " NOLOGIN")
-	a.query("GRANT " + pgPublicOwn + " TO CURRENT_USER")
-	a.query("GRANT CREATE ON SCHEMA public TO PUBLIC")
-	a.query("ALTER SCHEMA public OWNER TO " + pgPublicOwn)
-	a.query("REVOKE " + pgPublicOwn + " FROM CURRENT_USER")
-	t.Cleanup(func() {
-		a.query("GRANT " + pgPublicOwn + " TO CURRENT_USER")
-		a.query("ALTER SCHEMA public OWNER TO CURRENT_USER")
-		a.query("DROP ROLE " + pgPublicOwn)
-	})
+	a.query("CREATE ROLE " + pgUserC + " LOGIN")
+	a.query("COMMENT ON ROLE " + pgUserC + " IS 'alethia-env:env-a'")
 	_, out, err := a.applyErr("env-a", byoUser{pgUserA, pgPasswordA1})
 	if err == nil {
-		t.Fatalf("the run succeeded although PUBLIC kept CREATE on public:\n%s", out)
+		t.Fatalf("the run succeeded on a server older than 15:\n%s", out)
 	}
-	if !strings.Contains(out, "could not be revoked from PUBLIC") {
-		t.Errorf("the failure does not state the cause:\n%s", out)
+	if !strings.Contains(out, byoPGFloorReason) {
+		t.Errorf("the refusal does not state the floor:\n%s", out)
 	}
 	if got := strings.TrimSpace(a.query("SELECT count(*) FROM pg_roles WHERE rolname = '" + pgUserA + "'")); got != "0" {
-		t.Error("a refused preflight still provisioned a user")
+		t.Error("a user was provisioned below the floor")
+	}
+	if got := strings.TrimSpace(a.query("SELECT rolcanlogin FROM pg_roles WHERE rolname = '" + pgUserC + "'")); got != "t" {
+		t.Error("the refusal ran after the lockout: nothing may change below the floor")
+	}
+}
+
+// TestByoUsersPostgres_PublicCreateRefused: on 15 or newer, a database where PUBLIC still holds CREATE
+// on public (kept by an upgrade from before 15) gets no per-binding user, with a reason. The check
+// rewrites nothing: PUBLIC's grant is still there afterwards.
+func TestByoUsersPostgres_PublicCreateRefused(t *testing.T) {
+	a := newPgAdmin(t)
+	a.requires15()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.query("GRANT CREATE ON SCHEMA public TO PUBLIC")
+	t.Cleanup(func() { a.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC") })
+	_, out, err := a.applyErr("env-a", byoUser{pgUserA, pgPasswordA1})
+	if err == nil {
+		t.Fatalf("the run provisioned into a database whose public PUBLIC may write:\n%s", out)
+	}
+	if !strings.Contains(out, "PUBLIC holds CREATE on schema public") {
+		t.Errorf("the refusal does not state the cause:\n%s", out)
+	}
+	if got := strings.TrimSpace(a.query("SELECT count(*) FROM pg_roles WHERE rolname = '" + pgUserA + "'")); got != "0" {
+		t.Error("a user was provisioned although PUBLIC holds CREATE on public")
+	}
+	if got := strings.TrimSpace(a.query("SELECT has_schema_privilege('public', 'public', 'CREATE')")); got != "t" {
+		t.Error("the check rewrote public's ACL; it must only refuse")
+	}
+}
+
+// TestByoUsersPostgres_SkipRevoke: with an incomplete declared set the runner passes --skip-revoke.
+// The run provisions what is declared, and an undeclared user of this environment keeps LOGIN.
+func TestByoUsersPostgres_SkipRevoke(t *testing.T) {
+	a := newPgAdmin(t)
+	a.requires15()
+	a.cleanup()
+	t.Cleanup(a.cleanup)
+	a.apply("env-a", byoUser{pgUserA, pgPasswordA1})
+	got, out, err := a.applyInput(byoUsersInput{EnvironmentID: "env-a", Users: []byoUser{{pgUserB, pgPasswordB}}, SkipRevoke: true})
+	if err != nil {
+		t.Fatalf("--skip-revoke run failed: %v\n%s", err, out)
+	}
+	if strings.Join(got, ",") != pgUserB {
+		t.Errorf("result = %v, want [%s]", got, pgUserB)
+	}
+	if o, err := psqlRun(a.as(pgUserA, pgPasswordA1), "SELECT 1"); err != nil {
+		t.Errorf("--skip-revoke locked out an undeclared user: %v\n%s", err, o)
 	}
 }

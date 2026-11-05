@@ -155,23 +155,6 @@ queue_rules:
       #
       # Verified rather than assumed: it reported `pass` in 5s on #3179, an ordinary dev PR.
       - "check-success=contribution-legal"
-      # BYO users SQL on real Postgres (#6465), one context per matrix leg. The job is path-filtered
-      # (detect-changes' `runner`), and a matrix job skipped at JOB level reports ONE check under its
-      # UNEXPANDED name — `… (${{ matrix.postgres }})` — never the per-leg names. So each leg is
-      # satisfied by its own success or neutral, or by that unexpanded name being skipped. A plain
-      # `check-success=` would wedge every PR that does not touch the runner. Mergify-only on purpose,
-      # and declared in infra/github/required-checks-divergence.json: protect-dev cannot express the
-      # `or`, so the ruleset must not require these contexts.
-      - or:
-          - "check-success=BYO users SQL — real Postgres (17-alpine)"
-          - "check-neutral=BYO users SQL — real Postgres (17-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (17-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (${{ matrix.postgres }})"
-      - or:
-          - "check-success=BYO users SQL — real Postgres (14-alpine)"
-          - "check-neutral=BYO users SQL — real Postgres (14-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (14-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (${{ matrix.postgres }})"
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
@@ -198,17 +181,6 @@ merge_protections:
       # Also the same reason: required by protect-dev, so this file has to wait for it or the merge
       # is refused after the queue has already decided. See merge_conditions above.
       - "check-success=contribution-legal"
-      # Same two legs, same `or` shape and reason — see the note in the dev queue's merge_conditions.
-      - or:
-          - "check-success=BYO users SQL — real Postgres (17-alpine)"
-          - "check-neutral=BYO users SQL — real Postgres (17-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (17-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (${{ matrix.postgres }})"
-      - or:
-          - "check-success=BYO users SQL — real Postgres (14-alpine)"
-          - "check-neutral=BYO users SQL — real Postgres (14-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (14-alpine)"
-          - "check-skipped=BYO users SQL — real Postgres (${{ matrix.postgres }})"
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).

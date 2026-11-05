@@ -153,13 +153,23 @@ runner creates for it (`alethia-byo-db-users`), which holds no workload. Every o
 **Three phases, so that revocation fails safe and never blocks provisioning.** `db-bootstrap` writes the
 script only to the file named by `--out` (mode 0600; it refuses to run without one), never to stdout,
 which in a pod is its log. The script carries its own transactions and is applied with
-`psql -X -v ON_ERROR_STOP=1 -f`, not `--single-transaction`:
+`psql -X -v ON_ERROR_STOP=1 -f`, not `--single-transaction`. A version floor runs before the three
+phases (*Postgres 15 or newer*, below):
 
 1. *Lockout*, committed on its own first: every revocation candidate (§5) is set `NOLOGIN`. Only after
    that has committed are its sessions terminated, so a reconnect cannot slip in between.
-2. *Provision*, one transaction: the pre-15 preflight and every declared user. It applies for every
-   declared user or for none. The result line is written right after it commits.
+2. *Provision*, one transaction: a check that `PUBLIC` holds no `CREATE` on schema `public` (below), then
+   every declared user. It applies for every declared user or for none. The result line is written
+   right after it commits.
 3. *Sweep*: each candidate's reassign and drop, each in a transaction of its own.
+
+**Revocation runs only when the declared set is complete.** The declared set is the runner's: every
+binding the configuration declares for the environment. If any binding failed to resolve or render on a
+deploy, the set is incomplete. A binding missing from it would read as removed, and its user would be
+revoked while the binding is still declared. On such a deploy the runner passes `--skip-revoke`. The
+script then renders phase 2 only, with no lockout, no sweep and no `revocation-pending` lines. The
+declared users that did resolve are still provisioned. This is the ExternalSecret prune's rule (§4): any
+binding failure skips the prune.
 
 A drop can be blocked by something the sweep cannot reach. A role that owns an object in another
 database cannot be dropped, because `REASSIGN OWNED` and `DROP OWNED` act on the current database only.
@@ -194,7 +204,8 @@ configured and may contain `-`; nothing relies on a name's shape.
 **Postgres**
 
 ```sql
--- preflight: if server_version_num < 150000, PUBLIC may still CREATE in schema public (see below)
+-- phase 0: RAISE unless server_version_num >= 150000 (Postgres 15 or newer, see below)
+-- phase 2 opens with: RAISE if PUBLIC holds CREATE on schema public (see below)
 CREATE ROLE "alethia_byo_<h>" LOGIN PASSWORD 'SCRAM-SHA-256$4096:<salt>$<stored>:<server>' CONNECTION LIMIT 20;
                                                       -- or ALTER ROLE … PASSWORD '<verifier>' if it exists
 COMMENT ON ROLE "alethia_byo_<h>" IS 'alethia-env:<environment-id>';
@@ -221,20 +232,29 @@ against 32 random alphanumeric characters, but it is still credential material. 
 DDL on a server that hosts per-binding users, or should treat that log as sensitive.
 
 No `CREATEDB`, `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, no membership in any role, no grant on
-schema `public` or on any other schema. Postgres 15 and later deny `CREATE` on `public` to `PUBLIC`. The
-Job does not assume the server is 15+: it reads `server_version_num`, and below 150000 it first grants
-`CREATE` on `public` explicitly to the roles that hold it today through `PUBLIC` (the administrator, and
-`alethia_app` where it exists), then revokes `CREATE` on `public` from `PUBLIC`. If any of that is
-refused, the transaction fails and no user is provisioned. Postgres only warns when a `GRANT` or
-`REVOKE` is refused, so after the revoke the Job reads the schema's ACL and fails when `PUBLIC` still
-holds `CREATE`.
+schema `public` or on any other schema.
 
-**Known limit, fail-closed.** On a pre-15 server where `public` belongs to a role the administrator
-cannot act for, the revoke is refused, every BYO users run fails, and no per-binding user is ever
-provisioned there. On RDS that role can be `rdsadmin`. The bindings stay unsatisfied, never bound to
-the administrator. The fix is to upgrade to Postgres 15 or later, or to have an operator revoke
-`CREATE` on `public` from `PUBLIC`. CI tests this case (`TestByoUsersPostgres_PreflightRefusedFailsClosed`
-on Postgres 14). What `PUBLIC` keeps by default — `CONNECT`
+**Postgres 15 or newer.** Before Postgres 15, `PUBLIC` may `CREATE` in schema `public` by default, so a
+per-binding user could create objects outside its own schema. This design does not rewrite that default,
+which would change what every first-class role may do. It sets a floor instead:
+
+- Phase 0 refuses a server older than 15 before anything changes, with *per-binding database users
+  need PostgreSQL 15 or newer*.
+- Below 15 the runner does not run the BYO users Job, and the binding lane reports each per-binding
+  credential facet unsatisfied with that same reason (#6466). Such a binding is never bound to the
+  administrator.
+
+An earlier revision of this design instead granted `CREATE` on `public` to the administrator and
+`alethia_app`, then revoked it from `PUBLIC`. That preflight is removed. On a pre-15 server where the
+administrator cannot manage `public` (RDS's `rdsadmin` owns it), it could only fail, and on any other it
+rewrote a first-class default.
+
+What remains is a check. Postgres 15 removed the default only for databases created on 15 or later. A
+database carried over from an older major, by `pg_upgrade` or by a dump and restore, keeps its old ACL.
+So phase 2 opens by refusing an environment database where `PUBLIC` still holds `CREATE` on `public`,
+naming the cause, and changes nothing. Revoking it is the operator's decision.
+
+What `PUBLIC` keeps by default — `CONNECT`
 and `TEMP` on databases, `USAGE` on `public` — is unchanged, because revoking it would change what the
 first-class services may do. It grants no access to any table.
 
@@ -245,13 +265,14 @@ following:
 - `CONNECT` to every other database on the server whose `CONNECT` privilege `PUBLIC` still holds, which
   is the default;
 - create large objects there, because that needs no grant;
-- below Postgres 15, create objects in those databases' `public` schemas, because the preflight runs in
-  the environment's database only.
+- create objects in the `public` schema of any other database that was carried over from a Postgres
+  older than 15 and still grants `PUBLIC` `CREATE` there, because the check covers the environment's
+  database only.
 
 It gains no access to another role's tables by any of these. An object created this way is out of
 reach of `REASSIGN OWNED` and `DROP OWNED`, which is why phase 3 isolates each drop (above). A server
-that must close these gaps needs `CONNECT` revoked from `PUBLIC` on its other databases, and, below 15,
-the same preflight run in each of them. This design does neither.
+that must close these gaps needs `CONNECT` revoked from `PUBLIC` on its other databases, and `CREATE`
+revoked from `PUBLIC` on any carried-over `public` schema. This design does neither.
 
 **The administrator's membership.** The Job grants each per-binding role, and each holder role (§5), to
 the administrator it connects as (`GRANT … TO CURRENT_USER`). The membership is permanent:
@@ -380,7 +401,7 @@ moving them means reassigning ownership of existing data.
 |---|---|---|---|
 | 1 | This ADR; the namer; the per-binding resolver and renderer; the `db-user` source label and the prune rule; the dark flag `ALETHIA_BYO_DB_USERS_ENABLED` | `docs/adr/byo-binding-db-users.md`, `packages/core/manifests/chart_bindings*.go`, `packages/core/argocd/binding_secrets*.go`, `packages/core/provisioner/byo_charts*.go` | **landed with this document.** With the flag on, every BYO database credential facet is unsatisfied (no user is provisioned yet) and the binding prune withdraws every BYO database binding ExternalSecret that reads the administrative credential (on a deploy where the prune runs: any binding failure skips it). Off by default. |
 | 2 (#6464) | The store half: the declared set → `custom_secrets` entries on AWS, GCP and Azure; the reserved prefix; an Azure `custom_secret_names` output | `packages/core/cloud/{aws,gcp,azure}_provider*.go`, `packages/core/cloud/byo_db_users*.go`, `infra/templates/project/azure/outputs.tf` | creates secrets nothing reads until slice 4 |
-| 3 (#6465) | The SQL half: `alethia db-bootstrap --byo-users` for Postgres (create with a SCRAM verifier, tag, scope, re-adopt, rotate, env-scoped revoke, the pre-15 preflight) | `apps/runner/internal/agent/db_bootstrap_byo*.go` | pure, golden-tested |
+| 3 (#6465) | The SQL half: `alethia db-bootstrap --byo-users` for Postgres (create with a SCRAM verifier, tag, scope, re-adopt, rotate, env-scoped revoke, the Postgres 15 floor) | `apps/runner/internal/agent/db_bootstrap_byo*.go` | pure, golden-tested |
 | 4 (#6466) | The Job half: render and run the BYO users Job per cloud in its own namespace with one Secret per user, read its result, feed `DBUsers.Provisioned`, its own cleanup and sweep | `packages/core/manifests/byo_db_users*.go`, `packages/core/provisioner/byo_db_users*.go`, `packages/core/provisioner/byo_charts.go` (`provisionedByoDBUsers`) | after 2 and 3; the flag becomes usable on Postgres |
 | 5 (#6467) | MySQL: a non-secret `database` facet, and the MySQL dialect of slice 3 | the facet enum, its migration and console form; `db_bootstrap_byo_mysql*.go`; `chart_bindings.go` | needs a migration |
 

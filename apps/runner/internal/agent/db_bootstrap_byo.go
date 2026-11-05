@@ -26,14 +26,17 @@ import (
 // (docs/adr/byo-binding-db-users.md §3, §5; slice 3 of #6438). It is pure: it reads the declared users
 // from its arguments and their passwords from its environment, and writes SQL. The BYO users Job
 // (slice 4) applies that SQL as the database administrator with `psql -X -v ON_ERROR_STOP=1 -f <file>`
-// — NOT --single-transaction: the script carries its own transactions, in three phases (ADR §3):
+// — NOT --single-transaction: the script carries its own transactions, in three phases (ADR §3),
+// after a version floor:
 //
+//  0. FLOOR: a server older than Postgres 15 is refused before anything changes (ADR §3).
 //  1. LOCKOUT, committed first: every revocation candidate is set NOLOGIN, and once that has committed
 //     its sessions are terminated. Revocation therefore fails SAFE: whatever later blocks a drop (an
 //     object the role owns in another database, say), the role can no longer log in.
-//  2. PROVISION: the preflight and every declared user, in one transaction that commits for every
-//     declared user or for none. The result line is written right after it commits, so it reports
-//     committed state only, and with ON_ERROR_STOP a failed run never reaches it.
+//  2. PROVISION: every declared user, after a check that PUBLIC holds no CREATE on schema public, in
+//     one transaction that commits for every declared user or for none. The result line is written
+//     right after it commits, so it reports committed state only, and with ON_ERROR_STOP a failed run
+//     never reaches it.
 //  3. SWEEP: each candidate's reassign/drop in a transaction of its own. A candidate that cannot be
 //     dropped is rolled back alone, reported as a WARNING naming it, and stays NOLOGIN; the next run
 //     retries. It never touches phase 2, which has already committed, so one stuck role cannot hold
@@ -51,7 +54,9 @@ import (
 //     and is dropped, its objects handed to a holder role of its own so that a later re-declaration
 //     gets every one of them back. A user that cannot be dropped stays locked out and is reported as
 //     revocation-pending, without affecting anything else in the run;
-//   - below Postgres 15, PUBLIC no longer holds CREATE on schema public, or the run fails.
+//   - nothing runs on a server older than Postgres 15, and no user is provisioned in a database where
+//     PUBLIC still holds CREATE on schema public;
+//   - with --skip-revoke (an incomplete declared set), phases 1 and 3 are not rendered at all.
 
 // byoUserPattern is the shape of a per-binding user (manifests.ByoBindingDBUser). It is anchored at
 // both ends on purpose: the revocation sweep matches the same pattern in SQL, and the anchors are what
@@ -115,6 +120,10 @@ type byoUsersInput struct {
 	Users         []byoUser // the declared set; empty means every tagged user of this env is revoked
 	ResultPath    string    // where psql's \o writes the provisioned set (the termination message path)
 	Salt          io.Reader // random source for SCRAM salts; nil means crypto/rand
+	// SkipRevoke renders provisioning only: no lockout, no sweep. The runner sets it when its declared
+	// set is incomplete (a binding failed to resolve or render), as the ExternalSecret prune is
+	// skipped then, because an incomplete set would revoke a binding that is still declared.
+	SkipRevoke bool
 }
 
 // pgQuoteIdent double-quotes a Postgres identifier, doubling any embedded quote, as quote_ident does.
@@ -177,31 +186,31 @@ func doBlock(body string) (string, error) {
 	return "DO " + byoDollarTag + "\n" + body + "\n" + byoDollarTag + ";", nil
 }
 
-// byoPublicPreflight is the pre-15 preflight (ADR §3). Below 150000 PUBLIC may CREATE in schema
-// public, which would give every per-binding user a schema it does not own. It grants CREATE there
-// explicitly to the roles that hold it through PUBLIC today (the administrator, and alethia_app where
-// it exists), revokes it from PUBLIC, and then CHECKS the result: a GRANT or REVOKE by a role that may
-// not make it is only a WARNING in Postgres, so the check is what turns "refused" into a failed run.
-func byoPublicPreflight() (string, error) {
-	app := pgQuoteLiteral(keylessBootstrapRole)
+// byoPGFloorReason is why a server older than Postgres 15 gets no per-binding user. The binding lane
+// reports the same words as the facet's unsatisfied reason (#6466).
+const byoPGFloorReason = "per-binding database users need PostgreSQL 15 or newer"
+
+// byoVersionFloorSQL is phase 0: the run refuses a server older than Postgres 15 before it changes
+// anything. Below 15, PUBLIC may CREATE in schema public by default, so a per-binding user could
+// create objects outside its own schema. Rather than rewrite that default for every role on the
+// server, this design sets a floor (ADR §3).
+func byoVersionFloorSQL() (string, error) {
 	return doBlock(`BEGIN
-  IF current_setting('server_version_num')::int < 150000 AND to_regnamespace('public') IS NOT NULL THEN
-    GRANT CREATE ON SCHEMA public TO CURRENT_USER;
-    IF EXISTS (SELECT FROM pg_roles WHERE rolname = ` + app + `) THEN
-      GRANT CREATE ON SCHEMA public TO ` + pgQuoteIdent(keylessBootstrapRole) + `;
-    END IF;
-    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-    IF EXISTS (SELECT FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
-               WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: CREATE on schema public could not be revoked from PUBLIC';
-    END IF;
-    IF NOT has_schema_privilege(CURRENT_USER, 'public', 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: the administrator lost CREATE on schema public';
-    END IF;
-    IF EXISTS (SELECT FROM pg_roles WHERE rolname = ` + app + `)
-       AND NOT has_schema_privilege(` + app + `, 'public', 'CREATE') THEN
-      RAISE EXCEPTION 'alethia byo-users: alethia_app lost CREATE on schema public';
-    END IF;
+  IF current_setting('server_version_num')::int < 150000 THEN
+    RAISE EXCEPTION 'alethia byo-users: ` + byoPGFloorReason + ` (this server is %)', current_setting('server_version');
+  END IF;
+END`)
+}
+
+// byoPublicCreateCheckSQL refuses an environment database where PUBLIC still holds CREATE on schema
+// public. Postgres 15 removed that default only for databases created on 15 or later; a database
+// carried over from an older major by pg_upgrade or a dump keeps its old ACL. It is a check, not a fix:
+// revoking it would change what every first-class role may do, which is an operator's decision.
+func byoPublicCreateCheckSQL() (string, error) {
+	return doBlock(`BEGIN
+  IF EXISTS (SELECT FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+             WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE') THEN
+    RAISE EXCEPTION 'alethia byo-users: PUBLIC holds CREATE on schema public in this database (kept from a Postgres older than 15); revoke it before per-binding users can be provisioned';
   END IF;
 END`)
 }
@@ -431,7 +440,7 @@ func validateByoUsers(users []byoUser) ([]byoUser, error) {
 	return out, nil
 }
 
-// renderByoUsersSQL renders the whole per-binding script: header, the pre-15 preflight, each declared
+// renderByoUsersSQL renders the whole per-binding script: header, the version floor, each declared
 // user, the revocation sweep, and the result line — as the three phases the package comment
 // describes. It is meant for `psql -X -v ON_ERROR_STOP=1 -f`; every statement is idempotent, so a
 // second run converges on the same state (only the verifiers' salts differ).
@@ -455,20 +464,30 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 	if salt == nil {
 		salt = rand.Reader
 	}
-	preflight, err := byoPublicPreflight()
+	floor, err := byoVersionFloorSQL()
 	if err != nil {
 		return "", err
 	}
-	lockout, err := byoLockoutSQL(in.EnvironmentID, users)
+	publicCheck, err := byoPublicCreateCheckSQL()
 	if err != nil {
 		return "", err
 	}
 	stmts := []string{
 		"-- alethia db-bootstrap --byo-users (postgres). Apply with psql -X -v ON_ERROR_STOP=1 -f (not --single-transaction).",
 		"-- Passwords are carried as SCRAM-SHA-256 verifiers only.",
+		"-- phase 0: refuse a server older than Postgres 15, before anything changes",
+		floor,
 	}
-	stmts = append(stmts, lockout...)
-	stmts = append(stmts, "-- phase 2: the preflight and every declared user, in one transaction", "BEGIN;", preflight)
+	if in.SkipRevoke {
+		stmts = append(stmts, "-- revocation skipped: the declared set is incomplete")
+	} else {
+		lockout, err := byoLockoutSQL(in.EnvironmentID, users)
+		if err != nil {
+			return "", err
+		}
+		stmts = append(stmts, lockout...)
+	}
+	stmts = append(stmts, "-- phase 2: every declared user, in one transaction", "BEGIN;", publicCheck)
 	for _, u := range users {
 		s := make([]byte, scramSaltLen)
 		if _, err := io.ReadFull(salt, s); err != nil {
@@ -488,6 +507,9 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 	// have reported a user as provisioned.
 	stmts = append(stmts, "COMMIT;")
 	stmts = append(stmts, byoResultSQL(in.EnvironmentID, in.ResultPath, users, false)...)
+	if in.SkipRevoke {
+		return strings.Join(stmts, "\n") + "\n", nil
+	}
 	revoke, err := byoRevokeSQL(in.EnvironmentID, users)
 	if err != nil {
 		return "", err
@@ -526,6 +548,7 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 	usersFlag := fs.String("users", "", "comma-separated declared per-binding users (required; may be empty)")
 	resultPath := fs.String("result-path", "/dev/termination-log", "file the provisioned set is written to")
 	out := fs.String("out", "", "write the SQL to this file, 0600 (required: the SQL is never printed)")
+	skipRevoke := fs.Bool("skip-revoke", false, "provision only, revoke nothing (the declared set is incomplete)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -562,6 +585,7 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 		users = append(users, byoUser{Name: name, Password: pw})
 	}
 	sql, err := renderByoUsersSQL(byoUsersInput{
+		SkipRevoke:    *skipRevoke,
 		EnvironmentID: *envID,
 		DBName:        *dbName,
 		Users:         users,
