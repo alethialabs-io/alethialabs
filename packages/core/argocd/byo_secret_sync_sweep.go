@@ -389,11 +389,7 @@ func byoBindingSpecMatches(live, want map[string]any) bool {
 // esoNormalizeSpec returns spec with ESO's v1beta1 ExternalSecret defaults filled in and every scalar
 // as text. It never mutates its argument.
 func esoNormalizeSpec(spec map[string]any) any {
-	s := esoTextScalars(spec)
-	m, _ := s.(map[string]any)
-	if m == nil {
-		return s
-	}
+	m, _ := esoTextScalars(spec).(map[string]any) // a map in, a map out
 	esoSpecDefaults(m)
 	if ri, ok := m["refreshInterval"].(string); ok {
 		if d, err := time.ParseDuration(ri); err == nil {

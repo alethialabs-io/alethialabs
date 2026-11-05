@@ -349,3 +349,148 @@ func TestSweepByoSecretSync_AConflictIsReportedNotRetried(t *testing.T) {
 		t.Errorf("the refused replace was not reported: %q", warnings)
 	}
 }
+
+// TestByoSweepPathSafe pins the path check: a DNS-1123 subdomain and nothing else.
+func TestByoSweepPathSafe(t *testing.T) {
+	for in, want := range map[string]bool{
+		"external-secrets.io": true, "v1beta1": true, "api-db": true, "a.b-c.d": true,
+		"": false, strings.Repeat("a", 254): false, strings.Repeat("a", 64): false,
+		"a..b": false, "Upper": false, "-lead": false, "a/b": false, "a b": false,
+	} {
+		if got := byoSweepPathSafe(in); got != want {
+			t.Errorf("byoSweepPathSafe(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestSweepByoSecretSync_EveryReadFailureDeletesNothing walks each read the sweep makes and fails it,
+// or answers it with something unusable. Every one stops the sweep before any write.
+func TestSweepByoSecretSync_EveryReadFailureDeletesNothing(t *testing.T) {
+	ns := sweepNS(t, map[string]map[string]string{"byo-pay": byoNSLabels("env-1")})
+	cases := []struct {
+		name  string
+		rules []stubRule
+	}{
+		{"namespace list fails", []stubRule{{Match: "get namespaces", Exit: 1}}},
+		{"namespace list is not JSON", []stubRule{{Match: "get namespaces", Stdout: "nope"}}},
+		{"group discovery fails", []stubRule{{Match: "get namespaces", Stdout: ns}, {Match: "get --raw /apis", Exit: 1}}},
+		{"group discovery is not JSON", []stubRule{{Match: "get namespaces", Stdout: ns}, {Match: "get --raw /apis", Stdout: "nope"}}},
+		{"a group name is not a path", []stubRule{{Match: "get namespaces", Stdout: ns}, {Match: "get --raw /apis",
+			Stdout: `{"groups":[{"name":"Bad_Group.external-secrets.io","preferredVersion":{"version":"v1"}}]}`}}},
+		{"resource discovery fails", []stubRule{{Match: "get namespaces", Stdout: ns},
+			{Match: "get --raw /apis/external-secrets.io/v1beta1", Exit: 1},
+			{Match: "get --raw /apis", Stdout: `{"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1beta1"}}]}`}}},
+		{"resource discovery is not JSON", []stubRule{{Match: "get namespaces", Stdout: ns},
+			{Match: "get --raw /apis/external-secrets.io/v1beta1", Stdout: "nope"},
+			{Match: "get --raw /apis", Stdout: `{"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1beta1"}}]}`}}},
+		{"a resource name is not a path", []stubRule{{Match: "get namespaces", Stdout: ns},
+			{Match: "get --raw /apis/external-secrets.io/v1beta1", Stdout: `{"resources":[{"name":"Bad Name","kind":"X","namespaced":true,"verbs":["list","delete"]}]}`},
+			{Match: "get --raw /apis", Stdout: `{"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1beta1"}}]}`}}},
+		{"an object listing is not JSON", append([]stubRule{{Match: "get namespaces", Stdout: ns},
+			{Match: "/namespaces/byo-pay/externalsecrets", Stdout: "nope"}}, sweepDiscovery(t)...)},
+		{"a listed object has no usable uid", append([]stubRule{{Match: "get namespaces", Stdout: ns},
+			{Match: "/namespaces/byo-pay/externalsecrets", Stdout: `{"items":[{"metadata":{"name":"x","namespace":"byo-pay","uid":"not-a-uid"}}]}`}}, sweepDiscovery(t)...)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stub := newKubectlStub(t, 0, append(c.rules, stubRule{Match: "/namespaces/", Stdout: emptyList})...)
+			var stdout, stderr bytes.Buffer
+			w := SweepByoSecretSyncObjects("env-1", nil, nil, &stdout, &stderr)
+			if stub.calledWith("delete") || stub.calledWith("replace") || len(w) != 0 {
+				t.Errorf("the sweep wrote after a failed read; calls: %v", stub.calls())
+			}
+			if !strings.Contains(stderr.String(), "not sweeping") {
+				t.Errorf("the stopped sweep was not reported: %s", stderr.String())
+			}
+		})
+	}
+}
+
+// TestSweepByoSecretSync_SkipsWhatItMustNotTouch: a resource that cannot be both listed and
+// deleted is not swept, an object a listing places in another namespace is ignored, and a delete the
+// API server refuses is logged without a Deploy-tab claim that it happened.
+func TestSweepByoSecretSync_SkipsWhatItMustNotTouch(t *testing.T) {
+	res := `{"resources":[{"name":"externalsecrets","kind":"ExternalSecret","namespaced":true,"verbs":["list","delete"]},` +
+		`{"name":"readonlies","kind":"ReadOnly","namespaced":true,"verbs":["list"]}]}`
+	stub := newKubectlStub(t, 0,
+		stubRule{Match: "get namespaces", Stdout: sweepNS(t, map[string]map[string]string{"byo-pay": byoNSLabels("env-1")})},
+		stubRule{Match: "delete --raw", Exit: 1},
+		stubRule{Match: "/namespaces/byo-pay/externalsecrets", Stdout: `{"items":[` +
+			`{"metadata":{"name":"elsewhere","namespace":"other","uid":"` + testUID + `"}},` +
+			`{"metadata":{"name":"chart-made","namespace":"byo-pay","uid":"` + testUID + `"}}]}`},
+		stubRule{Match: "get --raw /apis/external-secrets.io/v1beta1", Stdout: res},
+		stubRule{Match: "get --raw /apis", Stdout: `{"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1beta1"}}]}`},
+	)
+	var stdout, stderr bytes.Buffer
+	w := SweepByoSecretSyncObjects("env-1", nil, nil, &stdout, &stderr)
+	if stub.calledWith("readonlies") {
+		t.Errorf("a resource without the delete verb was listed; calls: %v", stub.calls())
+	}
+	if stub.calledWith("/elsewhere ") {
+		t.Errorf("an object outside the listed namespace was deleted; calls: %v", stub.calls())
+	}
+	if len(w) != 0 || !strings.Contains(stderr.String(), "failed to delete ExternalSecret byo-pay/chart-made") {
+		t.Errorf("a refused delete was reported as done (%q) or not logged: %s", w, stderr.String())
+	}
+}
+
+// TestByoRestoreBinding_RefusesWhatItCannotPin: a rendered document that does not parse, a live spec
+// that does not parse, a listing without a resourceVersion, and a rendered document naming another
+// object are each refused without a write.
+func TestByoRestoreBinding_RefusesWhatItCannotPin(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	squatted, _ := json.Marshal(map[string]any{"dataFrom": []any{"x"}})
+	base := byoSweepObject{namespace: "byo-pay", name: "api-db", uid: testUID, resourceVersion: "1", spec: squatted}
+	noRV := base
+	noRV.resourceVersion = ""
+	badSpec := base
+	badSpec.spec = json.RawMessage("nope")
+	cases := []struct {
+		name    string
+		o       byoSweepObject
+		doc     string
+		warning bool
+	}{
+		{"rendered document does not parse", base, "a: [", false},
+		{"live spec does not parse", badSpec, renderedBinding, false},
+		{"no resourceVersion in the listing", noRV, renderedBinding, true},
+		{"rendered document names another object", base, strings.Replace(renderedBinding, "name: api-db\n  namespace", "name: other\n  namespace", 1), true},
+	}
+	for _, c := range cases {
+		var stdout, stderr bytes.Buffer
+		w := byoRestoreBinding(c.o, c.doc, &stdout, &stderr)
+		if (w != "") != c.warning || stderr.Len() == 0 {
+			t.Errorf("%s: warning %q, stderr %q", c.name, w, stderr.String())
+		}
+	}
+	if stub.calledWith("replace") {
+		t.Errorf("a refused restore wrote; calls: %v", stub.calls())
+	}
+}
+
+// TestByoBindingSpecMatches_Normalisation pins the comparison's edges: nothing rendered never
+// matches, a spec without a target matches its defaulted form, a template gets its defaults, a
+// non-object data entry and a null value compare as themselves.
+func TestByoBindingSpecMatches_Normalisation(t *testing.T) {
+	if byoBindingSpecMatches(map[string]any{}, nil) {
+		t.Error("a live spec matched a document with no spec")
+	}
+	if !byoBindingSpecMatches(
+		map[string]any{"target": map[string]any{"creationPolicy": "Owner", "deletionPolicy": "Retain"}, "refreshInterval": "1h"},
+		map[string]any{},
+	) {
+		t.Error("a spec with no target did not match its defaulted form")
+	}
+	if !byoBindingSpecMatches(
+		map[string]any{"target": map[string]any{"template": map[string]any{"engineVersion": "v2", "mergePolicy": "Replace", "data": map[string]any{"username": "u"}}}},
+		map[string]any{"target": map[string]any{"template": map[string]any{"data": map[string]any{"username": "u"}}}},
+	) {
+		t.Error("a template did not match its defaulted form")
+	}
+	if !byoBindingSpecMatches(map[string]any{"data": []any{"odd", nil}}, map[string]any{"data": []any{"odd", nil}}) {
+		t.Error("identical unusual data entries did not match")
+	}
+	if byoBindingSpecMatches(map[string]any{"data": []any{"odd"}}, map[string]any{"data": []any{"other"}}) {
+		t.Error("different data entries matched")
+	}
+}
