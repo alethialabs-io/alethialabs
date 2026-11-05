@@ -166,9 +166,13 @@ func nonNativeSecretsProvider(config *types.ProjectConfig) string {
 // ByoDBUserSecretsUnavailableReason is why no per-binding password can be stored for config, or ""
 // when it can. Today the only reason is the template's native-provider gate: with a credential-based
 // secrets provider (Vault, Doppler, …) every cloud template empties `custom_secrets`, so the
-// per-binding key never exists and every BYO database credential facet is unsatisfied. That is safe —
-// the binding resolver already reports a facet whose key is missing, and never falls back to the
-// administrative credential — and this names the cause, for the binding lane to report it.
+// per-binding key never exists and every BYO database credential facet is unsatisfied. That is safe:
+// the binding resolver already reports a facet whose key is missing ("no secret for its own database
+// user"), and never falls back to the administrative credential.
+//
+// NOTHING CALLS THIS YET. The binding lane still reports the generic missing-key reason, so a user on
+// a credential-based provider is not told the cause. Slice 4 (#6466) wires this into the binding
+// lane's unsatisfied reason (provisioner/byo_charts.go, which is that slice's scope).
 func ByoDBUserSecretsUnavailableReason(config *types.ProjectConfig) string {
 	if config == nil {
 		return ""
@@ -266,8 +270,11 @@ func withByoDBUserSecrets(config *types.ProjectConfig, current interface{}, shap
 //
 // The per-component carriers (a database, a cache, a NoSQL table, a registry) are not read. A reserved
 // key may not be decided by one of them (TestProviderTfvars_ReservedKeysAreClosedToEveryOtherComponent),
-// so a keeper map set on, say, a database's provider_config no longer reaches the plan; the cluster's
-// is the documented home of this knob (TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable).
+// so a keeper map set on, say, a database's provider_config no longer reaches the plan. The cluster's
+// provider_config is the passthrough this key is tested through on GCP and Azure
+// (TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable), but neither cloud's canvas offers it:
+// the generated knob list (apps/cli/cmd/provider_config_keys.json) carries custom_secret_keepers only
+// for Alibaba's cluster. On GCP and Azure it is reachable only through a hand-written provider_config.
 // TestByoDBUserSecrets_KeepersPassthroughPrecedence pins each source and the order.
 func keepersPassthroughSources(config *types.ProjectConfig) []map[string]any {
 	return []map[string]any{config.Cluster.ProviderConfig, config.DNS.ProviderConfig, config.Network.ProviderConfig}
