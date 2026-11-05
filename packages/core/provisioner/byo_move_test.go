@@ -448,7 +448,10 @@ func TestConfigureByoCharts_KeepsAnExistingChosenByoNamespace(t *testing.T) {
 // collisionConfig is an environment where chart `explicit` chose byo-payments, which is chart
 // "payments"'s own derived namespace, in the given add-on order.
 func collisionConfig(explicit string, explicitFirst bool) *types.ProjectConfig {
-	owner := types.AddOnInstall{ID: "payments", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/payments.git", Path: "chart", Version: "HEAD", Namespace: ""}
+	// The owner is stored with its own derived namespace, as a chart attached after #6446 is. (One
+	// still in "default" is not moved into an occupied namespace at all: see
+	// TestConfigureByoCharts_RefusesAMoveIntoAnOccupiedNamespace.)
+	owner := types.AddOnInstall{ID: "payments", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/payments.git", Path: "chart", Version: "HEAD", Namespace: "byo-payments"}
 	other := types.AddOnInstall{ID: explicit, Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/other.git", Path: "chart", Version: "HEAD", Namespace: "byo-payments"}
 	addons := []types.AddOnInstall{owner, other}
 	if explicitFirst {
@@ -500,5 +503,58 @@ func TestByoNamespaceCollisions_FallsBackToIdOrderOnlyWithoutAnOwner(t *testing.
 	}
 	if !strings.Contains(got["zeta"], `"alpha"`) {
 		t.Errorf("the reason must name the chart that keeps it: %s", got["zeta"])
+	}
+}
+
+// TestConfigureByoCharts_RefusesAMoveIntoAnOccupiedNamespace: a chart in "default" whose own
+// namespace is already another chart's (one that chose it before the byo- rule) is NOT moved. The
+// legacy chart is refused, with a warning to attach it again with another namespace; the occupant
+// deploys untouched, alone in its namespace.
+func TestConfigureByoCharts_RefusesAMoveIntoAnOccupiedNamespace(t *testing.T) {
+	c := newByoCluster(t, "")
+	vc := &types.ProjectConfig{ProjectName: "Acme Corp", AddOns: []types.AddOnInstall{
+		{ID: "payments", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/payments.git", Path: "chart", Version: "HEAD", Namespace: "default"},
+		{ID: "occupant", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/occupant.git", Path: "chart", Version: "HEAD", Namespace: "byo-payments"},
+	}}
+	_, refused, moved := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard))
+	if len(moved) != 0 {
+		t.Errorf("moved = %+v: the move into an occupied namespace must be refused", moved)
+	}
+	if len(refused) != 1 || refused[0].ID != "payments" || refused[0].Shared || refused[0].Namespace != "default" {
+		t.Fatalf("refused = %+v, want only the legacy chart, in default, not shared", refused)
+	}
+	w := refused[0].warning()
+	for _, want := range []string{`"payments"`, `"byo-payments"`, `"occupant"`, `"default"`, "not moved", "Attach the chart again with a namespace of your own"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, w)
+		}
+	}
+	if vc.AddOns[0].Namespace != "default" {
+		t.Errorf("the refused chart's namespace was rewritten to %q", vc.AddOns[0].Namespace)
+	}
+	if got := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(got, []string{"byo-payments"}) {
+		t.Errorf("AppProject destinations = %v, want only the occupant's byo-payments", got)
+	}
+}
+
+// TestConfigureByoCharts_ReleasesTheEnvironmentsCommonLabelsOnDefault: the labels released on
+// "default" include the classification labels the runner stamped with commonLabels, each only where
+// the value is this environment's.
+func TestConfigureByoCharts_ReleasesTheEnvironmentsCommonLabelsOnDefault(t *testing.T) {
+	c := newMoveClusterWith(t, `{"items":[]}`,
+		`{"metadata":{"name":"default","labels":{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-1","alethia.io/project-id":"proj-1","alethia.io/team":"other"}}}`, "")
+	vc := legacyByoConfig("default")
+	vc.EnvironmentID = "env-1"
+	common := map[string]string{"alethia.io/environment-id": "env-1", "alethia.io/project-id": "proj-1", "alethia.io/team": "payments"}
+	configureByoCharts(vc, "tok", nil, common, io.Discard, io.Discard)
+	want := "label namespace default alethia.io/environment-id- alethia.io/managed-by- alethia.io/project-id-"
+	var labelCalls []string
+	for _, line := range strings.Split(c.calls(), "\n") {
+		if strings.HasPrefix(line, "label ") {
+			labelCalls = append(labelCalls, line)
+		}
+	}
+	if !reflect.DeepEqual(labelCalls, []string{want}) {
+		t.Errorf("label calls = %q, want [%q] (team carries another value and stays)", labelCalls, want)
 	}
 }

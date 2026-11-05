@@ -12,7 +12,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
 	RUNNER_CAPABILITY_ADDON_BYO_MARKER,
+	ociByoAddOnIds,
 	parseRunnerCapabilities,
+	refusalForRunner,
 	snapshotForRunner,
 } from "@/lib/runners/snapshot-capabilities";
 
@@ -53,5 +55,31 @@ describe("snapshotForRunner", () => {
 	it("matches the runner's capability name exactly", () => {
 		expect(RUNNER_CAPABILITY_ADDON_BYO_MARKER).toBe("addon-byo-marker");
 		expect(parseRunnerCapabilities("addon-byo-marker-v2").has(RUNNER_CAPABILITY_ADDON_BYO_MARKER)).toBe(false);
+	});
+});
+
+describe("refusalForRunner", () => {
+	const none = parseRunnerCapabilities(null);
+	const capable = parseRunnerCapabilities(RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+
+	it("finds exactly the OCI BYO charts: marked, not git", () => {
+		expect(ociByoAddOnIds(fixture("with-byo-marker.json"))).toEqual(["payments"]);
+		expect(ociByoAddOnIds(fixture("without-byo-marker.json"))).toEqual([]);
+	});
+
+	it("refuses a DEPLOY with an OCI BYO chart to a runner without the capability, naming the chart and the fix", () => {
+		expect(refusalForRunner("DEPLOY", fixture("with-byo-marker.json"), none)).toMatch(
+			/OCI chart \(“payments”\), which needs a runner newer than runner-v0\.8\.0.*Update the runner/,
+		);
+	});
+
+	it("serves it to a capable runner, and serves other job types and git-only snapshots to any runner", () => {
+		expect(refusalForRunner("DEPLOY", fixture("with-byo-marker.json"), capable)).toBeNull();
+		expect(refusalForRunner("PLAN", fixture("with-byo-marker.json"), none)).toBeNull();
+		expect(refusalForRunner("DESTROY", fixture("with-byo-marker.json"), none)).toBeNull();
+		const gitOnly = {
+			addons: [{ id: "api", source: "git", byo: true }, { id: "reloader" }],
+		};
+		expect(refusalForRunner("DEPLOY", gitOnly, none)).toBeNull();
 	});
 });

@@ -23,10 +23,20 @@ platform's own workloads, their Secrets and their service accounts.
    built before the marker would fail every job whose snapshot carries it. A runner now names the keys
    it reads in an `X-Runner-Capabilities` header on every request (`types.RunnerSnapshotCapabilities`;
    this one is `addon-byo-marker`), and the claim route serves `addons[].byo` only to a runner that
-   names it (`apps/console/lib/runners/snapshot-capabilities.ts`). Any other runner — every runner
-   built before the header — is served the snapshot exactly as before: its OCI BYO charts are handled
-   as they were until that runner is updated. The strip is applied to the claim response; the stored
-   snapshot and its signature are unchanged. Shared fixtures in
+   names it (`apps/console/lib/runners/snapshot-capabilities.ts`). For any other runner — every runner
+   built before the header, a rolled-back image, a hand-built one — the claim decides per job:
+   - **No OCI BYO chart in the snapshot** (only git BYO charts, or none): `byo` is stripped and the job
+     is served. That runner already recognises a git chart as BYO by its source and pins it to the
+     hardened project, so nothing is lost.
+   - **A DEPLOY whose snapshot holds an OCI BYO chart:** the job is NOT served. It fails at claim with
+     a reason naming the chart and the fix — a runner newer than runner-v0.8.0, the one that sends the
+     capability. Stripping would hand that runner a plain Helm add-on, which it would render under the
+     catalogue's project with no namespace check, and on a cluster a newer runner already migrated
+     its re-apply would move the Application back. Failing rather than leaving the job queued is
+     deliberate: with no capable runner in the pool, a queued job would wait forever, saying nothing.
+     Other job types (PLAN, DESTROY, …) deploy no add-on and are served stripped.
+
+   The strip is applied to the claim response; the stored snapshot and its signature are unchanged. Shared fixtures in
    `packages/core/types/testdata/snapshot-capabilities` pin both halves: the console's strip produces
    the second from the first, and the runner's test decodes the second the way an old runner does.
 2. **One predicate.** `types.AddOnInstall.IsByo()` is true for the marker and for every git source
@@ -96,11 +106,17 @@ runner on every deploy until it is re-attached with a namespace of its own (`con
   (#6436) also looks in `default` and withdraws the ones an earlier deploy applied there. It deletes
   only objects carrying both the binding marker and this environment's owner label, re-checked on the
   object, so nothing of the platform's in `default` is a candidate;
-- an earlier runner labelled `default` as a BYO namespace when a chart deployed there
-  (`alethia.io/managed-by: byo-charts`, `alethia.io/environment-id`). Once the AppProject no longer
-  lists it, those two keys are removed — each only when its value is the one this environment wrote,
-  and not at all when the namespace names another environment (`argocd.ReleaseLegacyByoNamespaceLabels`).
-  Nothing else on `default` is touched.
+- an earlier runner labelled `default` as a BYO namespace when a chart deployed there:
+  `alethia.io/managed-by: byo-charts` plus every one of the environment's common labels (project id,
+  environment id, classification). Once the AppProject no longer lists it, those keys are removed —
+  each only when its value is the one this environment wrote, and not at all when the namespace names
+  another environment (`argocd.ReleaseLegacyByoNamespaceLabels`). Nothing else on `default` is touched;
+- **a move into a taken namespace is refused.** When the chart's own `byo-<id>` is already the stored
+  namespace of another chart (one that chose that name before the `byo-` rule), the chart is NOT moved:
+  it stays in `default`, is refused like any chart in a reserved namespace, and the warning asks for a
+  re-attach with another namespace. The occupant is untouched. Moving in would make two charts share a
+  namespace, and refusing the occupant instead would withdraw its bindings from under a running
+  workload.
 
 **What the chart created in `default` is left in place, and the warning says so** — including that it
 keeps running in the platform's namespace until it is deleted. Argo's normal prune

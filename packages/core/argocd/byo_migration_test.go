@@ -34,26 +34,34 @@ func TestLiveApplicationProject(t *testing.T) {
 	}
 }
 
-// TestReleaseLegacyByoNamespaceLabels covers each branch: ours (both keys), another environment's
-// (nothing), only managed-by, only the owner, neither, a refused input, a failed read, an unparsable
-// read and a failed label edit.
+// TestReleaseLegacyByoNamespaceLabels covers each branch: ours (managed-by, the owner, and every
+// commonLabels pair whose value is ours), another environment's (nothing), a managed-by with another
+// value (kept), a classification label with another value (kept), neither, a refused input, a failed
+// read, an unparsable read and a failed label edit.
 func TestReleaseLegacyByoNamespaceLabels(t *testing.T) {
 	ns := func(labels string) string { return `{"metadata":{"name":"default","labels":` + labels + `}}` }
+	ours := map[string]string{
+		"alethia.io/project-id":     "p1",
+		"alethia.io/environment-id": "env-1",
+		"alethia.io/team":           "payments",
+		"alethia.io/cost-center":    "cc-7",
+	}
 	for _, tc := range []struct {
 		name, labels string
 		want         []string
-		call         string
 	}{
-		{"ours", `{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-1","team":"x"}`,
-			[]string{"alethia.io/environment-id", "alethia.io/managed-by"}, "label namespace default alethia.io/environment-id- alethia.io/managed-by-"},
-		{"another environment's", `{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-2"}`, nil, ""},
-		{"only managed-by", `{"alethia.io/managed-by":"byo-charts"}`, []string{"alethia.io/managed-by"}, "label namespace default alethia.io/managed-by-"},
-		{"only the owner", `{"alethia.io/environment-id":"env-1"}`, []string{"alethia.io/environment-id"}, "label namespace default alethia.io/environment-id-"},
-		{"neither", `{"kubernetes.io/metadata.name":"default"}`, nil, ""},
+		{"ours", `{"kubernetes.io/metadata.name":"default","alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-1","alethia.io/project-id":"p1","alethia.io/team":"payments","team":"x"}`,
+			[]string{"alethia.io/environment-id", "alethia.io/managed-by", "alethia.io/project-id", "alethia.io/team"}},
+		{"another environment's", `{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-2","alethia.io/project-id":"p1"}`, nil},
+		{"managed-by someone else", `{"alethia.io/managed-by":"helm"}`, nil},
+		{"managed-by someone else, owner ours", `{"alethia.io/managed-by":"helm","alethia.io/environment-id":"env-1"}`, []string{"alethia.io/environment-id"}},
+		{"a classification label with another value", `{"alethia.io/managed-by":"byo-charts","alethia.io/cost-center":"cc-9"}`, []string{"alethia.io/managed-by"}},
+		{"only the owner", `{"alethia.io/environment-id":"env-1"}`, []string{"alethia.io/environment-id"}},
+		{"neither", `{"kubernetes.io/metadata.name":"default"}`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newKubectlStub(t, 0, stubRule{Match: "get namespace default -o json", Stdout: ns(tc.labels)})
-			got, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", io.Discard)
+			got, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", ours, io.Discard)
 			if err != nil {
 				t.Fatalf("err = %v", err)
 			}
@@ -66,11 +74,18 @@ func TestReleaseLegacyByoNamespaceLabels(t *testing.T) {
 					labelCalls = append(labelCalls, c)
 				}
 			}
-			if tc.call == "" && len(labelCalls) != 0 {
-				t.Errorf("unexpected label edit: %v", labelCalls)
+			if len(tc.want) == 0 {
+				if len(labelCalls) != 0 {
+					t.Errorf("unexpected label edit: %v", labelCalls)
+				}
+				return
 			}
-			if tc.call != "" && !reflect.DeepEqual(labelCalls, []string{tc.call}) {
-				t.Errorf("label calls = %v, want [%s]", labelCalls, tc.call)
+			args := make([]string, len(tc.want))
+			for i, k := range tc.want {
+				args[i] = k + "-"
+			}
+			if want := []string{"label namespace default " + strings.Join(args, " ")}; !reflect.DeepEqual(labelCalls, want) {
+				t.Errorf("label calls = %v, want %v", labelCalls, want)
 			}
 		})
 	}
@@ -78,7 +93,7 @@ func TestReleaseLegacyByoNamespaceLabels(t *testing.T) {
 	t.Run("refused input", func(t *testing.T) {
 		s := newKubectlStub(t, 0)
 		for _, in := range [][2]string{{"bad ns", "env-1"}, {"default", ""}} {
-			if _, err := ReleaseLegacyByoNamespaceLabels(in[0], in[1], io.Discard); err == nil {
+			if _, err := ReleaseLegacyByoNamespaceLabels(in[0], in[1], nil, io.Discard); err == nil {
 				t.Errorf("ReleaseLegacyByoNamespaceLabels(%q, %q) must be refused", in[0], in[1])
 			}
 		}
@@ -86,15 +101,26 @@ func TestReleaseLegacyByoNamespaceLabels(t *testing.T) {
 			t.Errorf("kubectl ran for refused input: %v", s.calls())
 		}
 	})
+	t.Run("a key that is not a label key", func(t *testing.T) {
+		s := newKubectlStub(t, 0, stubRule{Match: "get namespace default -o json", Stdout: ns(`{"bad key;x":"v"}`)})
+		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", map[string]string{"bad key;x": "v"}, io.Discard); err == nil {
+			t.Error("a key that is not a label key must be refused")
+		}
+		for _, c := range s.calls() {
+			if strings.HasPrefix(c, "label ") {
+				t.Errorf("a label edit ran: %s", c)
+			}
+		}
+	})
 	t.Run("failed read", func(t *testing.T) {
 		newKubectlStub(t, 1)
-		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", io.Discard); err == nil {
+		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", nil, io.Discard); err == nil {
 			t.Error("a failed read must be reported")
 		}
 	})
 	t.Run("unparsable read", func(t *testing.T) {
 		newKubectlStub(t, 0, stubRule{Match: "get namespace default -o json", Stdout: "not json"})
-		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", io.Discard); err == nil {
+		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", nil, io.Discard); err == nil {
 			t.Error("an unparsable read must be reported")
 		}
 	})
@@ -102,7 +128,7 @@ func TestReleaseLegacyByoNamespaceLabels(t *testing.T) {
 		newKubectlStub(t, 0,
 			stubRule{Match: "get namespace default -o json", Stdout: ns(`{"alethia.io/managed-by":"byo-charts"}`)},
 			stubRule{Match: "label namespace default", Exit: 1})
-		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", io.Discard); err == nil {
+		if _, err := ReleaseLegacyByoNamespaceLabels("default", "env-1", nil, io.Discard); err == nil {
 			t.Error("a failed label edit must be reported")
 		}
 	})

@@ -175,31 +175,57 @@ describe("POST /api/jobs/claim — runner-lifecycle token handoff", () => {
 
 // #6445: a runner is served `addons[].byo` only when it advertises that it reads it. A runner built
 // before the marker decodes the snapshot strictly and would fail the job on the unknown key, so it is
-// served the snapshot as it was before the marker (lib/runners/snapshot-capabilities.ts).
+// served the snapshot as it was before the marker (lib/runners/snapshot-capabilities.ts) — EXCEPT a
+// DEPLOY holding an OCI BYO chart, which such a runner would deploy outside its hardened project: that
+// job fails at claim with the fix in its reason.
 describe("POST /api/jobs/claim — snapshot keys gated on the runner's capabilities", () => {
-	const byoSnapshot = {
+	const gitByoSnapshot = {
 		project_name: "acme",
 		addons: [
-			{ id: "payments", source: "helm", byo: true, chartRepo: "oci://ghcr.io/acme", namespace: "byo-payments" },
+			{ id: "api", source: "git", byo: true, chartRepo: "https://github.com/acme/charts", namespace: "byo-api" },
 			{ id: "reloader", chartRepo: "https://stakater.github.io/stakater-charts", namespace: "reloader" },
 		],
 	};
+	const ociByoSnapshot = {
+		project_name: "acme",
+		addons: [{ id: "payments", source: "helm", byo: true, chartRepo: "oci://ghcr.io/acme", namespace: "byo-payments" }],
+	};
 	const addons = z.object({ addons: z.array(z.record(z.string(), z.unknown())) });
 
-	it("omits the BYO marker for a runner that does not advertise it, and stores nothing", async () => {
-		seed("DEPLOY", byoSnapshot);
+	it("strips the marker for a runner that does not advertise it when every BYO chart is git", async () => {
+		seed("DEPLOY", gitByoSnapshot);
 		const { status, text } = await claim();
 		expect(status).toBe(200);
 		const served = addons.parse(claimBody.parse(JSON.parse(text)).job.config_snapshot);
 		expect(served.addons.map((a) => "byo" in a)).toEqual([false, false]);
-		expect(served.addons[0]).toMatchObject({ id: "payments", namespace: "byo-payments" });
+		expect(served.addons[0]).toMatchObject({ id: "api", source: "git", namespace: "byo-api" });
 		expect(updates.filter((u) => u.table === jobs)).toEqual([]);
 	});
 
-	it("keeps the BYO marker for a runner that advertises it", async () => {
-		seed("DEPLOY", byoSnapshot);
-		const { text } = await claim(EXECUTOR, { "X-Runner-Capabilities": "addon-byo-marker" });
+	it("FAILS a DEPLOY with an OCI BYO chart for a runner that does not advertise the marker, naming the fix", async () => {
+		seed("DEPLOY", ociByoSnapshot);
+		const { status, text } = await claim();
+		expect(status).toBe(409);
+		expect(text).not.toContain("config_snapshot");
+		const failed = updates.find((u) => u.table === jobs)?.values;
+		expect(failed).toMatchObject({ status: "FAILED" });
+		expect(String(failed?.error_message)).toMatch(/bring-your-own OCI chart \(“payments”\).*Update the runner/);
+	});
+
+	it("serves a DEPLOY with an OCI BYO chart, marker kept, to a runner that advertises it", async () => {
+		seed("DEPLOY", ociByoSnapshot);
+		const { status, text } = await claim(EXECUTOR, { "X-Runner-Capabilities": "addon-byo-marker" });
+		expect(status).toBe(200);
 		const served = addons.parse(claimBody.parse(JSON.parse(text)).job.config_snapshot);
 		expect(served.addons[0]).toMatchObject({ id: "payments", byo: true });
+		expect(updates.filter((u) => u.table === jobs)).toEqual([]);
+	});
+
+	it("serves a DESTROY with an OCI BYO chart stripped: it deploys no add-on", async () => {
+		seed("DESTROY", ociByoSnapshot);
+		const { status, text } = await claim();
+		expect(status).toBe(200);
+		const served = addons.parse(claimBody.parse(JSON.parse(text)).job.config_snapshot);
+		expect("byo" in served.addons[0]).toBe(false);
 	});
 });

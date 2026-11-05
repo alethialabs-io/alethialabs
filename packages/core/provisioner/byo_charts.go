@@ -251,7 +251,7 @@ func (r byoRefusal) warning() string {
 	if r.Shared {
 		// The namespace stays a destination for the chart that keeps it, so nothing stops an
 		// Application an earlier deploy applied from syncing; say only what is true.
-		left = "Anything an earlier deploy applied for it stays in place; this deploy did not update it."
+		left = "Anything an earlier deploy applied for it stays in place, and may keep syncing into that namespace, which it then still shares with the chart that keeps it; this deploy did not update it."
 	} else if !r.ProjectUpdated {
 		left = "The runner could not update its project (see the deploy log), so an Application an earlier deploy applied for it may still sync into that namespace."
 	}
@@ -456,6 +456,15 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	var moved []byoMove
 	var leftProject []byoProjectChange
 	hasByo := false
+	// Which charts already hold each namespace as stored, so a move can see whether its target is
+	// taken (see the move below).
+	storedIn := map[string][]string{}
+	for _, a := range vc.AddOns {
+		if a.IsByo() {
+			storedIn[a.Namespace] = append(storedIn[a.Namespace], a.ID)
+		}
+	}
+	moveRefused := map[string]string{}
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
 		if !a.IsByo() {
@@ -468,6 +477,16 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		a.Project = projName
 		if a.Namespace == "" || a.Namespace == argocd.ByoLegacyDefaultNamespace {
 			to := argocd.ByoChartNamespace(a.ID)
+			// The target is already another chart's — one that chose this name before the byo- rule.
+			// The MOVE is refused, not that chart: moving in would make the two share a namespace, and
+			// refusing the occupant would withdraw its bindings from under a running workload. The
+			// legacy chart stays where it is stored and is refused like any chart in a reserved
+			// namespace; the occupant is untouched.
+			if occupants := storedIn[to]; len(occupants) > 0 {
+				moveRefused[a.ID] = fmt.Sprintf("it is stored in namespace %q, which is reserved for the platform, and its own namespace %q is already used by BYO chart %q, so it was not moved there",
+					argocd.ByoLegacyDefaultNamespace, to, occupants[0])
+				continue
+			}
 			moved = append(moved, byoMove{ID: a.ID, From: argocd.ByoLegacyDefaultNamespace, To: to})
 			a.Namespace = to
 			fmt.Fprintf(stdout, "BYO chart %q: moving from namespace %q to %q\n", a.ID, argocd.ByoLegacyDefaultNamespace, to)
@@ -480,6 +499,11 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			continue
 		}
 		ns := a.Namespace
+		if reason, refusedMove := moveRefused[a.ID]; refusedMove {
+			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
+			refused = append(refused, byoRefusal{ID: a.ID, Namespace: argocd.ByoLegacyDefaultNamespace, Reason: reason})
+			continue
+		}
 		if err := argocd.ValidateByoNamespace(ns); err != nil {
 			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %v\n", a.ID, err)
 			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: err.Error()})
@@ -543,12 +567,13 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	}
 
 	// "default" no longer holds any of this environment's charts once they have moved. An earlier
-	// runner labelled it as a BYO namespace when it created the destinations (RenderByoNamespaces);
-	// those two labels are removed, so nothing keyed on them selects the platform's namespace. Only
-	// when the AppProject no longer lists it, and only those two keys (ReleaseLegacyByoNamespaceLabels).
+	// runner labelled it as a BYO namespace when it created the destinations (RenderByoNamespaces):
+	// managed-by plus every one of commonLabels. Those labels are removed — each only where its value
+	// is this environment's — so nothing keyed on them selects the platform's namespace. Only when the
+	// AppProject no longer lists it (ReleaseLegacyByoNamespaceLabels).
 	if len(moved) > 0 && projectUpdated {
 		if owner := byoBindingOwner(vc); owner != "" {
-			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, stdout); err != nil {
+			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, commonLabels, stdout); err != nil {
 				fmt.Fprintf(stderr, "Warning: could not remove the BYO chart labels from namespace %q: %v\n", argocd.ByoLegacyDefaultNamespace, err)
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -40,15 +41,18 @@ func LiveApplicationProject(name string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// ReleaseLegacyByoNamespaceLabels removes, from namespace ns, the two labels an earlier runner put on
-// it when a BYO chart deployed there — `alethia.io/managed-by: byo-charts` and this environment's
-// `alethia.io/environment-id: <owner>` — and nothing else. It is for "default" after the charts in
-// it moved out (#6446): nothing keyed on those labels may select the platform's namespace.
+// ReleaseLegacyByoNamespaceLabels removes, from namespace ns, the labels an earlier runner stamped on
+// it when a BYO chart deployed there (RenderByoNamespaces applied `alethia.io/managed-by: byo-charts`
+// plus every one of the environment's commonLabels — the project and environment ids and the
+// classification dimensions), and nothing else. It is for "default" after the charts in it moved out
+// (#6446): nothing keyed on those labels may select the platform's namespace.
 //
-// It removes a key only when its value is exactly the one this environment's runner wrote. When the
-// namespace names ANOTHER environment it touches nothing at all, because that environment's charts
-// may still be there and the managed-by label is then theirs too. Returns the keys it removed.
-func ReleaseLegacyByoNamespaceLabels(ns, owner string, stdout io.Writer) ([]string, error) {
+// It removes a key only when its value is exactly the one this environment's runner wrote:
+// `managed-by` when it is "byo-charts", the owner label when it is owner, and each key of ours when
+// its value equals ours. When the namespace's owner label names ANOTHER environment it touches
+// nothing at all, because that environment's charts may still be there and the labels are then
+// theirs too. Returns the keys it removed, sorted.
+func ReleaseLegacyByoNamespaceLabels(ns, owner string, ours map[string]string, stdout io.Writer) ([]string, error) {
 	if !k8sNameRe.MatchString(ns) || !validOwner(owner) {
 		return nil, fmt.Errorf("refusing to edit namespace %q labels for owner %q", ns, owner)
 	}
@@ -68,12 +72,17 @@ func ReleaseLegacyByoNamespaceLabels(ns, owner string, stdout io.Writer) ([]stri
 	if v, ok := labels[ByoBindingOwnerLabel]; ok && v != owner {
 		return nil, nil
 	}
-	var remove []string
-	if labels[ByoBindingOwnerLabel] == owner {
-		remove = append(remove, ByoBindingOwnerLabel)
+	want := map[string]string{byoNamespaceManagedByLabel: byoNamespaceManagedByValue, ByoBindingOwnerLabel: owner}
+	for k, v := range ours {
+		if k != byoNamespaceManagedByLabel && v != "" {
+			want[k] = v
+		}
 	}
-	if labels[byoNamespaceManagedByLabel] == byoNamespaceManagedByValue {
-		remove = append(remove, byoNamespaceManagedByLabel)
+	var remove []string
+	for k, v := range want {
+		if got, ok := labels[k]; ok && got == v {
+			remove = append(remove, k)
+		}
 	}
 	if len(remove) == 0 {
 		return nil, nil
@@ -81,6 +90,11 @@ func ReleaseLegacyByoNamespaceLabels(ns, owner string, stdout io.Writer) ([]stri
 	sort.Strings(remove)
 	args := make([]string, len(remove))
 	for i, k := range remove {
+		// A label key is a qualified name, so it cannot carry shell metacharacters; refuse one that
+		// does rather than interpolate it.
+		if !labelKeyRe.MatchString(k) {
+			return nil, fmt.Errorf("refusing to remove label %q from namespace %s: not a label key", k, ns)
+		}
 		args[i] = k + "-"
 	}
 	if _, err := utils.ExecuteCommandWithOutput(fmt.Sprintf("kubectl label namespace %s %s", ns, strings.Join(args, " ")), ".", nil); err != nil {
@@ -89,3 +103,6 @@ func ReleaseLegacyByoNamespaceLabels(ns, owner string, stdout io.Writer) ([]stri
 	fmt.Fprintf(stdout, "Removed the BYO chart labels %s from namespace %q\n", strings.Join(remove, ", "), ns)
 	return remove, nil
 }
+
+// labelKeyRe is a Kubernetes label key: an optional DNS-subdomain prefix and a name segment.
+var labelKeyRe = regexp.MustCompile(`^([a-z0-9]([-a-z0-9.]*[a-z0-9])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`)

@@ -24,6 +24,7 @@ import { verifySnapshot } from "@/lib/runners/snapshot-sig";
 import {
 	RUNNER_CAPABILITIES_HEADER,
 	parseRunnerCapabilities,
+	refusalForRunner,
 	snapshotForRunner,
 } from "@/lib/runners/snapshot-capabilities";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
@@ -123,6 +124,20 @@ export async function POST(req: Request) {
 			);
 		}
 
+		// A runner is served only snapshot keys it reads (lib/runners/snapshot-capabilities.ts). One
+		// case cannot be served safely by stripping — a DEPLOY with an OCI BYO chart to a runner that
+		// does not read the marker — so that job fails here with the fix in its reason, rather than
+		// deploying the chart outside its hardened project or waiting in the queue forever.
+		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
+		const capabilityRefusal = refusalForRunner(job.job_type, job.config_snapshot, capabilities);
+		if (capabilityRefusal) {
+			await db
+				.update(jobs)
+				.set({ status: "FAILED", error_message: capabilityRefusal, completed_at: new Date() })
+				.where(eq(jobs.id, job.id));
+			return NextResponse.json({ error: capabilityRefusal }, { status: 409 });
+		}
+
 		// Telemetry (no-op unless an OTLP endpoint is configured): record how long this job
 		// waited in QUEUED before being claimed, and emit the console's "claim" span anchored
 		// to the job's traceparent so it joins the runner's spans in one distributed trace.
@@ -162,10 +177,7 @@ export async function POST(req: Request) {
 		// was before those keys existed. The stored row — and the signature checked above — are untouched.
 		const servedJob = {
 			...job,
-			config_snapshot: snapshotForRunner(
-				issuedSnapshot,
-				parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER)),
-			),
+			config_snapshot: snapshotForRunner(issuedSnapshot, capabilities),
 		};
 
 		// Least privilege (#5308): what rides along with the row is decided per job type by an
