@@ -11,7 +11,10 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 
 /** The slice of a parsed postcss node this test reads. */
 interface CssNode {
@@ -171,5 +174,14 @@ describe("app/globals.css animations under prefers-reduced-motion", () => {
 				declsOf(n).some((d) => d.prop === prop),
 		);
 		expect(defined).toBe(true);
+	});
+
+	// The shimmer's class goes through `cn` (tailwind-merge), which drops any class it reads as a
+	// conflicting utility — a `text-*` name would be read as a colour and lost beside
+	// `text-transparent`. So the class is pinned on the RENDERED span, not just in the source.
+	it("renders the shimmer with its keyframe class and its per-pass duration", () => {
+		const html = renderToStaticMarkup(createElement(Shimmer, { duration: 1.5, children: "Thinking..." }));
+		expect(html).toMatch(/class="[^"]*\bshimmer-sweep\b/);
+		expect(html).toContain("--shimmer-duration:1.5s");
 	});
 });
