@@ -34,7 +34,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, X } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useLayoutEffect, useState } from "react";
 import { type Control, Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { setProtectionRules } from "@/app/server/actions/protection";
@@ -114,11 +114,15 @@ export function ProtectionRulesDialog({
 
 	// Seed the form ONCE, from the fresh answer. A live update while the drawer is open refreshes the
 	// read but does not reset the form: that would discard what the person is in the middle of
-	// editing. The drawer mounts per open, so each open seeds afresh.
-	const [seeded, setSeeded] = useState(false);
-	useEffect(() => {
-		if (!fresh || seeded) return;
-		const row = fresh.rules;
+	// editing. The drawer mounts per open, so each open seeds afresh. The answer it seeds from is
+	// captured during render; the form (an external store) is reset from it in a layout effect, so
+	// the first paint that shows the fields already holds the seeded values.
+	const [seedSource, setSeedSource] = useState<typeof fresh>(undefined);
+	if (fresh && seedSource === undefined) setSeedSource(fresh);
+	const seeded = seedSource !== undefined;
+	useLayoutEffect(() => {
+		if (!seedSource) return;
+		const row = seedSource.rules;
 		reset(
 			row
 				? {
@@ -131,8 +135,7 @@ export function ProtectionRulesDialog({
 					}
 				: DEFAULTS,
 		);
-		setSeeded(true);
-	}, [fresh, seeded, reset]);
+	}, [seedSource, reset]);
 
 	const requireApproval = useWatch({ control, name: "require_approval" });
 

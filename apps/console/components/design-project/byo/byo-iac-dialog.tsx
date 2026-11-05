@@ -55,6 +55,9 @@ interface ByoIacDialogProps {
 
 const STEPS = ["Repository", "Path & ref", "Variables", "Review"] as const;
 
+/** The fields the dialog renders from. */
+const WATCHED = ["repo_url", "path", "ref"] as const;
+
 /** The four-step "attach an IaC source" dialog. Self-contained: owns the RHF form + resets on close. */
 export function ByoIacDialog({
 	open,
@@ -98,7 +101,7 @@ export function ByoIacDialog({
 		successMessage: "IaC source attached — scanning the module now.",
 	});
 
-	const [repoUrl, path, ref] = useWatch({ control, name: ["repo_url", "path", "ref"] });
+	const [repoUrl, path, ref] = useWatch({ control, name: WATCHED });
 
 	const close = useCallback(
 		(next: boolean) => {

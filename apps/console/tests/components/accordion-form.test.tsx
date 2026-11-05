@@ -23,6 +23,9 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
+/** The fields the harness renders from. */
+const WATCHED = ["name", "email"] as const;
+
 /** A two-section form (no terminal section) so advancing off the last section fires onComplete. */
 function Harness({ onComplete }: { onComplete?: () => void }) {
 	const [open, setOpen] = useState("identity");
@@ -31,7 +34,7 @@ function Harness({ onComplete }: { onComplete?: () => void }) {
 		defaultValues: { name: "", email: "" },
 		mode: "onChange",
 	});
-	const [name, email] = useWatch({ control: form.control, name: ["name", "email"] });
+	const [name, email] = useWatch({ control: form.control, name: WATCHED });
 	const sections: FormSectionDef<Values>[] = [
 		{
 			id: "identity",

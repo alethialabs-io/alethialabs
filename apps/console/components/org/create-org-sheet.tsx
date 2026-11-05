@@ -156,6 +156,9 @@ interface CreateOrgSheetProps {
 	onOpenChange: (open: boolean) => void;
 }
 
+/** The fields the sheet renders from. */
+const WATCHED = ["name", "slug"] as const;
+
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
@@ -168,7 +171,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		defaultValues: { name: "", slug: "" },
 		mode: "onChange",
 	});
-	const [name, slug] = useWatch({ control: form.control, name: ["name", "slug"] });
+	const [name, slug] = useWatch({ control: form.control, name: WATCHED });
 
 	const [slugTouched, setSlugTouched] = useState(false);
 	const [showUrl, setShowUrl] = useState(false);
@@ -274,53 +277,6 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			active = false;
 		};
 	}, [open]);
-
-	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
-	// first step the record says has not completed (each run re-checks that with the server). Only
-	// when nothing is in flight in memory: an open intent of this session wins. A run still in flight
-	// from before the close is ATTACHED to, never started a second time beside it.
-	//
-	// With no usable record, the SERVER is asked whether this user has a paid setup that never
-	// finished — a charge must not be offered a second purchase because one tab lost its copy.
-	useEffect(() => {
-		if (!open || !viewerId || subscriptionId) return;
-		const stored = readStoredPaidSetup(viewerId);
-		if (stored.kind === "ok") {
-			resumeFromRecord(stored.record);
-			return;
-		}
-		let active = true;
-		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
-			(found) => {
-				if (!active) return;
-				if (found.kind === "found") {
-					beginRecovery(found.state);
-				} else if (found.kind === "held") {
-					// A hold refuses this setup (ADR 0002 §5.6): its sentence, and no step to finish it.
-					setStopped(found.notice);
-					setView("pay");
-				} else if (found.kind === "unavailable") {
-					// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
-					// a customer who just paid does not pay again.
-					toast.error(
-						"We couldn't check whether you have a team setup to finish. If you just paid for a team, don't pay again — reopen Create a team in a moment, or contact support.",
-					);
-				} else if (stored.kind === "unreadable") {
-					// Unreadable, and the server has nothing unfinished under it (or could not be
-					// asked). Said, not dropped: the customer may still hold a receipt for it.
-					toast.error(
-						"We found an unfinished team setup in this tab that we couldn't read. If you were charged for a team that doesn't exist, contact support with the time of the payment.",
-					);
-				}
-			},
-		);
-		return () => {
-			active = false;
-		};
-		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
-		// storage after every intent. The read is for the moment the sheet opens.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, viewerId]);
 
 	/** Restores the sheet from this tab's record and attaches to (or offers to retry) its run. */
 	function resumeFromRecord(stored: PendingPaidSetup) {
@@ -522,7 +478,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const settlingSub = open && paidPlan ? paidPlan.subscriptionId : null;
 	const settlingCustomer = paidPlan?.customerId ?? null;
 	const armedState = useRef(paidPlan?.planState ?? null);
-	armedState.current = paidPlan?.planState ?? null;
+	// Kept current after commit, never during render; this effect runs before the poll's below.
+	useEffect(() => {
+		armedState.current = paidPlan?.planState ?? null;
+	});
 	useEffect(() => {
 		const initial = armedState.current;
 		if (!settlingSub || !settlingCustomer || !initial) return;
@@ -986,6 +945,54 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 	const heading =
 		view === "pay" || view === "declare" ? `Create ${name || "team"}` : "Create a team";
+
+	// Declared below the functions it calls (the React Compiler's immutability rule).
+	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
+	// first step the record says has not completed (each run re-checks that with the server). Only
+	// when nothing is in flight in memory: an open intent of this session wins. A run still in flight
+	// from before the close is ATTACHED to, never started a second time beside it.
+	//
+	// With no usable record, the SERVER is asked whether this user has a paid setup that never
+	// finished — a charge must not be offered a second purchase because one tab lost its copy.
+	useEffect(() => {
+		if (!open || !viewerId || subscriptionId) return;
+		const stored = readStoredPaidSetup(viewerId);
+		if (stored.kind === "ok") {
+			resumeFromRecord(stored.record);
+			return;
+		}
+		let active = true;
+		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
+			(found) => {
+				if (!active) return;
+				if (found.kind === "found") {
+					beginRecovery(found.state);
+				} else if (found.kind === "held") {
+					// A hold refuses this setup (ADR 0002 §5.6): its sentence, and no step to finish it.
+					setStopped(found.notice);
+					setView("pay");
+				} else if (found.kind === "unavailable") {
+					// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
+					// a customer who just paid does not pay again.
+					toast.error(
+						"We couldn't check whether you have a team setup to finish. If you just paid for a team, don't pay again — reopen Create a team in a moment, or contact support.",
+					);
+				} else if (stored.kind === "unreadable") {
+					// Unreadable, and the server has nothing unfinished under it (or could not be
+					// asked). Said, not dropped: the customer may still hold a receipt for it.
+					toast.error(
+						"We found an unfinished team setup in this tab that we couldn't read. If you were charged for a team that doesn't exist, contact support with the time of the payment.",
+					);
+				}
+			},
+		);
+		return () => {
+			active = false;
+		};
+		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
+		// storage after every intent. The read is for the moment the sheet opens.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, viewerId]);
 
 	return (
 		<Sheet open={open} onOpenChange={handleOpenChange}>

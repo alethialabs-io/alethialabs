@@ -150,6 +150,9 @@ function isServerField(key: string): key is FieldPath<ByoChartFormValues> {
 	return SERVER_FIELDS.has(key);
 }
 
+/** The fields the dialog renders from. */
+const WATCHED = ["source", "repoUrl", "chartPath", "name", "namespace", "ref"] as const;
+
 /** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
 export function ByoChartDialog({
 	open,
@@ -208,10 +211,7 @@ export function ByoChartDialog({
 
 	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
 	// (which differ per source) are rebuilt when it changes.
-	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({
-		control,
-		name: ["source", "repoUrl", "chartPath", "name", "namespace", "ref"],
-	});
+	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({ control, name: WATCHED });
 
 	const isOci = source === "oci";
 	const steps = STEPS[source];
@@ -258,39 +258,28 @@ export function ByoChartDialog({
 		[setValue],
 	);
 
-	const onSubmit = useCallback(
-		async (values: ByoChartFormValues) => {
-			if (attach.isPending) return;
-			setRefusal(null);
-			try {
-				const res = await attach.mutateAsync({
-					projectId,
-					environmentId,
-					id: effectiveName,
-					repoUrl: values.repoUrl,
-					// An OCI chart has no path — the chart name is the URL's last segment.
-					...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
-					ref: effectiveRef,
-					namespace: effectiveNs,
-					valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
-				});
-				onAttached?.(res.id);
-				close(false);
-			} catch {
-				// Already said: in the dialog for a refusal or a field, in one toast for anything else.
-			}
-		},
-		[
-			attach,
-			projectId,
-			environmentId,
-			effectiveName,
-			effectiveRef,
-			effectiveNs,
-			onAttached,
-			close,
-		],
-	);
+	/** Attaches the chart with the effective name, ref and namespace, then closes the dialog. */
+	async function onSubmit(values: ByoChartFormValues) {
+		if (attach.isPending) return;
+		setRefusal(null);
+		try {
+			const res = await attach.mutateAsync({
+				projectId,
+				environmentId,
+				id: effectiveName,
+				repoUrl: values.repoUrl,
+				// An OCI chart has no path — the chart name is the URL's last segment.
+				...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
+				ref: effectiveRef,
+				namespace: effectiveNs,
+				valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
+			});
+			onAttached?.(res.id);
+			close(false);
+		} catch {
+			// Already said: in the dialog for a refusal or a field, in one toast for anything else.
+		}
+	}
 
 	return (
 		<Dialog open={open} onOpenChange={close}>

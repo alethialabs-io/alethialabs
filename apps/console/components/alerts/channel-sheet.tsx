@@ -199,6 +199,9 @@ interface ChannelSheetProps {
 	encryptionConfigured: boolean;
 }
 
+/** The fields the sheet renders from. */
+const WATCHED = ["type", "recipients"] as const;
+
 /** Guided, single-form create flow for an alert channel. */
 export function ChannelSheet({
 	open,
@@ -215,7 +218,7 @@ export function ChannelSheet({
 		defaultValues: DEFAULTS,
 		mode: "onChange",
 	});
-	const [channelType, recipients] = useWatch({ control: form.control, name: ["type", "recipients"] });
+	const [channelType, recipients] = useWatch({ control: form.control, name: WATCHED });
 	const meta = CHANNEL_TYPE_META[channelType];
 	const isSecret = meta.credential !== "email";
 	const needsKey = isSecret && !encryptionConfigured;

@@ -107,6 +107,19 @@ interface PolicySheetProps {
 	onGoChannels: () => void;
 }
 
+/** The fields the sheet renders from. */
+const WATCHED = [
+	"enabled",
+	"event_patterns",
+	"channels",
+	"min_severity",
+	"project_ids",
+	"job_types",
+	"resource_types",
+	"actions",
+	"throttle_seconds",
+] as const;
+
 /** Guided, single-form create flow for an alert policy. */
 export function PolicySheet({
 	open,
@@ -139,20 +152,7 @@ export function PolicySheet({
 		resourceTypes,
 		actions,
 		throttleSeconds,
-	] = useWatch({
-		control: form.control,
-		name: [
-			"enabled",
-			"event_patterns",
-			"channels",
-			"min_severity",
-			"project_ids",
-			"job_types",
-			"resource_types",
-			"actions",
-			"throttle_seconds",
-		],
-	});
+	] = useWatch({ control: form.control, name: WATCHED });
 
 	useEffect(() => {
 		if (open && !wasOpen.current) form.reset(DEFAULTS);
