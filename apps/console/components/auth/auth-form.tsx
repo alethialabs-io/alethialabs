@@ -185,9 +185,8 @@ export function AuthForm({ mode }: AuthFormProps) {
 
 	// What the browser remembers from last time. Read AFTER mount, never during render:
 	// this form is server-prerendered and then hydrated, so a first client render that
-	// consulted localStorage would not match the server's HTML. Same shape as
-	// packages/ui/src/theme-toggle.tsx — the DOM is identical on the first client render
-	// and the remembered marks appear on the second.
+	// consulted localStorage would not match the server's HTML. The DOM is identical on the
+	// first client render and the remembered marks appear on the second.
 	const rememberedMethod = useAuthPrefsStore((s) => s.lastMethod);
 	const rememberedEmail = useAuthPrefsStore((s) => s.lastEmail);
 	const remember = useAuthPrefsStore((s) => s.remember);

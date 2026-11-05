@@ -45,6 +45,13 @@ interface ConsentContextValue {
 interface ConsentSnapshot {
 	consent: ConsentRecord | null;
 	gpc: boolean;
+	/**
+	 * Whether the browser facts above have been read. False on the server and through hydration,
+	 * so the first-visit notice cannot render before the stored decision is known. It lives in the
+	 * store, not in provider state, so learning it is the same single external update as the
+	 * decision itself (a `setState` inside the mount effect would be a second, cascading render).
+	 */
+	ready: boolean;
 }
 
 /**
@@ -72,7 +79,7 @@ interface ConsentStore {
 }
 
 /** What the server renders with, and what every consumer hydrates against: no decision, no GPC. */
-const SERVER_SNAPSHOT: ConsentSnapshot = { consent: null, gpc: false };
+const SERVER_SNAPSHOT: ConsentSnapshot = { consent: null, gpc: false, ready: false };
 
 /** The server (and hydration) snapshot, shared so React sees one stable value. */
 function getServerSnapshot(): ConsentSnapshot {
@@ -160,14 +167,16 @@ export function useConsent(): ConsentContextValue {
  */
 declare const process: { env: { NODE_ENV?: string } };
 
-/** Module-scoped so the dev warning below fires ONCE. It sits in a render body, and a missing
- * provider means every consent-reading component on the page warns on every render — under
- * StrictMode's double-invoke that is a wall of identical lines nobody reads to the end of. */
+/** Module-scoped so the dev warning below fires ONCE per page: a missing provider means every
+ * consent-reading component on the page would warn, and under StrictMode's double-invoke that is
+ * a wall of identical lines nobody reads to the end of. Written only from an effect — reassigning
+ * a module variable during render is a side effect React may replay or discard. */
 let warnedNoProvider = false;
 
 export function useOptionalConsent(): ConsentContextValue | null {
 	const handle = useContext(ConsentContext);
 	const context = useConsentValue(handle);
+	const missingProvider = handle === null;
 	// DEGRADING IS NOT THE SAME AS SAYING NOTHING.
 	//
 	// The strict hook threw, which is how the blog's missing provider was found at all — as the
@@ -178,20 +187,23 @@ export function useOptionalConsent(): ConsentContextValue | null {
 	// because nothing surfaces it until somebody looks at the rendered page.
 	//
 	// So the net stays and the silence does not. Dev-only: the warning is for whoever is wiring a
-	// new host, and a production bundle should not carry it.
-	if (
-		context === null &&
-		!warnedNoProvider &&
-		typeof process !== "undefined" &&
-		process.env.NODE_ENV !== "production"
-	) {
-		warnedNoProvider = true;
-		console.warn(
-			"[@repo/privacy] useOptionalConsent: no ConsentProvider above this component. " +
-				"Consent-dependent UI (including the cookie-settings control in the shared site footer) " +
-				"will render nothing. If this host is meant to offer consent, wrap it in <ConsentProvider>.",
-		);
-	}
+	// new host, and a production bundle should not carry it. It runs after commit, in the browser,
+	// which is where whoever is wiring the host is looking.
+	useEffect(() => {
+		if (
+			missingProvider &&
+			!warnedNoProvider &&
+			typeof process !== "undefined" &&
+			process.env.NODE_ENV !== "production"
+		) {
+			warnedNoProvider = true;
+			console.warn(
+				"[@repo/privacy] useOptionalConsent: no ConsentProvider above this component. " +
+					"Consent-dependent UI (including the cookie-settings control in the shared site footer) " +
+					"will render nothing. If this host is meant to offer consent, wrap it in <ConsentProvider>.",
+			);
+		}
+	}, [missingProvider]);
 	return context;
 }
 
@@ -217,19 +229,17 @@ export function ConsentProvider({
 	// `ConsentStore` for why that matters).
 	const [store] = useState(createConsentStore);
 	// The provider renders the notice and the dialog from the same store its consumers read.
-	const { consent, gpc } = useSyncExternalStore(
+	const { consent, gpc, ready } = useSyncExternalStore(
 		store.subscribe,
 		store.getSnapshot,
 		getServerSnapshot,
 	);
-	const [ready, setReady] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
 
 	useEffect(() => {
 		// Read after mount, never during render: the cookie and navigator are browser facts, and a
 		// value that differed between the server and client render would hydrate inconsistently.
-		store.set({ consent: readConsent(), gpc: globalPrivacyControlEnabled() });
-		setReady(true);
+		store.set({ consent: readConsent(), gpc: globalPrivacyControlEnabled(), ready: true });
 
 		/** Synchronize consumers after a choice changes in this document. */
 		const onConsent = (event: Event) => {

@@ -11,7 +11,7 @@
 import { Loader2, ScrollText } from "lucide-react";
 import { useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
 import { formatDate, formatRelative } from "@repo/format";

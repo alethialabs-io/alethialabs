@@ -37,7 +37,7 @@ import {
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { connectRoute } from "@/lib/connectors/helpers";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import {

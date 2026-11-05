@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatDate, formatRelative } from "@repo/format";
-import { useSyncExternalStore } from "react";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 /** How a case timestamp reads: relative to now, or an absolute date with or without the time. */
 export type CaseTimeStyle = "relative" | "date" | "datetime";
@@ -17,21 +17,6 @@ const SIZER: Record<CaseTimeStyle, string> = {
 	date: "30 Sept 2026",
 	datetime: "30 Sept 2026, 23:59",
 };
-
-/** Nothing changes after mount, so there is nothing to subscribe to. */
-function subscribeNever(): () => void {
-	return () => {};
-}
-
-/** In the browser, past hydration. */
-function getClientSnapshot(): boolean {
-	return true;
-}
-
-/** On the server, and during the render that hydrates the server's HTML. */
-function getServerSnapshot(): boolean {
-	return false;
-}
 
 /** Renders one case timestamp through `@repo/format`. */
 function formatCaseTime(instant: Date, style: CaseTimeStyle): string {
@@ -48,11 +33,10 @@ function formatCaseTime(instant: Date, style: CaseTimeStyle): string {
  * hydration is over, inside a slot already as wide as the widest string the style prints, and the
  * `<time>` element carries the instant for assistive tech meanwhile.
  *
- * The hydration test is the console's `useHydrated()` (`apps/console/hooks/use-hydrated.ts`),
- * inlined: this app has no hooks module of its own and that one is not shared.
+ * The hydration test is `useHydrated()` from `@repo/ui/use-hydrated`, shared with the console.
  */
 export function CaseTime({ at, style }: { at: string | Date; style: CaseTimeStyle }) {
-	const hydrated = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
+	const hydrated = useHydrated();
 	const instant = new Date(at);
 	// A value that is not a date must not take the row down: `toISOString()` throws on it, and
 	// `@repo/format` already answers an em dash, which needs neither the clock nor the zone.
