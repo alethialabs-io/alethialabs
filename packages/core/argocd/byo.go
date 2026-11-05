@@ -26,7 +26,9 @@ import (
 //   - clusterResourceWhitelist is EMPTY — no cluster-scoped resource (CRD, ClusterRole/Binding,
 //     Namespace, ValidatingWebhook, …) may be created by an untrusted chart;
 //   - namespaceResourceBlacklist denies in-namespace privilege-escalation vectors (RBAC Role/
-//     RoleBinding, ServiceAccount) so a chart can't grant itself extra permissions.
+//     RoleBinding, ServiceAccount) so a chart can't grant itself extra permissions, and every
+//     external-secrets.io and generators.external-secrets.io kind (byoSecretSyncDenied) so a chart
+//     reads only the secret material its declared bindings give it.
 //
 // This is the AppProject half of the trust boundary; namespace PSA + an admission controller
 // (Kyverno/Gatekeeper) are the pod-level half added before untrusted charts are allowed.
@@ -179,6 +181,26 @@ func ByoChartNamespace(chartID string) string {
 // its next deploy (provisioner.configureByoCharts).
 const ByoLegacyDefaultNamespace = "default"
 
+// byoSecretSyncDenied are the kinds a BYO chart may not declare because they sync secret material:
+// the whole external-secrets.io group (ExternalSecret, SecretStore, PushSecret, and the
+// cluster-scoped ClusterSecretStore and ClusterExternalSecret, which the empty
+// clusterResourceWhitelist denies as well) and the whole generators.external-secrets.io group, whose
+// kinds mint credentials for an ExternalSecret or PushSecret that references them.
+//
+// A chart reads only the secret material its declared bindings give it. Those bindings are
+// ExternalSecrets the RUNNER applies with its own kubeconfig (provisioner.applyByoChartBindings),
+// outside ArgoCD, so this list does not reach them. It has to be the AppProject that refuses a
+// chart's own: the platform's ClusterSecretStores admit the chart's namespace on purpose, because the
+// runner's binding ExternalSecrets live there, and an ESO store condition can only select a
+// NAMESPACE, never an object within one (see externalSecretsStoreTemplate).
+//
+// Kind "*" rather than a list of today's kinds: ArgoCD matches each entry with filepath.Match, so a
+// kind a later ESO release adds to either group is denied without anyone editing this list.
+var byoSecretSyncDenied = []byoGroupKind{
+	{Group: "external-secrets.io", Kind: "*"},
+	{Group: "generators.external-secrets.io", Kind: "*"},
+}
+
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
 // + namespaces. Empty inputs are tolerated (an empty sourceRepos/destinations project simply
 // admits nothing) so a mis-built snapshot fails closed rather than wide-open. commonLabels are the
@@ -217,11 +239,11 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 			SourceRepos:              repos,
 			Destinations:             dests,
 			ClusterResourceWhitelist: []byoGroupKind{}, // non-nil — see the field comment
-			NamespaceResourceBlacklist: []byoGroupKind{
+			NamespaceResourceBlacklist: append([]byoGroupKind{
 				{Group: "rbac.authorization.k8s.io", Kind: "Role"},
 				{Group: "rbac.authorization.k8s.io", Kind: "RoleBinding"},
 				{Group: "", Kind: "ServiceAccount"},
-			},
+			}, byoSecretSyncDenied...),
 			OrphanedResources: byoOrphanedResources{Warn: true},
 		},
 	}
