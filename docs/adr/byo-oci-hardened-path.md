@@ -44,16 +44,19 @@ platform's own workloads, their Secrets and their service accounts.
    name past 63 characters is cut and ends in an 8-hex FNV-1a hash of the whole id, so two ids never
    share a derived namespace. `default` joins `byo_reserved_namespaces.json` as the `platformWorkloads`
    group, mirrored by the console with the existing parity test.
-5. **`byo-` is reserved for derived namespaces — at attach time.** A NEW attachment (the console form,
+5. **`byo-` is reserved for derived namespaces — at attach time.** An attachment (the console form,
    the attach action, and so the CLI) may choose a `byo-` namespace only when it is that chart's own
-   derived one. The runner does NOT apply that rule to what is already stored: a chart a user placed
-   in a `byo-…` namespace before it keeps deploying. The one exception is a real collision — a stored
-   namespace that is another chart's derived name in the same environment. Then exactly one of the
-   charts is refused (`provisioner.byoNamespaceCollisions`): they are ordered by id, the one stable
-   order the snapshot carries, and all but the first are refused, with a Deploy-tab warning naming
-   both and asking the user to attach one again with another namespace. Nothing is deleted, and the
-   namespace stays the kept chart's destination, so the warning does not claim the refused chart's
-   earlier objects stop syncing.
+   derived one, or — on a re-attach — the namespace the chart is already stored with, kept unchanged.
+   The action reads that stored namespace from the database (`byoChartAttachSchemaFor`), never from
+   the request. The runner does NOT apply the rule to what is stored: a chart a user placed in a
+   `byo-…` namespace before it keeps deploying. The one exception is a real collision, decided by
+   OWNERSHIP (`provisioner.byoNamespaceCollisions`): a namespace that is a chart's derived default
+   belongs to that chart, so any other chart that chose it explicitly is refused, whatever the ids. Only
+   when two charts explicitly share a `byo-` name that no chart in the environment derives is there no
+   owner; then the later by id is refused — the one place id order decides. The refusal carries a
+   Deploy-tab warning naming both charts and asking for a re-attach with another namespace. Nothing is
+   deleted, and the namespace stays the kept chart's destination, so the warning does not claim the
+   refused chart's earlier objects stop syncing.
 
 ## Migration
 

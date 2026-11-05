@@ -458,36 +458,47 @@ func collisionConfig(explicit string, explicitFirst bool) *types.ProjectConfig {
 }
 
 // TestConfigureByoCharts_RefusesExactlyOneChartOfADerivedNamespaceCollision: when a chart's chosen
-// namespace is another chart's derived one, exactly ONE of the two is refused — the later by id,
-// whatever order the snapshot lists them in — with a warning naming both. The namespace stays the
-// kept chart's destination, and the warning does not claim the refused chart can no longer sync.
+// namespace is another chart's derived one, the chart that CHOSE it is refused and the owner keeps it
+// — whatever the ids, and whatever order the snapshot lists them in. The warning names both, and does
+// not claim the refused chart can no longer sync (the namespace stays the owner's destination).
 func TestConfigureByoCharts_RefusesExactlyOneChartOfADerivedNamespaceCollision(t *testing.T) {
-	for _, tc := range []struct {
-		explicit, refusedID, keptID string
-	}{
-		{"zeta", "zeta", "payments"},
-		{"alpha", "payments", "alpha"},
-	} {
+	for _, explicit := range []string{"zeta", "alpha"} {
 		for _, explicitFirst := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/explicitFirst=%v", tc.explicit, explicitFirst), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/explicitFirst=%v", explicit, explicitFirst), func(t *testing.T) {
 				c := newByoCluster(t, "")
-				_, refused, _ := byoConfigureTuple(configureByoCharts(collisionConfig(tc.explicit, explicitFirst), "tok", nil, nil, io.Discard, io.Discard))
-				if len(refused) != 1 || refused[0].ID != tc.refusedID || !refused[0].Shared {
-					t.Fatalf("refused = %+v, want exactly %q, marked shared", refused, tc.refusedID)
+				_, refused, _ := byoConfigureTuple(configureByoCharts(collisionConfig(explicit, explicitFirst), "tok", nil, nil, io.Discard, io.Discard))
+				if len(refused) != 1 || refused[0].ID != explicit || !refused[0].Shared {
+					t.Fatalf("refused = %+v, want exactly %q (it chose payments' own name), marked shared", refused, explicit)
 				}
 				w := refused[0].warning()
-				for _, want := range []string{`"` + tc.refusedID + `"`, `"` + tc.keptID + `"`, `"byo-payments"`, "Attach one of the two again with another namespace"} {
+				for _, want := range []string{`"` + explicit + `"`, `"payments"`, `"byo-payments"`, "own default namespace"} {
 					if !strings.Contains(w, want) {
 						t.Errorf("the warning does not say %q:\n%s", want, w)
 					}
 				}
 				if strings.Contains(w, "can no longer sync") {
-					t.Errorf("the namespace is still the kept chart's destination; the warning must not claim otherwise:\n%s", w)
+					t.Errorf("the namespace is still the owner's destination; the warning must not claim otherwise:\n%s", w)
 				}
 				if got := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(got, []string{"byo-payments"}) {
-					t.Errorf("AppProject destinations = %v, want [byo-payments] for the kept chart", got)
+					t.Errorf("AppProject destinations = %v, want [byo-payments] for the owner", got)
 				}
 			})
 		}
+	}
+}
+
+// TestByoNamespaceCollisions_FallsBackToIdOrderOnlyWithoutAnOwner: two charts that both chose a "byo-"
+// name nobody here derives have no owner, so the later by id is refused — the one case id order
+// decides. Two charts sharing a name outside the prefix are left alone, as they always were.
+func TestByoNamespaceCollisions_FallsBackToIdOrderOnlyWithoutAnOwner(t *testing.T) {
+	chart := func(id, ns string) types.AddOnInstall {
+		return types.AddOnInstall{ID: id, Source: "git", Namespace: ns}
+	}
+	got := byoNamespaceCollisions([]types.AddOnInstall{chart("zeta", "byo-x"), chart("alpha", "byo-x"), chart("one", "shared"), chart("two", "shared")})
+	if len(got) != 1 || got["zeta"] == "" {
+		t.Fatalf("collisions = %v, want only zeta refused (alpha first by id; \"shared\" is not byo-)", got)
+	}
+	if !strings.Contains(got["zeta"], `"alpha"`) {
+		t.Errorf("the reason must name the chart that keeps it: %s", got["zeta"])
 	}
 }

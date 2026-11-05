@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	byoChartAttachSchema,
+	byoChartAttachSchemaFor,
 	byoChartFormSchema,
 	byoChartNamespace,
 	byoNamespacePrefixMessage,
@@ -56,8 +56,8 @@ describe("byoChartNamespace", () => {
 });
 
 describe("the byo- prefix is reserved for derived namespaces", () => {
-	const attach = (id: string, namespace: string) =>
-		byoChartAttachSchema.safeParse({
+	const attach = (id: string, namespace: string, stored: string | null = null) =>
+		byoChartAttachSchemaFor(stored).safeParse({
 			projectId: "p1",
 			id,
 			repoUrl: "https://github.com/acme/charts",
@@ -73,6 +73,13 @@ describe("the byo- prefix is reserved for derived namespaces", () => {
 
 	it("refuses another chart's byo- namespace on the attach action", () => {
 		expect(attach("api", "byo-payments")).toBe(false);
+	});
+
+	it("lets a re-attach keep the byo- namespace the chart is stored with, and only that one", () => {
+		// Attached before the rule with a byo- name that is not its own: kept unchanged, allowed.
+		expect(attach("api", "byo-legacy", "byo-legacy")).toBe(true);
+		// A different, newly chosen byo- name is still refused.
+		expect(attach("api", "byo-other", "byo-legacy")).toBe(false);
 	});
 
 	it("refuses any typed byo- namespace on the form, where blank gives the chart its own", () => {

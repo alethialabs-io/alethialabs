@@ -43,6 +43,7 @@ import {
 } from "@/lib/validations/chart-workloads";
 import {
 	byoChartAttachSchema,
+	byoChartAttachSchemaFor,
 	byoChartNamespace,
 	type ByoChartAttachInput,
 } from "@/lib/validations/byo-charts";
@@ -115,6 +116,24 @@ export async function attachByoChart(
 	}
 
 	const envId = await resolveActiveEnvironmentId(parsed.projectId, parsed.environmentId);
+	// The `byo-` prefix rule needs the chart's stored namespace: a re-attach may keep it unchanged
+	// even when it is a `byo-` name that is not the chart's own (attached before the rule), while a
+	// newly chosen `byo-` name is refused. Read from the database, never from the request.
+	const [stored] = await withActorScope(actor, (tx) =>
+		tx
+			.select({ namespace: projectAddons.namespace })
+			.from(projectAddons)
+			.where(
+				and(
+					eq(projectAddons.project_id, parsed.projectId),
+					eq(projectAddons.environment_id, envId),
+					eq(projectAddons.addon_id, id),
+					eq(projectAddons.source, "byo"),
+				),
+			)
+			.limit(1),
+	);
+	byoChartAttachSchemaFor(stored?.namespace ?? null).parse(input);
 	// `version` holds the git ref for a git chart, or the chart version for an OCI chart
 	// (`*` = latest, an ArgoCD-supported Helm targetRevision).
 	const ref = parsed.ref || (isOci ? "*" : "HEAD");

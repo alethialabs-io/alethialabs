@@ -136,6 +136,33 @@ describe("attachByoChart — OCI", () => {
 		expect(inserted.find((i) => i.table === projectAddons)).toBeUndefined();
 	});
 
+	it("lets a re-attach keep its stored byo- namespace, read from the database (#6446)", async () => {
+		// The stored row: attached before the byo- rule, in a byo- namespace that is not its own.
+		const { inserted } = setupDb([{ namespace: "byo-legacy" }]);
+		await attachByoChart({
+			projectId: "proj-1",
+			id: "payments",
+			repoUrl: "oci://ghcr.io/acme/payments",
+			namespace: "byo-legacy",
+		});
+		expect(inserted.find((i) => i.table === projectAddons)?.payload).toMatchObject({
+			namespace: "byo-legacy",
+		});
+	});
+
+	it("refuses a newly chosen byo- namespace that is not the chart's own (#6446)", async () => {
+		const { inserted } = setupDb([{ namespace: "byo-legacy" }]);
+		await expect(
+			attachByoChart({
+				projectId: "proj-1",
+				id: "payments",
+				repoUrl: "oci://ghcr.io/acme/payments",
+				namespace: "byo-other",
+			}),
+		).rejects.toThrow(/reserved for the namespace each chart gets by default/);
+		expect(inserted.find((i) => i.table === projectAddons)).toBeUndefined();
+	});
+
 	it("rejects an oci:// reference that names no chart path at all", async () => {
 		setupDb();
 		await expect(

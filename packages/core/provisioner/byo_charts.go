@@ -302,20 +302,28 @@ func withByoMoveSources(namespaces []string, moved []byoMove) []string {
 	return namespaces
 }
 
-// byoNamespaceCollisions finds the BYO charts that must not deploy because their namespace is
-// ANOTHER chart's derived one (argocd.ByoChartNamespace) in this environment — two charts would share
-// it. It returns, for each chart to refuse, why.
+// byoNamespaceCollisions finds the BYO charts that must not deploy because they would share a
+// namespace another chart owns, and says why for each.
 //
 // A chosen "byo-" namespace is allowed at deploy: a NEW attachment cannot choose one other than its
 // own (the console's attach schema refuses it), but a chart attached before that rule keeps working.
-// Only the real collision is refused, and only ONE side of it: the charts sharing such a namespace are
-// ordered by id — the one stable order the snapshot carries; its add-on order is not guaranteed — and
-// all but the first are refused. Sharing a namespace no chart derives (two charts that chose the same
-// name of their own) is not this rule's business. Nothing is deleted: the caller treats each like any
-// other refusal.
+// What is refused is the real collision, and ownership decides it, not ids:
+//
+//   - A namespace that is some chart's DERIVED default (argocd.ByoChartNamespace(id)) belongs to that
+//     chart. Every OTHER chart in it chose it explicitly, and is refused; the owner keeps it, whatever
+//     the ids. Two charts cannot both derive one name (the derivation is distinct per id), so this
+//     never has to pick between owners.
+//   - The case ownership cannot decide: two or more charts EXPLICITLY sharing a "byo-" namespace that
+//     is nobody's derived default here (its owner deploys elsewhere, or no chart has that id). There
+//     is no owner, so the charts are ordered by id — the one stable order the snapshot carries; its
+//     add-on order is not guaranteed — and all but the first are refused. This is the ONLY place id
+//     order decides anything.
+//
+// Two charts sharing a namespace outside the "byo-" prefix (both chose "payments") is not this rule's
+// business: that was always allowed. Nothing is deleted: the caller treats each like any other refusal.
 func byoNamespaceCollisions(addons []types.AddOnInstall) map[string]string {
-	derivedBy := map[string]string{}
 	byNS := map[string][]string{}
+	derivedBy := map[string]string{}
 	for _, a := range addons {
 		if !a.IsByo() {
 			continue
@@ -325,15 +333,30 @@ func byoNamespaceCollisions(addons []types.AddOnInstall) map[string]string {
 	}
 	out := map[string]string{}
 	for ns, ids := range byNS {
+		if len(ids) < 2 || !strings.HasPrefix(ns, "byo-") {
+			continue
+		}
 		owner, derived := derivedBy[ns]
-		if !derived || len(ids) < 2 {
+		ownerHere := false
+		for _, id := range ids {
+			if derived && id == owner {
+				ownerHere = true
+			}
+		}
+		if ownerHere {
+			for _, id := range ids {
+				if id != owner {
+					out[id] = fmt.Sprintf("namespace %q is BYO chart %q's own default namespace, and two charts cannot share one; chart %q keeps it. "+
+						"Attach chart %q again with another namespace", ns, owner, owner, id)
+				}
+			}
 			continue
 		}
 		sort.Strings(ids)
 		kept := ids[0]
 		for _, id := range ids[1:] {
-			out[id] = fmt.Sprintf("namespace %q is also the namespace of BYO chart %q (it is chart %q's own default name), and two charts cannot share one; chart %q keeps it. "+
-				"Attach one of the two again with another namespace", ns, kept, owner, kept)
+			out[id] = fmt.Sprintf("namespace %q is also the namespace of BYO chart %q, and two charts cannot share one; chart %q keeps it (the first by id, since neither chart owns that name). "+
+				"Attach one of the two again with another namespace", ns, kept, kept)
 		}
 	}
 	return out
