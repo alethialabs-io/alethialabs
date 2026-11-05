@@ -149,11 +149,24 @@ runner creates for it (`alethia-byo-db-users`), which holds no workload. Every o
    that environment's next deploy, or its teardown, which removes the namespace's objects with its
    owner label. Until then the namespace holds no workload that could mount them.
 
-**How the Job reports `Provisioned`.** The SQL runs in one transaction (`psql --single-transaction -v
-ON_ERROR_STOP=1`): it either applies for every declared user or for none. Its last statement selects
+**Two phases, so that revocation fails safe.** The script carries its own two transactions and is
+applied with `psql -X -v ON_ERROR_STOP=1 -f`, not `--single-transaction`:
+
+1. *Lockout*, committed on its own first: every revocation candidate (§5) is set `NOLOGIN`. Only after
+   that has committed are its sessions terminated, so a reconnect cannot slip in between.
+2. *Main*, one transaction: the pre-15 preflight, every declared user, and the reassign and drop of
+   every candidate. It applies for every declared user or for none.
+
+A drop can be blocked by something the main transaction cannot reach. For example, a role that owns an
+object in another database cannot be dropped, because `REASSIGN OWNED` and `DROP OWNED` act on the
+current database only. The main transaction then fails with a reason naming the role, and the next run
+retries. Because the lockout committed first, a role whose revocation failed still cannot log in.
+
+**How the Job reports `Provisioned`.** After the main transaction commits, the last statement selects
 the declared users that now exist with LOGIN and the expected tag, and the main container writes that
 list, and nothing else, to its termination message (psql's `\o` pointed at the termination path just
-before that statement, so no earlier output reaches it) (`terminationMessagePath`, read by the runner from
+before that statement, so no earlier output reaches it; with `ON_ERROR_STOP` a failed run never reaches
+it) (`terminationMessagePath`, read by the runner from
 the pod's `status.containerStatuses[].state.terminated.message` through the API, never from logs). The
 runner counts a user as provisioned only when **all three** hold: the Job's condition is Complete, the
 user is in that message, and the user is in the set this deploy declared. A failed or timed-out Job,
@@ -194,7 +207,16 @@ schema `public` or on any other schema. Postgres 15 and later deny `CREATE` on `
 Job does not assume the server is 15+: it reads `server_version_num`, and below 150000 it first grants
 `CREATE` on `public` explicitly to the roles that hold it today through `PUBLIC` (the administrator, and
 `alethia_app` where it exists), then revokes `CREATE` on `public` from `PUBLIC`. If any of that is
-refused, the transaction fails and no user is provisioned. What `PUBLIC` keeps by default — `CONNECT`
+refused, the transaction fails and no user is provisioned. Postgres only warns when a `GRANT` or
+`REVOKE` is refused, so after the revoke the Job reads the schema's ACL and fails when `PUBLIC` still
+holds `CREATE`.
+
+**Known limit, fail-closed.** On a pre-15 server where `public` belongs to a role the administrator
+cannot act for, the revoke is refused, every BYO users run fails, and no per-binding user is ever
+provisioned there. On RDS that role can be `rdsadmin`. The bindings stay unsatisfied, never bound to
+the administrator. The fix is to upgrade to Postgres 15 or later, or to have an operator revoke
+`CREATE` on `public` from `PUBLIC`. CI tests this case (`TestByoUsersPostgres_PreflightRefusedFailsClosed`
+on Postgres 14). What `PUBLIC` keeps by default — `CONNECT`
 and `TEMP` on databases, `USAGE` on `public` — is unchanged, because revoking it would change what the
 first-class services may do. It grants no access to any table.
 
@@ -262,9 +284,11 @@ binding out of the declared set. The next deploy then does the following:
 3. **the BYO users Job** revokes every user that is **tagged with this environment** and is not
    declared. A user is selected by the per-binding prefix *and* its environment tag; a user with the
    prefix but no tag, or another environment's tag, is never a candidate, and neither is any
-   first-class role. On Postgres it runs `ALTER ROLE … NOLOGIN`, `pg_terminate_backend` of the user's
-   sessions, then hands the user's objects to a holder role (below), `DROP OWNED BY …` (which then
-   drops privileges only) and `DROP ROLE`. On MySQL it runs `DROP USER`.
+   first-class role. On Postgres, the lockout transaction runs `ALTER ROLE … NOLOGIN` and commits, then
+   `pg_terminate_backend` ends the user's sessions (§3). The main transaction then hands the user's
+   objects to a holder role (below), runs `DROP OWNED BY …` (which then drops privileges only) and
+   `DROP ROLE`. If the drop fails, the user stays `NOLOGIN` and the next run retries. On MySQL it runs
+   `DROP USER`.
 
 **Data is retained, and comes back whole.** On Postgres, `REASSIGN OWNED BY "alethia_byo_<h>" TO
 "alethia_byo_<h>_r"` moves everything the user owned — its schema and every table, sequence, view,

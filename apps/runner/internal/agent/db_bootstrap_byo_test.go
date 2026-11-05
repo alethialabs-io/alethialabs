@@ -439,8 +439,39 @@ func TestByoUsers_LeastPrivilege(t *testing.T) {
 }
 
 // goldenOneUser is the reviewed script for oneUserInput (salt bytes all 0x01).
-const goldenOneUser = `-- alethia db-bootstrap --byo-users (postgres). Apply with psql --single-transaction -v ON_ERROR_STOP=1.
+const goldenOneUser = `-- alethia db-bootstrap --byo-users (postgres). Apply with psql -X -v ON_ERROR_STOP=1 -f (not --single-transaction).
 -- Passwords are carried as SCRAM-SHA-256 verifiers only.
+-- phase 1: lock out every revocation candidate, committed on its own
+BEGIN;
+DO $alethia_byo$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname
+  LOOP
+    EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
+  END LOOP;
+END
+$alethia_byo$;
+COMMIT;
+DO $alethia_byo$
+BEGIN
+  PERFORM pg_terminate_backend(s.pid) FROM pg_stat_activity s
+    WHERE s.usename IN (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname);
+END
+$alethia_byo$;
+-- phase 2: everything else, in one transaction
+BEGIN;
 DO $alethia_byo$
 BEGIN
   IF current_setting('server_version_num')::int < 150000 AND to_regnamespace('public') IS NOT NULL THEN
@@ -525,8 +556,8 @@ BEGIN
     ORDER BY a.rolname
   LOOP
     holder := r.rolname || '_r';
+    BEGIN
     EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
-    PERFORM pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = r.rolname;
     IF EXISTS (SELECT FROM pg_roles WHERE rolname = holder) THEN
       IF shobj_description((SELECT oid FROM pg_roles WHERE rolname = holder), 'pg_authid') IS DISTINCT FROM 'alethia-env:env-1' THEN
         RAISE EXCEPTION 'alethia byo-users: holder % is not tagged with this environment', holder;
@@ -539,9 +570,13 @@ BEGIN
     EXECUTE format('REASSIGN OWNED BY %I TO %I', r.rolname, holder);
     EXECUTE format('DROP OWNED BY %I', r.rolname);
     EXECUTE format('DROP ROLE %I', r.rolname);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'alethia byo-users: could not revoke role % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
+    END;
   END LOOP;
 END
 $alethia_byo$;
+COMMIT;
 \pset tuples_only on
 \pset format unaligned
 \o /dev/termination-log
@@ -555,30 +590,40 @@ SELECT a.rolname FROM pg_roles a
 \o
 `
 
-// TestByoUsers_ProvisionOrder: one user's block refuses a foreign role, tags it, sets the verifier,
-// asserts no elevated attribute or membership, re-adopts from its holder BEFORE creating its schema
-// (so a schema left with the holder comes back rather than being skipped), then asserts it owns that
-// schema and sets its search_path.
-func TestByoUsers_ProvisionOrder(t *testing.T) {
+// TestByoUsers_TwoPhases: revocation fails SAFE (ADR §3). The lockout of every candidate is its own
+// committed transaction, its sessions are terminated only after that commit, and the main transaction
+// follows; a failed drop is re-raised naming the role. The result line reads committed state.
+func TestByoUsers_TwoPhases(t *testing.T) {
 	got, _ := renderByoUsersSQL(oneUserInput())
-	u := byoTestUser
+	lines := strings.Split(got, "\n")
+	var tx []string
+	for _, l := range lines {
+		if l == "BEGIN;" || l == "COMMIT;" {
+			tx = append(tx, l)
+		}
+	}
+	if strings.Join(tx, " ") != "BEGIN; COMMIT; BEGIN; COMMIT;" {
+		t.Fatalf("top-level transaction statements = %v, want two BEGIN/COMMIT pairs", tx)
+	}
+	first := strings.Index(got, "\nCOMMIT;\n")
+	phase1 := got[:first]
+	if !strings.Contains(phase1, "EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);") {
+		t.Error("phase 1 does not lock the candidates out")
+	}
+	for _, bad := range []string{"REASSIGN", "DROP ", "pg_terminate_backend", "CREATE ROLE", "PASSWORD"} {
+		if strings.Contains(phase1, bad) {
+			t.Errorf("phase 1 contains %q: it must hold only what cannot be blocked", bad)
+		}
+	}
 	order := []string{
-		"IS DISTINCT FROM 'alethia-env:env-1' THEN\n      RAISE EXCEPTION 'alethia byo-users: role % exists and is not tagged with this environment'",
-		`CREATE ROLE "` + u + `" NOLOGIN;`,
-		`COMMENT ON ROLE "` + u + `" IS 'alethia-env:env-1';`,
-		`ALTER ROLE "` + u + `" WITH LOGIN CONNECTION LIMIT 20 PASSWORD 'SCRAM-SHA-256$4096:`,
-		`GRANT "` + u + `" TO CURRENT_USER;`,
-		"(rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)) THEN\n    RAISE EXCEPTION",
-		"SELECT FROM pg_auth_members WHERE member = '" + u + "'::regrole) THEN\n    RAISE EXCEPTION",
-		"IS DISTINCT FROM 'alethia-env:env-1' THEN\n      RAISE EXCEPTION 'alethia byo-users: holder % is not tagged",
-		`REASSIGN OWNED BY "` + u + `_r" TO "` + u + `";`,
-		`DROP OWNED BY "` + u + `_r";`,
-		`DROP ROLE "` + u + `_r";`,
-		`GRANT CONNECT ON DATABASE "app-db" TO "` + u + `";`,
-		`CREATE SCHEMA IF NOT EXISTS "` + u + `" AUTHORIZATION "` + u + `";`,
-		"IS DISTINCT FROM '" + u + "'::regrole::oid THEN\n    RAISE EXCEPTION 'alethia byo-users: schema % is not owned by its user'",
-		`ALTER ROLE "` + u + `" IN DATABASE "app-db" SET search_path = "` + u + `";`,
-		"-- revoke every undeclared",
+		"\nCOMMIT;\n",
+		"PERFORM pg_terminate_backend(s.pid)",
+		"\nBEGIN;\n",
+		"server_version_num",
+		`CREATE ROLE "` + byoTestUser + `" NOLOGIN;`,
+		"EXECUTE format('DROP ROLE %I', r.rolname);\n    EXCEPTION WHEN OTHERS THEN\n      RAISE EXCEPTION 'alethia byo-users: could not revoke role %",
+		"\nCOMMIT;\n",
+		"\\o /dev/termination-log",
 	}
 	at := 0
 	for _, s := range order {
@@ -587,5 +632,9 @@ func TestByoUsers_ProvisionOrder(t *testing.T) {
 			t.Fatalf("missing, or out of order after offset %d: %q", at, s)
 		}
 		at += i + len(s)
+	}
+	// Both phases select candidates with the same predicate.
+	if strings.Count(got, "AND a.rolname <> ALL (ARRAY['"+byoTestUser+"']::name[])") != 3 {
+		t.Error("the lockout, the termination and the sweep do not share one candidate predicate")
 	}
 }

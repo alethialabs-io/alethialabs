@@ -25,9 +25,16 @@ import (
 // `alethia db-bootstrap --byo-users` renders the Postgres SQL for per-binding BYO database users
 // (docs/adr/byo-binding-db-users.md §3, §5; slice 3 of #6438). It is pure: it reads the declared users
 // from its arguments and their passwords from its environment, and writes SQL. The BYO users Job
-// (slice 4) applies that SQL as the database administrator with
-// `psql --single-transaction -v ON_ERROR_STOP=1`, so the whole script commits for every declared user
-// or for none.
+// (slice 4) applies that SQL as the database administrator with `psql -X -v ON_ERROR_STOP=1 -f <file>`
+// — NOT --single-transaction: the script carries its own two transactions (ADR §3):
+//
+//  1. LOCKOUT, committed first: every revocation candidate is set NOLOGIN, and once that has committed
+//     its sessions are terminated. Revocation therefore fails SAFE: whatever later blocks a drop (an
+//     object the role owns in another database, say), the role can no longer log in.
+//  2. MAIN: the preflight, every declared user and the reassign/drop of every candidate, in one
+//     transaction that commits for every declared user or for none. A candidate that cannot be dropped
+//     fails it with a reason naming the role; the next run retries. The result line runs after it
+//     commits, so it reports committed state only, and with ON_ERROR_STOP a failed run never reaches it.
 //
 // What the rendered script guarantees, per run:
 //
@@ -287,24 +294,63 @@ func byoTaggedRolesSQL(env string) string {
       AND d.description = ` + pgQuoteLiteral(byoEnvTagPrefix+env)
 }
 
-// byoRevokeSQL renders the environment-scoped revocation sweep (ADR §5). A candidate matches the
-// anchored per-binding pattern (so no holder and no first-class role) AND carries this environment's
-// tag (so no untagged role and no other environment's user), and is not declared. Each is locked out,
-// its sessions ended, its objects reassigned to its own tagged NOLOGIN holder, its remaining
-// privileges dropped, and the role dropped.
+// byoCandidatesSQL selects the revocation candidates: a role matching the anchored per-binding
+// pattern (so no holder and no first-class role) AND carrying this environment's tag (so no untagged
+// role and no other environment's user) AND not declared. The lockout and the sweep share it, so they
+// cannot disagree about which roles they act on.
+func byoCandidatesSQL(env string, users []byoUser) string {
+	return byoTaggedRolesSQL(env) + `
+      AND a.rolname <> ALL (` + byoNameArray(users) + `)
+    ORDER BY a.rolname`
+}
+
+// byoLockoutSQL renders phase 1 (ADR §3): its own transaction setting every candidate NOLOGIN, then —
+// only after that has COMMITTED, so a reconnect cannot slip in between — the termination of their
+// sessions. Nothing here can be blocked by what a role owns, so it commits even when the main
+// transaction's drop of that role later fails.
+func byoLockoutSQL(env string, users []byoUser) ([]string, error) {
+	lock, err := doBlock(`DECLARE
+  r record;
+BEGIN
+  FOR r IN ` + byoCandidatesSQL(env, users) + `
+  LOOP
+    EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
+  END LOOP;
+END`)
+	if err != nil {
+		return nil, err
+	}
+	terminate, err := doBlock(`BEGIN
+  PERFORM pg_terminate_backend(s.pid) FROM pg_stat_activity s
+    WHERE s.usename IN (` + byoCandidatesSQL(env, users) + `);
+END`)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		"-- phase 1: lock out every revocation candidate, committed on its own",
+		"BEGIN;",
+		lock,
+		"COMMIT;",
+		terminate,
+	}, nil
+}
+
+// byoRevokeSQL renders the main transaction's half of the revocation sweep (ADR §5). Each candidate —
+// already NOLOGIN since phase 1 (set again here, idempotently) — has its objects reassigned to its own
+// tagged NOLOGIN holder, its remaining privileges dropped, and the role dropped. A failure for one
+// role is re-raised naming that role, which fails the run; its lockout has already committed.
 func byoRevokeSQL(env string, users []byoUser) (string, error) {
 	tag := pgQuoteLiteral(byoEnvTagPrefix + env)
 	return doBlock(`DECLARE
   r record;
   holder name;
 BEGIN
-  FOR r IN ` + byoTaggedRolesSQL(env) + `
-      AND a.rolname <> ALL (` + byoNameArray(users) + `)
-    ORDER BY a.rolname
+  FOR r IN ` + byoCandidatesSQL(env, users) + `
   LOOP
     holder := r.rolname || ` + pgQuoteLiteral(byoHolderSuffix) + `;
+    BEGIN
     EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
-    PERFORM pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = r.rolname;
     IF EXISTS (SELECT FROM pg_roles WHERE rolname = holder) THEN
       IF shobj_description((SELECT oid FROM pg_roles WHERE rolname = holder), 'pg_authid') IS DISTINCT FROM ` + tag + ` THEN
         RAISE EXCEPTION 'alethia byo-users: holder % is not tagged with this environment', holder;
@@ -317,6 +363,9 @@ BEGIN
     EXECUTE format('REASSIGN OWNED BY %I TO %I', r.rolname, holder);
     EXECUTE format('DROP OWNED BY %I', r.rolname);
     EXECUTE format('DROP ROLE %I', r.rolname);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE EXCEPTION 'alethia byo-users: could not revoke role % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
+    END;
   END LOOP;
 END`)
 }
@@ -362,9 +411,9 @@ func validateByoUsers(users []byoUser) ([]byoUser, error) {
 }
 
 // renderByoUsersSQL renders the whole per-binding script: header, the pre-15 preflight, each declared
-// user, the revocation sweep, and the result line. It is meant for
-// `psql --single-transaction -v ON_ERROR_STOP=1`, which makes it one transaction; every statement is
-// idempotent, so a second run converges on the same state (only the verifiers' salts differ).
+// user, the revocation sweep, and the result line — as the two transactions the package comment
+// describes. It is meant for `psql -X -v ON_ERROR_STOP=1 -f`; every statement is idempotent, so a
+// second run converges on the same state (only the verifiers' salts differ).
 func renderByoUsersSQL(in byoUsersInput) (string, error) {
 	if !byoEnvIDPattern.MatchString(in.EnvironmentID) {
 		return "", errors.New("db-bootstrap --byo-users: --env-id is missing or not an environment ID")
@@ -389,11 +438,16 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	stmts := []string{
-		"-- alethia db-bootstrap --byo-users (postgres). Apply with psql --single-transaction -v ON_ERROR_STOP=1.",
-		"-- Passwords are carried as SCRAM-SHA-256 verifiers only.",
-		preflight,
+	lockout, err := byoLockoutSQL(in.EnvironmentID, users)
+	if err != nil {
+		return "", err
 	}
+	stmts := []string{
+		"-- alethia db-bootstrap --byo-users (postgres). Apply with psql -X -v ON_ERROR_STOP=1 -f (not --single-transaction).",
+		"-- Passwords are carried as SCRAM-SHA-256 verifiers only.",
+	}
+	stmts = append(stmts, lockout...)
+	stmts = append(stmts, "-- phase 2: everything else, in one transaction", "BEGIN;", preflight)
 	for _, u := range users {
 		s := make([]byte, scramSaltLen)
 		if _, err := io.ReadFull(salt, s); err != nil {
@@ -414,6 +468,9 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 		return "", err
 	}
 	stmts = append(stmts, "-- revoke every undeclared per-binding user of this environment", revoke)
+	// The result line reads COMMITTED state: it runs after the main transaction, so a commit that
+	// fails can never have reported a user as provisioned.
+	stmts = append(stmts, "COMMIT;")
 	stmts = append(stmts, byoResultSQL(in.EnvironmentID, in.ResultPath, users)...)
 	return strings.Join(stmts, "\n") + "\n", nil
 }
