@@ -22,7 +22,8 @@ import {
 } from "@/app/server/actions/agent";
 import type { AgentThread } from "@/lib/db/schema";
 import { type ElenchCtxRequest, useElenchStore } from "@/lib/stores/use-elench-store";
-import { useElenchThreads } from "@/components/agent/elench/use-elench-threads";
+import { orderUnsent, useElenchThreads, writtenAt } from "@/components/agent/elench/use-elench-threads";
+import { newEntry } from "@/lib/stores/elench-drafts/reducer-drafting";
 
 vi.mock("@/app/server/actions/agent", () => ({
 	listThreads: vi.fn(),
@@ -468,5 +469,51 @@ describe("useElenchThreads — a load that fails (G10)", () => {
 		act(() => result.current.retryLoad());
 		await waitFor(() => expect(useElenchStore.getState().threadId).toBe("t-2"));
 		expect(result.current.loadError).toBeNull();
+	});
+});
+
+// ── The Unsent group's order (#6459) ─────────────────────────────────────────────────────────
+
+describe("the Unsent order", () => {
+	const key = (conversationId: string) => ({ orgId: "o1", projectId: null, conversationId });
+
+	// Fails if a tab-only entry is timed by anything but the sentinel (e.g. the clock read again).
+	it("times words only this tab holds as Infinity: written now, newer than any stored row", () => {
+		expect(writtenAt(newEntry(key("c1"), "none"))).toBe(Number.POSITIVE_INFINITY);
+	});
+
+	// Fails if tab-only entries can sort under a stored row that is ahead of the browser clock.
+	it("puts tab-only entries above every stored row, even one dated in the future", () => {
+		const future = Date.parse("2999-01-01T00:00:00Z");
+		const rows = [
+			{ at: Date.parse("2026-11-01T00:00:00Z"), row: "old" },
+			{ at: future, row: "future" },
+			{ at: Number.POSITIVE_INFINITY, row: "tab" },
+		];
+		expect(orderUnsent(rows)).toEqual(["tab", "future", "old"]);
+	});
+
+	// Fails if equal times are reordered (an unstable comparator).
+	it("keeps equal times in their order", () => {
+		const rows = [
+			{ at: Number.POSITIVE_INFINITY, row: "a" },
+			{ at: Number.POSITIVE_INFINITY, row: "b" },
+			{ at: 5, row: "c" },
+			{ at: 5, row: "d" },
+		];
+		expect(orderUnsent(rows)).toEqual(["a", "b", "c", "d"]);
+	});
+
+	// Fails if an unparseable `updatedAt` (NaN) is compared as a number: it must sort last, with
+	// two such rows keeping their order.
+	it("sorts an unparseable time last and keeps those rows in order", () => {
+		const rows = [
+			{ at: Number.NaN, row: "bad-1" },
+			{ at: 10, row: "older" },
+			{ at: Number.NaN, row: "bad-2" },
+			{ at: Number.POSITIVE_INFINITY, row: "tab" },
+			{ at: 20, row: "newer" },
+		];
+		expect(orderUnsent(rows)).toEqual(["tab", "newer", "older", "bad-1", "bad-2"]);
 	});
 });

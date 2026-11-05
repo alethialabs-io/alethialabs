@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The mention popover's debounced search (components/agent/elench/use-mentions.ts). Its loading
-// flag and its list are DERIVED from the last answer and the query it answers (#6459), instead of
-// being reset by an effect; these pin the behaviour that derivation must keep.
+// The mention popover's debounced search (components/agent/elench/use-mentions.ts). #6459 moved
+// its loading flag and list from effect-set state to a derivation from the last answer and the
+// query it answers. These pin the OUTCOMES that change must keep. They cannot tell "same render"
+// from "one commit later": `renderHook`/`rerender` flush effects inside `act`, so the old
+// effect-based hook reached the same end states.
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -47,8 +49,8 @@ describe("useMentionSearch", () => {
 		expect(r.current).toEqual({ results: [], loading: false });
 	});
 
-	// Fails if `loading` is not derived from the answered query: it would read false before the
-	// first answer (an empty list that looks like "no matches").
+	// Fails if the hook reports idle before the first answer lands (an empty list that would read
+	// as "no matches").
 	it("is loading from the first render of a query until its answer lands", async () => {
 		const { result: r } = renderHook(() => useMentionSearch(at("pro")));
 		expect(r.current.loading).toBe(true);
@@ -56,8 +58,8 @@ describe("useMentionSearch", () => {
 		expect(r.current).toEqual({ results: [result("hit:pro")], loading: false });
 	});
 
-	// Fails if the previous answer is dropped on a new query (the list would flash empty while
-	// typing) or if it is treated as the new query's answer (loading would read false).
+	// Fails if the previous answer is dropped on a new query (the list would empty while typing) or
+	// is taken for the new query's answer (loading would read false).
 	it("keeps the previous rows up while the next query loads", async () => {
 		const { result: r, rerender } = renderHook(({ a }) => useMentionSearch(a), {
 			initialProps: { a: at("p") },

@@ -91,11 +91,10 @@ describe("AgentKnowledgePanel — non-editor (canEdit false)", () => {
 });
 
 describe("AgentKnowledgePanel — switching scope (#6459)", () => {
-	// The loading state is DERIVED from which scope the fields were loaded for, not reset by an
-	// effect: a switch must read as loading in the very render that names the new scope, and never
-	// show the previous scope's documents as if they were the new one's. Fails if `loading` is
-	// computed from anything that the switch itself does not change (e.g. a flag cleared by the first
-	// load only): the second assertion block would then find "Runbook" instead of "Loading…".
+	// A scope switch reads as loading and never shows the previous scope's documents as the new
+	// one's, until the new scope's load lands. This pins the outcome only: `rerender` flushes effects
+	// inside `act`, so it cannot tell the derived `loading` (#6459) from the old effect that set it.
+	// Fails if the switch leaves "Runbook" on screen, or never leaves the loading state.
 	it("reads as loading the moment the scope changes, then shows the new scope's knowledge", async () => {
 		vi.mocked(canEditAgentContext).mockResolvedValue(true);
 		const { rerender } = render(<AgentKnowledgePanel projectId={null} onClose={() => {}} />);

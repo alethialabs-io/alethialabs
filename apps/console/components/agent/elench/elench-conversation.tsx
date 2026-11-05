@@ -708,7 +708,10 @@ export function ElenchConversation({
 			if (!storeNeverSends(err)) return;
 			const threadId = useElenchStore.getState().threadId;
 			if (err.refusal.refusal === "thread-deleted") newChat();
-			else if (threadId && reloadThread) void reloadThread(threadId).catch(() => undefined);
+			else if (threadId && reloadThread)
+				void reloadThread(threadId).catch(() =>
+					toast.error("The conversation could not be reloaded. Reopen it to see its latest messages."),
+				);
 		},
 		[clearError, ownedRefusedTurn, routeEvent, newChat, reloadThread],
 	);

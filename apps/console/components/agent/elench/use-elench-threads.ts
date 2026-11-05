@@ -454,18 +454,30 @@ export interface UnsentView {
  * When an entry was last written: its row's `updatedAt`, or `Infinity` for words only this tab holds
  * — they are being written now, so they sort above every stored row. A sentinel rather than
  * `Date.now()`, because this is read during render (the hook's memo), where the clock is impure.
+ * An unparseable `updatedAt` is `NaN`, which `orderUnsent` sorts last.
  */
-function writtenAt(entry: DraftEntry): number {
+export function writtenAt(entry: DraftEntry): number {
 	if (entry.local !== null || entry.claiming !== null || entry.sending !== null || entry.server === null) {
 		return Number.POSITIVE_INFINITY;
 	}
 	return Date.parse(entry.server.updatedAt);
 }
 
-/** Newest first; two equal times (two tab-only entries are both `Infinity`) keep their order. */
+/**
+ * Newest first. Equal times (two tab-only entries are both `Infinity`) keep their order, and an
+ * unparseable time (`NaN`) sorts after every real one, so the comparator stays consistent.
+ */
 function newestFirst(x: { at: number }, y: { at: number }): number {
+	const xUnknown = Number.isNaN(x.at);
+	const yUnknown = Number.isNaN(y.at);
+	if (xUnknown || yUnknown) return xUnknown === yUnknown ? 0 : xUnknown ? 1 : -1;
 	if (x.at === y.at) return 0;
 	return y.at > x.at ? 1 : -1;
+}
+
+/** The rows of the Unsent group, most recently written first (see `newestFirst`). */
+export function orderUnsent<T>(rows: readonly { at: number; row: T }[]): T[] {
+	return [...rows].sort(newestFirst).map((r) => r.row);
 }
 
 /**
@@ -503,7 +515,7 @@ export function useUnsentConversations(threads: readonly AgentThread[]): UnsentV
 				},
 			});
 		}
-		const unsent = rows.sort(newestFirst).map((r) => r.row);
+		const unsent = orderUnsent(rows);
 		return { unsent, threadNotes, badge: unsent.filter((u) => !u.active).length };
 	}, [entries, threads, conversationId]);
 }
