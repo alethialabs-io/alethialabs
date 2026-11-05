@@ -41,6 +41,9 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateServiceNames(config); err != nil {
 		return err
 	}
+	if err := validateByoDBReservedSecretNames(config); err != nil {
+		return err
+	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
@@ -100,7 +103,7 @@ var (
 		"cloud_sql_backup_retention_days", "cloud_sql_engine", "cloud_sql_engine_version",
 		"cloud_sql_iam_auth", "cloud_sql_port", "cloud_sql_tier", "cloud_storage_buckets",
 		"create_cloud_sql", "create_cloud_storage", "create_firestore", "create_memorystore",
-		"create_memorystore_valkey", "create_pubsub", "custom_secrets", "environment",
+		"create_memorystore_valkey", "create_pubsub", "custom_secret_keepers", "custom_secrets", "environment",
 		"firestore_point_in_time_recovery", "gke_cluster_version", "gke_disk_size_gb",
 		"gke_enable_autopilot", "gke_instance_types", "gke_node_desired_size", "gke_node_max_size",
 		"gke_node_min_size", "gke_preemptible", "gke_spot", "memorystore_memory_size_gb", "memorystore_redis_version",
@@ -400,6 +403,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, gcpRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, gcpRootReserved...)
 	mergeProviderConfig(tfvars, config.Network.ProviderConfig, gcpRootReserved...)
+
+	// Per-binding database user passwords (docs/adr/byo-binding-db-users.md §2): one generated entry
+	// per declared BYO database binding, while ALETHIA_BYO_DB_USERS_ENABLED is on. See byo_db_users.go.
+	tfvars["custom_secrets"] = withByoDBUserSecrets(config, tfvars["custom_secrets"], byoDBSecretsGCPAzure)
+	// Their rotation keepers, beside the user's own — reserved from the passthrough above and read
+	// from the cluster, DNS and network provider_config, in that order, instead.
+	if keepers, ok := customSecretKeepers(config, keepersPassthroughSources(config)); ok {
+		tfvars["custom_secret_keepers"] = keepers
+	}
 
 	return tfvars
 }
