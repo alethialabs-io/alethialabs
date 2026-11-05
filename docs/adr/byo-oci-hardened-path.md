@@ -32,8 +32,10 @@ platform's own workloads, their Secrets and their service accounts.
      a reason naming the chart and the fix — a runner newer than runner-v0.8.0, the one that sends the
      capability. Stripping would hand that runner a plain Helm add-on, which it would render under the
      catalogue's project with no namespace check, and on a cluster a newer runner already migrated
-     its re-apply would move the Application back. Failing rather than leaving the job queued is
-     deliberate: with no capable runner in the pool, a queued job would wait forever, saying nothing.
+     its re-apply would move the Application back. Since #6458 such a runner is not handed the
+     job in the first place: `claim_next_job` leaves it QUEUED for a runner that sends the capability,
+     for a bounded wait, and only then is it failed here — see
+     [runner-capability-claim.md](runner-capability-claim.md).
      Other job types (PLAN, DESTROY, …) deploy no add-on and are served stripped.
 
      The refused job fails like a runner-reported failure: one helper (`lib/jobs/job-failed.ts`,

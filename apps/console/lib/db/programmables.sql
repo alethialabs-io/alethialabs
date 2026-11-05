@@ -488,8 +488,70 @@ CREATE OR REPLACE FUNCTION public.destroy_waits_on_tenants(
     END;
 $$;
 
+-- The runner capabilities a job needs before a runner may be handed it (#6458). The SQL half of
+-- apps/console/lib/runners/snapshot-capabilities.ts `refusalForRunner`: a DEPLOY whose snapshot holds an
+-- OCI bring-your-own chart — an add-on marked `byo: true` whose `source` is not "git" — needs
+-- `addon-byo-marker`; every other job needs nothing. The two are pinned to each other over the shared
+-- fixtures in packages/core/types/testdata/snapshot-capabilities by
+-- tests/integration/claim-capability-skip.test.ts, so a change to one without the other reds there.
+-- Computed from the stored snapshot at claim time — no column, so no migration and no backfill: a row
+-- enqueued before this function existed is judged exactly like a new one. Nested CASE, not AND: SQL
+-- does not promise AND's evaluation order, and jsonb_array_elements raises on a non-array.
+CREATE OR REPLACE FUNCTION public.job_required_capabilities(
+    p_job_type public.provision_job_type, p_snapshot JSONB
+) RETURNS TEXT[] LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+      WHEN p_job_type IS DISTINCT FROM 'DEPLOY'::public.provision_job_type
+        OR jsonb_typeof(p_snapshot -> 'addons') IS DISTINCT FROM 'array'
+        THEN ARRAY[]::TEXT[]
+      ELSE CASE
+        WHEN EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_snapshot -> 'addons') a
+           WHERE jsonb_typeof(a) = 'object'
+             AND a -> 'byo' = 'true'::jsonb
+             AND (a -> 'source') IS DISTINCT FROM '"git"'::jsonb
+        ) THEN ARRAY['addon-byo-marker']::TEXT[]
+        ELSE ARRAY[]::TEXT[]
+      END
+    END;
+$$;
+
+-- How long an unassigned job waits for a runner that has the capabilities it needs (#6458).
+--
+-- claim_next_job skips a job for a runner that lacks a capability the job needs, so in a mixed pool
+-- during a rollout an old runner leaves the job QUEUED for a new one. Skipping alone would let a job
+-- that NO runner in its pool can run wait forever, saying nothing. So the skip is bounded: once the
+-- job has sat QUEUED this long (measured from its last write, `updated_at`, so a job requeued by
+-- recovery gets a fresh window), a runner without the capability is handed it anyway — and the claim
+-- route's refusalForRunner fails it through recordJobFailed with the "update the runner" reason, the
+-- same end state as before the skip existed. Runners advertise capabilities only per request (the
+-- X-Runner-Capabilities header) and nothing stores them, so "is a capable runner registered?" cannot
+-- be asked at enqueue; a time bound needs no new state.
+--
+-- The cost, stated: a capable runner that stays busy for longer than the bound while an incapable one
+-- polls loses the job to a failure the user redeploys past. 15 minutes is the stale-claim window
+-- recover_stale_jobs already uses — longer than any interactive wait, short enough to answer.
+CREATE OR REPLACE FUNCTION public.capability_wait_bound()
+RETURNS INTERVAL LANGUAGE sql IMMUTABLE AS $$ SELECT INTERVAL '15 minutes' $$;
+
+-- TRUE iff a runner advertising p_capabilities may claim this unassigned job: it has every capability
+-- the job needs, or the job has waited out capability_wait_bound (see above). NULL capabilities are
+-- none — every runner built before the header.
+CREATE OR REPLACE FUNCTION public.runner_capable_for_job(
+    p_job_type public.provision_job_type, p_snapshot JSONB, p_queued_since TIMESTAMPTZ,
+    p_capabilities TEXT[]
+) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
+    SELECT public.job_required_capabilities(p_job_type, p_snapshot)
+             <@ COALESCE(p_capabilities, ARRAY[]::TEXT[])
+        OR p_queued_since < now() - public.capability_wait_bound();
+$$;
+
+-- The 3-argument form is dropped first: adding p_capabilities with a DEFAULT next to the old
+-- signature would leave two overloads, and every 3-argument call would then be ambiguous.
+DROP FUNCTION IF EXISTS public.claim_next_job(UUID, TEXT, UUID);
 CREATE OR REPLACE FUNCTION public.claim_next_job(
-    p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL
+    p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL,
+    p_capabilities TEXT[] DEFAULT NULL
 ) RETURNS SETOF public.jobs
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -518,6 +580,9 @@ BEGIN
     PERFORM public.open_runner_session(p_runner_id);
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
+    -- NOT capability-filtered, deliberately: no other runner may claim an assigned job, so skipping it
+    -- here would only delay the same answer. The claim route's refusalForRunner fails it at once with
+    -- the "update the runner" reason.
     -- Even an EXPLICIT assignment must respect org boundaries for a self runner: assigned_runner_id
     -- is set from a caller-supplied value at enqueue (projects.ts / the DESTROY_RUNNER route) and is
     -- NOT validated to be same-org, so a user authorized on org X's project could queue an org-X job
@@ -590,6 +655,9 @@ BEGIN
                 AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                 -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                 AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
+                -- Leave a job this runner cannot run QUEUED for one that can, within a bound
+                -- (see runner_capable_for_job).
+                AND public.runner_capable_for_job(j.job_type, j.config_snapshot, j.updated_at, p_capabilities)
                 AND (
                   public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
                   OR public.org_managed_inflight(j.org_id)
@@ -646,6 +714,9 @@ BEGIN
                   AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                   -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                   AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
+                  -- Leave a job this runner cannot run QUEUED for one that can, within a bound
+                  -- (see runner_capable_for_job).
+                  AND public.runner_capable_for_job(j.job_type, j.config_snapshot, j.updated_at, p_capabilities)
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         END IF;
