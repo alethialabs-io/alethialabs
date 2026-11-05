@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
@@ -231,6 +232,9 @@ type byoRefusal struct {
 	Namespace string
 	// Reason is the validator's refusal, naming the namespace.
 	Reason string
+	// Shared is set when the refused namespace is still another chart's destination
+	// (byoNamespaceCollisions): the AppProject keeps listing it for that chart.
+	Shared bool
 	// ProjectUpdated is whether this deploy re-applied the chart's AppProject without the refused
 	// destination. False when that render or apply failed, in which case a destination an earlier
 	// deploy granted is still there.
@@ -244,7 +248,11 @@ type byoRefusal struct {
 // the namespace.
 func (r byoRefusal) warning() string {
 	left := "Anything an earlier deploy applied for it stays in place but can no longer sync, because its project no longer permits that namespace."
-	if !r.ProjectUpdated {
+	if r.Shared {
+		// The namespace stays a destination for the chart that keeps it, so nothing stops an
+		// Application an earlier deploy applied from syncing; say only what is true.
+		left = "Anything an earlier deploy applied for it stays in place; this deploy did not update it."
+	} else if !r.ProjectUpdated {
 		left = "The runner could not update its project (see the deploy log), so an Application an earlier deploy applied for it may still sync into that namespace."
 	}
 	return fmt.Sprintf("BYO chart %q was not deployed: %s. This deploy applied nothing for it. %s "+
@@ -292,6 +300,43 @@ func withByoMoveSources(namespaces []string, moved []byoMove) []string {
 		}
 	}
 	return namespaces
+}
+
+// byoNamespaceCollisions finds the BYO charts that must not deploy because their namespace is
+// ANOTHER chart's derived one (argocd.ByoChartNamespace) in this environment — two charts would share
+// it. It returns, for each chart to refuse, why.
+//
+// A chosen "byo-" namespace is allowed at deploy: a NEW attachment cannot choose one other than its
+// own (the console's attach schema refuses it), but a chart attached before that rule keeps working.
+// Only the real collision is refused, and only ONE side of it: the charts sharing such a namespace are
+// ordered by id — the one stable order the snapshot carries; its add-on order is not guaranteed — and
+// all but the first are refused. Sharing a namespace no chart derives (two charts that chose the same
+// name of their own) is not this rule's business. Nothing is deleted: the caller treats each like any
+// other refusal.
+func byoNamespaceCollisions(addons []types.AddOnInstall) map[string]string {
+	derivedBy := map[string]string{}
+	byNS := map[string][]string{}
+	for _, a := range addons {
+		if !a.IsByo() {
+			continue
+		}
+		derivedBy[argocd.ByoChartNamespace(a.ID)] = a.ID
+		byNS[a.Namespace] = append(byNS[a.Namespace], a.ID)
+	}
+	out := map[string]string{}
+	for ns, ids := range byNS {
+		owner, derived := derivedBy[ns]
+		if !derived || len(ids) < 2 {
+			continue
+		}
+		sort.Strings(ids)
+		kept := ids[0]
+		for _, id := range ids[1:] {
+			out[id] = fmt.Sprintf("namespace %q is also the namespace of BYO chart %q (it is chart %q's own default name), and two charts cannot share one; chart %q keeps it. "+
+				"Attach one of the two again with another namespace", ns, kept, owner, kept)
+		}
+	}
+	return out
 }
 
 // byoRefusedIDs is the set of refused add-on ids, for the filters below.
@@ -404,10 +449,22 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			a.Namespace = to
 			fmt.Fprintf(stdout, "BYO chart %q: moving from namespace %q to %q\n", a.ID, argocd.ByoLegacyDefaultNamespace, to)
 		}
+	}
+	collisions := byoNamespaceCollisions(vc.AddOns)
+	for i := range vc.AddOns {
+		a := &vc.AddOns[i]
+		if !a.IsByo() {
+			continue
+		}
 		ns := a.Namespace
-		if err := argocd.ValidateByoChartNamespace(a.ID, ns); err != nil {
+		if err := argocd.ValidateByoNamespace(ns); err != nil {
 			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %v\n", a.ID, err)
 			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: err.Error()})
+			continue
+		}
+		if reason, collides := collisions[a.ID]; collides {
+			fmt.Fprintf(stderr, "Error: refusing BYO chart %q: %s\n", a.ID, reason)
+			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: reason, Shared: true})
 			continue
 		}
 		repos = append(repos, a.ChartRepo)

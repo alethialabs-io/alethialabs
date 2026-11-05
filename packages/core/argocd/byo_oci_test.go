@@ -167,35 +167,13 @@ func TestByoChartNamespace(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("ByoChartNamespace(%q) = %q, want %q", tc.id, got, tc.want)
 		}
-		if err := ValidateByoChartNamespace(tc.id, got); err != nil {
+		if err := ValidateByoNamespace(got); err != nil {
 			t.Errorf("ByoChartNamespace(%q) = %q, which that chart may not use: %v", tc.id, got, err)
 		}
 		if other, dup := seen[got]; dup {
 			t.Errorf("ids %q and %q both derive %q", other, tc.id, got)
 		}
 		seen[got] = tc.id
-	}
-}
-
-// TestValidateByoChartNamespace_ReservesTheByoPrefixForDerivedNamespaces: a chosen namespace may not
-// start with "byo-" unless it is the chart's own derived one, so no chart can take another's.
-func TestValidateByoChartNamespace_ReservesTheByoPrefixForDerivedNamespaces(t *testing.T) {
-	if err := ValidateByoChartNamespace("api", "byo-api"); err != nil {
-		t.Errorf("a chart's own derived namespace must be accepted: %v", err)
-	}
-	for _, ns := range []string{"byo-payments", "byo-x", "byo-api-2"} {
-		err := ValidateByoChartNamespace("api", ns)
-		if err == nil || !strings.Contains(err.Error(), "byo-api") {
-			t.Errorf("namespace %q for chart api must be refused, naming its own (byo-api); got %v", ns, err)
-		}
-	}
-	for _, ns := range []string{"payments", "api-byo", "byoapi"} {
-		if err := ValidateByoChartNamespace("api", ns); err != nil {
-			t.Errorf("namespace %q must be accepted: %v", ns, err)
-		}
-	}
-	if err := ValidateByoChartNamespace("api", "kube-system"); err == nil || !strings.Contains(err.Error(), "reserved for the platform") {
-		t.Errorf("the platform reservation must still apply, got %v", err)
 	}
 }
 

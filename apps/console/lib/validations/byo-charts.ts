@@ -91,7 +91,8 @@ export function byoChartNamespace(chartId: string): string {
 /**
  * Why `namespace` may not be chosen for the chart `chartId` because of its `byo-` prefix, or `null`.
  * The prefix is reserved for each chart's own derived namespace, so a chart cannot take another's;
- * its own is accepted. Mirrors the prefix half of Go `argocd.ValidateByoChartNamespace`. With no
+ * its own is accepted. An ATTACH-time rule only: the runner accepts a "byo-" namespace a chart stored before it, and refuses
+ * one side only of a real collision with another chart's derived name. With no
  * `chartId` (the form, before the id is derived), any `byo-` name is refused: leaving the field
  * blank is how a chart gets its own.
  */

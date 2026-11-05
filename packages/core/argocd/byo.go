@@ -158,8 +158,10 @@ func ByoProjectName(slug string) string {
 // A chart gets its own namespace rather than a shared one because the namespace is what isolates it:
 // the hardened AppProject allows the namespaced kinds in its destinations, so two charts in one
 // namespace can read each other's Secrets, and a chart in "default" sat beside the platform's own
-// workloads. No reserved name or prefix starts with "byo-", and a namespace a chart CHOOSES may not
-// start with it either (ValidateByoChartNamespace), so a derived name is never another chart's.
+// workloads. No reserved name or prefix starts with "byo-". A NEW attachment may not choose a "byo-"
+// namespace other than its own (the console's attach schema). A chart that chose one before that rule
+// keeps it; only if it is another chart's derived name in the same environment does the runner refuse
+// one of the two (provisioner.byoNamespaceCollisions).
 func ByoChartNamespace(chartID string) string {
 	full := byoProjectPrefix + chartID
 	if len(full) <= names.SlugMaxLength {
@@ -170,20 +172,6 @@ func ByoChartNamespace(chartID string) string {
 	suffix := fmt.Sprintf("%08x", h.Sum32())
 	head := strings.TrimRight(full[:names.SlugMaxLength-len(suffix)-1], "-")
 	return head + "-" + suffix
-}
-
-// ValidateByoChartNamespace is ValidateByoNamespace for the namespace of the chart chartID, plus the
-// one rule that needs the chart: a namespace starting with "byo-" is accepted only when it is this
-// chart's own derived one (ByoChartNamespace). The prefix is reserved for those, so a chart cannot
-// choose a namespace that another chart is given by default.
-func ValidateByoChartNamespace(chartID, ns string) error {
-	if err := validateByoNamespace(ns); err != nil {
-		return err
-	}
-	if own := ByoChartNamespace(chartID); strings.HasPrefix(ns, byoProjectPrefix) && ns != own {
-		return fmt.Errorf("namespace %q starts with %q, which is reserved for the namespace each chart gets by default (this chart's is %q). Choose a namespace of your own, or leave it blank", ns, byoProjectPrefix, own)
-	}
-	return nil
 }
 
 // ByoLegacyDefaultNamespace is where a BYO chart attached before #6446 deployed when no namespace

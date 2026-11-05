@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -430,16 +431,63 @@ func TestRunAddOnStage_WarnsWhenAnOCIChartLeavesAnotherProject(t *testing.T) {
 	}
 }
 
-// TestConfigureByoCharts_RefusesAChosenNamespaceWithTheByoPrefix: "byo-" is reserved for each chart's
-// derived namespace, so a chart that chose another chart's is refused, while its own is accepted.
-func TestConfigureByoCharts_RefusesAChosenNamespaceWithTheByoPrefix(t *testing.T) {
-	newByoCluster(t, "")
-	_, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("byo-api"), "tok", nil, nil, io.Discard, io.Discard))
-	if len(refused) != 1 || refused[0].ID != "legacy" || !strings.Contains(refused[0].Reason, "byo-legacy") {
-		t.Fatalf("refused = %+v, want the legacy chart refused for byo-api, naming its own byo-legacy", refused)
+// TestConfigureByoCharts_KeepsAnExistingChosenByoNamespace: the "byo-" rule is an ATTACH-time rule.
+// A chart that chose a "byo-" namespace before it — one no other chart in the environment derives —
+// keeps deploying there.
+func TestConfigureByoCharts_KeepsAnExistingChosenByoNamespace(t *testing.T) {
+	c := newByoCluster(t, "")
+	_, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("byo-payments"), "tok", nil, nil, io.Discard, io.Discard))
+	if len(refused) != 0 {
+		t.Fatalf("an existing chart in byo-payments was refused: %+v", refused)
 	}
-	newByoCluster(t, "")
-	if _, refused, _ := byoConfigureTuple(configureByoCharts(legacyByoConfig("byo-legacy"), "tok", nil, nil, io.Discard, io.Discard)); len(refused) != 0 {
-		t.Errorf("a chart's own derived namespace was refused: %+v", refused)
+	if got := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(got, []string{"payments", "byo-payments"}) {
+		t.Errorf("AppProject destinations = %v, want [payments byo-payments]", got)
+	}
+}
+
+// collisionConfig is an environment where chart `explicit` chose byo-payments, which is chart
+// "payments"'s own derived namespace, in the given add-on order.
+func collisionConfig(explicit string, explicitFirst bool) *types.ProjectConfig {
+	owner := types.AddOnInstall{ID: "payments", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/payments.git", Path: "chart", Version: "HEAD", Namespace: ""}
+	other := types.AddOnInstall{ID: explicit, Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/other.git", Path: "chart", Version: "HEAD", Namespace: "byo-payments"}
+	addons := []types.AddOnInstall{owner, other}
+	if explicitFirst {
+		addons = []types.AddOnInstall{other, owner}
+	}
+	return &types.ProjectConfig{ProjectName: "Acme Corp", AddOns: addons}
+}
+
+// TestConfigureByoCharts_RefusesExactlyOneChartOfADerivedNamespaceCollision: when a chart's chosen
+// namespace is another chart's derived one, exactly ONE of the two is refused — the later by id,
+// whatever order the snapshot lists them in — with a warning naming both. The namespace stays the
+// kept chart's destination, and the warning does not claim the refused chart can no longer sync.
+func TestConfigureByoCharts_RefusesExactlyOneChartOfADerivedNamespaceCollision(t *testing.T) {
+	for _, tc := range []struct {
+		explicit, refusedID, keptID string
+	}{
+		{"zeta", "zeta", "payments"},
+		{"alpha", "payments", "alpha"},
+	} {
+		for _, explicitFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/explicitFirst=%v", tc.explicit, explicitFirst), func(t *testing.T) {
+				c := newByoCluster(t, "")
+				_, refused, _ := byoConfigureTuple(configureByoCharts(collisionConfig(tc.explicit, explicitFirst), "tok", nil, nil, io.Discard, io.Discard))
+				if len(refused) != 1 || refused[0].ID != tc.refusedID || !refused[0].Shared {
+					t.Fatalf("refused = %+v, want exactly %q, marked shared", refused, tc.refusedID)
+				}
+				w := refused[0].warning()
+				for _, want := range []string{`"` + tc.refusedID + `"`, `"` + tc.keptID + `"`, `"byo-payments"`, "Attach one of the two again with another namespace"} {
+					if !strings.Contains(w, want) {
+						t.Errorf("the warning does not say %q:\n%s", want, w)
+					}
+				}
+				if strings.Contains(w, "can no longer sync") {
+					t.Errorf("the namespace is still the kept chart's destination; the warning must not claim otherwise:\n%s", w)
+				}
+				if got := c.lastAppProjectDestinations(t, "byo-acme-corp"); !reflect.DeepEqual(got, []string{"byo-payments"}) {
+					t.Errorf("AppProject destinations = %v, want [byo-payments] for the kept chart", got)
+				}
+			})
+		}
 	}
 }

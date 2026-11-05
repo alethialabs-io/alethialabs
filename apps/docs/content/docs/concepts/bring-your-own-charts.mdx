@@ -54,8 +54,11 @@ Some namespaces are reserved for the platform, and a chart that targets one is r
 - `default`, where the platform runs your environment's own services, with their Secrets and
   service accounts.
 
-A namespace you choose cannot start with `byo-` either, unless it is the chart's own: that prefix is
-kept for the namespace each chart gets by default.
+When you attach a chart, the namespace you choose cannot start with `byo-` either, unless it is the
+chart's own: that prefix is kept for the namespace each chart gets by default. A chart you attached
+before this rule keeps its namespace. If that namespace is the default namespace of another chart in
+the same environment, one of the two is not deployed, and the **Deploy** tab names both and asks you
+to attach one again with another namespace.
 
 ### A chart that was attached in `default`
 

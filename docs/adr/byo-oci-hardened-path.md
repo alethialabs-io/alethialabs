@@ -44,10 +44,16 @@ platform's own workloads, their Secrets and their service accounts.
    name past 63 characters is cut and ends in an 8-hex FNV-1a hash of the whole id, so two ids never
    share a derived namespace. `default` joins `byo_reserved_namespaces.json` as the `platformWorkloads`
    group, mirrored by the console with the existing parity test.
-5. **`byo-` is reserved for derived namespaces.** A namespace a chart chooses may start with `byo-`
-   only when it is that chart's own derived one (`argocd.ValidateByoChartNamespace`; the console's
-   attach action and form refuse it too). So no chart can be given — or choose — another chart's
-   namespace.
+5. **`byo-` is reserved for derived namespaces — at attach time.** A NEW attachment (the console form,
+   the attach action, and so the CLI) may choose a `byo-` namespace only when it is that chart's own
+   derived one. The runner does NOT apply that rule to what is already stored: a chart a user placed
+   in a `byo-…` namespace before it keeps deploying. The one exception is a real collision — a stored
+   namespace that is another chart's derived name in the same environment. Then exactly one of the
+   charts is refused (`provisioner.byoNamespaceCollisions`): they are ordered by id, the one stable
+   order the snapshot carries, and all but the first are refused, with a Deploy-tab warning naming
+   both and asking the user to attach one again with another namespace. Nothing is deleted, and the
+   namespace stays the kept chart's destination, so the warning does not claim the refused chart's
+   earlier objects stop syncing.
 
 ## Migration
 
