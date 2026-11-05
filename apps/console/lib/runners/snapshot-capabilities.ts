@@ -62,11 +62,19 @@ const ADDON_DEPLOYING_JOB_TYPES: ReadonlySet<string> = new Set(["DEPLOY"]);
  * Helm add-on, rendered under the catalogue's project with no namespace check — and on a cluster a
  * newer runner already migrated, its re-apply would move the Application back. So a DEPLOY whose
  * snapshot holds an OCI BYO chart is refused to such a runner, with the fix in the reason, rather
- * than served stripped. Failing it (not leaving it queued) is deliberate: with no capable runner in
- * the pool, a queued job would wait forever, saying nothing. The cost is in a MIXED pool during a
- * rollout: claim_next_job has already assigned the row when this runs, so an older runner can fail a
- * deploy a newer one could have run, and the user deploys again. Skipping such rows inside
- * claim_next_job needs a migration; it is a follow-up. The claim route fails the job through
+ * than served stripped.
+ *
+ * Most such jobs never reach this check (#6458). The claim route passes the runner's capabilities into
+ * claim_next_job, which stamps them on runners.capabilities and leaves a job needing one the runner
+ * lacks QUEUED while a LIVE (heartbeating and claiming) runner in the job's pool advertises it — so
+ * in a MIXED pool during a rollout the newer runner takes it, however long other gates hold the job.
+ * The SQL half of this rule is `job_required_capabilities` in lib/db/programmables.sql (stored on jobs.required_capabilities by a
+ * trigger), pinned to this one over the shared fixtures by
+ * tests/integration/claim-capability-skip.test.ts. When NO live runner in the pool has the capability,
+ * nobody else could run the job, so the incapable runner is handed it and this check fails it: a job
+ * no runner can run does not wait forever, saying nothing. This check also still fails an ASSIGNED
+ * job at once (no other runner may claim it), and stays as the defence should the SQL reading ever
+ * disagree with this one. The claim route fails the job through
  * recordJobFailed, so the environment, the promotion and the alert follow as for any failure.
  */
 export function refusalForRunner(

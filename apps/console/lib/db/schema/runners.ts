@@ -55,6 +55,15 @@ export const runners = pgTable(
 		// claims any provider (the full/self-host image); a lean per-cloud image
 		// declares just its one. Reported image-driven via the heartbeat.
 		supported_providers: cloudProvider().array(),
+		// The capabilities this runner last advertised in X-Runner-Capabilities (#6458), stamped by
+		// claim_next_job and runner_heartbeat. claim_next_job reads it to ask whether a LIVE runner in a
+		// job's pool can run a job the claiming runner cannot (lib/runners/snapshot-capabilities.ts).
+		capabilities: text().array().default([]).notNull(),
+		// When this runner last called the claim (#6458) — stamped by claim_next_job on every poll, empty
+		// or not. An idle runner polls at least every 30 s; a busy one holds an in-flight job. So a runner
+		// that only heartbeats — claim loop wedged — stops counting as a capable runner in its pool
+		// (live_runner_has_capabilities) once this ages out of the liveness window.
+		last_claim_at: timestamp({ withTimezone: true }),
 		// @deprecated superseded by operator/provisioning; retained nullable for the
 		// backfill window, dropped in a later migration.
 		mode: runnerMode(),
