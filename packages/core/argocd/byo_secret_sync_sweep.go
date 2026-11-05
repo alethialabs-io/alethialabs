@@ -27,13 +27,26 @@ import (
 // other namespaced object of the external-secrets.io group or any of its subgroups in a swept
 // namespace is deleted.
 //
+// A KEPT BINDING MUST BE EXACTLY THE RUNNER'S OWN OBJECT, not merely carry its name. The runner
+// applies a binding with client-side `kubectl apply`, which merges into whatever is there: a field its
+// manifest does not write survives every apply. So a declared name is kept only when the live object
+// was written by the runner alone (byoBindingIsRunnersOwn). Anything else at that name is deleted
+// like any other object here, and returned to the caller to re-apply in the same stage, once the
+// delete has completed, so the binding is not missing until the next deploy.
+//
 // WHERE IT LOOKS is decided by NAMESPACE labels, which a chart cannot set (Namespace is
 // cluster-scoped and the BYO AppProject's clusterResourceWhitelist is empty): the namespaces the
 // runner stamped as BYO chart namespaces (RenderByoNamespaces) whose owner label names this
 // environment, minus any reserved platform namespace. Another environment's namespace is never
 // listed. A namespace two environments' charts share carries the owner label of whichever deployed
-// last; that deploy's sweep removes the other environment's binding ExternalSecrets there, which
-// that environment re-applies on its own next deploy.
+// last.
+//
+// That last case cannot arise today: BYO charts are configured only by a dedicated deploy, on the
+// environment's own cluster (namespace and vcluster placements never apply BYO charts), so one
+// cluster carries one environment's BYO namespaces. If BYO charts ever run where two environments
+// share a cluster, this sweep must not stay as it is: it would delete the other environment's
+// bindings there. It would then need the namespace itself to be per-environment (refused when another
+// environment's owner label is on it), or a keep set covering every environment on the cluster.
 //
 // It reads everything before it deletes anything, and an error in any read deletes nothing: an
 // unknown set is never treated as an empty one. The caller skips the sweep outright when any
@@ -71,6 +84,65 @@ type byoSweepObject struct {
 	res             byoSweepResource
 	namespace, name string
 	uid             string
+	// runnersOwn is set on an ExternalSecret that byoBindingIsRunnersOwn accepts.
+	runnersOwn bool
+}
+
+// ByoBindingFieldManager is the field manager client-side `kubectl apply` records — the one the
+// runner's ApplyManifest writes every binding ExternalSecret with.
+const ByoBindingFieldManager = "kubectl-client-side-apply"
+
+// byoSweepItem is the slice of a listed object the sweep reads.
+type byoSweepItem struct {
+	Metadata struct {
+		Name          string `json:"name"`
+		Namespace     string `json:"namespace"`
+		UID           string `json:"uid"`
+		ManagedFields []struct {
+			Manager     string `json:"manager"`
+			Subresource string `json:"subresource"`
+		} `json:"managedFields"`
+	} `json:"metadata"`
+	Spec struct {
+		DataFrom []json.RawMessage `json:"dataFrom"`
+		Target   struct {
+			Template struct {
+				TemplateFrom []json.RawMessage `json:"templateFrom"`
+			} `json:"template"`
+		} `json:"target"`
+	} `json:"spec"`
+}
+
+// byoBindingIsRunnersOwn reports whether a live ExternalSecret is exactly the runner's own binding:
+// every write to the object itself was the runner's (ByoBindingFieldManager), and its spec carries
+// none of the fields the runner's renderers never write that pull more than the binding's own key
+// (spec.dataFrom, spec.target.template.templateFrom). Status writes, which ESO makes through the
+// status subresource, are not the object's content and are not read. An object with no
+// managedFields at all proves nothing about who wrote it, so it is not accepted.
+func byoBindingIsRunnersOwn(it byoSweepItem) bool {
+	if len(it.Spec.DataFrom) > 0 || len(it.Spec.Target.Template.TemplateFrom) > 0 {
+		return false
+	}
+	seen := false
+	for _, f := range it.Metadata.ManagedFields {
+		if f.Subresource != "" {
+			continue
+		}
+		if f.Manager != ByoBindingFieldManager {
+			return false
+		}
+		seen = true
+	}
+	return seen
+}
+
+// ByoSecretSyncSweep is what one sweep did.
+type ByoSecretSyncSweep struct {
+	// Warnings are the Deploy-tab warnings, one per deletion.
+	Warnings []string
+	// Reapply are the declared bindings whose live object was not the runner's own and was deleted;
+	// the caller re-applies them. Each one's delete has completed, or a warning says it may not have.
+	Reapply []BindingSecretRef
 }
 
 // byoKubectl runs kubectl from an argument vector (no shell) and returns its stdout. stdin, when
@@ -93,10 +165,11 @@ func byoKubectl(stdin string, args ...string) (string, error) {
 // environment's BYO chart namespaces that is not one of the runner's declared binding ExternalSecrets.
 // owner is the environment's owner-label value; declared is every binding ExternalSecret the
 // configuration declares. It returns one Deploy-tab warning per object whose deletion it requested.
-func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout, stderr io.Writer) []string {
+func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout, stderr io.Writer) ByoSecretSyncSweep {
+	var out ByoSecretSyncSweep
 	if !validOwner(owner) {
 		fmt.Fprintf(stderr, "Warning: not sweeping BYO chart namespaces for secret-sync objects: no usable environment owner label (%q)\n", owner)
-		return nil
+		return out
 	}
 	keep := make(map[bindingKey]bool, len(declared))
 	for _, d := range declared {
@@ -106,15 +179,15 @@ func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout
 	namespaces, err := byoSweepNamespaces(owner)
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: not sweeping BYO chart namespaces for secret-sync objects: %v\n", err)
-		return nil
+		return out
 	}
 	if len(namespaces) == 0 {
-		return nil
+		return out
 	}
 	resources, err := byoSweepResources()
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: not sweeping BYO chart namespaces for secret-sync objects: %v\n", err)
-		return nil
+		return out
 	}
 
 	var stale []byoSweepObject
@@ -123,10 +196,10 @@ func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout
 			objs, err := byoSweepList(r, ns)
 			if err != nil {
 				fmt.Fprintf(stderr, "Warning: not sweeping BYO chart namespaces for secret-sync objects: %v\n", err)
-				return nil
+				return out
 			}
 			for _, o := range objs {
-				if r.group == "external-secrets.io" && r.kind == "ExternalSecret" && keep[bindingKey{o.namespace, o.name}] {
+				if r.group == "external-secrets.io" && r.kind == "ExternalSecret" && keep[bindingKey{o.namespace, o.name}] && o.runnersOwn {
 					continue
 				}
 				stale = append(stale, o)
@@ -134,8 +207,8 @@ func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout
 		}
 	}
 
-	var warnings []string
 	for _, o := range stale {
+		declaredBinding := o.res.group == "external-secrets.io" && o.res.kind == "ExternalSecret" && keep[bindingKey{o.namespace, o.name}]
 		opts := fmt.Sprintf(`{"kind":"DeleteOptions","apiVersion":"v1","propagationPolicy":"Foreground","preconditions":{"uid":%q}}`, o.uid)
 		path := fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s/%s", o.res.group, o.res.version, o.namespace, o.res.resource, o.name)
 		// The deleted object's JSON comes back on stdout and is discarded, so none of it reaches the log.
@@ -144,12 +217,26 @@ func SweepByoSecretSyncObjects(owner string, declared []BindingSecretRef, stdout
 			continue
 		}
 		fmt.Fprintf(stdout, "BYO chart namespace secret-sync sweep: deletion requested for %s %s/%s\n", o.res.kind, o.namespace, o.name)
-		warnings = append(warnings, fmt.Sprintf(
-			"The runner deleted %s %q from BYO chart namespace %q. Bring-your-own charts can't create %s objects; "+
-				"declare a binding on the chart's workload instead, and the runner creates the secret for it.",
-			o.res.kind, o.name, o.namespace, o.res.group))
+		if !declaredBinding {
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"The runner deleted %s %q from BYO chart namespace %q. Bring-your-own charts can't create %s objects; "+
+					"declare a binding on the chart's workload instead, and the runner creates the secret for it.",
+				o.res.kind, o.name, o.namespace, o.res.group))
+			continue
+		}
+		// A declared binding's name held an object that was not the runner's own. It is re-applied by
+		// the caller, which must not happen while the Foreground delete is still in progress: an apply
+		// onto an object being deleted is lost with it.
+		if _, err := byoKubectl("", "wait", "--for=delete", "externalsecrets."+o.res.group+"/"+o.name, "-n", o.namespace, "--timeout=60s"); err != nil {
+			fmt.Fprintf(stderr, "Warning: the replaced binding ExternalSecret %s/%s may still be deleting: %v\n", o.namespace, o.name, err)
+		}
+		out.Reapply = append(out.Reapply, BindingSecretRef{Namespace: o.namespace, Name: o.name})
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"The runner replaced binding ExternalSecret %q in BYO chart namespace %q, because the live object was not "+
+				"exactly the one the runner writes. A kept binding must be exactly the runner's own object.",
+			o.name, o.namespace))
 	}
-	return warnings
+	return out
 }
 
 // byoSweepNamespaces lists the namespaces the runner stamped as this environment's BYO chart
@@ -256,7 +343,9 @@ func byoSweepList(r byoSweepResource, ns string) ([]byoSweepObject, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list %s in %s: %w", r.resource, ns, err)
 	}
-	var list labelledList
+	var list struct {
+		Items []byoSweepItem `json:"items"`
+	}
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
 		return nil, fmt.Errorf("parse %s in %s: %w", r.resource, ns, err)
 	}
@@ -269,7 +358,7 @@ func byoSweepList(r byoSweepResource, ns string) ([]byoSweepObject, error) {
 		if !byoSweepPathSafe(m.Name) || !bindingUIDRe.MatchString(m.UID) {
 			return nil, fmt.Errorf("%s %q in %s has no usable name or uid in the listing", r.kind, m.Name, ns)
 		}
-		out = append(out, byoSweepObject{res: r, namespace: ns, name: m.Name, uid: m.UID})
+		out = append(out, byoSweepObject{res: r, namespace: ns, name: m.Name, uid: m.UID, runnersOwn: byoBindingIsRunnersOwn(item)})
 	}
 	return out, nil
 }
