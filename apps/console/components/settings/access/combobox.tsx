@@ -13,6 +13,7 @@ import {
   CommandItem,
   CommandList,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { cn } from "@repo/ui/utils";
 
@@ -20,6 +21,9 @@ export interface ComboOption {
   value: string;
   label: string;
 }
+
+/** An option's search text: its visible label, for the shared ranker. */
+const optionSearchText = (o: ComboOption): string => o.label;
 
 /** A searchable single-select (Command-in-Popover), mirroring the org switcher. */
 export function Combobox({
@@ -36,6 +40,8 @@ export function Combobox({
   empty?: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Ranked by the shared ranker; the query starts empty each time the popover opens.
+  const optionSearch = useCommandSearch(options, optionSearchText, { open });
   const selected = options.find((o) => o.value === value);
   // The placeholder is an instruction ("Select a permission…"), so it doubles as the control's
   // purpose once the trailing ellipsis is dropped.
@@ -75,17 +81,20 @@ export function Combobox({
         className="w-[var(--anchor-width)] p-0"
         align="start"
       >
-        {/* The search inside the popup is named for the same purpose as its trigger. cmdk names its
-            input from this prop (via its own hidden <label>); with none, the input is unnamed. */}
-        <Command label={purpose}>
+        {/* The search inside the popup is named for the same purpose as its trigger. */}
+        <Command
+          label={purpose}
+          search={optionSearch.search}
+          onSearchChange={optionSearch.onSearchChange}
+          filteredItems={optionSearch.results}
+        >
           <CommandInput placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>{empty}</CommandEmpty>
             <CommandGroup>
-              {options.map((o) => (
+              {optionSearch.results.map((o) => (
                 <CommandItem
                   key={o.value}
-                  value={o.label}
                   onSelect={() => {
                     onChange(o.value);
                     setOpen(false);

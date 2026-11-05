@@ -4,9 +4,9 @@
 // Test stub for `react-phone-number-input/flags`, aliased in vitest.config.ts.
 //
 // The real module is a barrel of ~250 country flag components, each a full SVG with detailed path
-// data. `CountrySelect` and `PhoneInput` render the ENTIRE country list into their cmdk popover
-// unvirtualized (country-select.tsx:88 / phone-input.tsx:120 both `.map` over all options), so
-// every popover-open in a component test mounts ~250 real SVG trees in jsdom. That render cost —
+// data. `CountrySelect` and `PhoneInput` render the ENTIRE country list into their command popover
+// unvirtualized (`CountryCommand` in country-select.tsx and `PhoneCountryCommand` in
+// phone-input.tsx both `.map` over all options), so every popover-open in a component test mounts ~250 real SVG trees in jsdom. That render cost —
 // not any genuine async slowness — is what made these files take ~28s and ~50s on a PASSING CI run
 // and left individual tests within ~1.5s of the per-test timeout, flaking the required TypeScript
 // job on PRs that touch no UI code (#1402).

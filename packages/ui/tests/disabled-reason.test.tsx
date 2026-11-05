@@ -171,10 +171,10 @@ describe("disabledReason on menu and command items", () => {
 		const user = userEvent.setup();
 		const onSelect = vi.fn();
 		render(
-			<Command>
+			<Command label="Find command" filteredItems={["fit-view"]}>
 				<CommandList>
 					<CommandGroup>
-						<CommandItem value="fit-view" disabledReason={FIT} onSelect={onSelect}>
+						<CommandItem disabledReason={FIT} onSelect={onSelect}>
 							Fit view
 						</CommandItem>
 					</CommandGroup>
@@ -192,9 +192,9 @@ describe("disabledReason on menu and command items", () => {
 		const user = userEvent.setup();
 		const onSelect = vi.fn();
 		render(
-			<Command>
+			<Command label="Find command" filteredItems={["fit-view"]}>
 				<CommandList>
-					<CommandItem value="fit-view" disabledReason={null} onSelect={onSelect}>
+					<CommandItem disabledReason={null} onSelect={onSelect}>
 						Fit view
 					</CommandItem>
 				</CommandList>
