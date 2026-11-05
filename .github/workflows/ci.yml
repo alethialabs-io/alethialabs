@@ -2822,7 +2822,10 @@ jobs:
         env:
           ALETHIA_TEST_PG_ADMIN_DSN: postgres://byo_admin:byo-admin-ci@localhost:5432/byo-test?sslmode=disable
           ALETHIA_TEST_PG_REQUIRED: "1"
+        # pipefail: without it the step's status is tee's, so a failing test this -run matches but
+        # the PASS check below does not name would read green.
         run: |
+          set -o pipefail
           go test -tags integration -count=1 -v -run ByoUsers ./internal/agent/... | tee "$RUNNER_TEMP/byo.log"
           want="TestByoUsersPostgres_Lifecycle TestByoUsersPostgres_RefusesForeignRole TestByoUsersPostgres_RevokeFailsSafe"
           if [ "${{ matrix.postgres }}" = 14-alpine ]; then

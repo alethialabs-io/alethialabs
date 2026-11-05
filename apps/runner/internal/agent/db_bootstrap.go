@@ -220,7 +220,7 @@ func renderBootstrapSQL(in bootstrapInput) (string, error) {
 // truth shared with the unit tests. Executing it against the DB as admin is the Job's job.
 func RunDBBootstrap(ctx context.Context, args []string) error {
 	if isByoUsersInvocation(args) { // per-binding BYO users (db_bootstrap_byo.go, #6438)
-		return runDBBootstrapByoUsers(ctx, args, os.LookupEnv, os.Stdout)
+		return runDBBootstrapByoUsers(ctx, args, os.LookupEnv)
 	}
 	fs := flag.NewFlagSet("db-bootstrap", flag.ContinueOnError)
 	provider := fs.String("provider", "", "cloud provider (aws|azure|gcp)")

@@ -202,27 +202,22 @@ func TestScramVerifier_RFC7677Vector(t *testing.T) {
 }
 
 // TestByoUsers_PlaintextNowhere runs the CLI entry point: the password reaches it only through its
-// environment variable, and appears in neither the argv it was given nor anything it writes.
+// environment variable, and appears in neither the argv it was given nor anything it writes. The
+// script goes only to the owner-only --out file, never to stdout (which in a pod is its log).
 func TestByoUsers_PlaintextNowhere(t *testing.T) {
-	args := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser}
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	args := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser, "--out", path}
 	env := map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword}
-	var out bytes.Buffer
-	if err := runDBBootstrapByoUsers(context.Background(), args, mapEnv(env), &out); err != nil {
-		t.Fatal(err)
+	stdout := captureStdout(t, func() {
+		if err := runDBBootstrapByoUsers(context.Background(), args, mapEnv(env)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("the entry point wrote to stdout:\n%s", stdout)
 	}
 	if strings.Contains(strings.Join(args, " "), byoTestPassword) {
 		t.Fatal("password in argv")
-	}
-	if strings.Contains(out.String(), byoTestPassword) {
-		t.Fatal("password in the rendered SQL")
-	}
-	if !strings.Contains(out.String(), "PASSWORD 'SCRAM-SHA-256$4096:") {
-		t.Fatalf("no verifier in the rendered SQL:\n%s", out.String())
-	}
-	// --out writes the same script, owner-only.
-	path := filepath.Join(t.TempDir(), "byo.sql")
-	if err := runDBBootstrapByoUsers(context.Background(), append(args, "--out", path), mapEnv(env), io.Discard); err != nil {
-		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -235,6 +230,25 @@ func TestByoUsers_PlaintextNowhere(t *testing.T) {
 	if bytes.Contains(b, []byte(byoTestPassword)) {
 		t.Fatal("password in the --out file")
 	}
+	if !bytes.Contains(b, []byte("PASSWORD 'SCRAM-SHA-256$4096:")) {
+		t.Fatalf("no verifier in the --out file:\n%s", b)
+	}
+}
+
+// captureStdout returns what fn writes to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	_ = w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
 }
 
 // mapEnv adapts a map to the getenv the entry point takes.
@@ -321,25 +335,29 @@ func TestByoUsers_Refusals(t *testing.T) {
 // name before reading any password, and an engine other than Postgres.
 func TestByoUsers_CLIRefusals(t *testing.T) {
 	env := mapEnv(map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword})
-	base := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db"}
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	base := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--out", path}
 	for name, args := range map[string][]string{
+		"no --out":        {"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser},
 		"no --users":      base,
 		"no password env": append(append([]string{}, base...), "--users", "alethia_byo_ffffffffffff"),
 		"bad name":        append(append([]string{}, base...), "--users", "alethia_app"),
 		"mysql":           append(append([]string{}, base...), "--users", byoTestUser, "--engine", "mysql"),
 		"unknown flag":    append(append([]string{}, base...), "--users", byoTestUser, "--password", "x"),
 	} {
-		if err := runDBBootstrapByoUsers(context.Background(), args, env, io.Discard); err == nil {
+		if err := runDBBootstrapByoUsers(context.Background(), args, env); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("a refused invocation still wrote --out")
+	}
 	// An explicitly empty declared set is a known set: it renders the sweep.
-	var out bytes.Buffer
-	if err := runDBBootstrapByoUsers(context.Background(), append(base, "--users="), env, &out); err != nil {
+	if err := runDBBootstrapByoUsers(context.Background(), append(base, "--users="), env); err != nil {
 		t.Fatalf("--users= refused: %v", err)
 	}
-	if !strings.Contains(out.String(), "ARRAY[]::name[]") {
-		t.Errorf("empty declared set not rendered:\n%s", out.String())
+	if b, _ := os.ReadFile(path); !bytes.Contains(b, []byte("ARRAY[]::name[]")) {
+		t.Errorf("empty declared set not rendered:\n%s", b)
 	}
 }
 
@@ -354,7 +372,7 @@ func TestByoUsers_Dispatch(t *testing.T) {
 		t.Error("a flag VALUE named byo-users was routed")
 	}
 	if err := RunDBBootstrap(context.Background(), []string{"--byo-users", "--env-id", "e", "--db", "d"}); err == nil ||
-		!strings.Contains(err.Error(), "--users is required") {
+		!strings.Contains(err.Error(), "--out is required") {
 		t.Errorf("RunDBBootstrap did not reach the byo-users path: %v", err)
 	}
 }
@@ -371,7 +389,7 @@ func TestByoUsers_SweepPatternScope(t *testing.T) {
 		}
 	}
 	got, _ := renderByoUsersSQL(oneUserInput())
-	sweep := got[strings.Index(got, "-- revoke every undeclared"):]
+	sweep := got[strings.Index(got, "-- phase 3: revoke every undeclared"):]
 	for _, want := range []string{
 		"WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'",
 		"AND d.description = 'alethia-env:env-1'",
@@ -470,7 +488,7 @@ BEGIN
     ORDER BY a.rolname);
 END
 $alethia_byo$;
--- phase 2: everything else, in one transaction
+-- phase 2: the preflight and every declared user, in one transaction
 BEGIN;
 DO $alethia_byo$
 BEGIN
@@ -542,7 +560,19 @@ BEGIN
 END
 $alethia_byo$;
 ALTER ROLE "alethia_byo_0123456789ab" IN DATABASE "app-db" SET search_path = "alethia_byo_0123456789ab";
--- revoke every undeclared per-binding user of this environment
+COMMIT;
+\pset tuples_only on
+\pset format unaligned
+\o /dev/termination-log
+SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolcanlogin
+      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY 1;
+\o
+-- phase 3: revoke every undeclared per-binding user of this environment, one transaction each
 DO $alethia_byo$
 DECLARE
   r record;
@@ -571,39 +601,49 @@ BEGIN
     EXECUTE format('DROP OWNED BY %I', r.rolname);
     EXECUTE format('DROP ROLE %I', r.rolname);
     EXCEPTION WHEN OTHERS THEN
-      RAISE EXCEPTION 'alethia byo-users: could not revoke role % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
+      RAISE WARNING 'alethia byo-users: revocation pending: % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
     END;
+    COMMIT;
   END LOOP;
 END
 $alethia_byo$;
-COMMIT;
 \pset tuples_only on
 \pset format unaligned
 \o /dev/termination-log
-SELECT a.rolname FROM pg_roles a
+SELECT p.rolname::text FROM (SELECT a.rolname FROM pg_roles a
     JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
     WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
       AND d.description = 'alethia-env:env-1'
       AND a.rolcanlogin
-      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])
-    ORDER BY a.rolname;
+      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])) p
+UNION ALL
+SELECT 'revocation-pending:' || c.rolname FROM (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname) c
+    ORDER BY 1;
 \o
 `
 
-// TestByoUsers_TwoPhases: revocation fails SAFE (ADR §3). The lockout of every candidate is its own
-// committed transaction, its sessions are terminated only after that commit, and the main transaction
-// follows; a failed drop is re-raised naming the role. The result line reads committed state.
-func TestByoUsers_TwoPhases(t *testing.T) {
+// TestByoUsers_ThreePhases: revocation fails SAFE and never blocks provisioning (ADR §3).
+//   - phase 1, the lockout of every candidate, is its own committed transaction, and sessions are
+//     terminated only after it commits;
+//   - phase 2 provisions the declared users and commits, and the result line follows at once;
+//   - phase 3 sweeps the candidates at top level, one transaction each: a failure is a WARNING naming
+//     the role, not an exception, and each candidate is committed before the next. The result is then
+//     rewritten with the pending revocations.
+func TestByoUsers_ThreePhases(t *testing.T) {
 	got, _ := renderByoUsersSQL(oneUserInput())
-	lines := strings.Split(got, "\n")
 	var tx []string
-	for _, l := range lines {
+	for _, l := range strings.Split(got, "\n") {
 		if l == "BEGIN;" || l == "COMMIT;" {
 			tx = append(tx, l)
 		}
 	}
 	if strings.Join(tx, " ") != "BEGIN; COMMIT; BEGIN; COMMIT;" {
-		t.Fatalf("top-level transaction statements = %v, want two BEGIN/COMMIT pairs", tx)
+		t.Fatalf("top-level transaction statements = %v, want phase 1 and phase 2 each in one BEGIN/COMMIT, and phase 3 in none", tx)
 	}
 	first := strings.Index(got, "\nCOMMIT;\n")
 	phase1 := got[:first]
@@ -615,15 +655,32 @@ func TestByoUsers_TwoPhases(t *testing.T) {
 			t.Errorf("phase 1 contains %q: it must hold only what cannot be blocked", bad)
 		}
 	}
+	p3 := strings.Index(got, "-- phase 3:")
+	if p3 < 0 {
+		t.Fatal("no phase 3")
+	}
+	phase2, phase3 := got[first:p3], got[p3:]
+	for _, bad := range []string{"REASSIGN OWNED BY %I", "DROP ROLE %I"} {
+		if strings.Contains(phase2, bad) {
+			t.Errorf("phase 2 contains the sweep's %q: a stuck candidate would block every declared user", bad)
+		}
+	}
+	if strings.Contains(phase3, "RAISE EXCEPTION 'alethia byo-users: revocation") || strings.Contains(phase3, "\nBEGIN;\n") {
+		t.Error("phase 3 raises an exception or runs inside a transaction block")
+	}
 	order := []string{
 		"\nCOMMIT;\n",
 		"PERFORM pg_terminate_backend(s.pid)",
 		"\nBEGIN;\n",
 		"server_version_num",
 		`CREATE ROLE "` + byoTestUser + `" NOLOGIN;`,
-		"EXECUTE format('DROP ROLE %I', r.rolname);\n    EXCEPTION WHEN OTHERS THEN\n      RAISE EXCEPTION 'alethia byo-users: could not revoke role %",
 		"\nCOMMIT;\n",
-		"\\o /dev/termination-log",
+		"\\o /dev/termination-log\nSELECT a.rolname",
+		"-- phase 3:",
+		"EXECUTE format('DROP ROLE %I', r.rolname);\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'alethia byo-users: revocation pending: %",
+		"    END;\n    COMMIT;\n  END LOOP;",
+		"\\o /dev/termination-log\nSELECT p.rolname::text",
+		"SELECT 'revocation-pending:' || c.rolname",
 	}
 	at := 0
 	for _, s := range order {
@@ -633,8 +690,8 @@ func TestByoUsers_TwoPhases(t *testing.T) {
 		}
 		at += i + len(s)
 	}
-	// Both phases select candidates with the same predicate.
-	if strings.Count(got, "AND a.rolname <> ALL (ARRAY['"+byoTestUser+"']::name[])") != 3 {
-		t.Error("the lockout, the termination and the sweep do not share one candidate predicate")
+	// The lockout, the termination, the sweep and the pending list share one candidate predicate.
+	if strings.Count(got, "AND a.rolname <> ALL (ARRAY['"+byoTestUser+"']::name[])") != 4 {
+		t.Error("the phases do not share one candidate predicate")
 	}
 }

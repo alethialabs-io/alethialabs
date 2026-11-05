@@ -11,10 +11,11 @@
 
 A bring-your-own chart's database binding receives a database user that exists for that binding alone:
 it may connect to the environment's database and work inside a schema (Postgres) or database (MySQL)
-of its own, and nothing else. Its password lives in the environment's secret store under a key of its
+of its own, and nothing else that this design grants (the limits of that are stated in §3). Its password lives in the environment's secret store under a key of its
 own. The binding's ExternalSecret reads that key, and no BYO binding ever references the database's
 administrative credential. Removing the binding's declaration removes its ExternalSecret and revokes
-the user. The password never appears in a log, in a manifest or in SQL text sent to the server.
+the user. The password never appears in a log, in a manifest or in SQL text sent to the server; only
+its SCRAM-SHA-256 verifier does (§3).
 
 A chart is code the user brought, so it gets the least privilege that works.
 
@@ -149,24 +150,35 @@ runner creates for it (`alethia-byo-db-users`), which holds no workload. Every o
    that environment's next deploy, or its teardown, which removes the namespace's objects with its
    owner label. Until then the namespace holds no workload that could mount them.
 
-**Two phases, so that revocation fails safe.** The script carries its own two transactions and is
-applied with `psql -X -v ON_ERROR_STOP=1 -f`, not `--single-transaction`:
+**Three phases, so that revocation fails safe and never blocks provisioning.** `db-bootstrap` writes the
+script only to the file named by `--out` (mode 0600; it refuses to run without one), never to stdout,
+which in a pod is its log. The script carries its own transactions and is applied with
+`psql -X -v ON_ERROR_STOP=1 -f`, not `--single-transaction`:
 
 1. *Lockout*, committed on its own first: every revocation candidate (§5) is set `NOLOGIN`. Only after
    that has committed are its sessions terminated, so a reconnect cannot slip in between.
-2. *Main*, one transaction: the pre-15 preflight, every declared user, and the reassign and drop of
-   every candidate. It applies for every declared user or for none.
+2. *Provision*, one transaction: the pre-15 preflight and every declared user. It applies for every
+   declared user or for none. The result line is written right after it commits.
+3. *Sweep*: each candidate's reassign and drop, each in a transaction of its own.
 
-A drop can be blocked by something the main transaction cannot reach. For example, a role that owns an
-object in another database cannot be dropped, because `REASSIGN OWNED` and `DROP OWNED` act on the
-current database only. The main transaction then fails with a reason naming the role, and the next run
-retries. Because the lockout committed first, a role whose revocation failed still cannot log in.
+A drop can be blocked by something the sweep cannot reach. A role that owns an object in another
+database cannot be dropped, because `REASSIGN OWNED` and `DROP OWNED` act on the current database only.
+While it still had LOGIN, a per-binding user could create such an object on purpose (below). That
+candidate's transaction is rolled back alone, and psql reports a `WARNING` naming the role. The role
+stays `NOLOGIN`, since its lockout committed in phase 1. The declared users are unaffected, because
+phase 2 has already committed, and so are the other candidates. The run exits 0, and the next run
+retries the drop.
 
-**How the Job reports `Provisioned`.** After the main transaction commits, the last statement selects
-the declared users that now exist with LOGIN and the expected tag, and the main container writes that
-list, and nothing else, to its termination message (psql's `\o` pointed at the termination path just
-before that statement, so no earlier output reaches it; with `ON_ERROR_STOP` a failed run never reaches
-it) (`terminationMessagePath`, read by the runner from
+**How the Job reports `Provisioned`, and a pending revocation.** After phase 2 commits, a statement
+selects the declared users that now exist with LOGIN and the expected tag. The main container writes
+that list, and nothing else, to its termination message. psql's `\o` points at the termination path
+just before that statement, so no earlier output reaches it, and with `ON_ERROR_STOP` a failed run
+never reaches it. After phase 3 the file is rewritten (`\o` truncates) with the same list, plus one
+`revocation-pending:<role>` line for every candidate the sweep could not drop. A run that dies inside
+phase 3 therefore still leaves phase 2's list behind. The runner reads the message from the pod's
+`status.containerStatuses[].state.terminated.message`, through the API and never from logs (it is the
+container's `terminationMessagePath`). It surfaces each pending line as a revocation that has not
+finished: the role is locked out, but it still exists and still owns its objects. The
 the pod's `status.containerStatuses[].state.terminated.message` through the API, never from logs). The
 runner counts a user as provisioned only when **all three** hold: the Job's condition is Complete, the
 user is in that message, and the user is in the set this deploy declared. A failed or timed-out Job,
@@ -202,6 +214,12 @@ server's statement log wherever `log_statement` covers DDL (common in RDS parame
 SQL flags), and psql's error context in the Job's log. The verifier cannot be used to log in, and the
 plaintext is never in the SQL file, an argument or a log line.
 
+The verifier itself is in the SQL text. A server whose `log_statement` covers DDL (`ddl` or `all`) writes
+it to the server log, and psql's error context can carry it into the Job's log when a statement fails. A
+verifier does not authenticate. It does allow an offline guess at the password, which is not practical
+against 32 random alphanumeric characters, but it is still credential material. Operators should not log
+DDL on a server that hosts per-binding users, or should treat that log as sensitive.
+
 No `CREATEDB`, `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, no membership in any role, no grant on
 schema `public` or on any other schema. Postgres 15 and later deny `CREATE` on `public` to `PUBLIC`. The
 Job does not assume the server is 15+: it reads `server_version_num`, and below 150000 it first grants
@@ -219,6 +237,32 @@ the administrator. The fix is to upgrade to Postgres 15 or later, or to have an 
 on Postgres 14). What `PUBLIC` keeps by default — `CONNECT`
 and `TEMP` on databases, `USAGE` on `public` — is unchanged, because revoking it would change what the
 first-class services may do. It grants no access to any table.
+
+**The limits of "nothing else".** This design grants a per-binding user nothing beyond the above. It
+does not take away what `PUBLIC` holds on the rest of the server, so a per-binding user can also do the
+following:
+
+- `CONNECT` to every other database on the server whose `CONNECT` privilege `PUBLIC` still holds, which
+  is the default;
+- create large objects there, because that needs no grant;
+- below Postgres 15, create objects in those databases' `public` schemas, because the preflight runs in
+  the environment's database only.
+
+It gains no access to another role's tables by any of these. An object created this way is out of
+reach of `REASSIGN OWNED` and `DROP OWNED`, which is why phase 3 isolates each drop (above). A server
+that must close these gaps needs `CONNECT` revoked from `PUBLIC` on its other databases, and, below 15,
+the same preflight run in each of them. This design does neither.
+
+**The administrator's membership.** The Job grants each per-binding role, and each holder role (§5), to
+the administrator it connects as (`GRANT … TO CURRENT_USER`). The membership is permanent:
+
+- it lasts until the role is dropped;
+- holder roles are never dropped, by design, because they keep revoked data.
+
+It is needed because managed administrators are not superusers. `REASSIGN OWNED`, `CREATE SCHEMA …
+AUTHORIZATION` and dropping the role's objects all require the administrator to hold that role's
+privileges. The grant runs in one direction only: the administrator can act as the per-binding role,
+and the per-binding role gains nothing from the administrator.
 
 **MySQL**
 
@@ -285,10 +329,11 @@ binding out of the declared set. The next deploy then does the following:
    declared. A user is selected by the per-binding prefix *and* its environment tag; a user with the
    prefix but no tag, or another environment's tag, is never a candidate, and neither is any
    first-class role. On Postgres, the lockout transaction runs `ALTER ROLE … NOLOGIN` and commits, then
-   `pg_terminate_backend` ends the user's sessions (§3). The main transaction then hands the user's
-   objects to a holder role (below), runs `DROP OWNED BY …` (which then drops privileges only) and
-   `DROP ROLE`. If the drop fails, the user stays `NOLOGIN` and the next run retries. On MySQL it runs
-   `DROP USER`.
+   `pg_terminate_backend` ends the user's sessions (§3). After the declared users are provisioned, the
+   sweep handles each user in a transaction of its own: it hands the user's objects to a holder role
+   (below), runs `DROP OWNED BY …` (which then drops privileges only) and `DROP ROLE`. If the drop
+   fails, the user stays `NOLOGIN`, the result carries `revocation-pending:<user>`, and the next run
+   retries. Nothing else in the run is affected. On MySQL it runs `DROP USER`.
 
 **Data is retained, and comes back whole.** On Postgres, `REASSIGN OWNED BY "alethia_byo_<h>" TO
 "alethia_byo_<h>_r"` moves everything the user owned — its schema and every table, sequence, view,

@@ -26,15 +26,20 @@ import (
 // (docs/adr/byo-binding-db-users.md §3, §5; slice 3 of #6438). It is pure: it reads the declared users
 // from its arguments and their passwords from its environment, and writes SQL. The BYO users Job
 // (slice 4) applies that SQL as the database administrator with `psql -X -v ON_ERROR_STOP=1 -f <file>`
-// — NOT --single-transaction: the script carries its own two transactions (ADR §3):
+// — NOT --single-transaction: the script carries its own transactions, in three phases (ADR §3):
 //
 //  1. LOCKOUT, committed first: every revocation candidate is set NOLOGIN, and once that has committed
 //     its sessions are terminated. Revocation therefore fails SAFE: whatever later blocks a drop (an
 //     object the role owns in another database, say), the role can no longer log in.
-//  2. MAIN: the preflight, every declared user and the reassign/drop of every candidate, in one
-//     transaction that commits for every declared user or for none. A candidate that cannot be dropped
-//     fails it with a reason naming the role; the next run retries. The result line runs after it
-//     commits, so it reports committed state only, and with ON_ERROR_STOP a failed run never reaches it.
+//  2. PROVISION: the preflight and every declared user, in one transaction that commits for every
+//     declared user or for none. The result line is written right after it commits, so it reports
+//     committed state only, and with ON_ERROR_STOP a failed run never reaches it.
+//  3. SWEEP: each candidate's reassign/drop in a transaction of its own. A candidate that cannot be
+//     dropped is rolled back alone, reported as a WARNING naming it, and stays NOLOGIN; the next run
+//     retries. It never touches phase 2, which has already committed, so one stuck role cannot hold
+//     every declared user hostage. The result file is then rewritten with a
+//     `revocation-pending:<role>` line per candidate still present, and the run exits 0: provisioning
+//     succeeded, and the pending revocation is reported where the runner reads.
 //
 // What the rendered script guarantees, per run:
 //
@@ -42,8 +47,10 @@ import (
 //     tag, may CONNECT to the environment's database, owns a schema of its own name and has it as its
 //     search_path, and holds no other attribute, membership or grant this script gives it;
 //   - a user's password is sent as a SCRAM-SHA-256 verifier computed here, never as plaintext;
-//   - every per-binding user TAGGED WITH THIS ENVIRONMENT that is not declared is revoked, its objects
-//     handed to a holder role of its own, so a later re-declaration gets every one of them back;
+//   - every per-binding user TAGGED WITH THIS ENVIRONMENT that is not declared can no longer log in,
+//     and is dropped, its objects handed to a holder role of its own so that a later re-declaration
+//     gets every one of them back. A user that cannot be dropped stays locked out and is reported as
+//     revocation-pending, without affecting anything else in the run;
 //   - below Postgres 15, PUBLIC no longer holds CREATE on schema public, or the run fails.
 
 // byoUserPattern is the shape of a per-binding user (manifests.ByoBindingDBUser). It is anchored at
@@ -336,10 +343,12 @@ END`)
 	}, nil
 }
 
-// byoRevokeSQL renders the main transaction's half of the revocation sweep (ADR §5). Each candidate —
-// already NOLOGIN since phase 1 (set again here, idempotently) — has its objects reassigned to its own
-// tagged NOLOGIN holder, its remaining privileges dropped, and the role dropped. A failure for one
-// role is re-raised naming that role, which fails the run; its lockout has already committed.
+// byoRevokeSQL renders phase 3, the revocation sweep (ADR §5). It runs at top level (never inside a
+// transaction block), so the DO block may COMMIT: each candidate — already NOLOGIN since phase 1, set
+// again here idempotently — has its objects reassigned to its own tagged NOLOGIN holder, its remaining
+// privileges dropped and the role dropped, inside a subtransaction, and that candidate's work is
+// committed before the next begins. A failure rolls back that candidate alone and is reported as a
+// WARNING naming it; the role stays NOLOGIN and the next run retries.
 func byoRevokeSQL(env string, users []byoUser) (string, error) {
 	tag := pgQuoteLiteral(byoEnvTagPrefix + env)
 	return doBlock(`DECLARE
@@ -364,24 +373,36 @@ BEGIN
     EXECUTE format('DROP OWNED BY %I', r.rolname);
     EXECUTE format('DROP ROLE %I', r.rolname);
     EXCEPTION WHEN OTHERS THEN
-      RAISE EXCEPTION 'alethia byo-users: could not revoke role % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
+      RAISE WARNING 'alethia byo-users: revocation pending: % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
     END;
+    COMMIT;
   END LOOP;
 END`)
 }
 
-// byoResultSQL renders the run's last statement: the declared users that now exist with LOGIN and
-// this environment's tag, one per line, written through \o to resultPath so that nothing earlier in
-// the run reaches it. The Job's runner reads that file as the pod's termination message (#6466).
-func byoResultSQL(env, resultPath string, users []byoUser) []string {
+// byoPendingPrefix starts a result line naming a revocation candidate that phase 3 could not drop.
+const byoPendingPrefix = "revocation-pending:"
+
+// byoResultSQL renders a result write: the declared users that now exist with LOGIN and this
+// environment's tag, one per line, written through \o to resultPath so that nothing else reaches it.
+// With pending, it also lists `revocation-pending:<role>` for every candidate still present. \o
+// truncates, so the write after phase 3 replaces the one after phase 2. The Job's runner reads that
+// file as the pod's termination message (#6466).
+func byoResultSQL(env, resultPath string, users []byoUser, pending bool) []string {
+	query := byoTaggedRolesSQL(env) + `
+      AND a.rolcanlogin
+      AND a.rolname = ANY (` + byoNameArray(users) + `)`
+	if pending {
+		query = `SELECT p.rolname::text FROM (` + query + `) p
+UNION ALL
+SELECT ` + pgQuoteLiteral(byoPendingPrefix) + ` || c.rolname FROM (` + byoCandidatesSQL(env, users) + `) c`
+	}
 	return []string{
 		`\pset tuples_only on`,
 		`\pset format unaligned`,
 		`\o ` + resultPath,
-		byoTaggedRolesSQL(env) + `
-      AND a.rolcanlogin
-      AND a.rolname = ANY (` + byoNameArray(users) + `)
-    ORDER BY a.rolname;`,
+		query + `
+    ORDER BY 1;`,
 		`\o`,
 	}
 }
@@ -411,7 +432,7 @@ func validateByoUsers(users []byoUser) ([]byoUser, error) {
 }
 
 // renderByoUsersSQL renders the whole per-binding script: header, the pre-15 preflight, each declared
-// user, the revocation sweep, and the result line — as the two transactions the package comment
+// user, the revocation sweep, and the result line — as the three phases the package comment
 // describes. It is meant for `psql -X -v ON_ERROR_STOP=1 -f`; every statement is idempotent, so a
 // second run converges on the same state (only the verifiers' salts differ).
 func renderByoUsersSQL(in byoUsersInput) (string, error) {
@@ -447,7 +468,7 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 		"-- Passwords are carried as SCRAM-SHA-256 verifiers only.",
 	}
 	stmts = append(stmts, lockout...)
-	stmts = append(stmts, "-- phase 2: everything else, in one transaction", "BEGIN;", preflight)
+	stmts = append(stmts, "-- phase 2: the preflight and every declared user, in one transaction", "BEGIN;", preflight)
 	for _, u := range users {
 		s := make([]byte, scramSaltLen)
 		if _, err := io.ReadFull(salt, s); err != nil {
@@ -463,15 +484,16 @@ func renderByoUsersSQL(in byoUsersInput) (string, error) {
 		}
 		stmts = append(stmts, block...)
 	}
+	// The result line reads COMMITTED state: it runs after phase 2, so a commit that fails can never
+	// have reported a user as provisioned.
+	stmts = append(stmts, "COMMIT;")
+	stmts = append(stmts, byoResultSQL(in.EnvironmentID, in.ResultPath, users, false)...)
 	revoke, err := byoRevokeSQL(in.EnvironmentID, users)
 	if err != nil {
 		return "", err
 	}
-	stmts = append(stmts, "-- revoke every undeclared per-binding user of this environment", revoke)
-	// The result line reads COMMITTED state: it runs after the main transaction, so a commit that
-	// fails can never have reported a user as provisioned.
-	stmts = append(stmts, "COMMIT;")
-	stmts = append(stmts, byoResultSQL(in.EnvironmentID, in.ResultPath, users)...)
+	stmts = append(stmts, "-- phase 3: revoke every undeclared per-binding user of this environment, one transaction each", revoke)
+	stmts = append(stmts, byoResultSQL(in.EnvironmentID, in.ResultPath, users, true)...)
 	return strings.Join(stmts, "\n") + "\n", nil
 }
 
@@ -491,10 +513,10 @@ func isByoUsersInvocation(args []string) bool {
 }
 
 // runDBBootstrapByoUsers is `alethia db-bootstrap --byo-users`: it parses the declared users, reads
-// each password from its own environment variable, and writes the script to --out (0600) or stdout.
+// each password from its own environment variable, and writes the script to --out (0600), never to stdout.
 // --users must be given, even empty: the declared set has to be KNOWN before anything is revoked, and
 // a missing flag is a misrender, not "no bindings".
-func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string) (string, bool), stdout io.Writer) error {
+func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string) (string, bool)) error {
 	fs := flag.NewFlagSet("db-bootstrap --byo-users", flag.ContinueOnError)
 	fs.Bool("byo-users", false, "render the per-binding BYO users script")
 	engine := fs.String("engine", enginePostgres, "database engine (postgres only; MySQL is a later slice)")
@@ -503,9 +525,14 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 	dbName := fs.String("db", "", "the environment's database")
 	usersFlag := fs.String("users", "", "comma-separated declared per-binding users (required; may be empty)")
 	resultPath := fs.String("result-path", "/dev/termination-log", "file the provisioned set is written to")
-	out := fs.String("out", "", "write the SQL to this file (0600) instead of stdout")
+	out := fs.String("out", "", "write the SQL to this file, 0600 (required: the SQL is never printed)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// The script carries password verifiers. A verifier cannot log in, but it is still never printed:
+	// on stdout it would land in the pod log.
+	if *out == "" {
+		return errors.New("db-bootstrap --byo-users: --out is required (the script is never written to stdout)")
 	}
 	if *engine != enginePostgres && *engine != "" {
 		return fmt.Errorf("db-bootstrap --byo-users: engine %q is not supported (postgres only)", *engine)
@@ -543,9 +570,5 @@ func runDBBootstrapByoUsers(_ context.Context, args []string, getenv func(string
 	if err != nil {
 		return err
 	}
-	if *out != "" {
-		return os.WriteFile(*out, []byte(sql), 0o600)
-	}
-	_, err = fmt.Fprint(stdout, sql)
-	return err
+	return os.WriteFile(*out, []byte(sql), 0o600)
 }

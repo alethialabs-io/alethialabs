@@ -30,6 +30,7 @@ const (
 	pgUserA      = "alethia_byo_eeeeeeeeeee1" // env A, declared then revoked then re-adopted
 	pgUserB      = "alethia_byo_eeeeeeeeeee2" // env B — must survive env A's sweep
 	pgUntagged   = "alethia_byo_eeeeeeeeeee3" // prefixed but untagged — never a candidate
+	pgUserC      = "alethia_byo_eeeeeeeeeee4" // env A, a droppable candidate next to a stuck one
 	pgPasswordA1 = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA1"
 	pgPasswordA2 = "AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA2"
 	pgPasswordB  = "BbbbbbbbbbbbbbbbbbbbbbbbbbbbbbB1"
@@ -151,7 +152,7 @@ func (a *pgAdmin) applyErr(env string, users ...byoUser) ([]string, string, erro
 // cleanup removes every role and schema the test may have left.
 func (a *pgAdmin) cleanup() {
 	_, _ = psqlRun(a.dsn.String(), `DROP DATABASE IF EXISTS `+pgOtherDB)
-	for _, r := range []string{pgUserA, pgUserB, pgUntagged} {
+	for _, r := range []string{pgUserA, pgUserB, pgUntagged, pgUserC} {
 		for _, role := range []string{r, r + byoHolderSuffix} {
 			// A non-superuser admin needs the role's privileges to DROP OWNED it, hence the GRANT.
 			_, _ = psqlRun(a.dsn.String(), `DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = '`+role+`') THEN
@@ -295,24 +296,42 @@ func TestByoUsersPostgres_RefusesForeignRole(t *testing.T) {
 }
 
 // TestByoUsersPostgres_RevokeFailsSafe: a revoke candidate that owns an object in ANOTHER database
-// cannot be dropped (REASSIGN/DROP OWNED act on the current database only). The run fails naming the
-// role, AND the role is NOLOGIN afterwards, because the lockout committed on its own. Once the object
-// is gone, the next run completes the revocation.
+// cannot be dropped (REASSIGN/DROP OWNED act on the current database only). That must cost nothing
+// but its own revocation:
+//   - the run exits 0;
+//   - a declared user next to it IS provisioned, IS in the result and can log in;
+//   - a second, droppable candidate IS dropped in the same run, since each candidate is its own
+//     transaction;
+//   - the stuck role is NOLOGIN, reported as `revocation-pending:<role>` in the result and as a
+//     WARNING naming it.
+//
+// Once the object is gone, the next run completes the revocation.
 func TestByoUsersPostgres_RevokeFailsSafe(t *testing.T) {
 	a := newPgAdmin(t)
 	a.cleanup()
 	t.Cleanup(a.cleanup)
-	a.apply("env-a", byoUser{pgUserA, pgPasswordA1})
+	a.apply("env-a", byoUser{pgUserA, pgPasswordA1}, byoUser{pgUserC, pgPasswordA1})
 	a.query("CREATE DATABASE " + pgOtherDB)
 	if out, err := psqlRun(a.inDB(pgOtherDB), "CREATE SCHEMA stray AUTHORIZATION "+pgUserA); err != nil {
 		t.Fatalf("cannot plant the other-database object: %v\n%s", err, out)
 	}
-	_, out, err := a.applyErr("env-a")
-	if err == nil {
-		t.Fatalf("the revocation succeeded although the role owns an object in another database:\n%s", out)
+
+	// A and C are revoked; B is declared. A cannot be dropped.
+	got, out, err := a.applyErr("env-a", byoUser{pgUserB, pgPasswordB})
+	if err != nil {
+		t.Fatalf("a stuck revocation failed the run: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "could not revoke role "+pgUserA) {
-		t.Errorf("the failure does not name the role:\n%s", out)
+	if want := pgUserB + "," + byoPendingPrefix + pgUserA; strings.Join(got, ",") != want {
+		t.Errorf("result = %v, want %s", got, want)
+	}
+	if !strings.Contains(out, "WARNING:  alethia byo-users: revocation pending: "+pgUserA) {
+		t.Errorf("no WARNING naming the stuck role:\n%s", out)
+	}
+	if o, err := psqlRun(a.as(pgUserB, pgPasswordB), "SELECT 1"); err != nil {
+		t.Errorf("the declared user next to a stuck candidate cannot log in: %v\n%s", err, o)
+	}
+	if got := strings.TrimSpace(a.query("SELECT count(*) FROM pg_roles WHERE rolname = '" + pgUserC + "'")); got != "0" {
+		t.Error("the droppable candidate was not dropped: one stuck candidate blocked another")
 	}
 	if got := strings.TrimSpace(a.query("SELECT rolcanlogin FROM pg_roles WHERE rolname = '" + pgUserA + "'")); got != "f" {
 		t.Fatalf("after a failed revocation the role's rolcanlogin = %q; the lockout did not commit", got)
@@ -320,8 +339,12 @@ func TestByoUsersPostgres_RevokeFailsSafe(t *testing.T) {
 	if _, err := psqlRun(a.as(pgUserA, pgPasswordA1), "SELECT 1"); err == nil {
 		t.Fatal("a role whose revocation failed can still log in")
 	}
+
+	// The next run, with the object gone, completes it.
 	a.query("DROP DATABASE " + pgOtherDB)
-	a.apply("env-a")
+	if got := a.apply("env-a", byoUser{pgUserB, pgPasswordB}); strings.Join(got, ",") != pgUserB {
+		t.Errorf("retry result = %v, want [%s]", got, pgUserB)
+	}
 	if got := strings.TrimSpace(a.query("SELECT count(*) FROM pg_roles WHERE rolname = '" + pgUserA + "'")); got != "0" {
 		t.Error("the retry did not complete the revocation")
 	}
