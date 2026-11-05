@@ -9,7 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { cn } from "@repo/ui/utils";
 import { ArrowUpRight, Terminal } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 type OS = "mac" | "linux" | "windows";
 
@@ -40,12 +41,12 @@ function detectOS(): OS {
  * detected OS (switchable) plus a link to the full installation docs.
  */
 export function DownloadCliButton() {
+  // The OS the person picked, if they switched; otherwise the browser's, read only once
+  // hydrated so the server's HTML (which cannot know it) and the hydrating render agree.
   const [os, setOs] = useState<OS | null>(null);
+  const hydrated = useHydrated();
 
-  // Detect the OS on mount to keep SSR output stable.
-  useEffect(() => setOs(detectOS()), []);
-
-  const active = os ?? "mac";
+  const active = os ?? (hydrated ? detectOS() : "mac");
   const { command } = COMMANDS[active];
 
   return (

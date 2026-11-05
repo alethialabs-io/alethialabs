@@ -210,23 +210,40 @@ export function RepositorySelector({
   // row a user sees first is never one the data is about to take away.
   const [seed] = useState(() => sharedCtx?.linkedProviders ?? seededProviders);
   const [initialValue] = useState(value);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [loading, setLoading] = useState(() =>
-    sharedCtx ? sharedCtx.loadingProviders : seededProviders === undefined,
-  );
-  const [linkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
+  // This instance's own answers. With a shared context, the context's answers are READ (below),
+  // never copied into these: a copy needed an effect, and showed the previous answer for a commit.
+  const [ownRepositories, setRepositories] = useState<Repository[]>([]);
+  const [ownLoading, setLoading] = useState(seededProviders === undefined);
+  const [ownLinkedProviders, setLinkedProviders] = useState<PublicGitProvider[]>(
     seed ?? [],
   );
-  const [selectedProvider, setSelectedProvider] =
+  const [pickedProvider, setSelectedProvider] =
     useState<PublicGitProvider | null>(() =>
       seed ? initialProviderFor(seed, initialValue) : null,
     );
+  const linkedProviders = sharedCtx ? sharedCtx.linkedProviders : ownLinkedProviders;
+  const loading = sharedCtx ? sharedCtx.loadingProviders : ownLoading;
+  // Until one is picked, a shared context's provider defaults the way a seed's does.
+  const selectedProvider =
+    pickedProvider ??
+    (sharedCtx ? initialProviderFor(sharedCtx.linkedProviders, initialValue) : null);
   // What the mount knew, kept so `loadInitialData` can skip the provider read it no longer needs.
   const [seededAtMount] = useState(() => !sharedCtx && seededProviders !== undefined);
   const [selectedAtMount] = useState(selectedProvider);
   // A provider known at mount has its repositories in flight from the first frame, so the row reads
   // "Fetching repositories..." rather than "No repositories found" until the list lands.
-  const [fetchingRepos, setFetchingRepos] = useState(() => selectedProvider !== null);
+  // In shared-context mode the context's own flag says this until a local fetch starts.
+  const [ownFetchingRepos, setFetchingRepos] = useState(() => !sharedCtx && selectedProvider !== null);
+  // A shared context's cached list wins over this instance's own fetch, as it did when it was
+  // copied in; an uncached provider reads the context's flag (it is fetching it) or our own.
+  const ctxRepos =
+    sharedCtx && selectedProvider ? sharedCtx.reposByProvider[selectedProvider] : undefined;
+  const repositories = ctxRepos ?? ownRepositories;
+  const fetchingRepos = ctxRepos
+    ? false
+    : sharedCtx
+      ? sharedCtx.loadingRepos || ownFetchingRepos
+      : ownFetchingRepos;
   const [error, setError] = useState<string | null>(null);
   const [authRecoveryProvider, setAuthRecoveryProvider] =
     useState<PublicGitProvider | null>(null);
@@ -244,43 +261,21 @@ export function RepositorySelector({
       ? "border-border-strong"
       : "border-input";
 
-  // When shared context exists, use its data instead of fetching independently
+  // When shared context exists, ask IT for an uncached provider's repositories (it fetches each
+  // provider once) instead of fetching independently.
   useEffect(() => {
-    if (!sharedCtx) return;
-    setLinkedProviders(sharedCtx.linkedProviders);
-    setLoading(sharedCtx.loadingProviders);
+    if (!sharedCtx || !selectedProvider || ctxRepos) return;
+    void sharedCtx.fetchRepos(selectedProvider);
+  }, [sharedCtx, selectedProvider, ctxRepos]);
 
-    if (sharedCtx.linkedProviders.length > 0 && !selectedProvider) {
-      let provider = sharedCtx.linkedProviders[0];
-      const detected = initialValue ? providerFromRepoUrl(initialValue) : null;
-      if (detected) provider = detected;
-      if (sharedCtx.linkedProviders.includes(provider)) {
-        setSelectedProvider(provider);
-      } else {
-        setSelectedProvider(sharedCtx.linkedProviders[0]);
-      }
-    }
-  }, [sharedCtx?.linkedProviders, sharedCtx?.loadingProviders]);
-
-  useEffect(() => {
-    if (!sharedCtx || !selectedProvider) return;
-    const repos = sharedCtx.reposByProvider[selectedProvider];
-    if (repos) {
-      setRepositories(repos);
-      setFetchingRepos(false);
-    } else {
-      setFetchingRepos(sharedCtx.loadingRepos);
-      sharedCtx.fetchRepos(selectedProvider);
-    }
-  }, [sharedCtx?.reposByProvider, selectedProvider, sharedCtx?.loadingRepos]);
-
-  // Declared before loadInitialData, which awaits it. The old ordering only
-  // worked because the call is async; referencing the binding above its
-  // declaration is a TDZ hazard (react-hooks/immutability).
-  const fetchRepositories = async (providerName: PublicGitProvider) => {
-    setFetchingRepos(true);
-    setError(null);
-    setAuthRecoveryProvider(null);
+  // Both declared before loadInitialData, which awaits them, and `loadRepositories` before
+  // `fetchRepositories`: referencing a binding above its declaration is a TDZ hazard
+  // (react-hooks/immutability).
+  /**
+   * Fetches a provider's repositories into this instance, for a row already marked as fetching
+   * (by `fetchRepositories`, or by the mount's initial state).
+   */
+  const loadRepositories = async (providerName: PublicGitProvider) => {
     let recoveryProvider: PublicGitProvider | null = null;
     try {
       const data = await fetchRepositoriesByProvider(providerName);
@@ -314,15 +309,23 @@ export function RepositorySelector({
     }
   };
 
+  /** Marks the row as fetching, then fetches the provider's repositories. */
+  const fetchRepositories = async (providerName: PublicGitProvider) => {
+    setFetchingRepos(true);
+    setError(null);
+    setAuthRecoveryProvider(null);
+    await loadRepositories(providerName);
+  };
+
   const loadInitialData = useCallback(async () => {
     if (sharedCtx) return; // Skip — using shared context
     // Seeded by the server: the provider list is already on screen; only its repositories are left.
+    // The mount's initial state already says "loading" / "fetching", so nothing is set before the
+    // first request.
     if (seededAtMount) {
-      if (selectedAtMount) await fetchRepositories(selectedAtMount);
+      if (selectedAtMount) await loadRepositories(selectedAtMount);
       return;
     }
-    setLoading(true);
-    setError(null);
     try {
       const providers = await getLinkedProviders();
       setLinkedProviders(providers);

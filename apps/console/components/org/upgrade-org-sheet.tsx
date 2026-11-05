@@ -159,11 +159,11 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// Open a subscription intent once the payer has been declared (and re-open it when the
 	// currency toggle changes — Stripe locks a sub's currency at creation). If a live
 	// subscription already exists the action throws — surfaced inline rather than as a form.
+	// The previous intent's secret and error are dropped by whatever changed the request (the
+	// declaration, `switchCurrency`, close), so the render that asks again already shows neither.
 	useEffect(() => {
 		if (!open || !declaration) return;
 		let active = true;
-		setClientSecret(null);
-		setError(null);
 		createSubscriptionIntent("team", selected ? { currency: selected } : undefined)
 			.then((intent) => {
 				if (!active) return;
@@ -223,6 +223,8 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 				setRefusal(verdict.message);
 				return;
 			}
+			setClientSecret(null);
+			setError(null);
 			setDeclaration(next);
 			setView("pay");
 		} catch (e) {
@@ -234,6 +236,13 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		} finally {
 			setDeclaring(false);
 		}
+	}
+
+	/** The currency toggle: drops the intent made in the old currency, then asks in the new one. */
+	function switchCurrency(next: SupportedCurrency) {
+		setClientSecret(null);
+		setError(null);
+		setSelected(next);
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -373,7 +382,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 								<span className="text-ui-sm text-text-secondary">Billing currency</span>
 								<CurrencyToggle
 									value={currency}
-									onChange={setSelected}
+									onChange={switchCurrency}
 									disabled={!clientSecret}
 								/>
 							</div>

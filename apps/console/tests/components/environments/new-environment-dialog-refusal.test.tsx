@@ -39,6 +39,7 @@ vi.mock("sonner", () => ({
 	},
 }));
 
+import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import { NewEnvironmentDialog } from "@/components/environments/new-environment-dialog";
 import { orpc } from "@/lib/rpc/client";
 
@@ -161,3 +162,41 @@ describe("NewEnvironmentDialog — a refused name", () => {
 		settle({ ok: true, environment: { id: "env-2", name: "qa" } });
 	});
 });
+
+// #6459 — opening seeds the base from `defaultBaseId` (an env's Duplicate action), set while
+// rendering rather than from an effect.
+describe("NewEnvironmentDialog — the base an opening seeds", () => {
+	const ENVS: SwitcherEnv[] = [
+		{ id: "env-1", project_id: "p1", name: "production", is_default: true, stage: "production" },
+		{ id: "env-2", project_id: "p1", name: "staging", is_default: false, stage: "staging" },
+	];
+
+	/** The dialog over two environments, open or not, duplicating `defaultBaseId` when given. */
+	function dialog(open: boolean, defaultBaseId?: string) {
+		return (
+			<QueryClientProvider client={client}>
+				<NewEnvironmentDialog
+					open={open}
+					onOpenChange={vi.fn()}
+					projectId="p1"
+					envs={ENVS}
+					defaultBaseId={defaultBaseId}
+					onCreated={vi.fn()}
+				/>
+			</QueryClientProvider>
+		);
+	}
+
+	it("duplicates the env the dialog was opened for, including on a later opening", async () => {
+		duplicateEnvironment.mockResolvedValue({ ok: true, environment: { id: "env-3", name: "qa" } });
+		const user = userEvent.setup();
+		const { rerender } = render(dialog(false));
+		rerender(dialog(true, "env-2"));
+
+		await user.type(screen.getByLabelText("Environment name"), "qa");
+		await user.click(screen.getByRole("button", { name: "Create environment" }));
+
+		await vi.waitFor(() => expect(duplicateEnvironment).toHaveBeenCalledWith("p1", "env-2", "qa"));
+	});
+});
+

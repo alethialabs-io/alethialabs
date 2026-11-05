@@ -13,7 +13,7 @@ import {
   TooltipTrigger,
 } from "@repo/ui/tooltip";
 import { AlertTriangle, Check, Loader2, Server } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@repo/ui/utils";
 
 interface RunnerSelectPopoverProps {
@@ -40,24 +40,25 @@ export function RunnerSelectPopover({
 }: RunnerSelectPopoverProps) {
   // Live through the `runners` topic, so opening the popover needs no refetch of its own.
   const { data: runnersData, isPending: isLoading } = useRunnersQuery();
-  const allRunners = runnersData?.runners ?? [];
-  const runners = useMemo(
-    () =>
-      excludeId ? allRunners.filter((t) => t.id !== excludeId) : allRunners,
-    [allRunners, excludeId],
-  );
+  const runners = useMemo(() => {
+    const allRunners = runnersData?.runners ?? [];
+    return excludeId ? allRunners.filter((t) => t.id !== excludeId) : allRunners;
+  }, [runnersData, excludeId]);
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  // What the user picked since the popover last opened; `undefined` until they pick, when the
+  // selection is the online default runner (or "Any available"). Derived rather than set on open
+  // by an effect, so a default that arrives with the list after opening is still the selection,
+  // and a live refresh of the list no longer overrides a pick.
+  const [picked, setSelected] = useState<string | null | undefined>(undefined);
+  const defaultRunner = runners.find((w) => w.is_default && w.status === "ONLINE");
+  const selected = picked === undefined ? (defaultRunner?.id ?? null) : picked;
   const [rePlan, setRePlan] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      const defaultRunner = runners.find(
-        (w) => w.is_default && w.status === "ONLINE",
-      );
-      setSelected(defaultRunner?.id ?? null);
-    }
-  }, [open, runners]);
+  /** Opening starts from the default again; closing keeps nothing to reset. */
+  const handleOpenChange = (next: boolean) => {
+    if (next) setSelected(undefined);
+    setOpen(next);
+  };
 
   const handleConfirm = () => {
     setOpen(false);
@@ -66,7 +67,7 @@ export function RunnerSelectPopover({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger disabled={disabled} render={trigger} />
       <PopoverContent align="end" className="w-72 p-0">
         <div className="px-3 pt-3 pb-2 border-b border-border/40">

@@ -79,7 +79,8 @@ export function useAssignmentsQuery(
 			initialData,
 			// Mark seeded data fresh so a batch-hydrated list of N rows costs zero per-row
 			// fetches (each row trusts its slice until the staleTime elapses).
-			initialDataUpdatedAt: initialData ? Date.now() : undefined,
+			// A function, so TanStack reads the clock when it builds the query, not this render.
+			initialDataUpdatedAt: initialData ? () => Date.now() : undefined,
 		}),
 	);
 }
