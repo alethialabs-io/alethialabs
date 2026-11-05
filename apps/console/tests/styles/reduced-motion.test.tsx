@@ -11,7 +11,6 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -180,7 +179,7 @@ describe("app/globals.css animations under prefers-reduced-motion", () => {
 	// conflicting utility — a `text-*` name would be read as a colour and lost beside
 	// `text-transparent`. So the class is pinned on the RENDERED span, not just in the source.
 	it("renders the shimmer with its keyframe class and its per-pass duration", () => {
-		const html = renderToStaticMarkup(createElement(Shimmer, { duration: 1.5, children: "Thinking..." }));
+		const html = renderToStaticMarkup(<Shimmer duration={1.5}>Thinking...</Shimmer>);
 		expect(html).toMatch(/class="[^"]*\bshimmer-sweep\b/);
 		expect(html).toContain("--shimmer-duration:1.5s");
 	});

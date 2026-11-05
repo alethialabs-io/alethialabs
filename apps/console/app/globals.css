@@ -79,7 +79,7 @@
      already unmounted at once; CSS cannot animate an unmount, and nothing here pretends to.
    Under reduced motion nothing moves or resizes: movement falls back to the plain fade, a size
    change snaps, the shimmer stands still. A fade alone is not motion and stays.
-   tests/styles/reduced-motion.test.ts reads this file and fails on a keyframe or transition that
+   tests/styles/reduced-motion.test.tsx reads this file and fails on a keyframe or transition that
    moves something without a reduced-motion rule for every class that runs it. */
 @keyframes console-fade-in {
   from {
