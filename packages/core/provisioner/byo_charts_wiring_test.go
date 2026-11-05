@@ -575,7 +575,7 @@ func dbUserOutputs() map[string]interface{} {
 	return map[string]interface{}{
 		"rds_master_credentials_secret_name": bindingOutputsSecret,
 		"custom_secret_names": map[string]interface{}{
-			manifests.ByoBindingDBSecretKey("apps", "api", dbUserTarget): "use1-dev-acme-alethia-byo-db-x",
+			manifests.ByoBindingDBSecretKey("env-1", "apps", "api", dbUserTarget): "use1-dev-acme-alethia-byo-db-x",
 		},
 	}
 }
@@ -640,7 +640,7 @@ func TestByoBindingDBUsers_KeepsALiveOwnUserBinding(t *testing.T) {
 // labels as strings, never names the administrative secret, and the value path points at it.
 func TestByoBindingDBUsers_ProvisionedUserIsBound(t *testing.T) {
 	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
-	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("apps", "api", dbUserTarget))
+	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
 	c := newBindingCluster(t, `{"items":[]}`, 0)
 	vc := byoBindingConfig("env-1", true)
 	st := applyByoChartBindings(vc, dbUserOutputs(), "aws", io.Discard, io.Discard)
@@ -676,7 +676,7 @@ func TestByoBindingDBUsers_ProvisionedUserIsBound(t *testing.T) {
 // administrative secret and is declared with no source, exactly as before this mode existed.
 func TestByoBindingDBUsers_FlagOffIsUnchanged(t *testing.T) {
 	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "")
-	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("apps", "api", dbUserTarget))
+	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
 	c := newBindingCluster(t, `{"items":[]}`, 0)
 	st := applyByoChartBindings(byoBindingConfig("env-1", true), dbUserOutputs(), "aws", io.Discard, io.Discard)
 	body, _ := os.ReadFile(c.applied)

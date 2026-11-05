@@ -249,19 +249,19 @@ func TestResolveChartWorkloadBindings_PolicyRefusals(t *testing.T) {
 }
 
 // TestByoBindingDBUserIdentity pins the per-binding user namer (docs/adr/byo-binding-db-users.md §1):
-// deterministic; one user per binding Secret identity (namespace + BindingSecretName), so a different
-// namespace, workload or target is a different user; "" is the renderer's "default"; the user fits
+// deterministic; one user per binding Secret identity per environment (environment + namespace +
+// BindingSecretName), so a different environment, namespace, workload or target is a different user; "" is the renderer's "default"; the user fits
 // MySQL's 32-character limit; the secret key shares the user's hash and is Key Vault-safe (no "_").
 func TestByoBindingDBUserIdentity(t *testing.T) {
 	orders := types.ServiceBindingTarget{Kind: "database", Name: "orders"}
-	user := ByoBindingDBUser("apps", "web", orders)
-	if user != ByoBindingDBUser("apps", "web", orders) {
+	user := ByoBindingDBUser("env-1", "apps", "web", orders)
+	if user != ByoBindingDBUser("env-1", "apps", "web", orders) {
 		t.Fatal("the namer is not deterministic")
 	}
 	if !regexp.MustCompile(`^alethia_byo_[0-9a-f]{12}$`).MatchString(user) || len(user) > 32 {
 		t.Fatalf("user %q is not alethia_byo_<12 hex> within 32 characters", user)
 	}
-	key := ByoBindingDBSecretKey("apps", "web", orders)
+	key := ByoBindingDBSecretKey("env-1", "apps", "web", orders)
 	if key != "alethia-byo-db-"+strings.TrimPrefix(user, "alethia_byo_") {
 		t.Fatalf("secret key %q does not share the user %q's hash", key, user)
 	}
@@ -270,20 +270,21 @@ func TestByoBindingDBUserIdentity(t *testing.T) {
 	}
 	// A literal pin, so a change to the derivation is a visible decision, not a silent re-keying of
 	// every live user (each of which would then be revoked and re-created on the next deploy).
-	if user != "alethia_byo_"+sha256Hex12("apps\x00web-database-orders") {
-		t.Fatalf("user %q is not sha256(namespace NUL BindingSecretName)", user)
+	if user != "alethia_byo_"+sha256Hex12("env-1\x00apps\x00web-database-orders") {
+		t.Fatalf("user %q is not sha256(environment NUL namespace NUL BindingSecretName)", user)
 	}
 	distinct := map[string]string{
-		"other namespace": ByoBindingDBUser("apps-2", "web", orders),
-		"other workload":  ByoBindingDBUser("apps", "worker", orders),
-		"other target":    ByoBindingDBUser("apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "reports"}),
+		"other environment": ByoBindingDBUser("env-2", "apps", "web", orders),
+		"other namespace":   ByoBindingDBUser("env-1", "apps-2", "web", orders),
+		"other workload":    ByoBindingDBUser("env-1", "apps", "worker", orders),
+		"other target":      ByoBindingDBUser("env-1", "apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "reports"}),
 	}
 	for name, other := range distinct {
 		if other == user {
 			t.Errorf("%s: same user %q", name, user)
 		}
 	}
-	if ByoBindingDBUser("", "web", orders) != ByoBindingDBUser("default", "web", orders) {
+	if ByoBindingDBUser("env-1", "", "web", orders) != ByoBindingDBUser("env-1", "default", "web", orders) {
 		t.Error("an empty namespace is not the renderer's \"default\"")
 	}
 }
@@ -307,9 +308,10 @@ func dbUserFixture() (types.ServiceBinding, map[string]string, map[string]string
 		"rds_cluster_endpoint":               "db.internal",
 		"rds_master_credentials_secret_name": "acme/rds/master",
 	}
-	user := ByoBindingDBUser("apps", "web", binding.Target)
+	user := ByoBindingDBUser("env-1", "apps", "web", binding.Target)
 	users := &ByoDBUsers{
-		SecretNames: map[string]string{ByoBindingDBSecretKey("apps", "web", binding.Target): "use1-dev-acme-alethia-byo-db-x"},
+		Environment: "env-1",
+		SecretNames: map[string]string{ByoBindingDBSecretKey("env-1", "apps", "web", binding.Target): "use1-dev-acme-alethia-byo-db-x"},
 		Provisioned: map[string]bool{user: true},
 	}
 	return binding, valuePaths, outputs, users
@@ -330,7 +332,7 @@ func TestResolveChartWorkloadBindings_DBUsers(t *testing.T) {
 		t.Fatalf("patches = %v", res.Patches)
 	}
 	p := res.DBUserSecrets[0]
-	if p.User != ByoBindingDBUser("apps", "web", binding.Target) || p.RemoteKey != "use1-dev-acme-alethia-byo-db-x" ||
+	if p.User != ByoBindingDBUser("env-1", "apps", "web", binding.Target) || p.RemoteKey != "use1-dev-acme-alethia-byo-db-x" ||
 		!reflect.DeepEqual(p.Facets, []string{"password", "username"}) || p.Namespace != "apps" {
 		t.Fatalf("params = %#v", p)
 	}
@@ -371,6 +373,7 @@ func TestResolveChartWorkloadBindings_DBUsersUnsatisfied(t *testing.T) {
 		mutate     func(users *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, provider *string)
 		wantReason string // "" → unsatisfied with no stated reason (no store)
 	}{
+		{name: "no environment", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Environment = "" }, wantReason: "has no ID"},
 		{name: "user not provisioned", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.Provisioned = nil }, wantReason: "was not provisioned"},
 		{name: "no secret key", mutate: func(u *ByoDBUsers, _ *[]types.ProjectDatabaseConfig, _ *string) { u.SecretNames = nil }, wantReason: "no secret for its own database user"},
 		{name: "mysql", mutate: func(_ *ByoDBUsers, dbs *[]types.ProjectDatabaseConfig, _ *string) {
@@ -427,7 +430,7 @@ func TestResolveChartWorkloadBindings_DBUsersKeylessStillWins(t *testing.T) {
 func TestRenderByoDBUserExternalSecret_Refusals(t *testing.T) {
 	good := ByoDBUserSecretParams{
 		ServiceName: "web", Namespace: "apps", Target: types.ServiceBindingTarget{Kind: "database", Name: "orders"},
-		Provider: "aws", User: ByoBindingDBUser("apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "orders"}),
+		Provider: "aws", User: ByoBindingDBUser("env-1", "apps", "web", types.ServiceBindingTarget{Kind: "database", Name: "orders"}),
 		RemoteKey: "use1-dev-acme-alethia-byo-db-x", Facets: []string{"username"},
 		Labels: map[string]string{"alethia.io/byo-binding": "true"},
 	}

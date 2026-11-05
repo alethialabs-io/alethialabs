@@ -82,6 +82,10 @@ type ChartBindingPolicy struct {
 
 // ByoDBUsers is what one deploy knows about the per-binding database users.
 type ByoDBUsers struct {
+	// Environment is the environment's ID, folded into every per-binding user's identity so two
+	// environments never derive the same user, even when they reach one database server. Empty
+	// refuses every database credential facet: a user with no environment could not be told apart.
+	Environment string
 	// SecretNames maps a binding's secret key (ByoBindingDBSecretKey) to that secret's name in the
 	// environment's store — the tofu output `custom_secret_names`. A key with no entry has no secret.
 	SecretNames map[string]string
@@ -105,26 +109,28 @@ const (
 )
 
 // byoDBIdentityHash is the hash both halves of a per-binding user's identity end in. It is keyed on
-// exactly the binding ExternalSecret's identity — its namespace and BindingSecretName — so one user
-// exists per binding Secret, and a binding the prune treats as the same object gets the same user.
-func byoDBIdentityHash(namespace, workload string, t types.ServiceBindingTarget) string {
+// the environment and exactly the binding ExternalSecret's identity — its namespace and
+// BindingSecretName — so one user exists per binding Secret per environment, and a binding the prune
+// treats as the same object gets the same user.
+func byoDBIdentityHash(environment, namespace, workload string, t types.ServiceBindingTarget) string {
 	if namespace == "" {
 		namespace = "default" // the renderer's default, so the identity names the object it creates
 	}
-	sum := sha256.Sum256([]byte(namespace + "\x00" + BindingSecretName(workload, t)))
+	sum := sha256.Sum256([]byte(environment + "\x00" + namespace + "\x00" + BindingSecretName(workload, t)))
 	return hex.EncodeToString(sum[:])[:byoDBHashLen]
 }
 
-// ByoBindingDBUser is the database user (and, on Postgres, the schema) of one BYO binding: workload
-// in namespace, bound to target. Deterministic, so every deploy and every slice names the same user.
-func ByoBindingDBUser(namespace, workload string, t types.ServiceBindingTarget) string {
-	return ByoDBUserPrefix + byoDBIdentityHash(namespace, workload, t)
+// ByoBindingDBUser is the database user (and, on Postgres, the schema) of one BYO binding in
+// environment: workload in namespace, bound to target. Deterministic, so every deploy and every slice
+// names the same user.
+func ByoBindingDBUser(environment, namespace, workload string, t types.ServiceBindingTarget) string {
+	return ByoDBUserPrefix + byoDBIdentityHash(environment, namespace, workload, t)
 }
 
 // ByoBindingDBSecretKey is the `custom_secrets` key holding that user's password in the environment's
 // secret store. Same hash as ByoBindingDBUser, so the user and its key cannot drift apart.
-func ByoBindingDBSecretKey(namespace, workload string, t types.ServiceBindingTarget) string {
-	return ByoDBSecretKeyPrefix + byoDBIdentityHash(namespace, workload, t)
+func ByoBindingDBSecretKey(environment, namespace, workload string, t types.ServiceBindingTarget) string {
+	return ByoDBSecretKeyPrefix + byoDBIdentityHash(environment, namespace, workload, t)
 }
 
 // Reasons a credential facet is unsatisfied in per-binding mode.
@@ -133,6 +139,7 @@ const (
 	dbUserNoSecretReason       = "no secret for its own database user in the environment's secret store; a BYO binding is never given the administrative credential"
 	dbUserMySQLReason          = "a per-binding MySQL user needs a database facet, which bindings do not carry yet; a BYO binding is never given the administrative credential"
 	dbUserFacetReason          = "facet is not available for a per-binding database user"
+	dbUserNoEnvironmentReason  = "the environment has no ID, so its own database user cannot be named; a BYO binding is never given the administrative credential"
 )
 
 // keylessReason is the reported reason for a credential facet on a keyless database target.
@@ -224,9 +231,13 @@ func ResolveChartWorkloadBindings(
 					continue
 				}
 				if policy.DBUsers != nil && b.Target.Kind == types.ServiceBindingKindDatabase {
-					user := ByoBindingDBUser(namespace, workloadName, b.Target)
-					remoteKey := policy.DBUsers.SecretNames[ByoBindingDBSecretKey(namespace, workloadName, b.Target)]
+					env := policy.DBUsers.Environment
+					user := ByoBindingDBUser(env, namespace, workloadName, b.Target)
+					remoteKey := policy.DBUsers.SecretNames[ByoBindingDBSecretKey(env, namespace, workloadName, b.Target)]
 					switch {
+					case env == "":
+						refuse(knob, dbUserNoEnvironmentReason)
+						continue
 					case string(inj.From) != "username" && string(inj.From) != "password":
 						refuse(knob, dbUserFacetReason)
 						continue

@@ -197,7 +197,7 @@ func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]int
 	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn, dbUsersOn, refused)
 	var dbUsers *manifests.ByoDBUsers
 	if dbUsersOn {
-		dbUsers = &manifests.ByoDBUsers{SecretNames: customSecretNames(outputs), Provisioned: provisionedByoDBUsers(vc)}
+		dbUsers = &manifests.ByoDBUsers{Environment: st.Owner, SecretNames: customSecretNames(outputs), Provisioned: provisionedByoDBUsers(vc)}
 	}
 
 	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
