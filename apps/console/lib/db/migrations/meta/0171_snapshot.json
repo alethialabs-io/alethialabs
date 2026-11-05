@@ -1,5 +1,5 @@
 {
-  "id": "6cba06e8-21f8-489c-933e-05b81f749ca0",
+  "id": "6ad8026c-ae1c-41eb-ad84-950a6d2421bc",
   "prevId": "dadba3bc-9c09-4372-bd97-da4c776e672e",
   "version": "7",
   "dialect": "postgresql",
@@ -10887,6 +10887,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'"
+        },
+        "last_claim_at": {
+          "name": "last_claim_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "mode": {
           "name": "mode",

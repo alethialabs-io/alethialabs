@@ -66,9 +66,9 @@ const ADDON_DEPLOYING_JOB_TYPES: ReadonlySet<string> = new Set(["DEPLOY"]);
  *
  * Most such jobs never reach this check (#6458). The claim route passes the runner's capabilities into
  * claim_next_job, which stamps them on runners.capabilities and leaves a job needing one the runner
- * lacks QUEUED while a LIVE runner in the job's pool advertises it — so in a MIXED pool during a
- * rollout the newer runner takes it, however long other gates hold the job. The SQL half of this rule
- * is `job_required_capabilities` in lib/db/programmables.sql (stored on jobs.required_capabilities by a
+ * lacks QUEUED while a LIVE (heartbeating and claiming) runner in the job's pool advertises it — so
+ * in a MIXED pool during a rollout the newer runner takes it, however long other gates hold the job.
+ * The SQL half of this rule is `job_required_capabilities` in lib/db/programmables.sql (stored on jobs.required_capabilities by a
  * trigger), pinned to this one over the shared fixtures by
  * tests/integration/claim-capability-skip.test.ts. When NO live runner in the pool has the capability,
  * nobody else could run the job, so the incapable runner is handed it and this check fails it: a job

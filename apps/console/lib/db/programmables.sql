@@ -223,8 +223,8 @@ CREATE TRIGGER invoice_notify_change_insdel
 --     three leave a DRAINING runner DRAINING, so a draining runner's heartbeats are silent too;
 --     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
 --     runner really reports something new — which is then exactly one notice;
---   · capabilities — stamped by claim_next_job and runner_heartbeat on every request, and rendered
---     nowhere (#6458);
+--   · capabilities and last_claim_at — stamped by claim_next_job (and capabilities by runner_heartbeat)
+--     on every request, and rendered nowhere (#6458);
 --   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
 -- tests/integration/realtime-notify-runners.test.ts drives the real RPCs: a heartbeat and a presence
 -- ping emit zero; an OFFLINE→ONLINE flip, a sweep to OFFLINE and a new reported version emit one.
@@ -519,7 +519,9 @@ CREATE OR REPLACE FUNCTION public.job_required_capabilities(
 $$;
 
 -- jobs.required_capabilities is DERIVED, here, from job_type + config_snapshot — no enqueue site
--- writes it, so no enqueue site can forget it, and whatever an INSERT sets is overwritten. Stored so
+-- writes it, so no enqueue site can forget it. Whatever an INSERT sets is overwritten, and so is a
+-- direct UPDATE of the column itself: it is in the trigger's column list, so the stored value can
+-- only ever be the derivation. Stored so
 -- claim_next_job compares two arrays per candidate instead of reading every candidate's snapshot.
 CREATE OR REPLACE FUNCTION public.jobs_set_required_capabilities()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -531,7 +533,7 @@ $$;
 
 DROP TRIGGER IF EXISTS jobs_set_required_capabilities ON public.jobs;
 CREATE TRIGGER jobs_set_required_capabilities
-  BEFORE INSERT OR UPDATE OF job_type, config_snapshot ON public.jobs
+  BEFORE INSERT OR UPDATE OF job_type, config_snapshot, required_capabilities ON public.jobs
   FOR EACH ROW EXECUTE FUNCTION public.jobs_set_required_capabilities();
 
 -- Backfill every row that can still be claimed, or requeued and then claimed: the column arrived
@@ -560,16 +562,30 @@ UPDATE public.jobs
 -- runner row (the claim route passes runners.cloud_identity_id as p_cloud_identity_id). The legacy
 -- personal-org arm of the self branch admits runner-lifecycle jobs only, which never need a capability.
 -- LIVE = ONLINE (so not DRAINING, not OFFLINE) with a heartbeat inside the 5-minute window
--- recover_stale_jobs uses. runners.capabilities is stamped on every claim and heartbeat.
+-- recover_stale_jobs uses, AND claiming: it called the claim inside the same window (an idle runner
+-- polls at least every 30 s) or it holds an in-flight job (a busy runner claims nothing until it is
+-- done). A runner that heartbeats while its claim loop is wedged therefore stops holding the job after
+-- 5 minutes. runners.capabilities is stamped on every claim and heartbeat, last_claim_at on every claim.
+--
+-- Not SECURITY DEFINER, and not executable by PUBLIC: it answers "does some org have a live runner
+-- matching this identity and provider", which no caller other than claim_next_job (itself a definer,
+-- so this runs with the owner's rights inside it) may ask.
 CREATE OR REPLACE FUNCTION public.live_runner_has_capabilities(
     p_required TEXT[], p_org_id UUID, p_requires_self_runner BOOLEAN, p_cloud_identity_id UUID,
     p_provider public.cloud_provider
-) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+) RETURNS BOOLEAN LANGUAGE sql STABLE SET search_path = public AS $$
     SELECT EXISTS (
         SELECT 1 FROM public.runners r
          WHERE r.capabilities @> p_required
            AND r.status = 'ONLINE'
            AND r.last_heartbeat > now() - INTERVAL '5 minutes'
+           AND (
+             r.last_claim_at > now() - INTERVAL '5 minutes'
+             OR EXISTS (
+               SELECT 1 FROM public.jobs k
+                WHERE k.runner_id = r.id AND k.status IN ('CLAIMED', 'PROCESSING')
+             )
+           )
            AND (r.cloud_identity_id IS NULL OR r.cloud_identity_id = p_cloud_identity_id)
            AND (r.supported_providers IS NULL OR p_provider IS NULL OR p_provider = ANY(r.supported_providers))
            AND (
@@ -578,6 +594,7 @@ CREATE OR REPLACE FUNCTION public.live_runner_has_capabilities(
            )
     );
 $$;
+REVOKE ALL ON FUNCTION public.live_runner_has_capabilities(TEXT[], UUID, BOOLEAN, UUID, public.cloud_provider) FROM PUBLIC;
 
 -- The 3-argument form is dropped first: adding p_capabilities with a DEFAULT next to the old
 -- signature would leave two overloads, and every 3-argument call would then be ambiguous.
@@ -610,10 +627,11 @@ BEGIN
         RETURN;
     END IF;
     -- capabilities: what this runner advertised on this request (NULL — a caller that passes none —
-    -- keeps the last stamp). live_runner_has_capabilities reads it for every other runner's claim.
+    -- keeps the last stamp). last_claim_at: this runner's claim loop is alive. Both are read by
+    -- live_runner_has_capabilities for every other runner's claim.
     UPDATE public.runners
        SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
-           capabilities = COALESCE(p_capabilities, capabilities)
+           capabilities = COALESCE(p_capabilities, capabilities), last_claim_at = now()
      WHERE id = p_runner_id;
     PERFORM public.open_runner_session(p_runner_id);
 
@@ -695,7 +713,11 @@ BEGIN
                 AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
                 -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
                 -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
-                AND CASE WHEN j.required_capabilities <@ COALESCE(p_capabilities, ARRAY[]::TEXT[]) THEN true
+                -- NULL p_capabilities is a caller that does not know about capabilities — a console pod on the
+                -- previous release, mid-rollout or after a rollback. It gets no capability gate at all, exactly as
+                -- before #6458, and its own post-claim refusalForRunner is the check. Treating NULL as "none" would
+                -- let a stamped capable runner, claiming through such a pod, skip the very job it should take.
+                AND CASE WHEN p_capabilities IS NULL OR j.required_capabilities <@ p_capabilities THEN true
                          ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
                                     j.requires_self_runner, j.cloud_identity_id, j.provider)
                     END
@@ -757,7 +779,11 @@ BEGIN
                   AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
                   -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
                   -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
-                  AND CASE WHEN j.required_capabilities <@ COALESCE(p_capabilities, ARRAY[]::TEXT[]) THEN true
+                  -- NULL p_capabilities is a caller that does not know about capabilities — a console pod on the
+                  -- previous release, mid-rollout or after a rollback. It gets no capability gate at all, exactly as
+                  -- before #6458, and its own post-claim refusalForRunner is the check. Treating NULL as "none" would
+                  -- let a stamped capable runner, claiming through such a pod, skip the very job it should take.
+                  AND CASE WHEN p_capabilities IS NULL OR j.required_capabilities <@ p_capabilities THEN true
                            ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
                                       j.requires_self_runner, j.cloud_identity_id, j.provider)
                       END

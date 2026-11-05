@@ -93,7 +93,11 @@ interface SeededRunner {
  * starts OFFLINE with no capabilities: it becomes live — and known capable — only through the real
  * heartbeat or claim route.
  */
-async function seedRunner(kind: "self" | "managed", cloudIdentityId: string | null = null): Promise<SeededRunner> {
+async function seedRunner(
+	kind: "self" | "managed",
+	cloudIdentityId: string | null = null,
+	org: string = ORG,
+): Promise<SeededRunner> {
 	const token = `it-cap-skip-${randomUUID()}`;
 	const [r] = await getServiceDb()
 		.insert(runners)
@@ -101,7 +105,7 @@ async function seedRunner(kind: "self" | "managed", cloudIdentityId: string | nu
 			kind === "self"
 				? {
 						user_id: USER,
-						org_id: ORG,
+						org_id: org,
 						name: `it-cap-skip-${token.slice(-12)}`,
 						operator: "self",
 						provisioning: "registered",
@@ -209,6 +213,26 @@ async function heartbeat(runner: SeededRunner, capabilities?: string) {
 	expect(res.status).toBe(200);
 }
 
+/**
+ * Makes `runner` a LIVE runner in its pool, as a running one is: a heartbeat (stamping its
+ * capabilities) and one claim poll (stamping last_claim_at). Called before the case's jobs are
+ * seeded, so the poll finds nothing.
+ */
+async function goLive(runner: SeededRunner, capabilities?: string) {
+	await heartbeat(runner, capabilities);
+	const poll = await claim(runner, capabilities);
+	expect(poll.status).toBe(200);
+	expect(poll.body.job ?? null).toBeNull();
+}
+
+/** Claims through the 3-argument claim_next_job an old console pod calls (p_capabilities NULL). */
+async function claimAsOldPod(runner: SeededRunner): Promise<string | null> {
+	const rows = await getServiceDb().execute<{ id: string }>(
+		sql`select id from claim_next_job(${runner.id}::uuid, ${hashRunnerToken(runner.token)}, null::uuid)`,
+	);
+	return rows[0]?.id ?? null;
+}
+
 /** The job row's status, runner and error. */
 async function jobRow(jobId: string) {
 	const [row] = await getServiceDb()
@@ -274,7 +298,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 		if (runnerIds.length) {
 			await db
 				.update(runners)
-				.set({ status: "OFFLINE", last_heartbeat: new Date(Date.now() - 3600_000), capabilities: [] })
+				.set({ status: "OFFLINE", last_heartbeat: new Date(Date.now() - 3600_000), last_claim_at: null, capabilities: [] })
 				.where(inArray(runners.id, runnerIds));
 		}
 	});
@@ -282,7 +306,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 	it("mixed self pool: the old runner (no header) skips the OCI BYO DEPLOY and takes the plain one behind it; the live capable runner claims it", async () => {
 		const oldSelf = await seedRunner("self");
 		const newSelf = await seedRunner("self");
-		await heartbeat(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		// Same job type, so the same priority: the BYO DEPLOY is first in line by age, and only the
 		// capability skip lets the old runner reach the plain one behind it.
 		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT, queuedMinutesAgo: 1 });
@@ -310,8 +334,8 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 	it("presence, not time: a BYO DEPLOY held by state_object_busy for hours is still skipped by the old runner while a capable runner is live", async () => {
 		const oldSelf = await seedRunner("self");
 		const newSelf = await seedRunner("self");
-		await heartbeat(oldSelf);
-		await heartbeat(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(oldSelf);
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		const on = await seedEnvironment();
 		const key = await holdState(on);
 		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT, queuedMinutesAgo: 180, on });
@@ -344,7 +368,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 		// A capable runner that WAS live: once its heartbeat is outside the liveness window it no longer counts.
 		emitAlertEventSafe.mockClear();
 		const staleCapable = await seedRunner("self");
-		await heartbeat(staleCapable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(staleCapable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		await getServiceDb()
 			.update(runners)
 			.set({ last_heartbeat: new Date(Date.now() - 10 * 60_000) })
@@ -356,7 +380,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 		// A DRAINING capable runner is being retired and claims nothing, so it does not count either.
 		emitAlertEventSafe.mockClear();
 		const drainingCapable = await seedRunner("self");
-		await heartbeat(drainingCapable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(drainingCapable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		await getServiceDb().update(runners).set({ status: "DRAINING" }).where(eq(runners.id, drainingCapable.id));
 		const draining = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT });
 		expect((await claim(oldSelf)).status).toBe(409);
@@ -367,7 +391,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 		const cloudId = await seedIdentity();
 		const oldManaged = await seedRunner("managed", cloudId);
 		const newManaged = await seedRunner("managed", cloudId);
-		await heartbeat(newManaged, `other, ${RUNNER_CAPABILITY_ADDON_BYO_MARKER}`);
+		await goLive(newManaged, `other, ${RUNNER_CAPABILITY_ADDON_BYO_MARKER}`);
 		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT, cloudIdentityId: cloudId, queuedMinutesAgo: 120 });
 
 		const skipped = await claim(oldManaged);
@@ -392,7 +416,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 	it("an ASSIGNED OCI BYO DEPLOY fails at once on its runner, even with a capable runner live (no other runner may take it)", async () => {
 		const oldSelf = await seedRunner("self");
 		const newSelf = await seedRunner("self");
-		await heartbeat(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT, assignedRunnerId: oldSelf.id });
 		const refused = await claim(oldSelf);
 		expect(refused.status).toBe(409);
@@ -402,7 +426,7 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 	it("a git-only BYO DEPLOY is claimable by a runner without the capability, served without the marker", async () => {
 		const oldSelf = await seedRunner("self");
 		const newSelf = await seedRunner("self");
-		await heartbeat(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
 		const deploy = await seedQueued({ snapshot: GIT_BYO_SNAPSHOT });
 		const res = await claim(oldSelf);
 		expect(res.status).toBe(200);
@@ -411,6 +435,76 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 		expect(addons[0]).not.toHaveProperty("byo");
 		expect(addons[0]?.source).toBe("git");
 		expect((await jobRow(deploy.jobId)).runner_id).toBe(oldSelf.id);
+	});
+
+	it("an old console pod (3-argument claim, NULL capabilities) gets no capability gate: a stamped capable runner claiming through it is handed the job", async () => {
+		const newSelf = await seedRunner("self");
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT });
+		// The stamp survives the NULL call (COALESCE), and the NULL call is not read as "no capabilities".
+		expect(await claimAsOldPod(newSelf)).toBe(deploy.jobId);
+		const [r] = await getServiceDb().select({ caps: runners.capabilities }).from(runners).where(eq(runners.id, newSelf.id));
+		expect(r.caps).toEqual([RUNNER_CAPABILITY_ADDON_BYO_MARKER]);
+	});
+
+	it("after a console rollback (every claim and heartbeat NULL), a once-capable live runner never wedges the job: it is still claimed", async () => {
+		const oldSelf = await seedRunner("self");
+		const newSelf = await seedRunner("self");
+		await goLive(newSelf, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT });
+		// The rolled-back console: 4-argument heartbeats and 3-argument claims only.
+		await getServiceDb().execute(sql`select runner_heartbeat(${newSelf.id}::uuid, ${hashRunnerToken(newSelf.token)}, null, null)`);
+		expect(await claimAsOldPod(oldSelf)).toBe(deploy.jobId);
+		expect((await jobRow(deploy.jobId)).status).toBe("CLAIMED");
+	});
+
+	it("a capable runner that only heartbeats (claim loop wedged) stops holding the job; a busy one holding an in-flight job keeps holding it", async () => {
+		const oldSelf = await seedRunner("self");
+		const capable = await seedRunner("self");
+		await goLive(capable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		const db = getServiceDb();
+		await db.update(runners).set({ last_claim_at: new Date(Date.now() - 10 * 60_000) }).where(eq(runners.id, capable.id));
+		await heartbeat(capable, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+
+		// Busy: it holds a PROCESSING job, so its silent claim loop is accounted for.
+		const busy = await seedQueued({ snapshot: { project_name: "acme" } });
+		await db.update(jobs).set({ status: "PROCESSING", runner_id: capable.id }).where(eq(jobs.id, busy.jobId));
+		const held = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT });
+		expect((await claim(oldSelf)).body.job ?? null).toBeNull();
+		expect((await jobRow(held.jobId)).status).toBe("QUEUED");
+
+		// Its job finishes but it never claims again: after the window it no longer holds the job.
+		await db.update(jobs).set({ status: "SUCCESS", completed_at: new Date() }).where(eq(jobs.id, busy.jobId));
+		const refused = await claim(oldSelf);
+		expect(refused.status).toBe(409);
+		await expectFailedWithUpdateReason(held);
+	});
+
+	it("a capable runner OUTSIDE the job's pool holds nothing: another org, another cloud identity, another provider", async () => {
+		const cloudId = await seedIdentity();
+		const otherCloudId = await seedIdentity();
+		const oldManaged = await seedRunner("managed", cloudId);
+
+		const otherOrg = await seedRunner("self", null, randomUUID());
+		await goLive(otherOrg, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		const otherIdentity = await seedRunner("managed", otherCloudId);
+		await goLive(otherIdentity, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		const otherProvider = await seedRunner("managed", cloudId);
+		await goLive(otherProvider, RUNNER_CAPABILITY_ADDON_BYO_MARKER);
+		await getServiceDb().update(runners).set({ supported_providers: ["aws"] }).where(eq(runners.id, otherProvider.id));
+
+		// The job is the managed pool's, keyed to cloudId (provider hetzner) — none of the three may take it.
+		const deploy = await seedQueued({ snapshot: OCI_BYO_SNAPSHOT, cloudIdentityId: cloudId });
+		const refused = await claim(oldManaged);
+		expect(refused.status).toBe(409);
+		await expectFailedWithUpdateReason(deploy);
+	});
+
+	it("live_runner_has_capabilities is not executable by the app role (no cross-tenant oracle)", async () => {
+		const [row] = await getServiceDb().execute<{ can: boolean }>(
+			sql`select has_function_privilege('alethia_app', 'public.live_runner_has_capabilities(text[], uuid, boolean, uuid, public.cloud_provider)', 'EXECUTE') as can`,
+		);
+		expect(row.can).toBe(false);
 	});
 
 	it("jobs.required_capabilities is derived by the trigger, whatever the INSERT wrote", async () => {
@@ -433,6 +527,13 @@ describeIfDb("claim_next_job skips a job the runner lacks the capability for, wh
 			.where(eq(jobs.id, oci.id))
 			.returning({ caps: jobs.required_capabilities });
 		expect(rewritten.caps).toEqual([]);
+		// A direct write of the column itself is re-derived too.
+		const [direct] = await db
+			.update(jobs)
+			.set({ required_capabilities: [RUNNER_CAPABILITY_ADDON_BYO_MARKER, "forged"] })
+			.where(eq(jobs.id, oci.id))
+			.returning({ caps: jobs.required_capabilities });
+		expect(direct.caps).toEqual([]);
 	});
 
 	it("job_required_capabilities agrees with refusalForRunner over the shared fixtures and the edge shapes", async () => {
