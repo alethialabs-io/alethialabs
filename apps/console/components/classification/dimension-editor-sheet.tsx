@@ -121,10 +121,13 @@ export function DimensionEditorSheet({
 	const openTemplate = !dimension && initialTemplateKey
 		? CLASSIFICATION_TEMPLATES.find((x) => x.key === initialTemplateKey)
 		: undefined;
-	const [resetFor, setResetFor] = useState<{ dimension?: DimensionDTO; templateKey?: string } | null>(null);
+	// Keyed by the dimension's ID, not the object: a refetch that hands the open sheet a new object for
+	// the same row must not wipe what is being typed.
+	const dimensionId = dimension?.id;
+	const [resetFor, setResetFor] = useState<{ dimensionId?: string; templateKey?: string } | null>(null);
 	if (!open && resetFor !== null) setResetFor(null);
-	if (open && (resetFor === null || resetFor.dimension !== dimension || resetFor.templateKey !== initialTemplateKey)) {
-		setResetFor({ dimension, templateKey: initialTemplateKey });
+	if (open && (resetFor === null || resetFor.dimensionId !== dimensionId || resetFor.templateKey !== initialTemplateKey)) {
+		setResetFor({ dimensionId, templateKey: initialTemplateKey });
 		setStaged(openTemplate ? openTemplate.values : []);
 		setTemplateKey(openTemplate ? openTemplate.key : null);
 		setAddLabel("");
@@ -145,9 +148,10 @@ export function DimensionEditorSheet({
 		} else {
 			form.reset(BLANK_DIMENSION);
 		}
-		// `openTemplate` is derived from `initialTemplateKey`; `form` is stable for the sheet's life.
+		// Keyed like the state reset above: by the dimension's ID. `openTemplate` is derived from
+		// `initialTemplateKey`, and `form` is stable for the sheet's life.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, dimension, initialTemplateKey]);
+	}, [open, dimensionId, initialTemplateKey]);
 
 	const [multi, watchedAppliesTo, watchedLabel] = useWatch({ control: form.control, name: WATCHED });
 	const appliesTo = watchedAppliesTo ?? [];

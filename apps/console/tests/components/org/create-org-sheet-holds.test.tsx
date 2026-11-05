@@ -13,6 +13,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
@@ -114,10 +115,15 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 	useLivePlanPrice: () => ({ unitAmount: 0, label: "$0" }),
 }));
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
+// The real module, with `finishPaidSetup` observed so a test can count the runs the sheet starts.
+vi.mock("@/components/org/pending-paid-setup", async (importActual) => {
+	const actual = await importActual<typeof import("@/components/org/pending-paid-setup")>();
+	return { ...actual, finishPaidSetup: vi.fn(actual.finishPaidSetup) };
+});
 
 import { toast } from "sonner";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
-import { pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
+import { finishPaidSetup, pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
 
 const NOTICE =
@@ -365,6 +371,47 @@ describe("CreateOrgSheet — opening with a stored record resumes it (#6459)", (
 		expect(await screen.findByText("Create Acme Cloud")).toBeInTheDocument();
 		// The record was usable: no server lookup for an unfinished setup, and no second purchase.
 		expect(m.findUnfinished).not.toHaveBeenCalled();
+		expect(m.createIntent).not.toHaveBeenCalled();
+	});
+});
+
+describe("CreateOrgSheet — a resumed run starts once, even under StrictMode (#6459)", () => {
+	// StrictMode mounts every effect twice in development. The resume effect restarts a setup an
+	// earlier run stopped for support; a second start would be a second pass at a paid setup.
+	it("a stopped record opened under StrictMode asks the server and links exactly once", async () => {
+		window.sessionStorage.setItem(
+			pendingPaidSetupKey("user-holds"),
+			JSON.stringify({
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				name: "Acme Cloud",
+				slug: "acme-cloud",
+				currency: "eur",
+				declaration: { capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
+				billing: null,
+				customerDetailsSaved: true,
+				createdOrgId: null,
+				createdSlug: "",
+				linked: false,
+				slugRefusal: null,
+				stopped: "Contact support with the time of the payment.",
+			}),
+		);
+		m.resolveSetup.mockResolvedValue({ ...lookup(null), org: { id: "org-1", slug: "acme-cloud" } });
+		render(
+			<StrictMode>
+				<CreateOrgSheet open onOpenChange={vi.fn()} />
+			</StrictMode>,
+		);
+
+		await vi.waitFor(() =>
+			expect(window.sessionStorage.getItem(pendingPaidSetupKey("user-holds"))).toBeNull(),
+		);
+		// One run started. (A second would queue behind the first and return its outcome, so the
+		// link count alone could not show it — the run count does.)
+		expect(finishPaidSetup).toHaveBeenCalledTimes(1);
+		expect(m.linkSubscription).toHaveBeenCalledTimes(1);
+		expect(m.createOrg).not.toHaveBeenCalled();
 		expect(m.createIntent).not.toHaveBeenCalled();
 	});
 });

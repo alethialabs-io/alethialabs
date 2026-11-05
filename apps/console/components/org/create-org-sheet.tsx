@@ -27,7 +27,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { type UseFormReturn, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -328,6 +328,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		running: Promise<PaidSetupOutcome> | undefined;
 	} | null>(null);
 	const [recoverFrom, setRecoverFrom] = useState<StoredPaidSetup | null>(null);
+	// The resume whose run (or attach) has started — see the resume effect.
+	const startedFor = useRef<typeof resume>(null);
 	if (openedKey !== openedFor) {
 		setOpenedFor(openedKey);
 		setResume(null);
@@ -991,13 +993,19 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// The resume effect: the record's form values (an external store) and the run it attaches to, or
 	// restarts when an earlier run stopped it for support. That sentence may no longer be true (support
 	// can have fixed it), so it is not replayed: the run asks the server again, first, and either stops
-	// with what is true now or finishes. No retry is offered for it (§5.6 rule 4). Declared below the
-	// functions it calls (the React Compiler's immutability rule).
-	useEffect(() => {
+	// with what is true now or finishes. No retry is offered for it (§5.6 rule 4). A layout effect, so
+	// the restored view never paints with the form still blank. Declared below the functions it calls
+	// (the React Compiler's immutability rule).
+	useLayoutEffect(() => {
 		if (!resume) return;
 		const { record, running } = resume;
 		form.reset({ name: record.name, slug: record.slug });
 		if (record.slugRefusal) form.setError("slug", { message: record.slugRefusal });
+		// At most one attach or run per resume: StrictMode mounts effects twice in development, and a
+		// second `runSetupSteps` would be a second pass at a paid setup. Keyed by the resume (one per
+		// open transition over a record), so a later reopen over the same record still resumes it.
+		if (startedFor.current === resume) return;
+		startedFor.current = resume;
 		if (running) {
 			const gen = generation.current;
 			void running.then((outcome) => {
