@@ -88,6 +88,10 @@ export default defineConfig({
 				// the file from the console in #6144) — the #4104 precedent: a file with a dedicated suite
 				// is counted, not excluded.
 				"src/marker.tsx",
+				// Authored behaviour, promoted from the console in #6146: the server-vs-hydrated
+				// answer every clock- and zone-reading surface gates on. tests/use-hydrated.test.tsx
+				// proves the server render, the hydrating render and the render after.
+				"src/use-hydrated.ts",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming

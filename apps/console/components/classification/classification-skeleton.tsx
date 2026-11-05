@@ -22,7 +22,7 @@
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { useQueryClient } from "@tanstack/react-query";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { dimensionsInput } from "@/lib/query/use-classification-query";
 import { orpc } from "@/lib/rpc/client";
 import { CLASSIFICATION_TEMPLATES } from "./classification-templates";

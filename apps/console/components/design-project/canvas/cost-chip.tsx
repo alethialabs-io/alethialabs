@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatMonthlyRate } from "@repo/format";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 
 /**

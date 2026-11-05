@@ -23,7 +23,7 @@ import { CARD_EMPTY } from "@/components/overview/card-empty";
 import type { ProvisionJobStatus, ProvisionJobType } from "@/lib/db/schema/enums";
 import { JOB_TYPES } from "@/lib/jobs/format";
 import { globalHref } from "@/lib/routing";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useRecentJobsQuery } from "@/lib/query/use-jobs-query";
 import { ClockSlot } from "./clock-slot";
 import { isForbidden } from "./overview-reads";

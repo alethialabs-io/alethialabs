@@ -14,7 +14,7 @@
 
 import { format } from "date-fns";
 import { CalendarDays } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState } from "react";
 import {
   type DateRange,
   formatInZone,
@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./select";
+import { useHydrated } from "./use-hydrated";
 
 interface DateRangeFilterProps {
   value: DateRange;
@@ -56,21 +57,6 @@ const TRIGGER_PLACEHOLDER = "Date range";
 // formatted one, so the server and the hydrating client still render the same text; the real
 // label differs from it by a few characters, which moves its neighbours a few pixels, not a width.
 const TRIGGER_SIZER = "Mmm 00, 00:00xx - Mmm 00, 00:00xx";
-
-/** Nothing changes after mount, so there is nothing to subscribe to. */
-function subscribeNever(): () => void {
-  return () => {};
-}
-
-/** In the browser, past hydration. */
-function getClientSnapshot(): boolean {
-  return true;
-}
-
-/** On the server, and during the render that hydrates the server's HTML. */
-function getServerSnapshot(): boolean {
-  return false;
-}
 
 /** A bare date/time input pair styled to match the design system. */
 function inputCls() {
@@ -99,9 +85,9 @@ export function DateRangeFilter({
   // Gating on mount is the fix rather than `suppressHydrationWarning`, which suppresses the
   // REPORT and leaves the server's wrong wall-clock on screen. The committed range is unchanged
   // and the popover is closed during SSR, so nothing else here reaches the server's HTML.
-  // `useSyncExternalStore` answers "past hydration?" without a mount effect: false for the server
-  // render and the hydrating one, true for every render after and for a client-only mount.
-  const mounted = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
+  // `useHydrated` answers "past hydration?" without a mount effect: false for the server render
+  // and the hydrating one, true for every render after and for a client-only mount.
+  const mounted = useHydrated();
 
   const tzOptions = useMemo(() => timeZoneOptions(), []);
 

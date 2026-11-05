@@ -8,6 +8,7 @@
     "./range": "./src/range.ts",
     "./copy-text": "./src/copy-text.ts",
     "./command-search": "./src/command-search.ts",
+    "./use-hydrated": "./src/use-hydrated.ts",
     "./*": "./src/*.tsx"
   },
   "scripts": {

@@ -4,8 +4,7 @@
 
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useSyncExternalStore } from "react";
-
+import { useHydrated } from "./use-hydrated";
 import { cn } from "./utils";
 
 const THEMES = [
@@ -13,21 +12,6 @@ const THEMES = [
 	{ value: "light", icon: Sun, label: "Light" },
 	{ value: "dark", icon: Moon, label: "Dark" },
 ] as const;
-
-/** Nothing changes after mount, so there is nothing to subscribe to. */
-function subscribeNever(): () => void {
-	return () => {};
-}
-
-/** In the browser, past hydration. */
-function getClientSnapshot(): boolean {
-	return true;
-}
-
-/** On the server, and during the render that hydrates the server's HTML. */
-function getServerSnapshot(): boolean {
-	return false;
-}
 
 interface ThemeToggleProps {
 	className?: string;
@@ -48,10 +32,10 @@ interface ThemeToggleProps {
  */
 export function ThemeToggle({ className, bare }: ThemeToggleProps) {
 	const { theme, setTheme } = useTheme();
-	// The server cannot know the stored theme; highlight only after hydration. React reads the
-	// server snapshot for the server render and for hydration, so both agree, and the client one
-	// everywhere after — no mount effect, and a client-only mount highlights on its first render.
-	const mounted = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
+	// The server cannot know the stored theme; highlight only after hydration. `useHydrated` is
+	// false for the server render and the hydrating one, so both agree, and true after — no mount
+	// effect, and a client-only mount highlights on its first render.
+	const mounted = useHydrated();
 
 	return (
 		<div

@@ -4,7 +4,7 @@
 
 import { formatDate, formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 /**
  * A support timestamp that reads the clock or the browser's time zone — and therefore cannot be
