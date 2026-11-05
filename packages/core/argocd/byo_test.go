@@ -871,6 +871,8 @@ func TestByoAppProjectDeniesSecretSyncKinds(t *testing.T) {
 		{"generators.external-secrets.io", "Password"},
 		{"generators.external-secrets.io", "VaultDynamicSecret"},
 		{"generators.external-secrets.io", "Webhook"},
+		// A subgroup a later ESO release might add.
+		{"future.external-secrets.io", "Anything"},
 	}
 	for _, gk := range namespaced {
 		if !argoResourceInList(gk.Group, gk.Kind, black) {

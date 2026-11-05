@@ -138,6 +138,13 @@ its **own destination namespace** and nothing else:
   declares one fails its sync with a message naming the resource.
 - **No `Role`, `RoleBinding` or `ServiceAccount`,** even namespaced ones — a chart that could mint
   its own identity could grant itself more than this project allows.
+- **No secret-sync resources.** No `ExternalSecret`, `SecretStore`, `PushSecret`, or any other kind
+  from the `external-secrets.io` API groups, generators included. A chart reads only the secrets
+  its [bindings](/guides/design-project/bring-your-own-charts#binding-a-chart-to-your-infrastructure)
+  give it, and the runner creates those secrets for it. A chart that declares one of these kinds
+  fails its sync, and the sync result names the resource. Each deploy also deletes any such object
+  in the chart's namespace that no binding accounts for, and the Deploy tab names every object it
+  deletes.
 - **Only the repositories you declared.** The project is locked to your chart's repo, so an
   Application cannot be re-pointed at a source you did not configure.
 - **Only its own namespace.** The project's destinations list that namespace and no other.
@@ -174,6 +181,13 @@ in your chart, usually through an `existingSecret`-style option, and it settles.
 most common causes are a resource the project forbids (see
 [What your chart may create](#what-your-chart-may-create)) and a chart path that does not exist at
 the configured revision.
+
+**The sync fails and names an `ExternalSecret` or `SecretStore`.** Your chart ships its own
+secret-sync resource, which bring-your-own charts can't create. Turn that part of the chart off,
+usually through a value such as `externalSecret.enabled: false`. Then declare a binding on the
+chart's workload and point the chart at the secret the binding creates. Alethia reports such a
+chart as not synced but does not yet say why: the runner reads each Application's health and sync
+status, not the sync result that names the resource. Check that result in ArgoCD.
 
 **The Application is `Progressing` and stays there.** ArgoCD is waiting for a workload to become
 ready. Check the pods: a pod stuck `Pending` with `Insufficient memory` or `Insufficient cpu` is

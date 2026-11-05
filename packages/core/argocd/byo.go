@@ -185,7 +185,8 @@ const ByoLegacyDefaultNamespace = "default"
 // the whole external-secrets.io group (ExternalSecret, SecretStore, PushSecret, and the
 // cluster-scoped ClusterSecretStore and ClusterExternalSecret, which the empty
 // clusterResourceWhitelist denies as well) and the whole generators.external-secrets.io group, whose
-// kinds mint credentials for an ExternalSecret or PushSecret that references them.
+// kinds mint credentials for an ExternalSecret or PushSecret that references them, plus any other
+// subgroup of external-secrets.io a later ESO release adds.
 //
 // A chart reads only the secret material its declared bindings give it. Those bindings are
 // ExternalSecrets the RUNNER applies with its own kubeconfig (provisioner.applyByoChartBindings),
@@ -195,10 +196,15 @@ const ByoLegacyDefaultNamespace = "default"
 // NAMESPACE, never an object within one (see externalSecretsStoreTemplate).
 //
 // Kind "*" rather than a list of today's kinds: ArgoCD matches each entry with filepath.Match, so a
-// kind a later ESO release adds to either group is denied without anyone editing this list.
+// kind a later ESO release adds to any of these groups is denied without anyone editing this list.
+// "*.external-secrets.io" also matches the generators group; that group stays named because it is
+// the one ESO 0.9.20 ships.
+//
+// The deny stops new objects only. SweepByoSecretSyncObjects removes the ones an earlier sync left.
 var byoSecretSyncDenied = []byoGroupKind{
 	{Group: "external-secrets.io", Kind: "*"},
 	{Group: "generators.external-secrets.io", Kind: "*"},
+	{Group: "*.external-secrets.io", Kind: "*"},
 }
 
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos

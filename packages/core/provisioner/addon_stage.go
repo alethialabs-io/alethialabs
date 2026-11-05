@@ -114,6 +114,13 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// environment's owner label, so nothing of the platform's in "default" is a candidate.
 	out.Bindings.Namespaces = withByoMoveSources(out.Bindings.Namespaces, moved)
 
+	// Remove the secret-sync objects an earlier sync of a BYO chart left in its namespace: the
+	// AppProject now denies those kinds, so ArgoCD no longer manages them and nothing else would
+	// (argocd.SweepByoSecretSyncObjects). The keep set is the declared bindings, so the sweep is
+	// skipped outright when any binding failed: the set is then incomplete, and an object it would
+	// miss could be one the runner applied.
+	out.Warnings = append(out.Warnings, sweepByoSecretSync(out.Bindings, stdout, stderr)...)
+
 	// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 	// Applications render — the same seam, and the same reason, as the bindings above: the value
 	// exists only in this run's tofu outputs, and the console that stored the knob could not have
@@ -158,3 +165,20 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	out.Deployable = deployable
 	return out, nil
 }
+
+// sweepByoSecretSyncSkipped is the Deploy-tab warning for a deploy that did not run the sweep.
+const sweepByoSecretSyncSkipped = "The runner did not check this environment's bring-your-own chart namespaces " +
+	"for secret-sync objects on this deploy, because a binding failed to render or apply. It checks again on the next deploy."
+
+// sweepByoSecretSync runs the BYO secret-sync sweep over this deploy's declared bindings, or skips
+// it when any binding failed. Returns the Deploy-tab warnings.
+func sweepByoSecretSync(st byoBindingState, stdout, stderr io.Writer) []string {
+	if st.Failures > 0 {
+		fmt.Fprintf(stderr, "Warning: skipping the BYO secret-sync sweep: %d binding(s) failed to render or apply on this deploy\n", st.Failures)
+		return []string{sweepByoSecretSyncSkipped}
+	}
+	return sweepByoSecretSyncObjects(st.Owner, st.Declared, stdout, stderr)
+}
+
+// sweepByoSecretSyncObjects is the cluster call, a variable so the stage test can observe it.
+var sweepByoSecretSyncObjects = argocd.SweepByoSecretSyncObjects
