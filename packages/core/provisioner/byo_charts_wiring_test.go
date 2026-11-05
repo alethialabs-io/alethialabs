@@ -565,3 +565,145 @@ func TestByoBindingDeclaredRefMatchesTheRenderedObjectInDefault(t *testing.T) {
 		t.Errorf("declared name %q, want %q", st.Declared[0].Name, want)
 	}
 }
+
+// dbUserTarget is the database byoBindingConfig binds.
+var dbUserTarget = types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"}
+
+// dbUserOutputs are a deploy's outputs carrying both the administrative secret and the binding's own
+// key, so a test can see which one the binding read.
+func dbUserOutputs() map[string]interface{} {
+	return map[string]interface{}{
+		"rds_master_credentials_secret_name": bindingOutputsSecret,
+		"custom_secret_names": map[string]interface{}{
+			manifests.ByoBindingDBSecretKey("env-1", "apps", "api", dbUserTarget): "use1-dev-acme-alethia-byo-db-x",
+		},
+	}
+}
+
+// withProvisionedDBUsers stands in for the BYO users Job (the ADR's slice 4) reporting users.
+func withProvisionedDBUsers(t *testing.T, users ...string) {
+	t.Helper()
+	orig := provisionedByoDBUsers
+	t.Cleanup(func() { provisionedByoDBUsers = orig })
+	provisionedByoDBUsers = func(*types.ProjectConfig) map[string]bool {
+		out := map[string]bool{}
+		for _, u := range users {
+			out[u] = true
+		}
+		return out
+	}
+}
+
+// TestByoBindingDBUsers_NothingProvisionedWithdrawsTheAdminBinding: with the flag on and no user
+// provisioned (the state until slice 4 ships), the database credential facet is unsatisfied with
+// its reason, nothing is applied or patched, and the live ExternalSecret an earlier deploy pointed at
+// the administrative credential is deleted although the binding is still declared.
+func TestByoBindingDBUsers_NothingProvisionedWithdrawsTheAdminBinding(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
+	vc := byoBindingConfig("env-1", true)
+	var log strings.Builder
+	st := applyByoChartBindings(vc, dbUserOutputs(), "aws", &log, io.Discard)
+	pruneByoChartBindings(st, io.Discard, io.Discard)
+
+	if strings.Contains(c.calls(), "apply") {
+		t.Fatalf("an ExternalSecret was applied with no user provisioned:\n%s", c.calls())
+	}
+	if _, patched := vc.AddOns[0].Values["api"]; patched {
+		t.Errorf("a value path was patched to a Secret that will not exist: %#v", vc.AddOns[0].Values)
+	}
+	if !strings.Contains(log.String(), "own database user was not provisioned") {
+		t.Errorf("the reason was not reported:\n%s", log.String())
+	}
+	want := argocd.BindingSecretRef{Namespace: "apps", Name: "api-database-primary", Source: argocd.ByoBindingSourceDBUser}
+	if len(st.Declared) != 1 || st.Declared[0] != want {
+		t.Errorf("Declared = %#v, want %#v", st.Declared, want)
+	}
+	if !strings.Contains(c.calls(), bindingDelete) {
+		t.Errorf("the administrative binding ExternalSecret was not withdrawn:\n%s", c.calls())
+	}
+}
+
+// TestByoBindingDBUsers_KeepsALiveOwnUserBinding: the control — a live ExternalSecret that already
+// reads the binding's own user is kept.
+func TestByoBindingDBUsers_KeepsALiveOwnUserBinding(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1","alethia.io/byo-binding-source":"db-user"}`), 0)
+	runBindingDeploy(byoBindingConfig("env-1", true), io.Discard)
+	if strings.Contains(c.calls(), "delete") {
+		t.Fatalf("a binding reading its own user was pruned:\n%s", c.calls())
+	}
+}
+
+// TestByoBindingDBUsers_ProvisionedUserIsBound: with the user provisioned, the applied ExternalSecret
+// reads the binding's own key under the same Secret name, carries the marker, owner and source
+// labels as strings, never names the administrative secret, and the value path points at it.
+func TestByoBindingDBUsers_ProvisionedUserIsBound(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	vc := byoBindingConfig("env-1", true)
+	st := applyByoChartBindings(vc, dbUserOutputs(), "aws", io.Discard, io.Discard)
+
+	body, err := os.ReadFile(c.applied)
+	if err != nil {
+		t.Fatalf("nothing was applied: %v\n%s", err, c.calls())
+	}
+	if strings.Contains(string(body), bindingOutputsSecret) {
+		t.Fatalf("the BYO binding names the administrative secret:\n%s", body)
+	}
+	if !strings.Contains(string(body), "key: \"use1-dev-acme-alethia-byo-db-x\"") {
+		t.Fatalf("the binding does not read its own key:\n%s", body)
+	}
+	meta := appliedDocs(t, c)["api-database-primary"]
+	labels, _ := meta["labels"].(map[string]interface{})
+	for key, want := range map[string]string{
+		argocd.ByoBindingSecretLabel: "true", argocd.ByoBindingOwnerLabel: "env-1", argocd.ByoBindingSourceLabel: argocd.ByoBindingSourceDBUser,
+	} {
+		if got, ok := labels[key].(string); !ok || got != want {
+			t.Errorf("label %s = %#v, want the string %q", key, labels[key], want)
+		}
+	}
+	if m, _ := vc.AddOns[0].Values["api"].(map[string]interface{}); m == nil || m["existingSecret"] != "api-database-primary" {
+		t.Errorf("value path not patched: %#v", vc.AddOns[0].Values)
+	}
+	if st.Failures != 0 {
+		t.Errorf("failures = %d", st.Failures)
+	}
+}
+
+// TestByoBindingDBUsers_FlagOffIsUnchanged: with the flag off the binding still reads the
+// administrative secret and is declared with no source, exactly as before this mode existed.
+func TestByoBindingDBUsers_FlagOffIsUnchanged(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "")
+	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
+	c := newBindingCluster(t, `{"items":[]}`, 0)
+	st := applyByoChartBindings(byoBindingConfig("env-1", true), dbUserOutputs(), "aws", io.Discard, io.Discard)
+	body, _ := os.ReadFile(c.applied)
+	if !strings.Contains(string(body), bindingOutputsSecret) || strings.Contains(string(body), "alethia-byo-db-") {
+		t.Fatalf("flag off changed what the binding reads:\n%s", body)
+	}
+	if len(st.Declared) != 1 || st.Declared[0].Source != "" {
+		t.Errorf("Declared = %#v, want no source", st.Declared)
+	}
+}
+
+// TestCustomSecretNames reads the tofu map output in both decoded shapes and ignores the rest.
+func TestCustomSecretNames(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   interface{}
+		want map[string]string
+	}{
+		"json map":    {map[string]interface{}{"a": "x", "b": 3, "c": ""}, map[string]string{"a": "x"}},
+		"string map":  {map[string]string{"a": "x", "c": ""}, map[string]string{"a": "x"}},
+		"absent":      {nil, map[string]string{}},
+		"wrong shape": {"a", map[string]string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := customSecretNames(map[string]interface{}{"custom_secret_names": tc.in})
+			if len(got) != len(tc.want) || (len(tc.want) > 0 && got["a"] != tc.want["a"]) {
+				t.Fatalf("got %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
