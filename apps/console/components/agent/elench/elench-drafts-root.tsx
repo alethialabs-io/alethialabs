@@ -24,7 +24,7 @@
 // switch that remounts the shell keeps every word in memory. A test passes its own `tab`.
 
 import { usePathname } from "next/navigation";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useSyncExternalStore } from "react";
 import {
 	claimDraft,
 	consumeDraft,
@@ -130,9 +130,16 @@ export function createDraftsTab(deps: Omit<DraftsStoreDeps, "ui">): DraftsTab {
  */
 let pageTab: DraftsTab | null = null;
 
-/** The tab's drafts over the real transport, created once per page load (client only). */
-function pageDrafts(viewerId: string): DraftsTab {
-	pageTab ??= createDraftsTab({
+/** Who re-renders when the page's drafts are created: every mounted root, via `useSyncExternalStore`. */
+const pageTabListeners = new Set<() => void>();
+
+/**
+ * Create the tab's drafts over the real transport, once per page load. Called from an EFFECT only
+ * (client, after commit): it draws random ids and wires the heartbeat, which a render must not do.
+ */
+function createPageDrafts(viewerId: string): void {
+	if (pageTab !== null) return;
+	pageTab = createDraftsTab({
 		viewerId,
 		transport: SERVER_TRANSPORT,
 		heartbeat: fetchHeartbeat(),
@@ -140,7 +147,25 @@ function pageDrafts(viewerId: string): DraftsTab {
 		tabId: randomUuid(),
 		mint: randomUuid,
 	});
+	for (const listener of [...pageTabListeners]) listener();
+}
+
+/** Subscribe to the creation of the page's drafts. */
+function subscribePageTab(listener: () => void): () => void {
+	pageTabListeners.add(listener);
+	return () => {
+		pageTabListeners.delete(listener);
+	};
+}
+
+/** The page's drafts, or null before they are created. */
+function pageTabSnapshot(): DraftsTab | null {
 	return pageTab;
+}
+
+/** The server, and the render that hydrates its HTML, have no drafts. */
+function noPageTab(): null {
+	return null;
 }
 
 const DraftsTabContext = createContext<DraftsTab | null>(null);
@@ -166,18 +191,22 @@ export function ElenchDraftsRoot({
 }) {
 	const { viewer, isPending } = useViewer();
 	const viewerId = viewer?.id ?? null;
-	const [tab, setTab] = useState<DraftsTab | null>(injected ?? null);
+	// The page's drafts are a module singleton read as an external store: null on the server and
+	// through hydration, the created tab afterwards. `tab` (tests) replaces it.
+	const created = useSyncExternalStore(subscribePageTab, pageTabSnapshot, noPageTab);
+	const tab = injected ?? created;
 	const open = useElenchStore((s) => s.open);
 	const projectId = useElenchStore((s) => (s.ctx.kind === "project" ? s.ctx.projectId : null));
 	const pathname = usePathname();
 
-	// The store exists once a viewer is known (never on the server); a later viewer is D25.
+	// The store is created once a viewer is known (never on the server), in an effect; a later
+	// viewer is D25, below.
 	useEffect(() => {
-		if (isPending) return;
-		if (tab === null) {
-			if (viewerId !== null) setTab(pageDrafts(viewerId));
-			return;
-		}
+		if (injected !== undefined || isPending || viewerId === null) return;
+		createPageDrafts(viewerId);
+	}, [injected, isPending, viewerId]);
+	useEffect(() => {
+		if (isPending || tab === null) return;
 		tab.store.dispatch({ type: "VIEWER_CHANGE", viewerId });
 	}, [tab, viewerId, isPending]);
 

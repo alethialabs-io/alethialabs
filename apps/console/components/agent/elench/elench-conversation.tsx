@@ -78,6 +78,9 @@ import {
 
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
+/** The thumbs of a thread with none recorded (or none loaded yet): one object, so its identity is stable. */
+const NO_FEEDBACK: Record<string, "up" | "down"> = {};
+
 /** How often a turn being answered elsewhere is re-read until it is done (ADR 0003 §9.3). */
 const IN_FLIGHT_POLL_MS = 5_000;
 
@@ -122,6 +125,14 @@ function routeFailureOf(error: Error): RouteFailure {
 type RetryKind =
 	| { kind: "answer" | "continue" | "await-approval" }
 	| { kind: "regenerate"; messageId: string };
+
+/**
+ * Whether a refused request is one the drafts store never sends — a regenerate or a continuation,
+ * whose words are already in the stored transcript — so the conversation answers it itself.
+ */
+function storeNeverSends(err: TurnRefusedError): boolean {
+	return err.request?.turn.trigger === "regenerate-message" || err.request?.last?.role === "assistant";
+}
 
 /**
  * How the transcript's Retry resends the last turn (ADR 0003 §9.1), by what is last:
@@ -259,22 +270,25 @@ export function ElenchConversation({
 	const orgSlug = useActiveOrgSlug();
 	const supportHref = orgSlug ? globalHref(orgSlug, "support") : undefined;
 
-	// Per-message thumbs, hydrated per thread so a rating stays filled across a reload.
-	const [feedbackMap, setFeedbackMap] = useState<
-		Record<string, "up" | "down">
-	>({});
+	// Per-message thumbs, hydrated per thread so a rating stays filled across a reload. Held WITH
+	// the thread they belong to, so another thread (or none) reads as no thumbs in the same render,
+	// instead of being reset by an effect; `NO_FEEDBACK` is one stable object, because `AgentChat`
+	// re-seeds its own copy whenever this prop's identity changes.
+	const [feedback, setFeedback] = useState<{
+		threadId: string;
+		map: Record<string, "up" | "down">;
+	} | null>(null);
+	const feedbackMap =
+		feedback !== null && feedback.threadId === activeId ? feedback.map : NO_FEEDBACK;
 	useEffect(() => {
-		if (!activeId) {
-			setFeedbackMap({});
-			return;
-		}
+		if (!activeId) return;
 		let cancelled = false;
 		void getThreadFeedback(activeId)
 			.then((m) => {
-				if (!cancelled) setFeedbackMap(m);
+				if (!cancelled) setFeedback({ threadId: activeId, map: m });
 			})
 			.catch(() => {
-				if (!cancelled) setFeedbackMap({});
+				if (!cancelled) setFeedback({ threadId: activeId, map: {} });
 			});
 		return () => {
 			cancelled = true;
@@ -285,7 +299,10 @@ export function ElenchConversation({
 	const handleFeedback = useCallback(
 		(messageId: string, value: "up" | "down") => {
 			if (!activeId) return;
-			setFeedbackMap((m) => ({ ...m, [messageId]: value }));
+			setFeedback((f) => ({
+				threadId: activeId,
+				map: { ...(f !== null && f.threadId === activeId ? f.map : {}), [messageId]: value },
+			}));
 			void setMessageFeedback(activeId, messageId, value);
 			track("elench_message_feedback", {
 				value,
@@ -612,12 +629,20 @@ export function ElenchConversation({
 			routeEvent({ type: "ROUTE_FAILED", turnId: routingTurn, failure: { kind: "stop" } });
 	}, [routingTurn, status, messages, routeEvent]);
 	// A failure before `streaming` that is not a typed refusal (those are read by `onTurnRefused`).
+	// It is kept as `routeError` in the render that first sees it (the chat's own copy is cleared by
+	// the effect, which also tells the store), so the effect sets no state of this component.
+	const routeFailure =
+		routingTurn !== null && error !== undefined && !(error instanceof TurnRefusedError) ? error : null;
+	const [seenRouteFailure, setSeenRouteFailure] = useState<Error | null>(null);
+	if (routeFailure !== null && routeFailure !== seenRouteFailure) {
+		setSeenRouteFailure(routeFailure);
+		setRouteError(routeFailure);
+	}
 	useEffect(() => {
-		if (routingTurn === null || error === undefined || error instanceof TurnRefusedError) return;
+		if (routingTurn === null || routeFailure === null) return;
 		clearError();
-		setRouteError(error);
-		routeEvent({ type: "ROUTE_FAILED", turnId: routingTurn, failure: routeFailureOf(error) });
-	}, [routingTurn, error, clearError, routeEvent]);
+		routeEvent({ type: "ROUTE_FAILED", turnId: routingTurn, failure: routeFailureOf(routeFailure) });
+	}, [routingTurn, routeFailure, clearError, routeEvent]);
 	// D9d's deadline: stop the request, so the route sees a disconnect, and read it as uncertain.
 	useEffect(() => {
 		if (routingTurn === null) return;
@@ -628,6 +653,40 @@ export function ElenchConversation({
 		return () => clearTimeout(timer);
 	}, [routingTurn, stop, routeEvent]);
 
+	/** The refused turn's id when the drafts store owns its send (it is sending it), else null. */
+	const ownedRefusedTurn = useCallback(
+		(err: TurnRefusedError): string | null => {
+			const turnId = err.request?.turn.turnId ?? err.refusal.turnId;
+			if (binding === null || turnId === null) return null;
+			const owned = selectDraft(binding.store.view.getState(), binding.key)?.sending;
+			return owned?.turnId === turnId ? turnId : null;
+		},
+		[binding],
+	);
+	// The refusal's status line, card and "Being answered" line are taken in the render that first
+	// sees the refusal (React's "adjust state when a value changes" pattern), so the effect below
+	// only talks to the systems outside React: the chat, the store and the transcript.
+	const [seenRefusal, setSeenRefusal] = useState<TurnRefusedError | null>(null);
+	if (error instanceof TurnRefusedError && error !== seenRefusal) {
+		setSeenRefusal(error);
+		const { refusal, request } = error;
+		const refused = request?.last;
+		if (ownedRefusedTurn(error) === null && storeNeverSends(error)) {
+			const threadId = useElenchStore.getState().threadId;
+			// A continuation refused as answered from an older revision ended partial without this
+			// tab seeing it finish: keep its card and Retry, which now carries the current revision.
+			setStaleResume(
+				refused?.role === "assistant" &&
+					refusal.refusal === "turn-answered" &&
+					refusal.revision !== null &&
+					refusal.revision !== request?.turn.baseRevision,
+			);
+			setBeingAnswered(
+				refusal.refusal === "turn-in-progress" && threadId ? { conversationId, threadId } : null,
+			);
+			setRefusalNotice(REFUSAL_NOTICE[refusal.refusal] ?? null);
+		}
+	}
 	/**
 	 * A typed refusal (ADR 0003 §9.3). Every send of a user's words is the drafts store's (a composer
 	 * send, D9d, or an external one, D10f), so the refusal of one goes to the store and NOTHING else
@@ -639,42 +698,25 @@ export function ElenchConversation({
 	 * deadline already released it) has been answered by the store, so it is only cleared.
 	 */
 	const onTurnRefused = useCallback(
-		async (err: TurnRefusedError) => {
-			const { refusal, request } = err;
+		(err: TurnRefusedError) => {
 			clearError();
-			const turnId = request?.turn.turnId ?? refusal.turnId;
-			if (binding !== null && turnId !== null) {
-				const owned = selectDraft(binding.store.view.getState(), binding.key)?.sending;
-				if (owned?.turnId === turnId) {
-					routeEvent({ type: "ROUTE_FAILED", turnId, failure: routeFailureOf(err) });
-					return;
-				}
+			const turnId = ownedRefusedTurn(err);
+			if (turnId !== null) {
+				routeEvent({ type: "ROUTE_FAILED", turnId, failure: routeFailureOf(err) });
+				return;
 			}
-			const refused = request?.last;
-			const storeNeverSends =
-				request?.turn.trigger === "regenerate-message" || refused?.role === "assistant";
-			if (!storeNeverSends) return;
+			if (!storeNeverSends(err)) return;
 			const threadId = useElenchStore.getState().threadId;
-			if (refusal.refusal === "thread-deleted") newChat();
-			else if (threadId && reloadThread) await reloadThread(threadId);
-			// A continuation refused as answered from an older revision ended partial without this
-			// tab seeing it finish: keep its card and Retry, which now carries the current revision.
-			setStaleResume(
-				refused?.role === "assistant" &&
-					refusal.refusal === "turn-answered" &&
-					refusal.revision !== null &&
-					refusal.revision !== request?.turn.baseRevision,
-			);
-			const onScreen = useElenchStore.getState().conversationId;
-			setBeingAnswered(
-				refusal.refusal === "turn-in-progress" && threadId ? { conversationId: onScreen, threadId } : null,
-			);
-			setRefusalNotice(REFUSAL_NOTICE[refusal.refusal] ?? null);
+			if (err.refusal.refusal === "thread-deleted") newChat();
+			else if (threadId && reloadThread)
+				void reloadThread(threadId).catch(() =>
+					toast.error("The conversation could not be reloaded. Reopen it to see its latest messages."),
+				);
 		},
-		[clearError, binding, routeEvent, newChat, reloadThread],
+		[clearError, ownedRefusedTurn, routeEvent, newChat, reloadThread],
 	);
 	useEffect(() => {
-		if (error instanceof TurnRefusedError) void onTurnRefused(error);
+		if (error instanceof TurnRefusedError) onTurnRefused(error);
 	}, [error, onTurnRefused]);
 	// Whichever composer is mounted (the modal hero's or the docked one — never both).
 	const composerRef = useRef<ElenchComposerHandle>(null);

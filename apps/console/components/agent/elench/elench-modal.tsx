@@ -181,10 +181,13 @@ export function ElenchModal({
 	// Suppresses the width transition mid-drag so the pane tracks the cursor 1:1.
 	const [isDragging, setIsDragging] = useState(false);
 	const dragging = useRef(false);
-	// A freshly-opened split should never start collapsed.
-	useEffect(() => {
+	// A freshly-opened split should never start collapsed: adjusted in the render that sees it open
+	// (React's "adjust state when a prop changes" pattern), not in an effect a commit later.
+	const [wasSplitOpen, setWasSplitOpen] = useState(splitOpen);
+	if (wasSplitOpen !== splitOpen) {
+		setWasSplitOpen(splitOpen);
 		if (splitOpen) setCollapsed(false);
-	}, [splitOpen]);
+	}
 	const onHandleDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
 		dragging.current = true;
 		setIsDragging(true);

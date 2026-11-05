@@ -38,7 +38,9 @@ function isTerminal(state: ToolUIPart["state"]): boolean {
  */
 function useToolDuration(state: ToolUIPart["state"]): number | null {
 	const terminal = isTerminal(state);
-	const startRef = useRef<number | null>(terminal ? null : Date.now());
+	// The clock is read in the effect, never during render: a part that mounts running starts its
+	// timer in the mount effect below, which runs in the same commit.
+	const startRef = useRef<number | null>(null);
 	const mountedTerminalRef = useRef(terminal);
 	const [duration, setDuration] = useState<number | null>(null);
 
