@@ -21,6 +21,8 @@ import {
 	snapshotWithRunnerToken,
 } from "@/lib/runners/lifecycle-token";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
+import { recordJobFailed } from "@/lib/jobs/job-failed";
+import { log } from "@/lib/observability/log";
 import {
 	RUNNER_CAPABILITIES_HEADER,
 	parseRunnerCapabilities,
@@ -58,6 +60,11 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 		}
 	}
 	return [...slugs];
+}
+
+/** The logger for one claimed job. */
+function claimLog(jobId: string) {
+	return log.child({ component: "job-claim", job_id: jobId });
 }
 
 /**
@@ -106,15 +113,14 @@ export async function POST(req: Request) {
 		// the row was tampered after enqueue; fail the (already-claimed) job so it can't hang, and
 		// refuse to serve it. Signing is off when no key is configured, so this never blocks by default.
 		if (!verifySnapshot(job.config_snapshot, job.config_snapshot_sig)) {
+			const reason =
+				"config_snapshot signature verification failed — the snapshot was modified after enqueue";
 			await db
 				.update(jobs)
-				.set({
-					status: "FAILED",
-					error_message:
-						"config_snapshot signature verification failed — the snapshot was modified after enqueue",
-					completed_at: new Date(),
-				})
+				.set({ status: "FAILED", error_message: reason, completed_at: new Date() })
 				.where(eq(jobs.id, job.id));
+			// The rest of a failure (env, promotion, alert, scan row), as a runner-reported one gets.
+			await recordJobFailed(db, job.id, job, reason, claimLog(job.id));
 			console.error(
 				`[claim] config_snapshot signature mismatch for job ${job.id} — failed the job`,
 			);
@@ -135,6 +141,7 @@ export async function POST(req: Request) {
 				.update(jobs)
 				.set({ status: "FAILED", error_message: capabilityRefusal, completed_at: new Date() })
 				.where(eq(jobs.id, job.id));
+			await recordJobFailed(db, job.id, job, capabilityRefusal, claimLog(job.id));
 			return NextResponse.json({ error: capabilityRefusal }, { status: 409 });
 		}
 
@@ -163,6 +170,13 @@ export async function POST(req: Request) {
 					completed_at: new Date(),
 				})
 				.where(eq(jobs.id, job.id));
+			await recordJobFailed(
+				db,
+				job.id,
+				job,
+				`Runner token handoff refused: ${tokenIssue.reason}`,
+				claimLog(job.id),
+			);
 			return NextResponse.json(
 				{ error: `Runner token handoff refused: ${tokenIssue.reason}` },
 				{ status: 409 },

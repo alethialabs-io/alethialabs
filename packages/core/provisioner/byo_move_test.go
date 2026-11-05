@@ -558,3 +558,23 @@ func TestConfigureByoCharts_ReleasesTheEnvironmentsCommonLabelsOnDefault(t *test
 		t.Errorf("label calls = %q, want [%q] (team carries another value and stays)", labelCalls, want)
 	}
 }
+
+// TestConfigureByoCharts_KeepsTheLabelsOnDefaultWhileARefusedChartStaysThere: when one chart moves out
+// of "default" but another's move is refused, the refused chart is still this environment's and still
+// stored in "default", so its labels are not removed.
+func TestConfigureByoCharts_KeepsTheLabelsOnDefaultWhileARefusedChartStaysThere(t *testing.T) {
+	c := newMoveClusterWith(t, `{"items":[]}`,
+		`{"metadata":{"name":"default","labels":{"alethia.io/managed-by":"byo-charts","alethia.io/environment-id":"env-1"}}}`, "")
+	vc := &types.ProjectConfig{ProjectName: "Acme Corp", EnvironmentID: "env-1", AddOns: []types.AddOnInstall{
+		{ID: "moves", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/a.git", Path: "chart", Version: "HEAD", Namespace: "default"},
+		{ID: "payments", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/b.git", Path: "chart", Version: "HEAD", Namespace: "default"},
+		{ID: "occupant", Mode: "managed", Source: "git", ChartRepo: "https://github.com/acme/c.git", Path: "chart", Version: "HEAD", Namespace: "byo-payments"},
+	}}
+	_, refused, moved := byoConfigureTuple(configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard))
+	if len(moved) != 1 || moved[0].ID != "moves" || len(refused) != 1 || refused[0].ID != "payments" {
+		t.Fatalf("moved=%+v refused=%+v, want moves moved and payments refused", moved, refused)
+	}
+	if strings.Contains(c.calls(), "label namespace default") {
+		t.Errorf("default's labels were removed while a refused chart of this environment is still there:\n%s", c.calls())
+	}
+}

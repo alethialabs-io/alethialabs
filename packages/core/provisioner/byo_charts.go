@@ -566,12 +566,13 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		refused[i].ProjectUpdated = projectUpdated
 	}
 
-	// "default" no longer holds any of this environment's charts once they have moved. An earlier
-	// runner labelled it as a BYO namespace when it created the destinations (RenderByoNamespaces):
-	// managed-by plus every one of commonLabels. Those labels are removed — each only where its value
-	// is this environment's — so nothing keyed on them selects the platform's namespace. Only when the
-	// AppProject no longer lists it (ReleaseLegacyByoNamespaceLabels).
-	if len(moved) > 0 && projectUpdated {
+	// Once every chart of this environment has left "default", the labels an earlier runner stamped on
+	// it as a BYO namespace (RenderByoNamespaces: managed-by plus every one of commonLabels) are removed
+	// — each only where its value is this environment's — so nothing keyed on them selects the
+	// platform's namespace (ReleaseLegacyByoNamespaceLabels). Only when the AppProject no longer lists
+	// it, and NOT while a chart whose move was refused is still stored there: that chart still belongs
+	// to this environment and still has its objects in "default", so the labels stay true.
+	if len(moved) > 0 && projectUpdated && len(moveRefused) == 0 {
 		if owner := byoBindingOwner(vc); owner != "" {
 			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, commonLabels, stdout); err != nil {
 				fmt.Fprintf(stderr, "Warning: could not remove the BYO chart labels from namespace %q: %v\n", argocd.ByoLegacyDefaultNamespace, err)

@@ -63,7 +63,11 @@ const ADDON_DEPLOYING_JOB_TYPES: ReadonlySet<string> = new Set(["DEPLOY"]);
  * newer runner already migrated, its re-apply would move the Application back. So a DEPLOY whose
  * snapshot holds an OCI BYO chart is refused to such a runner, with the fix in the reason, rather
  * than served stripped. Failing it (not leaving it queued) is deliberate: with no capable runner in
- * the pool, a queued job would wait forever, saying nothing.
+ * the pool, a queued job would wait forever, saying nothing. The cost is in a MIXED pool during a
+ * rollout: claim_next_job has already assigned the row when this runs, so an older runner can fail a
+ * deploy a newer one could have run, and the user deploys again. Skipping such rows inside
+ * claim_next_job needs a migration; it is a follow-up. The claim route fails the job through
+ * recordJobFailed, so the environment, the promotion and the alert follow as for any failure.
  */
 export function refusalForRunner(
 	jobType: string,

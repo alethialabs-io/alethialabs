@@ -36,6 +36,18 @@ platform's own workloads, their Secrets and their service accounts.
      deliberate: with no capable runner in the pool, a queued job would wait forever, saying nothing.
      Other job types (PLAN, DESTROY, …) deploy no add-on and are served stripped.
 
+     The refused job fails like a runner-reported failure: one helper (`lib/jobs/job-failed.ts`,
+     also called by the status route and by the claim route's other refusals) raises the
+     `system.job.failed` alert, moves the environment to FAILED through the env-status CAS, marks the
+     BYO IaC source FAILED and fails the promotion the DEPLOY backs, so the promotion releases its
+     target and the user can deploy again.
+
+     **Known limit during a rollout.** `claim_next_job` assigns a job before the console sees the
+     runner's capabilities, so in a MIXED pool an older runner can claim — and so fail — an OCI-BYO
+     deploy that a newer runner in the same pool could have run. The user deploys again (and it lands
+     on whichever runner claims it). Skipping such rows for runners without the capability inside
+     `claim_next_job` needs a migration and is a follow-up.
+
    The strip is applied to the claim response; the stored snapshot and its signature are unchanged. Shared fixtures in
    `packages/core/types/testdata/snapshot-capabilities` pin both halves: the console's strip produces
    the second from the first, and the runner's test decodes the second the way an old runner does.
