@@ -59,6 +59,8 @@
 				"$TURBO_ROOT$/packages/core/format/format.go",
 				"$TURBO_ROOT$/packages/core/kubeaccess/testdata/seal_vectors.json",
 				"$TURBO_ROOT$/packages/core/types/brand_gen.go",
+				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/with-byo-marker.json",
+				"$TURBO_ROOT$/packages/core/types/testdata/snapshot-capabilities/without-byo-marker.json",
 				"$TURBO_ROOT$/packages/core/types/vocab_gen.go",
 				"$TURBO_ROOT$/scripts/check-destructive-actions.mjs",
 				"$TURBO_ROOT$/scripts/check-filter-standard.mjs",

@@ -108,7 +108,8 @@ describe("ByoChartDialog — OCI source", () => {
 			id: "payments",
 			repoUrl: "oci://ghcr.io/acme/payments",
 			ref: "1.4.2",
-			namespace: "default",
+			// Its own namespace by default (#6446), from the same id the action derives.
+			namespace: "byo-payments",
 		});
 		// Omitted, not empty — attachByoChart stores chart_path null for OCI, and an empty string
 		// would resolve to a git chart with a missing path.

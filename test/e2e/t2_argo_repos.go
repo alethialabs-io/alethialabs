@@ -137,7 +137,7 @@ func t2ArgoReposFromEnv() t2ArgoRepos {
 		byoChartRepo: t2ArgoEnvForProvider(envArgoByoChartRepo, provider, ""),
 		byoChartPath: t2ArgoEnvForProvider(envArgoByoChartPath, provider, "chart"),
 		byoRevision:  t2ArgoEnvForProvider(envArgoByoRevision, provider, "HEAD"),
-		byoNamespace: t2ArgoEnvForProvider(envArgoByoNamespace, provider, "byo-e2e"),
+		byoNamespace: t2ArgoEnvForProvider(envArgoByoNamespace, provider, argocd.ByoChartNamespace(byoAddonID)),
 		// The token is a single shared secret (crosses via the API; the handler reads only the flat
 		// var), so it is NOT resolved per provider — presence is enough here.
 		tokenPresent: t2Env(envArgoGitToken, "") != "",

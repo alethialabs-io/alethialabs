@@ -2413,12 +2413,16 @@ export function resolveByoChartInstall(
 			id: row.addon_id,
 			mode: row.mode,
 			source: "helm",
+			// The BYO marker: a helm source alone would read to the runner as a catalogue chart.
+			byo: true,
 			chartRepo: `oci://${segments.join("/")}`,
 			// Unused for a helm source (the chart is named separately), but the spec requires it.
 			path: "",
 			chart,
 			// The chart version (ArgoCD targetRevision); `*` = latest when unset.
 			version: row.version || "*",
+			// Sent as stored. A chart attached before #6446 may still say "default" (or nothing, which
+			// deployed into "default"); the runner moves it to `byo-<id>` and says so on the Deploy tab.
 			namespace: row.namespace ?? "default",
 			values,
 			syncWave: BYO_CHART_SYNC_WAVE,
@@ -2430,6 +2434,7 @@ export function resolveByoChartInstall(
 		id: row.addon_id,
 		mode: row.mode,
 		source: "git",
+		byo: true,
 		chartRepo: row.chart_repo,
 		// The chart directory within the repo (rendered as ArgoCD `source.path`).
 		path: row.chart_path ?? "",
@@ -2437,6 +2442,7 @@ export function resolveByoChartInstall(
 		chart: "",
 		// The git ref (branch/tag/sha); default to HEAD so an unset ref still resolves.
 		version: row.version ?? "HEAD",
+		// Sent as stored — see the OCI branch above.
 		namespace: row.namespace ?? "default",
 		values,
 		syncWave: BYO_CHART_SYNC_WAVE,

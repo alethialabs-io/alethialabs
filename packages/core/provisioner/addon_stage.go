@@ -73,11 +73,24 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	vc := in.VC
 	var out addOnStageResult
 
-	// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject and register
+	// Bring-your-own charts (git or OCI): pin them to a hardened per-project AppProject and register
 	// their per-repo credentials BEFORE rendering the Applications, so the renderer places them in
 	// "byo-<slug>" (not the wide-open "infra" project). A chart whose namespace is refused (malformed,
 	// or reserved for the platform — #6439) is refused PER CHART.
-	_, out.Refused = configureByoCharts(vc, in.GitAccessToken, in.GitRepoTokens, in.Facts.Labels, stdout, stderr)
+	byo := configureByoCharts(vc, in.GitAccessToken, in.GitRepoTokens, in.Facts.Labels, stdout, stderr)
+	out.Refused = byo.Refused
+	moved := byo.Moved
+	refusedIDs := byoRefusedIDs(out.Refused)
+	for _, c := range byo.ProjectChanges {
+		out.Warnings = append(out.Warnings, c.warning())
+	}
+	for _, m := range moved {
+		// A chart refused after its move is not deployed anywhere: its refusal is the warning, and a
+		// second one naming a namespace it does not run in would be false.
+		if !refusedIDs[m.ID] {
+			out.Warnings = append(out.Warnings, m.warning())
+		}
+	}
 	for _, r := range out.Refused {
 		out.Warnings = append(out.Warnings, r.warning())
 	}
@@ -92,6 +105,14 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// against the tofu outputs) + seed their keyless binding ExternalSecrets — BEFORE the
 	// Applications render, so the write-back rides the same helm.values block.
 	out.Bindings = applyByoChartBindingsExcept(vc, in.Outputs, in.Provider, out.Refused, stdout, stderr)
+	// A moved chart's bindings are declared in its NEW namespace (configureByoCharts rewrote it), so
+	// the ones an earlier deploy applied in "default" are no longer kept. The prune finds namespaces by
+	// this environment's owner label; an earlier runner did stamp that label on "default" when a chart
+	// deployed there, but configureByoCharts has just removed it (ReleaseLegacyByoNamespaceLabels), and
+	// a cluster where that removal failed must not decide the outcome either — so "default" is named
+	// here explicitly. The prune deletes only ExternalSecrets carrying the binding marker AND this
+	// environment's owner label, so nothing of the platform's in "default" is a candidate.
+	out.Bindings.Namespaces = withByoMoveSources(out.Bindings.Namespaces, moved)
 
 	// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 	// Applications render — the same seam, and the same reason, as the bindings above: the value

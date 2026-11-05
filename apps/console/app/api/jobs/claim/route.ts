@@ -21,6 +21,14 @@ import {
 	snapshotWithRunnerToken,
 } from "@/lib/runners/lifecycle-token";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
+import { recordJobFailed } from "@/lib/jobs/job-failed";
+import { log } from "@/lib/observability/log";
+import {
+	RUNNER_CAPABILITIES_HEADER,
+	parseRunnerCapabilities,
+	refusalForRunner,
+	snapshotForRunner,
+} from "@/lib/runners/snapshot-capabilities";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
@@ -52,6 +60,11 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 		}
 	}
 	return [...slugs];
+}
+
+/** The logger for one claimed job. */
+function claimLog(jobId: string) {
+	return log.child({ component: "job-claim", job_id: jobId });
 }
 
 /**
@@ -100,15 +113,14 @@ export async function POST(req: Request) {
 		// the row was tampered after enqueue; fail the (already-claimed) job so it can't hang, and
 		// refuse to serve it. Signing is off when no key is configured, so this never blocks by default.
 		if (!verifySnapshot(job.config_snapshot, job.config_snapshot_sig)) {
+			const reason =
+				"config_snapshot signature verification failed — the snapshot was modified after enqueue";
 			await db
 				.update(jobs)
-				.set({
-					status: "FAILED",
-					error_message:
-						"config_snapshot signature verification failed — the snapshot was modified after enqueue",
-					completed_at: new Date(),
-				})
+				.set({ status: "FAILED", error_message: reason, completed_at: new Date() })
 				.where(eq(jobs.id, job.id));
+			// The rest of a failure (env, promotion, alert, scan row), as a runner-reported one gets.
+			await recordJobFailed(db, job.id, job, reason, claimLog(job.id));
 			console.error(
 				`[claim] config_snapshot signature mismatch for job ${job.id} — failed the job`,
 			);
@@ -116,6 +128,21 @@ export async function POST(req: Request) {
 				{ error: "config_snapshot signature verification failed" },
 				{ status: 409 },
 			);
+		}
+
+		// A runner is served only snapshot keys it reads (lib/runners/snapshot-capabilities.ts). One
+		// case cannot be served safely by stripping — a DEPLOY with an OCI BYO chart to a runner that
+		// does not read the marker — so that job fails here with the fix in its reason, rather than
+		// deploying the chart outside its hardened project or waiting in the queue forever.
+		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
+		const capabilityRefusal = refusalForRunner(job.job_type, job.config_snapshot, capabilities);
+		if (capabilityRefusal) {
+			await db
+				.update(jobs)
+				.set({ status: "FAILED", error_message: capabilityRefusal, completed_at: new Date() })
+				.where(eq(jobs.id, job.id));
+			await recordJobFailed(db, job.id, job, capabilityRefusal, claimLog(job.id));
+			return NextResponse.json({ error: capabilityRefusal }, { status: 409 });
 		}
 
 		// Telemetry (no-op unless an OTLP endpoint is configured): record how long this job
@@ -143,18 +170,29 @@ export async function POST(req: Request) {
 					completed_at: new Date(),
 				})
 				.where(eq(jobs.id, job.id));
+			await recordJobFailed(
+				db,
+				job.id,
+				job,
+				`Runner token handoff refused: ${tokenIssue.reason}`,
+				claimLog(job.id),
+			);
 			return NextResponse.json(
 				{ error: `Runner token handoff refused: ${tokenIssue.reason}` },
 				{ status: 409 },
 			);
 		}
-		const servedJob =
+		const issuedSnapshot =
 			tokenIssue.kind === "issued"
-				? {
-						...job,
-						config_snapshot: snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token),
-					}
-				: job;
+				? snapshotWithRunnerToken(job.config_snapshot, tokenIssue.token)
+				: job.config_snapshot;
+		// A runner decodes the snapshot strictly, so it is served only the keys it says it reads
+		// (lib/runners/snapshot-capabilities.ts). One that predates the header gets the snapshot as it
+		// was before those keys existed. The stored row — and the signature checked above — are untouched.
+		const servedJob = {
+			...job,
+			config_snapshot: snapshotForRunner(issuedSnapshot, capabilities),
+		};
 
 		// Least privilege (#5308): what rides along with the row is decided per job type by an
 		// allow-list, not by what the snapshot happens to reference. A MINT_KUBECONFIG job carries

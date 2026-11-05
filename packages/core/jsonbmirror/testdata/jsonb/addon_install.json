@@ -5,6 +5,7 @@
   "chart": "vault",
   "version": "0.28.1",
   "source": "helm",
+  "byo": true,
   "path": "charts/vault",
   "crds": ["rabbitmqclusters.rabbitmq.com"],
   "requiresCertManager": true,

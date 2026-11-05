@@ -89,7 +89,7 @@ describe("BYO reserved namespaces — one list, two readers", () => {
 	});
 
 	it("names the namespaces the issue lists explicitly", () => {
-		for (const ns of ["kube-system", "kube-public", "kube-node-lease", "argocd"]) {
+		for (const ns of ["kube-system", "kube-public", "kube-node-lease", "argocd", "default"]) {
 			expect(byoReservedNamespaceReason(ns)).not.toBeNull();
 		}
 	});
@@ -111,7 +111,7 @@ describe("byoReservedNamespaceReason", () => {
 
 	it("accepts ordinary names, including ones that only contain a reserved word", () => {
 		for (const ns of [
-			"default",
+			"byo-payments",
 			"payments",
 			"kubernetes-dashboard",
 			"my-kube-system",
