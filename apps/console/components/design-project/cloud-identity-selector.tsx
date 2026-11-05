@@ -21,7 +21,7 @@ import {
 import { Button } from "@repo/ui/button";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 interface CloudIdentitySelectorProps {
 	identities: CloudIdentityOption[];
@@ -45,23 +45,21 @@ export function CloudIdentitySelector({
 }: CloudIdentitySelectorProps) {
 	const setIdentity = useCloudProviderStore((s) => s.setIdentity);
 	const { isLoading: loading } = useCloudProviderResources();
-	const onChangeRef = useRef(onChange);
-	onChangeRef.current = onChange;
-
-	const selectIdentity = useCallback(
-		(id: string, provider: CloudProviderSlug) => {
-			onChangeRef.current(id, provider);
-			if (manageGlobalStore) setIdentity(id, provider);
-		},
-		[setIdentity, manageGlobalStore],
-	);
+	/** Selects an identity: tells the caller, and (unless node-scoped) the global store. */
+	const selectIdentity = (id: string, provider: CloudProviderSlug) => {
+		onChange(id, provider);
+		if (manageGlobalStore) setIdentity(id, provider);
+	};
+	// The auto-select reads the CURRENT `onChange` when it runs, without re-running for a new one —
+	// what a ref assigned during render used to do, without writing a ref while rendering.
+	const autoSelect = useEffectEvent(selectIdentity);
 
 	useEffect(() => {
 		if (identities.length === 1 && !value) {
 			const first = identities[0];
-			selectIdentity(first.id, asCloudProviderSlug(first.provider));
+			autoSelect(first.id, asCloudProviderSlug(first.provider));
 		}
-	}, [identities, value, selectIdentity]);
+	}, [identities, value]);
 
 	if (identities.length === 0) {
 		return (

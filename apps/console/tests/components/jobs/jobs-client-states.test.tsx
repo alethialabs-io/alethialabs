@@ -6,7 +6,7 @@
 // tells the user something false about their data. And each row is a real link (F025).
 
 import { ORPCError } from "@orpc/client";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const page = vi.hoisted((): { current: Record<string, unknown> } => ({ current: {} }));
@@ -20,6 +20,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { JobsClient } from "@/app/(private)/[org]/~/jobs/jobs-client";
+import { DEFAULT_JOBS_FILTERS } from "@/components/jobs/jobs-query";
+import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 
 const EMPTY_FACETS = { authors: [], envs: [], projects: [], statuses: [], types: [] };
 const JOB = {
@@ -58,6 +60,7 @@ function query(state: Record<string, unknown>) {
 
 beforeEach(() => {
 	page.current = query({});
+	useJobsFilters.setState({ filters: DEFAULT_JOBS_FILTERS });
 });
 
 describe("the jobs list's four answers", () => {
@@ -103,5 +106,27 @@ describe("the jobs list's four answers", () => {
 		render(<JobsClient />);
 		expect(screen.getByRole("link", { name: /plan/i })).toBeInTheDocument();
 		expect(screen.queryByText("Couldn't load jobs")).toBeNull();
+	});
+});
+
+// #6459 — the "Show more" window is keyed by the filter set it grew under, not reset by an effect.
+describe("the jobs list's Show more window", () => {
+	/** `n` distinct job rows. */
+	const rows = (n: number) =>
+		Array.from({ length: n }, (_, i) => ({
+			...JOB,
+			id: `11111111-1111-4111-8111-${String(i).padStart(12, "0")}`,
+		}));
+
+	it("grows by 20, and a change of filters starts it again at 20", () => {
+		page.current = query({ data: { rows: rows(45), total: 45, facets: EMPTY_FACETS } });
+		render(<JobsClient />);
+		expect(screen.getAllByRole("link", { name: /plan/i })).toHaveLength(20);
+
+		fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+		expect(screen.getAllByRole("link", { name: /plan/i })).toHaveLength(40);
+
+		act(() => useJobsFilters.getState().set("statuses", ["FAILED"]));
+		expect(screen.getAllByRole("link", { name: /plan/i })).toHaveLength(20);
 	});
 });

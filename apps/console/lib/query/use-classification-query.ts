@@ -76,10 +76,12 @@ export function useAssignmentsQuery(
 	return useQuery(
 		orpc.classification.assignments.queryOptions({
 			input: { kind, resourceId },
+			// Seeded data is fresh, so a batch-hydrated list of N rows costs zero per-row fetches
+			// (each row trusts its slice until the staleTime elapses). No `initialDataUpdatedAt`: with
+			// none, TanStack stamps initial data with the moment it creates the query
+			// (query-core `getDefaultState`), which is what this hook used to pass as `Date.now()`
+			// from the render — an impure read (react-hooks/purity) of the same instant.
 			initialData,
-			// Mark seeded data fresh so a batch-hydrated list of N rows costs zero per-row
-			// fetches (each row trusts its slice until the staleTime elapses).
-			initialDataUpdatedAt: initialData ? Date.now() : undefined,
 		}),
 	);
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
 import { rpcClient } from "@/lib/rpc/client";
 import {
@@ -99,17 +99,35 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 		};
 	}, [projectId]);
 
+	// A job the runner settled moves the phase as the job list shows it — set while rendering
+	// (React's "adjust state while rendering" form: each branch leaves the phase it tests, so it
+	// runs once), not from an effect a commit later. `settled` names the job, so the parent's
+	// refresh runs once per settled job, from the effect below.
+	const planJob = planJobId ? jobs.find((j) => j.id === planJobId) : undefined;
+	const deployJob = deployJobId ? jobs.find((j) => j.id === deployJobId) : undefined;
+	const [settled, setSettled] = useState<string | null>(null);
+	if (phase === "generating" && planJob?.status === "FAILED") {
+		setPhase("failed");
+		setError(planJob.error_message || "Plan generation failed");
+		setSettled(planJob.id);
+	} else if (phase === "applying" && deployJob?.status === "FAILED") {
+		setPhase("failed");
+		setError(deployJob.error_message || "Deployment failed");
+		setSettled(deployJob.id);
+	} else if (phase === "applying" && deployJob?.status === "SUCCESS") {
+		setPhase("applied");
+		setSettled(deployJob.id);
+	}
+	/** The parent's refresh, read when it runs rather than as a dependency. */
+	const refresh = useEffectEvent(() => onRefresh?.());
+	useEffect(() => {
+		if (settled !== null) refresh();
+	}, [settled]);
+
 	useEffect(() => {
 		if (!planJobId || phase !== "generating") return;
 		const job = jobs.find((j) => j.id === planJobId);
 		if (!job) return;
-
-		if (job.status === "FAILED") {
-			setPhase("failed");
-			setError(job.error_message || "Plan generation failed");
-			onRefresh?.();
-			return;
-		}
 
 		if (job.status === "SUCCESS") {
 			rpcClient.jobs.planResult({ id: planJobId }).then((result) => {
@@ -128,24 +146,6 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 			});
 		}
 	}, [jobs, planJobId, phase, onRefresh]);
-
-	useEffect(() => {
-		if (!deployJobId || phase !== "applying") return;
-		const job = jobs.find((j) => j.id === deployJobId);
-		if (!job) return;
-
-		if (job.status === "FAILED") {
-			setPhase("failed");
-			setError(job.error_message || "Deployment failed");
-			onRefresh?.();
-			return;
-		}
-
-		if (job.status === "SUCCESS") {
-			setPhase("applied");
-			onRefresh?.();
-		}
-	}, [jobs, deployJobId, phase, onRefresh]);
 
 	const generatePlan = useCallback(async (runnerId?: string | null) => {
 		if (!projectId) return;

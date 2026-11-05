@@ -15,7 +15,7 @@
 
 import { asRecord } from "@/lib/records";
 import { ChevronsUpDown } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Badge } from "@repo/ui/badge";
@@ -158,11 +158,14 @@ export function AddonConfigCard({
   // could not do that, because it captured the item at click time; a card resolving live from the
   // query reintroduced the hazard. Freezing restores the old guarantee: an open form belongs to the
   // person typing in it.
-  const frozen = useRef<AddonMarketItem | null>(null);
-  if (live && (frozen.current === null || frozen.current.id !== itemId)) {
-    frozen.current = live;
-  }
-  const item = frozen.current?.id === itemId ? frozen.current : null;
+  //
+  // The frozen row is STATE, set during render the first time this id resolves (React's "adjust
+  // state while rendering" form, guarded so it runs once per id). The render that resolves it
+  // already shows `live`, so nothing waits a commit for the freeze.
+  const [frozen, setFrozen] = useState<AddonMarketItem | null>(null);
+  const frozenHere = frozen?.id === itemId ? frozen : null;
+  if (live && frozenHere === null) setFrozen(live);
+  const item = frozenHere ?? live;
 
   if (!item) {
     return (

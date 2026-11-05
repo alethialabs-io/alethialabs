@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Copy, FileStack } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 import { addEnvironment, duplicateEnvironment } from "@/app/server/actions/projects";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
@@ -81,7 +81,7 @@ export function NewEnvironmentDialog({
 	const defaultBase = envs.find((e) => e.is_default) ?? envs[0];
 	const [name, setName] = useState("");
 	const [mode, setMode] = useState<Mode>("duplicate");
-	const [baseId, setBaseId] = useState<string>(defaultBase?.id ?? "");
+	const [baseId, setBaseId] = useState<string>(defaultBaseId ?? defaultBase?.id ?? "");
 	/**
 	 * Why the server refused the name, shown under the field it is about. The action RETURNS this
 	 * (#5445); it used to throw it, and a production build replaced the sentence with a digest
@@ -89,14 +89,17 @@ export function NewEnvironmentDialog({
 	 */
 	const [nameError, setNameError] = useState<string | null>(null);
 
-	// When (re)opened, seed the base from `defaultBaseId` (the duplicated env) if given.
-	useEffect(() => {
+	// When (re)opened, seed the base from `defaultBaseId` (the duplicated env) if given. Seeded while
+	// rendering (React's "adjust state while rendering" form, keyed on what it last seeded for), so
+	// the dialog's first open frame already shows the base rather than the previous one.
+	const [seededFor, setSeededFor] = useState({ open, defaultBaseId });
+	if (seededFor.open !== open || seededFor.defaultBaseId !== defaultBaseId) {
+		setSeededFor({ open, defaultBaseId });
 		if (open) {
 			setMode("duplicate");
 			setBaseId(defaultBaseId ?? defaultBase?.id ?? "");
 		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, defaultBaseId]);
+	}
 
 	/** Resets the form to its defaults (called on close + after a successful create). */
 	function reset() {

@@ -232,8 +232,12 @@ function DeployForm({
 		mode: "onChange",
 	});
 
-	const enabledRegions =
-		cachedResources && "regions" in cachedResources ? cachedResources.regions : [];
+	// Memoised itself: a `[]` fallback built inline was a new array every render, so the region
+	// groups' memo below never held.
+	const enabledRegions = useMemo(
+		() => (cachedResources && "regions" in cachedResources ? cachedResources.regions : []),
+		[cachedResources],
+	);
 
 	const regionGroups = useMemo(
 		() => groupRegions(enabledRegions, provider),
