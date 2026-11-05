@@ -53,11 +53,13 @@ before. It does not wait in the queue forever.
    - *The pool* is the set of runners that `claim_next_job` would let take the job, assignment aside:
      a managed runner (unless the job requires a self runner), or a self runner of the job's org. Both
      pass the claim's own cloud-identity and provider filters, read off the runner row.
-   - *Live* means `ONLINE`, which excludes DRAINING and OFFLINE, with a heartbeat inside the 5-minute
-     window that `recover_stale_jobs` uses. It also means *claiming*: the runner called the claim
-     inside that window (an idle runner polls at least every 30 s), or it holds an in-flight job. So a
-     runner whose heartbeat loop runs while its claim loop is wedged stops holding the job after 5
-     minutes.
+   - *Live* means `ONLINE`, which excludes DRAINING and OFFLINE, with a heartbeat inside
+     `runner_liveness_window()` (5 minutes). That is the one definition of the window, and
+     `recover_stale_jobs` reads it too. It also means *claiming*: the runner called the claim inside
+     that window (an idle runner polls at least every 30 s), or it holds an in-flight job (served by
+     the partial index `idx_jobs_runner_inflight`). So a runner whose heartbeat loop runs while its
+     claim loop is wedged stops holding the job once the window passes. For the same reason, a runner
+     whose claim poll is slower than the window stops counting as capable while it is idle.
    - `live_runner_has_capabilities` is not `SECURITY DEFINER`, and `EXECUTE` is revoked from `PUBLIC`.
      It answers a cross-tenant question, so only `claim_next_job` (a definer) may ask it.
 
@@ -80,7 +82,7 @@ before. It does not wait in the queue forever.
   capability, at the moment of that runner's claim. A capable runner that is busy but heartbeating
   still counts, so the job waits for it.
 - A capable runner that dies without a clean disconnect keeps counting until its heartbeat ages out
-  of the 5-minute window. Until then, the job waits rather than fails. The same window applies to a
+  of the liveness window. Until then, the job waits rather than fails. The same window applies to a
   runner that heartbeats without claiming, unless it holds an in-flight job, in which case
   `recover_stale_jobs` handles a stall.
 - While any console pod on the previous release remains, its claims run without the gate and can

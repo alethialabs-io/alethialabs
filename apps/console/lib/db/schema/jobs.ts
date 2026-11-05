@@ -163,6 +163,12 @@ export const jobs = pgTable(
 		index("idx_jobs_assigned_runner")
 			.on(t.assigned_runner_id)
 			.where(sql`assigned_runner_id IS NOT NULL`),
+		// A runner's in-flight jobs (#6458): claim_next_job's live_runner_has_capabilities asks, per
+		// candidate runner, whether it holds one — a busy runner claims nothing, yet still counts as a
+		// capable runner in its pool. Partial, so it stays as small as the in-flight set.
+		index("idx_jobs_runner_inflight")
+			.on(t.runner_id)
+			.where(sql`status IN ('CLAIMED', 'PROCESSING')`),
 		// Cross-replica dedup for the drift sweeper (lib/drift/dispatch.ts): at most ONE active
 		// DETECT_DRIFT job per environment. Two replicas ticking `sweepDriftSchedule` concurrently
 		// would otherwise each INSERT a drift job for the same due env. Paired with an

@@ -1,5 +1,5 @@
 {
-  "id": "6ad8026c-ae1c-41eb-ad84-950a6d2421bc",
+  "id": "9ccf24d7-6606-4116-a50b-94aff05d8694",
   "prevId": "dadba3bc-9c09-4372-bd97-da4c776e672e",
   "version": "7",
   "dialect": "postgresql",
@@ -11949,6 +11949,22 @@
           ],
           "isUnique": false,
           "where": "assigned_runner_id IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_jobs_runner_inflight": {
+          "name": "idx_jobs_runner_inflight",
+          "columns": [
+            {
+              "expression": "runner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "status IN ('CLAIMED', 'PROCESSING')",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -544,6 +544,14 @@ UPDATE public.jobs
  WHERE status IN ('QUEUED', 'CLAIMED', 'PROCESSING')
    AND required_capabilities IS DISTINCT FROM public.job_required_capabilities(job_type, config_snapshot);
 
+-- How recently a runner must have been heard from to count as alive: the ONE definition of the
+-- liveness window. live_runner_has_capabilities (heartbeat and claim poll) and recover_stale_jobs
+-- (is a claimed job's runner still heartbeating?) both read it, so they cannot disagree about whether
+-- a runner is there. It is not sweep_offline_runners' 45 s: that flips a silent runner OFFLINE; this
+-- one decides whether to act on its absence.
+CREATE OR REPLACE FUNCTION public.runner_liveness_window()
+RETURNS INTERVAL LANGUAGE sql IMMUTABLE AS $$ SELECT INTERVAL '5 minutes' $$;
+
 -- TRUE iff a LIVE runner that could claim this unassigned job advertises every capability in
 -- p_required (#6458). This is what bounds claim_next_job's capability skip.
 --
@@ -561,11 +569,11 @@ UPDATE public.jobs
 -- either way passing the same cloud-identity and provider filters the claim applies, read off the
 -- runner row (the claim route passes runners.cloud_identity_id as p_cloud_identity_id). The legacy
 -- personal-org arm of the self branch admits runner-lifecycle jobs only, which never need a capability.
--- LIVE = ONLINE (so not DRAINING, not OFFLINE) with a heartbeat inside the 5-minute window
--- recover_stale_jobs uses, AND claiming: it called the claim inside the same window (an idle runner
+-- LIVE = ONLINE (so not DRAINING, not OFFLINE) with a heartbeat inside runner_liveness_window (the
+-- window recover_stale_jobs uses), AND claiming: it called the claim inside the same window (an idle runner
 -- polls at least every 30 s) or it holds an in-flight job (a busy runner claims nothing until it is
--- done). A runner that heartbeats while its claim loop is wedged therefore stops holding the job after
--- 5 minutes. runners.capabilities is stamped on every claim and heartbeat, last_claim_at on every claim.
+-- done). A runner that heartbeats while its claim loop is wedged therefore stops holding the job once
+-- the window passes — and so, while idle, does any runner whose claim poll is slower than the window. runners.capabilities is stamped on every claim and heartbeat, last_claim_at on every claim.
 --
 -- Not SECURITY DEFINER, and not executable by PUBLIC: it answers "does some org have a live runner
 -- matching this identity and provider", which no caller other than claim_next_job (itself a definer,
@@ -578,9 +586,10 @@ CREATE OR REPLACE FUNCTION public.live_runner_has_capabilities(
         SELECT 1 FROM public.runners r
          WHERE r.capabilities @> p_required
            AND r.status = 'ONLINE'
-           AND r.last_heartbeat > now() - INTERVAL '5 minutes'
+           AND r.last_heartbeat > now() - public.runner_liveness_window()
            AND (
-             r.last_claim_at > now() - INTERVAL '5 minutes'
+             r.last_claim_at > now() - public.runner_liveness_window()
+             -- Served by the partial index idx_jobs_runner_inflight.
              OR EXISTS (
                SELECT 1 FROM public.jobs k
                 WHERE k.runner_id = r.id AND k.status IN ('CLAIMED', 'PROCESSING')
@@ -883,7 +892,7 @@ BEGIN
             ( j.claimed_at < now() - INTERVAL '15 minutes'
               AND (j.runner_id IS NULL OR NOT EXISTS (
                 SELECT 1 FROM public.runners r
-                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes')) )
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - public.runner_liveness_window())) )
             OR
             -- (B) stalled-but-alive: runner heartbeating, but no forward progress for the stall window
             ( j.runner_id IS NOT NULL
@@ -891,7 +900,7 @@ BEGIN
               AND j.progress_at < now() - INTERVAL '30 minutes'
               AND EXISTS (
                 SELECT 1 FROM public.runners r
-                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes') )
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - public.runner_liveness_window()) )
           )
         -- RETURNING sees the NEW row, so the apply marker is still readable and status is the new one.
         RETURNING j.id, j.job_type, j.environment_id, j.org_id, j.project_id,
