@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
 import { Loader2, SendHorizontal } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { postCaseMessage } from "@/app/server/actions/support";
 import { FieldMessage } from "@/components/support/field-message";
@@ -51,7 +51,6 @@ export function CaseComposer({ caseId }: { caseId: string }) {
 		handleSubmit,
 		reset,
 		setError,
-		watch,
 		formState: { errors },
 	} = form;
 
@@ -87,7 +86,7 @@ export function CaseComposer({ caseId }: { caseId: string }) {
 		send.mutate({ caseId, body: values.body.trim() });
 	});
 
-	const body = watch("body");
+	const body = useWatch({ control: form.control, name: "body" });
 	const messageId = `case-reply-message-${caseId}`;
 
 	return (

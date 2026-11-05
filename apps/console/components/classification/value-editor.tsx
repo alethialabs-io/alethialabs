@@ -23,7 +23,7 @@ import { Input } from "@repo/ui/input";
 import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import {
 	createValue,
@@ -35,6 +35,9 @@ import { classificationReadKeys } from "@/lib/query/use-classification-query";
 import { type ValueInput, valueInputSchema } from "@/lib/validations/classification";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { InfoHint, Spinner } from "./classification-ui";
+
+/** The fields the editor renders from. */
+const WATCHED = ["label", "enforcement"] as const;
 
 /**
  * The value editor dialog. Pass an existing `value` to edit, or omit it to create one on
@@ -83,8 +86,7 @@ export function ValueEditor({
 		}
 	}, [open, value, form]);
 
-	const label = form.watch("label");
-	const enforcement = form.watch("enforcement");
+	const [label, enforcement] = useWatch({ control: form.control, name: WATCHED });
 	const enforceOn = Boolean(enforcement);
 
 	/** Toggles the enforcement policy on/off, seeding a sensible default (require approval). */
