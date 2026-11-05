@@ -144,8 +144,8 @@ describe("FacetFilter", () => {
 	it("names the search box after the facet when the placeholder is the generic one (#5803)", async () => {
 		const user = userEvent.setup({ delay: null });
 		await open(user);
-		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
-		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		// The search is named by the `Command` root's `label` (#5803; an unnamed search is a combobox a
+		// screen reader cannot tell apart from any other).
 		expect(
 			screen.getByRole("combobox", { name: "Search User" }),
 		).toHaveAttribute("placeholder", "Search…");
@@ -175,7 +175,7 @@ describe("FacetFilter", () => {
 		const search = screen.getByPlaceholderText("Search…");
 		await user.type(search, "bob");
 
-		// Only the matching option survives the cmdk filter.
+		// Only the matching option survives the shared ranker.
 		expect(screen.getByText("Bob")).toBeInTheDocument();
 		expect(screen.queryByText("Alice")).not.toBeInTheDocument();
 		expect(screen.queryByText("Carol")).not.toBeInTheDocument();

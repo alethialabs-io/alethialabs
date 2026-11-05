@@ -77,7 +77,7 @@ describe("Fit view on an empty board", () => {
 				onArrange={vi.fn()}
 			/>,
 		);
-		const item = screen.getByText("Fit view").closest("[cmdk-item]");
+		const item = screen.getByText("Fit view").closest('[data-slot="command-item"]');
 		expect(item).toHaveAttribute("aria-disabled", "true");
 		expect(item).toHaveAccessibleDescription(NOTHING_TO_FIT);
 		expect(item).toHaveTextContent(NOTHING_TO_FIT);

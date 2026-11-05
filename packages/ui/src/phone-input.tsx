@@ -17,6 +17,7 @@ import {
   CommandItem,
   CommandList,
 } from "./command";
+import { useCommandSearch } from "./command-search";
 import { Input } from "./input";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 
@@ -108,47 +109,81 @@ function CountrySelect({
         }
       />
       <PopoverContent className="w-[300px] p-0">
-        {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
-            prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
-            the search is an unnamed combobox to a screen reader (#5803). */}
-        <Command label="Search country">
-          <CommandInput placeholder="Search country…" />
-          <CommandList>
-            <CommandEmpty>No country found.</CommandEmpty>
-            <CommandGroup>
-              {countryList
-                .filter((x): x is { label: string; value: RPNInput.Country } =>
-                  Boolean(x.value),
-                )
-                .map((option) => (
-                  <CommandItem
-                    key={option.value}
-                    className="gap-2"
-                    onSelect={() => onChange(option.value)}
-                  >
-                    <FlagComponent
-                      country={option.value}
-                      countryName={option.label}
-                    />
-                    <span className="flex-1 text-sm">{option.label}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {`+${RPNInput.getCountryCallingCode(option.value)}`}
-                    </span>
-                    <CheckIcon
-                      className={cn(
-                        "ml-auto size-4",
-                        option.value === selectedCountry
-                          ? "opacity-100"
-                          : "opacity-0",
-                      )}
-                    />
-                  </CommandItem>
-                ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <PhoneCountryCommand
+          options={countryList}
+          selectedCountry={selectedCountry}
+          onChange={onChange}
+        />
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** A dial-code option that names a country (the "International" entry has none). */
+interface DialCountry {
+  label: string;
+  value: RPNInput.Country;
+}
+
+/**
+ * A dial-code option's search text: the country's name and its `+code`, so typing either finds it.
+ * cmdk used to match the row's rendered text, which happened to be the same two things.
+ */
+function dialCountrySearchText(option: DialCountry): string {
+  return `${option.label} +${RPNInput.getCountryCallingCode(option.value)}`;
+}
+
+/**
+ * The searchable dial-code list inside the popover. Its own component so the query lives and dies
+ * with the open list: reopening the picker starts from an empty search.
+ */
+function PhoneCountryCommand({
+  options,
+  selectedCountry,
+  onChange,
+}: {
+  options: CountryEntry[];
+  selectedCountry: RPNInput.Country;
+  onChange: (country: RPNInput.Country) => void;
+}) {
+  const countries = React.useMemo(
+    () => options.filter((x): x is DialCountry => Boolean(x.value)),
+    [options],
+  );
+  const search = useCommandSearch(countries, dialCountrySearchText);
+  return (
+    <Command
+      label="Search country"
+      search={search.search}
+      onSearchChange={search.onSearchChange}
+      filteredItems={search.results}
+    >
+      <CommandInput placeholder="Search country…" />
+      <CommandList>
+        <CommandEmpty>No country found.</CommandEmpty>
+        <CommandGroup>
+          {search.results.map((option) => (
+            <CommandItem
+              key={option.value}
+              className="gap-2"
+              onSelect={() => onChange(option.value)}
+            >
+              <FlagComponent country={option.value} countryName={option.label} />
+              <span className="flex-1 text-sm">{option.label}</span>
+              <span className="text-sm text-muted-foreground">
+                {`+${RPNInput.getCountryCallingCode(option.value)}`}
+              </span>
+              <CheckIcon
+                className={cn(
+                  "ml-auto size-4",
+                  option.value === selectedCountry ? "opacity-100" : "opacity-0",
+                )}
+              />
+            </CommandItem>
+          ))}
+        </CommandGroup>
+      </CommandList>
+    </Command>
   );
 }
 

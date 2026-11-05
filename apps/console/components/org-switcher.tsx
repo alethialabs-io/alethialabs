@@ -18,6 +18,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
 import { planMeta } from "@repo/plan-catalog";
@@ -65,6 +66,14 @@ export function switchTargetHref(
 	return slug ? orgHref(slug) : null;
 }
 
+/** An organization's search text: its name, for the shared ranker. */
+const orgSearchText = (o: { name: string }): string => o.name;
+
+/** An org with no slug has no URL to go to, so its row is disabled (and, while a search is typed,
+ * ranks after the rest). */
+const orgIsUnreachable = (o: { slug: string | null }): boolean => !o.slug;
+
+/** The header organization switcher: lists, searches and switches the user's organizations. */
 export function OrgSwitcher() {
 	const router = useRouter();
 	const orgSlug = useActiveOrgSlug();
@@ -77,6 +86,11 @@ export function OrgSwitcher() {
 	// is in flight) the trigger names the org by its ADDRESS and shows no plan — never a guessed
 	// "Personal" or a default plan, which would be a claim about a tenant the page is not on.
 	const name = active?.name ?? orgSlug;
+	// Ranked by the shared ranker; the query starts empty each time the popover opens.
+	const orgSearch = useCommandSearch(organizations, orgSearchText, {
+		open,
+		isDisabled: orgIsUnreachable,
+	});
 	const meta = active ? planMeta(active.plan) : null;
 
 	const handleSelect = (orgId: string) => {
@@ -141,17 +155,21 @@ export function OrgSwitcher() {
 					}
 				/>
 				<PopoverContent className="w-72 p-0" align="start">
-					<Command label="Find organization">
+					<Command
+						label="Find organization"
+						search={orgSearch.search}
+						onSearchChange={orgSearch.onSearchChange}
+						filteredItems={orgSearch.results}
+					>
 						<CommandInput placeholder="Find organization…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No organization found.</CommandEmpty>
 							<CommandGroup heading="Organizations">
-								{organizations.map((o) => {
+								{orgSearch.results.map((o) => {
 									const meta = planMeta(o.plan);
 									return (
 										<CommandItem
 											key={o.id}
-											value={o.name}
 											// An org with no slug has no URL to navigate to — see handleSelect.
 											// Disabled rather than hidden: a workspace the user belongs to that
 											// silently vanished from the switcher is harder to report than one

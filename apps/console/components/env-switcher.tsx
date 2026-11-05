@@ -19,9 +19,14 @@ import {
 	CommandInput,
 	CommandItem,
 	CommandList,
-	CommandSeparator,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
+import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent } from "@repo/ui/popover";
+import { Separator } from "@repo/ui/separator";
+
+/** An environment's search text: its name, for the shared ranker. */
+const envSearchText = (e: SwitcherEnv): string => e.name;
 
 /** A stable empty list, so effects keyed on `envs` do not re-run on every render before data. */
 const NO_ENVS: SwitcherEnv[] = [];
@@ -112,6 +117,9 @@ export function EnvSwitcher() {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [isDrilldown, envs, envId, pathname, router, syncElench]);
 
+	// Ranked by the shared ranker; the query starts empty each time the popover opens.
+	const envSearch = useCommandSearch(envs, envSearchText, { open });
+
 	if (!isDrilldown || envs.length === 0) return null;
 
 	const active =
@@ -151,40 +159,49 @@ export function EnvSwitcher() {
 					label={active?.name ?? ""}
 				/>
 				<PopoverContent className="w-64 p-0" align="start">
-					<Command label="Find environment">
+					<Command
+						label="Find environment"
+						search={envSearch.search}
+						onSearchChange={envSearch.onSearchChange}
+						filteredItems={envSearch.results}
+					>
 						<CommandInput placeholder="Find environment…" className="h-9" />
 						<CommandList>
 							<CommandEmpty>No environment found.</CommandEmpty>
-							<CommandGroup heading="Environments">
-								{envs.map((e) => (
-									<CommandItem
-										key={e.id}
-										value={e.name}
-										onSelect={() => handleSelect(e.id)}
-										className="gap-2"
-									>
-										<span className="flex-1 truncate">{e.name}</span>
-										{e.id === active?.id && (
-											<Check className="h-4 w-4 shrink-0" />
-										)}
-									</CommandItem>
-								))}
-							</CommandGroup>
-							<CommandSeparator />
-							<CommandGroup>
-								<CommandItem
-									value="__new-environment"
-									onSelect={() => {
-										setOpen(false);
-										setCreateOpen(true);
-									}}
-									className="gap-2 text-muted-foreground"
-								>
-									<Plus className="h-4 w-4 shrink-0" />
-									<span className="flex-1">New Environment</span>
-								</CommandItem>
-							</CommandGroup>
+							{envSearch.results.length > 0 && (
+								<CommandGroup heading="Environments">
+									{envSearch.results.map((e) => (
+										<CommandItem
+											key={e.id}
+											onSelect={() => handleSelect(e.id)}
+											className="gap-2"
+										>
+											<span className="flex-1 truncate">{e.name}</span>
+											{e.id === active?.id && (
+												<Check className="h-4 w-4 shrink-0" />
+											)}
+										</CommandItem>
+									))}
+								</CommandGroup>
+							)}
 						</CommandList>
+						<Separator />
+						{/* An action, not an environment, so a footer button OUTSIDE the listbox: offered on a
+						    miss too, reached by click or Tab from the search, never an arrow-key row and
+						    never counted as a match (so Enter on a miss runs nothing). */}
+						<div className="p-1">
+							<Button
+								variant="ghost"
+								onClick={() => {
+									setOpen(false);
+									setCreateOpen(true);
+								}}
+								className="w-full justify-start gap-2 px-2 text-muted-foreground"
+							>
+								<Plus className="h-4 w-4 shrink-0" />
+								<span className="flex-1 text-left">New Environment</span>
+							</Button>
+						</div>
 					</Command>
 				</PopoverContent>
 			</Popover>

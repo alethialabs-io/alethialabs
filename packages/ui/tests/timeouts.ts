@@ -24,8 +24,8 @@
 /**
  * Per-RTL-wait budget: how long a single `waitFor` / `findBy*` may poll before failing.
  *
- * Generous on purpose — base-ui popovers portal and mount asynchronously, cmdk filters its list
- * asynchronously, and a loaded CI runner stretches both well past RTL's 1000ms default (#1236).
+ * Generous on purpose — base-ui popovers portal and mount asynchronously, and a loaded CI runner
+ * stretches that mount well past RTL's 1000ms default (#1236).
  */
 export const ASYNC_UTIL_TIMEOUT_MS = 8_000;
 

@@ -15,6 +15,7 @@ import {
   CommandItem,
   CommandList,
 } from "./command";
+import { useCommandSearch } from "./command-search";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { COUNTRY_OPTIONS, countryName } from "./countries";
 
@@ -94,47 +95,73 @@ export function CountrySelect({
         finalFocus={() => returnFocusToTrigger(popupRef.current)}
         className="w-[var(--anchor-width)] min-w-[260px] p-0 data-[closed]:pointer-events-none"
       >
-        {/* cmdk points the input's aria-labelledby at its own hidden <label>, whose text is this
-            prop. Left empty, that reference resolves to "" and blocks the placeholder fallback, so
-            the search is an unnamed combobox to a screen reader (#5803). */}
-        <Command label="Search country">
-          <CommandInput placeholder="Search country…" />
-          <CommandList>
-            <CommandEmpty>No country found.</CommandEmpty>
-            <CommandGroup>
-              {COUNTRY_OPTIONS.map((c) => {
-                const ItemFlag = flags[c.code as keyof typeof flags];
-                return (
-                  <CommandItem
-                    key={c.code}
-                    value={c.name}
-                    className="gap-2"
-                    onSelect={() => {
-                      onChange(c.code);
-                      setOpen(false);
-                    }}
-                  >
-                    {ItemFlag && (
-                      <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm bg-foreground/10 [&_svg]:size-full">
-                        <ItemFlag title={c.name} />
-                      </span>
-                    )}
-                    <span className="flex-1 text-sm">{c.name}</span>
-                    <CheckIcon
-                      className={cn(
-                        "ml-auto size-4",
-                        c.code === value ? "opacity-100" : "opacity-0",
-                      )}
-                    />
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+        <CountryCommand
+          value={value}
+          onPick={(code) => {
+            onChange(code);
+            setOpen(false);
+          }}
+        />
       </PopoverContent>
     </Popover>
   );
+}
+
+/**
+ * The searchable country list inside the popover. Its own component so the query lives and dies
+ * with the open list: reopening the picker starts from an empty search.
+ */
+function CountryCommand({
+  value,
+  onPick,
+}: {
+  value: string;
+  onPick: (code: string) => void;
+}) {
+  const countries = useCommandSearch(COUNTRY_OPTIONS, countrySearchText);
+  return (
+    <Command
+      label="Search country"
+      search={countries.search}
+      onSearchChange={countries.onSearchChange}
+      filteredItems={countries.results}
+    >
+      <CommandInput placeholder="Search country…" />
+      <CommandList>
+        <CommandEmpty>No country found.</CommandEmpty>
+        <CommandGroup>
+          {countries.results.map((c) => {
+            const ItemFlag = flags[c.code as keyof typeof flags];
+            return (
+              <CommandItem
+                key={c.code}
+                className="gap-2"
+                onSelect={() => onPick(c.code)}
+              >
+                {ItemFlag && (
+                  <span className="flex h-4 w-6 shrink-0 overflow-hidden rounded-sm bg-foreground/10 [&_svg]:size-full">
+                    <ItemFlag title={c.name} />
+                  </span>
+                )}
+                <span className="flex-1 text-sm">{c.name}</span>
+                <CheckIcon
+                  className={cn(
+                    "ml-auto size-4",
+                    c.code === value ? "opacity-100" : "opacity-0",
+                  )}
+                />
+              </CommandItem>
+            );
+          })}
+        </CommandGroup>
+      </CommandList>
+    </Command>
+  );
+}
+
+/** A country's search text: its name, matched by the shared ranker in `./command-search`. */
+function countrySearchText(c: (typeof COUNTRY_OPTIONS)[number]): string {
+  return c.name;
 }
 
 /**

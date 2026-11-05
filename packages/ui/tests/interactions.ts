@@ -14,8 +14,8 @@ import type userEvent from "@testing-library/user-event";
 /**
  * Enters a search query as ONE input event instead of one per character.
  *
- * `user.type` fires a keystroke at a time, and each keystroke re-runs cmdk's filter over the whole
- * option list and re-renders the matches. A paste drives that filter exactly once. What these tests
+ * `user.type` fires a keystroke at a time, and each keystroke re-ranks the whole option list
+ * (@repo/ui/command-search) and re-renders the matches. A paste ranks exactly once. What these tests
  * assert is the FILTERED RESULT, not per-character behaviour, so the cheaper input is also the
  * honest one.
  *

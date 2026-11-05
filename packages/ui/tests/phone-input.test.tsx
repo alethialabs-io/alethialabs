@@ -99,8 +99,8 @@ describe("PhoneInput", () => {
 		await user.click(trigger);
 		const search = await screen.findByPlaceholderText(/search country/i);
 		await pasteQuery(user, search, "Germany");
-		// cmdk filters asynchronously; the global asyncUtilTimeout (tests/setup.ts) gives the match
-		// generous headroom on a loaded CI box.
+		// The popover mounts asynchronously; the global asyncUtilTimeout (tests/setup.ts) gives the
+		// match generous headroom on a loaded CI box.
 		const option = await screen.findByRole("option", { name: /germany/i });
 		// The option surfaces the +49 dial code alongside the country label.
 		expect(within(option).getByText("+49")).toBeInTheDocument();
@@ -117,8 +117,8 @@ describe("PhoneInput", () => {
 		const { trigger } = renderPhone("US");
 
 		await user.click(trigger);
-		// cmdk labels its input through aria-labelledby → its own <label>; with no `label` prop that
-		// resolves to an empty name, which a screen reader announces as an unnamed combobox.
+		// The search is named by the `Command` root's `label` (#5803; an unnamed search is a combobox a
+		// screen reader cannot tell apart from any other).
 		expect(
 			await screen.findByRole("combobox", { name: "Search country" }),
 		).toHaveAttribute("placeholder", "Search country…");
