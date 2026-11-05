@@ -23,7 +23,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Layers, Server } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 export { JOB_TYPES };
 

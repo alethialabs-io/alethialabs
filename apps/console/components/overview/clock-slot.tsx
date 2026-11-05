@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@repo/ui/utils";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 /**
  * Text that reads the clock or the browser's time zone ("3 minutes ago", "resets in 4 hr"),

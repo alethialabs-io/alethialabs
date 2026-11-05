@@ -12,7 +12,7 @@
 import { formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import type { ReactNode } from "react";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 /** The widest relative string `formatRelative` prints for a proof timestamp. */
 const RELATIVE_SIZER = "less than a minute ago";

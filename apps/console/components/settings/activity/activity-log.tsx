@@ -25,7 +25,7 @@ import { filterStateFromUrl } from "@/lib/query/filter-url-codec";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
 import { RegionError } from "@/components/errors/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";

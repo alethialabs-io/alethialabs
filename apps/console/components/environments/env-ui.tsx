@@ -16,7 +16,7 @@ import {
 	UserCheck,
 	type LucideIcon,
 } from "lucide-react";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import type { GateResult } from "@/types/jsonb.types";
 
 /** The widest relative time `formatRelative` prints, so the slot is that wide before it is read. */

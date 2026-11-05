@@ -13,7 +13,7 @@ import { RunnerSelectPopover } from "@/components/runners/runner-select-popover"
 // one shared decision across two lanes and is deliberately NOT taken here; importing them is what
 // keeps this page from becoming the third rendering of a term and its value.
 import { Fact, FactList } from "@/components/settings/usage/usage-primitives";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { qk } from "@/lib/query/keys";
