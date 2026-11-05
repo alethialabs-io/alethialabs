@@ -62,6 +62,9 @@ func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateServiceNames(config); err != nil {
 		return err
 	}
+	if err := validateByoDBReservedSecretNames(config); err != nil {
+		return err
+	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
@@ -399,6 +402,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, awsRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, awsRootReserved...)
 	mergeProviderConfig(tfvars, config.Network.ProviderConfig, awsRootReserved...)
+
+	// Per-binding database user passwords (docs/adr/byo-binding-db-users.md §2): one generated entry
+	// per declared BYO database binding, while ALETHIA_BYO_DB_USERS_ENABLED is on. See byo_db_users.go.
+	tfvars["custom_secrets"] = withByoDBUserSecrets(config, tfvars["custom_secrets"], byoDBSecretsAWS)
 
 	return tfvars
 }
