@@ -86,21 +86,24 @@ export function useLivePlanPrice(
 	currency: SupportedCurrency = "usd",
 ): LivePlanPriceView {
 	const meta = planMeta(plan);
-	const [data, setData] = useState<LivePlanPrice | null>(null);
+	// The row is kept WITH THE PLAN IT IS FOR, and read only for that plan.
+	//
+	// THE PREVIOUS ROW IS NEVER SHOWN FOR A NEW PLAN, and that is a correctness fix rather than
+	// tidiness. A plan that CHANGES on a live component would otherwise keep the old row while the
+	// new one is in flight, so the hook would report `loading: false` — its contract for "this is
+	// the authoritative price" — beside another plan's amount. The console does exactly that
+	// transition: ai-usage-section renders `useLiveAiPrice(ai?.tier ?? "ai_free")`, so every visit
+	// would show a paid tier priced "Free" for at least one render once the summary resolves. This
+	// used to be an effect clearing the row; keyed by plan, the render with the new plan already
+	// reads none.
+	const [loaded, setLoaded] = useState<{ plan: PlanId; row: LivePlanPrice } | null>(null);
+	const data = loaded !== null && loaded.plan === plan ? loaded.row : null;
 
 	useEffect(() => {
 		let active = true;
-		// THE PREVIOUS ROW IS DROPPED BEFORE THE NEW ONE IS FETCHED, and that is a correctness fix
-		// rather than tidiness. Without it a plan that CHANGES on a live component keeps the old
-		// row in state while the new one is in flight, so the hook reports `loading: false` — its
-		// contract for "this is the authoritative price" — beside another plan's amount. The
-		// console does exactly that transition: ai-usage-section renders
-		// `useLiveAiPrice(ai?.tier ?? "ai_free")`, so every visit shows a paid tier priced "Free"
-		// for at least one render once the summary resolves.
-		setData(null);
 		loadPrices()
 			.then((m: LivePlanPriceMap) => {
-				if (active) setData(m[plan]);
+				if (active) setLoaded({ plan, row: m[plan] });
 			})
 			.catch(() => {
 				// Keep the catalog fallback on failure.

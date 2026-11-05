@@ -142,6 +142,24 @@ describe("useLivePlanPrice", () => {
 		expect(vi.mocked(getLivePlanPrices).mock.calls.length).toBe(before + 1);
 	});
 
+	// #6459: the row is kept with the plan it is for, so a change of plan never reports the OLD
+	// plan's row as authoritative (`loading: false`). This pins the outcome; the effect that used to
+	// clear the row reached the same end state once act flushed it.
+	it("a change of plan reads no row until that plan's arrives", async () => {
+		vi.mocked(getLivePlanPrices).mockResolvedValue(planPrices);
+		const { result, rerender } = renderHook(({ plan }) => useLivePlanPrice(plan), {
+			initialProps: { plan: "team" as "team" | "community" },
+		});
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.unitAmount).toEqual(money(2500, "usd"));
+
+		rerender({ plan: "community" });
+		expect(result.current.loading).toBe(true);
+		expect(result.current.unitAmount).not.toEqual(money(2500, "usd"));
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.unitAmount).toEqual(money(0, "usd"));
+	});
+
 	it("serves every later consumer from one fetch, in either currency", async () => {
 		const before = vi.mocked(getLivePlanPrices).mock.calls.length;
 		const eur = renderHook(() => useLivePlanPrice("team", "eur"));

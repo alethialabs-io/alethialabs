@@ -99,6 +99,21 @@ describe("useJobLogStream", () => {
 		expect(FakeEventSource.opened[0]?.closed).toBe(true);
 	});
 
+	// #6459: the streamed tail is keyed by the stream that sent it, not cleared by an effect. This
+	// pins the outcome (the old effect reached it too, once act flushed it), not the timing.
+	it("drops the previous job's streamed tail the moment it moves to another job", () => {
+		const { result, rerender } = renderHook(({ id, head }) => useJobLogStream(id, head, true), {
+			initialProps: { id: "job-1", head: { lines: [line(1)], lastId: 1 } },
+		});
+		act(() => FakeEventSource.opened[0]?.onmessage?.({ data: JSON.stringify(line(2)) }));
+		expect(result.current.logs.map((l) => l.id)).toEqual([1, 2]);
+
+		rerender({ id: "job-2", head: { lines: [line(10)], lastId: 10 } });
+		expect(result.current.logs.map((l) => l.id)).toEqual([10]);
+		act(() => FakeEventSource.opened[1]?.onmessage?.({ data: JSON.stringify(line(11)) }));
+		expect(result.current.logs.map((l) => l.id)).toEqual([10, 11]);
+	});
+
 	it("with no head (the plan flow), streams the whole backlog at once", () => {
 		renderHook(() => useJobLogStream("job-1"));
 		expect(FakeEventSource.opened.map((e) => e.url)).toEqual(["/api/stream/jobs/job-1"]);

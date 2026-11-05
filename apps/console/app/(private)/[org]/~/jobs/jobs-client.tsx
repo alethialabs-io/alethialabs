@@ -44,7 +44,7 @@ import { cn } from "@repo/ui/utils";
 import { ClipboardList, Lock, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
 	JOBS_DEFAULT_PRESET,
@@ -77,10 +77,6 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// so the server's prefetch key and this key are identical), explicit bounds otherwise (#6113).
 	const [rangeSpec, setRangeSpec] = useState<JobsRange>({ preset: JOBS_DEFAULT_PRESET });
 	const [rangeLabel, setRangeLabel] = useState(JOBS_DEFAULT_RANGE_LABEL);
-	// "Show more" window — grows client-side over the already server-filtered rows (like the
-	// Activity log), instead of page-number pagination.
-	const [visibleCount, setVisibleCount] = useState(20);
-
 	// Search stays responsive (bound to filters.search) but only re-keys the query after a
 	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
 	// object (and so the structural TanStack key) is stable until the debounced value moves.
@@ -134,10 +130,12 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 		[facets, memberById],
 	);
 
-	// Reset the visible window whenever the filters change (the set may shrink).
-	useEffect(() => {
-		setVisibleCount(20);
-	}, [input]);
+	// "Show more" window — grows client-side over the already server-filtered rows (like the
+	// Activity log), instead of page-number pagination. It belongs to the filter set it was grown
+	// under: a change of filters (the set may shrink) starts again at 20. Keyed by `input` rather
+	// than reset in an effect, so the first render under new filters already shows 20.
+	const [visibleWindow, setVisibleWindow] = useState({ input, count: 20 });
+	const visibleCount = visibleWindow.input === input ? visibleWindow.count : 20;
 
 	const columns = useMemo(
 		() => buildJobColumns({ showProject: !projectId, authorById, orgSlug }),
@@ -296,7 +294,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 									pageSize={visibleCount}
 									loadMore={{
 										hasMore: rows.length > visibleCount,
-										onLoadMore: () => setVisibleCount((c) => c + 20),
+										onLoadMore: () => setVisibleWindow({ input, count: visibleCount + 20 }),
 									}}
 									scrollHeight="h-[70vh]"
 								/>
