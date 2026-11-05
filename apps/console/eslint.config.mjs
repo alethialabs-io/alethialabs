@@ -74,15 +74,38 @@ const eslintConfig = defineConfig([
 		},
 	},
 	{
-		// The new React-Compiler-era react-hooks rules (eslint-config-next 16) are
-		// advisory for this codebase — keep them visible as warnings, not blockers.
-		// The classic rules-of-hooks / exhaustive-deps stay as configured.
+		// The react-hooks rules GATE (#6459). eslint-config-next spreads eslint-plugin-react-hooks 7's
+		// `recommended` preset, whose React Compiler rules (purity, set-state-in-effect, refs,
+		// incompatible-library, immutability, preserve-manual-memoization …) are errors; this file
+		// used to set five of them back to "warn", and with no --max-warnings nothing gated, so the
+		// count drifted to 78. They are now the preset's own errors again, and exhaustive-deps (a
+		// "warn" in the preset) is raised to match. Fix a finding; do not soften one here.
+		//
+		// Errors rather than `--max-warnings 0`: the console's lint also carries advisory warnings by
+		// decision (vitest/no-conditional-expect, above), and a global cap would gate on those too.
+		//
+		// The one honest suppression is TanStack Table's `useReactTable`, which has no form the
+		// compiler can memoise: those sites carry a stated `eslint-disable-next-line
+		// react-hooks/incompatible-library`. See docs/plans/console-react-hooks-warnings.md.
 		rules: {
-			"react-hooks/purity": "warn",
+			"react-hooks/exhaustive-deps": "error",
+		},
+	},
+	{
+		// TODO(#6147): delete this block once #6147 lands. These four files are owned by #6147 (drop
+		// `motion`), which is rewriting them, so their findings were left for it rather than fixed
+		// under it: agent-chat.tsx, design-project-canvas.tsx and chart-workload-panel.tsx each set
+		// state in an effect, and config-fields.tsx calls react-hook-form's `watch()`. Exactly these
+		// paths and exactly those two rules; every other rule gates here as everywhere.
+		files: [
+			"components/agent/agent-chat.tsx",
+			"components/design-project/canvas/design-project-canvas.tsx",
+			"components/design-project/canvas/inspector/chart-workload-panel.tsx",
+			"components/design-project/canvas/inspector/config-fields.tsx",
+		],
+		rules: {
 			"react-hooks/set-state-in-effect": "warn",
-			"react-hooks/refs": "warn",
 			"react-hooks/incompatible-library": "warn",
-			"react-hooks/preserve-manual-memoization": "warn",
 		},
 	},
 	{
