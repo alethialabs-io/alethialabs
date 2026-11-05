@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { motion } from "motion/react";
 import { useEffect } from "react";
 import { AddonConfigCard } from "@/components/addons/addon-config-card";
 import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-store";
@@ -93,11 +92,10 @@ export function WorkspaceRail({
 	const open = isRailOpen(card, { projectId, environmentId });
 
 	return (
-		<motion.div
-			initial={false}
-			animate={{ width: open ? RAIL_W + RAIL_GAP : 0 }}
-			transition={{ duration: 0.2, ease: "easeOut" }}
-			className="h-full shrink-0 overflow-hidden"
+		// `workspace-rail` (app/globals.css) transitions the width; `workspace-card-in` fades a card in.
+		<div
+			style={{ width: open ? RAIL_W + RAIL_GAP : 0 }}
+			className="workspace-rail h-full shrink-0 overflow-hidden"
 			data-testid="workspace-rail"
 			data-open={open ? "true" : "false"}
 		>
@@ -107,24 +105,18 @@ export function WorkspaceRail({
 					style={{ width: RAIL_W }}
 				>
 					{open && card && (
-						<motion.div
-							key={cardKey(card)}
-							initial={{ opacity: 0 }}
-							animate={{ opacity: 1 }}
-							transition={{ duration: 0.15 }}
-							className="flex h-full min-h-0 flex-col"
-						>
+						<div key={cardKey(card)} className="workspace-card-in flex h-full min-h-0 flex-col">
 							<CardBody
 								card={card}
 								projectId={projectId}
 								environmentId={environmentId}
 								destroyEnvironment={destroyEnvironment}
 							/>
-						</motion.div>
+						</div>
 					)}
 				</div>
 			</div>
-		</motion.div>
+		</div>
 	);
 }
 

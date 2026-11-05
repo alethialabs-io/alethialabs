@@ -4,7 +4,6 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
-import { motion } from "motion/react";
 import { Plus } from "lucide-react";
 import { cn } from "@repo/ui/utils";
 import { track } from "@/lib/analytics/track";
@@ -611,21 +610,15 @@ function CanvasInner({
 
 	const boardContent = (
 		<CanvasInteractionContext.Provider value={interaction}>
-			{/* Keyed by the active environment so switching envs (picker / Shift+Tab) crossfades
-			    the canvas instead of snapping to the new env's design. */}
-			<motion.div
-				key={environmentId ?? "default"}
-				initial={{ opacity: 0 }}
-				animate={{ opacity: 1 }}
-				transition={{ duration: 0.15 }}
-				className="h-full"
-			>
+			{/* Keyed by the active environment so switching envs (picker / Shift+Tab) remounts it and
+			    fades the new env's design in (`canvas-env-in`, app/globals.css) instead of snapping. */}
+			<div key={environmentId ?? "default"} className="canvas-env-in h-full">
 				<CanvasFlow
 					onPaneContextMenu={contextMenu.onPaneContextMenu}
 					onNodeContextMenu={contextMenu.onNodeContextMenu}
 					onSelectionContextMenu={contextMenu.onSelectionContextMenu}
 				/>
-			</motion.div>
+			</div>
 
 			{/* A board with nothing designed on it says what to do next (F037), instead of an empty
 			    dotted plane. Not while an IaC module governs the env: there is nothing to add. */}
