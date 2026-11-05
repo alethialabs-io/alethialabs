@@ -15,7 +15,7 @@ import {
 	byoNamespacePrefixMessage,
 } from "@/lib/validations/byo-charts";
 import { byoReservedNamespaceReason } from "@/lib/validations/byo-reserved-namespaces";
-import { ADDON_ID_MAX_LENGTH, chartSlug } from "@/lib/validations/names";
+import { ADDON_ID_MAX_LENGTH, chartSlug, isDns1123Label } from "@/lib/validations/names";
 
 const CASES: [id: string, want: string][] = [
 	["payments", "byo-payments"],
@@ -41,7 +41,7 @@ describe("byoChartNamespace", () => {
 			expect(byoReservedNamespaceReason(ns)).toBeNull();
 			expect(byoNamespacePrefixMessage(ns, id)).toBeNull();
 			expect(ns.length).toBeLessThanOrEqual(63);
-			expect(ns).toMatch(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/);
+			expect(isDns1123Label(ns)).toBe(true);
 			expect(seen.has(ns)).toBe(false);
 			seen.add(ns);
 		}

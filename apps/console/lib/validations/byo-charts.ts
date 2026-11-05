@@ -76,8 +76,8 @@ function fnv1a32Hex(s: string): string {
 /**
  * The namespace a BYO chart deploys into when none of its own is chosen: `byo-<chart id>` (#6446).
  * Past 63 characters it is cut further and ends in `-` + an 8-hex hash of the WHOLE id, so two long
- * ids that share a prefix still get two namespaces. Mirrors the Go `argocd.ByoChartNamespace`; both
- * sides pin the same table of literal cases (tests/lib/validations/byo-charts-namespace.test.ts and
+ * ids that share a prefix still get two namespaces. The Go `argocd.ByoChartNamespace` derives the same
+ * name; the two are held together by the same table of literal cases on each side (tests/lib/validations/byo-charts-namespace.test.ts and
  * packages/core/argocd/byo_oci_test.go). `chartId` is the add-on id — `chartSlug` of the name.
  */
 export function byoChartNamespace(chartId: string): string {
