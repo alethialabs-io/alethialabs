@@ -104,6 +104,31 @@ describe("DateRangeFilter", () => {
 		expect(range.from.getTime()).toBeLessThan(range.to.getTime());
 	});
 
+	// The draft is reset when the popover OPENS (#6146 moved that from an effect into the open
+	// handler): an edit abandoned by closing without Apply must not be what the next opening shows.
+	it("discards an un-applied edit when the popover is closed and reopened", async () => {
+		const user = userEvent.setup();
+		const value = {
+			from: new Date("2026-05-04T12:00:00.000Z"),
+			to: new Date("2026-05-11T12:00:00.000Z"),
+		};
+		const onChange = vi.fn();
+		render(<DateRangeFilter value={value} onChange={onChange} defaultTimeZone="UTC" />);
+
+		await user.click(screen.getByRole("button", { name: /–|—/ }));
+		const draft = document.querySelectorAll<HTMLInputElement>('input[type="date"]');
+		fireEvent.change(draft[0], { target: { value: "2026-06-01" } });
+		expect(draft[0].value).toBe("2026-06-01");
+
+		await user.keyboard("{Escape}");
+		await user.click(screen.getByRole("button", { name: /–|—/ }));
+
+		const reopened = document.querySelectorAll<HTMLInputElement>('input[type="date"]');
+		expect(reopened[0].value).toBe("2026-05-04");
+		expect(reopened[1].value).toBe("2026-05-11");
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it("renders the timezone selector with the local zone", async () => {
 		const user = userEvent.setup();
 		renderFilter();

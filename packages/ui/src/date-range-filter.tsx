@@ -14,7 +14,7 @@
 
 import { format } from "date-fns";
 import { CalendarDays } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   type DateRange,
   formatInZone,
@@ -57,6 +57,21 @@ const TRIGGER_PLACEHOLDER = "Date range";
 // label differs from it by a few characters, which moves its neighbours a few pixels, not a width.
 const TRIGGER_SIZER = "Mmm 00, 00:00xx - Mmm 00, 00:00xx";
 
+/** Nothing changes after mount, so there is nothing to subscribe to. */
+function subscribeNever(): () => void {
+  return () => {};
+}
+
+/** In the browser, past hydration. */
+function getClientSnapshot(): boolean {
+  return true;
+}
+
+/** On the server, and during the render that hydrates the server's HTML. */
+function getServerSnapshot(): boolean {
+  return false;
+}
+
 /** A bare date/time input pair styled to match the design system. */
 function inputCls() {
   return "h-8 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-2 text-[12px] text-text-primary outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/50";
@@ -84,18 +99,21 @@ export function DateRangeFilter({
   // Gating on mount is the fix rather than `suppressHydrationWarning`, which suppresses the
   // REPORT and leaves the server's wrong wall-clock on screen. The committed range is unchanged
   // and the popover is closed during SSR, so nothing else here reaches the server's HTML.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // `useSyncExternalStore` answers "past hydration?" without a mount effect: false for the server
+  // render and the hydrating one, true for every render after and for a client-only mount.
+  const mounted = useSyncExternalStore(subscribeNever, getClientSnapshot, getServerSnapshot);
 
   const tzOptions = useMemo(() => timeZoneOptions(), []);
 
-  // Reset the draft to the committed value whenever the popover (re)opens.
-  useEffect(() => {
-    if (open) {
+  /** Open or close the popover; opening resets the draft to the committed value, so an edit
+   * abandoned by closing without Apply is not what the next opening shows. */
+  function onOpenChange(next: boolean) {
+    if (next) {
       setFrom(value.from);
       setTo(value.to);
     }
-  }, [open, value.from, value.to]);
+    setOpen(next);
+  }
 
   // Derived display fields (all in the chosen tz).
   const fromDate = formatInZone(from, tz, "yyyy-MM-dd");
@@ -129,7 +147,7 @@ export function DateRangeFilter({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={
           <Button variant="outline" size="sm" className="gap-1.5">
