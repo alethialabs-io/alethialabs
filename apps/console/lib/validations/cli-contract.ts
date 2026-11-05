@@ -157,6 +157,9 @@ export const jobWire = createSelectSchema(jobs, {
 	config_snapshot_sig: true,
 	// Internal approval dedupe digest (#5797) — matched server-side, never on the CLI wire.
 	idempotency_key: true,
+	// Internal claim routing (#6458) — the runner capabilities a job needs, derived by a trigger and
+	// read only by claim_next_job, never on the CLI wire.
+	required_capabilities: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
