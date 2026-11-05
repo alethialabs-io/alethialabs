@@ -71,10 +71,8 @@ describe("useMentionSearch", () => {
 
 	// Fails if closing does not drop the answer: the next open would show the old list.
 	it("closing drops the list, so the next open starts empty", async () => {
-		const { result: r, rerender } = renderHook(
-			({ a }: { a: MentionAnchor | null }) => useMentionSearch(a),
-			{ initialProps: { a: at("p") } },
-		);
+		const initialProps: { a: MentionAnchor | null } = { a: at("p") };
+		const { result: r, rerender } = renderHook(({ a }) => useMentionSearch(a), { initialProps });
 		await settle();
 		rerender({ a: null });
 		expect(r.current).toEqual({ results: [], loading: false });
