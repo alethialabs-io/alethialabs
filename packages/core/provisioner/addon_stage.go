@@ -10,7 +10,6 @@ import (
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
-	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -119,12 +118,11 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// AppProject now denies those kinds, so ArgoCD no longer manages them and nothing else would
 	// (argocd.SweepByoSecretSyncObjects). The keep set is the declared bindings, so the sweep is
 	// skipped outright when any binding failed: the set is then incomplete, and an object it would
-	// miss could be one the runner applied. A kept binding must be exactly the runner's own object; one
-	// that is not is deleted by the sweep and applied again here, in a second pass over exactly those
-	// names, so the binding is not missing until the next deploy.
-	out.Warnings = append(out.Warnings, sweepByoSecretSync(out.Bindings, func(names []argocd.BindingSecretRef) byoBindingState {
-		return applyByoChartBindingsExcept(withOnlyByoBindings(vc, names), in.Outputs, in.Provider, out.Refused, stdout, stderr)
-	}, stdout, stderr)...)
+	// miss could be one the runner applied. A kept binding must be exactly the runner's own object: the
+	// sweep holds each one's live spec to the document rendered for it here, restoring it in place
+	// when it differs.
+	rendered := renderedByoBindings(vc, in.Outputs, in.Provider, out.Refused)
+	out.Warnings = append(out.Warnings, sweepByoSecretSync(out.Bindings, rendered, stdout, stderr)...)
 
 	// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 	// Applications render — the same seam, and the same reason, as the bindings above: the value
@@ -175,63 +173,14 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 const sweepByoSecretSyncSkipped = "The runner did not check this environment's bring-your-own chart namespaces " +
 	"for secret-sync objects on this deploy, because a binding failed to render or apply. It checks again on the next deploy."
 
-// sweepByoSecretSyncReapplyFailed is the Deploy-tab warning for a replaced binding that could not be
-// applied again on this deploy.
-const sweepByoSecretSyncReapplyFailed = "The runner replaced a bring-your-own chart binding secret but could not apply it " +
-	"again on this deploy (see the deploy log). The workload that uses it is without that credential until the next deploy."
-
-// sweepByoSecretSync runs the BYO secret-sync sweep over this deploy's declared bindings, or skips
-// it when any binding failed, then re-applies through reapply the bindings the sweep replaced.
-// Returns the Deploy-tab warnings.
-func sweepByoSecretSync(st byoBindingState, reapply func([]argocd.BindingSecretRef) byoBindingState, stdout, stderr io.Writer) []string {
+// sweepByoSecretSync runs the BYO secret-sync sweep over this deploy's declared bindings and the
+// documents rendered for them, or skips it when any binding failed. Returns the Deploy-tab warnings.
+func sweepByoSecretSync(st byoBindingState, rendered map[argocd.BindingSecretRef]string, stdout, stderr io.Writer) []string {
 	if st.Failures > 0 {
 		fmt.Fprintf(stderr, "Warning: skipping the BYO secret-sync sweep: %d binding(s) failed to render or apply on this deploy\n", st.Failures)
 		return []string{sweepByoSecretSyncSkipped}
 	}
-	res := sweepByoSecretSyncObjects(st.Owner, st.Declared, stdout, stderr)
-	warnings := res.Warnings
-	if len(res.Reapply) > 0 {
-		if again := reapply(res.Reapply); again.Failures > 0 {
-			warnings = append(warnings, sweepByoSecretSyncReapplyFailed)
-		}
-	}
-	return warnings
-}
-
-// withOnlyByoBindings is vc reduced to the workload bindings whose binding ExternalSecret is one of
-// names, so the binding apply renders and applies exactly those. Every add-on keeps its Values map,
-// so the second pass writes the same value-paths the first one did.
-func withOnlyByoBindings(vc *types.ProjectConfig, names []argocd.BindingSecretRef) *types.ProjectConfig {
-	want := make(map[argocd.BindingSecretRef]bool, len(names))
-	for _, n := range names {
-		want[argocd.BindingSecretRef{Namespace: n.Namespace, Name: n.Name}] = true
-	}
-	cp := *vc
-	cp.AddOns = nil
-	for _, a := range vc.AddOns {
-		ns := a.Namespace
-		if ns == "" {
-			ns = "default" // the binding renderer's default
-		}
-		var workloads []types.ChartWorkloadBinding
-		for _, w := range a.Workloads {
-			var bindings []types.ServiceBinding
-			for _, b := range w.Bindings {
-				if want[argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, b.Target)}] {
-					bindings = append(bindings, b)
-				}
-			}
-			if len(bindings) > 0 {
-				w.Bindings = bindings
-				workloads = append(workloads, w)
-			}
-		}
-		if len(workloads) > 0 {
-			a.Workloads = workloads
-			cp.AddOns = append(cp.AddOns, a)
-		}
-	}
-	return &cp
+	return sweepByoSecretSyncObjects(st.Owner, st.Declared, rendered, stdout, stderr)
 }
 
 // sweepByoSecretSyncObjects is the cluster call, a variable so the stage test can observe it.

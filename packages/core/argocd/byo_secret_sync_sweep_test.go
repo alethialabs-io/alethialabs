@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // sweepNS renders a namespace list payload: each entry is a name and its labels.
@@ -25,53 +27,13 @@ func byoNSLabels(env string) map[string]string {
 	return map[string]string{byoNamespaceManagedByLabel: byoNamespaceManagedByValue, ByoBindingOwnerLabel: env}
 }
 
-// sweepObj is one listed object: its name, the field managers of its own writes, and whether its
-// spec carries a dataFrom.
-type sweepObj struct {
-	name     string
-	labels   map[string]string
-	managers []string
-	dataFrom bool
-}
-
-// runnerObj is an object the runner alone wrote, with ESO's status write beside it.
-func runnerObj(name string) sweepObj {
-	return sweepObj{name: name, labels: owned("env-1"), managers: []string{ByoBindingFieldManager}}
-}
-
-// sweepObjects renders a raw list of one kind in ns, every object carrying testUID. Every object
-// also carries ESO's status-subresource write, which the ownership check must not read.
-func sweepObjects(t *testing.T, ns string, items ...sweepObj) string {
+// sweepObjects renders a raw list of one kind, every object carrying testUID.
+func sweepObjects(t *testing.T, ns string, items ...esItem) string {
 	t.Helper()
-	type mf struct {
-		Manager     string `json:"manager"`
-		Operation   string `json:"operation"`
-		Subresource string `json:"subresource,omitempty"`
+	for i := range items {
+		items[i].ns = ns
 	}
-	var out struct {
-		Items []map[string]any `json:"items"`
-	}
-	out.Items = []map[string]any{}
-	for _, it := range items {
-		fields := []mf{{Manager: "external-secrets", Operation: "Update", Subresource: "status"}}
-		for _, m := range it.managers {
-			fields = append(fields, mf{Manager: m, Operation: "Update"})
-		}
-		spec := map[string]any{"data": []any{map[string]any{"secretKey": "password"}}}
-		if it.dataFrom {
-			spec["dataFrom"] = []any{map[string]any{"find": map[string]any{"name": map[string]any{"regexp": ".*"}}}}
-		}
-		out.Items = append(out.Items, map[string]any{
-			"apiVersion": "external-secrets.io/v1beta1",
-			"metadata":   map[string]any{"name": it.name, "namespace": ns, "uid": testUID, "labels": it.labels, "managedFields": fields},
-			"spec":       spec,
-		})
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
+	return listOf(t, items...)
 }
 
 // sweepDiscovery are the discovery answers for ESO 0.9.20's groups, most specific path first
@@ -106,7 +68,7 @@ const emptyList = `{"items":[]}`
 // discovery. Any other listing answers empty.
 func sweepStub(t *testing.T, namespaces string, lists ...stubRule) *kubectlStub {
 	t.Helper()
-	rules := []stubRule{{Match: "get namespaces", Stdout: namespaces}, {Match: "delete --raw", Stdout: `{"kind":"ExternalSecret"}`}, {Match: "wait --for=delete"}}
+	rules := []stubRule{{Match: "get namespaces", Stdout: namespaces}, {Match: "delete --raw", Stdout: `{"kind":"ExternalSecret"}`}}
 	rules = append(rules, lists...)
 	rules = append(rules, stubRule{Match: "/namespaces/", Stdout: emptyList})
 	rules = append(rules, sweepDiscovery(t)...)
@@ -126,23 +88,19 @@ func TestSweepByoSecretSync_RemovesOnlyWhatNoBindingDeclares(t *testing.T) {
 	stub := sweepStub(t,
 		sweepNS(t, map[string]map[string]string{"byo-pay": byoNSLabels("env-1")}),
 		stubRule{Match: "get --raw /apis/external-secrets.io/v1beta1/namespaces/byo-pay/externalsecrets", Stdout: sweepObjects(t, "byo-pay",
-			runnerObj("api-db"),
-			sweepObj{name: "chart-made", managers: []string{"argocd-controller"}},
-			sweepObj{name: "forged", labels: owned("env-1"), managers: []string{ByoBindingFieldManager}},
+			esItem{name: "api-db", labels: owned("env-1")},
+			esItem{name: "chart-made"},
+			esItem{name: "forged", labels: owned("env-1")},
 		)},
 		stubRule{Match: "get --raw /apis/external-secrets.io/v1beta1/namespaces/byo-pay/secretstores", Stdout: sweepObjects(t, "byo-pay",
-			sweepObj{name: "api-db", managers: []string{"argocd-controller"}},
+			esItem{name: "api-db"},
 		)},
 		stubRule{Match: "get --raw /apis/generators.external-secrets.io/v1alpha1/namespaces/byo-pay/passwords", Stdout: sweepObjects(t, "byo-pay",
-			sweepObj{name: "pw", managers: []string{"argocd-controller"}},
+			esItem{name: "pw"},
 		)},
 	)
 	var stdout, stderr bytes.Buffer
-	res := SweepByoSecretSyncObjects("env-1", []BindingSecretRef{{Namespace: "byo-pay", Name: "api-db"}}, &stdout, &stderr)
-	warnings := res.Warnings
-	if len(res.Reapply) != 0 {
-		t.Errorf("a binding that is exactly the runner's own was marked for re-apply: %v", res.Reapply)
-	}
+	warnings := SweepByoSecretSyncObjects("env-1", []BindingSecretRef{{Namespace: "byo-pay", Name: "api-db"}}, nil, &stdout, &stderr)
 
 	if stub.calledWith(sweepDelete("external-secrets.io/v1beta1", "byo-pay", "externalsecrets", "api-db")) {
 		t.Errorf("the declared binding ExternalSecret was deleted; calls: %v", stub.calls())
@@ -185,7 +143,7 @@ func TestSweepByoSecretSync_OnlyThisEnvironmentsBYONamespaces(t *testing.T) {
 		"default":   byoNSLabels("env-1"),
 	}))
 	var stdout, stderr bytes.Buffer
-	warnings := SweepByoSecretSyncObjects("env-1", nil, &stdout, &stderr).Warnings
+	warnings := SweepByoSecretSyncObjects("env-1", nil, nil, &stdout, &stderr)
 
 	for _, ns := range []string{"byo-other", "plain", "default"} {
 		if stub.calledWith("/namespaces/" + ns + "/") {
@@ -205,11 +163,11 @@ func TestSweepByoSecretSync_OnlyThisEnvironmentsBYONamespaces(t *testing.T) {
 func TestSweepByoSecretSync_AFailedReadDeletesNothing(t *testing.T) {
 	stub := sweepStub(t,
 		sweepNS(t, map[string]map[string]string{"byo-a": byoNSLabels("env-1"), "byo-b": byoNSLabels("env-1")}),
-		stubRule{Match: "/namespaces/byo-a/externalsecrets", Stdout: sweepObjects(t, "byo-a", sweepObj{name: "chart-made"})},
+		stubRule{Match: "/namespaces/byo-a/externalsecrets", Stdout: sweepObjects(t, "byo-a", esItem{name: "chart-made"})},
 		stubRule{Match: "/namespaces/byo-b/secretstores", Exit: 1},
 	)
 	var stdout, stderr bytes.Buffer
-	warnings := SweepByoSecretSyncObjects("env-1", nil, &stdout, &stderr).Warnings
+	warnings := SweepByoSecretSyncObjects("env-1", nil, nil, &stdout, &stderr)
 	if stub.calledWith("delete") || len(warnings) != 0 {
 		t.Errorf("a sweep with a failed read deleted something; calls: %v", stub.calls())
 	}
@@ -222,53 +180,172 @@ func TestSweepByoSecretSync_AFailedReadDeletesNothing(t *testing.T) {
 func TestSweepByoSecretSync_RefusesAnUnusableOwner(t *testing.T) {
 	stub := sweepStub(t, emptyList)
 	var stdout, stderr bytes.Buffer
-	if w := SweepByoSecretSyncObjects("env 1;rm", nil, &stdout, &stderr).Warnings; len(w) != 0 || len(stub.calls()) != 0 {
+	if w := SweepByoSecretSyncObjects("env 1;rm", nil, nil, &stdout, &stderr); len(w) != 0 || len(stub.calls()) != 0 {
 		t.Errorf("an unusable owner reached kubectl; calls: %v", stub.calls())
 	}
 }
 
-// TestSweepByoSecretSync_ReplacesABindingThatIsNotTheRunnersOwn: a kept binding must be exactly the
-// runner's own object. An object at a declared binding's name that another field manager also wrote,
-// or whose spec carries a dataFrom, is deleted, waited out, and returned for re-apply; a binding the
-// runner alone wrote is untouched.
-func TestSweepByoSecretSync_ReplacesABindingThatIsNotTheRunnersOwn(t *testing.T) {
-	stub := sweepStub(t,
-		sweepNS(t, map[string]map[string]string{"byo-pay": byoNSLabels("env-1")}),
-		stubRule{Match: "get --raw /apis/external-secrets.io/v1beta1/namespaces/byo-pay/externalsecrets", Stdout: sweepObjects(t, "byo-pay",
-			runnerObj("clean"),
-			sweepObj{name: "taken", labels: owned("env-1"), managers: []string{"argocd-controller", ByoBindingFieldManager}, dataFrom: true},
-			sweepObj{name: "widened", labels: owned("env-1"), managers: []string{ByoBindingFieldManager}, dataFrom: true},
-			sweepObj{name: "unknown", labels: owned("env-1")},
-		)},
-	)
-	declared := []BindingSecretRef{
-		{Namespace: "byo-pay", Name: "clean"}, {Namespace: "byo-pay", Name: "taken"},
-		{Namespace: "byo-pay", Name: "widened"}, {Namespace: "byo-pay", Name: "unknown"},
-	}
-	var stdout, stderr bytes.Buffer
-	res := SweepByoSecretSyncObjects("env-1", declared, &stdout, &stderr)
+// renderedBinding is a binding ExternalSecret document in the shape the runner's renderer writes.
+const renderedBinding = `apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: api-db
+  namespace: byo-pay
+  labels:
+    app.kubernetes.io/name: api-db
+    app.kubernetes.io/managed-by: alethia
+    alethia.io/byo-binding: "true"
+    alethia.io/environment-id: "env-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: secretstore-aws
+    kind: ClusterSecretStore
+  target:
+    name: api-db
+    creationPolicy: Owner
+  data:
+    - secretKey: password
+      remoteRef:
+        key: acme/rds/master
+        property: password
+`
 
-	if stub.calledWith("/externalsecrets/clean ") {
-		t.Errorf("the runner's own binding was deleted; calls: %v", stub.calls())
+// liveBindingSpec is renderedBinding's spec as the API server stores it: ESO's CRD defaults filled
+// in, and refreshInterval spelled another way.
+func liveBindingSpec() map[string]any {
+	return map[string]any{
+		"refreshInterval": "1h0m0s",
+		"secretStoreRef":  map[string]any{"name": "secretstore-aws", "kind": "ClusterSecretStore"},
+		"target":          map[string]any{"name": "api-db", "creationPolicy": "Owner", "deletionPolicy": "Retain"},
+		"data": []any{map[string]any{"secretKey": "password", "remoteRef": map[string]any{
+			"key": "acme/rds/master", "property": "password",
+			"conversionStrategy": "Default", "decodingStrategy": "None", "metadataPolicy": "None",
+		}}},
 	}
-	want := map[string]bool{"taken": true, "widened": true, "unknown": true}
-	for name := range want {
-		if !stub.calledWith(sweepDelete("external-secrets.io/v1beta1", "byo-pay", "externalsecrets", name)) {
-			t.Errorf("binding %s was not replaced; calls: %v", name, stub.calls())
+}
+
+// liveBindingList renders one listed ExternalSecret api-db in byo-pay with the given spec.
+func liveBindingList(t *testing.T, spec map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"apiVersion": "external-secrets.io/v1beta1",
+		"metadata":   map[string]any{"name": "api-db", "namespace": "byo-pay", "uid": testUID, "resourceVersion": "4242"},
+		"spec":       spec,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// restoreStub is a cluster with one BYO namespace holding the given api-db; replaceExit is how a
+// replace answers.
+func restoreStub(t *testing.T, spec map[string]any, replaceExit int) *kubectlStub {
+	t.Helper()
+	return newKubectlStub(t, 0, append([]stubRule{
+		{Match: "get namespaces", Stdout: sweepNS(t, map[string]map[string]string{"byo-pay": byoNSLabels("env-1")})},
+		{Match: "replace -f -", Exit: replaceExit},
+		{Match: "/namespaces/byo-pay/externalsecrets", Stdout: liveBindingList(t, spec)},
+		{Match: "/namespaces/", Stdout: emptyList},
+	}, sweepDiscovery(t)...)...)
+}
+
+// sweepRestore runs the sweep over the one declared binding api-db, rendered as renderedBinding.
+func sweepRestore() ([]string, string) {
+	var stdout, stderr bytes.Buffer
+	ref := BindingSecretRef{Namespace: "byo-pay", Name: "api-db"}
+	w := SweepByoSecretSyncObjects("env-1", []BindingSecretRef{ref}, map[BindingSecretRef]string{ref: renderedBinding}, &stdout, &stderr)
+	return w, stderr.String()
+}
+
+// TestSweepByoSecretSync_RestoresASquattedBindingInPlace: a kept binding must be exactly the runner's
+// own object. A live object at the binding's name whose spec carries a dataFrom is replaced with the
+// rendered object, pinned to its uid and resourceVersion: the result's spec is exactly the rendered
+// one, and nothing at that name is deleted.
+func TestSweepByoSecretSync_RestoresASquattedBindingInPlace(t *testing.T) {
+	spec := liveBindingSpec()
+	spec["dataFrom"] = []any{map[string]any{"find": map[string]any{"name": map[string]any{"regexp": ".*"}}}}
+	stub := restoreStub(t, spec, 0)
+	warnings, stderr := sweepRestore()
+
+	if stub.calledWith("delete") {
+		t.Fatalf("a kept binding was deleted; calls: %v", stub.calls())
+	}
+	if !stub.calledWith("replace -f -") {
+		t.Fatalf("the squatted binding was not replaced; calls: %v\nstderr: %s", stub.calls(), stderr)
+	}
+	var sent struct {
+		Metadata struct {
+			Name            string `json:"name"`
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"metadata"`
+		Spec map[string]any `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(stub.appliedManifests()), &sent); err != nil {
+		t.Fatalf("the replace body is not one JSON object: %v\n%s", err, stub.appliedManifests())
+	}
+	if sent.Metadata.UID != testUID || sent.Metadata.ResourceVersion != "4242" {
+		t.Errorf("the replace is not pinned to the live uid and resourceVersion: %+v", sent.Metadata)
+	}
+	var want struct {
+		Spec map[string]any `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(renderedBinding), &want); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := sent.Spec["dataFrom"]; has || !byoBindingSpecMatches(sent.Spec, want.Spec) {
+		t.Errorf("the replaced spec is not exactly the rendered one: %v", sent.Spec)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `restored binding ExternalSecret "api-db"`) {
+		t.Errorf("the restore was not reported: %q", warnings)
+	}
+}
+
+// TestSweepByoSecretSync_RestoresAChangedStore: the comparison is the whole spec, so a binding whose
+// store reference was changed is restored too.
+func TestSweepByoSecretSync_RestoresAChangedStore(t *testing.T) {
+	spec := liveBindingSpec()
+	spec["secretStoreRef"] = map[string]any{"name": "chart-store", "kind": "SecretStore"}
+	stub := restoreStub(t, spec, 0)
+	sweepRestore()
+	if !stub.calledWith("replace -f -") {
+		t.Errorf("a binding pointed at another store was not restored; calls: %v", stub.calls())
+	}
+}
+
+// TestSweepByoSecretSync_LeavesTheRunnersOwnBindingUnwritten: a live binding whose spec is the
+// rendered one plus ESO's CRD defaults is not written at all.
+func TestSweepByoSecretSync_LeavesTheRunnersOwnBindingUnwritten(t *testing.T) {
+	stub := restoreStub(t, liveBindingSpec(), 0)
+	warnings, _ := sweepRestore()
+	if stub.calledWith("replace") || stub.calledWith("delete") || len(warnings) != 0 {
+		t.Errorf("the runner's own binding was written; calls: %v, warnings: %q", stub.calls(), warnings)
+	}
+}
+
+// TestSweepByoSecretSync_AConflictIsReportedNotRetried: a replace the API server refuses (the object
+// changed since it was read) is reported once, on the Deploy tab, and not retried.
+func TestSweepByoSecretSync_AConflictIsReportedNotRetried(t *testing.T) {
+	spec := liveBindingSpec()
+	spec["dataFrom"] = []any{map[string]any{"extract": map[string]any{"key": "anything"}}}
+	stub := restoreStub(t, spec, 1)
+	warnings, _ := sweepRestore()
+
+	n := 0
+	for _, c := range stub.calls() {
+		if strings.HasPrefix(c, "replace") {
+			n++
 		}
-		if !stub.calledWith("wait --for=delete externalsecrets.external-secrets.io/" + name + " -n byo-pay") {
-			t.Errorf("the delete of %s was not waited out before the re-apply; calls: %v", name, stub.calls())
-		}
 	}
-	if len(res.Reapply) != len(want) {
-		t.Fatalf("reapply = %v, want exactly %v", res.Reapply, want)
+	if n != 1 {
+		t.Errorf("replace was issued %d time(s), want exactly once; calls: %v", n, stub.calls())
 	}
-	for _, r := range res.Reapply {
-		if r.Namespace != "byo-pay" || !want[r.Name] {
-			t.Errorf("unexpected re-apply %+v", r)
-		}
+	if stub.calledWith("delete") {
+		t.Errorf("a refused replace fell back to a delete; calls: %v", stub.calls())
 	}
-	if !strings.Contains(strings.Join(res.Warnings, "\n"), `replaced binding ExternalSecret "taken"`) {
-		t.Errorf("the replacement was not reported: %q", res.Warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "could not restore it on this deploy") {
+		t.Errorf("the refused replace was not reported: %q", warnings)
 	}
 }

@@ -7,32 +7,28 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 )
 
-// stubSweep replaces the cluster call for one test and records what it was handed. reapply is what
-// the stubbed sweep reports it replaced.
-func stubSweep(t *testing.T, reapply ...argocd.BindingSecretRef) *[][]argocd.BindingSecretRef {
+// lastRendered is the rendered-document map the stubbed sweep was last handed.
+var lastRendered map[argocd.BindingSecretRef]string
+
+// stubSweep replaces the cluster call for one test and records what it was handed.
+func stubSweep(t *testing.T) *[][]argocd.BindingSecretRef {
 	t.Helper()
 	var got [][]argocd.BindingSecretRef
 	orig := sweepByoSecretSyncObjects
-	sweepByoSecretSyncObjects = func(owner string, declared []argocd.BindingSecretRef, _, _ io.Writer) argocd.ByoSecretSyncSweep {
+	sweepByoSecretSyncObjects = func(owner string, declared []argocd.BindingSecretRef, rendered map[argocd.BindingSecretRef]string, _, _ io.Writer) []string {
 		got = append(got, declared)
-		return argocd.ByoSecretSyncSweep{Warnings: []string{"deleted one"}, Reapply: reapply}
+		lastRendered = rendered
+		return []string{"deleted one"}
 	}
 	t.Cleanup(func() { sweepByoSecretSyncObjects = orig })
 	return &got
-}
-
-// noReapply is a re-apply pass that must not run.
-func noReapply(t *testing.T) func([]argocd.BindingSecretRef) byoBindingState {
-	return func(names []argocd.BindingSecretRef) byoBindingState {
-		t.Errorf("a re-apply ran for %v although nothing was replaced", names)
-		return byoBindingState{}
-	}
 }
 
 // TestSweepByoSecretSync_SkipsWhenABindingFailed: the keep set is the declared bindings, and a
@@ -41,7 +37,7 @@ func noReapply(t *testing.T) func([]argocd.BindingSecretRef) byoBindingState {
 func TestSweepByoSecretSync_SkipsWhenABindingFailed(t *testing.T) {
 	got := stubSweep(t)
 	var stdout, stderr bytes.Buffer
-	w := sweepByoSecretSync(byoBindingState{Owner: "env-1", Failures: 1}, noReapply(t), &stdout, &stderr)
+	w := sweepByoSecretSync(byoBindingState{Owner: "env-1", Failures: 1}, nil, &stdout, &stderr)
 	if len(*got) != 0 {
 		t.Fatalf("the sweep ran although a binding failed")
 	}
@@ -56,7 +52,7 @@ func TestSweepByoSecretSync_PassesTheDeclaredBindings(t *testing.T) {
 	got := stubSweep(t)
 	declared := []argocd.BindingSecretRef{{Namespace: "byo-pay", Name: "api-db"}}
 	var stdout, stderr bytes.Buffer
-	w := sweepByoSecretSync(byoBindingState{Owner: "env-1", Declared: declared}, noReapply(t), &stdout, &stderr)
+	w := sweepByoSecretSync(byoBindingState{Owner: "env-1", Declared: declared}, nil, &stdout, &stderr)
 	if len(*got) != 1 || len((*got)[0]) != 1 || (*got)[0][0] != declared[0] {
 		t.Fatalf("the sweep was not handed the declared bindings: %v", *got)
 	}
@@ -88,46 +84,47 @@ func TestRunAddOnStage_SweepsAfterTheBindings(t *testing.T) {
 	if len((*got)[0]) == 0 || len((*got)[0]) != len(stage.Bindings.Declared) {
 		t.Errorf("the sweep was handed %v, want the declared bindings %v", (*got)[0], stage.Bindings.Declared)
 	}
+	for _, d := range stage.Bindings.Declared {
+		if lastRendered[d] == "" {
+			t.Errorf("the sweep was not handed the rendered document for %+v: %v", d, lastRendered)
+		}
+	}
 	if !strings.Contains(strings.Join(stage.Warnings, "\n"), "deleted one") {
 		t.Errorf("the sweep's warning did not reach the Deploy tab: %q", stage.Warnings)
 	}
 }
 
-// TestRunAddOnStage_ReappliesAReplacedBinding: a binding the sweep replaced, because the live object
-// was not exactly the runner's own, is applied again in the same stage, rendered clean, and nothing
-// else is applied a second time.
-func TestRunAddOnStage_ReappliesAReplacedBinding(t *testing.T) {
-	c := newByoCluster(t, "")
-	stubSweep(t, argocd.BindingSecretRef{Namespace: "apps", Name: "api-database-primary"})
+// TestRenderedByoBindings_MatchesWhatTheBindingApplyApplies holds renderedByoBindings to the documents
+// applyByoChartBindingsExcept actually applies, byte for byte. The sweep restores a live binding to
+// the rendered document, so a renderer that drifted from the apply would rewrite every binding on
+// every deploy.
+func TestRenderedByoBindings_MatchesWhatTheBindingApplyApplies(t *testing.T) {
+	c := newBindingCluster(t, `{"items":[]}`, 0)
 	vc := byoBindingConfig("env-1", true)
 	worker := vc.AddOns[0].Workloads[0]
 	worker.Name = "worker"
 	vc.AddOns[0].Workloads = append(vc.AddOns[0].Workloads, worker)
+	outputs := map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}
 
-	stage, err := runAddOnStage(context.Background(), addOnStageInput{
-		VC:             vc,
-		Facts:          &argocd.InfraFacts{},
-		Outputs:        map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret},
-		Provider:       "aws",
-		GitAccessToken: "tok",
-		Refresh:        func(context.Context, string) error { return nil },
-	}, io.Discard, io.Discard)
+	applyByoChartBindingsExcept(vc, outputs, "aws", nil, io.Discard, io.Discard)
+	raw, err := os.ReadFile(c.applied)
 	if err != nil {
-		t.Fatalf("runAddOnStage: %v", err)
+		t.Fatalf("nothing was applied: %v", err)
 	}
-	applied := map[string]int{}
-	for _, d := range c.docs(t) {
-		if d.Kind == "ExternalSecret" {
-			applied[d.Metadata.Namespace+"/"+d.Metadata.Name]++
+	applied := string(raw)
+
+	rendered := renderedByoBindings(vc, outputs, "aws", nil)
+	if len(rendered) != 2 {
+		t.Fatalf("rendered %d binding(s), want 2: %v", len(rendered), rendered)
+	}
+	total := 0
+	for ref, doc := range rendered {
+		if !strings.Contains(applied, doc) {
+			t.Errorf("the rendered %s/%s is not what the apply applied:\nrendered:\n%s\napplied:\n%s", ref.Namespace, ref.Name, doc, applied)
 		}
+		total += len(doc)
 	}
-	if applied["apps/api-database-primary"] != 2 {
-		t.Errorf("the replaced binding was applied %d time(s), want twice (the pass and the re-apply); applied: %v", applied["apps/api-database-primary"], applied)
-	}
-	if applied["apps/worker-database-primary"] != 1 {
-		t.Errorf("a binding the sweep kept was applied %d time(s), want once; applied: %v", applied["apps/worker-database-primary"], applied)
-	}
-	if strings.Contains(stage.Warnings[len(stage.Warnings)-1], "could not apply it again") {
-		t.Errorf("the re-apply reported a failure: %q", stage.Warnings)
+	if total != len(applied) {
+		t.Errorf("the apply applied %d bytes but the rendered documents are %d: one side has a document the other lacks", len(applied), total)
 	}
 }
