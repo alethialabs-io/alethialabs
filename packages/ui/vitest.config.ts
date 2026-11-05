@@ -23,7 +23,7 @@ export default defineConfig({
 			// `react-phone-number-input/flags` is ~250 full SVG flag components. #1452 cut the
 			// phone-input tests' cost by passing the library's `countries` prop, but CountrySelect
 			// takes no such prop — it renders COUNTRY_OPTIONS straight from countries.ts
-			// (country-select.tsx:88), so every popover-open still mounts the entire set in jsdom.
+			// (`CountryCommand` in country-select.tsx), so every popover-open still mounts the entire set in jsdom.
 			// That left country-select.test.tsx the slowest file in the package at ~50s, with its
 			// worst test ~1.5s under the old per-test budget. Swapping a shape-compatible stub in
 			// fixes it at the source, for both files. See tests/stubs/flags.tsx.
@@ -60,6 +60,7 @@ export default defineConfig({
 				"src/provider-icon.tsx",
 				"src/copy-button.tsx",
 				"src/copy-text.ts",
+				"src/command-search.ts",
 				"src/status-badge.tsx",
 				"src/filter-bar.tsx",
 				"src/filter-chip.tsx",

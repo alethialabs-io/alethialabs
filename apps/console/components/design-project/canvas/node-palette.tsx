@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ArrowLeft, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
 import type { CloudIdentityOption } from "@/app/server/actions/aws/identities";
 import {
@@ -20,6 +20,7 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@repo/ui/command";
+import { groupResults, rankItems } from "@repo/ui/command-search";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import {
@@ -55,6 +56,23 @@ interface ServiceEntry {
 	kind?: NodeKind;
 	comingSoon?: boolean;
 }
+
+/** One palette row: its group, the ONE string its search matches, and what it shows and runs. */
+interface PaletteRow {
+	id: string;
+	group: string;
+	/** What the shared ranker matches (the row's label and its secondary text). */
+	searchText: string;
+	disabled?: boolean;
+	onSelect: () => void;
+	content: ReactNode;
+}
+
+/** A row's search text, for the shared ranker. */
+const rowSearchText = (row: PaletteRow): string => row.searchText;
+
+/** Whether a row cannot be chosen, for the shared ranker. */
+const rowIsDisabled = (row: PaletteRow): boolean => Boolean(row.disabled);
 
 /** Builds the grouped Add-palette catalog from the node registry for the given addable
  * kinds: each kind's `palette` metadata places it in a `PALETTE_GROUP_ORDER` group, and
@@ -141,6 +159,21 @@ export function NodePalette({
 	// nested step left: it is part of naming WHICH service you are adding, so it still precedes the
 	// add. Everything after the add happens on the rail.
 	const [variantKind, setVariantKind] = useState<NodeKind | null>(null);
+	// The search query, ranked by the shared ranker below. It starts empty each time the palette
+	// opens (not as it closes, which would flash the full list during the exit animation) and each
+	// time the step changes.
+	const [search, setSearch] = useState("");
+	const [wasOpen, setWasOpen] = useState(open);
+	if (open !== wasOpen) {
+		setWasOpen(open);
+		if (open) setSearch("");
+	}
+
+	/** Moves to the variant step for `kind`, or back to the service list; the search starts over. */
+	const setStep = (kind: NodeKind | null) => {
+		setVariantKind(kind);
+		setSearch("");
+	};
 
 	/** Reset the nested step whenever the dialog closes. */
 	const handleOpenChange = (o: boolean) => {
@@ -157,7 +190,7 @@ export function NodePalette({
 	const add = (entry: ServiceEntry) => {
 		if (entry.comingSoon || !entry.kind) return;
 		if (NODE_REGISTRY[entry.kind].variants) {
-			setVariantKind(entry.kind);
+			setStep(entry.kind);
 			return;
 		}
 		// `addNode` opens the new node's card on the rail; the palette closes behind it.
@@ -177,6 +210,153 @@ export function NodePalette({
 	const variantDef = variantKind ? NODE_REGISTRY[variantKind] : null;
 	const serviceGroups = serviceGroupsFor(addableKindsFor(coreProvider));
 
+	/** The variant step's options for `variantKind`, provider-filtered (e.g. Hetzner's in-cluster
+	 * charts back PostgreSQL/Valkey only) — same gate as the inspector's engine radio. */
+	const variantRows: PaletteRow[] =
+		variantDef && variantKind
+			? variantOptionsFor(variantKind, coreProvider).map((opt) => {
+					const Icon = variantDef.icon;
+					return {
+						id: opt.value,
+						group: `${variantDef.label} type`,
+						searchText: `${opt.label} ${opt.description}`,
+						onSelect: () => pickVariant(variantKind, opt.value),
+						content: (
+							<>
+								<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+								<div className="min-w-0 flex-1">
+									<div className="text-sm font-medium">{opt.label}</div>
+									<div className="truncate text-xs text-muted-foreground">
+										{opt.description}
+									</div>
+								</div>
+							</>
+						),
+					};
+				})
+			: [];
+
+	const serviceRows: PaletteRow[] = serviceGroups.flatMap((group) =>
+		group.items.map((entry): PaletteRow => {
+			const Icon = entry.icon;
+			const onCanvas =
+				!!entry.kind &&
+				NODE_REGISTRY[entry.kind].cardinality === "singleton" &&
+				nodes.some((n) => n.data.kind === entry.kind);
+			return {
+				id: entry.id,
+				group: group.title,
+				searchText: `${entry.label} ${entry.subtitle}`,
+				disabled: entry.comingSoon || onCanvas,
+				onSelect: () => add(entry),
+				content: (
+					<>
+						<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+						<div className="min-w-0 flex-1">
+							<div className="text-sm font-medium">{entry.label}</div>
+							<div className="truncate text-xs text-muted-foreground">
+								{entry.subtitle}
+							</div>
+						</div>
+						{entry.comingSoon ? (
+							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
+								Soon
+							</span>
+						) : onCanvas ? (
+							<span className="font-mono text-ui-2xs text-muted-foreground">
+								on canvas
+							</span>
+						) : null}
+					</>
+				),
+			};
+		}),
+	);
+	if (onConfigureAddon && addonItems) {
+		for (const a of addonItems) {
+			serviceRows.push({
+				id: `addon-${a.id}`,
+				group: "Add-ons",
+				searchText: `add-on ${a.name} ${a.summary} ${a.category}`,
+				onSelect: () => {
+					onConfigureAddon(a);
+					handleOpenChange(false);
+				},
+				content: (
+					<>
+						<AddonIcon
+							icon={a.icon}
+							className="h-4 w-4 shrink-0 text-muted-foreground"
+						/>
+						<div className="min-w-0 flex-1">
+							<div className="text-sm font-medium">{a.name}</div>
+							<div className="truncate text-xs text-muted-foreground">
+								{a.summary}
+							</div>
+						</div>
+						{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
+						    whose recorded window fits this cluster shows nothing at all. */}
+						<AddonCompatBadge
+							addonId={a.id}
+							k8sVersion={clusterK8s.version}
+							versionUnknownReason={clusterK8s.reason}
+						/>
+						{a.install ? (
+							<AddonStatusBadge
+								status={a.install.status}
+								health={a.install.health}
+							/>
+						) : (
+							<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
+								Free
+							</span>
+						)}
+					</>
+				),
+			});
+		}
+	}
+
+	// Whichever step is showing, ranked by the shared ranker.
+	// While a search is typed, a disabled row ("Soon", already on the canvas) ranks after every row
+	// that can be added. An empty search keeps PALETTE_GROUP_ORDER exactly, whatever is placed.
+	const results = rankItems(
+		variantDef ? variantRows : serviceRows,
+		search,
+		rowSearchText,
+		rowIsDisabled,
+	);
+	const groups = groupResults(results, (row) => row.group);
+
+	/** The "Back to services" row, above the variant options while nothing is typed. Hidden once the
+	 * user searches, so the first highlighted row (what Enter runs) is always their best match. */
+	const backRow: PaletteRow = {
+		id: "__back",
+		group: "",
+		searchText: "",
+		onSelect: () => setStep(null),
+		content: (
+			<>
+				<ArrowLeft className="h-4 w-4 shrink-0" />
+				<span className="text-sm">Back to services</span>
+			</>
+		),
+	};
+
+	const showBack = variantDef !== null && search.trim() === "";
+
+	/** Renders one row as a `CommandItem`. */
+	const item = (row: PaletteRow, className = "gap-3") => (
+		<CommandItem
+			key={row.id}
+			disabled={row.disabled}
+			onSelect={row.onSelect}
+			className={className}
+		>
+			{row.content}
+		</CommandItem>
+	);
+
 	return (
 		<CommandDialog
 			open={open}
@@ -188,48 +368,28 @@ export function NodePalette({
 			}
 			description="Search and add infrastructure to your project."
 			className="sm:max-w-xl"
+			search={search}
+			onSearchChange={setSearch}
+			filteredItems={showBack ? [backRow, ...results] : results}
 		>
-			{variantDef && variantKind ? (
+			{variantDef ? (
 				<>
 					<CommandInput
 						placeholder={`Choose a ${variantDef.label.toLowerCase()} type…`}
 					/>
 					<CommandList className="max-h-[60vh]">
 						<CommandEmpty>No option matches.</CommandEmpty>
-						<CommandGroup>
-							<CommandItem
-								value="__back"
-								onSelect={() => setVariantKind(null)}
-								className="gap-3 text-muted-foreground"
-							>
-								<ArrowLeft className="h-4 w-4 shrink-0" />
-								<span className="text-sm">Back to services</span>
-							</CommandItem>
-						</CommandGroup>
-						<CommandSeparator />
-						<CommandGroup heading={`${variantDef.label} type`}>
-							{/* Variant options are provider-filtered (e.g. Hetzner's in-cluster charts
-							    back PostgreSQL/Valkey only) — same gate as the inspector's engine radio. */}
-							{variantOptionsFor(variantKind, coreProvider).map((opt) => {
-								const Icon = variantDef.icon;
-								return (
-									<CommandItem
-										key={opt.value}
-										value={`${opt.label} ${opt.description}`}
-										onSelect={() => pickVariant(variantKind, opt.value)}
-										className="gap-3"
-									>
-										<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-										<div className="min-w-0 flex-1">
-											<div className="text-sm font-medium">{opt.label}</div>
-											<div className="truncate text-xs text-muted-foreground">
-												{opt.description}
-											</div>
-										</div>
-									</CommandItem>
-								);
-							})}
-						</CommandGroup>
+						{showBack && (
+							<>
+								<CommandGroup>{item(backRow, "gap-3 text-muted-foreground")}</CommandGroup>
+								<CommandSeparator />
+							</>
+						)}
+						{groups.map(({ group, items }) => (
+							<CommandGroup key={group} heading={group}>
+								{items.map((row) => item(row))}
+							</CommandGroup>
+						))}
 					</CommandList>
 				</>
 			) : (
@@ -243,87 +403,11 @@ export function NodePalette({
 								design now.
 							</p>
 						)}
-						{serviceGroups.map((group) => (
-							<CommandGroup key={group.title} heading={group.title}>
-								{group.items.map((entry) => {
-									const Icon = entry.icon;
-									const onCanvas =
-										!!entry.kind &&
-										NODE_REGISTRY[entry.kind].cardinality === "singleton" &&
-										nodes.some((n) => n.data.kind === entry.kind);
-									const disabled = entry.comingSoon || onCanvas;
-									return (
-										<CommandItem
-											key={entry.id}
-											value={`${entry.label} ${entry.subtitle}`}
-											disabled={disabled}
-											onSelect={() => add(entry)}
-											className="gap-3"
-										>
-											<Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-											<div className="min-w-0 flex-1">
-												<div className="text-sm font-medium">{entry.label}</div>
-												<div className="truncate text-xs text-muted-foreground">
-													{entry.subtitle}
-												</div>
-											</div>
-											{entry.comingSoon ? (
-												<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
-													Soon
-												</span>
-											) : onCanvas ? (
-												<span className="font-mono text-ui-2xs text-muted-foreground">
-													on canvas
-												</span>
-											) : null}
-										</CommandItem>
-									);
-								})}
+						{groups.map(({ group, items }) => (
+							<CommandGroup key={group} heading={group}>
+								{items.map((row) => item(row))}
 							</CommandGroup>
 						))}
-						{onConfigureAddon && addonItems && addonItems.length > 0 && (
-							<CommandGroup heading="Add-ons">
-								{addonItems.map((a) => (
-									<CommandItem
-										key={a.id}
-										value={`add-on ${a.name} ${a.summary} ${a.category}`}
-										onSelect={() => {
-											onConfigureAddon(a);
-											handleOpenChange(false);
-										}}
-										className="gap-3"
-									>
-										<AddonIcon
-											icon={a.icon}
-											className="h-4 w-4 shrink-0 text-muted-foreground"
-										/>
-										<div className="min-w-0 flex-1">
-											<div className="text-sm font-medium">{a.name}</div>
-											<div className="truncate text-xs text-muted-foreground">
-												{a.summary}
-											</div>
-										</div>
-										{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
-										    whose recorded window fits this cluster shows nothing at all. */}
-										<AddonCompatBadge
-											addonId={a.id}
-											k8sVersion={clusterK8s.version}
-											versionUnknownReason={clusterK8s.reason}
-										/>
-										{a.install ? (
-											<AddonStatusBadge
-												status={a.install.status}
-												health={a.install.health}
-											/>
-										) : (
-											<span className="font-mono text-ui-2xs uppercase text-muted-foreground">
-												Free
-											</span>
-										)}
-									</CommandItem>
-								))}
-							</CommandGroup>
-						)}
 					</CommandList>
 				</>
 			)}

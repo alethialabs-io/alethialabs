@@ -17,28 +17,16 @@ import {
 	CommandItem,
 	CommandList,
 } from "@repo/ui/command";
+import { useCommandSearch } from "@repo/ui/command-search";
 import { Popover, PopoverContent } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref, projectHref } from "@/lib/routing";
 
-/**
- * How well a project name matches what was typed into the switcher's search, for cmdk's `filter`
- * (higher sorts first; 0 hides the row). Exact, then prefix, then the start of a later word, then
- * a plain substring — and NOTHING for a scattered-letter match. cmdk's default scorer is fuzzy, so
- * "zz" listed htz3, htz2 and azdemo (F038): rows the user did not type and cannot see why.
- */
-export function rankProjectMatch(name: string, search: string): number {
-	const query = search.trim().toLowerCase();
-	if (query === "") return 1;
-	const value = name.trim().toLowerCase();
-	if (value === query) return 1;
-	if (value.startsWith(query)) return 0.9;
-	if (value.split(/[\s\-_./]+/).some((word) => word.startsWith(query))) return 0.8;
-	if (value.includes(query)) return 0.5;
-	return 0;
-}
+/** A project's search text: its name, ranked by the shared ranker in `@repo/ui/command-search`
+ * (exact, prefix, word start, substring — never cmdk's scattered-letter match, F038). */
+const projectSearchText = (p: { project_name: string }): string => p.project_name;
 
 /**
  * Header project switcher — the Vercel combobox between org and env. Lists the org's projects
@@ -54,6 +42,8 @@ export function ProjectSwitcher() {
 	const [open, setOpen] = useState(false);
 	// Prefetched by the `[org]` layout (#6114), so the active project is named on first paint.
 	const { data: projects = [], isSuccess: projectsLoaded } = useProjectsQuery();
+	// The query starts empty each time the popover opens.
+	const projectSearch = useCommandSearch(projects, projectSearchText, { open });
 
 	// Render across the whole org (overview, `~` global pages, project drilldowns) — never the
 	// legacy `/dashboard/*` tree. The active project is only the one in a `/{org}/{project}/…`
@@ -96,7 +86,12 @@ export function ProjectSwitcher() {
 				label={active?.project_name ?? (projectSlug && !projectsLoaded ? projectSlug : "All projects")}
 			/>
 			<PopoverContent className="w-72 p-0" align="start">
-				<Command label="Find project" filter={rankProjectMatch}>
+				<Command
+					label="Find project"
+					search={projectSearch.search}
+					onSearchChange={projectSearch.onSearchChange}
+					filteredItems={projectSearch.results}
+				>
 					{projects.length > 0 ? (
 						<>
 							<CommandInput placeholder="Find project…" className="h-9" />
@@ -104,10 +99,9 @@ export function ProjectSwitcher() {
 								{/* Only on a genuine search miss — never as the empty-org state. */}
 								<CommandEmpty>No project found.</CommandEmpty>
 								<CommandGroup heading="Projects">
-									{projects.map((p) => (
+									{projectSearch.results.map((p) => (
 										<CommandItem
 											key={p.id}
-											value={p.project_name}
 											onSelect={() => p.slug && handleSelect(p.slug)}
 											className="gap-2"
 										>

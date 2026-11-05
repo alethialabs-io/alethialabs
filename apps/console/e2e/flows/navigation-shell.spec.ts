@@ -369,7 +369,14 @@ test.describe("Navigation shell — org switcher", () => {
 		await waitForShell(owner.page);
 		await owner.page.getByRole("button", { name: "Switch organization" }).click();
 		await owner.page.getByRole("button", { name: /create organization/i }).click();
-		await expect(owner.page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
+		// The sheet BY NAME: the switcher's popover is also a `dialog`, and it is still in the DOM for
+		// its exit animation as the sheet opens. A bare `getByRole("dialog")` then matched both (a
+		// strict-mode violation), and on an earlier tick could pass on the closing popover alone.
+		await expect(owner.page.getByRole("dialog", { name: "Create a team" })).toBeVisible({
+			timeout: 10_000,
+		});
+		// ...and the switcher it came from has gone, rather than staying open behind the sheet.
+		await expect(owner.page.getByPlaceholder(/find organization/i)).toBeHidden();
 	});
 });
 
@@ -437,7 +444,11 @@ test.describe("Navigation shell — env switcher", () => {
 		await owner.page.getByRole("button", { name: /switch environment: production/i }).click({ timeout: 20_000 });
 		await expect(owner.page.getByPlaceholder(/find environment/i)).toBeVisible();
 		await expect(owner.page.getByRole("option", { name: "production" })).toBeVisible();
-		await expect(owner.page.getByRole("option", { name: /new environment/i })).toBeVisible();
+		// The action is a footer BUTTON in the switcher's popover, outside the listbox (#6145): never
+		// an arrow-key row, never counted as a match.
+		const popover = owner.page.locator('[data-slot="popover-content"]');
+		await expect(popover.getByRole("button", { name: /new environment/i })).toBeVisible();
+		await expect(owner.page.getByRole("option", { name: /new environment/i })).toHaveCount(0);
 	});
 
 	test("selecting an environment pins it via the ?environment_id query", async ({ owner }) => {
