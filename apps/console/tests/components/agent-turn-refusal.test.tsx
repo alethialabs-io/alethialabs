@@ -77,6 +77,12 @@ vi.mock("@/app/server/actions/agent", () => ({
 	})),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
+const toastError = vi.hoisted(() => vi.fn());
+// `toast` is called both as a function (the drafts status host) and as `toast.error` (the conversation).
+vi.mock("sonner", () => ({
+	toast: Object.assign(vi.fn(), { error: toastError, success: vi.fn(), info: vi.fn(), dismiss: vi.fn() }),
+	Toaster: () => null,
+}));
 vi.mock("@/app/server/actions/projects", () => ({
 	getApprovedJob: vi.fn(async () => null),
 	tryPlanProject: vi.fn(),
@@ -241,7 +247,7 @@ function answered(id: string, text: string, revision: number): UIMessageChunk[] 
 
 // ── The thread, as the server stores it ──────────────────────────────────────────────────────
 
-const stored = { messages: [] as UIMessage[], revision: 1 };
+const stored = { messages: [] as UIMessage[], revision: 1, failReload: false };
 
 const user = (id: string, text: string): UIMessage => ({
 	id,
@@ -283,6 +289,7 @@ function Harness({ initial, revision }: { initial: UIMessage[]; revision: number
 		selectThread: vi.fn(),
 		reloadThread: async (id: string) => {
 			reloads(id);
+			if (stored.failReload) throw new Error("the thread read failed");
 			setMessages(stored.messages);
 			setRev(stored.revision);
 			useElenchStore.getState().selectThread(id);
@@ -383,6 +390,8 @@ beforeEach(() => {
 	threadReads.inFlight = [];
 	card.output = { status: "rejected" };
 	reloads.mockClear();
+	stored.failReload = false;
+	toastError.mockClear();
 	vi.stubGlobal("fetch", vi.fn(routeFetch));
 	useWidgetGridStore.setState({
 		hydrate: vi.fn(async () => undefined),
@@ -761,6 +770,23 @@ describe("onTurnRefused", () => {
 		expect(content()).toBe("");
 		expect(drafts.server.callsOf("claimDraft")).toHaveLength(0);
 		expect(drafts.server.callsOf("releaseClaim")).toHaveLength(0);
+	});
+
+	// A refused Retry whose transcript reload FAILS still says why it was refused, and says the
+	// reload failed (#6459). Fails if the notice waits on the reload, or if the failure is swallowed.
+	it("a refused Retry whose reload fails still shows the refusal's line and says the reload failed", async () => {
+		await renderConversation([user("u1", "plan api")], 2);
+		stored.failReload = true;
+		answers.push({ refusal: refusal("thread-busy", { turnId: "u1", revision: 2 }), status: 409 });
+		await clickRetry();
+
+		await waitFor(() => expect(reloads).toHaveBeenCalledWith(THREAD));
+		expect(await screen.findByText("Another message in this conversation is being answered")).toBeTruthy();
+		await waitFor(() =>
+			expect(toastError).toHaveBeenCalledWith(
+				"The conversation could not be reloaded. Reopen it to see its latest messages.",
+			),
+		);
 	});
 
 	it("a continuation refused turn-answered with a newer revision loads, keeps the card and Retry, and the next Retry is accepted as a resume", async () => {
