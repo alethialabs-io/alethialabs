@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -45,12 +44,22 @@ func byoSecretSyncGroup(group string) bool {
 	return group == "external-secrets.io" || strings.HasSuffix(group, ".external-secrets.io")
 }
 
-// byoSweepNameRe is a DNS-1123 subdomain, the shape Kubernetes allows for a custom resource's name.
-// The name interpolates into an API path, so anything else is refused.
-var byoSweepNameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
-
-// byoSweepSegmentRe is one API path segment from discovery: a group, a version or a resource name.
-var byoSweepSegmentRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
+// byoSweepPathSafe reports whether s is a DNS-1123 subdomain: dot-separated segments, each the same
+// DNS label grammar a namespace uses (dns1123Label, from packages/core/names), at most 253 characters
+// in all. That is the shape Kubernetes allows for a custom resource's name, and every API group,
+// version and resource name discovery returns fits it too. Each of them interpolates into an API path,
+// so anything else is refused.
+func byoSweepPathSafe(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, seg := range strings.Split(s, ".") {
+		if len(seg) > dns1123LabelMaxLen || !dns1123Label.MatchString(seg) {
+			return false
+		}
+	}
+	return true
+}
 
 // byoSweepResource is one namespaced, listable and deletable resource of a swept group.
 type byoSweepResource struct {
@@ -194,7 +203,7 @@ func byoSweepResources() ([]byoSweepResource, error) {
 			continue
 		}
 		v := g.PreferredVersion.Version
-		if !byoSweepSegmentRe.MatchString(g.Name) || !byoSweepSegmentRe.MatchString(v) {
+		if !byoSweepPathSafe(g.Name) || !byoSweepPathSafe(v) {
 			return nil, fmt.Errorf("API group %q version %q is not a usable path", g.Name, v)
 		}
 		rraw, err := byoKubectl("", "get", "--raw", "/apis/"+g.Name+"/"+v)
@@ -216,7 +225,7 @@ func byoSweepResources() ([]byoSweepResource, error) {
 			if !r.Namespaced || strings.Contains(r.Name, "/") || !hasVerbs(r.Verbs, "list", "delete") {
 				continue // cluster-scoped (the AppProject denies those outright), or a subresource
 			}
-			if !byoSweepSegmentRe.MatchString(r.Name) {
+			if !byoSweepPathSafe(r.Name) {
 				return nil, fmt.Errorf("resource %q in %s is not a usable path", r.Name, g.Name)
 			}
 			out = append(out, byoSweepResource{group: g.Name, version: v, resource: r.Name, kind: r.Kind})
@@ -257,7 +266,7 @@ func byoSweepList(r byoSweepResource, ns string) ([]byoSweepObject, error) {
 		if m.Namespace != ns {
 			continue // a listing that ignored its namespace can never widen what is deleted
 		}
-		if !byoSweepNameRe.MatchString(m.Name) || !bindingUIDRe.MatchString(m.UID) {
+		if !byoSweepPathSafe(m.Name) || !bindingUIDRe.MatchString(m.UID) {
 			return nil, fmt.Errorf("%s %q in %s has no usable name or uid in the listing", r.kind, m.Name, ns)
 		}
 		out = append(out, byoSweepObject{res: r, namespace: ns, name: m.Name, uid: m.UID})
