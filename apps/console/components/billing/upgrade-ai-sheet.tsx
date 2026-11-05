@@ -103,10 +103,22 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 		};
 	}, [open]);
 
+	// An intent belongs to one opening of the sheet. Whatever closes it — `handleOpenChange`, or a
+	// parent setting `open` itself — the secret and error made while it was open are dropped in the
+	// render that sees `open` change (React's "adjust state while rendering" form, keyed on the last
+	// `open` seen), so a reopening never shows the previous opening's payment form.
+	const [openSeen, setOpenSeen] = useState(open);
+	if (openSeen !== open) {
+		setOpenSeen(open);
+		setClientSecret(null);
+		setError(null);
+	}
+
 	// Open (or re-open, on a currency switch) the subscription intent once a paid tier is
 	// picked. Stripe locks a subscription's currency at creation, so the toggle re-creates it.
 	// The previous intent's secret and error are dropped by whatever changed the request (`choose`,
-	// `switchCurrency`, Back, close), so the render that asks again already shows neither.
+	// `switchCurrency`, Back) or by the opening changing (above), so the render that asks again
+	// already shows neither.
 	useEffect(() => {
 		if (!open || !tier) return;
 		let alive = true;

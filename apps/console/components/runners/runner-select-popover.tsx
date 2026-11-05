@@ -45,13 +45,17 @@ export function RunnerSelectPopover({
     return excludeId ? allRunners.filter((t) => t.id !== excludeId) : allRunners;
   }, [runnersData, excludeId]);
   const [open, setOpen] = useState(false);
-  // What the user picked since the popover last opened; `undefined` until they pick, when the
-  // selection is the online default runner (or "Any available"). Derived rather than set on open
-  // by an effect, so a default that arrives with the list after opening is still the selection,
-  // and a live refresh of the list no longer overrides a pick.
+  // What the user picked since the popover last opened; `undefined` until they pick. The selection
+  // is derived on every render: the pick while it is still selectable ("Any available", or a runner
+  // still in the list and ONLINE), otherwise the online default (or "Any available"). So a live
+  // refresh keeps a pick that is still valid, a pick whose runner went offline or away falls back
+  // rather than confirming a disabled runner, and a default that arrives after opening is used.
   const [picked, setSelected] = useState<string | null | undefined>(undefined);
   const defaultRunner = runners.find((w) => w.is_default && w.status === "ONLINE");
-  const selected = picked === undefined ? (defaultRunner?.id ?? null) : picked;
+  const pickStillValid =
+    picked === null ||
+    (picked !== undefined && runners.some((w) => w.id === picked && w.status === "ONLINE"));
+  const selected = pickStillValid ? picked : (defaultRunner?.id ?? null);
   const [rePlan, setRePlan] = useState(false);
 
   /** Opening starts from the default again; closing keeps nothing to reset. */

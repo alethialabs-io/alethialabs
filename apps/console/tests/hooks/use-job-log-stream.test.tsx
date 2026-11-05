@@ -99,7 +99,8 @@ describe("useJobLogStream", () => {
 		expect(FakeEventSource.opened[0]?.closed).toBe(true);
 	});
 
-	// #6459: the streamed tail is keyed by the stream that sent it, not cleared by an effect.
+	// #6459: the streamed tail is keyed by the stream that sent it, not cleared by an effect. This
+	// pins the outcome (the old effect reached it too, once act flushed it), not the timing.
 	it("drops the previous job's streamed tail the moment it moves to another job", () => {
 		const { result, rerender } = renderHook(({ id, head }) => useJobLogStream(id, head, true), {
 			initialProps: { id: "job-1", head: { lines: [line(1)], lastId: 1 } },

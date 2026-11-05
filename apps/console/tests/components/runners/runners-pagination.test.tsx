@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6459 — the runner grid's page belongs to the query it was picked under. A different result set
-// starts at page 1, and it does so in the render that shows it: the page is keyed by the query, not
-// reset by an effect a commit later. The query hooks are stubbed; the pager is a two-button stub.
+// #6459 — the runner grid's page belongs to the query it was picked under: a different result set
+// starts at page 1. The page is now keyed by the query instead of reset by an effect. This pins the
+// outcome, not the timing: Testing Library flushes effects inside act, so the old effect reached the
+// same end state. The query hooks are stubbed; the pager is a two-button stub.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

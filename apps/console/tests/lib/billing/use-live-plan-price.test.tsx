@@ -142,9 +142,9 @@ describe("useLivePlanPrice", () => {
 		expect(vi.mocked(getLivePlanPrices).mock.calls.length).toBe(before + 1);
 	});
 
-	// #6459: the row is kept with the plan it is for. The render that changes the plan must not
-	// report the OLD plan's row as authoritative (`loading: false`) — that used to be an effect
-	// clearing the row a commit later.
+	// #6459: the row is kept with the plan it is for, so a change of plan never reports the OLD
+	// plan's row as authoritative (`loading: false`). This pins the outcome; the effect that used to
+	// clear the row reached the same end state once act flushed it.
 	it("a change of plan reads no row until that plan's arrives", async () => {
 		vi.mocked(getLivePlanPrices).mockResolvedValue(planPrices);
 		const { result, rerender } = renderHook(({ plan }) => useLivePlanPrice(plan), {

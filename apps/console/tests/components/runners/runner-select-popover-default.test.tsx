@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #6459 — the runner picker's selection. Each opening starts from the online default runner (or
-// "Any available" when there is none); a pick holds until the next opening. The default used to be
-// set by an effect on every change of the list while open, which a live refresh turned into
-// "your pick was undone"; it is now derived, so a list that arrives after opening still supplies it.
+// "Any available" when there is none). A pick holds through a live refresh while its runner is still
+// selectable, and falls back to the default when it is not. The default used to be set by an effect
+// on every change of the list while open, which undid a valid pick on each refresh: "keeps a pick
+// through a live refresh" is the case that fails against that code.
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +52,31 @@ describe("RunnerSelectPopover — the selection", () => {
 		expect(onConfirm).toHaveBeenLastCalledWith("r-other", false);
 
 		fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+		fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+		expect(onConfirm).toHaveBeenLastCalledWith("r-default", false);
+	});
+
+	it("keeps a pick through a live refresh while its runner stays online", () => {
+		const onConfirm = vi.fn();
+		const { rerender } = render(picker(onConfirm));
+		fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+		fireEvent.click(screen.getByRole("button", { name: /spare/ }));
+
+		// The `runners` topic refetches: a new array of the same rows.
+		h.runners = RUNNERS.map((r) => ({ ...r }));
+		rerender(picker(onConfirm));
+		fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+		expect(onConfirm).toHaveBeenLastCalledWith("r-other", false);
+	});
+
+	it("falls back to the default when the picked runner goes offline in a live refresh", () => {
+		const onConfirm = vi.fn();
+		const { rerender } = render(picker(onConfirm));
+		fireEvent.click(screen.getByRole("button", { name: "Plan" }));
+		fireEvent.click(screen.getByRole("button", { name: /spare/ }));
+
+		h.runners = RUNNERS.map((r) => (r.id === "r-other" ? { ...r, status: "OFFLINE" } : { ...r }));
+		rerender(picker(onConfirm));
 		fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 		expect(onConfirm).toHaveBeenLastCalledWith("r-default", false);
 	});

@@ -159,8 +159,20 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// Open a subscription intent once the payer has been declared (and re-open it when the
 	// currency toggle changes — Stripe locks a sub's currency at creation). If a live
 	// subscription already exists the action throws — surfaced inline rather than as a form.
+	// An intent belongs to one opening of the sheet. Whatever closes it — `handleOpenChange`, or a
+	// parent setting `open` itself — the secret and error made while it was open are dropped in the
+	// render that sees `open` change (React's "adjust state while rendering" form, keyed on the last
+	// `open` seen), so a reopening never shows the previous opening's payment form.
+	const [openSeen, setOpenSeen] = useState(open);
+	if (openSeen !== open) {
+		setOpenSeen(open);
+		setClientSecret(null);
+		setError(null);
+	}
+
 	// The previous intent's secret and error are dropped by whatever changed the request (the
-	// declaration, `switchCurrency`, close), so the render that asks again already shows neither.
+	// declaration, `switchCurrency`) or by the opening changing (above), so the render that asks
+	// again already shows neither.
 	useEffect(() => {
 		if (!open || !declaration) return;
 		let active = true;

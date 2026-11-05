@@ -78,4 +78,24 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 		await act(async () => eur.resolve({ clientSecret: "cs_eur", currency: "eur" }));
 		expect(screen.getByText("pay with cs_eur")).toBeTruthy();
 	});
+
+	it("a reopening never shows the previous opening's payment form, however the sheet was closed", async () => {
+		const first = deferred<Intent>();
+		const second = deferred<Intent>();
+		h.createAiSubscriptionIntent.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+		const { rerender } = render(<UpgradeAiSheet open onOpenChange={() => {}} />);
+		fireEvent.click(await screen.findByRole("button", { name: "Upgrade to AI Plus" }));
+		await act(async () => first.resolve({ clientSecret: "cs_first", currency: "usd" }));
+		expect(screen.getByText("pay with cs_first")).toBeTruthy();
+
+		// The PARENT closes and reopens it, without going through the sheet's own close.
+		rerender(<UpgradeAiSheet open={false} onOpenChange={() => {}} />);
+		rerender(<UpgradeAiSheet open onOpenChange={() => {}} />);
+		expect(screen.queryByText("pay with cs_first")).toBeNull();
+
+		await act(async () => second.resolve({ clientSecret: "cs_second", currency: "usd" }));
+		expect(screen.getByText("pay with cs_second")).toBeTruthy();
+	});
 });
+
