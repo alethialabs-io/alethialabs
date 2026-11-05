@@ -143,6 +143,25 @@ func ByoProjectName(slug string) string {
 	return names.Bounded(byoProjectPrefix + s)
 }
 
+// ByoChartNamespace is the namespace a BYO chart deploys into when none of its own is chosen:
+// "byo-<chart id>", capped at 63 characters (#6446). The chart id is the add-on id the console
+// derives (chartSlug), so this is the same name the console's attach form offers as the default
+// (byoChartNamespace in apps/console/lib/validations/byo-charts.ts — the two are pinned to the same
+// table of cases on each side).
+//
+// A chart gets its own namespace rather than a shared one because the namespace is what isolates it:
+// the hardened AppProject allows the namespaced kinds in its destinations, so two charts in one
+// namespace can read each other's Secrets, and a chart in "default" sat beside the platform's own
+// workloads. No reserved name or prefix starts with "byo-".
+func ByoChartNamespace(chartID string) string {
+	return names.Bounded(byoProjectPrefix + chartID)
+}
+
+// ByoLegacyDefaultNamespace is where a BYO chart attached before #6446 deployed when no namespace
+// was chosen. It is now reserved for the platform, and such a chart is moved to ByoChartNamespace on
+// its next deploy (provisioner.configureByoCharts).
+const ByoLegacyDefaultNamespace = "default"
+
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
 // + namespaces. Empty inputs are tolerated (an empty sourceRepos/destinations project simply
 // admits nothing) so a mis-built snapshot fails closed rather than wide-open. commonLabels are the
@@ -277,8 +296,9 @@ func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 // The console's BYO form refuses the same names up front from a mirrored copy
 // (apps/console/lib/validations/byo-reserved-namespaces.ts) whose parity test deep-equals this file;
 // how each group is checked against its source (and which parts are hand-kept) is stated in the JSON's
-// own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is deliberately
-// absent: it is where a BYO chart lands when no namespace is given. Preview namespaces are not
+// own $comment; the Go pins are the TestByoReserved_* tests in byo_test.go. "default" is reserved
+// (#6446): it holds the platform's first-class workloads, their binding Secrets and service accounts.
+// A chart with no namespace of its own lands in ByoChartNamespace instead. Preview namespaces are not
 // reserved either: their prefix is a per-project setting (project_preview_config.namespace_prefix),
 // not a fixed platform name.
 //

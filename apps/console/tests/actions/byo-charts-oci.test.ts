@@ -109,6 +109,33 @@ describe("attachByoChart — OCI", () => {
 		});
 	});
 
+	it("defaults a new chart to its own namespace, byo-<chart id> (#6446)", async () => {
+		const { inserted } = setupDb();
+
+		await attachByoChart({
+			projectId: "proj-1",
+			id: "payments",
+			repoUrl: "oci://ghcr.io/acme/payments",
+		});
+
+		expect(inserted.find((i) => i.table === projectAddons)?.payload).toMatchObject({
+			namespace: "byo-payments",
+		});
+	});
+
+	it("refuses a new chart in default, which is reserved for the platform (#6446)", async () => {
+		const { inserted } = setupDb();
+		await expect(
+			attachByoChart({
+				projectId: "proj-1",
+				id: "payments",
+				repoUrl: "oci://ghcr.io/acme/payments",
+				namespace: "default",
+			}),
+		).rejects.toThrow();
+		expect(inserted.find((i) => i.table === projectAddons)).toBeUndefined();
+	});
+
 	it("rejects an oci:// reference that names no chart path at all", async () => {
 		setupDb();
 		await expect(

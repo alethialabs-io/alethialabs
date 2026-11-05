@@ -582,9 +582,10 @@ func TestValidateByoNamespace_RefusesReservedPrefixes(t *testing.T) {
 }
 
 // TestValidateByoNamespace_AcceptsOrdinaryNamespaces — the refusal must not reach ordinary names,
-// including the BYO default and names that merely CONTAIN a reserved word or prefix.
+// including a BYO chart's own default (byo-<chart id>) and names that merely CONTAIN a reserved word
+// or prefix. "default" is not among them: it is reserved (#6446).
 func TestValidateByoNamespace_AcceptsOrdinaryNamespaces(t *testing.T) {
-	for _, ns := range []string{"default", "payments", "byo-e2e", "kubernetes-dashboard", "my-kube-system", "vault-client", "monitoring-team", "vcluster", "apps"} {
+	for _, ns := range []string{"payments", "byo-e2e", "byo-api", "kubernetes-dashboard", "my-kube-system", "vault-client", "monitoring-team", "vcluster", "apps"} {
 		if err := validateByoNamespace(ns); err != nil {
 			t.Errorf("ordinary namespace %q refused: %v", ns, err)
 		}
@@ -767,8 +768,8 @@ var helmNamespaceAttr = regexp.MustCompile(`^\s*namespace\s*=\s*(.+?)\s*$`)
 // its header sits on one line in canonical `tofu fmt` form, and only its top-level `namespace` line is
 // read (depth 1, by counting braces). A NON-LITERAL namespace (a variable, a local) FAILS the test
 // rather than being skipped, so a value this scan cannot read is never counted as covered. A block
-// with no namespace attribute installs into "default", which is deliberately not reserved, and is
-// skipped. Other ways to create a namespace in tofu (kubernetes_namespace, a raw manifest) are not
+// with no namespace attribute installs into "default" and is skipped: "default" is reserved, but by
+// the platformWorkloads group (#6446), not this one. Other ways to create a namespace in tofu (kubernetes_namespace, a raw manifest) are not
 // read; none exist under infra/templates today.
 func TestByoReserved_PlatformCategoriesMatchTheTofuHelmInstalls(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "infra", "templates")

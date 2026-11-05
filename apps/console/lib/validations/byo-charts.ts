@@ -50,6 +50,23 @@ function refuseReservedNamespace(namespace: string | undefined, ctx: z.Refinemen
 	}
 }
 
+/** The prefix of a BYO chart's own namespace. Mirrors the Go `byoProjectPrefix`. */
+const BYO_CHART_NAMESPACE_PREFIX = "byo-";
+
+/** Kubernetes' cap on a namespace name. */
+const NAMESPACE_MAX_LENGTH = 63;
+
+/**
+ * The namespace a BYO chart deploys into when none of its own is chosen: `byo-<chart id>`, capped at
+ * 63 characters with a dash the cut exposes trimmed (#6446). Mirrors the Go `argocd.ByoChartNamespace`;
+ * both sides pin the same table of cases (tests/lib/validations/byo-charts-namespace.test.ts and
+ * packages/core/argocd/byo_oci_test.go). `chartId` is the add-on id — `chartSlug` of the name.
+ */
+export function byoChartNamespace(chartId: string): string {
+	const ns = `${BYO_CHART_NAMESPACE_PREFIX}${chartId}`;
+	return ns.slice(0, NAMESPACE_MAX_LENGTH).replace(/-+$/, "");
+}
+
 export const CHART_SOURCES = ["git", "oci"] as const;
 export type ChartSource = (typeof CHART_SOURCES)[number];
 
@@ -59,8 +76,8 @@ export type ChartSource = (typeof CHART_SOURCES)[number];
 
 /**
  * The attach form. Optional fields carry their defaults at the EDGE (`ref` → `HEAD`/`*`,
- * `namespace` → `default`) rather than in the action, so what the review step shows is what gets
- * persisted.
+ * `namespace` → `byo-<chart id>`) rather than in the action, so what the review step shows is what
+ * gets persisted.
  */
 export const byoChartFormSchema = z
 	.object({

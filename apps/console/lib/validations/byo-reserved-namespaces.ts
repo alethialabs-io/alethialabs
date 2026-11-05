@@ -72,6 +72,12 @@ export const BYO_RESERVED_NAMESPACES: {
 			],
 		},
 		{
+			id: "platformWorkloads",
+			reason:
+				"the platform's own workloads, their Secrets and their service accounts run there",
+			namespaces: ["default"],
+		},
+		{
 			id: "marketplaceAddOns",
 			reason: "a platform-managed add-on from the marketplace installs there",
 			namespaces: [
