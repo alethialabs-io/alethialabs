@@ -38,7 +38,7 @@ import { Repository } from "@/app/server/actions/git/types";
 import { getLinkedProviders } from "@/app/server/actions/identities";
 import { useRepositoryContext } from "@/components/design-project/repository-context";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 interface RepositorySelectorProps {
   value: string | undefined;
@@ -268,45 +268,45 @@ export function RepositorySelector({
     void sharedCtx.fetchRepos(selectedProvider);
   }, [sharedCtx, selectedProvider, ctxRepos]);
 
-  // Both declared before loadInitialData, which awaits them, and `loadRepositories` before
+  // Both declared before loadInitialData, which calls them, and `loadRepositories` before
   // `fetchRepositories`: referencing a binding above its declaration is a TDZ hazard
   // (react-hooks/immutability).
   /**
    * Fetches a provider's repositories into this instance, for a row already marked as fetching
-   * (by `fetchRepositories`, or by the mount's initial state).
+   * (by `fetchRepositories`, or by the mount's initial state). Every write is in a callback of the
+   * request, so the mount effect that starts it sets nothing synchronously.
    */
-  const loadRepositories = async (providerName: PublicGitProvider) => {
+  const loadRepositories = (providerName: PublicGitProvider): Promise<void> => {
     let recoveryProvider: PublicGitProvider | null = null;
-    try {
-      const data = await fetchRepositoriesByProvider(providerName);
-      if (data.error) {
-        if (
-          data.authErrorCode &&
-          data.authProvider &&
-          (data.authErrorCode === "token_expired" ||
-            data.authErrorCode === "unauthorized" ||
-            data.authErrorCode === "missing_token")
-        ) {
-          setAuthRecoveryProvider(data.authProvider);
-          recoveryProvider = data.authProvider;
+    return fetchRepositoriesByProvider(providerName)
+      .then((data) => {
+        if (data.error) {
+          if (
+            data.authErrorCode &&
+            data.authProvider &&
+            (data.authErrorCode === "token_expired" ||
+              data.authErrorCode === "unauthorized" ||
+              data.authErrorCode === "missing_token")
+          ) {
+            setAuthRecoveryProvider(data.authProvider);
+            recoveryProvider = data.authProvider;
+          }
+          throw new Error(data.error);
         }
-        throw new Error(data.error);
-      }
-
-      setRepositories(data.repositories || []);
-    } catch (err) {
-      console.error(`Error fetching ${providerName} repositories:`, err);
-      setError(
-        recoveryProvider
-          ? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
-          : err instanceof Error
-            ? err.message
-            : "Failed to fetch repositories",
-      );
-      setRepositories([]);
-    } finally {
-      setFetchingRepos(false);
-    }
+        setRepositories(data.repositories || []);
+      })
+      .catch((err: unknown) => {
+        console.error(`Error fetching ${providerName} repositories:`, err);
+        setError(
+          recoveryProvider
+            ? `Authentication with ${recoveryProvider} failed or expired. Relink your account and try again.`
+            : err instanceof Error
+              ? err.message
+              : "Failed to fetch repositories",
+        );
+        setRepositories([]);
+      })
+      .finally(() => setFetchingRepos(false));
   };
 
   /** Marks the row as fetching, then fetches the provider's repositories. */
@@ -317,45 +317,34 @@ export function RepositorySelector({
     await loadRepositories(providerName);
   };
 
-  const loadInitialData = useCallback(async () => {
-    if (sharedCtx) return; // Skip — using shared context
+  /**
+   * The mount's read when there is no shared context. The initial state already says "loading" /
+   * "fetching", so nothing is set before the first request; every write is in its callbacks.
+   */
+  const loadInitialData = useEffectEvent((): Promise<void> => {
     // Seeded by the server: the provider list is already on screen; only its repositories are left.
-    // The mount's initial state already says "loading" / "fetching", so nothing is set before the
-    // first request.
     if (seededAtMount) {
-      if (selectedAtMount) await loadRepositories(selectedAtMount);
-      return;
+      return selectedAtMount ? loadRepositories(selectedAtMount) : Promise.resolve();
     }
-    try {
-      const providers = await getLinkedProviders();
-      setLinkedProviders(providers);
-
-      if (providers.length > 0) {
-        let initialProvider = providers[0];
-        const detected = initialValue
-          ? providerFromRepoUrl(initialValue)
-          : null;
-        if (detected) initialProvider = detected;
-
-        if (providers.includes(initialProvider)) {
+    return getLinkedProviders()
+      .then(async (providers) => {
+        setLinkedProviders(providers);
+        const initialProvider = initialProviderFor(providers, initialValue);
+        if (initialProvider) {
           setSelectedProvider(initialProvider);
           await fetchRepositories(initialProvider);
-        } else {
-          setSelectedProvider(providers[0]);
-          await fetchRepositories(providers[0]);
         }
-      }
-    } catch (err) {
-      console.error("Error loading linked providers:", err);
-      setError("Failed to load linked accounts");
-    } finally {
-      setLoading(false);
-    }
-  }, [initialValue, sharedCtx, seededAtMount, selectedAtMount]);
+      })
+      .catch((err: unknown) => {
+        console.error("Error loading linked providers:", err);
+        setError("Failed to load linked accounts");
+      })
+      .finally(() => setLoading(false));
+  });
 
   useEffect(() => {
-    if (!sharedCtx) loadInitialData();
-  }, [loadInitialData, sharedCtx]);
+    if (!sharedCtx) void loadInitialData();
+  }, [sharedCtx]);
 
   const handleProviderChange = async (provider: PublicGitProvider) => {
     setSelectedProvider(provider);

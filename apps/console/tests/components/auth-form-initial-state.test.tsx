@@ -42,7 +42,8 @@ describe("AuthForm — the ?provider= hint", () => {
 		h.social.mockReturnValue(new Promise(() => {}));
 		render(<AuthForm mode="login" />);
 
-		expect(screen.getByRole("button", { name: "GitHub" })).toBeDisabled();
+		// The hand-off remembers the provider, so its tile may name itself "(last used)".
+		expect(screen.getByRole("button", { name: /^GitHub/ })).toBeDisabled();
 		await waitFor(() => expect(h.social).toHaveBeenCalledTimes(1));
 		expect(h.social.mock.calls[0]?.[0]).toMatchObject({ provider: "github" });
 	});
@@ -53,7 +54,7 @@ describe("AuthForm — the ?provider= hint", () => {
 		render(<AuthForm mode="login" />);
 
 		expect(await screen.findByText("nope")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "GitHub" })).not.toBeDisabled();
+		expect(screen.getByRole("button", { name: /^GitHub/ })).not.toBeDisabled();
 	});
 
 	it("ignores a provider outside the allowlist", () => {
