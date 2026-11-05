@@ -37,6 +37,7 @@ import {
 } from "@/app/server/actions/elench-drafts";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { fetchHeartbeat } from "@/lib/stores/elench-drafts/heartbeat";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { scopeId } from "@/lib/stores/elench-drafts/reducer-drafting";
 import {
 	createDraftsStore,
@@ -171,13 +172,14 @@ export function ElenchDraftsRoot({
 	const projectId = useElenchStore((s) => (s.ctx.kind === "project" ? s.ctx.projectId : null));
 	const pathname = usePathname();
 
-	// The store exists once a viewer is known (never on the server); a later viewer is D25.
+	// The store exists once a viewer is known, past hydration (never on the server, and never in the
+	// render that hydrates the server's HTML, which had none). It is taken in the render that first
+	// sees a viewer — `pageDrafts` is an idempotent per-page singleton — rather than an effect a
+	// commit later. A later viewer is D25, below.
+	const hydrated = useHydrated();
+	if (tab === null && hydrated && !isPending && viewerId !== null) setTab(pageDrafts(viewerId));
 	useEffect(() => {
-		if (isPending) return;
-		if (tab === null) {
-			if (viewerId !== null) setTab(pageDrafts(viewerId));
-			return;
-		}
+		if (isPending || tab === null) return;
 		tab.store.dispatch({ type: "VIEWER_CHANGE", viewerId });
 	}, [tab, viewerId, isPending]);
 

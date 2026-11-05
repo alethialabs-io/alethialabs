@@ -113,7 +113,11 @@ export function AgentKnowledgePanel({
 	const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
 	const [derived, setDerived] = useState("");
 	const [derivedOpen, setDerivedOpen] = useState(false);
-	const [loading, setLoading] = useState(true);
+	// The scope whose knowledge the fields hold; `undefined` until the first load lands. The panel is
+	// loading while that is not the scope it shows — so a scope switch reads as loading in the same
+	// render, with nothing to reset.
+	const [loadedFor, setLoadedFor] = useState<string | null | undefined>(undefined);
+	const loading = loadedFor !== projectId;
 	// Whether the caller may edit this scope's knowledge (org:edit / project:edit when the
 	// org-shared flag is on; always true otherwise). Non-editors get a read-only panel instead of
 	// a silent 403 on auto-save. Defaults true so the editable UI never flashes for an editor.
@@ -126,7 +130,6 @@ export function AgentKnowledgePanel({
 
 	useEffect(() => {
 		let cancelled = false;
-		setLoading(true);
 		void (async () => {
 			const [ctx, preview, editable] = await Promise.all([
 				getAgentContext(projectId).catch(() => null),
@@ -140,7 +143,7 @@ export function AgentKnowledgePanel({
 			setDocs(ctx?.documents ?? []);
 			setDerived(preview);
 			setCanEdit(editable);
-			setLoading(false);
+			setLoadedFor(projectId);
 		})();
 		return () => {
 			cancelled = true;

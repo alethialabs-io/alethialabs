@@ -450,10 +450,22 @@ export interface UnsentView {
 	badge: number;
 }
 
-/** When an entry was last written: now for words only this tab holds, else its row's `updatedAt`. */
-function writtenAt(entry: DraftEntry, now: number): number {
-	if (entry.local !== null || entry.claiming !== null || entry.sending !== null || entry.server === null) return now;
+/**
+ * When an entry was last written: its row's `updatedAt`, or `Infinity` for words only this tab holds
+ * — they are being written now, so they sort above every stored row. A sentinel rather than
+ * `Date.now()`, because this is read during render (the hook's memo), where the clock is impure.
+ */
+function writtenAt(entry: DraftEntry): number {
+	if (entry.local !== null || entry.claiming !== null || entry.sending !== null || entry.server === null) {
+		return Number.POSITIVE_INFINITY;
+	}
 	return Date.parse(entry.server.updatedAt);
+}
+
+/** Newest first; two equal times (two tab-only entries are both `Infinity`) keep their order. */
+function newestFirst(x: { at: number }, y: { at: number }): number {
+	if (x.at === y.at) return 0;
+	return y.at > x.at ? 1 : -1;
 }
 
 /**
@@ -471,7 +483,6 @@ export function useUnsentConversations(threads: readonly AgentThread[]): UnsentV
 	);
 	return useMemo(() => {
 		const listed = new Set(threads.map((t) => t.id));
-		const now = Date.now();
 		const threadNotes: Record<string, string> = {};
 		const rows: { at: number; row: UnsentConversation }[] = [];
 		for (const e of entries) {
@@ -482,7 +493,7 @@ export function useUnsentConversations(threads: readonly AgentThread[]): UnsentV
 				continue;
 			}
 			rows.push({
-				at: writtenAt(e, now),
+				at: writtenAt(e),
 				row: {
 					conversationId: id,
 					label: labelOf(e, e.server?.title ?? null),
@@ -492,7 +503,7 @@ export function useUnsentConversations(threads: readonly AgentThread[]): UnsentV
 				},
 			});
 		}
-		const unsent = rows.sort((x, y) => y.at - x.at).map((r) => r.row);
+		const unsent = rows.sort(newestFirst).map((r) => r.row);
 		return { unsent, threadNotes, badge: unsent.filter((u) => !u.active).length };
 	}, [entries, threads, conversationId]);
 }

@@ -151,5 +151,5 @@ export function useWidgetAutoPin(messages: UIMessage[], threadId: string | null)
 			}
 			if (landed) useArtifactStore.getState().openGrid();
 		})();
-	}, [messages, threadId, gridThread, pin]);
+	}, [messages, threadId, gridThread, pin, hydrate]);
 }

@@ -43,26 +43,25 @@ export function useMentionSearch(anchor: MentionAnchor | null): {
 	loading: boolean;
 } {
 	const query = anchor?.query ?? null;
-	const [results, setResults] = useState<MentionResult[]>([]);
-	const [loading, setLoading] = useState(false);
+	// The last answer, WITH the query it answers: the list is loading while that is not the query
+	// typed now, and the previous answer's rows stay up meanwhile (no flash of an empty list).
+	const [answer, setAnswer] = useState<{ query: string; results: MentionResult[] } | null>(null);
+	// Closing the popover drops the answer, so the next open starts from an empty list.
+	if (query === null && answer !== null) setAnswer(null);
+	const results = query === null || answer === null ? [] : answer.results;
+	const loading = query !== null && answer?.query !== query;
 
 	useEffect(() => {
-		if (query === null) {
-			setResults([]);
-			setLoading(false);
-			return;
-		}
+		if (query === null) return;
 		let cancelled = false;
-		setLoading(true);
 		const t = setTimeout(async () => {
+			let r: MentionResult[] = [];
 			try {
-				const r = await searchMentions(query);
-				if (!cancelled) setResults(r);
+				r = await searchMentions(query);
 			} catch {
-				if (!cancelled) setResults([]);
-			} finally {
-				if (!cancelled) setLoading(false);
+				r = [];
 			}
+			if (!cancelled) setAnswer({ query, results: r });
 		}, 140);
 		return () => {
 			cancelled = true;

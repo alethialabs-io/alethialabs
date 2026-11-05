@@ -89,3 +89,31 @@ describe("AgentKnowledgePanel — non-editor (canEdit false)", () => {
 		expect(upsertAgentContext).not.toHaveBeenCalled();
 	});
 });
+
+describe("AgentKnowledgePanel — switching scope (#6459)", () => {
+	// The loading state is DERIVED from which scope the fields were loaded for, not reset by an
+	// effect: a switch must read as loading in the very render that names the new scope, and never
+	// show the previous scope's documents as if they were the new one's. Fails if `loading` is
+	// computed from anything that the switch itself does not change (e.g. a flag cleared by the first
+	// load only): the second assertion block would then find "Runbook" instead of "Loading…".
+	it("reads as loading the moment the scope changes, then shows the new scope's knowledge", async () => {
+		vi.mocked(canEditAgentContext).mockResolvedValue(true);
+		const { rerender } = render(<AgentKnowledgePanel projectId={null} onClose={() => {}} />);
+		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Runbook")).toBeInTheDocument();
+
+		let answer: (v: { instructions: string; documents: (typeof DOC)[] }) => void = () => {};
+		vi.mocked(getAgentContext).mockReturnValue(
+			new Promise((resolve) => {
+				answer = resolve;
+			}) as never,
+		);
+		rerender(<AgentKnowledgePanel projectId="p1" onClose={() => {}} />);
+		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(screen.queryByText("Runbook")).not.toBeInTheDocument();
+
+		answer({ instructions: "", documents: [{ ...DOC, id: "d2", title: "Project notes" }] });
+		expect(await screen.findByText("Project notes")).toBeInTheDocument();
+		expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+	});
+});

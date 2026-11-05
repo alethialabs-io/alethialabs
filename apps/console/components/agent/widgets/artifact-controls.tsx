@@ -161,9 +161,10 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
   const [items, setItems] = useState<AgentArtifact[] | null>(null);
   const hydrate = useWidgetGridStore((s) => s.hydrate);
 
+  // The list is cleared where the popover OPENS (`onOpenChange` below), so each open shows the
+  // loading state instead of the previous open's list; this effect only fetches.
   useEffect(() => {
     if (!open) return;
-    setItems(null);
     void listArtifacts()
       .then(setItems)
       .catch(() => setItems([]));
@@ -182,7 +183,13 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setItems(null);
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger
         render={
           <Button
