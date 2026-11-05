@@ -57,9 +57,11 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
 	byoChartFormSchema,
+	byoChartNamespace,
 	type ByoChartFormValues,
 	type ChartSource,
 } from "@/lib/validations/byo-charts";
+import { chartSlug } from "@/lib/validations/names";
 
 interface ByoChartDialogProps {
 	open: boolean;
@@ -220,7 +222,10 @@ export function ByoChartDialog({
 
 	const effectiveUrl = (repoUrl ?? "").trim();
 	const effectiveName = (name ?? "").trim() || defaultNameFromRepo(effectiveUrl);
-	const effectiveNs = (namespace ?? "").trim() || "default";
+	// Its own namespace by default (#6446) — the same `byo-<id>` the attach action would choose, from
+	// the same id the action derives (`chartSlug` of the name).
+	const defaultNs = byoChartNamespace(chartSlug(effectiveName));
+	const effectiveNs = (namespace ?? "").trim() || defaultNs;
 	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
 	const effectiveRef = (ref ?? "").trim() || (isOci ? "*" : "HEAD");
 
@@ -464,7 +469,7 @@ export function ByoChartDialog({
 									<Input
 										id="byo-chart-ns"
 										{...register("namespace")}
-										placeholder="default"
+										placeholder={defaultNs}
 										className="font-mono"
 										aria-invalid={errors.namespace ? true : undefined}
 									/>

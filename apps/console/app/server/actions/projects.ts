@@ -1339,8 +1339,8 @@ async function buildConfigSnapshot(
 		}
 		const addons: AddOnInstallSpec[] = addonRows
 			.map((r) =>
-				// A bring-your-own chart (source='byo') resolves to a git-source spec (chart from the
-				// customer's repo); a catalog add-on resolves against the code catalog.
+				// A bring-your-own chart (source='byo') resolves to a git- or OCI-source spec marked
+				// `byo` (the customer's chart); a catalog add-on resolves against the code catalog.
 				r.source === "byo"
 					? resolveByoChartInstall(
 							{

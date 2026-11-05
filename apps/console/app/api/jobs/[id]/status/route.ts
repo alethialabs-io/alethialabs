@@ -21,9 +21,9 @@ import {
 import { recordEnvironmentCost } from "@/lib/cost/record-environment-cost";
 import {
 	advancePromotionOnPlan,
-	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/lib/promotions/lifecycle";
+import { recordJobFailed } from "@/lib/jobs/job-failed";
 import { recordProbeResult } from "@/lib/probes/persistence";
 import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import {
@@ -270,30 +270,9 @@ export async function PUT(
 						{ job_id: jobId, provider: job.provider ?? undefined },
 					);
 				}
-				if (status === "FAILED") {
-					emitAlertEventSafe(job.org_id, "system.job.failed", {
-						title: `Job failed: ${job.job_type}`,
-						summary: error_message || undefined,
-						severity: "critical",
-						...base,
-					});
-					// A non-cancel mid-apply interruption the runner observed (its 2h deadline or a
-					// graceful shutdown-drain) posts FAILED — not CANCELLED — but can still leave
-					// cloud resources outside tofu state. When the runner flagged orphan risk, raise
-					// the SAME distinct critical alert the cancel path raises so an operator reconciles
-					// cloud vs state. The env already moved to FAILED via deployFailed below, so no
-					// additional env-state change is needed here. (A hard SIGKILL/crash mid-apply is
-					// not flagged by the runner; the server-side stale-job reconciler is the backstop.)
-					if (job.execution_metadata?.orphan_risk === true) {
-						emitAlertEventSafe(job.org_id, "system.project.orphan_risk", {
-							title: "Possible orphaned resources after interrupted apply",
-							summary:
-								"An apply was interrupted mid-flight (timeout or runner shutdown); cloud resources may exist outside tofu state and need reconciliation.",
-							severity: "critical",
-							...base,
-						});
-					}
-				} else {
+				// FAILED's alerts are raised by recordJobFailed below, with the rest of a failure's side
+				// effects — the same helper the claim-time refusals call.
+				if (status === "SUCCESS") {
 					emitAlertEventSafe(job.org_id, "system.job.succeeded", {
 						title: `Job succeeded: ${job.job_type}`,
 						severity: "info",
@@ -307,6 +286,13 @@ export async function PUT(
 						});
 					}
 				}
+			}
+
+			// A FAILED terminal: the alerts, the env CAS, the BYO IaC source, the promotion and a scan's
+			// result row — ONE helper (lib/jobs/job-failed.ts), in the order this route always ran them,
+			// shared with the claim route's refusals so every failed job leaves the same state.
+			if (job && status === "FAILED") {
+				await recordJobFailed(db, jobId, job, error_message || null, jlog);
 			}
 
 			// M1: provisioning status lives on the targeted environment (the job carries
@@ -330,11 +316,9 @@ export async function PUT(
 				// finalizeDeployment; these are the in-flight and failed ones, so the module's cards can
 				// show "applying" and "failed" rather than silently sitting at their last terminal state.
 				// No-op on a template env (no row matches). Best-effort — never fail a status callback.
-				const moveIac = (
-					s: "CREATING" | "DESTROYING" | "FAILED",
-					msg: string | null = null,
-				) =>
-					setIacSourceStatus(projectId, environmentId, s, msg).catch((err) =>
+				// (Its FAILED status is written by recordJobFailed above.)
+				const moveIac = (s: "CREATING" | "DESTROYING") =>
+					setIacSourceStatus(projectId, environmentId, s, null).catch((err) =>
 						jlog.error("set iac source status", { err }),
 					);
 
@@ -342,13 +326,6 @@ export async function PUT(
 					if (status === "PROCESSING") {
 						await move("deployStart");
 						await moveIac("CREATING");
-					} else if (status === "FAILED") {
-						await move("deployFailed");
-						await moveIac("FAILED", error_message || null);
-						// A promotion's deploy failed → mark the promotion FAILED (no-op otherwise).
-						await failPromotionForJob(jobId).catch((err) =>
-							jlog.error("fail promotion (deploy) error", { err }),
-						);
 					} else if (status === "SUCCESS") {
 						try {
 							// finalizeDeployment moves the env to ACTIVE through the same CAS.
@@ -372,9 +349,6 @@ export async function PUT(
 					if (status === "PROCESSING") {
 						await move("destroyStart");
 						await moveIac("DESTROYING");
-					} else if (status === "FAILED") {
-						await move("destroyFailed");
-						await moveIac("FAILED", error_message || null);
 					} else if (status === "SUCCESS") {
 						// A successful DESTROY tore down the env's infra — finalizeDeployment records it:
 						// the BYO-IaC deployed-commit pin is cleared so the source can be detached again,
@@ -386,12 +360,7 @@ export async function PUT(
 						await move("destroySuccess");
 					}
 				} else if (job.job_type === "PLAN") {
-					if (status === "FAILED") {
-						await move("planFailed");
-						await failPromotionForJob(jobId).catch((err) =>
-							jlog.error("fail promotion (plan) error", { err }),
-						);
-					} else if (status === "SUCCESS") {
+					if (status === "SUCCESS") {
 						await move("planSuccess");
 
 						// Persist what this plan says the environment COSTS. The runner has already run
@@ -552,7 +521,8 @@ export async function PUT(
 			}
 
 			// CHART_SCAN: write the chart-safety verify.Report back onto the chart row (done/failed).
-			if (job?.job_type === "CHART_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
+			// (A FAILED scan is finalized by recordJobFailed above.)
+			if (job?.job_type === "CHART_SCAN" && status === "SUCCESS") {
 				await finalizeChartScan(jobId).catch((err) =>
 					jlog.error("finalize chart scan error", { err }),
 				);
@@ -560,7 +530,7 @@ export async function PUT(
 
 			// IAC_SCAN: write the BYO-IaC scan report back onto its project_iac_sources row and
 			// pin the scanned commit (done/failed).
-			if (job?.job_type === "IAC_SCAN" && (status === "SUCCESS" || status === "FAILED")) {
+			if (job?.job_type === "IAC_SCAN" && status === "SUCCESS") {
 				await finalizeIacScan(jobId).catch((err) =>
 					jlog.error("finalize IaC scan error", { err }),
 				);

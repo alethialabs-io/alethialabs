@@ -354,6 +354,12 @@ export interface AddOnInstallSpec {
 	/** ArgoCD AppProject the Application is placed in. Omitted = "infra" (marketplace default);
 	 * BYO charts are pinned to their hardened "byo-<slug>" project by the runner. */
 	project?: string;
+	/** Marks a bring-your-own chart — git OR OCI. Set by `resolveByoChartInstall` on every BYO spec
+	 * and on nothing else. The runner keys all of its BYO handling on it (the namespace check, the
+	 * hardened `byo-<slug>` project, the BYO sync policy) rather than on the chart URL: an `oci://`
+	 * URL says where a chart is stored, not who wrote it, and catalogue charts can be OCI too.
+	 * Mirrors the Go `AddOnInstall.Byo` (#6445). */
+	byo?: boolean;
 	namespace: string;
 	/** Fully-merged Helm values (defaults + user knobs, or a raw override in gitops mode).
 	 * NEVER contains a secret-typed knob's value (W4.5) — only SecretKeyRef wiring. */
