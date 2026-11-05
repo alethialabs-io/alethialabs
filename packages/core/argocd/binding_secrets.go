@@ -44,12 +44,28 @@ const ByoBindingSecretLabel = "alethia.io/byo-binding"
 // rendering of one ID.
 const ByoBindingOwnerLabel = "alethia.io/environment-id"
 
+// ByoBindingSourceLabel names where a binding ExternalSecret reads its credential from. Only the
+// per-binding-user path sets it (ByoBindingSourceDBUser); an object without it reads the
+// administrative credential (docs/adr/byo-binding-db-users.md §4).
+const ByoBindingSourceLabel = "alethia.io/byo-binding-source"
+
+// ByoBindingSourceDBUser is ByoBindingSourceLabel's value on an ExternalSecret that reads the
+// binding's own database user's key.
+const ByoBindingSourceDBUser = "db-user"
+
 // BindingSecretRef names one binding ExternalSecret by namespace and name. A name alone is not an
 // identity: two charts in two namespaces may bind the same workload name to the same target.
 type BindingSecretRef struct {
 	Namespace string
 	Name      string
+	// Source, when set, is the ByoBindingSourceLabel value the live object must carry to be kept.
+	// A declared binding whose live object reads another source (the administrative credential, from
+	// a deploy before the per-binding-user mode) is not kept, so turning the mode on withdraws it.
+	Source string
 }
+
+// bindingKey is a BindingSecretRef's identity, without the source it is kept for.
+type bindingKey struct{ namespace, name string }
 
 // labelledList is the slice of a `kubectl get … -o json` list this file reads.
 type labelledList struct {
@@ -76,6 +92,9 @@ type staleBinding struct {
 	ref        BindingSecretRef
 	uid        string
 	apiVersion string
+	// wrongSource is set when the binding is still declared but its live object does not read the
+	// source the declaration requires.
+	wrongSource bool
 }
 
 // validOwner reports whether owner can be used as a label value in a selector. It interpolates into
@@ -106,7 +125,8 @@ func ownedNamespaces(owner string) ([]string, error) {
 }
 
 // PruneChartBindingSecrets deletes this environment's labelled BYO binding ExternalSecrets that are
-// no longer desired (a removed binding, or a detached chart). owner is the environment's owner-label
+// no longer desired (a removed binding, or a detached chart, or a declared binding whose live object
+// does not read the source the declaration requires — see BindingSecretRef.Source). owner is the environment's owner-label
 // value; declaredNamespaces are the namespaces its configuration places a binding in; desired is
 // every binding its configuration declares. Best-effort: any listing it cannot read stops the prune
 // with a warning and deletes nothing — an unknown set is never treated as an empty one.
@@ -115,9 +135,9 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 		fmt.Fprintf(stderr, "Warning: not pruning BYO binding ExternalSecrets: no usable environment owner label (%q)\n", owner)
 		return
 	}
-	keep := make(map[BindingSecretRef]struct{}, len(desired))
+	keep := make(map[bindingKey]string, len(desired))
 	for _, d := range desired {
-		keep[d] = struct{}{}
+		keep[bindingKey{d.Namespace, d.Name}] = d.Source
 	}
 
 	owned, err := ownedNamespaces(owner)
@@ -167,7 +187,8 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 				continue
 			}
 			ref := BindingSecretRef{Namespace: m.Namespace, Name: m.Name}
-			if _, ok := keep[ref]; ok {
+			source, declared := keep[bindingKey{m.Namespace, m.Name}]
+			if declared && (source == "" || m.Labels[ByoBindingSourceLabel] == source) {
 				continue
 			}
 			// The name interpolates into a kubectl command; the API server already constrains it to a
@@ -182,7 +203,7 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 				fmt.Fprintf(stderr, "Warning: skipping prune of ExternalSecret %s/%s: no usable uid or apiVersion in the listing\n", m.Namespace, m.Name)
 				continue
 			}
-			stale = append(stale, staleBinding{ref: ref, uid: m.UID, apiVersion: item.APIVersion})
+			stale = append(stale, staleBinding{ref: ref, uid: m.UID, apiVersion: item.APIVersion, wrongSource: declared})
 		}
 	}
 
@@ -190,6 +211,10 @@ func PruneChartBindingSecrets(owner string, declaredNamespaces []string, desired
 		if delErr := deleteBindingWithUID(s, stderr); delErr != nil {
 			fmt.Fprintf(stderr, "Warning: failed to prune BYO binding ExternalSecret %s/%s: %v\n",
 				s.ref.Namespace, s.ref.Name, delErr)
+			continue
+		}
+		if s.wrongSource {
+			fmt.Fprintf(stdout, "BYO binding ExternalSecret does not read its binding's own credential: deletion requested for %s/%s\n", s.ref.Namespace, s.ref.Name)
 			continue
 		}
 		fmt.Fprintf(stdout, "BYO binding ExternalSecret no longer declared: deletion requested for %s/%s\n", s.ref.Namespace, s.ref.Name)
