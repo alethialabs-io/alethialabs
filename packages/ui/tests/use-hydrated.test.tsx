@@ -7,8 +7,8 @@
 // the hydrating render identical to the server's HTML (React #418 otherwise), the second keeps a
 // client mount from flashing its pending state for a frame.
 
-import { render } from "@testing-library/react";
-import { act } from "react";
+// RTL's `act` (not React's) flags the environment as an act environment while it runs.
+import { act, render } from "@testing-library/react";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
