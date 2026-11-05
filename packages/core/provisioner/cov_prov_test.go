@@ -2521,8 +2521,10 @@ func TestProv_ProbeSynthesizesTheClusterNameWhenTheOutputIsAbsent(t *testing.T) 
 // reachable; continuing past a namespace we merely failed to CREATE is still right, and unchanged.
 //
 // Fail-closed is preserved, which is what the old comment actually cared about: the scan loop has
-// already pinned each Application to `byo-<slug>`, and refusing here means that AppProject is never
-// created — so nothing syncs, rather than syncing into the wide-open default project.
+// already pinned each Application to `byo-<slug>`. Since #6439 the refusal is PER CHART: the refused
+// chart contributes no destination, the AppProject is re-applied without it (with no destinations at
+// all here, since this is the only chart), and deploy.go leaves the chart out of the render — so
+// nothing syncs into the refused namespace, and nothing syncs into the wide-open default project.
 func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\nexit 0\n")
 
@@ -2534,12 +2536,13 @@ func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	}
 	var errOut strings.Builder
 	if prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
-		t.Fatal("a namespace Kubernetes would reject must REFUSE the stage, not configure it")
+		t.Fatal("a namespace Kubernetes would reject must be REFUSED, not configured")
 	}
-	if !strings.Contains(errOut.String(), "refusing to configure BYO charts") {
+	if !strings.Contains(errOut.String(), "refusing BYO chart") {
 		t.Errorf("the refusal must say so, got:\n%s", errOut.String())
 	}
-	// Fail-closed: the Application is still pinned to a project that will not exist.
+	// Fail-closed: the Application is still pinned to the hardened project, which now grants it no
+	// destination.
 	if got := vc.AddOns[0].Project; got != "byo-acme-corp" {
 		t.Errorf("AddOns[0].Project = %q, want it pinned to the hardened project so nothing syncs", got)
 	}
