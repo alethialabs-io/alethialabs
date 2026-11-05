@@ -33,8 +33,8 @@ platform's own workloads, their Secrets and their service accounts.
      capability. Stripping would hand that runner a plain Helm add-on, which it would render under the
      catalogue's project with no namespace check, and on a cluster a newer runner already migrated
      its re-apply would move the Application back. Since #6458 such a runner is not handed the
-     job in the first place: `claim_next_job` leaves it QUEUED for a runner that sends the capability,
-     for a bounded wait, and only then is it failed here — see
+     job in the first place: `claim_next_job` leaves it QUEUED while a live runner in its pool sends the
+     capability, and it is failed here only when none does — see
      [runner-capability-claim.md](runner-capability-claim.md).
      Other job types (PLAN, DESTROY, …) deploy no add-on and are served stripped.
 

@@ -87,10 +87,11 @@ export async function POST(req: Request) {
 			.limit(1);
 
 		// The capabilities this runner advertised (lib/runners/snapshot-capabilities.ts). They go INTO
-		// the claim: claim_next_job leaves a job that needs one this runner lacks QUEUED for a runner that
-		// has it, for a bounded wait (programmables.sql, runner_capable_for_job). Joined into one text
-		// value and split in SQL, because a JS array in a drizzle `sql` template expands into a list of
-		// parameters, not one array. A capability name never contains a comma.
+		// the claim, which stamps them on runners.capabilities and leaves a job needing one this runner
+		// lacks QUEUED while a live runner in the job's pool has it (programmables.sql,
+		// live_runner_has_capabilities). Joined into one text value and split in SQL, because a JS array
+		// in a drizzle `sql` template expands into a list of parameters, not one array. A capability name
+		// never contains a comma.
 		const capabilities = parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER));
 		const capabilityList = [...capabilities].join(",");
 
@@ -142,10 +143,9 @@ export async function POST(req: Request) {
 		// case cannot be served safely by stripping — a DEPLOY with an OCI BYO chart to a runner that
 		// does not read the marker. claim_next_job does not hand such a job to such a runner, except in
 		// three cases, and each lands here and fails with the fix in its reason: the job is ASSIGNED to
-		// this runner (no other runner may take it), it has waited out the capability bound (no capable
-		// runner claimed it), or the SQL
-		// reading of the snapshot (job_required_capabilities) ever disagrees with this one — the
-		// defence this check is kept for.
+		// this runner (no other runner may take it), no live runner in the job's pool advertises the
+		// capability (nobody else could run it), or the SQL reading of the snapshot
+		// (job_required_capabilities) ever disagrees with this one — the defence this check is kept for.
 		const capabilityRefusal = refusalForRunner(job.job_type, job.config_snapshot, capabilities);
 		if (capabilityRefusal) {
 			await db

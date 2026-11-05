@@ -55,6 +55,10 @@ export const runners = pgTable(
 		// claims any provider (the full/self-host image); a lean per-cloud image
 		// declares just its one. Reported image-driven via the heartbeat.
 		supported_providers: cloudProvider().array(),
+		// The capabilities this runner last advertised in X-Runner-Capabilities (#6458), stamped by
+		// claim_next_job and runner_heartbeat. claim_next_job reads it to ask whether a LIVE runner in a
+		// job's pool can run a job the claiming runner cannot (lib/runners/snapshot-capabilities.ts).
+		capabilities: text().array().default([]).notNull(),
 		// @deprecated superseded by operator/provisioning; retained nullable for the
 		// backfill window, dropped in a later migration.
 		mode: runnerMode(),

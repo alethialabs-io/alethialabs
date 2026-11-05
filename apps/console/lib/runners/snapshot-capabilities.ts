@@ -65,14 +65,16 @@ const ADDON_DEPLOYING_JOB_TYPES: ReadonlySet<string> = new Set(["DEPLOY"]);
  * than served stripped.
  *
  * Most such jobs never reach this check (#6458). The claim route passes the runner's capabilities into
- * claim_next_job, which leaves a job needing one the runner lacks QUEUED for a runner that has it — so
- * in a MIXED pool during a rollout the newer runner takes it. The SQL half of this rule is
- * `job_required_capabilities` in lib/db/programmables.sql, pinned to this one over the shared fixtures
- * by tests/integration/claim-capability-skip.test.ts. The skip is BOUNDED (`capability_wait_bound`,
- * 15 minutes from the job's last write): after that an incapable runner is handed the job and this
- * check fails it, so a job no runner in its pool can run does not wait forever, saying nothing. This
- * check also still fails an ASSIGNED job at once (no other runner may claim it), and stays as the
- * defence should the SQL reading ever disagree with this one. The claim route fails the job through
+ * claim_next_job, which stamps them on runners.capabilities and leaves a job needing one the runner
+ * lacks QUEUED while a LIVE runner in the job's pool advertises it — so in a MIXED pool during a
+ * rollout the newer runner takes it, however long other gates hold the job. The SQL half of this rule
+ * is `job_required_capabilities` in lib/db/programmables.sql (stored on jobs.required_capabilities by a
+ * trigger), pinned to this one over the shared fixtures by
+ * tests/integration/claim-capability-skip.test.ts. When NO live runner in the pool has the capability,
+ * nobody else could run the job, so the incapable runner is handed it and this check fails it: a job
+ * no runner can run does not wait forever, saying nothing. This check also still fails an ASSIGNED
+ * job at once (no other runner may claim it), and stays as the defence should the SQL reading ever
+ * disagree with this one. The claim route fails the job through
  * recordJobFailed, so the environment, the promotion and the alert follow as for any failure.
  */
 export function refusalForRunner(

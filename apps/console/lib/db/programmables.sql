@@ -122,7 +122,8 @@ $$;
 -- UI's (components/jobs/columns.tsx + the job detail page), plus verify_override — a recorded
 -- verification waiver, which the Evidence page lists (#6126). Deliberately NOT listed: progress_at and
 -- updated_at (heartbeat-like), claimed_at and attempts (they move with status), usage_reported_at,
--- priority, provider, assigned_runner_id, traceparent, and org_id (a backfill-only write).
+-- priority, provider, assigned_runner_id, traceparent, required_capabilities (derived by a trigger,
+-- rendered nowhere), and org_id (a backfill-only write).
 DROP TRIGGER IF EXISTS jobs_notify_change_upd ON public.jobs;
 CREATE TRIGGER jobs_notify_change_upd
   AFTER UPDATE ON public.jobs
@@ -222,6 +223,8 @@ CREATE TRIGGER invoice_notify_change_insdel
 --     three leave a DRAINING runner DRAINING, so a draining runner's heartbeats are silent too;
 --     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
 --     runner really reports something new — which is then exactly one notice;
+--   · capabilities — stamped by claim_next_job and runner_heartbeat on every request, and rendered
+--     nowhere (#6458);
 --   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
 -- tests/integration/realtime-notify-runners.test.ts drives the real RPCs: a heartbeat and a presence
 -- ping emit zero; an OFFLINE→ONLINE flip, a sweep to OFFLINE and a new reported version emit one.
@@ -494,9 +497,8 @@ $$;
 -- `addon-byo-marker`; every other job needs nothing. The two are pinned to each other over the shared
 -- fixtures in packages/core/types/testdata/snapshot-capabilities by
 -- tests/integration/claim-capability-skip.test.ts, so a change to one without the other reds there.
--- Computed from the stored snapshot at claim time — no column, so no migration and no backfill: a row
--- enqueued before this function existed is judged exactly like a new one. Nested CASE, not AND: SQL
--- does not promise AND's evaluation order, and jsonb_array_elements raises on a non-array.
+-- Nested CASE, not AND: SQL does not promise AND's evaluation order, and jsonb_array_elements raises
+-- on a non-array.
 CREATE OR REPLACE FUNCTION public.job_required_capabilities(
     p_job_type public.provision_job_type, p_snapshot JSONB
 ) RETURNS TEXT[] LANGUAGE sql IMMUTABLE AS $$
@@ -516,34 +518,65 @@ CREATE OR REPLACE FUNCTION public.job_required_capabilities(
     END;
 $$;
 
--- How long an unassigned job waits for a runner that has the capabilities it needs (#6458).
---
--- claim_next_job skips a job for a runner that lacks a capability the job needs, so in a mixed pool
--- during a rollout an old runner leaves the job QUEUED for a new one. Skipping alone would let a job
--- that NO runner in its pool can run wait forever, saying nothing. So the skip is bounded: once the
--- job has sat QUEUED this long (measured from its last write, `updated_at`, so a job requeued by
--- recovery gets a fresh window), a runner without the capability is handed it anyway — and the claim
--- route's refusalForRunner fails it through recordJobFailed with the "update the runner" reason, the
--- same end state as before the skip existed. Runners advertise capabilities only per request (the
--- X-Runner-Capabilities header) and nothing stores them, so "is a capable runner registered?" cannot
--- be asked at enqueue; a time bound needs no new state.
---
--- The cost, stated: a capable runner that stays busy for longer than the bound while an incapable one
--- polls loses the job to a failure the user redeploys past. 15 minutes is the stale-claim window
--- recover_stale_jobs already uses — longer than any interactive wait, short enough to answer.
-CREATE OR REPLACE FUNCTION public.capability_wait_bound()
-RETURNS INTERVAL LANGUAGE sql IMMUTABLE AS $$ SELECT INTERVAL '15 minutes' $$;
+-- jobs.required_capabilities is DERIVED, here, from job_type + config_snapshot — no enqueue site
+-- writes it, so no enqueue site can forget it, and whatever an INSERT sets is overwritten. Stored so
+-- claim_next_job compares two arrays per candidate instead of reading every candidate's snapshot.
+CREATE OR REPLACE FUNCTION public.jobs_set_required_capabilities()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.required_capabilities := public.job_required_capabilities(NEW.job_type, NEW.config_snapshot);
+  RETURN NEW;
+END;
+$$;
 
--- TRUE iff a runner advertising p_capabilities may claim this unassigned job: it has every capability
--- the job needs, or the job has waited out capability_wait_bound (see above). NULL capabilities are
--- none — every runner built before the header.
-CREATE OR REPLACE FUNCTION public.runner_capable_for_job(
-    p_job_type public.provision_job_type, p_snapshot JSONB, p_queued_since TIMESTAMPTZ,
-    p_capabilities TEXT[]
-) RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
-    SELECT public.job_required_capabilities(p_job_type, p_snapshot)
-             <@ COALESCE(p_capabilities, ARRAY[]::TEXT[])
-        OR p_queued_since < now() - public.capability_wait_bound();
+DROP TRIGGER IF EXISTS jobs_set_required_capabilities ON public.jobs;
+CREATE TRIGGER jobs_set_required_capabilities
+  BEFORE INSERT OR UPDATE OF job_type, config_snapshot ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.jobs_set_required_capabilities();
+
+-- Backfill every row that can still be claimed, or requeued and then claimed: the column arrived
+-- with its '{}' default on rows written before the trigger. Settled rows are never claimed again and
+-- keep '{}'. Idempotent: matches nothing once every such row agrees with its snapshot.
+UPDATE public.jobs
+   SET required_capabilities = public.job_required_capabilities(job_type, config_snapshot)
+ WHERE status IN ('QUEUED', 'CLAIMED', 'PROCESSING')
+   AND required_capabilities IS DISTINCT FROM public.job_required_capabilities(job_type, config_snapshot);
+
+-- TRUE iff a LIVE runner that could claim this unassigned job advertises every capability in
+-- p_required (#6458). This is what bounds claim_next_job's capability skip.
+--
+-- A runner without a capability a job needs skips the job — leaves it QUEUED — only while a runner
+-- that HAS it is live in the job's pool, so in a mixed pool during a rollout the newer runner takes it.
+-- Once none is, nobody else could run it either, so the incapable runner is handed it and the claim
+-- route's refusalForRunner fails it through recordJobFailed with the "update the runner" reason —
+-- rather than leaving it QUEUED forever, saying nothing. The question is about PRESENCE, not time: a
+-- job held by another gate (state_object_busy, destroy_waits_on_tenants, the managed concurrency cap)
+-- for any length of time is still skipped while a capable runner is live.
+--
+-- The pool is the set of runners claim_next_job would let take the job (an assignment aside):
+--   · a managed runner, unless the job requires a self runner;
+--   · a self runner of the job's org;
+-- either way passing the same cloud-identity and provider filters the claim applies, read off the
+-- runner row (the claim route passes runners.cloud_identity_id as p_cloud_identity_id). The legacy
+-- personal-org arm of the self branch admits runner-lifecycle jobs only, which never need a capability.
+-- LIVE = ONLINE (so not DRAINING, not OFFLINE) with a heartbeat inside the 5-minute window
+-- recover_stale_jobs uses. runners.capabilities is stamped on every claim and heartbeat.
+CREATE OR REPLACE FUNCTION public.live_runner_has_capabilities(
+    p_required TEXT[], p_org_id UUID, p_requires_self_runner BOOLEAN, p_cloud_identity_id UUID,
+    p_provider public.cloud_provider
+) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.runners r
+         WHERE r.capabilities @> p_required
+           AND r.status = 'ONLINE'
+           AND r.last_heartbeat > now() - INTERVAL '5 minutes'
+           AND (r.cloud_identity_id IS NULL OR r.cloud_identity_id = p_cloud_identity_id)
+           AND (r.supported_providers IS NULL OR p_provider IS NULL OR p_provider = ANY(r.supported_providers))
+           AND (
+             (r.operator = 'managed' AND NOT p_requires_self_runner)
+             OR (r.operator = 'self' AND r.org_id = p_org_id)
+           )
+    );
 $$;
 
 -- The 3-argument form is dropped first: adding p_capabilities with a DEFAULT next to the old
@@ -576,7 +609,12 @@ BEGIN
     IF v_status = 'DRAINING' THEN
         RETURN;
     END IF;
-    UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status WHERE id = p_runner_id;
+    -- capabilities: what this runner advertised on this request (NULL — a caller that passes none —
+    -- keeps the last stamp). live_runner_has_capabilities reads it for every other runner's claim.
+    UPDATE public.runners
+       SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
+           capabilities = COALESCE(p_capabilities, capabilities)
+     WHERE id = p_runner_id;
     PERFORM public.open_runner_session(p_runner_id);
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
@@ -655,9 +693,12 @@ BEGIN
                 AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                 -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                 AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
-                -- Leave a job this runner cannot run QUEUED for one that can, within a bound
-                -- (see runner_capable_for_job).
-                AND public.runner_capable_for_job(j.job_type, j.config_snapshot, j.updated_at, p_capabilities)
+                -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
+                -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
+                AND CASE WHEN j.required_capabilities <@ COALESCE(p_capabilities, ARRAY[]::TEXT[]) THEN true
+                         ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
+                                    j.requires_self_runner, j.cloud_identity_id, j.provider)
+                    END
                 AND (
                   public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
                   OR public.org_managed_inflight(j.org_id)
@@ -714,9 +755,12 @@ BEGIN
                   AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                   -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                   AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
-                  -- Leave a job this runner cannot run QUEUED for one that can, within a bound
-                  -- (see runner_capable_for_job).
-                  AND public.runner_capable_for_job(j.job_type, j.config_snapshot, j.updated_at, p_capabilities)
+                  -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
+                  -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
+                  AND CASE WHEN j.required_capabilities <@ COALESCE(p_capabilities, ARRAY[]::TEXT[]) THEN true
+                           ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
+                                      j.requires_self_runner, j.cloud_identity_id, j.provider)
+                      END
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         END IF;
@@ -975,9 +1019,13 @@ BEGIN
 END;
 $$;
 
+-- p_capabilities (#6458): what the runner advertised in X-Runner-Capabilities on this heartbeat,
+-- stamped on runners.capabilities (NULL keeps the last stamp). The 4-argument form is dropped first so
+-- the defaulted fifth argument leaves no ambiguous overload behind.
+DROP FUNCTION IF EXISTS public.runner_heartbeat(UUID, TEXT, TEXT, public.cloud_provider[]);
 CREATE OR REPLACE FUNCTION public.runner_heartbeat(
     p_runner_id UUID, p_runner_token_hash TEXT, p_version TEXT DEFAULT NULL,
-    p_providers public.cloud_provider[] DEFAULT NULL
+    p_providers public.cloud_provider[] DEFAULT NULL, p_capabilities TEXT[] DEFAULT NULL
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_release_id UUID;
 BEGIN
@@ -995,7 +1043,8 @@ BEGIN
     SET last_heartbeat = now(),
         status = CASE WHEN status = 'DRAINING' THEN status ELSE 'ONLINE'::public.runner_status END,
         version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id),
-        supported_providers = COALESCE(p_providers, supported_providers)
+        supported_providers = COALESCE(p_providers, supported_providers),
+        capabilities = COALESCE(p_capabilities, capabilities)
     WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF NOT FOUND THEN RAISE EXCEPTION 'Unauthorized runner'; END IF;
     PERFORM public.open_runner_session(p_runner_id);

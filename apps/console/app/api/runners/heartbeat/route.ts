@@ -4,6 +4,10 @@
 import { getServiceDb } from "@/lib/db";
 import { cloudProvider } from "@/lib/db/schema";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import {
+	RUNNER_CAPABILITIES_HEADER,
+	parseRunnerCapabilities,
+} from "@/lib/runners/snapshot-capabilities";
 import { sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -40,10 +44,16 @@ export async function POST(req: Request) {
 	// existing supported_providers (the full image reports none → stays "any").
 	const providersLiteral = providers ? `{${providers.join(",")}}` : null;
 
+	// The capabilities this runner advertises, stamped on runners.capabilities (#6458): claim_next_job
+	// asks whether a LIVE runner in a job's pool has a capability the claiming runner lacks, and a
+	// runner that is busy with a long job is kept "known capable" by its heartbeat, not only its
+	// claims. A runner without the header stamps none. Joined and split in SQL, as in the claim route.
+	const capabilityList = [...parseRunnerCapabilities(req.headers.get(RUNNER_CAPABILITIES_HEADER))].join(",");
+
 	try {
 		const db = getServiceDb();
 		await db.execute(
-			sql`select runner_heartbeat(${runnerId}::uuid, ${tokenHash}, ${runnerVersion}, ${providersLiteral}::cloud_provider[])`,
+			sql`select runner_heartbeat(${runnerId}::uuid, ${tokenHash}, ${runnerVersion}, ${providersLiteral}::cloud_provider[], string_to_array(${capabilityList}::text, ','))`,
 		);
 		// Fallback cancel delivery: the primary path is a pushed wake-stream cancel event, but that
 		// pg_notify is dropped if the runner's SSE was disconnected at notify time. Return this
