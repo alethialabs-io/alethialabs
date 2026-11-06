@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -306,12 +308,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     aws:
       service: SecretsManager
@@ -328,12 +325,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     gcpsm:
       projectID: {{ .GCPProjectID }}
@@ -344,12 +336,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -361,12 +348,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     alibaba:
       regionID: {{ .Region }}
@@ -390,12 +372,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     aws:
       service: SecretsManager
@@ -417,12 +394,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     gcpsm:
       projectID: {{ .SecretsXacctProjectID }}
@@ -434,12 +406,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -456,12 +423,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     alibaba:
       regionID: {{ .SecretsXacctRegion }}
@@ -553,7 +515,60 @@ spec:
 {{- end }}
 `
 
-var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").Parse(externalSecretsStoreTemplate))
+var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").
+	Funcs(template.FuncMap{"storeConditions": secretStoreConditions}).
+	Parse(externalSecretsStoreTemplate))
+
+// SecretStoreAccessLabel is the runner's secret-store stamp: a label the runner puts on the
+// namespaces it creates for bring-your-own charts and for the BYO users Job, and which a chart
+// cannot write (a namespace is cluster-scoped, and the hardened BYO project admits no cluster-scoped
+// kind). SecretStoreAccessValue is its value. See secretStoreConditions.
+const (
+	SecretStoreAccessLabel = "alethia.io/secret-store-access"
+	SecretStoreAccessValue = "runner"
+)
+
+// secretStoreConditions renders the `conditions` every platform ClusterSecretStore carries. ESO
+// admits a namespace when ANY condition selects it, and evaluates each against the namespace's
+// labels alone. Every condition first refuses a placed tenant namespace (#1306, see
+// externalSecretsStoreTemplate). Beyond that a namespace is admitted when:
+//
+//  1. it is not marked as a BYO chart's (alethia.io/managed-by=byo-charts) — every namespace the
+//     platform's own workloads, add-ons and customer workloads use, unchanged;
+//  2. it carries the runner's stamp (SecretStoreAccessLabel) — the BYO chart namespaces and the BYO
+//     users namespace the runner creates. A namespace marked as a BYO chart's is therefore served
+//     only while it also carries the runner's positive stamp, as defence in depth;
+//  3. it is one of the platform's reserved namespaces, by its API-server-set name label
+//     (kubernetes.io/metadata.name, which nothing can rewrite). A runner from before #6439/#6446
+//     could mark one of those as a BYO chart's, and the platform's own ExternalSecrets live there
+//     ("default" holds every first-class service's), so the stamp rule must never withdraw them.
+//
+// What this does NOT do, and cannot: tell the runner's binding ExternalSecret from one a chart wrote
+// in the same namespace. A condition sees only the namespace. That line is the hardened BYO
+// project's deny of every external-secrets.io kind (byoSecretSyncDenied).
+func secretStoreConditions() string {
+	reserved := make([]string, 0, len(byoReserved.exact))
+	for n := range byoReserved.exact {
+		reserved = append(reserved, strconv.Quote(n))
+	}
+	sort.Strings(reserved)
+	sel := func(key, op string, values ...string) string {
+		return `    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
+          - key: ` + key + `
+            operator: ` + op + `
+            values: [` + strings.Join(values, ", ") + `]`
+	}
+	return strings.Join([]string{
+		"  conditions:",
+		sel(byoNamespaceManagedByLabel, "NotIn", strconv.Quote(byoNamespaceManagedByValue)),
+		sel(SecretStoreAccessLabel, "In", strconv.Quote(SecretStoreAccessValue)),
+		sel("kubernetes.io/metadata.name", "In", reserved...),
+	}, "\n")
+}
 
 // externalSecretsStoreManifest renders the per-cloud ClusterSecretStore for the given facts, or ""
 // when the provider/identity fact means there is no cloud secret store (e.g. hetzner).

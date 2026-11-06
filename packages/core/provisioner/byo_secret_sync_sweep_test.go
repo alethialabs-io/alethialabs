@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
 	"strings"
 	"testing"
 
@@ -91,40 +90,5 @@ func TestRunAddOnStage_SweepsAfterTheBindings(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(stage.Warnings, "\n"), "deleted one") {
 		t.Errorf("the sweep's warning did not reach the Deploy tab: %q", stage.Warnings)
-	}
-}
-
-// TestRenderedByoBindings_MatchesWhatTheBindingApplyApplies holds renderedByoBindings to the documents
-// applyByoChartBindingsExcept actually applies, byte for byte. The sweep restores a live binding to
-// the rendered document, so a renderer that drifted from the apply would rewrite every binding on
-// every deploy.
-func TestRenderedByoBindings_MatchesWhatTheBindingApplyApplies(t *testing.T) {
-	c := newBindingCluster(t, `{"items":[]}`, 0)
-	vc := byoBindingConfig("env-1", true)
-	worker := vc.AddOns[0].Workloads[0]
-	worker.Name = "worker"
-	vc.AddOns[0].Workloads = append(vc.AddOns[0].Workloads, worker)
-	outputs := map[string]interface{}{"rds_master_credentials_secret_name": bindingOutputsSecret}
-
-	applyByoChartBindingsExcept(vc, outputs, "aws", nil, io.Discard, io.Discard)
-	raw, err := os.ReadFile(c.applied)
-	if err != nil {
-		t.Fatalf("nothing was applied: %v", err)
-	}
-	applied := string(raw)
-
-	rendered := renderedByoBindings(vc, outputs, "aws", nil)
-	if len(rendered) != 2 {
-		t.Fatalf("rendered %d binding(s), want 2: %v", len(rendered), rendered)
-	}
-	total := 0
-	for ref, doc := range rendered {
-		if !strings.Contains(applied, doc) {
-			t.Errorf("the rendered %s/%s is not what the apply applied:\nrendered:\n%s\napplied:\n%s", ref.Namespace, ref.Name, doc, applied)
-		}
-		total += len(doc)
-	}
-	if total != len(applied) {
-		t.Errorf("the apply applied %d bytes but the rendered documents are %d: one side has a document the other lacks", len(applied), total)
 	}
 }

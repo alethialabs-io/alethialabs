@@ -4,8 +4,10 @@
 package argocd
 
 // W5 Path A Lane 2b — prune runner-applied BYO chart binding ExternalSecrets. These are applied by
-// the runner OUTSIDE ArgoCD (the hardened BYO AppProject forbids namespaced CRs), so nothing else
-// sweeps them: when a binding is removed (or its chart detached), its ExternalSecret would orphan.
+// the runner OUTSIDE ArgoCD, because the hardened BYO AppProject admits only a closed list of
+// namespaced workload kinds and denies every external-secrets.io kind (byoWorkloadKinds,
+// byoSecretSyncDenied), so the chart's Application could not carry them. Nothing else sweeps them:
+// when a binding is removed (or its chart detached), its ExternalSecret would orphan.
 //
 // The prune is scoped to ONE environment's objects, and scoped twice:
 //   - by NAMESPACE: it lists only the namespaces the environment declares a BYO binding in, plus

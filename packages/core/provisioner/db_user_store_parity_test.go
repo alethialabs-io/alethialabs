@@ -73,7 +73,7 @@ func TestByoDBUserStore_CoversEveryKeyTheResolverLooksUp(t *testing.T) {
 		names[s.Key] = "store/" + s.Key
 		users = append(users, s.User)
 	}
-	withProvisionedDBUsers(t, users...)
+	provisioned := provisionedDBUsers(users...)
 	outputs := map[string]interface{}{"custom_secret_names": names}
 
 	// Then the add-on stage, as addon_stage.go runs it: configure (the move), then the bindings.
@@ -82,8 +82,20 @@ func TestByoDBUserStore_CoversEveryKeyTheResolverLooksUp(t *testing.T) {
 	if len(byo.Moved) != 1 || byo.Moved[0].To != "byo-acme-api" || len(byo.Refused) != 0 {
 		t.Fatalf("fixture: moved %+v refused %+v, want acme-api moved to byo-acme-api and nothing refused", byo.Moved, byo.Refused)
 	}
+	// The BYO users Job's declared set (read after the move) is exactly the store half's: a user the
+	// Job declares with no key would make every run skip revocation, and a key with no declared user
+	// would never be provisioned.
+	declared := declaredByoDBUsers(vc, true, byo.Refused)
+	if len(declared) != len(store) {
+		t.Errorf("the Job declares %d users, the store half %d: %+v vs %+v", len(declared), len(store), declared, store)
+	}
+	for _, d := range declared {
+		if names[d.Key] == nil {
+			t.Errorf("the Job declares %s, whose key %s the store half never created", d.User, d.Key)
+		}
+	}
 	var log strings.Builder
-	st := applyByoChartBindingsExcept(vc, outputs, "aws", byo.Refused, &log, io.Discard)
+	st := applyByoChartBindingsExcept(vc, outputs, "aws", byo.Refused, provisioned, &log, io.Discard)
 
 	if strings.Contains(log.String(), "no secret for its own database user") {
 		t.Errorf("the resolver looked up a key the store half never created:\n%s\nstore: %+v", log.String(), store)
