@@ -38,8 +38,8 @@ import (
 
 const (
 	// ByoDBUsersNamespace is where the BYO users Job and its credential objects live. The runner
-	// creates it, and it is reserved for the platform: the "alethia-" prefix of
-	// argocd/byo_reserved_namespaces.json refuses it as a BYO chart's namespace (pinned by
+	// creates it, and it is reserved for the platform by its exact name (the platformByoDBUsers
+	// group of argocd/byo_reserved_namespaces.json, pinned by
 	// TestByoDBUsers_NamespaceIsReservedForThePlatform), and the run refuses to start while it holds
 	// any object that is not a run's (provisioner foreignByoDBUsersObjects).
 	ByoDBUsersNamespace = "alethia-byo-db-users"

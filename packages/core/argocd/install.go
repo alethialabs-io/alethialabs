@@ -543,7 +543,7 @@ const (
 //     name label (kubernetes.io/metadata.name). A runner from before #6439/#6446 could mark one of
 //     those as a BYO chart's, and the platform's own ExternalSecrets live there ("default" holds
 //     every first-class service's), so the stamp rule must never withdraw them. The reserved
-//     PREFIXES (alethia-, kube-, vcluster-) are not covered: a label selector cannot match a prefix,
+//     PREFIXES (kube-, vcluster-) are not covered: a label selector cannot match a prefix,
 //     and ESO 0.9.20 evaluates a condition's namespaceRegexes on their own, without the placement
 //     requirement, so a regex condition would admit a placed tenant whose name matched. No platform
 //     ExternalSecret is known to live in a prefix-reserved namespace.

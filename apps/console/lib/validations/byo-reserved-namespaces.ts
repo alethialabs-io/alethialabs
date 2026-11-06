@@ -72,6 +72,11 @@ export const BYO_RESERVED_NAMESPACES: {
 			],
 		},
 		{
+			id: "platformByoDBUsers",
+			reason: "the platform's BYO database users Job runs there, with the credentials it needs",
+			namespaces: ["alethia-byo-db-users"],
+		},
+		{
 			id: "platformWorkloads",
 			reason:
 				"the platform's own workloads, their Secrets and their service accounts run there",
@@ -101,10 +106,6 @@ export const BYO_RESERVED_NAMESPACES: {
 		},
 	],
 	prefixes: [
-		{
-			prefix: "alethia-",
-			reason: "the platform names its own namespaces alethia-<name>",
-		},
 		{
 			prefix: "kube-",
 			reason: "Kubernetes reserves the kube- prefix for its system namespaces",

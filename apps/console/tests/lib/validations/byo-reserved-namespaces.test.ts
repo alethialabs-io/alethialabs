@@ -98,7 +98,7 @@ describe("BYO reserved namespaces — one list, two readers", () => {
 describe("byoReservedNamespaceReason", () => {
 	it("refuses every reserved name and every reserved prefix", () => {
 		for (const ns of ALL_RESERVED) expect(byoReservedNamespaceReason(ns)).not.toBeNull();
-		for (const ns of ["kube-flannel", "vcluster-dev", "alethia-byo-db-users", "alethia-anything"]) {
+		for (const ns of ["kube-flannel", "vcluster-dev", "alethia-byo-db-users"]) {
 			expect(byoReservedNamespaceReason(ns)).not.toBeNull();
 		}
 	});
@@ -107,6 +107,13 @@ describe("byoReservedNamespaceReason", () => {
 		expect(byoReservedNamespaceReason("kube-system")).toBe(
 			BYO_RESERVED_NAMESPACES.groups.find((g) => g.id === "kubernetes")?.reason,
 		);
+	});
+
+	it("reserves the BYO users namespace by its exact name, not an alethia- prefix", () => {
+		// Only the one name is reserved: a prefix would refuse a chart already attached in a namespace
+		// such as alethia-foo on its next deploy, and the prune would then withdraw its binding secrets.
+		expect(byoReservedNamespaceReason("alethia-byo-db-users")).not.toBeNull();
+		expect(byoReservedNamespaceReason("alethia-anything")).toBeNull();
 	});
 
 	it("accepts ordinary names, including ones that only contain a reserved word", () => {

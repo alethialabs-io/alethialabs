@@ -738,16 +738,22 @@ func TestByoUsers_ThreePhases(t *testing.T) {
 // it, so an empty result is an explicit count=0 and a truncated one (the kubelet keeps the LAST 4096
 // bytes) is detected by its missing header.
 func TestByoUsers_ResultStartsWithACountedHeader(t *testing.T) {
-	for _, skip := range []bool{false, true} {
+	// Every combination, including NOTHING declared with --skip-revoke: the runner treats an absent
+	// message as a lost result, so even an empty run must write its header (count=0).
+	for _, c := range []struct{ skip, empty bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		skip := c.skip
 		in := oneUserInput()
 		in.SkipRevoke = skip
+		if c.empty {
+			in.Users = nil
+		}
 		got, err := renderByoUsersSQL(in)
 		if err != nil {
 			t.Fatal(err)
 		}
 		writes := strings.Split(got, "\\o /dev/termination-log\n")[1:]
 		if len(writes) == 0 {
-			t.Fatalf("skip=%v: no result write", skip)
+			t.Fatalf("skip=%v empty=%v: no result write", skip, c.empty)
 		}
 		for i, w := range writes {
 			w = w[:strings.Index(w, "\\o\n")]

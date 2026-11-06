@@ -754,11 +754,12 @@ func TestByoDBUsers_TruncatedResultIsNamed(t *testing.T) {
 	}
 }
 
-// TestByoDBUsers_NoDeclaredUserAndNoMessageIsASuccess: with nothing declared, a Complete Job whose
-// termination message the API server omits (an empty file) is a success with nothing listed — not a
-// failure that would skip the binding prune on every deploy of an environment with no BYO binding.
-func TestByoDBUsers_NoDeclaredUserAndNoMessageIsASuccess(t *testing.T) {
-	for name, msg := range map[string]*string{"no message field": nil, "empty message": new(string), "count=0 header": resultOf()} {
+// TestByoDBUsers_AbsentMessageIsALostResult: db-bootstrap writes its header on every run, so a
+// Complete Job whose termination message is absent (the API server omits an empty one) lost its
+// result. That fails the run with a named warning, whatever was declared — even nothing. The
+// success case for "nothing declared" is the header's count=0.
+func TestByoDBUsers_AbsentMessageIsALostResult(t *testing.T) {
+	for name, msg := range map[string]*string{"no message field": nil, "empty message": new(string)} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
 			c := newUsersCluster(t)
@@ -766,14 +767,25 @@ func TestByoDBUsers_NoDeclaredUserAndNoMessageIsASuccess(t *testing.T) {
 			vc := usersConfig()
 			vc.AddOns = nil
 			out, log := runUsers(vc, usersOutputs(vc), nil)
-			if out.Failed || len(out.Warnings) != 0 || len(out.Provisioned) != 0 {
+			if !out.Failed || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "result lost") {
 				t.Fatalf("outcome %+v\n%s", out, log)
-			}
-			if !strings.Contains(c.jobArgs(), "--users= ") {
-				t.Errorf("the Job did not run with an explicit empty set: %q", c.jobArgs())
 			}
 		})
 	}
+	t.Run("count=0 with nothing declared", func(t *testing.T) {
+		t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+		c := newUsersCluster(t)
+		c.message = resultOf()
+		vc := usersConfig()
+		vc.AddOns = nil
+		out, log := runUsers(vc, usersOutputs(vc), nil)
+		if out.Failed || len(out.Warnings) != 0 || len(out.Provisioned) != 0 {
+			t.Fatalf("outcome %+v\n%s", out, log)
+		}
+		if !strings.Contains(c.jobArgs(), "--users= ") {
+			t.Errorf("the Job did not run with an explicit empty set: %q", c.jobArgs())
+		}
+	})
 }
 
 // TestByoDBUsers_RefusesANamespaceHoldingForeignObjects: the run refuses, as a failed run with a
@@ -782,16 +794,22 @@ func TestByoDBUsers_RefusesANamespaceHoldingForeignObjects(t *testing.T) {
 	runLabels := func(owner string) map[string]any {
 		return map[string]any{manifests.ByoDBUsersLabel: "true", manifests.ByoDBUsersOwnerLabel: owner}
 	}
+	jobUID := "20000000-0000-0000-0000-000000000001"
+	ownedBy := func(uid string) []any {
+		return []any{map[string]any{"kind": "Job", "name": manifests.ByoDBUsersJobNamePrefix + "abc-r1", "uid": uid}}
+	}
 	allowed := []map[string]any{
 		{"kind": "ServiceAccount", "metadata": map[string]any{"name": "default"}},
 		{"kind": "ConfigMap", "metadata": map[string]any{"name": "kube-root-ca.crt"}},
-		{"kind": "Pod", "metadata": map[string]any{"name": "run-pod", "labels": runLabels("env-2"),
-			"ownerReferences": []any{map[string]any{"kind": "Job", "name": manifests.ByoDBUsersJobNamePrefix + "abc-r1"}}}},
+		{"kind": "Job", "metadata": map[string]any{"name": manifests.ByoDBUsersJobNamePrefix + "abc-r1", "uid": jobUID, "labels": runLabels("env-2")}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "run-pod", "labels": runLabels("env-2"), "ownerReferences": ownedBy(jobUID)}},
 		{"kind": "Secret", "metadata": map[string]any{"name": "s", "labels": runLabels("env-2")}},
 	}
 	for name, foreign := range map[string]map[string]any{
-		"a Deployment":                         {"kind": "Deployment", "metadata": map[string]any{"name": "web", "labels": runLabels("env-1")}},
-		"a Pod not owned by a run's Job":       {"kind": "Pod", "metadata": map[string]any{"name": "loose", "labels": runLabels("env-1")}},
+		"a Deployment":                   {"kind": "Deployment", "metadata": map[string]any{"name": "web", "labels": runLabels("env-1")}},
+		"a Pod not owned by a run's Job": {"kind": "Pod", "metadata": map[string]any{"name": "loose", "labels": runLabels("env-1")}},
+		"a Pod owned by a Job not listed here": {"kind": "Pod", "metadata": map[string]any{"name": "elsewhere", "labels": runLabels("env-1"),
+			"ownerReferences": ownedBy("20000000-0000-0000-0000-000000000099")}},
 		"a ServiceAccount without both labels": {"kind": "ServiceAccount", "metadata": map[string]any{"name": "lookalike", "labels": map[string]any{manifests.ByoDBUsersLabel: "true"}}},
 		"a ConfigMap":                          {"kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
 	} {
@@ -829,10 +847,39 @@ func TestByoDBUsers_RefusesANamespaceHoldingForeignObjects(t *testing.T) {
 }
 
 // TestByoDBUsers_NamespaceIsReservedForThePlatform: no BYO chart may target the BYO users namespace,
-// and a chart that asks for it is refused at deploy.
+// and a chart that asks for it is refused at deploy; no other alethia- name is reserved.
 func TestByoDBUsers_NamespaceIsReservedForThePlatform(t *testing.T) {
 	if err := argocd.ValidateByoNamespace(manifests.ByoDBUsersNamespace); err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("ValidateByoNamespace(%q) = %v, want a reserved-namespace refusal", manifests.ByoDBUsersNamespace, err)
+	}
+	// Only the exact name: a reserved alethia- prefix would refuse a chart already attached in a
+	// namespace such as alethia-foo on its next deploy, and the binding prune would then withdraw its
+	// binding secrets from its running pods.
+	if err := argocd.ValidateByoNamespace("alethia-anything"); err != nil {
+		t.Errorf("alethia-anything is refused (%v); only the BYO users namespace itself is reserved", err)
+	}
+	// The JSON group that reserves it names exactly this namespace.
+	raw, err := os.ReadFile("../argocd/byo_reserved_namespaces.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Groups []struct {
+			ID         string   `json:"id"`
+			Namespaces []string `json:"namespaces"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, g := range list.Groups {
+		if g.ID == "platformByoDBUsers" {
+			found = len(g.Namespaces) == 1 && g.Namespaces[0] == manifests.ByoDBUsersNamespace
+		}
+	}
+	if !found {
+		t.Errorf("byo_reserved_namespaces.json has no platformByoDBUsers group naming exactly %q", manifests.ByoDBUsersNamespace)
 	}
 	newBindingCluster(t, `{"items":[]}`, 0)
 	vc := usersConfig()
@@ -867,20 +914,25 @@ func TestByoDBUsers_OnlyThePrimaryDatabaseGetsUsers(t *testing.T) {
 // TestParseByoDBUsersResult_Header pins the header contract directly.
 func TestParseByoDBUsersResult_Header(t *testing.T) {
 	api, worker := usersFor()
-	users, pending, err := parseByoDBUsersResult(*resultOf(api, "revocation-pending:"+worker), true, 1)
+	users, pending, err := parseByoDBUsersResult(*resultOf(api, "revocation-pending:"+worker), true)
 	if err != nil || len(users) != 1 || len(pending) != 1 {
 		t.Fatalf("got %v %v %v", users, pending, err)
 	}
-	if _, _, err := parseByoDBUsersResult("", false, 0); err != nil {
-		t.Errorf("an absent message with nothing declared: %v", err)
+	if u, p, err := parseByoDBUsersResult(*resultOf(), true); err != nil || len(u)+len(p) != 0 {
+		t.Errorf("count=0: %v %v %v", u, p, err)
 	}
-	if _, _, err := parseByoDBUsersResult("", false, 1); !errors.Is(err, errByoDBUsersTruncated) {
-		t.Errorf("an absent message with users declared: %v", err)
+	for _, absent := range []struct {
+		msg     string
+		present bool
+	}{{"", false}, {"", true}} {
+		if _, _, err := parseByoDBUsersResult(absent.msg, absent.present); !errors.Is(err, errByoDBUsersResultLost) {
+			t.Errorf("an absent message (present=%v): %v, want a lost result", absent.present, err)
+		}
 	}
-	if _, _, err := parseByoDBUsersResult(*rawResult(api), true, 1); !errors.Is(err, errByoDBUsersTruncated) {
+	if _, _, err := parseByoDBUsersResult(*rawResult(api), true); !errors.Is(err, errByoDBUsersTruncated) {
 		t.Errorf("a headerless message: %v", err)
 	}
-	if _, _, err := parseByoDBUsersResult(*rawResult(byoDBUsersResultHeader+"01", api), true, 1); err == nil {
+	if _, _, err := parseByoDBUsersResult(*rawResult(byoDBUsersResultHeader+"01", api), true); err == nil {
 		t.Errorf("a zero-padded count was accepted")
 	}
 }
@@ -900,5 +952,25 @@ func TestParseByoDBUsersResult_ContractWithTheRunner(t *testing.T) {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("the runner does not declare %s", want)
 		}
+	}
+}
+
+// TestByoDBUsers_APodOfAnUnlabelledJobIsForeign: a Pod is a run's only when its owner Job is one
+// listed in the namespace with both run labels, so a Pod owned by an unlabelled Job is named as
+// foreign in its own right, not only through its Job.
+func TestByoDBUsers_APodOfAnUnlabelledJobIsForeign(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newUsersCluster(t)
+	labels := map[string]any{manifests.ByoDBUsersLabel: "true", manifests.ByoDBUsersOwnerLabel: "env-1"}
+	uid := "30000000-0000-0000-0000-000000000001"
+	c.foreign = []map[string]any{
+		{"kind": "Job", "metadata": map[string]any{"name": manifests.ByoDBUsersJobNamePrefix + "x", "uid": uid}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "child", "labels": labels,
+			"ownerReferences": []any{map[string]any{"kind": "Job", "name": manifests.ByoDBUsersJobNamePrefix + "x", "uid": uid}}}},
+	}
+	vc := usersConfig()
+	out, _ := runUsers(vc, usersOutputs(vc), nil)
+	if !out.Failed || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "Pod/child") {
+		t.Fatalf("outcome %+v, want the Pod named as foreign", out)
 	}
 }

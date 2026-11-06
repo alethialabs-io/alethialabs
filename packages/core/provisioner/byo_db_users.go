@@ -33,8 +33,8 @@
 //     user counts as provisioned only when the Job is Complete, the message names the user, and the
 //     user is in the set this run declared. Anything else provisions nothing, and is a binding
 //     failure, so the binding prune is skipped. A `revocation-pending:<user>` line is surfaced as a
-//     deploy warning and is NOT a failure. With no user declared, an absent message (the API server
-//     omits an empty one) is a success with nothing listed.
+//     deploy warning and is NOT a failure. An absent message is a lost result and a failure: the
+//     header is always written, so "nothing declared" arrives as `count=0`.
 package provisioner
 
 import (
@@ -366,7 +366,7 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 		return fail(fmt.Sprintf("render failed: %v", err))
 	}
 
-	// The namespace is reserved for the platform (byo_reserved_namespaces.json, prefix "alethia-"),
+	// The namespace is reserved for the platform (the platformByoDBUsers group of byo_reserved_namespaces.json),
 	// and holds nothing but the runs' own objects. An object that is not one of them means that no
 	// longer holds, so the run refuses before it touches anything.
 	if foreign, err := foreignByoDBUsersObjects(ctx); err != nil {
@@ -426,7 +426,7 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	if err != nil {
 		return fail(fmt.Sprintf("could not read Job %s's result: %v", job.JobName, err))
 	}
-	listed, pending, err := parseByoDBUsersResult(msg, present, len(users))
+	listed, pending, err := parseByoDBUsersResult(msg, present)
 	if err != nil {
 		return fail(fmt.Sprintf("Job %s's result is malformed: %v", job.JobName, err))
 	}
@@ -771,6 +771,11 @@ const byoDBUsersResultHeader = "alethia-byo-users v1 count="
 // byoDBUsersHeaderRe is the header line with its count.
 var byoDBUsersHeaderRe = regexp.MustCompile(`^` + regexp.QuoteMeta(byoDBUsersResultHeader) + `(0|[1-9][0-9]{0,5})$`)
 
+// errByoDBUsersResultLost is the named reason for a Complete Job with no termination message. The
+// header is written on every run, even with nothing declared and with --skip-revoke, so an absent
+// message means the result was lost, never "nothing listed".
+var errByoDBUsersResultLost = errors.New("result lost: the Job completed but left no termination message")
+
 // errByoDBUsersTruncated is the named reason for a result without its header. The kubelet keeps the
 // LAST 4096 bytes of a termination file, so a result too long for it loses its header line first.
 var errByoDBUsersTruncated = errors.New("result truncated: too many users for one Job (its header line is missing)")
@@ -781,16 +786,12 @@ var errByoDBUsersTruncated = errors.New("result truncated: too many users for on
 // count that does not match, any other line, an empty line, a carriage return or a repeated entry
 // makes the whole message malformed, so nothing in it is trusted.
 //
-// An ABSENT message (present=false, or empty) is accepted as "nothing listed" only when the run
-// declared no user — the case the reviewer of #6503 described, where an empty file reaches the API as
-// no message field. With users declared, the header is always written, so its absence means the
-// result was lost, and the run is not trusted.
-func parseByoDBUsersResult(msg string, present bool, declared int) (users, pending []string, err error) {
+// An ABSENT message (present=false, or empty) is never "nothing listed": db-bootstrap writes the
+// header on every run, so "nothing declared" arrives as `count=0`, and an absent message means the
+// result was lost (errByoDBUsersResultLost), whatever was declared.
+func parseByoDBUsersResult(msg string, present bool) (users, pending []string, err error) {
 	if !present || msg == "" {
-		if declared == 0 {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("the Job wrote no result for %d declared user(s): %w", declared, errByoDBUsersTruncated)
+		return nil, nil, errByoDBUsersResultLost
 	}
 	lines := strings.Split(strings.TrimSuffix(msg, "\n"), "\n")
 	m := byoDBUsersHeaderRe.FindStringSubmatch(lines[0])
@@ -831,31 +832,38 @@ type byoDBUsersForeignObject struct {
 	Metadata struct {
 		Name            string            `json:"name"`
 		Labels          map[string]string `json:"labels"`
+		UID             string            `json:"uid"`
 		OwnerReferences []struct {
 			Kind string `json:"kind"`
-			Name string `json:"name"`
+			UID  string `json:"uid"`
 		} `json:"ownerReferences"`
 	} `json:"metadata"`
+}
+
+// labelled reports whether the object carries the run label and an owner label of the right shape.
+func (o byoDBUsersForeignObject) labelled() bool {
+	m := o.Metadata
+	return m.Labels[manifests.ByoDBUsersLabel] == manifests.ByoDBUsersLabelValue && byoDBUsersOwnerRe.MatchString(m.Labels[manifests.ByoDBUsersOwnerLabel])
 }
 
 // isRunObject reports whether one listed object is a BYO users run's — of any environment the
 // cluster hosts, since the namespace is shared — or one the API server creates in every namespace.
 // A run object is a Job, ExternalSecret, Secret or ServiceAccount carrying the run label and an
-// owner label, or a Pod carrying both and owned by a run's Job. Nothing else belongs there.
-func (o byoDBUsersForeignObject) isRunObject() bool {
+// owner label, or a Pod carrying both whose owner reference is the uid of a run Job listed in the
+// same namespace (runJobs) — a name or kind alone proves nothing. Nothing else belongs there.
+func (o byoDBUsersForeignObject) isRunObject(runJobs map[string]bool) bool {
 	m := o.Metadata
 	switch {
 	case o.Kind == "ServiceAccount" && m.Name == "default", o.Kind == "ConfigMap" && m.Name == "kube-root-ca.crt":
 		return true
 	}
-	labelled := m.Labels[manifests.ByoDBUsersLabel] == manifests.ByoDBUsersLabelValue && byoDBUsersOwnerRe.MatchString(m.Labels[manifests.ByoDBUsersOwnerLabel])
 	switch o.Kind {
 	case "Job", "ExternalSecret", "Secret", "ServiceAccount":
-		return labelled
+		return o.labelled()
 	case "Pod":
 		for _, ref := range m.OwnerReferences {
-			if ref.Kind == "Job" && strings.HasPrefix(ref.Name, manifests.ByoDBUsersJobNamePrefix) {
-				return labelled
+			if ref.Kind == "Job" && ref.UID != "" && runJobs[ref.UID] {
+				return o.labelled()
 			}
 		}
 	}
@@ -875,9 +883,15 @@ func foreignByoDBUsersObjects(ctx context.Context) ([]string, error) {
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
 		return nil, fmt.Errorf("parse the namespace's objects: %w", err)
 	}
+	runJobs := map[string]bool{}
+	for _, o := range list.Items {
+		if o.Kind == "Job" && o.labelled() && o.Metadata.UID != "" {
+			runJobs[o.Metadata.UID] = true
+		}
+	}
 	var out []string
 	for _, o := range list.Items {
-		if !o.isRunObject() {
+		if !o.isRunObject(runJobs) {
 			out = append(out, o.Kind+"/"+o.Metadata.Name)
 		}
 	}
