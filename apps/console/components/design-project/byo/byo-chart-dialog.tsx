@@ -97,7 +97,8 @@ export const STARTER_CHART_PATH = "chart";
 /** The OCI example. It is NOT the starter chart: that repository publishes no OCI artifact today, so
  * naming `oci://ghcr.io/alethialabs-io/…` would re-commit #4114's defect under our own org. podinfo
  * is the reference public OCI Helm chart, pullable anonymously, and — checked, not assumed — renders
- * only namespaced, non-RBAC resources, so it also satisfies the default-deny BYO AppProject a user
+ * a Deployment, a Service and test-hook Pods by default, all on the BYO AppProject's closed list of
+ * workload kinds (byoWorkloadKinds in packages/core/argocd/byo.go), so it satisfies the project a user
  * would be pasting it into. Swap it for ours the day the starter chart ships an OCI release. */
 export const EXAMPLE_OCI_CHART_REF = "oci://ghcr.io/stefanprodan/charts/podinfo";
 

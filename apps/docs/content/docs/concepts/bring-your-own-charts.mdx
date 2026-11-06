@@ -148,9 +148,8 @@ other kind fails its sync, and the sync result names the resource.
 | `PersistentVolumeClaim` | core | A claim on storage from the cluster's storage classes. |
 | `Service` | core | A stable address for your chart's pods. |
 | `Ingress` | `networking.k8s.io` | HTTP routing through the cluster's ingress controller. |
-| `NetworkPolicy` | `networking.k8s.io` | Traffic rules for your chart's own pods. |
-| `HorizontalPodAutoscaler` | `autoscaling` | Scaling for your chart's own workloads. |
-| `PodDisruptionBudget` | `policy` | Keeps replicas running while nodes are drained. |
+| `HorizontalPodAutoscaler` | `autoscaling` | Scales a workload in the namespace as its load changes. |
+| `PodDisruptionBudget` | `policy` | Limits how many pods in the namespace a node drain can evict at once. |
 
 The API group is part of the match. An `Ingress` from the old `extensions` group, for example, is
 not on the list.
@@ -172,6 +171,8 @@ Some kinds are left out on purpose:
   on that operator, not on this project.
 - **No `Endpoints`, `EndpointSlice`, `ResourceQuota` or `LimitRange`.** A `Service` selects its own
   backends, and the namespace's limits are the platform's to set.
+- **No `NetworkPolicy`.** A policy applies to every pod it selects in the namespace, and nothing
+  guarantees that the namespace holds only your chart.
 
 Two more rules apply to every sync:
 
@@ -223,7 +224,9 @@ the configured revision.
 **The sync fails and names a kind that is not in the table.** Your chart declares a kind that
 bring-your-own charts can't create. Turn that part of the chart off, usually through a value, or
 [ask for the kind](#asking-for-another-kind). Charts often render a `ServiceAccount` by default;
-set the chart's `serviceAccount.create` value, or its equivalent, to `false`.
+set the chart's `serviceAccount.create` value, or its equivalent, to `false`. If the chart was
+attached before its kind was refused, the objects of that kind it created earlier stay in place, and
+ArgoCD no longer manages them. Delete them yourself.
 
 **The sync fails and names an `ExternalSecret` or `SecretStore`.** Your chart ships its own
 secret-sync resource, which bring-your-own charts can't create. Turn that part of the chart off,

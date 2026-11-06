@@ -716,8 +716,9 @@ type byoProjectChange struct {
 // kinds will fail to sync, and that what it created earlier is left in place.
 func (c byoProjectChange) warning() string {
 	return fmt.Sprintf("BYO chart %q now deploys under its hardened project %q instead of %q, like every chart you bring. "+
-		"That project permits only namespaced resources in the chart's own namespace, and no ServiceAccount, Role or RoleBinding: "+
-		"a chart that declares a cluster-scoped resource or one of those kinds fails its sync, naming the resource. "+
+		"That project permits only a closed list of namespaced workload kinds in the chart's own namespace, "+
+		"so no cluster-scoped resource and no ServiceAccount, Role or RoleBinding: "+
+		"a chart that declares a kind outside the list fails its sync, naming the resource. "+
 		"Anything it created earlier that the project does not permit is left in place and no longer managed; delete it yourself if you no longer need it.",
 		c.ID, c.To, c.From)
 }

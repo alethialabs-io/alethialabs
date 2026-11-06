@@ -140,12 +140,13 @@ To enable it, add these repo **variables** (Settings → Secrets and variables �
 
 **BYO chart constraints (important):** bring-your-own charts sync into a **hardened,
 default-deny** ArgoCD AppProject — `clusterResourceWhitelist: []` (no CRDs, ClusterRoles,
-Namespaces, webhooks) and an RBAC/ServiceAccount blacklist. The chart at
-`E2E_ARGO_BYO_CHART_PATH` must therefore create **only namespaced resources** in its target
+Namespaces, webhooks) and a closed `namespaceResourceWhitelist` of workload kinds
+(`byoWorkloadKinds` in `packages/core/argocd/byo.go`). The chart at
+`E2E_ARGO_BYO_CHART_PATH` must therefore create **only kinds on that list** in its target
 namespace (e.g. a ConfigMap + Deployment + Service) with **no ServiceAccount/Role/RoleBinding**
 (set `serviceAccount.create=false` for charts like podinfo). The chart must render **at least one**
 resource (the proof asserts the app manages ≥1 — an empty chart would trivially green). A chart
-that needs cluster-scoped or RBAC objects will (correctly) fail to sync and red the nightly. A BYO
+that needs cluster-scoped, RBAC or other unlisted kinds will (correctly) fail to sync and red the nightly. A BYO
 chart Application is
 **manual-sync** by design (an operator reviews an untrusted chart first); the harness issues
 the sync over the Application CR, mirroring that operator action, then asserts convergence.

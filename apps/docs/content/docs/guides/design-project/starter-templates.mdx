@@ -90,7 +90,7 @@ is a namespaced workload kind that a bring-your-own chart may create. See
 
 The repository mechanises that contract in `hack/check-byo-contract.sh`. Run it against your own
 chart before you attach it, and the build fails if a change breaks the contract. The script's list
-of kinds differs from the project's in two places: it accepts `Endpoints`, which the project
+of kinds differs from the project's: it accepts `Endpoints` and `NetworkPolicy`, which the project
 refuses, and it does not accept `DaemonSet`, which the project admits.
 
 <Steps>

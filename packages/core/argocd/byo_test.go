@@ -944,7 +944,7 @@ func TestByoAppProjectAdmitsOnlyWorkloadKinds(t *testing.T) {
 		{"apps", "Deployment"}, {"apps", "StatefulSet"}, {"apps", "DaemonSet"}, {"apps", "ReplicaSet"},
 		{"batch", "Job"}, {"batch", "CronJob"}, {"", "Pod"},
 		{"", "ConfigMap"}, {"", "Secret"}, {"", "PersistentVolumeClaim"},
-		{"", "Service"}, {"networking.k8s.io", "Ingress"}, {"networking.k8s.io", "NetworkPolicy"},
+		{"", "Service"}, {"networking.k8s.io", "Ingress"},
 		{"autoscaling", "HorizontalPodAutoscaler"}, {"policy", "PodDisruptionBudget"},
 	}
 	for _, gk := range admitted {
@@ -999,6 +999,9 @@ func TestByoAppProjectAdmitsOnlyWorkloadKinds(t *testing.T) {
 		{"discovery.k8s.io", "EndpointSlice"},
 		{"", "ResourceQuota"},
 		{"", "LimitRange"},
+		// Refused as in the namespace-tenant and preview projects: a policy governs every pod its
+		// selector matches, and nothing guarantees the namespace holds only this chart.
+		{"networking.k8s.io", "NetworkPolicy"},
 		{"", "Event"},
 		{"coordination.k8s.io", "Lease"},
 		// The group is part of the match: a listed kind in another group is not the listed kind.

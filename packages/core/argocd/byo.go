@@ -74,15 +74,18 @@ type byoProjectSpec struct {
 	Description  string           `yaml:"description"`
 	SourceRepos  []string         `yaml:"sourceRepos"`
 	Destinations []byoDestination `yaml:"destinations"`
-	// MUST be a non-nil empty slice: yaml.v3 marshals a NIL slice as `null`, and an AppProject whose
-	// clusterResourceWhitelist is `null` is not the same statement as one whose whitelist is `[]`.
-	// This is the single field the whole hardening rests on, so its emptiness is asserted by a test
-	// rather than left to whoever next edits this struct.
+	// MUST render as `[]`: ArgoCD admits a cluster-scoped kind only when this list is non-empty and
+	// matches it. yaml.v3 marshals a nil slice as `[]` too, so the explicit empty slice below is for the
+	// reader; what would change the statement is an `omitempty` tag, which drops the key. This is the
+	// single field the whole hardening rests on, so its emptiness is asserted by a test rather than
+	// left to whoever next edits this struct.
 	ClusterResourceWhitelist []byoGroupKind `yaml:"clusterResourceWhitelist"`
-	// MUST be non-nil AND non-empty, for the opposite reason: ArgoCD reads a nil (absent)
-	// namespaceResourceWhitelist as "every namespaced kind is permitted" and an empty one as "none is"
-	// (AppProject.IsGroupKindNamePermitted). Dropping this field would open the project, not close it,
-	// so TestByoAppProjectAdmitsOnlyWorkloadKinds asserts it is present on the rendered YAML.
+	// MUST be present AND non-empty. ArgoCD reads an ABSENT namespaceResourceWhitelist (nil after
+	// decoding) as "every namespaced kind is permitted" and an empty one as "none is"
+	// (AppProject.IsGroupKindNamePermitted). yaml.v3 marshals a nil slice as `[]`, so leaving the
+	// field unset renders a closed project. What would open it is an `omitempty` tag or deleting the
+	// field, since either drops the key. TestByoAppProjectAdmitsOnlyWorkloadKinds asserts the rendered
+	// YAML carries the list.
 	NamespaceResourceWhitelist []byoGroupKind       `yaml:"namespaceResourceWhitelist"`
 	NamespaceResourceBlacklist []byoGroupKind       `yaml:"namespaceResourceBlacklist"`
 	OrphanedResources          byoOrphanedResources `yaml:"orphanedResources"`
@@ -229,7 +232,9 @@ var byoSecretSyncDenied = []byoGroupKind{
 // identity or grant one permissions); every external-secrets.io kind (a chart reads only the secrets
 // its bindings give it — byoSecretSyncDenied); Endpoints and EndpointSlice (a Service's backends are
 // chosen by its selector, not written by hand); ResourceQuota and LimitRange (the namespace's limits
-// are the platform's to set); and every kind served by a CustomResourceDefinition, because what such
+// are the platform's to set); NetworkPolicy, as in the namespace-tenant and preview projects (a policy
+// governs every pod its selector matches in the namespace, and nothing guarantees that namespace holds
+// only this chart); and every kind served by a CustomResourceDefinition, because what such
 // an object can make its operator do is that operator's rule, not this project's. To admit another
 // kind, add it here with its reason and a case in TestByoAppProjectAdmitsOnlyWorkloadKinds.
 var byoWorkloadKinds = []byoGroupKind{
@@ -246,12 +251,11 @@ var byoWorkloadKinds = []byoGroupKind{
 	{Group: "", Kind: "Secret"},                // the chart's own secrets; bindings' secrets are the runner's
 	{Group: "", Kind: "PersistentVolumeClaim"}, // a claim on storage the cluster's StorageClasses provide
 	// Networking inside and into the namespace.
-	{Group: "", Kind: "Service"},                        // a stable address for the chart's pods
-	{Group: "networking.k8s.io", Kind: "Ingress"},       // HTTP routing through the cluster's ingress controller
-	{Group: "networking.k8s.io", Kind: "NetworkPolicy"}, // traffic rules for the chart's own pods
+	{Group: "", Kind: "Service"},                  // a stable address for the chart's pods
+	{Group: "networking.k8s.io", Kind: "Ingress"}, // HTTP routing through the cluster's ingress controller
 	// Availability.
-	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}, // scales the chart's own workloads
-	{Group: "policy", Kind: "PodDisruptionBudget"},          // keeps replicas up through node drains
+	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}, // scales a workload in the namespace on load
+	{Group: "policy", Kind: "PodDisruptionBudget"},          // limits voluntary evictions of pods in the namespace
 }
 
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
@@ -382,8 +386,9 @@ func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 // byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
 //
 // WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
-// objects and in-namespace RBAC, but it allows the other namespaced kinds in its destinations, so a
-// chart's isolation from the platform rests on the namespace itself. These are the namespaces on the
+// objects, and admits only a closed list of namespaced workload kinds (byoWorkloadKinds) in its
+// destinations. Those kinds include Secret, ConfigMap and Service, so a chart's isolation from the
+// platform still rests on the namespace itself. These are the namespaces on the
 // platform's side of that line.
 //
 // The console's BYO form refuses the same names up front from a mirrored copy
