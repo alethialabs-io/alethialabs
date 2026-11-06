@@ -2824,7 +2824,7 @@ jobs:
           set -o pipefail
           go test -tags integration -count=1 -v -run ByoUsers ./internal/agent/... | tee "$RUNNER_TEMP/byo.log"
           if [ "${{ matrix.postgres }}" = 14-alpine ]; then
-            want="TestByoUsersPostgres_RefusesBelow15"
+            want="TestByoUsersPostgres_DoesNotExist_ThrowawayRedProof"
           else
             want="TestByoUsersPostgres_Lifecycle TestByoUsersPostgres_RefusesForeignRole TestByoUsersPostgres_RevokeFailsSafe TestByoUsersPostgres_PublicCreateRefused TestByoUsersPostgres_SkipRevoke"
           fi
