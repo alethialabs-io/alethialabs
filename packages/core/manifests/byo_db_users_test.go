@@ -4,6 +4,7 @@
 package manifests
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -346,4 +347,30 @@ func TestByoDBUsersJob_ContractWithTheRunner(t *testing.T) {
 	if !strings.Contains(string(src), `fs.String("result-path", "`+ByoDBUsersResultPath+`"`) {
 		t.Errorf("the runner's default --result-path is not %s", ByoDBUsersResultPath)
 	}
+}
+
+// TestByoDBUsersJob_RefusesACloudWithNoAdminConnection: Alibaba has a ClusterSecretStore but no admin
+// connection this Job knows (the bootstrap Job has none there either), so a run is refused rather
+// than rendered against outputs it would not read.
+func TestByoDBUsersJob_RefusesACloudWithNoAdminConnection(t *testing.T) {
+	if StoreNameFor("alibaba") == "" {
+		t.Fatal("fixture: alibaba is expected to have a store, so the refusal below is the admin connection's")
+	}
+	_, err := RenderByoDBUsersJob(ByoDBUsersJobParams{Provider: "alibaba", RunnerImage: "img", Environment: "env-1", RunID: "r1",
+		Outputs: map[string]string{"rds_cluster_endpoint": "db", "rds_database_name": "app", "rds_master_credentials_secret_name": "m"}})
+	if err == nil || !strings.Contains(err.Error(), `not supported for provider "alibaba"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestByoDBUsersJob_MarshalDefectPanics: a document holding a value YAML cannot encode is a defect in
+// the renderer, and fails loudly instead of rendering a partial manifest — which is why
+// marshalByoDBUsersDoc has no error to return.
+func TestByoDBUsersJob_MarshalDefectPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "cannot marshal") {
+			t.Fatalf("recovered %v, want yaml's panic on an unencodable value", r)
+		}
+	}()
+	marshalByoDBUsersDoc(map[string]any{"bad": make(chan int)})
 }

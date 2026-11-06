@@ -199,13 +199,11 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 	for k, v := range p.NamespaceLabels {
 		nsLabels[k] = v
 	}
-	if out.NamespaceYAML, err = marshalByoDBUsersDoc(map[string]any{
+	out.NamespaceYAML = marshalByoDBUsersDoc(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Namespace",
 		"metadata":   map[string]any{"name": ByoDBUsersNamespace, "labels": nsLabels},
-	}); err != nil {
-		return ByoDBUsersJob{}, err
-	}
+	})
 	if conn.admin.YAML != "" {
 		out.Credentials = append(out.Credentials, conn.admin)
 	}
@@ -215,12 +213,9 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 	renderEnv := make([]any, 0, len(users))
 	for _, u := range users {
 		name := byoDBUsersUserSecretName(env, u.User)
-		doc, err := byoDBUsersExternalSecret(name, store, labels, []map[string]any{
+		doc := byoDBUsersExternalSecret(name, store, labels, []map[string]any{
 			{"secretKey": "password", "remoteRef": map[string]any{"key": u.RemoteKey}},
 		})
-		if err != nil {
-			return ByoDBUsersJob{}, err
-		}
 		out.Credentials = append(out.Credentials, ByoDBUsersObject{Resource: byoDBUsersESResource, Name: name, YAML: doc})
 		userArgs = append(userArgs, u.User)
 		renderEnv = append(renderEnv, secretEnv(ByoDBUsersPasswordEnv(u.User), name, "password"))
@@ -275,7 +270,7 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 		podLabels[k] = v
 	}
 	out.JobName = ByoDBUsersBaseName(env) + "-" + p.RunID
-	if out.JobYAML, err = marshalByoDBUsersDoc(map[string]any{
+	out.JobYAML = marshalByoDBUsersDoc(map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
 		"metadata":   map[string]any{"name": out.JobName, "namespace": ByoDBUsersNamespace, "labels": labels},
@@ -288,9 +283,7 @@ func RenderByoDBUsersJob(p ByoDBUsersJobParams) (ByoDBUsersJob, error) {
 				"spec":     podSpec,
 			},
 		},
-	}); err != nil {
-		return ByoDBUsersJob{}, err
-	}
+	})
 	return out, nil
 }
 
@@ -357,13 +350,10 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 			return c, err
 		}
 		name := byoDBUsersAdminName(env)
-		doc, err := byoDBUsersExternalSecret(name, store, labels, []map[string]any{
+		doc := byoDBUsersExternalSecret(name, store, labels, []map[string]any{
 			{"secretKey": "username", "remoteRef": map[string]any{"key": remote, "property": "username"}},
 			{"secretKey": "password", "remoteRef": map[string]any{"key": remote, "property": "password"}},
 		})
-		if err != nil {
-			return c, err
-		}
 		c.admin = ByoDBUsersObject{Resource: byoDBUsersESResource, Name: name, YAML: doc}
 		envs := append(pgEnv(host, c.dbName), secretEnv("PGUSER", name, "username"), secretEnv("PGPASSWORD", name, "password"))
 		c.main = map[string]any{
@@ -395,7 +385,7 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		for k, v := range labels {
 			saLabels[k] = v
 		}
-		doc, err := marshalByoDBUsersDoc(map[string]any{
+		doc := marshalByoDBUsersDoc(map[string]any{
 			"apiVersion": "v1",
 			"kind":       "ServiceAccount",
 			"metadata": map[string]any{
@@ -405,9 +395,6 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 				"annotations": map[string]string{"azure.workload.identity/client-id": clientID},
 			},
 		})
-		if err != nil {
-			return c, err
-		}
 		c.admin = ByoDBUsersObject{Resource: "serviceaccounts", Name: name, YAML: doc}
 		c.serviceAccount = name
 		c.podLabels = map[string]string{"azure.workload.identity/use": "true"}
@@ -439,7 +426,7 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 // byoDBUsersExternalSecret renders one credential ExternalSecret of a run. The Secret it materialises
 // carries the same labels (target.template.metadata), so the sweep can select a Secret whose
 // ExternalSecret is already gone. With no template data, ESO writes the fetched data unchanged.
-func byoDBUsersExternalSecret(name, store string, labels map[string]string, data []map[string]any) (string, error) {
+func byoDBUsersExternalSecret(name, store string, labels map[string]string, data []map[string]any) string {
 	return marshalByoDBUsersDoc(map[string]any{
 		"apiVersion": "external-secrets.io/v1beta1",
 		"kind":       "ExternalSecret",
@@ -494,10 +481,12 @@ func byoDBUsersPodSecurityContext() map[string]any {
 
 // marshalByoDBUsersDoc encodes one document. Marshalling, not templating: every value is quoted as
 // YAML needs, so no input can become a second document or a field it was not given as.
-func marshalByoDBUsersDoc(doc map[string]any) (string, error) {
-	b, err := yaml.Marshal(doc)
-	if err != nil {
-		return "", fmt.Errorf("render BYO users object: %w", err)
-	}
-	return string(b), nil
+//
+// There is no error to handle. yaml.v3 returns one only from a value's own MarshalYAML, and every
+// document here is built from strings, ints, bools, maps and slices, none of which has one; a value
+// of a kind YAML cannot carry makes Marshal panic instead, which is a defect in this file and fails
+// loudly (TestByoDBUsersJob_MarshalDefectPanics).
+func marshalByoDBUsersDoc(doc map[string]any) string {
+	b, _ := yaml.Marshal(doc)
+	return string(b)
 }
