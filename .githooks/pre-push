@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Committed pre-push hook — reject direct pushes to protected branches, reinforcing the
-# `feature → dev` flow locally (ahead of the branch-flow-guard CI check), and reject a push from a
-# worktree another live Claude instance holds. Escape: `git push --no-verify`.
+# `feature → dev` flow locally (ahead of the branch-flow-guard CI check), reject a push from a
+# worktree another live Claude instance holds, and reject any pushed commit written by
+# guard-destroy's snapshot identity. Escape: `git push --no-verify`.
 #
 # git feeds one line per pushed ref on stdin: <local ref> <local sha> <remote ref> <remote sha>
 set -euo pipefail
@@ -24,7 +25,23 @@ if [ -f "$wt_lib" ] && [ "${ALETHIA_ALLOW_FOREIGN_WT:-}" != "1" ]; then
 	fi
 fi
 
-while read -r _localref _localsha remoteref _remotesha; do
+# A guard-destroy snapshot (refs/safety/*) can hold every untracked, non-ignored file a tree had —
+# local documents, .bak settings — and this repository is PUBLIC. Every snapshot commit is written
+# by one identity, so the check is on CONTENT, not on a ref name: no spelling (a short name, a raw
+# sha, a branch made from a snapshot, a commit on top of one) gets past it. The range is exactly
+# what git is about to send: <remote sha>..<local sha>, or everything the remotes do not have yet.
+SNAPSHOT_IDENTITY="safety@alethia.invalid"
+zero="0000000000000000000000000000000000000000"
+
+# refuse_snapshot <ref> <sha> — named so the guard's mutation test can disable it
+refuse_snapshot() {
+	echo "✗ pre-push: '$1' would publish a guard-destroy snapshot commit ($2, by $SNAPSHOT_IDENTITY)." >&2
+	echo "  A snapshot can carry untracked private files. Restore its FILES onto a normal commit" >&2
+	echo "  instead: .claude/skills/dev/SKILL.md → Recovering from a destructive command." >&2
+	exit 1
+}
+
+while read -r _localref localsha remoteref remotesha; do
 	case "$remoteref" in
 		refs/heads/dev | refs/heads/staging | refs/heads/main)
 			echo "✗ pre-push: direct push to '${remoteref#refs/heads/}' is not allowed." >&2
@@ -32,6 +49,17 @@ while read -r _localref _localsha remoteref _remotesha; do
 			exit 1
 			;;
 	esac
+	[ -n "${localsha:-}" ] && [ "$localsha" != "$zero" ] || continue # a delete sends no commits
+	if [ -n "${remotesha:-}" ] && [ "$remotesha" != "$zero" ] && git cat-file -e "${remotesha}^{commit}" 2>/dev/null; then
+		range=("${remotesha}..${localsha}")
+	else
+		range=("$localsha" --not --remotes)
+	fi
+	hit="$(git log --format='%H %ae %ce' "${range[@]}" 2>/dev/null | grep -F "$SNAPSHOT_IDENTITY" | head -1 || true)"
+	if [ -n "$hit" ]; then
+		# @mut prepush-snapshot
+		refuse_snapshot "${remoteref#refs/heads/}" "${hit%% *}"
+	fi
 done
 
 exit 0

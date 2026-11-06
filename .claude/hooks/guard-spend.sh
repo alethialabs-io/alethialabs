@@ -537,11 +537,41 @@ wf_file_for_name() { # <workflow name> — print the file whose `name:` it is (o
 }
 
 # gh run rerun [<run-id>] [--failed] [--job <id>] — price it from the run's own workflow.
+# gh_lookup <out-var> <gh args…> — run a read-only gh lookup; on failure set GH_ERR to gh's own
+# error line (`HTTP 404: Not Found …`) and return 1. On an HTTP error gh prints the JSON error
+# body on STDOUT, so the output is never trusted unless gh exited 0.
+gh_lookup() {
+	local __var="$1" __out __err __rc
+	shift
+	__err="$(mktemp "${TMPDIR:-/tmp}/alethia-gh-err.XXXXXX")"
+	__out="$(cd "${DIR:-.}" 2>/dev/null && gh "$@" 2>"$__err")"
+	__rc=$?
+	GH_ERR="$(grep -v '^[[:space:]]*$' "$__err" | head -1)"
+	rm -f "$__err"
+	if [ "$__rc" != 0 ]; then
+		printf -v "$__var" '%s' ""
+		[ -n "$GH_ERR" ] || GH_ERR="gh exited $__rc"
+		return 1
+	fi
+	printf -v "$__var" '%s' "$__out"
+}
+
+# rerun_repo <owner/repo> — the repository a rerun's `-R/--repo` names (before or after `rerun`).
+rerun_repo() { RERUN_REPO="$1"; }
+
 rule_rerun() {
 	local i n=${#TOK[@]} a id="" job="" failed=0 info wf ev cls repo jobs count=0 per cents
+	RERUN_REPO="$CMDLINE_GH_REPO"
 	for ((i = 3; i < n; i++)); do
 		a="${TOK[$i]}"
 		case "$a" in
+		-R | --repo)
+			# @mut rerun-repo-after
+			rerun_repo "${TOK[$((i + 1))]:-}"
+			i=$((i + 1))
+			;;
+		--repo=*) rerun_repo "${a#--repo=}" ;;
+		-R?*) rerun_repo "${a#-R}" ;;
 		--failed) failed=1 ;;
 		-j | --job)
 			job="${TOK[$((i + 1))]:-}"
@@ -552,10 +582,11 @@ rule_rerun() {
 		*) [ -n "$id" ] || id="$a" ;;
 		esac
 	done
-	repo="${CMDLINE_GH_REPO:-"{owner}/{repo}"}"
+	repo="${RERUN_REPO:-"{owner}/{repo}"}"
 	if [ -z "$id" ] && [ -n "$job" ]; then
 		case "$job" in *[!0-9]*) refuse R-RERUN "\`gh run rerun --job $job\`: the job id is not a number the guard can look up." ;; esac
-		id="$(cd "${DIR:-.}" 2>/dev/null && gh api "repos/$repo/actions/jobs/$job" --jq '.run_id' 2>/dev/null)"
+		gh_lookup id api "repos/$repo/actions/jobs/$job" --jq '.run_id' ||
+			refuse R-RERUN "could not look up job $job to find its run, so the rerun cannot be priced: $GH_ERR"
 	fi
 	case "$id" in "" | *[!0-9]*)
 		# @mut rerun-noid
@@ -563,14 +594,17 @@ rule_rerun() {
 			"Resolve the id in one command, then rerun it by number in the next: gh run rerun <run-id> [--failed]"
 		;;
 	esac
-	info="$(cd "${DIR:-.}" 2>/dev/null && gh api "repos/$repo/actions/runs/$id" --jq '.path + " " + .event' 2>/dev/null)"
+	if ! gh_lookup info api "repos/$repo/actions/runs/$id" --jq '.path + " " + .event'; then
+		# @mut rerun-lookup-error
+		refuse R-RERUN "could not look up run $id${RERUN_REPO:+ in $RERUN_REPO}, so the rerun cannot be priced: $GH_ERR"
+	fi
 	wf="${info%% *}"
 	ev="${info#* }"
 	wf="${wf%%@*}"
 	wf="${wf##*/}"
 	if [ -z "$info" ] || [ -z "$wf" ]; then
 		# @mut rerun-lookup
-		refuse R-RERUN "could not look up run $id (offline, or not a run in this repository), so the rerun cannot be priced."
+		refuse R-RERUN "could not look up run $id (offline, or not a run in ${RERUN_REPO:-this repository}), so the rerun cannot be priced."
 	fi
 	cls="$(wf_class "$wf")"
 	case "$cls" in
@@ -590,9 +624,10 @@ rule_rerun() {
 		;;
 	esac
 	# nightly: one charge per Provision job the rerun runs again
-	jobs="$(cd "${DIR:-.}" 2>/dev/null && gh run view "$id" ${CMDLINE_GH_REPO:+-R "$CMDLINE_GH_REPO"} --json jobs \
-		--jq '.jobs[] | "\(.databaseId)\t\(.conclusion)\t\(.name)"' 2>/dev/null)"
-	[ -n "$jobs" ] || refuse R-RERUN "could not list the jobs of run $id, so the rerun cannot be priced."
+	gh_lookup jobs run view "$id" ${RERUN_REPO:+-R "$RERUN_REPO"} --json jobs \
+		--jq '.jobs[] | "\(.databaseId)\t\(.conclusion)\t\(.name)"' ||
+		refuse R-RERUN "could not list the jobs of run $id, so the rerun cannot be priced: $GH_ERR"
+	[ -n "$jobs" ] || refuse R-RERUN "run $id lists no jobs, so the rerun cannot be priced."
 	local jid conc name
 	while IFS=$'\t' read -r jid conc name; do
 		case "$name" in Provision*) ;; *) continue ;; esac
@@ -907,6 +942,10 @@ case "$*" in
 *actions/runs/108*) echo ".github/workflows/infra-cp-aws.yml pull_request" ;;
 *actions/runs/109*) echo ".github/workflows/infra-cp-aws.yml push" ;;
 *actions/jobs/5551*) echo 104 ;;
+*o/other/actions/runs/110*) echo ".github/workflows/e2e-ai-nightly.yml schedule" ;;
+*actions/runs/110*) echo '{"message":"Not Found","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+*actions/runs/111*) exit 0 ;;
+*actions/runs/106*) echo '{"message":"Not Found","documentation_url":"x","status":"404"}'; echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
 "run view 104 "*)
 	printf '1\tsuccess\tResolve dimension\n5551\tfailure\tProvision + verify + teardown (real cloud) (hetzner)\n'
 	printf '5552\tsuccess\tProvision + verify + teardown (real cloud) (aws)\n5553\tcancelled\tProvision + verify + teardown (real cloud) (gcp)\n'
@@ -1004,6 +1043,17 @@ STUB
 	grep -q 'not a literal number' "$tmp/stderr" && pass=$((pass + 1)) || bad "a variable run id is named as such"
 	t block 'gh run rerun 106'
 	grep -q 'could not look up run 106' "$tmp/stderr" && pass=$((pass + 1)) || bad "a failed run lookup is refused by name: $(cat "$tmp/stderr")"
+	grep -q 'HTTP 404' "$tmp/stderr" && pass=$((pass + 1)) || bad "the lookup failure reports gh's HTTP error: $(cat "$tmp/stderr")"
+	grep -q '"message"' "$tmp/stderr" && bad "the HTTP error body must not be read as data: $(cat "$tmp/stderr")" || pass=$((pass + 1))
+	# -R/--repo in EITHER position: the run is looked up in the repository named
+	t block 'gh run rerun 111'
+	grep -q 'offline, or not a run in' "$tmp/stderr" && pass=$((pass + 1)) || bad "an empty lookup answer is refused: $(cat "$tmp/stderr")"
+	c 10 'gh run rerun -R o/other 110'
+	c 10 'gh run rerun 110 -R o/other'
+	c 10 'gh run rerun 110 --repo=o/other'
+	c 10 'gh -R o/other run rerun 110'
+	t block 'gh run rerun 110'
+	grep -q 'HTTP 404' "$tmp/stderr" && pass=$((pass + 1)) || bad "a run absent from the cwd repo is a lookup failure: $(cat "$tmp/stderr")"
 	t block 'gh run rerun 107'
 	grep -q 'not in guard-spend.sh' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unknown workflow's rerun names the table"
 	t block 'gh run rerun'

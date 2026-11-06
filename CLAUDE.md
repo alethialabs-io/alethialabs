@@ -45,8 +45,10 @@ branches, repo/release/secret deletion, local tfstate, a non-local database rese
 outside disposable targets, credential directories) is refused; local git destruction
 (`reset --hard`, `clean`, `checkout`/`restore`, `stash drop`, `worktree remove --force`, an `rm` in
 a work tree) is **snapshotted first, then allowed**, under `refs/safety/<worktree>/<UTC timestamp>`
-— restore steps are in `.claude/skills/dev/SKILL.md`; dependency caches are never captured and
-untracked files are capped at 5000 files / 50 MB per snapshot. Neither hook has an escape hatch.
+— restore steps are in `.claude/skills/dev/SKILL.md`, and a snapshot is restored as files, never
+checked out as a branch. Tracked changes are always captured. Untracked files are captured within a
+5000-file / 50 MB budget shared fairly across directories, and dependency caches never are.
+`.githooks/pre-push` refuses any pushed commit written by the snapshot identity. Neither hook has an escape hatch.
 Both parse gh's global flags before the subcommand, which the prefix `deny` rules in
 `.claude/settings.json` cannot see past. A hook that CRASHES allows (no hook sets `onFailure: "block"`, so a guard bug never bricks
 the shell); every refusal is an explicit exit.

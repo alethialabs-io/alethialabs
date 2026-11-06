@@ -2472,8 +2472,8 @@ jobs:
           # Mutation tests: every rule's call sites are disabled in turn, and so is every statement a
           # `# @mut` marker names (one site of a rule, a cap, the shared gh-flag parser), and the
           # self-test must FAIL for each. The list is derived from the files, so a rule or marker
-          # added without a failing case fails here. ~3 min together, most of it the snapshot-cap
-          # fixtures (5000+ files, a 60 MB file) that the cap mutants have to reach.
+          # added without a failing case fails here. ~4–5 min together, most of it the snapshot
+          # fixtures (5000+ and 20000+ files, a 60 MB file) that the cap and fairness mutants reach.
           bash .claude/hooks/guard-spend.sh --mutation-test
           bash .claude/hooks/guard-destroy.sh --mutation-test
           bash .claude/hooks/guard-merge.sh --mutation-test

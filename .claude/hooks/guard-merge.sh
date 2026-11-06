@@ -70,6 +70,25 @@ deny() {
 	exit 2
 }
 
+# merge_args_from_words <raw segment> — set margs from the segment's quote-aware words: skip to
+# the `gh`, past gh's global flags, past `pr merge`. Leaves margs alone when that shape is not found.
+merge_args_from_words() {
+	local i=0 n
+	cmdline_qwords "$1"
+	n=${#QWORDS[@]}
+	while [ "$i" -lt "$n" ] && [ "${QWORDS[$i]##*/}" != gh ]; do i=$((i + 1)); done
+	i=$((i + 1))
+	while [ "$i" -lt "$n" ]; do
+		case "${QWORDS[$i]}" in
+		-R | --repo | --hostname) i=$((i + 2)) ;;
+		-*) i=$((i + 1)) ;;
+		*) break ;;
+		esac
+	done
+	[ "${QWORDS[$i]:-}" = pr ] && [ "${QWORDS[$((i + 1))]:-}" = merge ] || return 0
+	margs=("${QWORDS[@]:$((i + 2))}")
+}
+
 # repo_args <owner/repo> — the lookups go to the repository the merge names.
 repo_args() { rargs=(-R "$1"); }
 
@@ -99,8 +118,12 @@ main() {
 		cmdline_is_inspect && continue
 		[ "${TOK[0]##*/}" = gh ] && [ "${TOK[1]:-}" = pr ] && [ "${TOK[2]:-}" = merge ] || continue
 		merges=$((merges + 1))
-		margs=("${TOK[@]:3}")
 		repo="$CMDLINE_GH_REPO"
+		# The arguments, read as shell WORDS so a quoted option value is one word. Falls back to
+		# TOK only when the segment's own words cannot be lined up (a `bash -c "…"` body).
+		margs=("${TOK[@]:3}")
+		# @mut merge-qwords
+		merge_args_from_words "$raw"
 	done
 	[ "$merges" -gt 0 ] || exit 0
 	if [ "$merges" -gt 1 ]; then
@@ -108,8 +131,10 @@ main() {
 		deny "this command runs $merges \`gh pr merge\`s; each merge must be checked on its own. Run them one at a time."
 	fi
 
-	# Flags, their values, and the PR. `-R/--repo` after the subcommand counts too.
-	local i n=${#margs[@]} a pr="" mhc="" admin=0 squash=0 rebase=0 merge=0 auto=0 delbranch=0
+	# Flags, their values, and the PR. `-R/--repo` after the subcommand counts too. The PR is the
+	# FIRST positional word, structurally — never "the first number anywhere", which would read a
+	# number inside a --subject/--body value as the PR and check the wrong one.
+	local i n=${#margs[@]} a pr="" sel="" mhc="" admin=0 squash=0 rebase=0 merge=0 auto=0 delbranch=0
 	for ((i = 0; i < n; i++)); do
 		a="${margs[$i]}"
 		case "$a" in
@@ -131,13 +156,17 @@ main() {
 		--match-head-commit=*) mhc="${a#--match-head-commit=}" ;;
 		-t | --subject | -b | --body | -F | --body-file | -A | --author-email) i=$((i + 1)) ;;
 		-*) ;;
-		*/pull/[0-9]*)
-			[ -n "$pr" ] || pr="${a##*/pull/}"
-			pr="${pr%%[!0-9]*}"
-			;;
-		*) case "$a" in *[!0-9]*) ;; *) [ -n "$pr" ] || pr="$a" ;; esac ;;
+		*) [ -n "$sel" ] || sel="$a" ;;
 		esac
 	done
+	case "$sel" in
+	*/pull/[0-9]*)
+		pr="${sel##*/pull/}"
+		pr="${pr%%[!0-9]*}"
+		;;
+	*[!0-9]* | "") pr="" ;;
+	*) pr="$sel" ;;
+	esac
 
 	# --admin bypasses the merge queue, so it is refused regardless of base. That bypass is
 	# what makes a stale-green PR able to break dev, which is the whole reason for the queue.
@@ -148,7 +177,7 @@ main() {
 	if [ -z "$pr" ]; then
 		# `gh pr merge` with no number means "the PR for the current branch" — which this hook
 		# cannot resolve without knowing the branch, so it fails closed rather than guessing.
-		deny "cannot tell which PR (and so which base branch) this merges."
+		deny "cannot tell which PR (and so which base branch) this merges${sel:+ — '$sel' is not a PR number or URL}."
 	fi
 
 	local rargs=()
@@ -367,6 +396,15 @@ STUB
 	t allow 'gh -R o/other pr merge 1700 --merge --match-head-commit aaa1700'
 	t allow 'gh pr merge 1700 --merge --match-head-commit aaa1700 -R o/other'
 	t block 'gh pr merge 1700 --merge --match-head-commit aaa1700'   # not in the cwd's repo → unresolvable
+
+	# ── the PR is the first POSITIONAL word; a number inside an option value is not it ──
+	t allow 'gh pr merge --merge --subject "release 1535" --match-head-commit aaa1610 1610'
+	t block 'gh pr merge --merge --body "fixes 1535" 1601'      # 1601 (main ← feature) is what merges
+	says 'PR #1601' 'the PR checked is the positional one'
+	t block 'gh pr merge --merge -t "promote 1535 now" 1612 --match-head-commit aaa1612'
+	t allow "gh pr merge 1535 --squash --body 'done; see #1601'"
+	t block 'gh pr merge feat/some-branch --merge'               # a branch name, not a PR
+	says 'is not a PR number or URL' 'a non-number selector is named'
 
 	# ── one merge per command ──
 	t block 'gh pr merge 1610 --merge --match-head-commit aaa1610 && gh pr merge 1535 --squash'

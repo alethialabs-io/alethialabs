@@ -59,23 +59,35 @@
 #   deletion. Nothing is stored when the tree already equals HEAD. session-cleanup.sh prunes
 #   refs/safety entries older than 30 days.
 #
-#   THE SNAPSHOT IS BOUNDED, so it can never stall a command. Dependency caches are never captured
-#   (SNAP_EXCLUDES: .pnpm-store, node_modules, .yarn/cache, .npm, .venv, .terraform, .gradle —
-#   all re-downloadable, and the main checkout once held a 1.7 GB / 128k-file .pnpm-store that made
-#   one snapshot take 95 s and write 864 MB). Untracked files are then taken in path order up to
-#   SNAP_MAX_FILES (5000) and SNAP_MAX_BYTES (50 MB), and the scan stops after SNAP_SCAN_MAX (20000)
-#   entries. Why those numbers: a branch's real untracked work is tens to hundreds of files and a few
-#   MB; 5000 files / 50 MB hashes in well under a second and stores at most 50 MB per snapshot, while
-#   still covering a large generated fixture set. Anything over the cap is LEFT OUT, never waited
-#   for, and a one-line warning names how much and under which top-level directories.
+#   THE SNAPSHOT IS BOUNDED, so it can never stall a command, AND FAIR, so one big directory cannot
+#   starve a small real file. Tracked changes are ALWAYS captured, whatever their path. Untracked
+#   dependency caches are never captured (.pnpm-store, node_modules, .yarn/cache, .npm, .venv,
+#   .terraform, .gradle — all re-downloadable; the main checkout once held a 1.7 GB / 128k-file
+#   .pnpm-store that made one snapshot take 95 s and write 864 MB). The untracked budget is
+#   SNAP_MAX_FILES (5000) and SNAP_MAX_BYTES (50 MB), spent in this order:
+#     1. `git ls-files -o --directory` lists untracked entries with every wholly-untracked
+#        directory collapsed to ONE line, so the listing is cheap however big a directory is;
+#     2. loose untracked files (new files inside tracked directories) go first, SMALLEST first;
+#     3. each collapsed directory then gets an equal share of what is left, and is read only up to
+#        that share (at most SNAP_MAX_DIRS (50) directories; the listing itself stops at
+#        SNAP_SCAN_MAX (20000) entries).
+#   Why those numbers: a branch's real untracked work is tens to hundreds of files and a few MB;
+#   5000 files / 50 MB hashes in well under a second and stores at most 50 MB per snapshot, while
+#   still covering a large generated fixture set. Anything over budget is LEFT OUT, never waited
+#   for, and a one-line warning names EVERY group left out: each directory cut at its share, each
+#   file group over the byte cap, each directory not scanned, and where a listing stopped.
 #
 #   RESTORE (also in .claude/skills/dev/SKILL.md → "Recovering from a destructive command"):
 #       git for-each-ref --sort=-refname refs/safety/            # what is there
 #       git show --stat <ref>     ·    git diff <ref>^ <ref>       # what it saved
 #       git restore --source=<ref> --worktree -- <path>…          # put files back
-#       git worktree add ../wt-recovered <ref>                    # a whole removed tree
-#       git stash store -m recovered <ref>                        # a dropped stash entry
-#       git branch <name> <ref>                                   # a deleted branch
+#       git worktree add ../wt-recovered <ref>^                   # a removed tree: its HEAD …
+#       git -C ../wt-recovered restore --source=<ref> --worktree -- .   # … then its files
+#       git stash store -m recovered <ref>                        # a -stash-N pin only
+#       git branch <name> <ref>                                   # a -branch-<name> pin only
+#   A tree snapshot is restored as FILES onto a normal commit, never checked out as a branch or a
+#   worktree base: its commit carries every untracked file it captured, and this repo is public.
+#   (A -stash-N or -branch-<name> pin is the original commit, not a snapshot, so those two are safe.)
 #
 # BOUNDARIES — what this deliberately does NOT catch (the classifier half's job, or not text):
 #   · anything inside a script file (`bash x.sh`), an alias, a function, or text built at run
@@ -194,43 +206,95 @@ is_tfstate_path() {
 }
 
 # ── the snapshot ──────────────────────────────────────────────────────────────────────────────
+# The identity every snapshot commit is written with. .githooks/pre-push refuses any pushed commit
+# carrying it, and rule_push refuses a source whose unpushed history carries it.
+SNAP_EMAIL=safety@alethia.invalid
 # @mut-sub snap-file-cap s/5000/9999999/
 SNAP_MAX_FILES=5000
 # @mut-sub snap-byte-cap s/50 \* 1024 \* 1024/50 * 1024 * 1024 * 1024/
 SNAP_MAX_BYTES=$((50 * 1024 * 1024))
 # @mut-sub snap-scan-cap s/20000/9999999/
 SNAP_SCAN_MAX=20000
-SNAP_EXCLUDES=(
-	# @mut-sub snap-exclude-store s/^.*$/\t':(exclude,glob)**\/.not-a-store\/**'/
-	':(exclude,glob)**/.pnpm-store/**'
-	':(exclude,glob)**/node_modules/**'
-	':(exclude,glob)**/.yarn/cache/**'
-	':(exclude,glob)**/.npm/**'
-	':(exclude,glob)**/.venv/**'
-	':(exclude,glob)**/.terraform/**'
-	':(exclude,glob)**/.gradle/**'
-)
+SNAP_MAX_DIRS=50
 
-# The untracked-file selector: reads NUL-separated paths (relative to the tree), writes the ones
-# under the cap to $1 (NUL-separated), and prints "<taken> <taken-bytes> <left> <left-bytes>
-# <stopped> <top-dirs>". Exiting early closes the pipe, so `git ls-files` stops too.
+# The untracked-file selector, run with the tree as its cwd. Arguments: <out-list> <max-files>
+# <max-bytes> <max-dirs> <scan-max> <n-specs> <spec>… <exclude>…. Writes the chosen paths to
+# <out-list> (NUL-separated) and prints "<taken> <left> <left-bytes> <groups>", where <groups> names
+# every group left out. Every `git ls-files` it starts is read only as far as it needs, and closing
+# the pipe stops git.
 SNAP_SELECT_PL='
-my ($out, $maxf, $maxb, $scan) = @ARGV;
-open(my $o, ">", $out) or die;
-my ($an, $ab, $sn, $sb, $seen, $stop) = (0, 0, 0, 0, 0, 0);
-my %d;
-$/ = "\0";
-while (my $p = <STDIN>) {
-	chomp $p;
-	if (++$seen > $scan) { $stop = 1; last; }
-	my $sz = -s $p;
-	$sz = 0 unless defined $sz;
-	if ($an < $maxf && $ab + $sz <= $maxb) { print $o "$p\0"; $an++; $ab += $sz; }
-	else { $sn++; $sb += $sz; my ($t) = $p =~ m{^([^/]+/?)}; $d{$t}++; }
+use strict; use warnings;
+my ($out, $maxf, $maxb, $maxdirs, $scan, $ns, @r) = @ARGV;
+my @specs = @r[0 .. $ns - 1];
+my @ex = @r[$ns .. $#r];
+# The untracked dependency caches, never captured. One list, applied to every listed entry,
+# including a whole directory `--directory` collapsed to one line.
+# @mut-sub snap-exclude-store s/\\.pnpm-store\|//
+my $cache = qr{(^|/)(\.pnpm-store|node_modules|\.yarn/cache|\.npm|\.venv|\.terraform|\.gradle)(/|$)};
+sub walk {
+	my ($lim, $dirmode, @paths) = @_;
+	my @cmd = ("git", "ls-files", "-o", "--exclude-standard", "-z");
+	push @cmd, "--directory", "--no-empty-directory" if $dirmode;
+	my (@got, $more);
+	$more = 0;
+	open(my $h, "-|", @cmd, "--", @paths, @ex) or return (\@got, 0);
+	local $/ = "\0";
+	while (my $p = <$h>) {
+		chomp $p;
+		next if $p =~ $cache;
+		if (@got >= $lim) { $more = 1; last; }
+		push @got, $p;
+	}
+	close $h;
+	return (\@got, $more);
 }
+my %sz;
+sub size { my $p = shift; $sz{$p} //= (-s $p) // 0; return $sz{$p}; }
+my ($ent, $emore) = walk($scan, 1, @specs);
+my (@loose, @dirs);
+for (@$ent) { if (m{/$}) { push @dirs, $_ } else { push @loose, $_ } }
+my ($an, $ab, $ln, $lb) = (0, 0, 0, 0);
+my (@take, %grp);
+sub try_take {
+	my ($p, $g, $why) = @_;
+	my $s = size($p);
+	if ($an < $maxf && $ab + $s <= $maxb) { push @take, $p; $an++; $ab += $s; return 1; }
+	$ln++; $lb += $s; $grp{$g} //= $why; return 0;
+}
+# 2. loose files, smallest first
+# @mut-sub snap-small-first s/^/#/
+@loose = sort { size($a) <=> size($b) || $a cmp $b } @loose;
+for my $p (@loose) {
+	my ($t) = $p =~ m{^([^/]+/)};
+	try_take($p, defined $t ? "$t (loose files)" : $p, "over the cap");
+}
+# 3. directories: an equal share each
+my @scan_dirs = @dirs;
+if (@scan_dirs > $maxdirs) {
+	# @mut-sub snap-name-unscanned s/^/#/
+	$grp{$_} = "not scanned: over the $maxdirs-directory limit" for @scan_dirs[$maxdirs .. $#scan_dirs];
+	@scan_dirs = @scan_dirs[0 .. $maxdirs - 1];
+}
+my $n = scalar @scan_dirs;
+my $left_f = $maxf - $an;
+$left_f = 0 if $left_f < 0;
+# @mut-sub snap-fair-share s/int\(\$left_f \/ \$n\)/\$left_f/
+my $share = $n ? int($left_f / $n) : 0;
+$share = 1 if $n && $share < 1;
+for my $d (@scan_dirs) {
+	my ($got, $more) = walk($share, 0, $d);
+	try_take($_, $d, "over the cap") for @$got;
+	if ($more) {
+		# @mut-sub snap-name-cut s/^/#/
+		$grp{$d} = "cut at its share of " . scalar(@$got) . " files; the rest were not read";
+	}
+}
+# @mut-sub snap-name-stop s/^/#/
+$grp{"everything listed after " . $ent->[-1]} = "not seen: the listing stopped at $scan entries" if $emore;
+open(my $o, ">", $out) or die;
+print $o "$_\0" for @take;
 close $o;
-my @t = grep { defined } (sort { $d{$b} <=> $d{$a} } keys %d)[0 .. 4];
-print join(" ", $an, $ab, $sn, $sb, $stop, (@t ? join(",", @t) : "-")), "\n";
+print join(" ", $an, $ln, $lb, (%grp ? join("; ", map { "$_ ($grp{$_})" } sort keys %grp) : "-")), "\n";
 '
 
 safety_ts() { SAFETY_TS="$(date -u +%Y%m%dT%H%M%SZ)"; }
@@ -274,24 +338,27 @@ snapshot_tree() {
 	[ $# -gt 0 ] || set -- ":/"
 	# add's exit code is not the signal: an explicitly named IGNORED path makes it exit 1 having
 	# done exactly the right thing. write-tree is the signal.
-	# 1. tracked changes — bounded by the index, which already knows every tracked file
-	GIT_INDEX_FILE="$tmp" git -C "$top" add -u -- "$@" "${SNAP_EXCLUDES[@]}" >/dev/null 2>&1
-	# 2. untracked files, up to the cap
-	local list stats taken=0 _tbytes=0 left=0 lbytes=0 stopped=0 dirs=-
+	# 1. tracked changes, ALL of them, whatever their path — bounded by the index, which already
+	#    knows every tracked file. The cache excludes are for UNTRACKED content only.
+	# @mut-sub snap-tracked-all s/-- "\$@" >/-- "\$@" ":(exclude,glob)**\/node_modules\/**" >/
+	GIT_INDEX_FILE="$tmp" git -C "$top" add -u -- "$@" >/dev/null 2>&1
+	# 2. untracked files, within the budget, fairly (see the header)
+	local list stats taken=0 left=0 lbytes=0 groups=-
 	list="$(mktemp "${TMPDIR:-/tmp}/alethia-safety-list.XXXXXX")" || {
 		rm -f "$tmp"
 		return 2
 	}
-	stats="$(cd "$top" && git ls-files -o --exclude-standard -z -- "$@" "${SNAP_EXCLUDES[@]}" 2>/dev/null |
-		perl -e "$SNAP_SELECT_PL" "$list" "$SNAP_MAX_FILES" "$SNAP_MAX_BYTES" "$SNAP_SCAN_MAX" 2>/dev/null)"
-	read -r taken _tbytes left lbytes stopped dirs <<<"$stats"
+	stats="$(cd "$top" && perl -e "$SNAP_SELECT_PL" "$list" "$SNAP_MAX_FILES" "$SNAP_MAX_BYTES" "$SNAP_MAX_DIRS" "$SNAP_SCAN_MAX" "$#" "$@" 2>/dev/null)"
+	read -r taken left lbytes groups <<<"$stats"
 	case "$taken" in '' | *[!0-9]*) taken=0 ;; esac
 	if [ "$taken" -gt 0 ]; then
 		GIT_INDEX_FILE="$tmp" GIT_LITERAL_PATHSPECS=1 git -C "$top" add --pathspec-from-file="$list" --pathspec-file-nul >/dev/null 2>&1
 	fi
 	rm -f "$list"
-	if [ "${left:-0}" != 0 ] || [ "${stopped:-0}" = 1 ]; then
-		note "snapshot LEFT OUT ${left} untracked file(s) ($((${lbytes:-0} / 1048576)) MB) over the ${SNAP_MAX_FILES}-file / $((SNAP_MAX_BYTES / 1048576)) MB cap$([ "${stopped:-0}" = 1 ] && echo ", and stopped scanning after ${SNAP_SCAN_MAX} entries") — under: ${dirs}"
+	if [ -n "$groups" ] && [ "$groups" != - ]; then
+		local counted=""
+		[ "${left:-0}" -gt 0 ] 2>/dev/null && counted=", ${left} file(s) / $((${lbytes:-0} / 1048576)) MB of it counted"
+		note "snapshot LEFT OUT untracked content over the ${SNAP_MAX_FILES}-file / $((SNAP_MAX_BYTES / 1048576)) MB budget${counted} — not captured: ${groups}"
 	fi
 	tree="$(GIT_INDEX_FILE="$tmp" git -C "$top" write-tree 2>/dev/null)"
 	rm -f "$tmp"
@@ -301,7 +368,7 @@ snapshot_tree() {
 		return 0
 	fi
 	commit="$(printf 'safety snapshot before: %s\n\ntree: %s\n' "$label" "$top" |
-		git -C "$top" -c user.name=alethia-safety -c user.email=safety@alethia.invalid \
+		git -C "$top" -c user.name=alethia-safety -c user.email="$SNAP_EMAIL" \
 			commit-tree "$tree" ${head:+-p "$head"} 2>/dev/null)"
 	[ -n "$commit" ] || return 2
 	store_ref "$top" "" "$commit" || return 2
@@ -438,6 +505,20 @@ current_branch() { # <dir> — sets BRANCH ("" when detached or unknown)
 	BRANCH="$(git -C "$1" symbolic-ref -q --short HEAD 2>/dev/null)"
 }
 
+# push_source_is_snapshot <src> — does pushing <src> publish snapshot content? True when <src>
+# resolves (by any spelling: a short name git expands, a raw sha, a branch) to a ref under
+# refs/safety/, or to a commit whose history — beyond what the remotes already have — holds a
+# commit written by the snapshot identity. A branch made from a snapshot is caught here too;
+# .githooks/pre-push repeats the history check on the exact range git is about to send.
+push_source_is_snapshot() {
+	local src="$1" full sha
+	[ -n "$GDIR" ] && [ -n "$src" ] || return 1
+	full="$(git -C "$GDIR" rev-parse --symbolic-full-name "$src" 2>/dev/null)"
+	case "$full" in refs/safety/*) return 0 ;; esac
+	sha="$(git -C "$GDIR" rev-parse -q --verify "$src^{commit}" 2>/dev/null)" || return 1
+	git -C "$GDIR" log --format='%ae %ce' "$sha" --not --remotes 2>/dev/null | grep -qF "$SNAP_EMAIL"
+}
+
 # push_target_is_branch <name> <remote> — a local or remote-tracking branch exists and no tag does.
 push_target_is_branch() {
 	local name="$1" remote="${2:-origin}"
@@ -498,6 +579,11 @@ rule_push() {
 		# upstream). Resolve that here rather than leave it to the pre-push hook.
 		[ -n "$GDIR" ] || refuse R-PUSH "cannot tell which branch a bare \`git push\` pushes (the tree is an unexpanded variable)."
 		current_branch "$GDIR"
+		if push_source_is_snapshot HEAD; then
+			# @mut push-snapshot-content
+			refuse R-PUSH "\`git push\` would publish a snapshot commit: this branch's unpushed history holds a commit written by guard-destroy's snapshot identity, which can carry untracked private files." \
+				"Restore files from a snapshot onto a normal commit instead (.claude/skills/dev/SKILL.md → Recovering from a destructive command)."
+		fi
 		if is_protected_branch "$BRANCH"; then
 			refuse R-PUSH "a bare \`git push\` from a tree on \`$BRANCH\` pushes \`$BRANCH\`." \
 				"Feature work goes to a feature branch and a PR into dev; promotions are PR merges (guard-merge.sh)."
@@ -520,6 +606,12 @@ rule_push() {
 	esac
 	for s in "${specs[@]}"; do
 		s="${s#+}"
+		src="${s%%:*}"
+		if [ -n "$src" ] && push_source_is_snapshot "$src"; then
+			# @mut push-snapshot-source
+			refuse R-PUSH "\`git push\` of '$src' would publish a snapshot commit (a refs/safety ref under another name, or a history holding a commit written by the snapshot identity), which can carry untracked private files." \
+				"Restore files from a snapshot onto a normal commit instead (.claude/skills/dev/SKILL.md → Recovering from a destructive command)."
+		fi
 		case "$s" in
 		*:*)
 			src="${s%%:*}"
@@ -1357,6 +1449,14 @@ STUB
 			echo "  ✗ $label: rc=$RC new refs=$got want $want : $4"
 		fi
 	}
+	bad_case() {
+		fail=$((fail + 1))
+		echo "  ✗ $1"
+		[ -z "${SELFTEST_FAILFAST:-}" ] || exit 1
+	}
+	# The repository whose .githooks/pre-push is under test: this file's own checkout, or the
+	# mutation harness's copy.
+	REPO_ROOT="${HOOK_ROOT:-$(cd "${self%/*}/../.." && pwd)}"
 	check() { # <label> <condition-command…>
 		local label="$1"
 		shift
@@ -1656,6 +1756,55 @@ git push origin main"
 	t block "$repo" 'git worktree remove --force "$WT"'
 	rm -rf "$tmp/wt-tf/infra"
 
+	# ── snapshot content never reaches a remote, by any route ──
+	printf 'private-untracked\n' >"$wt/private.txt"
+	snapped 1 'a snapshot of a tree holding a private untracked file' "$wt" 'git reset --hard'
+	local snapref="$NEW" snapsha short
+	snapsha="$(git -C "$repo" rev-parse "$snapref")"
+	short="${snapref#refs/}"
+	t block "$wt" "git push origin $short:refs/heads/recovered"
+	t block "$wt" "git push origin $snapsha:refs/heads/recovered"
+	G -C "$repo" branch from-snapshot "$snapsha"
+	t block "$wt" 'git push -u origin from-snapshot'
+	# a normal commit on top of the snapshot still carries it in its history
+	G -C "$repo" worktree add "$tmp/wt-leak" from-snapshot
+	printf 'more\n' >>"$tmp/wt-leak/file.txt"
+	G -C "$tmp/wt-leak" commit -am 'work on top'
+	t block "$tmp/wt-leak" 'git push'
+	t block "$wt" 'git push origin from-snapshot:refs/heads/x'
+	t allow "$wt" 'git push origin feat/a'
+	# the NAME check still holds when the tree is unknown and nothing can be resolved
+	t block "$wt" "git -C \"\$W\" push origin $snapref:refs/heads/x"
+	# …and the restore the docs prescribe does NOT carry it: files onto the parent commit
+	G -C "$repo" worktree add --detach "$tmp/wt-restored" "$snapsha^"
+	G -C "$tmp/wt-restored" restore --source="$snapsha" --worktree -- .
+	check 'the documented restore brings the private file back' test "$(cat "$tmp/wt-restored/private.txt" 2>/dev/null)" = private-untracked
+	G -C "$tmp/wt-restored" switch -c restored-work
+	G -C "$tmp/wt-restored" add -A
+	G -C "$tmp/wt-restored" commit -m restored
+	t allow "$tmp/wt-restored" 'git push -u origin restored-work'
+	# .githooks/pre-push checks the exact range git sends — the layer no spelling can get past
+	local bare="$tmp/remote.git" hooks="$REPO_ROOT/.githooks"
+	git init -q --bare "$bare"
+	git -C "$repo" remote add t "$bare" >/dev/null 2>&1
+	if git -C "$repo" -c core.hooksPath="$hooks" push -q t from-snapshot:refs/heads/leak >/dev/null 2>"$tmp/push.err"; then
+		bad_case 'pre-push refuses a branch whose history holds a snapshot commit'
+	else pass=$((pass + 1)); fi
+	check 'pre-push names the snapshot identity' grep -q 'snapshot' "$tmp/push.err"
+	if git -C "$repo" -c core.hooksPath="$hooks" push -q t "$snapsha:refs/heads/leak2" >/dev/null 2>&1; then
+		bad_case 'pre-push refuses a raw snapshot sha'
+	else pass=$((pass + 1)); fi
+	if git -C "$repo" -c core.hooksPath="$hooks" push -q t feat/a:refs/heads/feat/a >/dev/null 2>"$tmp/push.err"; then
+		pass=$((pass + 1))
+	else bad_case "pre-push lets an ordinary branch through: $(cat "$tmp/push.err")"; fi
+	if git -C "$tmp/wt-restored" -c core.hooksPath="$hooks" push -q t restored-work >/dev/null 2>"$tmp/push.err"; then
+		pass=$((pass + 1))
+	else bad_case "pre-push lets the documented restore through: $(cat "$tmp/push.err")"; fi
+	G -C "$repo" worktree remove --force "$tmp/wt-leak"
+	G -C "$repo" worktree remove --force "$tmp/wt-restored"
+	G -C "$repo" branch -D from-snapshot restored-work
+	rm -f "$wt/private.txt"
+
 	# ── S-WTREE ──
 	G -C "$repo" worktree add -b feat/b "$tmp/wt-b"
 	printf 'lost?\n' >"$tmp/wt-b/precious.txt"
@@ -1668,34 +1817,78 @@ git push origin main"
 	check 'the removed tree survives in refs/safety/wt-b' test "$(git -C "$repo" show "$NEW:precious.txt" 2>/dev/null)" = 'lost?'
 	snapped 0 'worktree remove (no force) refuses dirty trees itself' "$repo" "git worktree remove $tmp/wt-b"
 
-	# ── B4: the snapshot is bounded ──
-	mkdir -p "$wt/.pnpm-store/v3" "$wt/node_modules/x" "$wt/many" "$wt/big" "$wt/small"
+	# ── B4: the snapshot is bounded, and fair ──
+	# helper: is <path> in the snapshot NEW?
+	insnap() { git -C "$repo" cat-file -e "$NEW:$1" 2>/dev/null; }
+	mkdir -p "$wt/.pnpm-store/v3" "$wt/node_modules/x" "$wt/small"
 	printf 'store\n' >"$wt/.pnpm-store/v3/blob"
 	printf 'dep\n' >"$wt/node_modules/x/index.js"
 	printf 'mine\n' >"$wt/small/keep.txt"
 	snapped 1 'a tree with dependency caches still snapshots' "$wt" 'git reset --hard'
-	check 'the work file is in it' test "$(git -C "$repo" show "$NEW:small/keep.txt" 2>/dev/null)" = mine
+	check 'the work file is in it' insnap small/keep.txt
 	check '.pnpm-store is never captured' bash -c "! git -C '$repo' cat-file -e '$NEW:.pnpm-store/v3/blob' 2>/dev/null"
 	check 'node_modules is never captured' bash -c "! git -C '$repo' cat-file -e '$NEW:node_modules/x/index.js' 2>/dev/null"
-	# over the FILE cap: 5003 files → 5000 taken, 3 left out, and the note says so
-	(cd "$wt/many" && touch f{0001..5003}) 2>/dev/null
-	snapped 1 'over the file cap it still snapshots' "$wt" 'git checkout -- file.txt'
-	check 'the note names what was left out' grep -qE 'LEFT OUT [0-9]+ untracked file\(s\).*under: many/' "$tmp/stderr"
-	check 'it took exactly the cap' test "$(git -C "$repo" diff --name-only --diff-filter=A "$NEW^" "$NEW" | wc -l | tr -d ' ')" = 5000
-	rm -rf "$wt/many"
-	# over the BYTE cap: one 60 MB file is left out, the small one is still taken
+	rm -rf "$wt/.pnpm-store" "$wt/node_modules" "$wt/small"
+
+	# A TRACKED change is always captured, even under a cache-named path (the excludes are for
+	# untracked content only).
+	mkdir -p "$wt/vendor/node_modules/pkg" "$wt/src" "$wt/flood"
+	printf 'v1\n' >"$wt/vendor/node_modules/pkg/index.js"
+	printf 'keep\n' >"$wt/src/keep.ts"
+	printf 'keep\n' >"$wt/flood/keep"
+	G -C "$wt" add -f vendor/node_modules/pkg/index.js src/keep.ts flood/keep
+	G -C "$wt" commit -m 'tracked fixtures'
+	printf 'v2-tracked-change\n' >"$wt/vendor/node_modules/pkg/index.js"
+	snapped 1 'a tracked change under a cache-named path' "$wt" 'git checkout -- file.txt'
+	check 'that tracked change is in the snapshot' test "$(git -C "$repo" show "$NEW:vendor/node_modules/pkg/index.js" 2>/dev/null)" = v2-tracked-change
+	G -C "$wt" checkout -- vendor/node_modules/pkg/index.js
+
+	# FAIRNESS: a big untracked directory that sorts FIRST, a 10-byte real file under src/ (a
+	# tracked directory), and a small untracked directory that sorts after the big one.
+	mkdir -p "$wt/aaa-data" "$wt/zzz-new"
+	(cd "$wt/aaa-data" && touch f{0001..6000}) 2>/dev/null
+	printf '0123456789' >"$wt/src/new.ts"
+	printf 'note\n' >"$wt/zzz-new/note.md"
+	snapped 1 'a big directory sorting first still snapshots' "$wt" 'git reset --hard'
+	check 'the 10-byte file under src/ is captured' insnap src/new.ts
+	check 'the small directory after the big one is captured' insnap zzz-new/note.md
+	check 'the note names the big directory as cut at its share' grep -q 'aaa-data/ (cut at its share' "$tmp/stderr"
+	check 'the note does not claim src/ was left out' bash -c "! grep -q 'src/' '$tmp/stderr'"
+	rm -rf "$wt/aaa-data" "$wt/zzz-new" "$wt/src/new.ts"
+
+	# SMALLEST FIRST among loose files: 5000 two-byte files and one 1-byte file that sorts LAST.
+	perl -e 'for my $i (1 .. 5000) { open(my $f, ">", sprintf("%s/src/bulk-%04d", $ARGV[0], $i)) or die; print $f "xx"; close $f }' "$wt"
+	printf 'z' >"$wt/src/zz-small.ts"
+	snapped 1 'over the file budget it still snapshots' "$wt" 'git checkout -- file.txt'
+	check 'the smallest file is taken first' insnap src/zz-small.ts
+	check 'exactly the file budget was taken' test "$(git -C "$repo" diff --name-only --diff-filter=A "$NEW^" "$NEW" | wc -l | tr -d ' ')" = 5000
+	check 'the note names the loose group left out' grep -q 'src/ (loose files) (over the cap)' "$tmp/stderr"
+	rm -f "$wt"/src/bulk-* "$wt/src/zz-small.ts"
+
+	# the BYTE budget: a 60 MB file in its own directory is left out, a small directory kept
+	mkdir -p "$wt/big" "$wt/small"
 	dd if=/dev/zero of="$wt/big/blob.bin" bs=1048576 count=60 2>/dev/null
-	snapped 1 'over the byte cap it still snapshots' "$wt" 'git checkout -- file.txt'
+	printf 'mine\n' >"$wt/small/keep.txt"
+	snapped 1 'over the byte budget it still snapshots' "$wt" 'git checkout -- file.txt'
 	check 'the big file is left out' bash -c "! git -C '$repo' cat-file -e '$NEW:big/blob.bin' 2>/dev/null"
-	check 'the small file is still in' test "$(git -C "$repo" show "$NEW:small/keep.txt" 2>/dev/null)" = mine
-	check 'the note names the directory' grep -q 'under: big/' "$tmp/stderr"
-	rm -rf "$wt/big"
-	# the SCAN cap: 20001+ untracked files stop the scan rather than being walked in full
-	mkdir -p "$wt/flood"
+	check 'the small file is still in' insnap small/keep.txt
+	check 'the note names the big directory' grep -q 'big/ (over the cap)' "$tmp/stderr"
+	rm -rf "$wt/big" "$wt/small"
+
+	# more directories than SNAP_MAX_DIRS: every one past the limit is NAMED
+	local d
+	for d in $(seq -w 1 52); do mkdir -p "$wt/d$d" && printf 'x\n' >"$wt/d$d/f"; done
+	snapped 1 'more directories than the scan limit' "$wt" 'git checkout -- file.txt'
+	check 'a directory inside the limit is captured' insnap d01/f
+	check 'the 51st directory is named as not scanned' grep -q 'd51/ (not scanned' "$tmp/stderr"
+	check 'the 52nd directory is named as not scanned' grep -q 'd52/ (not scanned' "$tmp/stderr"
+	rm -rf "$wt"/d[0-9][0-9]
+
+	# the LISTING stops: 20500 loose files inside a tracked directory
 	(cd "$wt/flood" && touch g{00001..20500}) 2>/dev/null
 	snapped 1 'a flood of untracked files still snapshots' "$wt" 'git checkout -- file.txt'
-	check 'the note says the scan stopped' grep -q 'stopped scanning after 20000' "$tmp/stderr"
-	rm -rf "$wt/flood" "$wt/.pnpm-store" "$wt/node_modules" "$wt/small"
+	check 'the note says where the listing stopped' grep -q 'everything listed after flood/' "$tmp/stderr"
+	find "$wt/flood" -name 'g*' -type f -delete
 
 	# ── S-STASH / S-BRANCH ──
 	printf 's1\n' >"$wt/file.txt"
@@ -1730,7 +1923,7 @@ mutation_test() {
 	for id in $ids; do
 		copy="$dir/guard-destroy.sh"
 		sed -E "s/(refuse|snapshot|snap|pin) $id( |\$)/true $id\\2/g" "$self" >"$copy"
-		if SELFTEST_FAILFAST=1 bash "$copy" --self-test >/dev/null 2>&1; then
+		if SELFTEST_FAILFAST=1 HOOK_ROOT="$(cd "${self%/*}/../.." && pwd)" bash "$copy" --self-test >/dev/null 2>&1; then
 			survived=$((survived + 1))
 			echo "  ✗ mutant SURVIVED: disabling $id fails no self-test case"
 		else
@@ -1743,18 +1936,21 @@ mutation_test() {
 	# a REFUSAL or a call — never on `[ … ] && refuse`, where `true … && refuse` still refuses and the
 	# mutant would only ever be "killed" by refusing too much. They cover the fixes a
 	# whole-rule mutant cannot isolate (one site of a rule that has many).
-	local names name lib="${self%/*}/lib/cmdline.sh"
-	names="$(cat "$self" "$lib" | grep -oE '# @mut(-sub)? [a-z0-9-]+' | awk '{print $3}' | sort -u)"
+	local names name lib="${self%/*}/lib/cmdline.sh" prepush
+	prepush="$(cd "${self%/*}/../.." && pwd)/.githooks/pre-push"
+	mkdir -p "$dir/root/.githooks"
+	names="$(cat "$self" "$lib" "$prepush" | grep -oE '# @mut(-sub)? [a-z0-9-]+' | awk '{print $3}' | sort -u)"
 	for name in $names; do
 		cp "$self" "$dir/guard-destroy.sh"
 		cp "$lib" "$dir/lib/cmdline.sh"
-		mutate_marker "$name" "$dir/guard-destroy.sh" "$dir/lib/cmdline.sh"
-		if cmp -s "$self" "$dir/guard-destroy.sh" && cmp -s "$lib" "$dir/lib/cmdline.sh"; then
+		cp "$prepush" "$dir/root/.githooks/pre-push"
+		mutate_marker "$name" "$dir/guard-destroy.sh" "$dir/lib/cmdline.sh" "$dir/root/.githooks/pre-push"
+		if cmp -s "$self" "$dir/guard-destroy.sh" && cmp -s "$lib" "$dir/lib/cmdline.sh" && cmp -s "$prepush" "$dir/root/.githooks/pre-push"; then
 			survived=$((survived + 1))
 			echo "  ✗ marker $name did not apply"
 			continue
 		fi
-		if SELFTEST_FAILFAST=1 bash "$dir/guard-destroy.sh" --self-test >/dev/null 2>&1; then
+		if SELFTEST_FAILFAST=1 HOOK_ROOT="$dir/root" bash "$dir/guard-destroy.sh" --self-test >/dev/null 2>&1; then
 			survived=$((survived + 1))
 			echo "  ✗ mutant SURVIVED: disabling @$name fails no self-test case"
 		else

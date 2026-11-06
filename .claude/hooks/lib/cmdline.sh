@@ -388,6 +388,54 @@ cmdline_expand() {
 	return 0
 }
 
+# cmdline_qwords <text> — sets QWORDS: the text split into shell WORDS, honouring '…' and "…"
+# (with backslash escapes outside single quotes) and dropping the quote characters. TOK splits on
+# whitespace AFTER removing quotes, which is right for matching names and wrong for an option
+# whose value has spaces (`--subject "release 42"` must be ONE word). A character loop, so only
+# for the short segments that need it (a `gh pr merge`).
+cmdline_qwords() {
+	local t="$1" i n=${#1} ch q="" w="" inword=0
+	QWORDS=()
+	for ((i = 0; i < n; i++)); do
+		ch="${t:i:1}"
+		if [ -n "$q" ]; then
+			if [ "$ch" = "$q" ]; then
+				q=""
+			elif [ "$q" = '"' ] && [ "$ch" = "\\" ]; then
+				i=$((i + 1))
+				w="$w${t:i:1}"
+			else
+				w="$w$ch"
+			fi
+			continue
+		fi
+		case "$ch" in
+		\" | \')
+			q="$ch"
+			inword=1
+			;;
+		\\)
+			i=$((i + 1))
+			w="$w${t:i:1}"
+			inword=1
+			;;
+		" " | $'\t' | $'\n')
+			if [ "$inword" = 1 ]; then
+				QWORDS+=("$w")
+				w=""
+				inword=0
+			fi
+			;;
+		*)
+			w="$w$ch"
+			inword=1
+			;;
+		esac
+	done
+	[ "$inword" = 1 ] && QWORDS+=("$w")
+	return 0
+}
+
 # cmdline_has_var <word> — does the word still carry an unexpanded variable or substitution?
 cmdline_has_var() {
 	case "$1" in *'$'* | *'`'*) return 0 ;; esac
