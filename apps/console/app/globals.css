@@ -69,6 +69,88 @@
   }
 }
 
+/* The console's enter animations, which replaced the `motion` library (#6147). Each is the CSS
+   twin of the tween it replaced: the same property, distance, duration and curve.
+   - `ease-out` below is CSS's own keyword, cubic-bezier(0, 0, 0.58, 1), which is exactly motion's
+     "easeOut". Tailwind's `ease-out` UTILITY is a different curve, cubic-bezier(0, 0, 0.2, 1), and
+     that is why these are classes here and not tw-animate-css utilities.
+   - A tween that named no curve ran on motion's default for opacity, cubic-bezier(0.25, 0.1, 0.35, 1).
+   - None of them animates an exit. No call site used AnimatePresence, so under motion each element
+     already unmounted at once; CSS cannot animate an unmount, and nothing here pretends to.
+   Under reduced motion nothing moves or resizes: movement falls back to the plain fade, a size
+   change snaps, the shimmer stands still. A fade alone is not motion and stays.
+   tests/styles/reduced-motion.test.tsx reads this file and fails on a keyframe or transition that
+   moves something without a reduced-motion rule for every class that runs it. */
+@keyframes console-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes agent-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes elench-panel-in {
+  from {
+    width: 0;
+  }
+}
+@keyframes shimmer-sweep {
+  from {
+    background-position: 100% center;
+  }
+  to {
+    background-position: 0% center;
+  }
+}
+/* A chat message rising into the agent transcript. */
+.agent-message-in {
+  animation: agent-message-in 180ms ease-out;
+}
+/* The transcript's "Thinking…" row appearing (motion's default 300ms fade). */
+.agent-thinking-in {
+  animation: console-fade-in 300ms cubic-bezier(0.25, 0.1, 0.35, 1);
+}
+/* The Elench drawer opening from zero width to the width its own style sets. */
+.elench-panel-in {
+  animation: elench-panel-in 200ms ease-out;
+}
+/* The canvas workspace rail sliding open and shut. A transition, not a keyframe: it runs in both
+   directions and, like motion's `initial={false}`, not on first render. */
+.workspace-rail {
+  transition: width 200ms ease-out;
+}
+/* A workspace-rail card, and the canvas on an environment switch, fading in (both keyed, so a new
+   card or a new environment remounts the element and replays it). */
+.workspace-card-in,
+.canvas-env-in {
+  animation: console-fade-in 150ms cubic-bezier(0.25, 0.1, 0.35, 1);
+}
+/* The text shimmer behind "Thinking…": it loops for as long as the model streams. Not named
+   `text-shimmer`: tailwind-merge reads any `text-*` as a colour and would drop it beside the
+   span's `text-transparent`. */
+.shimmer-sweep {
+  animation: shimmer-sweep var(--shimmer-duration, 2s) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-message-in {
+    animation-name: console-fade-in;
+  }
+  .elench-panel-in {
+    animation: none;
+  }
+  .workspace-rail {
+    transition: none;
+  }
+  /* At 0% the highlight band sits past the text's right edge, so the label reads in full. */
+  .shimmer-sweep {
+    animation: none;
+    background-position: 0% center;
+  }
+}
+
 /* Architecture-canvas container regions (VPC / cluster / BYO module).
    A region is a background box you can drag by its header and resize by its handles, but its BODY
    must stay click-through so the pane still pans and the cards on top stay clickable. So the whole

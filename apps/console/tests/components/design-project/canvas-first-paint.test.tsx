@@ -64,9 +64,6 @@ vi.mock("@xyflow/react", () => ({
 	ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 	useReactFlow: () => ({ fitView: vi.fn() }),
 }));
-vi.mock("motion/react", () => ({
-	motion: { div: ({ children }: { children: ReactNode }) => <div>{children}</div> },
-}));
 // The graph → form step is graph-to-form's subject; a valid form is all Deploy needs to reach the
 // server call under test.
 vi.mock("@/lib/validations/project-form.schema", () => ({
