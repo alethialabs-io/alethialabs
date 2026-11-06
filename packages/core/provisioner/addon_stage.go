@@ -44,8 +44,8 @@ type addOnStageResult struct {
 // runAddOnStage is the add-on stage of a dedicated deploy, up to — NOT including — the health wait,
 // in the order the cluster needs:
 //
-//	configure BYO charts → seed add-on secrets → BYO bindings → cloud identity → render → wave
-//	apply → GitOps-mode write → one-shot bootstraps
+//	configure BYO charts → seed add-on secrets → BYO users Job → BYO bindings → cloud identity →
+//	render → wave apply → GitOps-mode write → one-shot bootstraps
 //
 // It returns the add-ons this deploy applied (`Deployable`). RunDeployV2 then runs the prunes and
 // only then the refresh and the health wait over `Deployable`, the order it always had: a disabled
@@ -101,10 +101,23 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// chart consumes them via the SecretKeyRef wiring the console resolved into helm.values.
 	argocd.EnsureAddOnSecrets(withoutByoRefusals(vc.AddOns, out.Refused), in.AddOnSecretValues, stdout, stderr)
 
+	// The BYO users Job (docs/adr/byo-binding-db-users.md §3): with the per-binding flag on, it
+	// provisions each declared binding's own database user BEFORE the bindings resolve, because a
+	// binding is satisfiable only once its user exists. After configureByoCharts, so its declared set
+	// leaves out the refused charts and sees the moved ones in their new namespaces. A no-op with the
+	// flag off.
+	if byoDBUsersEnabled() {
+		if err := in.Refresh(ctx, "the BYO users Job"); err != nil {
+			return out, err
+		}
+	}
+	dbUsers := runByoDBUsers(ctx, byoDBUsersInput{VC: vc, Outputs: in.Outputs, Provider: in.Provider, Refused: out.Refused, Refresh: in.Refresh}, stdout, stderr)
+	out.Warnings = append(out.Warnings, dbUsers.Warnings...)
+
 	// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now (runtime,
 	// against the tofu outputs) + seed their keyless binding ExternalSecrets — BEFORE the
 	// Applications render, so the write-back rides the same helm.values block.
-	out.Bindings = applyByoChartBindingsExcept(vc, in.Outputs, in.Provider, out.Refused, stdout, stderr)
+	out.Bindings = applyByoChartBindingsExcept(vc, in.Outputs, in.Provider, out.Refused, dbUsers, stdout, stderr)
 	// A moved chart's bindings are declared in its NEW namespace (configureByoCharts rewrote it), so
 	// the ones an earlier deploy applied in "default" are no longer kept. The prune finds namespaces by
 	// this environment's owner label; an earlier runner did stamp that label on "default" when a chart
@@ -119,10 +132,9 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	// (argocd.SweepByoSecretSyncObjects). The keep set is the declared bindings, so the sweep is
 	// skipped outright when any binding failed: the set is then incomplete, and an object it would
 	// miss could be one the runner applied. A kept binding must be exactly the runner's own object: the
-	// sweep holds each one's live spec to the document rendered for it here, restoring it in place
-	// when it differs.
-	rendered := renderedByoBindings(vc, in.Outputs, in.Provider, out.Refused)
-	out.Warnings = append(out.Warnings, sweepByoSecretSync(out.Bindings, rendered, stdout, stderr)...)
+	// sweep holds each one's live spec to the document the binding apply rendered and applied for it
+	// (out.Bindings.Rendered), restoring it in place when it differs.
+	out.Warnings = append(out.Warnings, sweepByoSecretSync(out.Bindings, out.Bindings.Rendered, stdout, stderr)...)
 
 	// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
 	// Applications render — the same seam, and the same reason, as the bindings above: the value

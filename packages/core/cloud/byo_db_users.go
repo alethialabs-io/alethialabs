@@ -23,12 +23,12 @@ import (
 //
 // WHERE THE PASSWORD EXISTS. In the store; in tofu state, because `random_password` keeps its result
 // there exactly as it does for every other `custom_secrets` entry, and the runner reads and writes that
-// state through the state proxy for the duration of a run; in the binding's k8s Secret, once slice 4
-// provisions the user and the binding resolves; and briefly in the BYO users Job's pod (slice 4). It
-// is never in these tfvars (they carry a length and a charset, never a value), a manifest, the
-// snapshot or a log line.
+// state through the state proxy for the duration of a run; in the binding's k8s Secret, once the BYO
+// users Job (provisioner/byo_db_users.go) provisions the user and the binding resolves; and briefly in
+// that Job's pod, in a Secret of its own per user. It is never in these tfvars (they carry a length and
+// a charset, never a value), a manifest, the snapshot or a log line.
 //
-// Nothing reads these secrets until slice 4 provisions the users. The entries are emitted only while
+// The BYO users Job and the binding lane read these secrets. The entries are emitted only while
 // the per-binding flag is on. One thing changes with the flag off, on GCP and Azure only:
 // `custom_secret_keepers` is now written by the typed mapping, so it is read from the cluster, DNS and
 // network provider_config alone (keepersPassthroughSources says why).
@@ -98,8 +98,9 @@ func byoChartNamespace(chartID string) string {
 // One difference, stated: a REFUSED BYO chart (#6439) is not excluded. Its refusal is decided by
 // argocd's namespace validator and the provisioner's collision rule, and both packages import this
 // one. Its entry is therefore a password nothing reads: a refused chart gets no binding ExternalSecret
-// (applyByoChartBindingsExcept skips it), and the BYO users Job (slice 4, not shipped) is designed to
-// take its user list from the provisioner's refusal-aware set, so no user is created for it either.
+// (applyByoChartBindingsExcept skips it), and the BYO users Job takes its user list from the
+// provisioner's refusal-aware set (provisioner.declaredByoDBUsers), so no user is created for it
+// either.
 // The set errs towards a key existing too often, never towards one missing for a binding the resolver
 // resolves.
 //
@@ -170,9 +171,8 @@ func nonNativeSecretsProvider(config *types.ProjectConfig) string {
 // the binding resolver already reports a facet whose key is missing ("no secret for its own database
 // user"), and never falls back to the administrative credential.
 //
-// NOTHING CALLS THIS YET. The binding lane still reports the generic missing-key reason, so a user on
-// a credential-based provider is not told the cause. Slice 4 (#6466) wires this into the binding
-// lane's unsatisfied reason (provisioner/byo_charts.go, which is that slice's scope).
+// provisioner.runByoDBUsers reads it: with a reason, the BYO users Job does not run, and the binding
+// lane reports every per-binding database credential facet unsatisfied with this reason.
 func ByoDBUserSecretsUnavailableReason(config *types.ProjectConfig) string {
 	if config == nil {
 		return ""

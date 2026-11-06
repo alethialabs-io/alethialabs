@@ -449,7 +449,7 @@ func TestByoUsers_SkipRevoke(t *testing.T) {
 			t.Errorf("--skip-revoke still renders %q", bad)
 		}
 	}
-	for _, want := range []string{byoPGFloorReason, `CREATE ROLE "` + byoTestUser + `" NOLOGIN;`, "\\o /dev/termination-log\nSELECT a.rolname"} {
+	for _, want := range []string{byoPGFloorReason, `CREATE ROLE "` + byoTestUser + `" NOLOGIN;`, "\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("--skip-revoke dropped %q", want)
 		}
@@ -593,13 +593,17 @@ COMMIT;
 \pset tuples_only on
 \pset format unaligned
 \o /dev/termination-log
-SELECT a.rolname FROM pg_roles a
+WITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname FROM pg_roles a
     JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
     WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
       AND d.description = 'alethia-env:env-1'
       AND a.rolcanlogin
-      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])
-    ORDER BY 1;
+      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])) q(x))
+SELECT s.line FROM (
+  SELECT 0 AS o, 'alethia-byo-users v1 count=' || count(*) AS line FROM r
+  UNION ALL
+  SELECT 1, r.line FROM r) s
+    ORDER BY s.o, s.line;
 \o
 -- phase 3: revoke every undeclared per-binding user of this environment, one transaction each
 DO $alethia_byo$
@@ -639,7 +643,7 @@ $alethia_byo$;
 \pset tuples_only on
 \pset format unaligned
 \o /dev/termination-log
-SELECT p.rolname::text FROM (SELECT a.rolname FROM pg_roles a
+WITH r(line) AS (SELECT q.x::text FROM (SELECT p.rolname::text FROM (SELECT a.rolname FROM pg_roles a
     JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
     WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
       AND d.description = 'alethia-env:env-1'
@@ -651,8 +655,12 @@ SELECT 'revocation-pending:' || c.rolname FROM (SELECT a.rolname FROM pg_roles a
     WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
       AND d.description = 'alethia-env:env-1'
       AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
-    ORDER BY a.rolname) c
-    ORDER BY 1;
+    ORDER BY a.rolname) c) q(x))
+SELECT s.line FROM (
+  SELECT 0 AS o, 'alethia-byo-users v1 count=' || count(*) AS line FROM r
+  UNION ALL
+  SELECT 1, r.line FROM r) s
+    ORDER BY s.o, s.line;
 \o
 `
 
@@ -704,11 +712,11 @@ func TestByoUsers_ThreePhases(t *testing.T) {
 		"PUBLIC holds CREATE on schema public",
 		`CREATE ROLE "` + byoTestUser + `" NOLOGIN;`,
 		"\nCOMMIT;\n",
-		"\\o /dev/termination-log\nSELECT a.rolname",
+		"\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname",
 		"-- phase 3:",
 		"EXECUTE format('DROP ROLE %I', r.rolname);\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'alethia byo-users: revocation pending: %",
 		"    END;\n    COMMIT;\n  END LOOP;",
-		"\\o /dev/termination-log\nSELECT p.rolname::text",
+		"\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT p.rolname::text",
 		"SELECT 'revocation-pending:' || c.rolname",
 	}
 	at := 0
@@ -722,5 +730,41 @@ func TestByoUsers_ThreePhases(t *testing.T) {
 	// The lockout, the termination, the sweep and the pending list share one candidate predicate.
 	if strings.Count(got, "AND a.rolname <> ALL (ARRAY['"+byoTestUser+"']::name[])") != 4 {
 		t.Error("the phases do not share one candidate predicate")
+	}
+}
+
+// TestByoUsers_ResultStartsWithACountedHeader: every result write puts the header line, with the count
+// of the entries after it, before every entry, with and without --skip-revoke. The runner requires
+// it, so an empty result is an explicit count=0 and a truncated one (the kubelet keeps the LAST 4096
+// bytes) is detected by its missing header.
+func TestByoUsers_ResultStartsWithACountedHeader(t *testing.T) {
+	// Every combination, including NOTHING declared with --skip-revoke: the runner treats an absent
+	// message as a lost result, so even an empty run must write its header (count=0).
+	for _, c := range []struct{ skip, empty bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		skip := c.skip
+		in := oneUserInput()
+		in.SkipRevoke = skip
+		if c.empty {
+			in.Users = nil
+		}
+		got, err := renderByoUsersSQL(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writes := strings.Split(got, "\\o /dev/termination-log\n")[1:]
+		if len(writes) == 0 {
+			t.Fatalf("skip=%v empty=%v: no result write", skip, c.empty)
+		}
+		for i, w := range writes {
+			w = w[:strings.Index(w, "\\o\n")]
+			for _, want := range []string{"SELECT 0 AS o, '" + byoResultHeaderPrefix + "' || count(*) AS line FROM r", "SELECT 1, r.line FROM r", "ORDER BY s.o, s.line;"} {
+				if !strings.Contains(w, want) {
+					t.Errorf("skip=%v write %d lacks %q:\n%s", skip, i, want, w)
+				}
+			}
+		}
+	}
+	if byoResultHeaderPrefix != "alethia-byo-users v1 count=" {
+		t.Errorf("the header changed to %q; the runner's parser (provisioner parseByoDBUsersResult) reads that exact text", byoResultHeaderPrefix)
 	}
 }

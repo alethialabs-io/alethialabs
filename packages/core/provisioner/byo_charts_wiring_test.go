@@ -580,24 +580,19 @@ func dbUserOutputs() map[string]interface{} {
 	}
 }
 
-// withProvisionedDBUsers stands in for the BYO users Job (the ADR's slice 4) reporting users.
-func withProvisionedDBUsers(t *testing.T, users ...string) {
-	t.Helper()
-	orig := provisionedByoDBUsers
-	t.Cleanup(func() { provisionedByoDBUsers = orig })
-	provisionedByoDBUsers = func(*types.ProjectConfig) map[string]bool {
-		out := map[string]bool{}
-		for _, u := range users {
-			out[u] = true
-		}
-		return out
+// provisionedDBUsers stands in for a BYO users run (runByoDBUsers) that provisioned users.
+func provisionedDBUsers(users ...string) byoDBUsersOutcome {
+	out := byoDBUsersOutcome{Provisioned: map[string]bool{}}
+	for _, u := range users {
+		out.Provisioned[u] = true
 	}
+	return out
 }
 
 // TestByoBindingDBUsers_NothingProvisionedWithdrawsTheAdminBinding: with the flag on and no user
-// provisioned (the state until slice 4 ships), the database credential facet is unsatisfied with
-// its reason, nothing is applied or patched, and the live ExternalSecret an earlier deploy pointed at
-// the administrative credential is deleted although the binding is still declared.
+// provisioned (a BYO users run that provisioned nothing), the database credential facet is
+// unsatisfied with its reason, nothing is applied or patched, and the live ExternalSecret an earlier
+// deploy pointed at the administrative credential is deleted although the binding is still declared.
 func TestByoBindingDBUsers_NothingProvisionedWithdrawsTheAdminBinding(t *testing.T) {
 	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
 	c := newBindingCluster(t, liveBinding(`{"alethia.io/byo-binding":"true","alethia.io/environment-id":"env-1"}`), 0)
@@ -640,10 +635,10 @@ func TestByoBindingDBUsers_KeepsALiveOwnUserBinding(t *testing.T) {
 // labels as strings, never names the administrative secret, and the value path points at it.
 func TestByoBindingDBUsers_ProvisionedUserIsBound(t *testing.T) {
 	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
-	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
+	users := provisionedDBUsers(manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
 	c := newBindingCluster(t, `{"items":[]}`, 0)
 	vc := byoBindingConfig("env-1", true)
-	st := applyByoChartBindings(vc, dbUserOutputs(), "aws", io.Discard, io.Discard)
+	st := applyByoChartBindingsExcept(vc, dbUserOutputs(), "aws", nil, users, io.Discard, io.Discard)
 
 	body, err := os.ReadFile(c.applied)
 	if err != nil {
@@ -676,9 +671,9 @@ func TestByoBindingDBUsers_ProvisionedUserIsBound(t *testing.T) {
 // administrative secret and is declared with no source, exactly as before this mode existed.
 func TestByoBindingDBUsers_FlagOffIsUnchanged(t *testing.T) {
 	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "")
-	withProvisionedDBUsers(t, manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
+	users := provisionedDBUsers(manifests.ByoBindingDBUser("env-1", "apps", "api", dbUserTarget))
 	c := newBindingCluster(t, `{"items":[]}`, 0)
-	st := applyByoChartBindings(byoBindingConfig("env-1", true), dbUserOutputs(), "aws", io.Discard, io.Discard)
+	st := applyByoChartBindingsExcept(byoBindingConfig("env-1", true), dbUserOutputs(), "aws", nil, users, io.Discard, io.Discard)
 	body, _ := os.ReadFile(c.applied)
 	if !strings.Contains(string(body), bindingOutputsSecret) || strings.Contains(string(body), "alethia-byo-db-") {
 		t.Fatalf("flag off changed what the binding reads:\n%s", body)
