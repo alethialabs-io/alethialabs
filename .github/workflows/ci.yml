@@ -2750,6 +2750,87 @@ jobs:
           working-directory: test/e2e
           args: --build-tags=e2e_t1,e2e_t2,e2e_b6
 
+  byo-users-postgres:
+    name: BYO users SQL — real Postgres (${{ matrix.postgres }})
+    # The per-binding BYO database users SQL (apps/runner/internal/agent/db_bootstrap_byo*.go,
+    # #6465) is security-critical and only a real server can say whether it works: the unit tests
+    # pin its text, not what Postgres does with it. This applies it to a real server as a
+    # NON-superuser admin, which is what every managed Postgres hands us (RDS master,
+    # cloudsqlsuperuser, azure_pg_admin), on the console Integration job's major (17). Per-binding users
+    # need Postgres 15 or newer, so the ONE pre-15 major (14) proves the refusal: the run fails with
+    # the floor's reason and changes nothing.
+    needs: detect-changes
+    # Not on the UI-audit nightly (see `go` above), and on a PR only when the runner's Go could
+    # have changed — detect-changes' `runner` filter covers apps/runner, packages/core, go.work and
+    # this file.
+    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["17-alpine", "14-alpine"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres-ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: apps/runner/go.sum
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh apps/runner
+      - name: Install the psql client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q postgresql-client
+          fi
+          psql --version
+      # The admin the tests act as: LOGIN CREATEROLE CREATEDB, owner of the test database, and NOT a
+      # superuser. The database name carries a '-' so identifier quoting is exercised for real.
+      - name: Create a non-superuser admin and its database
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres-ci
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE byo_admin LOGIN CREATEROLE CREATEDB PASSWORD 'byo-admin-ci'"
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "byo-test" OWNER byo_admin'
+          test "$(psql -X -At -c "SELECT rolsuper FROM pg_roles WHERE rolname = 'byo_admin'")" = f
+      # ALETHIA_TEST_PG_REQUIRED turns the tests' "no database" skip into a failure, and the grep
+      # below asserts each real-Postgres test actually PASSED by name: a renamed test, a -run that
+      # matches nothing, or a skip would otherwise all read green.
+      - name: go test -tags integration (BYO users, real Postgres)
+        working-directory: apps/runner
+        env:
+          ALETHIA_TEST_PG_ADMIN_DSN: postgres://byo_admin:byo-admin-ci@localhost:5432/byo-test?sslmode=disable
+          ALETHIA_TEST_PG_REQUIRED: "1"
+        # pipefail: without it the step's status is tee's, so a failing test this -run matches but
+        # the PASS check below does not name would read green.
+        run: |
+          set -o pipefail
+          go test -tags integration -count=1 -v -run ByoUsers ./internal/agent/... | tee "$RUNNER_TEMP/byo.log"
+          if [ "${{ matrix.postgres }}" = 14-alpine ]; then
+            want="TestByoUsersPostgres_RefusesBelow15"
+          else
+            want="TestByoUsersPostgres_Lifecycle TestByoUsersPostgres_RefusesForeignRole TestByoUsersPostgres_RevokeFailsSafe TestByoUsersPostgres_PublicCreateRefused TestByoUsersPostgres_SkipRevoke"
+          fi
+          for t in $want; do
+            grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo.log" || { echo "::error::$t did not PASS on postgres ${{ matrix.postgres }}"; exit 1; }
+          done
+
   coverage-determinism:
     name: Coverage determinism probe (manual)
     # MANUAL ONLY. This exists to answer one question before the ratchet is armed: are the numbers
