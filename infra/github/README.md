@@ -24,8 +24,9 @@ manual fallback only.
   `scripts/merge-signal-health.sh` grades the observe-only signals over them (#2759). Promoting one
   to required means naming it here in `required_status_checks` AND in both `.mergify.yml` lists —
   and only after its job always reports, because Mergify's `check-success=` does not accept a
-  skipped job. The maintainer reviews the integrated `dev`
-  (`dev.alethialabs.io`) and promotes `dev → staging → main`.
+  skipped job. Promotions (`dev → staging → main`) are merged by agents once green — every check
+  and every release-gate leg passed — through `.claude/hooks/guard-merge.sh` (maintainer ruling
+  2026-11-06).
   - **Repo settings prerequisite** (not TF-managed — the repo resource isn't in this stack): the queue
     needs `allow_auto_merge` **on** so `--auto` can enqueue. Set once:
     `gh api -X PATCH repos/:owner/:repo -F allow_auto_merge=true -F allow_update_branch=true`.
