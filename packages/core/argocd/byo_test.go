@@ -825,3 +825,75 @@ func TestByoReserved_PlatformCategoriesMatchTheTofuHelmInstalls(t *testing.T) {
 			"Edit the group to match (and its mirror in apps/console/lib/validations/byo-reserved-namespaces.ts).", want, gotSet)
 	}
 }
+
+// argoResourceInList is ArgoCD's own matcher for an AppProject resource list (isResourceInList in
+// pkg/apis/application/v1alpha1/types.go, unchanged from v2.13 through the pinned v3.3.9): an entry
+// matches when filepath.Match accepts its kind AND its group. Restated here so the test below asks
+// the question ArgoCD asks, not whether a string appears in the YAML.
+func argoResourceInList(group, kind string, list []byoGroupKind) bool {
+	for _, item := range list {
+		if ok, err := filepath.Match(item.Kind, kind); ok && err == nil {
+			if ok, err := filepath.Match(item.Group, group); ok && err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestByoAppProjectDeniesSecretSyncKinds pins that a BYO chart reads only the secret material its
+// declared bindings give it: ArgoCD refuses every external-secrets.io and
+// generators.external-secrets.io kind the chart might declare. The kinds are the CRDs ESO 0.9.20 (the
+// pinned chart, infra/templates/argocd/external-secrets-operator.yaml) ships under
+// config/crds/bases. The two cluster-scoped ones are refused by the empty clusterResourceWhitelist,
+// which is asserted too. Ordinary workload kinds must stay permitted, or the deny is "fixed" by
+// refusing every chart.
+func TestByoAppProjectDeniesSecretSyncKinds(t *testing.T) {
+	out, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{"byo-e2e"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var proj byoAppProject
+	if err := yaml.Unmarshal([]byte(out), &proj); err != nil {
+		t.Fatalf("parse rendered AppProject: %v\n%s", err, out)
+	}
+	black := proj.Spec.NamespaceResourceBlacklist
+
+	namespaced := []byoGroupKind{
+		{"external-secrets.io", "ExternalSecret"},
+		{"external-secrets.io", "SecretStore"},
+		{"external-secrets.io", "PushSecret"},
+		{"generators.external-secrets.io", "ACRAccessToken"},
+		{"generators.external-secrets.io", "ECRAuthorizationToken"},
+		{"generators.external-secrets.io", "Fake"},
+		{"generators.external-secrets.io", "GCRAccessToken"},
+		{"generators.external-secrets.io", "GithubAccessToken"},
+		{"generators.external-secrets.io", "Password"},
+		{"generators.external-secrets.io", "VaultDynamicSecret"},
+		{"generators.external-secrets.io", "Webhook"},
+		// A subgroup a later ESO release might add.
+		{"future.external-secrets.io", "Anything"},
+	}
+	for _, gk := range namespaced {
+		if !argoResourceInList(gk.Group, gk.Kind, black) {
+			t.Errorf("the BYO AppProject must deny %s/%s in a chart's namespace; blacklist is %+v", gk.Group, gk.Kind, black)
+		}
+	}
+
+	if len(proj.Spec.ClusterResourceWhitelist) != 0 {
+		t.Fatalf("clusterResourceWhitelist must stay empty, got %+v", proj.Spec.ClusterResourceWhitelist)
+	}
+	for _, kind := range []string{"ClusterSecretStore", "ClusterExternalSecret"} {
+		if argoResourceInList("external-secrets.io", kind, proj.Spec.ClusterResourceWhitelist) {
+			t.Errorf("cluster-scoped %s must not be whitelisted", kind)
+		}
+	}
+
+	for _, gk := range []byoGroupKind{
+		{"apps", "Deployment"}, {"", "Secret"}, {"", "ConfigMap"}, {"", "Service"}, {"batch", "Job"},
+	} {
+		if argoResourceInList(gk.Group, gk.Kind, black) {
+			t.Errorf("the deny must not reach the ordinary workload kind %s/%s", gk.Group, gk.Kind)
+		}
+	}
+}
