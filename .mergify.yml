@@ -155,6 +155,14 @@ queue_rules:
       #
       # Verified rather than assumed: it reported `pass` in 5s on #3179, an ordinary dev PR.
       - "check-success=contribution-legal"
+      # THE BYO USERS SQL, APPLIED TO A REAL POSTGRES (#6484). The legs themselves are a matrix
+      # skipped at job level on every PR that does not touch the runner, which reports one check
+      # under the UNEXPANDED matrix name and never the per-leg names — so requiring a leg would wedge
+      # those PRs. This is the always-running aggregator in ci.yml (`byo-users-postgres-required`):
+      # one fixed name, green when every leg passed or when the runner did not change, red otherwise.
+      # A plain `check-success=` on purpose: no `or:`, and no template braces in the value — Mergify
+      # gives those a meaning inside conditions, and an invalid file stops the queue for everyone.
+      - "check-success=BYO users SQL — real Postgres"
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
@@ -181,6 +189,8 @@ merge_protections:
       # Also the same reason: required by protect-dev, so this file has to wait for it or the merge
       # is refused after the queue has already decided. See merge_conditions above.
       - "check-success=contribution-legal"
+      # The BYO users aggregator — see merge_conditions above.
+      - "check-success=BYO users SQL — real Postgres"
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).

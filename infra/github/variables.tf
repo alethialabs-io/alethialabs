@@ -73,6 +73,12 @@ variable "required_status_checks" {
     # reports (green in seconds when no app path changed) and never wedges an unrelated PR.
     # One job, not a matrix, so there is exactly one context to name here.
     "Build console images (no push)",
+    # The BYO users SQL applied to a real Postgres (#6484). NOT a matrix leg, despite the comment at
+    # the top of this list: the legs (`byo-users-postgres` in ci.yml) are skipped at job level on any
+    # PR that does not touch the runner, and a skipped matrix reports only its unexpanded template
+    # name, so requiring a leg would wedge those PRs. This is the always-running aggregator job
+    # (`byo-users-postgres-required`), which reports this one fixed name on every PR.
+    "BYO users SQL — real Postgres",
     # THE BROWSER RELEASE GATE (.github/workflows/release-gate.yml). Production deploys on a push to
     # main, and main only takes PRs from staging, so requiring these on main is "before every
     # production deployment". A matrix — one context per leg, listed literally as the comment at the

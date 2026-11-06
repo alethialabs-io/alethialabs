@@ -2762,7 +2762,8 @@ jobs:
     needs: detect-changes
     # Not on the UI-audit nightly (see `go` above), and on a PR only when the runner's Go could
     # have changed — detect-changes' `runner` filter covers apps/runner, packages/core, go.work and
-    # this file.
+    # this file. `byo-users-postgres-required` below restates this condition to know whether a
+    # `skipped` result is by design; change one and you must change the other.
     if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -2830,6 +2831,58 @@ jobs:
           for t in $want; do
             grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo.log" || { echo "::error::$t did not PASS on postgres ${{ matrix.postgres }}"; exit 1; }
           done
+
+  # THE ONE CONTEXT THAT MAKES `byo-users-postgres` REQUIRABLE (#6484). Required by name in
+  # .mergify.yml (both blocks) and in infra/github/variables.tf.
+  #
+  # The matrix above cannot be required directly. Skipped at job level — every PR that does not
+  # touch the runner — it reports ONE check under its UNEXPANDED name,
+  # `BYO users SQL — real Postgres (${{ matrix.postgres }})`, and never the per-leg names, so a
+  # `check-success=<leg>` would wedge every such PR. Accepting the unexpanded name as well was tried
+  # in #6475 and withdrawn: Mergify gives `{{ … }}` a meaning inside a condition value, and an
+  # invalid .mergify.yml stops the queue for everyone, readable only once it reaches `main`.
+  #
+  # So this job has a FIXED name with no `${{ }}` in it, and always reports: `!cancelled()` runs it
+  # even when the legs were skipped (the implicit `success()` would skip it with them). It passes
+  # in exactly two cases — the legs were EXPECTED to run and the matrix result is `success`, or
+  # they were NOT expected and it is `skipped` — and fails on everything else, `cancelled`
+  # included. "Expected" is the legs' own `if:` restated below; keep the two in step.
+  #
+  # `detect-changes` must itself have succeeded. Its `runner` output is empty when it failed, which
+  # would read as "the runner did not change" and turn a broken filter into a green gate.
+  byo-users-postgres-required:
+    name: BYO users SQL — real Postgres
+    needs: [detect-changes, byo-users-postgres]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every leg passed, or the runner did not change
+        env:
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          RUNNER_CHANGED: ${{ needs.detect-changes.outputs.runner }}
+          LEGS_RESULT: ${{ needs.byo-users-postgres.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$DETECT_RESULT" != success ]; then
+            echo "::error::detect-changes concluded '$DETECT_RESULT', so whether the runner changed is unknown"
+            exit 1
+          fi
+          # The legs' own condition: not the 03:00 UI-audit nightly, and on a PR only when `runner` changed.
+          expected=false
+          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; }; then
+            expected=true
+          fi
+          echo "legs expected to run: $expected; matrix result: $LEGS_RESULT"
+          if [ "$expected" = true ] && [ "$LEGS_RESULT" = success ]; then
+            echo "every BYO users leg passed"
+          elif [ "$expected" = false ] && [ "$LEGS_RESULT" = skipped ]; then
+            echo "the runner did not change, so the legs were skipped by design"
+          else
+            echo "::error::BYO users SQL legs concluded '$LEGS_RESULT' (expected to run: $expected)"
+            exit 1
+          fi
 
   coverage-determinism:
     name: Coverage determinism probe (manual)
