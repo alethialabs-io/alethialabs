@@ -102,6 +102,10 @@ export const BYO_RESERVED_NAMESPACES: {
 	],
 	prefixes: [
 		{
+			prefix: "alethia-",
+			reason: "the platform names its own namespaces alethia-<name>",
+		},
+		{
 			prefix: "kube-",
 			reason: "Kubernetes reserves the kube- prefix for its system namespaces",
 		},

@@ -16,24 +16,31 @@
 //     whether that set is complete. It is not when a declared user has no stored password, or when a
 //     binding of the environment fails to render. An incomplete set runs with `--skip-revoke`, so a
 //     binding that is still declared is never read as removed.
-//  3. Sweep what an interrupted earlier run left (sweepByoDBUsers): only ByoDBUsersNamespace, only
-//     ExternalSecrets, Secrets and ServiceAccounts, only objects carrying BOTH the run label and this
-//     environment's owner label, each re-checked and deleted pinned to its uid. While a Job of this
-//     environment is still active the sweep stands down, and no second Job is started.
+//  3. Refuse, touching nothing, while ByoDBUsersNamespace holds any object that is not a run's
+//     (foreignByoDBUsersObjects): the namespace is reserved for the platform, and the run's
+//     credential Secrets live there. Then sweep what an interrupted earlier run left
+//     (sweepByoDBUsers): only ByoDBUsersNamespace, only ExternalSecrets, Secrets and
+//     ServiceAccounts, only objects carrying BOTH the run label and this environment's owner label,
+//     each re-checked and deleted pinned to its uid. While a Job of this environment is still active
+//     the sweep stands down, and no second Job is started.
 //  4. Apply the namespace, then — from the moment a credential object may exist — a deferred cleanup
 //     that deletes every credential object of the run, uid-pinned with Foreground propagation, so
 //     each owned Secret goes first. A render, apply, wait or read error cannot skip it. The Job
 //     itself holds no credential and is left to its TTL, so a failed run's logs stay readable.
 //  5. Wait for Complete or Failed, bounded by the Job's own deadline, and read the main container's
-//     termination message through the API (never logs). A user counts as provisioned only when the
-//     Job is Complete, the message names the user, and the user is in the set this run declared.
-//     Anything else provisions nothing, and is a binding failure, so the binding prune is skipped.
-//     A `revocation-pending:<user>` line is surfaced as a deploy warning and is NOT a failure.
+//     termination message through the API (never logs). The message opens with a header counting
+//     its entries, so a result the kubelet truncated is detected, never read as a shorter list. A
+//     user counts as provisioned only when the Job is Complete, the message names the user, and the
+//     user is in the set this run declared. Anything else provisions nothing, and is a binding
+//     failure, so the binding prune is skipped. A `revocation-pending:<user>` line is surfaced as a
+//     deploy warning and is NOT a failure. With no user declared, an absent message (the API server
+//     omits an empty one) is a success with nothing listed.
 package provisioner
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -152,6 +159,23 @@ func byoDBUsersPendingWarning(user string) string {
 		"It can no longer log in, but it still exists and still owns its objects. The next deploy tries the drop again.", user)
 }
 
+// byoPrimaryDatabase is the name of the environment's primary database (byoEnvDatabase). A project
+// may list more than one database, but every cloud's tofu composition provisions only the first
+// (aws/gcp/azure/alibaba_provider.go read config.Databases[0]), and the admin connection outputs
+// name that one server. A per-binding user is therefore created only for a binding to the primary
+// database; a binding to any other target is refused with byoNonPrimaryReason, never created on the
+// primary under another target's name.
+func byoPrimaryDatabase(vc *types.ProjectConfig) (string, bool) {
+	db, ok := byoEnvDatabase(vc)
+	return db.Name, ok
+}
+
+// byoNonPrimaryReason is the unsatisfied reason of a per-binding database credential facet bound to
+// a target other than the primary database.
+func byoNonPrimaryReason(primary string) string {
+	return fmt.Sprintf("per-binding database users are created only on the environment's primary database %q; a BYO binding is never given the administrative credential", primary)
+}
+
 // byoEnvDatabase is the environment's database: the first configured one, which is the one every
 // cloud template provisions and the admin connection outputs name.
 func byoEnvDatabase(vc *types.ProjectConfig) (types.ProjectDatabaseConfig, bool) {
@@ -208,12 +232,17 @@ func byoPostgresMajor(provider string, db types.ProjectDatabaseConfig) (int, boo
 // declaredByoDBUsers is the set of per-binding users this deploy declares, sorted by user: every
 // database binding with a credential facet in an add-on that is not a refused BYO chart, a keyless
 // target excluded while the keyless flag is on, and a MySQL target excluded (that dialect is a later
-// slice, and the resolver refuses it). It is the refusal-aware counterpart of cloud.ByoDBUserSecrets,
+// slice, and the resolver refuses it), and a target other than the environment's primary database
+// excluded (byoPrimaryDatabase says why). It is the refusal-aware counterpart of cloud.ByoDBUserSecrets,
 // read from the configuration alone, so a binding that fails later on this run is still declared.
 // Namespaces are read as configureByoCharts left them (a moved chart is already in its own).
 func declaredByoDBUsers(vc *types.ProjectConfig, keylessOn bool, refused []byoRefusal) []byoDeclaredDBUser {
 	env := byoBindingOwner(vc)
 	if env == "" {
+		return nil
+	}
+	primary, ok := byoPrimaryDatabase(vc)
+	if !ok {
 		return nil
 	}
 	skip := byoRefusedIDs(refused)
@@ -231,7 +260,7 @@ func declaredByoDBUsers(vc *types.ProjectConfig, keylessOn bool, refused []byoRe
 				if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
 					continue
 				}
-				if byoTargetIsMySQL(vc.Databases, b.Target.Name) {
+				if byoTargetIsMySQL(vc.Databases, b.Target.Name) || b.Target.Name != primary {
 					continue
 				}
 				user := manifests.ByoBindingDBUser(env, a.Namespace, w.Name, b.Target)
@@ -285,6 +314,12 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 		return out
 	}
 
+	// fail marks the run Failed. That provisions nothing, so on this deploy every BYO chart's
+	// database credential facets are unsatisfied and its Values render WITHOUT the existingSecret
+	// patch: a transient Job failure costs existing charts their database credential reference until
+	// the next successful deploy (an availability cost, not only a binding not made). The binding
+	// prune is skipped, so no live binding Secret is withdrawn; a chart that reads its Secret by a
+	// name it already knows keeps working.
 	fail := func(reason string) byoDBUsersOutcome {
 		fmt.Fprintf(stderr, "Warning: BYO users Job: %s\n", reason)
 		out.Failed = true
@@ -329,6 +364,16 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	})
 	if err != nil {
 		return fail(fmt.Sprintf("render failed: %v", err))
+	}
+
+	// The namespace is reserved for the platform (byo_reserved_namespaces.json, prefix "alethia-"),
+	// and holds nothing but the runs' own objects. An object that is not one of them means that no
+	// longer holds, so the run refuses before it touches anything.
+	if foreign, err := foreignByoDBUsersObjects(ctx); err != nil {
+		return fail(fmt.Sprintf("could not check namespace %s for objects that are not BYO users runs': %v", manifests.ByoDBUsersNamespace, err))
+	} else if len(foreign) > 0 {
+		return fail(fmt.Sprintf("namespace %s holds objects that are not BYO users runs' (%s), so the Job was not started and nothing there was changed",
+			manifests.ByoDBUsersNamespace, strings.Join(foreign, ", ")))
 	}
 
 	active, err := sweepByoDBUsers(ctx, owner, stdout, stderr)
@@ -377,11 +422,11 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	if !complete {
 		return fail(fmt.Sprintf("Job %s failed (its pod log names the cause)", job.JobName))
 	}
-	msg, err := readByoDBUsersResult(ctx, job.JobName, jobUID)
+	msg, present, err := readByoDBUsersResult(ctx, job.JobName, jobUID)
 	if err != nil {
 		return fail(fmt.Sprintf("could not read Job %s's result: %v", job.JobName, err))
 	}
-	listed, pending, err := parseByoDBUsersResult(msg)
+	listed, pending, err := parseByoDBUsersResult(msg, present, len(users))
 	if err != nil {
 		return fail(fmt.Sprintf("Job %s's result is malformed: %v", job.JobName, err))
 	}
@@ -672,17 +717,20 @@ func waitByoDBUsersJob(ctx context.Context, name string, refresh func(context.Co
 // readByoDBUsersResult reads the result of a Complete Job: the termination message of the main
 // container of its one Succeeded pod, through the API. A pod is the Job's only when its owner
 // reference names the Job's uid. No succeeded pod, two of them, or a main container with no
-// terminated state, a non-zero exit or no message field is an error, never an empty result.
-func readByoDBUsersResult(ctx context.Context, jobName, jobUID string) (string, error) {
+// terminated state or a non-zero exit is an error. present=false when the message field is absent:
+// the API server omits an empty message (ContainerStateTerminated.Message is omitempty, and the
+// kubelet reports a zero-length termination file as no message), so absence is a value, not an error,
+// and parseByoDBUsersResult decides what it means.
+func readByoDBUsersResult(ctx context.Context, jobName, jobUID string) (string, bool, error) {
 	raw, err := byoDBUsersKubectl(ctx, "", "get", "pods", "-n", manifests.ByoDBUsersNamespace, "-l", "job-name="+jobName, "-o", "json")
 	if err != nil {
-		return "", fmt.Errorf("list the Job's pods: %w", err)
+		return "", false, fmt.Errorf("list the Job's pods: %w", err)
 	}
 	var list struct {
 		Items []byoDBUsersObject `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
-		return "", fmt.Errorf("parse the Job's pods: %w", err)
+		return "", false, fmt.Errorf("parse the Job's pods: %w", err)
 	}
 	var succeeded []byoDBUsersObject
 	for _, p := range list.Items {
@@ -697,34 +745,67 @@ func readByoDBUsersResult(ctx context.Context, jobName, jobUID string) (string, 
 		}
 	}
 	if len(succeeded) != 1 {
-		return "", fmt.Errorf("%d succeeded pod(s) of the Job, want exactly 1", len(succeeded))
+		return "", false, fmt.Errorf("%d succeeded pod(s) of the Job, want exactly 1", len(succeeded))
 	}
 	for _, cs := range succeeded[0].Status.ContainerStatuses {
 		if cs.Name != manifests.ByoDBUsersMainContainer {
 			continue
 		}
 		t := cs.State.Terminated
-		if t == nil || t.ExitCode != 0 || t.Message == nil {
-			return "", fmt.Errorf("container %s has no successful termination message", cs.Name)
+		if t == nil || t.ExitCode != 0 {
+			return "", false, fmt.Errorf("container %s did not terminate successfully", cs.Name)
 		}
-		return *t.Message, nil
+		if t.Message == nil {
+			return "", false, nil
+		}
+		return *t.Message, true, nil
 	}
-	return "", fmt.Errorf("the Job's pod has no %s container status", manifests.ByoDBUsersMainContainer)
+	return "", false, fmt.Errorf("the Job's pod has no %s container status", manifests.ByoDBUsersMainContainer)
 }
 
-// parseByoDBUsersResult parses a termination message strictly: one line per entry, each either a
-// per-binding user (provisioned) or `revocation-pending:<user>`, with one trailing newline allowed.
-// Any other line, an empty line, a carriage return or a repeated entry makes the whole message
-// malformed, so nothing in it is trusted.
-func parseByoDBUsersResult(msg string) (users, pending []string, err error) {
-	if msg == "" {
-		return nil, nil, nil
+// byoDBUsersResultHeader starts the first line of every result db-bootstrap writes
+// (apps/runner db_bootstrap_byo.go byoResultHeaderPrefix): `alethia-byo-users v1 count=<n>`, then
+// exactly n entries.
+const byoDBUsersResultHeader = "alethia-byo-users v1 count="
+
+// byoDBUsersHeaderRe is the header line with its count.
+var byoDBUsersHeaderRe = regexp.MustCompile(`^` + regexp.QuoteMeta(byoDBUsersResultHeader) + `(0|[1-9][0-9]{0,5})$`)
+
+// errByoDBUsersTruncated is the named reason for a result without its header. The kubelet keeps the
+// LAST 4096 bytes of a termination file, so a result too long for it loses its header line first.
+var errByoDBUsersTruncated = errors.New("result truncated: too many users for one Job (its header line is missing)")
+
+// parseByoDBUsersResult parses a termination message strictly. The first line is the header, and
+// exactly the counted number of entries follow, each either a per-binding user (provisioned) or
+// `revocation-pending:<user>`, with one trailing newline allowed. A missing header (truncation), a
+// count that does not match, any other line, an empty line, a carriage return or a repeated entry
+// makes the whole message malformed, so nothing in it is trusted.
+//
+// An ABSENT message (present=false, or empty) is accepted as "nothing listed" only when the run
+// declared no user — the case the reviewer of #6503 described, where an empty file reaches the API as
+// no message field. With users declared, the header is always written, so its absence means the
+// result was lost, and the run is not trusted.
+func parseByoDBUsersResult(msg string, present bool, declared int) (users, pending []string, err error) {
+	if !present || msg == "" {
+		if declared == 0 {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("the Job wrote no result for %d declared user(s): %w", declared, errByoDBUsersTruncated)
 	}
-	body := strings.TrimSuffix(msg, "\n")
+	lines := strings.Split(strings.TrimSuffix(msg, "\n"), "\n")
+	m := byoDBUsersHeaderRe.FindStringSubmatch(lines[0])
+	if m == nil {
+		return nil, nil, errByoDBUsersTruncated
+	}
+	count, _ := strconv.Atoi(m[1])
+	entries := lines[1:]
+	if len(entries) != count {
+		return nil, nil, fmt.Errorf("the header counts %d entries, the result carries %d", count, len(entries))
+	}
 	seen := map[string]bool{}
-	for i, line := range strings.Split(body, "\n") {
+	for i, line := range entries {
 		if seen[line] {
-			return nil, nil, fmt.Errorf("line %d repeats an entry", i+1)
+			return nil, nil, fmt.Errorf("line %d repeats an entry", i+2)
 		}
 		seen[line] = true
 		switch {
@@ -733,8 +814,73 @@ func parseByoDBUsersResult(msg string) (users, pending []string, err error) {
 		case strings.HasPrefix(line, byoDBUsersPendingPrefix) && byoDBUsersUserRe.MatchString(strings.TrimPrefix(line, byoDBUsersPendingPrefix)):
 			pending = append(pending, strings.TrimPrefix(line, byoDBUsersPendingPrefix))
 		default:
-			return nil, nil, fmt.Errorf("line %d is neither a user nor a pending revocation", i+1)
+			return nil, nil, fmt.Errorf("line %d is neither a user nor a pending revocation", i+2)
 		}
 	}
 	return users, pending, nil
+}
+
+// byoDBUsersForeignKinds are the kinds the namespace check lists: every workload kind, plus the kinds
+// a run's objects take and the two the API server creates in every namespace.
+const byoDBUsersForeignKinds = "pods,deployments.apps,statefulsets.apps,daemonsets.apps,replicasets.apps,jobs.batch,cronjobs.batch," +
+	"services,configmaps,secrets,serviceaccounts,externalsecrets.external-secrets.io"
+
+// byoDBUsersForeignObject is the part of a listed object the namespace check reads.
+type byoDBUsersForeignObject struct {
+	Kind     string `json:"kind"`
+	Metadata struct {
+		Name            string            `json:"name"`
+		Labels          map[string]string `json:"labels"`
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"ownerReferences"`
+	} `json:"metadata"`
+}
+
+// isRunObject reports whether one listed object is a BYO users run's — of any environment the
+// cluster hosts, since the namespace is shared — or one the API server creates in every namespace.
+// A run object is a Job, ExternalSecret, Secret or ServiceAccount carrying the run label and an
+// owner label, or a Pod carrying both and owned by a run's Job. Nothing else belongs there.
+func (o byoDBUsersForeignObject) isRunObject() bool {
+	m := o.Metadata
+	switch {
+	case o.Kind == "ServiceAccount" && m.Name == "default", o.Kind == "ConfigMap" && m.Name == "kube-root-ca.crt":
+		return true
+	}
+	labelled := m.Labels[manifests.ByoDBUsersLabel] == manifests.ByoDBUsersLabelValue && byoDBUsersOwnerRe.MatchString(m.Labels[manifests.ByoDBUsersOwnerLabel])
+	switch o.Kind {
+	case "Job", "ExternalSecret", "Secret", "ServiceAccount":
+		return labelled
+	case "Pod":
+		for _, ref := range m.OwnerReferences {
+			if ref.Kind == "Job" && strings.HasPrefix(ref.Name, manifests.ByoDBUsersJobNamePrefix) {
+				return labelled
+			}
+		}
+	}
+	return false
+}
+
+// foreignByoDBUsersObjects lists the objects in the BYO users namespace that are not a run's, as
+// "Kind/name". Read-only; an absent namespace lists nothing.
+func foreignByoDBUsersObjects(ctx context.Context) ([]string, error) {
+	raw, err := byoDBUsersKubectl(ctx, "", "get", byoDBUsersForeignKinds, "-n", manifests.ByoDBUsersNamespace, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Items []byoDBUsersForeignObject `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil, fmt.Errorf("parse the namespace's objects: %w", err)
+	}
+	var out []string
+	for _, o := range list.Items {
+		if !o.isRunObject() {
+			out = append(out, o.Kind+"/"+o.Metadata.Name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }

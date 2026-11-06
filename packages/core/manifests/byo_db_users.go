@@ -38,7 +38,10 @@ import (
 
 const (
 	// ByoDBUsersNamespace is where the BYO users Job and its credential objects live. The runner
-	// creates it; no workload runs there, so no pod but the Job's can mount what it holds.
+	// creates it, and it is reserved for the platform: the "alethia-" prefix of
+	// argocd/byo_reserved_namespaces.json refuses it as a BYO chart's namespace (pinned by
+	// TestByoDBUsers_NamespaceIsReservedForThePlatform), and the run refuses to start while it holds
+	// any object that is not a run's (provisioner foreignByoDBUsersObjects).
 	ByoDBUsersNamespace = "alethia-byo-db-users"
 	// ByoDBUsersLabel marks every object of a BYO users run. The cleanup and the sweep select by it
 	// AND by ByoDBUsersOwnerLabel, and re-check both on each object.
@@ -52,8 +55,10 @@ const (
 	// ByoDBUsersResultPath is the main container's terminationMessagePath. psql's \o writes the
 	// result there, and the runner reads it back as the container's termination message.
 	ByoDBUsersResultPath = "/dev/termination-log"
-	// byoDBUsersNamePrefix starts every object name of a run.
+	// byoDBUsersNamePrefix starts every object name of a run; ByoDBUsersJobNamePrefix exports it.
 	byoDBUsersNamePrefix = "byo-db-users-"
+	// ByoDBUsersJobNamePrefix starts every run's Job name (and every other object name of a run).
+	ByoDBUsersJobNamePrefix = byoDBUsersNamePrefix
 	// byoDBUsersEnvHashLen is how many hex characters of the environment hash a name carries.
 	byoDBUsersEnvHashLen = 10
 )

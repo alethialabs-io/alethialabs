@@ -98,7 +98,7 @@ describe("BYO reserved namespaces — one list, two readers", () => {
 describe("byoReservedNamespaceReason", () => {
 	it("refuses every reserved name and every reserved prefix", () => {
 		for (const ns of ALL_RESERVED) expect(byoReservedNamespaceReason(ns)).not.toBeNull();
-		for (const ns of ["kube-flannel", "vcluster-dev"]) {
+		for (const ns of ["kube-flannel", "vcluster-dev", "alethia-byo-db-users", "alethia-anything"]) {
 			expect(byoReservedNamespaceReason(ns)).not.toBeNull();
 		}
 	});

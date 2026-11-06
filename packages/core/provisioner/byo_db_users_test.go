@@ -40,6 +40,8 @@ type usersCluster struct {
 	message *string
 	// jobGetErr makes every read of a Job fail.
 	jobGetErr bool
+	// foreign are the namespace's objects the pre-run check lists, beyond the run's own.
+	foreign []map[string]any
 	// applyApplied is every document applied.
 	applied []map[string]any
 	uid     int
@@ -132,7 +134,8 @@ func (c *usersCluster) kubectl(_ context.Context, stdin string, args ...string) 
 			uid, _ = job["metadata"].(map[string]any)["uid"].(string)
 		}
 		term := map[string]any{"exitCode": 0}
-		if c.message != nil {
+		// The API server omits an empty message (ContainerStateTerminated.Message is omitempty).
+		if c.message != nil && *c.message != "" {
 			term["message"] = *c.message
 		}
 		pod := map[string]any{
@@ -141,6 +144,9 @@ func (c *usersCluster) kubectl(_ context.Context, stdin string, args ...string) 
 				map[string]any{"name": manifests.ByoDBUsersMainContainer, "state": map[string]any{"terminated": term}}}},
 		}
 		b, _ := json.Marshal(map[string]any{"items": []any{pod}})
+		return string(b), nil
+	case args[0] == "get" && strings.Contains(args[1], ","):
+		b, _ := json.Marshal(map[string]any{"items": c.foreign})
 		return string(b), nil
 	case args[0] == "get" && len(args) > 3 && args[2] == "-n" && args[4] == "-l":
 		b, _ := json.Marshal(map[string]any{"items": c.seeded[args[1]]})
@@ -261,12 +267,19 @@ func usersOutputs(vc *types.ProjectConfig) map[string]interface{} {
 	}
 }
 
-// resultOf is a termination message listing lines.
+// resultOf is a termination message as db-bootstrap writes it: the header counting the entries,
+// then the entries.
 func resultOf(lines ...string) *string {
-	s := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		s += "\n"
+	s := byoDBUsersResultHeader + fmt.Sprint(len(lines)) + "\n"
+	for _, l := range lines {
+		s += l + "\n"
 	}
+	return &s
+}
+
+// rawResult is a termination message exactly as given, for malformed cases.
+func rawResult(lines ...string) *string {
+	s := strings.Join(lines, "\n") + "\n"
 	return &s
 }
 
@@ -348,14 +361,18 @@ func TestByoDBUsers_FailureProvisionsNothing(t *testing.T) {
 func TestByoDBUsers_UntrustworthyResultProvisionsNothing(t *testing.T) {
 	api, _ := usersFor()
 	for name, setup := range map[string]func(c *usersCluster){
-		"unknown line":      func(c *usersCluster) { c.message = resultOf(api, "NOTICE: done") },
-		"empty middle line": func(c *usersCluster) { c.message = resultOf(api, "", api[:len(api)-1]+"0") },
-		"repeated entry":    func(c *usersCluster) { c.message = resultOf(api, api) },
-		"bad pending line":  func(c *usersCluster) { c.message = resultOf(api, "revocation-pending:alethia_app") },
-		"no message field":  func(c *usersCluster) { c.message = nil },
-		"wait error":        func(c *usersCluster) { c.message = resultOf(api); c.jobGetErr = true },
-		"never finishes":    func(c *usersCluster) { c.message = resultOf(api); c.jobOutcome = "" },
-		"carriage return":   func(c *usersCluster) { c.message = resultOf(api + "\r") },
+		"unknown line":                         func(c *usersCluster) { c.message = resultOf(api, "NOTICE: done") },
+		"empty middle line":                    func(c *usersCluster) { c.message = resultOf(api, "", api[:len(api)-1]+"0") },
+		"repeated entry":                       func(c *usersCluster) { c.message = resultOf(api, api) },
+		"bad pending line":                     func(c *usersCluster) { c.message = resultOf(api, "revocation-pending:alethia_app") },
+		"no header":                            func(c *usersCluster) { c.message = rawResult(api) },
+		"count too high":                       func(c *usersCluster) { c.message = rawResult(byoDBUsersResultHeader+"3", api) },
+		"count too low":                        func(c *usersCluster) { c.message = rawResult(byoDBUsersResultHeader+"0", api) },
+		"no message field with users declared": func(c *usersCluster) { c.message = nil },
+		"wait error":                           func(c *usersCluster) { c.message = resultOf(api); c.jobGetErr = true },
+		"never finishes":                       func(c *usersCluster) { c.message = resultOf(api); c.jobOutcome = "" },
+		"carriage return":                      func(c *usersCluster) { c.message = resultOf(api + "\r") },
+		"carriage return in the header":        func(c *usersCluster) { c.message = rawResult(byoDBUsersResultHeader+"1\r", api) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
@@ -717,5 +734,171 @@ func TestConfigureByoCharts_StampsTheSecretStoreLabel(t *testing.T) {
 	stamped := strings.Count(string(raw), argocd.SecretStoreAccessLabel+": "+argocd.SecretStoreAccessValue+"\n")
 	if namespaces != 2 || stamped != 2 {
 		t.Fatalf("%d namespaces applied, %d stamped, want 2 and 2:\n%s", namespaces, stamped, raw)
+	}
+}
+
+// TestByoDBUsers_TruncatedResultIsNamed: a result that lost its header — what the kubelet's
+// keep-the-last-4096-bytes does to a result too long for it — fails the run with a named warning.
+func TestByoDBUsers_TruncatedResultIsNamed(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	c := newUsersCluster(t)
+	api, worker := usersFor()
+	c.message = rawResult(api, worker) // the header and anything before these lines were cut
+	vc := usersConfig()
+	out, _ := runUsers(vc, usersOutputs(vc), nil)
+	if !out.Failed || len(out.Provisioned) != 0 {
+		t.Fatalf("outcome %+v", out)
+	}
+	if len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "result truncated: too many users for one Job") {
+		t.Errorf("warnings %q", out.Warnings)
+	}
+}
+
+// TestByoDBUsers_NoDeclaredUserAndNoMessageIsASuccess: with nothing declared, a Complete Job whose
+// termination message the API server omits (an empty file) is a success with nothing listed — not a
+// failure that would skip the binding prune on every deploy of an environment with no BYO binding.
+func TestByoDBUsers_NoDeclaredUserAndNoMessageIsASuccess(t *testing.T) {
+	for name, msg := range map[string]*string{"no message field": nil, "empty message": new(string), "count=0 header": resultOf()} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+			c := newUsersCluster(t)
+			c.message = msg
+			vc := usersConfig()
+			vc.AddOns = nil
+			out, log := runUsers(vc, usersOutputs(vc), nil)
+			if out.Failed || len(out.Warnings) != 0 || len(out.Provisioned) != 0 {
+				t.Fatalf("outcome %+v\n%s", out, log)
+			}
+			if !strings.Contains(c.jobArgs(), "--users= ") {
+				t.Errorf("the Job did not run with an explicit empty set: %q", c.jobArgs())
+			}
+		})
+	}
+}
+
+// TestByoDBUsers_RefusesANamespaceHoldingForeignObjects: the run refuses, as a failed run with a
+// named reason, while its namespace holds an object that is not a run's, and touches nothing.
+func TestByoDBUsers_RefusesANamespaceHoldingForeignObjects(t *testing.T) {
+	runLabels := func(owner string) map[string]any {
+		return map[string]any{manifests.ByoDBUsersLabel: "true", manifests.ByoDBUsersOwnerLabel: owner}
+	}
+	allowed := []map[string]any{
+		{"kind": "ServiceAccount", "metadata": map[string]any{"name": "default"}},
+		{"kind": "ConfigMap", "metadata": map[string]any{"name": "kube-root-ca.crt"}},
+		{"kind": "Pod", "metadata": map[string]any{"name": "run-pod", "labels": runLabels("env-2"),
+			"ownerReferences": []any{map[string]any{"kind": "Job", "name": manifests.ByoDBUsersJobNamePrefix + "abc-r1"}}}},
+		{"kind": "Secret", "metadata": map[string]any{"name": "s", "labels": runLabels("env-2")}},
+	}
+	for name, foreign := range map[string]map[string]any{
+		"a Deployment":                         {"kind": "Deployment", "metadata": map[string]any{"name": "web", "labels": runLabels("env-1")}},
+		"a Pod not owned by a run's Job":       {"kind": "Pod", "metadata": map[string]any{"name": "loose", "labels": runLabels("env-1")}},
+		"a ServiceAccount without both labels": {"kind": "ServiceAccount", "metadata": map[string]any{"name": "lookalike", "labels": map[string]any{manifests.ByoDBUsersLabel: "true"}}},
+		"a ConfigMap":                          {"kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+			c := newUsersCluster(t)
+			api, worker := usersFor()
+			c.message = resultOf(api, worker)
+			c.foreign = append(append([]map[string]any{}, allowed...), foreign)
+			vc := usersConfig()
+			out, _ := runUsers(vc, usersOutputs(vc), nil)
+			fname := foreign["kind"].(string) + "/" + foreign["metadata"].(map[string]any)["name"].(string)
+			if !out.Failed || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], fname) {
+				t.Fatalf("outcome %+v, want a failed run naming %s", out, fname)
+			}
+			for _, call := range c.calls {
+				if !strings.HasPrefix(call, "get ") {
+					t.Errorf("the run touched the cluster after refusing: %s", call)
+				}
+			}
+		})
+	}
+	// The control: only the run's own objects and the API server's defaults — the run proceeds.
+	t.Run("only run objects", func(t *testing.T) {
+		t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+		c := newUsersCluster(t)
+		api, worker := usersFor()
+		c.message = resultOf(api, worker)
+		c.foreign = allowed
+		vc := usersConfig()
+		if out, log := runUsers(vc, usersOutputs(vc), nil); out.Failed {
+			t.Fatalf("outcome %+v\n%s", out, log)
+		}
+	})
+}
+
+// TestByoDBUsers_NamespaceIsReservedForThePlatform: no BYO chart may target the BYO users namespace,
+// and a chart that asks for it is refused at deploy.
+func TestByoDBUsers_NamespaceIsReservedForThePlatform(t *testing.T) {
+	if err := argocd.ValidateByoNamespace(manifests.ByoDBUsersNamespace); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("ValidateByoNamespace(%q) = %v, want a reserved-namespace refusal", manifests.ByoDBUsersNamespace, err)
+	}
+	newBindingCluster(t, `{"items":[]}`, 0)
+	vc := usersConfig()
+	vc.AddOns[0].Namespace = manifests.ByoDBUsersNamespace
+	byo := configureByoCharts(vc, "", nil, nil, io.Discard, io.Discard)
+	if len(byo.Refused) != 1 || byo.Refused[0].ID != "acme-api" {
+		t.Fatalf("refused %+v, want acme-api refused for its namespace", byo.Refused)
+	}
+}
+
+// TestByoDBUsers_OnlyThePrimaryDatabaseGetsUsers: a binding to a second configured Postgres database
+// is not declared (no user is created on the primary under its name), and its facet says why.
+func TestByoDBUsers_OnlyThePrimaryDatabaseGetsUsers(t *testing.T) {
+	t.Setenv("ALETHIA_BYO_DB_USERS_ENABLED", "true")
+	vc := usersConfig()
+	vc.Databases = append(vc.Databases, types.ProjectDatabaseConfig{Name: "analytics", EngineFamily: "postgres", EngineVersion: "16"})
+	vc.AddOns[1].Workloads[0].Bindings[0].Target = types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "analytics"}
+	vc.AddOns[1].Workloads[0].ValuePaths = map[string]string{"bind:database:analytics:password": "worker.existingSecret"}
+	api, _ := usersFor()
+	declared := declaredByoDBUsers(vc, false, nil)
+	if len(declared) != 1 || declared[0].User != api {
+		t.Fatalf("declared %+v, want only the primary-database binding's user %s", declared, api)
+	}
+	newBindingCluster(t, `{"items":[]}`, 0)
+	var log strings.Builder
+	applyByoChartBindingsExcept(vc, usersOutputs(vc), "aws", nil, provisionedDBUsers(api), &log, io.Discard)
+	if !strings.Contains(log.String(), "binding bind:database:analytics:password unsatisfied ("+byoNonPrimaryReason("primary")+")") {
+		t.Errorf("the second database's facet does not state the rule:\n%s", log.String())
+	}
+}
+
+// TestParseByoDBUsersResult_Header pins the header contract directly.
+func TestParseByoDBUsersResult_Header(t *testing.T) {
+	api, worker := usersFor()
+	users, pending, err := parseByoDBUsersResult(*resultOf(api, "revocation-pending:"+worker), true, 1)
+	if err != nil || len(users) != 1 || len(pending) != 1 {
+		t.Fatalf("got %v %v %v", users, pending, err)
+	}
+	if _, _, err := parseByoDBUsersResult("", false, 0); err != nil {
+		t.Errorf("an absent message with nothing declared: %v", err)
+	}
+	if _, _, err := parseByoDBUsersResult("", false, 1); !errors.Is(err, errByoDBUsersTruncated) {
+		t.Errorf("an absent message with users declared: %v", err)
+	}
+	if _, _, err := parseByoDBUsersResult(*rawResult(api), true, 1); !errors.Is(err, errByoDBUsersTruncated) {
+		t.Errorf("a headerless message: %v", err)
+	}
+	if _, _, err := parseByoDBUsersResult(*rawResult(byoDBUsersResultHeader+"01", api), true, 1); err == nil {
+		t.Errorf("a zero-padded count was accepted")
+	}
+}
+
+// TestParseByoDBUsersResult_ContractWithTheRunner pins the result spellings this parser shares with
+// `alethia db-bootstrap --byo-users` (apps/runner, a separate module): the header and the pending
+// prefix.
+func TestParseByoDBUsersResult_ContractWithTheRunner(t *testing.T) {
+	src, err := os.ReadFile("../../../apps/runner/internal/agent/db_bootstrap_byo.go")
+	if err != nil {
+		t.Fatalf("read the runner source: %v", err)
+	}
+	for _, want := range []string{
+		`const byoResultHeaderPrefix = "` + byoDBUsersResultHeader + `"`,
+		`const byoPendingPrefix = "` + byoDBUsersPendingPrefix + `"`,
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("the runner does not declare %s", want)
+		}
 	}
 }

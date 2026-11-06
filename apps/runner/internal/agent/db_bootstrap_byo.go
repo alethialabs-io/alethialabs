@@ -392,11 +392,18 @@ END`)
 // byoPendingPrefix starts a result line naming a revocation candidate that phase 3 could not drop.
 const byoPendingPrefix = "revocation-pending:"
 
-// byoResultSQL renders a result write: the declared users that now exist with LOGIN and this
-// environment's tag, one per line, written through \o to resultPath so that nothing else reaches it.
-// With pending, it also lists `revocation-pending:<role>` for every candidate still present. \o
-// truncates, so the write after phase 3 replaces the one after phase 2. The Job's runner reads that
-// file as the pod's termination message (#6466).
+// byoResultHeaderPrefix starts the first line of every result write: `alethia-byo-users v1 count=<n>`,
+// where n is the number of entry lines after it. The runner requires it (provisioner
+// parseByoDBUsersResult). It makes an empty result an explicit `count=0` rather than an empty file
+// (which the kubelet reports as no message at all), and it makes truncation visible: the kubelet keeps
+// the LAST 4096 bytes of the termination file, so a result too long for it loses its header first.
+const byoResultHeaderPrefix = "alethia-byo-users v1 count="
+
+// byoResultSQL renders a result write: the header line, then the declared users that now exist with
+// LOGIN and this environment's tag, one per line, written through \o to resultPath so that nothing
+// else reaches it. With pending, it also lists `revocation-pending:<role>` for every candidate still
+// present. \o truncates, so the write after phase 3 replaces the one after phase 2. The Job's runner
+// reads that file as the pod's termination message (#6466).
 func byoResultSQL(env, resultPath string, users []byoUser, pending bool) []string {
 	query := byoTaggedRolesSQL(env) + `
       AND a.rolcanlogin
@@ -410,8 +417,12 @@ SELECT ` + pgQuoteLiteral(byoPendingPrefix) + ` || c.rolname FROM (` + byoCandid
 		`\pset tuples_only on`,
 		`\pset format unaligned`,
 		`\o ` + resultPath,
-		query + `
-    ORDER BY 1;`,
+		`WITH r(line) AS (SELECT q.x::text FROM (` + query + `) q(x))
+SELECT s.line FROM (
+  SELECT 0 AS o, ` + pgQuoteLiteral(byoResultHeaderPrefix) + ` || count(*) AS line FROM r
+  UNION ALL
+  SELECT 1, r.line FROM r) s
+    ORDER BY s.o, s.line;`,
 		`\o`,
 	}
 }

@@ -241,7 +241,11 @@ func byoBindingRenderFailures(vc *types.ProjectConfig, outputs map[string]interf
 //
 // provisioned and dbRefusal are the BYO users run's outcome (ignored with the per-binding flag off).
 // A database credential facet the resolver refused only because its user is not provisioned is
-// reported with dbRefusal when that is set — the cause the user can act on — and never bound.
+// reported with the cause the user can act on — a target other than the primary database
+// (byoNonPrimaryReason), or dbRefusal when that is set — and never bound. An unsatisfied facet means
+// the chart's Values render without its existingSecret patch on this deploy: when the cause is a
+// transient BYO users Job failure, that is an availability cost to a chart already running, not only
+// a binding not made (see runByoDBUsers' fail).
 func renderByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, provisioned map[string]bool, dbRefusal string, write bool, stdout, stderr io.Writer) ([]byoRenderedBinding, int) {
 	keylessOn := keylessDBAuthEnabled()
 	skip := byoRefusedIDs(refused)
@@ -251,6 +255,7 @@ func renderByoChartBindings(vc *types.ProjectConfig, outputs map[string]interfac
 		dbUsers = &manifests.ByoDBUsers{Environment: owner, SecretNames: customSecretNames(outputs), Provisioned: provisioned}
 	}
 	notProvisioned := byoDBUserNotProvisionedReason()
+	primary, hasPrimary := byoPrimaryDatabase(vc)
 	strOutputs := stringOutputs(outputs)
 
 	var docs []byoRenderedBinding
@@ -285,10 +290,25 @@ func renderByoChartBindings(vc *types.ProjectConfig, outputs map[string]interfac
 					manifests.SetByPath(a.Values, path, val)
 				}
 			}
+			// The database target of each knob, for the primary-database rule below.
+			knobTarget := map[string]string{}
+			for _, b := range w.Bindings {
+				if b.Target.Kind != types.ServiceBindingKindDatabase {
+					continue
+				}
+				for _, inj := range b.Inject {
+					knobTarget[manifests.ChartBindingKnob(string(b.Target.Kind), b.Target.Name, string(inj.From))] = b.Target.Name
+				}
+			}
 			for _, knob := range res.Unsatisfied {
 				reason := res.UnsatisfiedReasons[knob]
-				if dbRefusal != "" && reason == notProvisioned {
-					reason = dbRefusal
+				if reason == notProvisioned {
+					// The cause the user can act on, in place of the resolver's generic one.
+					if target, isDB := knobTarget[knob]; isDB && hasPrimary && target != primary {
+						reason = byoNonPrimaryReason(primary)
+					} else if dbRefusal != "" {
+						reason = dbRefusal
+					}
 				}
 				if reason != "" {
 					fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (%s) — not written.\n", a.ID, w.Name, knob, reason)
@@ -691,7 +711,9 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	//
 	// Each namespace also carries the runner's secret-store stamp (argocd.SecretStoreAccessLabel): the
 	// platform's ClusterSecretStores admit a namespace marked as a BYO chart's only while it carries
-	// it, as defence in depth. A chart cannot write a namespace's labels.
+	// it. For the namespaces stamped here that changes nothing; it is a narrow label-level check, and
+	// the line a chart cannot cross is the hardened project's external-secrets deny (see
+	// argocd.secretStoreConditions).
 	nsLabels := byoNamespaceLabels(commonLabels)
 	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
