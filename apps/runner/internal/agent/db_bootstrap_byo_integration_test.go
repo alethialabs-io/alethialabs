@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -162,7 +163,16 @@ func (a *pgAdmin) applyInput(in byoUsersInput) ([]string, string, error) {
 	if rerr != nil {
 		a.t.Fatalf("the run succeeded but wrote no result line: %v\n%s", rerr, out)
 	}
-	return strings.Fields(string(b)), string(out), nil
+	// The first line is the header, `alethia-byo-users v1 count=<n>`, and exactly n entries follow.
+	lines := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	if !strings.HasPrefix(lines[0], byoResultHeaderPrefix) {
+		a.t.Fatalf("the result does not start with its header:\n%s", b)
+	}
+	entries := lines[1:]
+	if want := strings.TrimPrefix(lines[0], byoResultHeaderPrefix); want != strconv.Itoa(len(entries)) {
+		a.t.Fatalf("the header counts %s entries, the result has %d:\n%s", want, len(entries), b)
+	}
+	return entries, string(out), nil
 }
 
 // cleanup removes every role and schema the test may have left.

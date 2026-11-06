@@ -32,6 +32,14 @@ type byoBindingState struct {
 	// Failures counts the binding ExternalSecrets that failed to render or apply on this run. Any
 	// failure skips the prune for the whole deploy.
 	Failures int
+	// DBUsersFailed is set when this deploy's BYO users run was due and produced no trustworthy
+	// result (runByoDBUsers). It skips the prune like Failures does; it is kept apart because the
+	// declared set is still complete, so the BYO secret-sync sweep still runs.
+	DBUsersFailed bool
+	// Rendered is every binding ExternalSecret rendered on this run, keyed by its namespace and name:
+	// exactly the documents the apply applied. The BYO secret-sync sweep holds each live binding to
+	// its document (argocd.SweepByoSecretSyncObjects).
+	Rendered map[argocd.BindingSecretRef]string
 }
 
 // byoBindingOwner is the environment's owner-label value: the same rendering of the environment ID
@@ -48,20 +56,15 @@ func keylessDBAuthEnabled() bool {
 }
 
 // byoDBUsersEnabled is the per-binding database user flag (docs/adr/byo-binding-db-users.md), dark by
-// default. With it on, every BYO database credential facet reads its binding's own user, and an
-// ExternalSecret an earlier deploy pointed at the administrative credential is withdrawn.
+// default. With it on, each deploy runs the BYO users Job (runByoDBUsers), every BYO database
+// credential facet reads its binding's own user, and only once the Job has provisioned that user,
+// and an ExternalSecret an earlier deploy pointed at the administrative credential is withdrawn.
 //
-// Do not turn it on before the BYO users Job ships (the ADR's slice 4): until then no user is ever
-// provisioned, so every BYO database credential facet is unsatisfied.
+// It stays dark until an end-to-end test proves a chart connects as its own user (#6466's last work
+// item), and on MySQL until that dialect ships (#6467): there every facet is unsatisfied.
 func byoDBUsersEnabled() bool {
 	return os.Getenv("ALETHIA_BYO_DB_USERS_ENABLED") == "true"
 }
-
-// provisionedByoDBUsers is the set of per-binding database users (manifests.ByoBindingDBUser) the BYO
-// users Job created or confirmed on this deploy. That Job is the ADR's slice 4 and has not shipped, so
-// no user is provisioned and the set is empty: with the flag on, every BYO database credential facet
-// is unsatisfied. It is a variable so the binding lane's handling of a provisioned user is tested now.
-var provisionedByoDBUsers = func(*types.ProjectConfig) map[string]bool { return map[string]bool{} }
 
 // customSecretNames reads the tofu output `custom_secret_names` — each `custom_secrets` key mapped to
 // the secret's name in the environment's store — as a string map. An absent or malformed output is
@@ -174,61 +177,140 @@ func declaredByoBindings(vc *types.ProjectConfig, keylessOn, dbUsersOn bool, ref
 // provision's tofu `outputs` and writes them into the chart's Values BEFORE its Application renders:
 // a non-secret facet (endpoint/port) becomes a literal at its value-path; a credential facet becomes
 // a keyless `existingSecret` reference backed by a runner-seeded ExternalSecret applied pre-sync via
-// direct kubectl apply (the hardened BYO AppProject forbids namespaced CRs through ArgoCD, so the
-// same pattern as EnsureAddOnSecrets is used). Never inlines a plaintext credential; a facet that
-// can't be resolved keylessly is logged and skipped, never referenced. Non-fatal — a bad binding
-// must not fail an otherwise-healthy deploy. Mutates each addon's Values in place.
+// direct kubectl apply. The runner applies it, not the chart's Application, because the hardened BYO
+// AppProject admits only a closed list of namespaced workload kinds and denies every
+// external-secrets.io kind (argocd byoWorkloadKinds, byoSecretSyncDenied) — the same pattern as
+// EnsureAddOnSecrets. Never inlines a plaintext credential; a facet that can't be resolved keylessly
+// is logged and skipped, never referenced. Non-fatal — a bad binding must not fail an
+// otherwise-healthy deploy. Mutates each addon's Values in place.
 //
 // Each ExternalSecret carries the binding marker and the environment's owner label. The returned
-// state carries the DECLARED bindings (the prune's keep set) and how many failed on this run.
+// state carries the DECLARED bindings (the prune's keep set), how many failed on this run, and the
+// documents rendered for them. Nothing is provisioned: with the per-binding flag on, every database
+// credential facet is unsatisfied (applyByoChartBindingsExcept takes the BYO users run's outcome).
 func applyByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, stdout, stderr io.Writer) byoBindingState {
-	return applyByoChartBindingsExcept(vc, outputs, provider, nil, stdout, stderr)
+	return applyByoChartBindingsExcept(vc, outputs, provider, nil, byoDBUsersOutcome{}, stdout, stderr)
 }
 
 // applyByoChartBindingsExcept is applyByoChartBindings that writes NOTHING for the BYO charts in
 // refused — the ones configureByoCharts refused, whose namespace the runner must not write into —
 // and declares none of their bindings, so the prune that follows withdraws any an earlier deploy
-// applied (see declaredByoBindings).
-func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, stdout, stderr io.Writer) byoBindingState {
+// applied (see declaredByoBindings). users is this deploy's BYO users run (runByoDBUsers): the users
+// it provisioned, the reason the others are not, and whether it failed — a failed run is a binding
+// failure, so the prune is skipped.
+func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, users byoDBUsersOutcome, stdout, stderr io.Writer) byoBindingState {
 	keylessOn := keylessDBAuthEnabled()
 	dbUsersOn := byoDBUsersEnabled()
-	skip := byoRefusedIDs(refused)
-	st := byoBindingState{Owner: byoBindingOwner(vc)}
+	st := byoBindingState{Owner: byoBindingOwner(vc), Rendered: map[argocd.BindingSecretRef]string{}}
 	st.Declared, st.Namespaces = declaredByoBindings(vc, keylessOn, dbUsersOn, refused)
-	var dbUsers *manifests.ByoDBUsers
-	if dbUsersOn {
-		dbUsers = &manifests.ByoDBUsers{Environment: st.Owner, SecretNames: customSecretNames(outputs), Provisioned: provisionedByoDBUsers(vc)}
-	}
+	st.DBUsersFailed = dbUsersOn && users.Failed
 
-	// The pure renderer resolves endpoints from string outputs (a database's endpoint, etc.).
-	strOutputs := make(map[string]string, len(outputs))
-	for k, v := range outputs {
-		if s, ok := v.(string); ok {
-			strOutputs[k] = s
+	docs, failures := renderByoChartBindings(vc, outputs, provider, refused, users.Provisioned, users.Refusal, true, stdout, stderr)
+	st.Failures = failures
+	for _, d := range docs {
+		st.Rendered[d.Ref] = d.YAML
+		if err := argocd.ApplyManifest(d.YAML, stdout, stderr); err != nil {
+			st.Failures++
+			fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", d.AddOnID, d.Workload, err)
 		}
+	}
+	return st
+}
+
+// byoRenderedBinding is one binding ExternalSecret rendered for this deploy.
+type byoRenderedBinding struct {
+	AddOnID, Workload string
+	Ref               argocd.BindingSecretRef
+	YAML              string
+}
+
+// byoBindingRenderFailures counts the binding ExternalSecrets of this configuration that fail to
+// render, as if every user in provisioned existed. Nothing is written or applied. The BYO users run
+// reads it BEFORE its Job, to know whether the declared set is complete (a render failure means it
+// is not, so nothing may be revoked).
+func byoBindingRenderFailures(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, provisioned map[string]bool) int {
+	_, failures := renderByoChartBindings(vc, outputs, provider, refused, provisioned, "", false, io.Discard, io.Discard)
+	return failures
+}
+
+// renderByoChartBindings is the one walk over the BYO chart bindings: it resolves every workload's
+// bindings, writes the value-path patches into each add-on's Values when write is set, and returns
+// every binding ExternalSecret it rendered, with its namespace and name, and how many failed to
+// render. The apply above applies exactly these documents, and the BYO secret-sync sweep holds each
+// live binding to them (byoBindingState.Rendered), so the two can never disagree.
+//
+// provisioned and dbRefusal are the BYO users run's outcome (ignored with the per-binding flag off).
+// A database credential facet the resolver refused only because its user is not provisioned is
+// reported with the cause the user can act on — a target other than the primary database
+// (byoNonPrimaryReason), or dbRefusal when that is set — and never bound. An unsatisfied facet means
+// the chart's Values render without its existingSecret patch on this deploy: when the cause is a
+// transient BYO users Job failure, that is an availability cost to a chart already running, not only
+// a binding not made (see runByoDBUsers' fail).
+func renderByoChartBindings(vc *types.ProjectConfig, outputs map[string]interface{}, provider string, refused []byoRefusal, provisioned map[string]bool, dbRefusal string, write bool, stdout, stderr io.Writer) ([]byoRenderedBinding, int) {
+	keylessOn := keylessDBAuthEnabled()
+	skip := byoRefusedIDs(refused)
+	owner := byoBindingOwner(vc)
+	var dbUsers *manifests.ByoDBUsers
+	if byoDBUsersEnabled() {
+		dbUsers = &manifests.ByoDBUsers{Environment: owner, SecretNames: customSecretNames(outputs), Provisioned: provisioned}
+	}
+	notProvisioned := byoDBUserNotProvisionedReason()
+	primary, hasPrimary := byoPrimaryDatabase(vc)
+	strOutputs := stringOutputs(outputs)
+
+	var docs []byoRenderedBinding
+	failures := 0
+	keep := func(a types.AddOnInstall, w types.ChartWorkloadBinding, target types.ServiceBindingTarget, doc string) {
+		ns := a.Namespace
+		if ns == "" {
+			ns = "default" // the renderer's default
+		}
+		docs = append(docs, byoRenderedBinding{AddOnID: a.ID, Workload: w.Name,
+			Ref: argocd.BindingSecretRef{Namespace: ns, Name: manifests.BindingSecretName(w.Name, target)}, YAML: doc})
 	}
 	for i := range vc.AddOns {
 		a := &vc.AddOns[i]
 		if len(a.Workloads) == 0 || (a.IsByo() && skip[a.ID]) {
 			continue
 		}
-		if a.Values == nil {
+		if write && a.Values == nil {
 			a.Values = map[string]interface{}{}
 		}
 		ns := a.Namespace
 		if ns == "" {
 			ns = "default" // the renderer's default
 		}
-		policy := byoBindingPolicy(vc, ns, st.Owner, keylessOn, dbUsers)
+		policy := byoBindingPolicy(vc, ns, owner, keylessOn, dbUsers)
 		for _, w := range a.Workloads {
 			res := manifests.ResolveChartWorkloadBindings(
 				w.Name, w.Bindings, w.ValuePaths, strOutputs, provider, a.Namespace, vc.Databases, policy,
 			)
-			for path, val := range res.Patches {
-				manifests.SetByPath(a.Values, path, val)
+			if write {
+				for path, val := range res.Patches {
+					manifests.SetByPath(a.Values, path, val)
+				}
+			}
+			// The database target of each knob, for the primary-database rule below.
+			knobTarget := map[string]string{}
+			for _, b := range w.Bindings {
+				if b.Target.Kind != types.ServiceBindingKindDatabase {
+					continue
+				}
+				for _, inj := range b.Inject {
+					knobTarget[manifests.ChartBindingKnob(string(b.Target.Kind), b.Target.Name, string(inj.From))] = b.Target.Name
+				}
 			}
 			for _, knob := range res.Unsatisfied {
-				if reason := res.UnsatisfiedReasons[knob]; reason != "" {
+				reason := res.UnsatisfiedReasons[knob]
+				if reason == notProvisioned {
+					// The cause the user can act on, in place of the resolver's generic one.
+					if target, isDB := knobTarget[knob]; isDB && hasPrimary && target != primary {
+						reason = byoNonPrimaryReason(primary)
+					} else if dbRefusal != "" {
+						reason = dbRefusal
+					}
+				}
+				if reason != "" {
 					fmt.Fprintf(stdout, "BYO chart %s workload %s: binding %s unsatisfied (%s) — not written.\n", a.ID, w.Name, knob, reason)
 					continue
 				}
@@ -240,10 +322,10 @@ func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]int
 				// prune run by any OTHER environment on a shared host never selects it.
 				// The owner is never empty here: an ownerless environment's credential facets are
 				// refused by the policy, so no ExternalSecret is ever rendered without one.
-				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true", argocd.ByoBindingOwnerLabel: st.Owner}
+				es.Labels = map[string]string{argocd.ByoBindingSecretLabel: "true", argocd.ByoBindingOwnerLabel: owner}
 				yaml, skipped, err := manifests.RenderExternalSecret(es)
 				if err != nil {
-					st.Failures++
+					failures++
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
 					continue
 				}
@@ -253,45 +335,55 @@ func applyByoChartBindingsExcept(vc *types.ProjectConfig, outputs map[string]int
 				if yaml == "" {
 					continue
 				}
-				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
-					st.Failures++
-					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
-					continue
-				}
+				keep(*a, w, es.Target, yaml)
 			}
 			for _, es := range res.DBUserSecrets {
 				// The same marker and owner as above, plus the source label the prune requires of a
 				// declared database binding in this mode.
 				es.Labels = map[string]string{
 					argocd.ByoBindingSecretLabel: "true",
-					argocd.ByoBindingOwnerLabel:  st.Owner,
+					argocd.ByoBindingOwnerLabel:  owner,
 					argocd.ByoBindingSourceLabel: argocd.ByoBindingSourceDBUser,
 				}
 				yaml, err := manifests.RenderByoDBUserExternalSecret(es)
 				if err != nil {
-					st.Failures++
+					failures++
 					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret render failed (%s/%s): %v\n", a.ID, w.Name, err)
 					continue
 				}
-				if err := argocd.ApplyManifest(yaml, stdout, stderr); err != nil {
-					st.Failures++
-					fmt.Fprintf(stderr, "Warning: BYO binding ExternalSecret apply failed (%s/%s): %v\n", a.ID, w.Name, err)
-					continue
-				}
+				keep(*a, w, es.Target, yaml)
 			}
 		}
 	}
-	return st
+	return docs, failures
+}
+
+// byoDBUserNotProvisionedReason is the resolver's own reason for a database credential facet whose
+// user is not provisioned, read from the resolver itself (one synthetic binding, nothing
+// provisioned), so the override above matches that refusal exactly and cannot drift from its text.
+func byoDBUserNotProvisionedReason() string {
+	t := types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "probe"}
+	knob := manifests.ChartBindingKnob(string(t.Kind), t.Name, "password")
+	res := manifests.ResolveChartWorkloadBindings("probe",
+		[]types.ServiceBinding{{Target: t, Inject: []types.ServiceBindingInjection{{Env: "P", From: "password"}}}},
+		map[string]string{knob: "probe"}, nil, string(types.CloudProviderAws), "probe", nil,
+		manifests.ChartBindingPolicy{DBUsers: &manifests.ByoDBUsers{Environment: "probe"}})
+	return res.UnsatisfiedReasons[knob]
 }
 
 // pruneByoChartBindings sweeps the environment's binding ExternalSecrets that its configuration no
-// longer declares. It is skipped outright when any binding failed to render or apply on this run:
+// longer declares. It is skipped outright when any binding failed to render or apply on this run, or
+// the BYO users Job failed:
 // that deploy's view of the bindings is incomplete, and a live binding must never be removed
 // because one run could not re-apply it. It is also skipped when the environment has no owner
 // label to scope by.
 func pruneByoChartBindings(st byoBindingState, stdout, stderr io.Writer) {
 	if st.Failures > 0 {
 		fmt.Fprintf(stderr, "Warning: skipping the BYO binding ExternalSecret prune: %d binding(s) failed to render or apply on this deploy\n", st.Failures)
+		return
+	}
+	if st.DBUsersFailed {
+		fmt.Fprintln(stderr, "Warning: skipping the BYO binding ExternalSecret prune: the BYO users Job did not provision its users on this deploy")
 		return
 	}
 	argocd.PruneChartBindingSecrets(st.Owner, st.Namespaces, st.Declared, stdout, stderr)
@@ -506,7 +598,8 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 // hardened project and prune OFF in the same object, so no sync ever runs with the new destination
 // and the old prune setting. Resource tracking does not name the project, so the chart's objects
 // in its destination namespace stay tracked. What the hardened project no longer permits — the old
-// "default" namespace after a move, a cluster-scoped kind or a ServiceAccount/Role/RoleBinding — is
+// "default" namespace after a move, or any kind outside its closed list of namespaced workload kinds
+// (every cluster-scoped kind, ServiceAccount, Role and RoleBinding among them) — is
 // dropped from the Application's view by ArgoCD itself (controller/state.go filters live objects by
 // IsLiveResourcePermitted, and finalizeApplicationDeletion deletes only permitted ones), so it is
 // neither pruned, updated, nor cascaded on a later detach. It is LEFT IN PLACE, and the move's
@@ -615,7 +708,14 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// Every namespace here has already passed the validator above, so a render error is not expected;
 	// it is still not fail-soft (#2540): falling through would apply an AppProject built from a value
 	// the renderer declined.
-	if ns, err := argocd.RenderByoNamespaces(namespaces, commonLabels); err != nil {
+	//
+	// Each namespace also carries the runner's secret-store stamp (argocd.SecretStoreAccessLabel): the
+	// platform's ClusterSecretStores admit a namespace marked as a BYO chart's only while it carries
+	// it. For the namespaces stamped here that changes nothing; it is a narrow label-level check, and
+	// the line a chart cannot cross is the hardened project's external-secrets deny (see
+	// argocd.secretStoreConditions).
+	nsLabels := byoNamespaceLabels(commonLabels)
+	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
 		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject}
 	} else if ns != "" {
@@ -647,7 +747,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// to this environment and still has its objects in "default", so the labels stay true.
 	if len(moved) > 0 && projectUpdated && len(moveRefused) == 0 {
 		if owner := byoBindingOwner(vc); owner != "" {
-			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, commonLabels, stdout); err != nil {
+			if _, err := argocd.ReleaseLegacyByoNamespaceLabels(argocd.ByoLegacyDefaultNamespace, owner, nsLabels, stdout); err != nil {
 				fmt.Fprintf(stderr, "Warning: could not remove the BYO chart labels from namespace %q: %v\n", argocd.ByoLegacyDefaultNamespace, err)
 			}
 		}
@@ -683,6 +783,19 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject}
 }
 
+// byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
+// managed-by marker RenderByoNamespaces adds: the classification labels, and the secret-store stamp.
+// The same set is what ReleaseLegacyByoNamespaceLabels removes from "default", so nothing stamped
+// there outlives the last chart that left it.
+func byoNamespaceLabels(commonLabels map[string]string) map[string]string {
+	out := make(map[string]string, len(commonLabels)+1)
+	for k, v := range commonLabels {
+		out[k] = v
+	}
+	out[argocd.SecretStoreAccessLabel] = argocd.SecretStoreAccessValue
+	return out
+}
+
 // byoConfigured is what configureByoCharts did.
 type byoConfigured struct {
 	// Configured is whether any BYO chart was configured.
@@ -713,11 +826,12 @@ type byoProjectChange struct {
 }
 
 // warning is the Deploy-tab warning for the change: what the chart now runs under, which of its
-// kinds will fail to sync, and that what it created earlier is left in place.
+// kinds will fail to sync (anything outside the hardened project's closed list of workload kinds,
+// argocd byoWorkloadKinds), and that what it created earlier is left in place.
 func (c byoProjectChange) warning() string {
 	return fmt.Sprintf("BYO chart %q now deploys under its hardened project %q instead of %q, like every chart you bring. "+
-		"That project permits only namespaced resources in the chart's own namespace, and no ServiceAccount, Role or RoleBinding: "+
-		"a chart that declares a cluster-scoped resource or one of those kinds fails its sync, naming the resource. "+
+		"That project permits only a closed list of namespaced workload kinds in the chart's own namespace, so no cluster-scoped resource "+
+		"and no ServiceAccount, Role or RoleBinding: a chart that declares a kind outside the list fails its sync, naming the resource. "+
 		"Anything it created earlier that the project does not permit is left in place and no longer managed; delete it yourself if you no longer need it.",
 		c.ID, c.To, c.From)
 }

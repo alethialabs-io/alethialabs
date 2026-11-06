@@ -422,7 +422,7 @@ func TestRunAddOnStage_WarnsWhenAnOCIChartLeavesAnotherProject(t *testing.T) {
 				t.Fatalf("want one warning, got %v", stage.Warnings)
 			}
 			w := stage.Warnings[0]
-			for _, want := range []string{`"payments"`, `"byo-acme-corp"`, `"infra"`, "ServiceAccount", "cluster-scoped", "left in place"} {
+			for _, want := range []string{`"payments"`, `"byo-acme-corp"`, `"infra"`, "ServiceAccount", "cluster-scoped", "closed list", "left in place"} {
 				if !strings.Contains(w, want) {
 					t.Errorf("the warning does not say %q:\n%s", want, w)
 				}

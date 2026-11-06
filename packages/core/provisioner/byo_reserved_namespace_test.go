@@ -412,7 +412,7 @@ func TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt(t *testing.T
 		c := newBindingCluster(t, live, 0)
 		vc := byoBindingConfig("env-1", true)
 		vc.AddOns[0].Source = "git"
-		st := applyByoChartBindingsExcept(vc, outputs, "aws", []byoRefusal{{ID: "acme-api", Namespace: "apps"}}, io.Discard, io.Discard)
+		st := applyByoChartBindingsExcept(vc, outputs, "aws", []byoRefusal{{ID: "acme-api", Namespace: "apps"}}, byoDBUsersOutcome{}, io.Discard, io.Discard)
 		pruneByoChartBindings(st, io.Discard, io.Discard)
 		if _, err := os.Stat(c.applied); err == nil {
 			t.Error("a binding ExternalSecret was applied for a refused chart")
@@ -425,7 +425,7 @@ func TestByoBindings_ARefusedChartsBindingSecretsAreWithdrawnWithIt(t *testing.T
 		c := newBindingCluster(t, live, 0)
 		vc := byoBindingConfig("env-1", true)
 		vc.AddOns[0].Source = "git"
-		st := applyByoChartBindingsExcept(vc, outputs, "aws", nil, io.Discard, io.Discard)
+		st := applyByoChartBindingsExcept(vc, outputs, "aws", nil, byoDBUsersOutcome{}, io.Discard, io.Discard)
 		pruneByoChartBindings(st, io.Discard, io.Discard)
 		if strings.Contains(c.calls(), "delete") {
 			t.Errorf("an accepted chart's binding was deleted:\n%s", c.calls())

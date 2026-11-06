@@ -72,6 +72,11 @@ export const BYO_RESERVED_NAMESPACES: {
 			],
 		},
 		{
+			id: "platformByoDBUsers",
+			reason: "the platform's BYO database users Job runs there, with the credentials it needs",
+			namespaces: ["alethia-byo-db-users"],
+		},
+		{
 			id: "platformWorkloads",
 			reason:
 				"the platform's own workloads, their Secrets and their service accounts run there",
