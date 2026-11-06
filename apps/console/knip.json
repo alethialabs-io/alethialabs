@@ -57,9 +57,6 @@
     "components/plan/resource-card.tsx": [
       "files"
     ],
-    "components/plan/use-plan.ts": [
-      "files"
-    ],
     "components/settings/upgrade/use-current-plan.ts": [
       "files"
     ]

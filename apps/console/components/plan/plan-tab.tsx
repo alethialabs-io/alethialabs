@@ -16,8 +16,9 @@ import {
 } from "@repo/ui/collapsible";
 import { PlanSummaryBar } from "./plan-summary-bar";
 import { ResourceCard } from "./resource-card";
-import { groupByCategory } from "@/lib/plan/parse-plan";
-import type { UsePlanReturn } from "./use-plan";
+import { groupByCategory, type PlanSummary } from "@/lib/plan/parse-plan";
+import type { CostSummary } from "@/lib/plan/parse-cost";
+import type { JobLogEntry } from "@/hooks/use-job-log-stream";
 import {
 	AlertCircle,
 	ChevronDown,
@@ -26,8 +27,30 @@ import {
 	Rocket,
 } from "lucide-react";
 
+/** Where a plan is in its generate → apply lifecycle. */
+type PlanPhase =
+	| "idle"
+	| "generating"
+	| "ready"
+	| "applying"
+	| "applied"
+	| "failed";
+
+/** The plan state and actions the tab renders and drives. */
+interface PlanState {
+	phase: PlanPhase;
+	planJobId: string | null;
+	deployJobId: string | null;
+	planResult: PlanSummary | null;
+	costResult: CostSummary | null;
+	logs: JobLogEntry[];
+	error: string | null;
+	generatePlan: (runnerId?: string | null) => Promise<void>;
+	applyPlan: (runnerId?: string | null) => Promise<void>;
+}
+
 interface PlanTabProps {
-	plan: UsePlanReturn;
+	plan: PlanState;
 	onApplied: (deployJobId: string) => void;
 }
 
