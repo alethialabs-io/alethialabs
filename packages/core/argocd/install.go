@@ -286,6 +286,19 @@ var externalSecretsStoreMaxWait = 15 * time.Minute
 // ExternalSecret against these stores (vcluster syncs no ExternalSecret CRD to the host by default). If
 // vcluster ever syncs ExternalSecret CRDs host-ward, extend this selector to also exclude vcluster host
 // namespaces (deploy_vcluster.go).
+//
+// BYO CHART NAMESPACES ARE ADMITTED, ON PURPOSE. A condition selects the NAMESPACE an ExternalSecret
+// lives in and nothing about the object itself: ESO evaluates namespaceSelector, namespaces and
+// namespaceRegexes against the namespace alone (client_manager.go, v0.9.20). The runner's per-binding
+// ExternalSecrets for a BYO chart live in that chart's own namespace, because the Secret a chart's
+// existingSecret names must be there, so a condition cannot admit them and refuse a chart's own
+// ExternalSecret beside them. Excluding BYO namespaces here would withdraw every binding. The line a
+// chart cannot cross is drawn where the actor can be told apart: the hardened BYO AppProject denies
+// the whole external-secrets.io and generators.external-secrets.io groups (byoSecretSyncDenied) and
+// every ServiceAccount, Role and RoleBinding a chart might declare to grant its pods API access, while
+// the runner applies the binding ExternalSecrets with its own kubeconfig.
+// TestSecretStoreConditionsAdmitTheRunnersBindingPath pins this admission set for every store,
+// Hetzner's included.
 const externalSecretsStoreTemplate = `
 {{- if and (eq .Provider "aws") .IRSAExternalSecretsArn }}
 apiVersion: external-secrets.io/v1beta1
