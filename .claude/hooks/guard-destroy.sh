@@ -10,7 +10,10 @@
 #
 #   REFUSE (exit 2) — the deletion cannot be undone from this machine:
 #     R-PUSH     a push to, or delete of, dev/staging/main in any refspec form; --mirror;
-#                --all/--branches with force; deleting a remote tag
+#                --all/--branches with force; deleting a remote tag in any spelling (a delete
+#                whose target is not a KNOWN branch is treated as a tag); --prune together with
+#                --tags, --all or a tags refspec; --prune-tags; force-pushing --tags; pushing
+#                refs/safety/* anywhere (snapshots can hold untracked private files)
 #     R-GH       gh repo delete|archive|rename, gh repo edit --visibility, gh release
 #                delete|delete-asset, gh secret delete|remove, gh issue delete
 #     R-GHAPI    gh api DELETE|PUT|PATCH on rulesets, branch protection, releases, git/refs,
@@ -19,6 +22,8 @@
 #                a graphql mutation that deletes or rewrites one of those
 #     R-TFSTATE  removing or overwriting a terraform.tfstate* (rm/mv/cp-onto/truncate/shred/`>`),
 #                rm -r of a directory holding one, `git clean -x|-X` in a tree that holds one,
+#                `git worktree remove` (forced or not) of a tree holding one, `find … -delete` /
+#                `find -exec rm` that can reach one, `rsync --delete` onto a directory holding one,
 #                tofu|terraform state rm|mv|push|replace-provider, init -migrate-state|-force-copy,
 #                workspace delete. infra/{gcp,azure,alibaba}-e2e and infra/sandbox keep LOCAL,
 #                gitignored state: no snapshot below can see an ignored file, so this refuses.
@@ -46,12 +51,23 @@
 #     S-BRANCH   git branch -D / --delete --force — pins the tips it would drop
 #
 #   A snapshot captures the tree's tracked AND untracked non-ignored content: copy the real index
-#   to a temp GIT_INDEX_FILE (so unchanged files are not re-hashed), `git add -A`, `write-tree`,
-#   `commit-tree` with HEAD as parent, and store it at
+#   to a temp GIT_INDEX_FILE (so unchanged files are not re-hashed), `git add -u` for the tracked
+#   changes, then the untracked files UP TO A CAP, `write-tree`, `commit-tree` with HEAD as parent,
+#   and store it at
 #       refs/safety/<worktree-name>/<UTC timestamp>
 #   Objects and refs/safety/* live in the SHARED repository, so they outlive the worktree's own
 #   deletion. Nothing is stored when the tree already equals HEAD. session-cleanup.sh prunes
 #   refs/safety entries older than 30 days.
+#
+#   THE SNAPSHOT IS BOUNDED, so it can never stall a command. Dependency caches are never captured
+#   (SNAP_EXCLUDES: .pnpm-store, node_modules, .yarn/cache, .npm, .venv, .terraform, .gradle —
+#   all re-downloadable, and the main checkout once held a 1.7 GB / 128k-file .pnpm-store that made
+#   one snapshot take 95 s and write 864 MB). Untracked files are then taken in path order up to
+#   SNAP_MAX_FILES (5000) and SNAP_MAX_BYTES (50 MB), and the scan stops after SNAP_SCAN_MAX (20000)
+#   entries. Why those numbers: a branch's real untracked work is tens to hundreds of files and a few
+#   MB; 5000 files / 50 MB hashes in well under a second and stores at most 50 MB per snapshot, while
+#   still covering a large generated fixture set. Anything over the cap is LEFT OUT, never waited
+#   for, and a one-line warning names how much and under which top-level directories.
 #
 #   RESTORE (also in .claude/skills/dev/SKILL.md → "Recovering from a destructive command"):
 #       git for-each-ref --sort=-refname refs/safety/            # what is there
@@ -79,6 +95,15 @@
 #     recognisably protected.
 #
 # There is NO escape hatch here, on purpose: an irreversible action is the maintainer's to run.
+#
+# CRASH DIRECTION IS FAIL-OPEN, deliberately: a crash (exit other than 0/2) is an allow, because no
+# hook sets `onFailure: "block"` and a guard bug must never brick every Bash call. The REFUSALS
+# above are explicit exits, never a crash. Without jq the command cannot be read and this hook
+# allows (the spend guard refuses priced commands in that case; this one does not, because "git"
+# appearing in a command is not evidence of destruction).
+#
+# gh's global flags before the subcommand are parsed by lib/cmdline.sh. The deny rules in
+# .claude/settings.json are prefix matches and cannot see past such flags; this hook can.
 
 _self="${BASH_SOURCE[0]}"
 case "$_self" in */*) HOOK_DIR="${_self%/*}" ;; *) HOOK_DIR="." ;; esac
@@ -169,6 +194,45 @@ is_tfstate_path() {
 }
 
 # ── the snapshot ──────────────────────────────────────────────────────────────────────────────
+# @mut-sub snap-file-cap s/5000/9999999/
+SNAP_MAX_FILES=5000
+# @mut-sub snap-byte-cap s/50 \* 1024 \* 1024/50 * 1024 * 1024 * 1024/
+SNAP_MAX_BYTES=$((50 * 1024 * 1024))
+# @mut-sub snap-scan-cap s/20000/9999999/
+SNAP_SCAN_MAX=20000
+SNAP_EXCLUDES=(
+	# @mut-sub snap-exclude-store s/^.*$/\t':(exclude,glob)**\/.not-a-store\/**'/
+	':(exclude,glob)**/.pnpm-store/**'
+	':(exclude,glob)**/node_modules/**'
+	':(exclude,glob)**/.yarn/cache/**'
+	':(exclude,glob)**/.npm/**'
+	':(exclude,glob)**/.venv/**'
+	':(exclude,glob)**/.terraform/**'
+	':(exclude,glob)**/.gradle/**'
+)
+
+# The untracked-file selector: reads NUL-separated paths (relative to the tree), writes the ones
+# under the cap to $1 (NUL-separated), and prints "<taken> <taken-bytes> <left> <left-bytes>
+# <stopped> <top-dirs>". Exiting early closes the pipe, so `git ls-files` stops too.
+SNAP_SELECT_PL='
+my ($out, $maxf, $maxb, $scan) = @ARGV;
+open(my $o, ">", $out) or die;
+my ($an, $ab, $sn, $sb, $seen, $stop) = (0, 0, 0, 0, 0, 0);
+my %d;
+$/ = "\0";
+while (my $p = <STDIN>) {
+	chomp $p;
+	if (++$seen > $scan) { $stop = 1; last; }
+	my $sz = -s $p;
+	$sz = 0 unless defined $sz;
+	if ($an < $maxf && $ab + $sz <= $maxb) { print $o "$p\0"; $an++; $ab += $sz; }
+	else { $sn++; $sb += $sz; my ($t) = $p =~ m{^([^/]+/?)}; $d{$t}++; }
+}
+close $o;
+my @t = grep { defined } (sort { $d{$b} <=> $d{$a} } keys %d)[0 .. 4];
+print join(" ", $an, $ab, $sn, $sb, $stop, (@t ? join(",", @t) : "-")), "\n";
+'
+
 safety_ts() { SAFETY_TS="$(date -u +%Y%m%dT%H%M%SZ)"; }
 
 # store_ref <top> <name-suffix> <commit> — create refs/safety/<wt>/<ts><suffix>, never overwrite.
@@ -210,7 +274,25 @@ snapshot_tree() {
 	[ $# -gt 0 ] || set -- ":/"
 	# add's exit code is not the signal: an explicitly named IGNORED path makes it exit 1 having
 	# done exactly the right thing. write-tree is the signal.
-	GIT_INDEX_FILE="$tmp" git -C "$top" add -A -- "$@" >/dev/null 2>&1
+	# 1. tracked changes — bounded by the index, which already knows every tracked file
+	GIT_INDEX_FILE="$tmp" git -C "$top" add -u -- "$@" "${SNAP_EXCLUDES[@]}" >/dev/null 2>&1
+	# 2. untracked files, up to the cap
+	local list stats taken=0 _tbytes=0 left=0 lbytes=0 stopped=0 dirs=-
+	list="$(mktemp "${TMPDIR:-/tmp}/alethia-safety-list.XXXXXX")" || {
+		rm -f "$tmp"
+		return 2
+	}
+	stats="$(cd "$top" && git ls-files -o --exclude-standard -z -- "$@" "${SNAP_EXCLUDES[@]}" 2>/dev/null |
+		perl -e "$SNAP_SELECT_PL" "$list" "$SNAP_MAX_FILES" "$SNAP_MAX_BYTES" "$SNAP_SCAN_MAX" 2>/dev/null)"
+	read -r taken _tbytes left lbytes stopped dirs <<<"$stats"
+	case "$taken" in '' | *[!0-9]*) taken=0 ;; esac
+	if [ "$taken" -gt 0 ]; then
+		GIT_INDEX_FILE="$tmp" GIT_LITERAL_PATHSPECS=1 git -C "$top" add --pathspec-from-file="$list" --pathspec-file-nul >/dev/null 2>&1
+	fi
+	rm -f "$list"
+	if [ "${left:-0}" != 0 ] || [ "${stopped:-0}" = 1 ]; then
+		note "snapshot LEFT OUT ${left} untracked file(s) ($((${lbytes:-0} / 1048576)) MB) over the ${SNAP_MAX_FILES}-file / $((SNAP_MAX_BYTES / 1048576)) MB cap$([ "${stopped:-0}" = 1 ] && echo ", and stopped scanning after ${SNAP_SCAN_MAX} entries") — under: ${dirs}"
+	fi
 	tree="$(GIT_INDEX_FILE="$tmp" git -C "$top" write-tree 2>/dev/null)"
 	rm -f "$tmp"
 	[ -n "$tree" ] || return 2
@@ -356,8 +438,18 @@ current_branch() { # <dir> — sets BRANCH ("" when detached or unknown)
 	BRANCH="$(git -C "$1" symbolic-ref -q --short HEAD 2>/dev/null)"
 }
 
+# push_target_is_branch <name> <remote> — a local or remote-tracking branch exists and no tag does.
+push_target_is_branch() {
+	local name="$1" remote="${2:-origin}"
+	[ -n "$GDIR" ] || return 1
+	git -C "$GDIR" show-ref -q --verify "refs/tags/$name" 2>/dev/null && return 1
+	git -C "$GDIR" show-ref -q --verify "refs/heads/$name" 2>/dev/null && return 0
+	git -C "$GDIR" show-ref -q --verify "refs/remotes/$remote/$name" 2>/dev/null && return 0
+	return 1
+}
+
 rule_push() {
-	local i a remote="" force=0 del=0 all=0 n=${#GARGS[@]} specs=() skip=0 s src dst
+	local i a remote="" force=0 del=0 all=0 prune=0 tags=0 n=${#GARGS[@]} specs=() skip=0 s src dst
 	for ((i = 0; i < n; i++)); do
 		a="${GARGS[$i]}"
 		if [ "$skip" = 1 ]; then
@@ -369,6 +461,12 @@ rule_push() {
 		-f | --force | --force-with-lease* | --force-if-includes) force=1 ;;
 		-d | --delete) del=1 ;;
 		--all | --branches) all=1 ;;
+		--prune) prune=1 ;;
+		--tags) tags=1 ;;
+		--prune-tags)
+			# @mut prune-tags
+			refuse R-PUSH "\`--prune-tags\` deletes every remote tag that has no local copy."
+			;;
 		-o | --push-option | --repo | --receive-pack | --exec) skip=1 ;;
 		--) ;;
 		-*)
@@ -382,6 +480,17 @@ rule_push() {
 	done
 	if [ "$all" = 1 ] && [ "$force" = 1 ]; then
 		refuse R-PUSH "\`git push --all --force\` force-pushes every local branch, dev/staging/main included."
+	fi
+	if [ "$prune" = 1 ]; then
+		case " ${specs[*]} " in *refs/tags/*) tags=1 ;; esac
+		if [ "$tags" = 1 ] || [ "$all" = 1 ]; then
+			# @mut push-prune
+			refuse R-PUSH "\`git push --prune\` with tags or --all deletes every remote ref that has no local copy — tags and protected branches included."
+		fi
+	fi
+	if [ "$tags" = 1 ] && [ "$force" = 1 ]; then
+		# @mut tags-force
+		refuse R-PUSH "\`git push --tags --force\` moves published tags, which the release workflows build from."
 	fi
 	if [ ${#specs[@]} -eq 0 ]; then
 		[ "$all" = 1 ] && return 0
@@ -402,6 +511,13 @@ rule_push() {
 		esac
 		return 0
 	fi
+	# A snapshot holds whatever untracked files the tree had — local documents, .bak files — and
+	# this repository is PUBLIC. Snapshots never leave the machine.
+	case " ${specs[*]} " in *refs/safety*)
+		# @mut push-safety
+		refuse R-PUSH "\`git push\` of refs/safety/* would publish local snapshots, which can hold untracked private files."
+		;;
+	esac
 	for s in "${specs[@]}"; do
 		s="${s#+}"
 		case "$s" in
@@ -427,6 +543,21 @@ rule_push() {
 			continue
 			;;
 		esac
+		# A delete by SHORT name: git resolves it against the remote's refs, and a tag is as
+		# likely as a branch. It is a branch only when this repository knows a branch of that
+		# name (local, or remote-tracking for that remote) and no tag of that name.
+		if { [ "$del" = 1 ] || [ -z "$src" ]; } && ! is_protected_branch "${dst#refs/heads/}"; then
+			case "$dst" in
+			refs/heads/*) ;;
+			*)
+				if ! push_target_is_branch "$dst" "$remote"; then
+					# @mut tag-short
+					refuse R-PUSH "\`git push\` would delete '$dst' on the remote, and it is not a branch this repository knows — it may be a tag." \
+						"Release tags drive the release workflows. To delete a remote BRANCH, spell it refs/heads/$dst."
+				fi
+				;;
+			esac
+		fi
 		dst="${dst#refs/heads/}"
 		dst="${dst#heads/}"
 		case "$dst" in *\**)
@@ -530,7 +661,6 @@ rule_git() {
 		;;
 	worktree)
 		[ "${GARGS[0]:-}" = remove ] || return 0
-		has_arg -f --force || return 0
 		local a target=""
 		for a in "${GARGS[@]:1}"; do
 			case "$a" in -*) ;; *)
@@ -543,9 +673,18 @@ rule_git() {
 		xp "$target"
 		target="$X"
 		if cmdline_has_var "$target" || [ -z "$GDIR" ]; then
-			snap S-WTREE "" "$label"
+			refuse R-TFSTATE "cannot tell which tree \`$label\` removes, so neither its local state nor its work can be checked first." \
+				"Spell the path literally."
 		fi
 		cmdline_abspath "$target" "$GDIR"
+		# Forced or not: plain `worktree remove` also deletes IGNORED files, and a snapshot can
+		# never see them. Local tfstate has no other copy, so the same refusal as `rm -r`.
+		if [ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH"; then
+			# @mut wt-tfstate
+			refuse R-TFSTATE "\`$label\` removes a worktree holding local terraform state (terraform.tfstate*), which no snapshot can capture." \
+				"Move the state out first, or have the maintainer remove the tree."
+		fi
+		has_arg -f --force || return 0
 		snap S-WTREE "$ABSPATH" "$label"
 		;;
 	branch)
@@ -739,6 +878,46 @@ rule_redirect() {
 			case "$ABSPATH" in "$c"/*) refuse R-CRED "a redirection overwrites $t, inside $c." ;; esac
 		done
 	done
+	return 0
+}
+
+# find … -delete / -exec rm, and rsync --delete: the two bulk deleters with no rm in front of them.
+rule_find_rsync() {
+	local prog="$1" a roots=() last=""
+	if [ "$prog" = find ]; then
+		case " $SEG " in *" -delete"* | *" -exec rm "* | *" -execdir rm "* | *"/rm "*) ;; *) return 0 ;; esac
+		case "$SEG" in *tfstate*)
+			# @mut find-tfstate
+			refuse R-TFSTATE "\`find … -delete\` names terraform state."
+			;;
+		esac
+		# with no name or path filter, everything under the roots goes
+		case " $SEG " in *" -name "* | *" -iname "* | *" -path "* | *" -ipath "* | *" -regex "* | *" -iregex "*) return 0 ;; esac
+		for a in "${TOK[@]:1}"; do
+			case "$a" in -* | "(" | "!") break ;; esac
+			roots+=("$a")
+		done
+		[ ${#roots[@]} -gt 0 ] || roots=(.)
+		for a in "${roots[@]}"; do
+			cmdline_has_var "$a" && continue
+			cmdline_abspath "$a" "${DIR:-/}"
+			[ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH" &&
+				refuse R-TFSTATE "\`find $a … -delete\` deletes everything under a directory holding local terraform state."
+		done
+		return 0
+	fi
+	# rsync
+	case " $SEG " in *" --delete"* | *" --del "*) ;; *) return 0 ;; esac
+	for a in "${TOK[@]:1}"; do
+		case "$a" in -*) ;; *) last="$a" ;; esac
+	done
+	[ -n "$last" ] || return 0
+	case "$last" in *:*) return 0 ;; esac
+	cmdline_abspath "$last" "${DIR:-/}"
+	if is_tfstate_path "$ABSPATH" || { [ -d "$ABSPATH" ] && tree_has_tfstate "$ABSPATH"; }; then
+		# @mut rsync-tfstate
+		refuse R-TFSTATE "\`rsync --delete … $last\` can delete local terraform state in the destination."
+	fi
 	return 0
 }
 
@@ -968,7 +1147,13 @@ rule_gh_api() {
 			;;
 		-X*) method="${a#-X}" ;;
 		--method=*) method="${a#--method=}" ;;
-		-f | -F | --field | --raw-field)
+		-F | --field)
+			body=1
+			# `-F query=@file` reads the body from a file, exactly like --input
+			case "${TOK[$((i + 1))]:-}" in *=@*) input=1 ;; esac
+			i=$((i + 1))
+			;;
+		-f | --raw-field)
 			body=1
 			i=$((i + 1))
 			;;
@@ -982,6 +1167,14 @@ rule_gh_api() {
 		*) [ -n "$path" ] || path="$a" ;;
 		esac
 	done
+	# a full URL (`https://api.github.com/repos/…`, or a GHES `…/api/v3/…`) is the same path
+	case "$path" in
+	http://* | https://*)
+		path="${path#*://}"
+		path="${path#*/}"
+		path="${path#api/v3/}"
+		;;
+	esac
 	path="${path#/}"
 	path="${path%%\?*}"
 	if [ -z "$method" ]; then
@@ -989,8 +1182,11 @@ rule_gh_api() {
 	fi
 	method="$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]')"
 	if [ "$path" = graphql ]; then
-		[ "$input" = 1 ] && refuse R-GHAPI "\`gh api graphql --input\` sends a body the guard cannot read." \
-			"Pass the query with -f query='…' so the mutation is visible."
+		if [ "$input" = 1 ]; then
+			# @mut graphql-file
+			refuse R-GHAPI "\`gh api graphql\` reads its query from a file or stdin, which the guard cannot read." \
+				"Pass the query inline with -f query='…' so the mutation is visible."
+		fi
 		[[ "$CMD" =~ $GH_GRAPHQL_RE ]] && refuse R-GHAPI "a graphql \`${BASH_REMATCH[1]}\` mutation deletes or rewrites repository state."
 		return 0
 	fi
@@ -1029,7 +1225,7 @@ main() {
 	[ -n "$CMD" ] || exit 0
 	# A cheap first look, with no fork: a command naming none of these cannot match any rule.
 	case "$CMD" in
-	*git* | *gh* | *rm* | *tofu* | *tfstate* | *db:* | *drizzle* | *.mjs* | *reencrypt* | *docker* | *hcloud* | *aws* | *gcloud* | *az* | *aliyun* | *kubectl* | *helm* | *mv* | *cp* | *shred* | *unlink* | *truncate* | *\>*) ;;
+	*git* | *gh* | *rm* | *tofu* | *tfstate* | *db:* | *drizzle* | *.mjs* | *reencrypt* | *docker* | *hcloud* | *aws* | *gcloud* | *az* | *aliyun* | *kubectl* | *helm* | *mv* | *cp* | *shred* | *unlink* | *truncate* | *find* | *rsync* | *\>*) ;;
 	*) exit 0 ;;
 	esac
 	cmdline_split "$CMD"
@@ -1085,6 +1281,7 @@ main() {
 		rm | unlink | shred | truncate) rule_rm "$prog" ;;
 		mv | cp) rule_mv_cp "$prog" ;;
 		tofu | terraform) rule_tofu ;;
+		find | rsync) rule_find_rsync "$prog" ;;
 		docker) rule_docker ;;
 		hcloud | aws | gcloud | az | aliyun | kubectl | helm) rule_cloud "$prog" ;;
 		esac
@@ -1196,6 +1393,23 @@ STUB
 	t block "$tmp" "W=$repo; git -C \$W push"
 	t block "$tmp" "W=$repo && cd \$W && git push"
 
+	# ── R-PUSH: tag deletes in every spelling, prune, and gh global flags (B1/B2) ──
+	G -C "$repo" tag v1.0.0
+	t block "$wt" 'git push --delete origin v1.0.0'
+	t block "$wt" 'git push origin :v1.0.0'
+	t block "$wt" 'git push origin --delete never-heard-of-it'
+	t block "$wt" 'git push origin --tags --prune'
+	t block "$wt" 'git push --prune origin "refs/tags/*:refs/tags/*"'
+	t block "$wt" 'git push --prune --all origin'
+	t block "$wt" 'git push --prune-tags origin'
+	t block "$wt" 'git push --tags --force origin'
+	t allow "$wt" 'git push origin --delete feat/a'
+	t block "$wt" 'git push origin "refs/safety/*:refs/safety/*"'
+	t block "$wt" 'git push origin refs/safety/wt-a/20261106T000000Z:refs/heads/feat/leak'
+	t allow "$wt" 'git push origin :refs/heads/feat/old'
+	t allow "$wt" 'git push --tags origin'
+	t block "$wt" 'git push --prune origin "refs/heads/feat/*:refs/heads/feat/*"'
+
 	# ── R-GH / R-GHAPI ──
 	t block "$wt" 'gh repo delete alethialabs-io/app --yes'
 	t block "$wt" 'gh repo archive'
@@ -1219,6 +1433,19 @@ STUB
 	t block "$wt" "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }'"
 	t block "$wt" 'gh api graphql --input q.json'
 	t allow "$wt" 'gh api repos/o/r/rulesets'
+	# gh's global flags before the subcommand (B1)
+	t block "$wt" 'gh -R o/r release delete v1 --yes'
+	t block "$wt" 'gh --repo o/r secret delete FOO'
+	t block "$wt" 'gh --repo=o/r repo delete --yes'
+	t block "$wt" 'gh -Ro/r issue delete 5 --yes'
+	t block "$wt" 'gh --hostname github.com -R o/r api -X DELETE repos/o/r/rulesets/1'
+	t allow "$wt" 'gh -R o/r release list'
+	t allow "$wt" 'gh --repo o/r pr view 12'
+	# a full URL is the same path; a graphql body from a file cannot be read
+	t block "$wt" 'gh api -X DELETE https://api.github.com/repos/o/r'
+	t block "$wt" 'gh api -X DELETE https://ghe.example.com/api/v3/repos/o/r/rulesets/2'
+	t block "$wt" 'gh api graphql -F query=@mutation.graphql'
+	t allow "$wt" 'gh api graphql -F owner=o -f query=query{viewer{login}}'
 	t allow "$wt" 'gh api -X PATCH repos/o/r/git/refs/heads/deps/npm-minor -f sha=abc -F force=true'
 	t allow "$wt" 'R=repos/o/r; gh api -X PATCH $R/git/refs/heads/deps/x -f sha=abc'
 	t block "$wt" 'R=repos/o/r; gh api -X PATCH $R/git/refs/heads/main -f sha=abc -F force=true'
@@ -1253,6 +1480,15 @@ STUB
 	t allow "$repo" 'tofu -chdir=infra/sandbox plan -out=tfplan'
 	t allow "$repo" 'tofu init -backend=false'
 	t allow "$repo" 'grep -rn tfstate infra/'
+	# bulk deleters (find / rsync) that can reach local state
+	t block "$repo" "find . -name '*.tfstate' -delete"
+	t block "$repo" 'find infra -type f -delete'
+	t block "$repo" 'find infra -exec rm {} +'
+	t block "$repo" 'rsync -a --delete /tmp/empty/ infra/'
+	t allow "$repo" "find . -name '*.log' -delete"
+	t allow "$repo" 'find /tmp/x -type f -delete'
+	t allow "$repo" 'rsync -a --delete /tmp/a/ /tmp/b/'
+	t allow "$repo" 'find infra -name "*.tf"'
 
 	# ── R-DB ──
 	t block "$wt" 'pnpm -F console db:reset'
@@ -1410,6 +1646,16 @@ git push origin main"
 	snapped 1 'rm -rf "$x" snapshots the cwd tree' "$wt" 'rm -rf "$x"'
 	snapped 0 'rm outside any git tree' "$home" 'rm -rf scratch'
 
+	# ── B5: worktree remove of a tree holding (ignored) local state ──
+	G -C "$repo" worktree add -b feat/tf "$tmp/wt-tf"
+	mkdir -p "$tmp/wt-tf/infra/sandbox"
+	printf '{}' >"$tmp/wt-tf/infra/sandbox/terraform.tfstate"
+	t block "$repo" "rm -rf $tmp/wt-tf"
+	t block "$repo" "git worktree remove --force $tmp/wt-tf"
+	t block "$repo" "git worktree remove $tmp/wt-tf"
+	t block "$repo" 'git worktree remove --force "$WT"'
+	rm -rf "$tmp/wt-tf/infra"
+
 	# ── S-WTREE ──
 	G -C "$repo" worktree add -b feat/b "$tmp/wt-b"
 	printf 'lost?\n' >"$tmp/wt-b/precious.txt"
@@ -1421,6 +1667,35 @@ git push origin main"
 	esac
 	check 'the removed tree survives in refs/safety/wt-b' test "$(git -C "$repo" show "$NEW:precious.txt" 2>/dev/null)" = 'lost?'
 	snapped 0 'worktree remove (no force) refuses dirty trees itself' "$repo" "git worktree remove $tmp/wt-b"
+
+	# ── B4: the snapshot is bounded ──
+	mkdir -p "$wt/.pnpm-store/v3" "$wt/node_modules/x" "$wt/many" "$wt/big" "$wt/small"
+	printf 'store\n' >"$wt/.pnpm-store/v3/blob"
+	printf 'dep\n' >"$wt/node_modules/x/index.js"
+	printf 'mine\n' >"$wt/small/keep.txt"
+	snapped 1 'a tree with dependency caches still snapshots' "$wt" 'git reset --hard'
+	check 'the work file is in it' test "$(git -C "$repo" show "$NEW:small/keep.txt" 2>/dev/null)" = mine
+	check '.pnpm-store is never captured' bash -c "! git -C '$repo' cat-file -e '$NEW:.pnpm-store/v3/blob' 2>/dev/null"
+	check 'node_modules is never captured' bash -c "! git -C '$repo' cat-file -e '$NEW:node_modules/x/index.js' 2>/dev/null"
+	# over the FILE cap: 5003 files → 5000 taken, 3 left out, and the note says so
+	(cd "$wt/many" && touch f{0001..5003}) 2>/dev/null
+	snapped 1 'over the file cap it still snapshots' "$wt" 'git checkout -- file.txt'
+	check 'the note names what was left out' grep -qE 'LEFT OUT [0-9]+ untracked file\(s\).*under: many/' "$tmp/stderr"
+	check 'it took exactly the cap' test "$(git -C "$repo" diff --name-only --diff-filter=A "$NEW^" "$NEW" | wc -l | tr -d ' ')" = 5000
+	rm -rf "$wt/many"
+	# over the BYTE cap: one 60 MB file is left out, the small one is still taken
+	dd if=/dev/zero of="$wt/big/blob.bin" bs=1048576 count=60 2>/dev/null
+	snapped 1 'over the byte cap it still snapshots' "$wt" 'git checkout -- file.txt'
+	check 'the big file is left out' bash -c "! git -C '$repo' cat-file -e '$NEW:big/blob.bin' 2>/dev/null"
+	check 'the small file is still in' test "$(git -C "$repo" show "$NEW:small/keep.txt" 2>/dev/null)" = mine
+	check 'the note names the directory' grep -q 'under: big/' "$tmp/stderr"
+	rm -rf "$wt/big"
+	# the SCAN cap: 20001+ untracked files stop the scan rather than being walked in full
+	mkdir -p "$wt/flood"
+	(cd "$wt/flood" && touch g{00001..20500}) 2>/dev/null
+	snapped 1 'a flood of untracked files still snapshots' "$wt" 'git checkout -- file.txt'
+	check 'the note says the scan stopped' grep -q 'stopped scanning after 20000' "$tmp/stderr"
+	rm -rf "$wt/flood" "$wt/.pnpm-store" "$wt/node_modules" "$wt/small"
 
 	# ── S-STASH / S-BRANCH ──
 	printf 's1\n' >"$wt/file.txt"
@@ -1463,8 +1738,42 @@ mutation_test() {
 			echo "  ✓ disabling $id fails the self-test"
 		fi
 	done
+	# Targeted mutants: each `# @mut <name>` line disables the statement on the next line (its first
+	# word becomes `true`); `# @mut-sub <name> <s///>` rewrites the next line. A marker must sit on
+	# a REFUSAL or a call — never on `[ … ] && refuse`, where `true … && refuse` still refuses and the
+	# mutant would only ever be "killed" by refusing too much. They cover the fixes a
+	# whole-rule mutant cannot isolate (one site of a rule that has many).
+	local names name lib="${self%/*}/lib/cmdline.sh"
+	names="$(cat "$self" "$lib" | grep -oE '# @mut(-sub)? [a-z0-9-]+' | awk '{print $3}' | sort -u)"
+	for name in $names; do
+		cp "$self" "$dir/guard-destroy.sh"
+		cp "$lib" "$dir/lib/cmdline.sh"
+		mutate_marker "$name" "$dir/guard-destroy.sh" "$dir/lib/cmdline.sh"
+		if cmp -s "$self" "$dir/guard-destroy.sh" && cmp -s "$lib" "$dir/lib/cmdline.sh"; then
+			survived=$((survived + 1))
+			echo "  ✗ marker $name did not apply"
+			continue
+		fi
+		if SELFTEST_FAILFAST=1 bash "$dir/guard-destroy.sh" --self-test >/dev/null 2>&1; then
+			survived=$((survived + 1))
+			echo "  ✗ mutant SURVIVED: disabling @$name fails no self-test case"
+		else
+			killed=$((killed + 1))
+			echo "  ✓ disabling @$name fails the self-test"
+		fi
+	done
+	cp "${self%/*}/lib/cmdline.sh" "$dir/lib/"
 	echo "  ${killed} mutants killed, ${survived} survived"
 	[ "$survived" -eq 0 ] && [ "$killed" -gt 0 ]
+}
+
+# mutate_marker <name> <file>… — apply the marker <name> in place (see mutation_test).
+mutate_marker() {
+	local name="$1"
+	shift
+	perl -i -pe 'BEGIN { $n = shift @ARGV }
+		if ($next) { if (defined $sub && length $sub) { eval $sub } else { s/^(\s*)\S+/$1true/ } $next = 0 }
+		if (/^\s*# \@mut(-sub)? \Q$n\E(?:\s+(.*))?$/) { $next = 1; $sub = $2 }' "$name" "$@"
 }
 
 case "${1:-}" in

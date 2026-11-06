@@ -20,8 +20,9 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Never work in a worktree another live instance holds.** Check with `pnpm wt:who`.
 - **Never push to `dev`, `staging` or `main`, and never open a feature PR into `staging` or
   `main`.** Feature work goes to `dev`. **Promotions are agents' work when green**: the
-  `dev → staging` and `staging → main` PRs merge with `gh pr merge <n> --merge`, which
-  `.claude/hooks/guard-merge.sh` admits only when every check and every release-gate leg passed.
+  `dev → staging` and `staging → main` PRs merge with
+  `gh pr merge <n> --merge --match-head-commit <head sha>`, which `.claude/hooks/guard-merge.sh`
+  admits only when every check and every release-gate leg passed for exactly that head.
 - **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy` on your own
   initiative.** The one exception is a specific named operation the maintainer has instructed,
   under a plan they have reviewed.
@@ -33,8 +34,10 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 **Spend and deletion — the two things that stay the maintainer's.** Everything else is delegated.
 *Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 30 per rolling 7 days**, shared
 by every instance, in the ledger `~/.alethia/spend-ledger.jsonl` (`pnpm spend:status` prints the
-window). Each priced action (a box bring-up, an e2e dispatch, a disposable hcloud create) is
-charged before it runs; one that would cross the budget is refused, and production dispatches,
+window). Each priced action (a box bring-up, an e2e dispatch or rerun, a disposable hcloud create)
+is charged before it runs — even if it then never runs — and a ledger that cannot be read or
+written refuses the charge rather than skipping it. One that would cross the budget is refused,
+and production dispatches,
 non-disposable cloud writes, live Stripe and `vercel --prod` are refused at any price. The budget
 is a constant in the hook, so raising it is a reviewed PR. *Deletion* is
 `.claude/hooks/guard-destroy.sh`: what cannot be undone (pushes to or deletes of protected
@@ -42,7 +45,11 @@ branches, repo/release/secret deletion, local tfstate, a non-local database rese
 outside disposable targets, credential directories) is refused; local git destruction
 (`reset --hard`, `clean`, `checkout`/`restore`, `stash drop`, `worktree remove --force`, an `rm` in
 a work tree) is **snapshotted first, then allowed**, under `refs/safety/<worktree>/<UTC timestamp>`
-— restore steps are in `.claude/skills/dev/SKILL.md`. Neither hook has an escape hatch.
+— restore steps are in `.claude/skills/dev/SKILL.md`; dependency caches are never captured and
+untracked files are capped at 5000 files / 50 MB per snapshot. Neither hook has an escape hatch.
+Both parse gh's global flags before the subcommand, which the prefix `deny` rules in
+`.claude/settings.json` cannot see past. A hook that CRASHES allows (no hook sets `onFailure: "block"`, so a guard bug never bricks
+the shell); every refusal is an explicit exit.
 
 ## 2. One worktree per instance (enforced)
 
@@ -169,9 +176,11 @@ branch), the only thing that actually holds a PR back is opening it as a **draft
 
 Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
 yourself is permitted when you have a reason. **A promotion merge** (`dev → staging`,
-`staging → main`) **goes through `.claude/hooks/guard-merge.sh`**: `gh pr merge <n> --merge`, never
-`--squash`, `--rebase` or `--auto`, and only once `gh pr checks <n>` shows nothing failed or pending
-and every `Release gate (<leg>)` named in `.github/workflows/release-gate.yml` passed. Any other
+`staging → main`) **goes through `.claude/hooks/guard-merge.sh`**:
+`gh pr merge <n> --merge --match-head-commit <head sha>` (the guard refuses without it and prints the
+exact command), never `--squash`, `--rebase`, `--auto` or `--delete-branch`, one merge per command,
+and only once `gh pr checks <n>` shows nothing failed or pending and every `Release gate (<leg>)`
+named in `.github/workflows/release-gate.yml` passed. Any other
 merge into `staging`/`main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
 is never yours. Never merge a red PR.
 

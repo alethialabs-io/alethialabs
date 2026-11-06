@@ -17,6 +17,16 @@
 #   wrapper words `sudo env xargs command builtin exec nohup time then do else if while ! { (` and a
 #   `sh|bash|zsh -c` prefix are peeled off, so what remains starts with the program that runs.
 #
+#   gh's global flags are skipped before the subcommand is read (cmdline_gh_globals), so a gh
+#   command with global flags before the subcommand is judged as the same command without them.
+#   The prefix-matching `deny` rules in .claude/settings.json cannot see past such flags, so for
+#   gh the hooks are the layer that holds, and the deny rules are only defence in depth.
+#
+#   CRASH DIRECTION: a hook that crashes (exit not 0 or 2) is an ALLOW — Claude Code only blocks on
+#   exit 2 unless a hook sets `onFailure: "block"`, and none does. That is chosen: a bug in a guard
+#   must never brick every Bash call. The hooks therefore refuse EXPLICITLY on the conditions they
+#   can see (an unreadable ledger, a missing jq on a priced command) rather than relying on a crash.
+#
 #   It does NOT: expand variables or globs, follow aliases or shell functions, open a script file
 #   and judge what is inside it (`bash some-script.sh` is judged as `bash`), or decode text that is
 #   built at run time (`eval "$(…)"`, base64). That is the classifier half's job (user settings);
@@ -24,16 +34,21 @@
 
 # cmdline_read_payload — read the hook JSON on stdin into CMD (the command) and CWD.
 # One jq call. The cwd is printed first so a multi-line command reads back intact.
+# Without jq the command cannot be read: CMDLINE_NO_JQ=1 and CMDLINE_RAW holds the raw payload, so
+# a hook can refuse what it would have priced or refused instead of allowing it blind.
 cmdline_read_payload() {
 	CMD=""
 	CWD=""
+	CMDLINE_NO_JQ=""
+	CMDLINE_RAW=""
 	if command -v jq >/dev/null 2>&1; then
 		{
 			IFS= read -r CWD
 			CMD="$(cat)"
 		} < <(jq -r '(.cwd // ""), (.tool_input.command // "")' 2>/dev/null)
 	else
-		cat >/dev/null
+		CMDLINE_NO_JQ=1
+		CMDLINE_RAW="$(cat)"
 	fi
 	[ -n "$CWD" ] || CWD="$PWD"
 }
@@ -248,6 +263,43 @@ cmdline_normalise() {
 		w="${w//\'/}"
 		TOK+=("$w")
 	done
+	CMDLINE_GH_REPO=""
+	if [ "${TOK[0]##*/}" = gh ]; then
+		# @mut gh-globals
+		cmdline_gh_globals
+	fi
+}
+
+# cmdline_gh_globals — drop gh's flags that come BEFORE the subcommand, so TOK reads
+# `gh <command> <subcommand> …` however it was spelled. `-R/--repo` and `--hostname` take a value
+# (joined with `=` or not); any other leading flag is treated as a switch. The repository named
+# by `-R/--repo` is kept in CMDLINE_GH_REPO (guard-merge must look the PR up THERE).
+# Boundary: an unknown leading flag that DOES take a value leaves its value as the "command", and
+# the gh rules then do not match — a spelling the classifier half has to judge.
+cmdline_gh_globals() {
+	local i=1 n=${#TOK[@]} a
+	while [ "$i" -lt "$n" ]; do
+		a="${TOK[$i]}"
+		case "$a" in
+		-R | --repo)
+			CMDLINE_GH_REPO="${TOK[$((i + 1))]:-}"
+			i=$((i + 2))
+			;;
+		--hostname) i=$((i + 2)) ;;
+		--repo=*)
+			CMDLINE_GH_REPO="${a#--repo=}"
+			i=$((i + 1))
+			;;
+		-R?*)
+			CMDLINE_GH_REPO="${a#-R}"
+			i=$((i + 1))
+			;;
+		-*) i=$((i + 1)) ;;
+		*) break ;;
+		esac
+	done
+	[ "$i" -gt 1 ] && TOK=("${TOK[0]}" "${TOK[@]:$i}")
+	return 0
 }
 
 # cmdline_is_inspect — is SEG a search-or-print command whose arguments are data?

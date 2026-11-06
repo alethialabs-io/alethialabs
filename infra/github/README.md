@@ -28,8 +28,10 @@ manual fallback only.
   and every release-gate leg passed — through `.claude/hooks/guard-merge.sh` (maintainer ruling
   2026-11-06).
   - **Repo settings prerequisite** (not TF-managed — the repo resource isn't in this stack): the queue
-    needs `allow_auto_merge` **on** so `--auto` can enqueue. Set once:
-    `gh api -X PATCH repos/:owner/:repo -F allow_auto_merge=true -F allow_update_branch=true`.
+    needs `allow_auto_merge` **on** so `--auto` can enqueue. It is set once, by the maintainer: add a
+    `github_repository` resource carrying `allow_auto_merge` and `allow_update_branch` to this stack
+    and apply it with tofu (the maintainer's, like every apply here). Agents cannot change repository
+    settings: `.claude/hooks/guard-destroy.sh` refuses API writes to the repository itself.
 
 `github_owner`/`repository` are variables → switching to an org repo is a var change.
 

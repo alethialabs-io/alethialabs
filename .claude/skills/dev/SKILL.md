@@ -193,7 +193,9 @@ PreToolUse hook spawned before the command runs.
 `.claude/hooks/guard-spend.sh` charges every priced action to `~/.alethia/spend-ledger.jsonl`
 before it runs, against **EUR 30 per rolling 7 days** shared by every instance on this machine:
 `pnpm env:box` is EUR 1, an `e2e-nightly.yml` floor dispatch EUR 0.50 plus EUR 15 per heavy input
-per provider, `e2e-ai-nightly.yml` EUR 0.10. `pnpm spend:status` prints the window and what is left.
+per provider, `e2e-ai-nightly.yml` EUR 0.10, and `gh run rerun` the price of the jobs it reruns.
+`pnpm spend:status` prints the window and what is left. A charge is taken even when the command
+then never runs, and a ledger that cannot be read or written refuses the charge.
 `env:up`/`push`/`logs`/`status`/`down`/`reap` are free. `env:box` is refused while the reap
 LaunchAgent is missing (`pnpm env:timer` installs it), and `pnpm env:timer off` is refused outright.
 
@@ -205,7 +207,10 @@ LaunchAgent is missing (`pnpm env:timer` installs it), and `pnpm env:timer off` 
 `git stash drop`/`clear` would drop and the tips `git branch -D` would drop. Each lands under
 `refs/safety/<worktree-name>/<UTC timestamp>[-stash-N|-branch-name]` in the SHARED repository, so
 it survives the worktree being deleted. Tracked and untracked files are captured; **ignored files
-(`.env`, `node_modules`, build output) are not**. Run these from any checkout:
+(`.env`, `node_modules`, build output) are not**, nor are dependency caches (`.pnpm-store`,
+`node_modules`, `.yarn/cache`, `.npm`, `.venv`, `.terraform`, `.gradle`). Untracked files are capped
+at 5000 files / 50 MB per snapshot; anything over the cap is left out, and a one-line note says how
+much and where. Run these from any checkout:
 
 ```
 git for-each-ref --sort=-refname refs/safety/          # what is there

@@ -9,14 +9,30 @@
 # THE LEDGER: ~/.alethia/spend-ledger.jsonl — outside the repo, so it survives worktrees and
 # every instance shares it. One JSON line per charge. `pnpm spend:status` prints the window.
 #
-# A charge is taken at PreToolUse, BEFORE the command runs, and is not refunded when the command
-# fails: a failed `env:box` may still have created a server, so counting it is the conservative
-# choice. A refusal exits 2 and names the action, its price, the rolling total and the budget.
+# A charge is taken at PreToolUse, BEFORE the command runs, and is never refunded: not when the
+# command fails (a failed `env:box` may still have created a server), and not when it NEVER RUNS
+# at all — a sibling hook refused it, or the user declined the permission prompt. Over-counting is
+# the conservative direction. A refusal exits 2 and names the action, its price, the rolling total
+# and the budget.
+#
+# THE LEDGER FAILS CLOSED FOR A CHARGE. A priced command is refused when the ledger directory
+# cannot be written, the ledger exists but cannot be read or written, a line in it does not parse,
+# the append fails (a full disk), or the appended charge does not read back. "charged" is printed
+# only after the read-back. A command with no price never opens the ledger.
+#
+# CRASH DIRECTION IS FAIL-OPEN, deliberately: a crash (exit other than 0/2) is an allow, because no
+# hook sets `onFailure: "block"` and a guard bug must never brick every Bash call. Every refusal
+# here is an explicit exit 2. The one input it cannot work without is jq: with no jq the command
+# cannot be read, so any payload that MENTIONS a priced or refused action is refused (R-NOJQ)
+# rather than allowed blind.
 #
 # ── THE PRICE TABLE (cents; each line says where the number comes from) ─────────────────────────
-#   C-BOX        100   `pnpm env:box` — a cpx42 sandbox at EUR 0.1114/h (infra/sandbox, CLAUDE.md
-#                      §3). The env:timer LaunchAgent reaps it after 90 idle minutes, so one
-#                      bring-up is a working session: EUR 1 buys ~9 box-hours. REFUSED outright
+#   C-BOX        100   `pnpm env:box` — PER BRING-UP, not per hour. A cpx42 sandbox at EUR 0.1114/h
+#                      (infra/sandbox, CLAUDE.md §3); the env:timer LaunchAgent reaps it after 90 idle
+#                      minutes, so one bring-up is a working session and EUR 1 buys ~9 box-hours. A
+#                      box kept busy longer is under-charged and a no-op `env:box` on a live box is
+#                      charged anyway; both are accepted for an estimate. Any spelling that runs
+#                      the script counts: /abs/path/pnpm, npx pnpm, corepack pnpm. REFUSED outright
 #                      when the reap LaunchAgent is not installed — without it a box bills
 #                      EUR 69.49/month until a human notices.
 #   C-NIGHTLY     50   `gh workflow run e2e-nightly.yml` with no heavy input — the hetzner green
@@ -33,6 +49,14 @@
 #                      the same real-cloud applies as one heavy nightly leg.
 #   C-HCLOUD     100   `hcloud --context alethia-e2e|alethia-sandbox <resource> create` — the
 #                      same order of cost as one sandbox bring-up.
+#   C-RERUN            `gh run rerun <id>` — the run's workflow is looked up over the REST API and
+#                      priced from the same table: free → 0, prod → refused, e2e-ai → 10. An
+#                      e2e-nightly rerun is charged per "Provision" job it runs again (all of them;
+#                      only the failed ones with --failed; the one named with --job): 50 for a
+#                      SCHEDULED run (the floor is the only scheduled dimension) and 1550 for a
+#                      dispatched one, because a run object carries no inputs and a dispatch may
+#                      have been heavy. A rerun with no run id, or whose lookup fails, is refused
+#                      (R-RERUN).
 #
 # ── ALWAYS REFUSED (no price makes these an agent's call) ───────────────────────────────────────
 #   R-PROD       a production deploy/release/infra workflow dispatch. Production ships ONLY
@@ -58,11 +82,13 @@
 #   R-LEDGER     writing, moving or deleting the ledger (that would reset the budget).
 #   R-BUDGET     a charge that would take the rolling 7-day total over the budget.
 #
-# FREE AND ALLOWED: release-gate.yml, ci.yml and the other free workflows in the table, gh run
-# rerun|cancel, pnpm env:up|push|logs|status|down|reap, every read.
+# FREE AND ALLOWED: release-gate.yml, ci.yml and the other free workflows in the table, a rerun
+# of one of them, gh run cancel, pnpm env:up|push|logs|status|down|reap, every read.
+#
+# gh's global flags before the subcommand are parsed by lib/cmdline.sh, so a command spelled that
+# way is priced like any other.
 #
 # BOUNDARIES — deliberately NOT caught here:
-#   · `gh run rerun` of a priced run re-buys its spend; the maintainer listed rerun as free.
 #   · spend inside a script file, an alias, or text built at run time (`eval`).
 #   · Write/Edit tool calls on the plist or the ledger (this hook sees Bash only).
 #   · cloud consoles, the Stripe/Vercel MCP tools, anything that is not a Bash command.
@@ -81,8 +107,9 @@ LEDGER="$LEDGER_DIR/spend-ledger.jsonl"
 REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 
 # ── the workflow table ──────────────────────────────────────────────────────────────────────────
-# Every workflow_dispatch workflow in .github/workflows must be classified here; --self-test
-# checks both directions (an unclassified workflow, and an entry naming no file).
+# EVERY workflow in .github/workflows must be classified here — a dispatch can only start a
+# workflow_dispatch one, but `gh run rerun` can re-run any of them. --self-test checks both
+# directions (an unclassified workflow, and an entry naming no file).
 #   free     costs nothing worth metering (CI minutes on the repo's own runners)
 #   prod     ships or changes production — refused (R-PROD)
 #   nightly  priced from its inputs (C-NIGHTLY)
@@ -92,7 +119,8 @@ wf_class() {
 	ci.yml | release-gate.yml | codeql.yml | validate-console.yml | validate-runner.yml | workflow-health.yml | \
 		merge-signal-health.yml | addon-render-determinism.yml | catalog-drift.yml | compat-drift.yml | \
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
-		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml)
+		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
+		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml)
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \
@@ -112,18 +140,24 @@ now_epoch() {
 	NOW="$(date +%s)"
 }
 
-# window_cents — sets WINDOW_CENTS: the sum of every charge in the last 7 days.
+# window_cents — sets WINDOW_CENTS: the sum of every charge in the last 7 days. FAILS (1) when the
+# ledger exists and cannot be read, or holds a line that does not parse — the caller refuses then:
+# reading an unreadable ledger as "empty" is how a budget stops being enforced without a sign.
 window_cents() {
 	WINDOW_CENTS=0
-	[ -f "$LEDGER" ] || return 0
+	[ -e "$LEDGER" ] || return 0
+	[ -r "$LEDGER" ] || return 1
 	WINDOW_CENTS="$(awk -v since=$((NOW - SPEND_WINDOW_SEC)) '
+		/^[[:space:]]*$/ { next }
+		!/"ts":[0-9]+/ || !/"cents":[0-9]+/ { bad++; next }
 		{
 			ts = $0; sub(/.*"ts":/, "", ts); sub(/[^0-9].*/, "", ts)
 			c = $0; sub(/.*"cents":/, "", c); sub(/[^0-9].*/, "", c)
 			if (ts + 0 >= since) s += c
 		}
-		END { print s + 0 }' "$LEDGER" 2>/dev/null)"
-	case "$WINDOW_CENTS" in '' | *[!0-9]*) WINDOW_CENTS=0 ;; esac
+		END { if (bad) exit 3; print s + 0 }' "$LEDGER" 2>/dev/null)" || return 1
+	case "$WINDOW_CENTS" in '' | *[!0-9]*) return 1 ;; esac
+	return 0
 }
 
 refuse() { # <rule-id> <what> [why]
@@ -164,6 +198,11 @@ settle() {
 		total=$((total + cents))
 	done
 	mkdir -p "$LEDGER_DIR" 2>/dev/null
+	if ! [ -d "$LEDGER_DIR" ] || ! [ -w "$LEDGER_DIR" ]; then
+		# @mut ledger-dir
+		refuse R-LEDGER "the spend ledger directory $LEDGER_DIR cannot be created or written, so this charge cannot be recorded. Nothing was run." \
+			"Fix the directory (permissions, a full disk) and run the command again."
+	fi
 	# Serialise the check-and-append across instances. A lock older than 60 s is a crashed hook.
 	local lock="$LEDGER_DIR/spend-ledger.lock" tries=0
 	while ! mkdir "$lock" 2>/dev/null; do
@@ -178,8 +217,18 @@ settle() {
 		sleep 0.1
 	done
 	now_epoch
-	window_cents
-	local budget=$((SPEND_BUDGET_EUR_7D * 100)) after=$((WINDOW_CENTS + total))
+	if [ -e "$LEDGER" ] && ! [ -w "$LEDGER" ]; then
+		rmdir "$lock" 2>/dev/null
+		# @mut ledger-unwritable
+		refuse R-LEDGER "the spend ledger $LEDGER cannot be written, so this charge cannot be recorded. Nothing was run."
+	fi
+	if ! window_cents; then
+		rmdir "$lock" 2>/dev/null
+		# @mut ledger-unreadable
+		refuse R-LEDGER "the spend ledger $LEDGER cannot be read or holds a line that does not parse, so the 7-day total is unknown. Nothing was run." \
+			"Inspect it with pnpm spend:status; a ledger that cannot be read must not count as an empty one."
+	fi
+	local budget=$((SPEND_BUDGET_EUR_7D * 100)) after=$((WINDOW_CENTS + total)) before_cents="$WINDOW_CENTS"
 	if [ "$after" -gt "$budget" ]; then
 		rmdir "$lock" 2>/dev/null
 		for c in "${CHARGES[@]}"; do
@@ -201,9 +250,20 @@ settle() {
 		label="${c##*|}"
 		cents="${c#*|}"
 		cents="${cents%%|*}"
-		printf '{"ts":%s,"utc":"%s","cents":%s,"eur":"%s","rule":"%s","action":"%s","session":"%s","cwd":"%s"}\n' \
-			"$NOW" "$utc" "$cents" "$(eur "$cents")" "$id" "$(json_str "$label")" "$(json_str "$session")" "$(json_str "$CWD")" >>"$LEDGER"
+		if ! printf '{"ts":%s,"utc":"%s","cents":%s,"eur":"%s","rule":"%s","action":"%s","session":"%s","cwd":"%s"}\n' \
+			"$NOW" "$utc" "$cents" "$(eur "$cents")" "$id" "$(json_str "$label")" "$(json_str "$session")" "$(json_str "$CWD")" >>"$LEDGER" 2>/dev/null; then
+			rmdir "$lock" 2>/dev/null
+			# @mut ledger-append
+			refuse R-LEDGER "could not append this charge to $LEDGER (a full disk, or the file vanished), so it cannot be recorded. Nothing was run."
+		fi
 	done
+	# Read the charge BACK before saying it was taken: a write that "succeeded" into the void
+	# (a ledger replaced by /dev/null, a filesystem that drops writes) must not count as recorded.
+	if ! window_cents || [ "$WINDOW_CENTS" != $((before_cents + total)) ]; then
+		rmdir "$lock" 2>/dev/null
+		# @mut ledger-verify
+		refuse R-LEDGER "the charge did not read back from $LEDGER (expected EUR $(eur $((before_cents + total))), read EUR $(eur "${WINDOW_CENTS:-0}")). Nothing was run."
+	fi
 	rmdir "$lock" 2>/dev/null
 	echo "guard-spend: charged EUR $(eur "$total") — rolling 7-day total EUR $(eur "$after") of EUR ${SPEND_BUDGET_EUR_7D}." >&2
 }
@@ -248,12 +308,30 @@ LOCAL_E2E_RE='^((ba)?sh[[:space:]]+)?[^[:space:]]*scripts/e2e/(provisioning|keyl
 # A program that EDITS or REMOVES a file, for the plist/ledger/threshold rules.
 MUTATORS=" rm mv cp sed perl tee truncate unlink shred plutil defaults chmod chflags ln install dd ed ex vi vim nano : "
 
+# box_seg — sets BSEG: SEG with a leading npx/pnpx/bunx/corepack wrapper dropped and the program
+# reduced to its basename, so `/opt/homebrew/bin/pnpm env:box`, `npx pnpm env:box` and
+# `corepack pnpm env:box` all read as `pnpm env:box`.
+box_seg() {
+	local s="$SEG" first
+	first="${s%%[[:space:]]*}"
+	case "${first##*/}" in npx | pnpx | bunx | corepack)
+		s="${s#"$first"}"
+		s="${s#"${s%%[![:space:]]*}"}"
+		first="${s%%[[:space:]]*}"
+		;;
+	esac
+	# @mut box-wrapper
+	s="${first##*/}${s#"$first"}"
+	BSEG="$s"
+}
+
 rule_box() {
-	if [[ "$SEG" =~ $TIMER_OFF_RE ]]; then
+	box_seg
+	if [[ "$BSEG" =~ $TIMER_OFF_RE ]]; then
 		refuse R-REAP "\`env:timer off\` removes the only thing that reaps an idle box." \
 			"The box bills by the hour it EXISTS (EUR 69.49/month left up). Reap by hand with pnpm env:reap --now; leave the timer on."
 	fi
-	if [[ "$SEG" =~ $ENVBOX_RE ]]; then
+	if [[ "$BSEG" =~ $ENVBOX_RE ]]; then
 		[ -f "$REAP_PLIST" ] ||
 			refuse R-REAP "\`env:box\` with no reap LaunchAgent installed ($REAP_PLIST is missing)." \
 				"Install the idle reaper first — pnpm env:timer — so a forgotten box dies within 90 minutes instead of billing all month."
@@ -417,6 +495,9 @@ rule_workflow() {
 	for a in "${inputs[@]}"; do
 		k="${a%%=*}"
 		v="${a#*=}"
+		# GitHub coerces a boolean input case-insensitively, so `full_bar=TRUE` is a true
+		# @mut nightly-case
+		v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
 		case "$k=$v" in
 		alibaba_allow_prepaid=true)
 			refuse R-NIGHTLY "e2e-nightly with alibaba_allow_prepaid=true buys a PREPAID resource (~USD 150/month, a teardown may not refund it)." ;;
@@ -455,10 +536,84 @@ wf_file_for_name() { # <workflow name> — print the file whose `name:` it is (o
 	if [ -n "$f" ]; then printf '%s' "${f##*/}"; else printf '%s' "$1"; fi
 }
 
+# gh run rerun [<run-id>] [--failed] [--job <id>] — price it from the run's own workflow.
+rule_rerun() {
+	local i n=${#TOK[@]} a id="" job="" failed=0 info wf ev cls repo jobs count=0 per cents
+	for ((i = 3; i < n; i++)); do
+		a="${TOK[$i]}"
+		case "$a" in
+		--failed) failed=1 ;;
+		-j | --job)
+			job="${TOK[$((i + 1))]:-}"
+			i=$((i + 1))
+			;;
+		--job=*) job="${a#--job=}" ;;
+		-*) ;;
+		*) [ -n "$id" ] || id="$a" ;;
+		esac
+	done
+	repo="${CMDLINE_GH_REPO:-"{owner}/{repo}"}"
+	if [ -z "$id" ] && [ -n "$job" ]; then
+		case "$job" in *[!0-9]*) refuse R-RERUN "\`gh run rerun --job $job\`: the job id is not a number the guard can look up." ;; esac
+		id="$(cd "${DIR:-.}" 2>/dev/null && gh api "repos/$repo/actions/jobs/$job" --jq '.run_id' 2>/dev/null)"
+	fi
+	case "$id" in "" | *[!0-9]*)
+		# @mut rerun-noid
+		refuse R-RERUN "\`gh run rerun ${id:-<no id>}\`: the run id is not a literal number the guard can look up before the command runs, so the rerun cannot be priced." \
+			"Resolve the id in one command, then rerun it by number in the next: gh run rerun <run-id> [--failed]"
+		;;
+	esac
+	info="$(cd "${DIR:-.}" 2>/dev/null && gh api "repos/$repo/actions/runs/$id" --jq '.path + " " + .event' 2>/dev/null)"
+	wf="${info%% *}"
+	ev="${info#* }"
+	wf="${wf%%@*}"
+	wf="${wf##*/}"
+	if [ -z "$info" ] || [ -z "$wf" ]; then
+		# @mut rerun-lookup
+		refuse R-RERUN "could not look up run $id (offline, or not a run in this repository), so the rerun cannot be priced."
+	fi
+	cls="$(wf_class "$wf")"
+	case "$cls" in
+	free) return 0 ;;
+	prod)
+		# A PULL-REQUEST run of a production workflow is plan/validate-only: every infra-* apply
+		# job is gated on a push to main or a dispatch, and infra-templates, infra-e2e-issuer,
+		# infra-aws-oidc and infra-sandbox have no apply job at all. Re-running one is a check.
+		[ "$ev" = pull_request ] && return 0
+		# @mut rerun-prod
+		refuse R-PROD "\`gh run rerun $id\` re-runs $wf ($ev), which ships or changes PRODUCTION."
+		;;
+	unknown) refuse R-WORKFLOW "\`gh run rerun $id\` re-runs $wf, which is not in guard-spend.sh's workflow table." ;;
+	ai)
+		charge C-RERUN 10 "gh run rerun $id ($wf)"
+		return 0
+		;;
+	esac
+	# nightly: one charge per Provision job the rerun runs again
+	jobs="$(cd "${DIR:-.}" 2>/dev/null && gh run view "$id" ${CMDLINE_GH_REPO:+-R "$CMDLINE_GH_REPO"} --json jobs \
+		--jq '.jobs[] | "\(.databaseId)\t\(.conclusion)\t\(.name)"' 2>/dev/null)"
+	[ -n "$jobs" ] || refuse R-RERUN "could not list the jobs of run $id, so the rerun cannot be priced."
+	local jid conc name
+	while IFS=$'\t' read -r jid conc name; do
+		case "$name" in Provision*) ;; *) continue ;; esac
+		if [ -n "$job" ]; then
+			[ "$jid" = "$job" ] || continue
+		elif [ "$failed" = 1 ]; then
+			case "$conc" in failure | cancelled | timed_out | startup_failure) ;; *) continue ;; esac
+		fi
+		count=$((count + 1))
+	done <<<"$jobs"
+	[ "$count" -gt 0 ] || return 0
+	if [ "$ev" = schedule ]; then per=50; else per=1550; fi
+	cents=$((count * per))
+	charge C-RERUN "$cents" "gh run rerun $id (e2e-nightly, $count Provision job(s), $ev run)"
+}
+
 rule_gh() {
 	local sub="${TOK[1]:-}" verb="${TOK[2]:-}" a name="" i n path=""
 	case "$sub" in
 	workflow) [ "$verb" = run ] && rule_workflow ;;
+	run) [ "$verb" = rerun ] && rule_rerun ;;
 	variable)
 		case "$verb" in set | delete | remove) ;; *) return 0 ;; esac
 		n=${#TOK[@]}
@@ -634,11 +789,22 @@ rule_vercel() {
 }
 
 # ── main ───────────────────────────────────────────────────────────────────────────────────────
+# Words that mark a payload the guard would price or refuse; used only when jq is missing.
+NOJQ_RE='env:box|env:timer|env\.sh|workflow run|run rerun|-e2e\.sh|hcloud|aws |gcloud|az |aliyun|stripe|_live_|vercel|variable (set|delete)|REAP_AFTER|sandbox-reap|spend-ledger|actions/workflows'
+
 main() {
 	cmdline_read_payload
+	if [ -n "$CMDLINE_NO_JQ" ]; then
+		if [[ "$CMDLINE_RAW" =~ $NOJQ_RE ]]; then
+			# @mut nojq
+			refuse R-NOJQ "jq is not installed, so the guard cannot read this command, and it mentions a priced or refused action (${BASH_REMATCH[0]})." \
+				"Install jq (brew install jq), then run it again."
+		fi
+		exit 0
+	fi
 	[ -n "$CMD" ] || exit 0
 	case "$CMD" in
-	*env:box* | *env.sh* | *env:timer* | *REAP_AFTER* | *sandbox-reap* | *workflow* | *variable* | *hcloud* | *aws* | \
+	*env:box* | *env.sh* | *env:timer* | *REAP_AFTER* | *sandbox-reap* | *workflow* | *variable* | *rerun* | *hcloud* | *aws* | \
 		*gcloud* | *az* | *aliyun* | *stripe* | *_live_* | *vercel* | *-e2e.sh* | *spend-ledger* | *.alethia*) ;;
 	*) exit 0 ;;
 	esac
@@ -727,6 +893,30 @@ self_test() {
 	mkdir -p "$home/Library/LaunchAgents" "$home/.alethia"
 	: >"$home/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 	local ledger="$home/.alethia/spend-ledger.jsonl"
+	# A stub gh for `gh run rerun`: the run lookups below answer from a table, 106 fails.
+	mkdir -p "$tmp/stub"
+	cat >"$tmp/stub/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+*actions/runs/101*) echo ".github/workflows/ci.yml pull_request" ;;
+*actions/runs/102*) echo ".github/workflows/deploy-console.yml workflow_dispatch" ;;
+*actions/runs/103*) echo ".github/workflows/e2e-ai-nightly.yml schedule" ;;
+*actions/runs/104*) echo ".github/workflows/e2e-nightly.yml schedule" ;;
+*actions/runs/105*) echo ".github/workflows/e2e-nightly.yml workflow_dispatch" ;;
+*actions/runs/107*) echo ".github/workflows/not-in-the-table.yml push" ;;
+*actions/runs/108*) echo ".github/workflows/infra-cp-aws.yml pull_request" ;;
+*actions/runs/109*) echo ".github/workflows/infra-cp-aws.yml push" ;;
+*actions/jobs/5551*) echo 104 ;;
+"run view 104 "*)
+	printf '1\tsuccess\tResolve dimension\n5551\tfailure\tProvision + verify + teardown (real cloud) (hetzner)\n'
+	printf '5552\tsuccess\tProvision + verify + teardown (real cloud) (aws)\n5553\tcancelled\tProvision + verify + teardown (real cloud) (gcp)\n'
+	printf '9\tfailure\tNightly verdict rollup (5-cloud table + dedup issue)\n'
+	;;
+"run view 105 "*) printf '7001\tfailure\tProvision + verify + teardown (real cloud) (aws)\n' ;;
+*) exit 1 ;;
+esac
+STUB
+	chmod +x "$tmp/stub/gh"
 	bad() {
 		fail=$((fail + 1))
 		echo "  ✗ $*"
@@ -736,11 +926,11 @@ self_test() {
 		local cmd="$1" payload
 		shift
 		payload="$(jq -n --arg c "$cmd" --arg d "$tmp" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}')"
-		printf '%s' "$payload" | env HOME="$home" HCLOUD_CONTEXT= HCLOUD_TOKEN= CLAUDE_PROJECT_DIR="$HOOK_ROOT" "$@" \
+		printf '%s' "$payload" | env PATH="$tmp/stub:$PATH" HOME="$home" HCLOUD_CONTEXT= HCLOUD_TOKEN= CLAUDE_PROJECT_DIR="$HOOK_ROOT" "$@" \
 			bash "$self" >/dev/null 2>"$tmp/stderr"
 		RC=$?
 	}
-	cents_in_ledger() { [ -f "$ledger" ] && awk '{c=$0; sub(/.*"cents":/,"",c); sub(/[^0-9].*/,"",c); s+=c} END{print s+0}' "$ledger" || echo 0; }
+	cents_in_ledger() { [ -f "$ledger" ] && awk '{c=$0; sub(/.*"cents":/,"",c); sub(/[^0-9].*/,"",c); s+=c} END{print s+0}' "$ledger" 2>/dev/null || echo 0; }
 	# t <block|allow> <command> [env…] — and an allow must charge NOTHING
 	t() {
 		local want="$1" cmd="$2" got before after
@@ -788,6 +978,37 @@ self_test() {
 	c 100 'hcloud --context alethia-e2e server create --name x --type cx22'
 	c 100 'HCLOUD_CONTEXT=alethia-sandbox hcloud server create --name x'
 	c 200 'pnpm env:box && hcloud --context alethia-e2e volume create --name v --size 10'
+	# any spelling that runs the script is charged, and checked for the reaper
+	c 100 '/opt/homebrew/bin/pnpm env:box'
+	c 100 'npx pnpm env:box'
+	c 100 'corepack pnpm env:box'
+	c 100 'bash /Users/x/work/app/scripts/env.sh box'
+	# boolean inputs are case-insensitive
+	c 1550 'gh workflow run e2e-nightly.yml -f full_bar=TRUE'
+	# gh's global flags before the subcommand (B1)
+	c 1550 'gh -R alethialabs-io/alethialabs workflow run e2e-nightly.yml -f full_bar=true'
+	c 50 'gh --repo=o/r workflow run e2e-nightly.yml'
+	# gh run rerun is priced from the run it reruns
+	c 100 'gh run rerun 104 --failed'
+	c 150 'gh run rerun 104'
+	c 50 'gh run rerun 104 --job 5552'
+	c 50 'gh run rerun --job 5551'
+	c 1550 'gh run rerun 105 --failed'
+	c 10 'gh run rerun 103'
+	c 0 'gh run rerun 101'
+	t block 'gh run rerun 102'
+	grep -q 'ships or changes PRODUCTION' "$tmp/stderr" && pass=$((pass + 1)) || bad "a production rerun is refused as production: $(cat "$tmp/stderr")"
+	t allow 'gh run rerun 108 --failed'
+	t block 'gh run rerun 109'
+	t block 'gh run rerun "$rid" --failed'
+	grep -q 'not a literal number' "$tmp/stderr" && pass=$((pass + 1)) || bad "a variable run id is named as such"
+	t block 'gh run rerun 106'
+	grep -q 'could not look up run 106' "$tmp/stderr" && pass=$((pass + 1)) || bad "a failed run lookup is refused by name: $(cat "$tmp/stderr")"
+	t block 'gh run rerun 107'
+	grep -q 'not in guard-spend.sh' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unknown workflow's rerun names the table"
+	t block 'gh run rerun'
+	grep -q 'rerun <no id>' "$tmp/stderr" && pass=$((pass + 1)) || bad "a rerun with no id is refused by name: $(cat "$tmp/stderr")"
+	t block 'gh run rerun --failed'
 	# cli_demo_grid reaches four providers: 0.50 + 15 × 4 = 60.50, over the budget on its own
 	t block 'gh workflow run e2e-nightly.yml -f dimension=cli-demo -f cli_demo_grid=true'
 
@@ -805,6 +1026,10 @@ self_test() {
 
 	# ── hard refusals ──
 	t block 'gh workflow run deploy-console.yml'
+	t block 'gh --repo alethialabs-io/alethialabs workflow run deploy-console.yml'
+	t block 'gh -R o/r variable set E2E_FABRIC_DEMO --body 1'
+	t block 'gh -R o/r api -X POST repos/o/r/actions/workflows/deploy-console.yml/dispatches -f ref=main'
+	t block 'npx pnpm env:timer off'
 	t block 'gh workflow run deploy-fleet-aws.yml -f x=y'
 	t block 'gh workflow run release-cli.yml'
 	t block 'gh workflow run infra-cp-hetzner.yml'
@@ -870,7 +1095,7 @@ self_test() {
 	t allow 'gh workflow run release-gate.yml -f legs=hero'
 	t allow 'gh workflow run ci.yml --ref feat/x'
 	t allow 'gh workflow run e2e-orphan-reaper.yml'
-	t allow 'gh run rerun 123 --failed'
+	t allow 'gh run rerun 101 --failed'
 	t allow 'gh run cancel 123'
 	t allow 'gh workflow list'
 	t allow 'gh variable list'
@@ -935,14 +1160,65 @@ pnpm env:box"
 	# ── the workflow table covers the repo, in both directions ──
 	local wf f cls
 	for wf in "$HOOK_ROOT"/.github/workflows/*.yml; do
-		grep -q 'workflow_dispatch' "$wf" || continue
 		f="${wf##*/}"
 		cls="$(wf_class "$f")"
-		[ "$cls" != unknown ] && pass=$((pass + 1)) || bad "the dispatchable workflow $f is not in wf_class()"
+		[ "$cls" != unknown ] && pass=$((pass + 1)) || bad "the workflow $f is not in wf_class() (a rerun can reach any workflow)"
 	done
 	for f in $(sed -n '/^wf_class() {/,/^}/p' "$self" | grep -oE '[a-z0-9-]+\.yml' | sort -u); do
 		[ -f "$HOOK_ROOT/.github/workflows/$f" ] && pass=$((pass + 1)) || bad "wf_class() names $f, which does not exist"
 	done
+
+	# ── B3: the ledger fails CLOSED for a charge ──
+	now="$(date +%s)"
+	printf '{"ts":%s,"cents":2950}\n' "$now" >"$ledger"
+	chmod 000 "$ledger"
+	t block 'pnpm env:box'
+	grep -q 'cannot be written' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unwritable ledger is named: $(cat "$tmp/stderr")"
+	chmod 200 "$ledger"
+	t block 'pnpm env:box'
+	grep -q 'cannot be read or holds a line that does not parse' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unreadable ledger is named: $(cat "$tmp/stderr")"
+	chmod 600 "$ledger"
+	printf 'this is not a ledger line\n' >>"$ledger"
+	t block 'pnpm env:box'
+	grep -q 'does not parse' "$tmp/stderr" && pass=$((pass + 1)) || bad "a corrupt line is refused: $(cat "$tmp/stderr")"
+	t allow 'git status'
+	t allow 'pnpm env:up'
+	rm -f "$ledger"
+	# the append fails (the path behind a dangling link cannot be created — the shape of a full disk)
+	ln -s "$tmp/no-such-dir/ledger" "$ledger"
+	t block 'pnpm env:box'
+	grep -q 'could not append' "$tmp/stderr" && pass=$((pass + 1)) || bad "a failed append is refused by name: $(cat "$tmp/stderr")"
+	grep -q 'charged' "$tmp/stderr" && bad "a failed append must never print charged" || pass=$((pass + 1))
+	rm -f "$ledger"
+	# the append "succeeds" into the void: the charge must read back
+	ln -s /dev/null "$ledger"
+	t block 'pnpm env:box'
+	grep -q 'did not read back' "$tmp/stderr" && pass=$((pass + 1)) || bad "an append that does not read back is refused: $(cat "$tmp/stderr")"
+	rm -f "$ledger"
+	# the directory cannot be created
+	mv "$home/.alethia" "$home/.alethia.bak"
+	: >"$home/.alethia"
+	t block 'pnpm env:box'
+	grep -q 'directory' "$tmp/stderr" && pass=$((pass + 1)) || bad "an unwritable ledger directory is refused: $(cat "$tmp/stderr")"
+	rm -f "$home/.alethia"
+	mv "$home/.alethia.bak" "$home/.alethia"
+
+	# ── no jq: a priced command is refused, an ordinary one allowed ──
+	mkdir -p "$tmp/nojq"
+	ln -sf "$(command -v cat)" "$tmp/nojq/cat"
+	nojq() { # <block|allow> <command>
+		local payload rc got
+		payload="$(jq -n --arg c "$2" '{tool_name:"Bash",cwd:"/tmp",tool_input:{command:$c}}')"
+		printf '%s' "$payload" | env PATH="$tmp/nojq" HOME="$home" "$BASH" "$self" >/dev/null 2>"$tmp/stderr"
+		rc=$?
+		case "$rc" in 0) got=allow ;; 2) got=block ;; *) got="crash($rc)" ;; esac
+		[ "$got" = "$1" ] && pass=$((pass + 1)) || bad "no jq: want=$1 got=$got : $2"
+	}
+	nojq block 'pnpm env:box'
+	nojq block 'gh workflow run e2e-nightly.yml -f full_bar=true'
+	nojq block 'gh run rerun 104'
+	nojq allow 'git status --short'
+	nojq allow 'pnpm -F console test'
 
 	# ── the ledger line is well-formed JSON ──
 	: >"$ledger"
@@ -970,6 +1246,28 @@ mutation_test() {
 		else
 			killed=$((killed + 1))
 			echo "  ✓ disabling $id fails the self-test"
+		fi
+	done
+	# Targeted mutants — see guard-destroy.sh's mutation_test for the `# @mut` marker convention.
+	local names name lib="${self%/*}/lib/cmdline.sh"
+	names="$(cat "$self" "$lib" | grep -oE '# @mut(-sub)? [a-z0-9-]+' | awk '{print $3}' | sort -u)"
+	for name in $names; do
+		cp "$self" "$dir/guard-spend.sh"
+		cp "$lib" "$dir/lib/cmdline.sh"
+		perl -i -pe 'BEGIN { $n = shift @ARGV }
+			if ($next) { if (defined $sub && length $sub) { eval $sub } else { s/^(\s*)\S+/$1true/ } $next = 0 }
+			if (/^\s*# \@mut(-sub)? \Q$n\E(?:\s+(.*))?$/) { $next = 1; $sub = $2 }' "$name" "$dir/guard-spend.sh" "$dir/lib/cmdline.sh"
+		if cmp -s "$self" "$dir/guard-spend.sh" && cmp -s "$lib" "$dir/lib/cmdline.sh"; then
+			survived=$((survived + 1))
+			echo "  ✗ marker $name did not apply"
+			continue
+		fi
+		if SELFTEST_FAILFAST=1 HOOK_ROOT="$HOOK_ROOT" bash "$dir/guard-spend.sh" --self-test >/dev/null 2>&1; then
+			survived=$((survived + 1))
+			echo "  ✗ mutant SURVIVED: disabling @$name fails no self-test case"
+		else
+			killed=$((killed + 1))
+			echo "  ✓ disabling @$name fails the self-test"
 		fi
 	done
 	echo "  ${killed} mutants killed, ${survived} survived"

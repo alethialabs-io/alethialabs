@@ -70,6 +70,7 @@ self_test() {
 	expect_hook deny "tofu -chdir=infra/cp-aws apply"
 	expect_hook deny "git push origin main"
 	expect_hook deny "gh repo delete alethialabs-io/app --yes"
+	expect_hook deny "gh -R alethialabs-io/app release delete v1 --yes"
 	expect_hook deny "gh workflow run deploy-console.yml"
 	expect_hook deny "hcloud server create --name x"
 	echo "✓ Codex hook adapter self-tests passed"
