@@ -25,10 +25,14 @@ import (
 //   - destinations are pinned to the in-cluster server + the specific namespaces the charts target;
 //   - clusterResourceWhitelist is EMPTY — no cluster-scoped resource (CRD, ClusterRole/Binding,
 //     Namespace, ValidatingWebhook, …) may be created by an untrusted chart;
-//   - namespaceResourceBlacklist denies in-namespace privilege-escalation vectors (RBAC Role/
-//     RoleBinding, ServiceAccount) so a chart can't grant itself extra permissions, and every
-//     external-secrets.io and generators.external-secrets.io kind (byoSecretSyncDenied) so a chart
-//     reads only the secret material its declared bindings give it.
+//   - namespaceResourceWhitelist is a CLOSED list of workload kinds (byoWorkloadKinds), so a
+//     namespaced kind that is not on it — RBAC Role/RoleBinding, ServiceAccount, every
+//     external-secrets.io kind, and any kind an installed operator serves — fails the sync;
+//   - namespaceResourceBlacklist still names RBAC Role/RoleBinding, ServiceAccount and the
+//     external-secrets groups (byoSecretSyncDenied). The whitelist already refuses all of them; the
+//     blacklist is the second layer, so that a later widening of the whitelist (a wildcard group, say)
+//     cannot readmit them. ArgoCD admits a namespaced kind only when it is whitelisted AND not
+//     blacklisted.
 //
 // This is the AppProject half of the trust boundary; namespace PSA + an admission controller
 // (Kyverno/Gatekeeper) are the pod-level half added before untrusted charts are allowed.
@@ -70,11 +74,19 @@ type byoProjectSpec struct {
 	Description  string           `yaml:"description"`
 	SourceRepos  []string         `yaml:"sourceRepos"`
 	Destinations []byoDestination `yaml:"destinations"`
-	// MUST be a non-nil empty slice: yaml.v3 marshals a NIL slice as `null`, and an AppProject whose
-	// clusterResourceWhitelist is `null` is not the same statement as one whose whitelist is `[]`.
-	// This is the single field the whole hardening rests on, so its emptiness is asserted by a test
-	// rather than left to whoever next edits this struct.
-	ClusterResourceWhitelist   []byoGroupKind       `yaml:"clusterResourceWhitelist"`
+	// MUST render as `[]`: ArgoCD admits a cluster-scoped kind only when this list is non-empty and
+	// matches it. yaml.v3 marshals a nil slice as `[]` too, so the explicit empty slice below is for the
+	// reader; what would change the statement is an `omitempty` tag, which drops the key. This is the
+	// single field the whole hardening rests on, so its emptiness is asserted by a test rather than
+	// left to whoever next edits this struct.
+	ClusterResourceWhitelist []byoGroupKind `yaml:"clusterResourceWhitelist"`
+	// MUST be present AND non-empty. ArgoCD reads an ABSENT namespaceResourceWhitelist (nil after
+	// decoding) as "every namespaced kind is permitted" and an empty one as "none is"
+	// (AppProject.IsGroupKindNamePermitted). yaml.v3 marshals a nil slice as `[]`, so leaving the
+	// field unset renders a closed project. What would open it is an `omitempty` tag or deleting the
+	// field, since either drops the key. TestByoAppProjectAdmitsOnlyWorkloadKinds asserts the rendered
+	// YAML carries the list.
+	NamespaceResourceWhitelist []byoGroupKind       `yaml:"namespaceResourceWhitelist"`
 	NamespaceResourceBlacklist []byoGroupKind       `yaml:"namespaceResourceBlacklist"`
 	OrphanedResources          byoOrphanedResources `yaml:"orphanedResources"`
 }
@@ -207,6 +219,45 @@ var byoSecretSyncDenied = []byoGroupKind{
 	{Group: "*.external-secrets.io", Kind: "*"},
 }
 
+// byoWorkloadKinds is the closed list of namespaced kinds a BYO chart may create. Each entry is an
+// exact group and kind: no wildcard, because ArgoCD matches each entry with filepath.Match and a "*"
+// here would admit every kind an installed operator serves in that group. The core group is "".
+//
+// A kind earns a place by being something an ordinary application chart ships to run itself, and by
+// granting nothing beyond the chart's own namespace. This list decides which KINDS a chart may
+// declare; what a container inside an admitted pod may do is the pod-level half described on
+// byoAppProject, not something this list can express.
+//
+// Absent ON PURPOSE, so refused: ServiceAccount, Role and RoleBinding (a chart may not mint an
+// identity or grant one permissions); every external-secrets.io kind (a chart reads only the secrets
+// its bindings give it — byoSecretSyncDenied); Endpoints and EndpointSlice (a Service's backends are
+// chosen by its selector, not written by hand); ResourceQuota and LimitRange (the namespace's limits
+// are the platform's to set); NetworkPolicy, as in the namespace-tenant and preview projects (a policy
+// governs every pod its selector matches in the namespace, and nothing guarantees that namespace holds
+// only this chart); and every kind served by a CustomResourceDefinition, because what such
+// an object can make its operator do is that operator's rule, not this project's. To admit another
+// kind, add it here with its reason and a case in TestByoAppProjectAdmitsOnlyWorkloadKinds.
+var byoWorkloadKinds = []byoGroupKind{
+	// Workload controllers — the chart's own processes.
+	{Group: "apps", Kind: "Deployment"},  // the usual stateless workload
+	{Group: "apps", Kind: "StatefulSet"}, // a workload with stable identity and its own volumes
+	{Group: "apps", Kind: "DaemonSet"},   // one pod per node, for node-local agents
+	{Group: "apps", Kind: "ReplicaSet"},  // what a Deployment manages; a chart may declare one directly
+	{Group: "batch", Kind: "Job"},        // run-to-completion work, including Helm hook jobs
+	{Group: "batch", Kind: "CronJob"},    // scheduled Jobs
+	{Group: "", Kind: "Pod"},             // a bare pod, as Helm test hooks declare
+	// Configuration and storage the workload reads.
+	{Group: "", Kind: "ConfigMap"},             // non-secret configuration
+	{Group: "", Kind: "Secret"},                // the chart's own secrets; bindings' secrets are the runner's
+	{Group: "", Kind: "PersistentVolumeClaim"}, // a claim on storage the cluster's StorageClasses provide
+	// Networking inside and into the namespace.
+	{Group: "", Kind: "Service"},                  // a stable address for the chart's pods
+	{Group: "networking.k8s.io", Kind: "Ingress"}, // HTTP routing through the cluster's ingress controller
+	// Availability.
+	{Group: "autoscaling", Kind: "HorizontalPodAutoscaler"}, // scales a workload in the namespace on load
+	{Group: "policy", Kind: "PodDisruptionBudget"},          // limits voluntary evictions of pods in the namespace
+}
+
 // RenderByoAppProject renders the hardened AppProject YAML locking BYO charts to their own repos
 // + namespaces. Empty inputs are tolerated (an empty sourceRepos/destinations project simply
 // admits nothing) so a mis-built snapshot fails closed rather than wide-open. commonLabels are the
@@ -241,10 +292,11 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 			Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
 		},
 		Spec: byoProjectSpec{
-			Description:              "Bring-your-own Helm charts (hardened, default-deny)",
-			SourceRepos:              repos,
-			Destinations:             dests,
-			ClusterResourceWhitelist: []byoGroupKind{}, // non-nil — see the field comment
+			Description:                "Bring-your-own Helm charts (hardened, default-deny)",
+			SourceRepos:                repos,
+			Destinations:               dests,
+			ClusterResourceWhitelist:   []byoGroupKind{}, // non-nil — see the field comment
+			NamespaceResourceWhitelist: append([]byoGroupKind{}, byoWorkloadKinds...),
 			NamespaceResourceBlacklist: append([]byoGroupKind{
 				{Group: "rbac.authorization.k8s.io", Kind: "Role"},
 				{Group: "rbac.authorization.k8s.io", Kind: "RoleBinding"},
@@ -334,8 +386,9 @@ func ValidateByoNamespace(ns string) error { return validateByoNamespace(ns) }
 // byoReservedNamespacesJSON is the ONE list of namespaces a BYO chart may never target (#6439).
 //
 // WHY A BYO CHART MUST NOT SHARE A PLATFORM NAMESPACE. The hardened AppProject denies cluster-scoped
-// objects and in-namespace RBAC, but it allows the other namespaced kinds in its destinations, so a
-// chart's isolation from the platform rests on the namespace itself. These are the namespaces on the
+// objects, and admits only a closed list of namespaced workload kinds (byoWorkloadKinds) in its
+// destinations. Those kinds include Secret, ConfigMap and Service, so a chart's isolation from the
+// platform still rests on the namespace itself. These are the namespaces on the
 // platform's side of that line.
 //
 // The console's BYO form refuses the same names up front from a mirrored copy
