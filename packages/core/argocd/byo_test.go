@@ -66,7 +66,9 @@ func TestByoRepoSecretName(t *testing.T) {
 }
 
 // TestRenderByoAppProject asserts the hardened defaults: repos + namespaces locked, cluster-scoped
-// resources default-denied (empty whitelist), RBAC/ServiceAccount namespace-blacklisted, and blank
+// resources default-denied (empty whitelist), namespaced kinds limited to a whitelist (pinned under
+// ArgoCD's matching by TestByoAppProjectAdmitsOnlyWorkloadKinds), RBAC/ServiceAccount
+// namespace-blacklisted as well, and blank
 // inputs deduped/dropped.
 func TestRenderByoAppProject(t *testing.T) {
 	out, err := RenderByoAppProject("byo-payments",
@@ -82,6 +84,7 @@ func TestRenderByoAppProject(t *testing.T) {
 		"- https://github.com/acme/payments-helm",
 		"namespace: payments",
 		"clusterResourceWhitelist: []",
+		"namespaceResourceWhitelist:",
 		"namespaceResourceBlacklist:",
 		"kind: RoleBinding",
 		"kind: ServiceAccount",
@@ -894,6 +897,122 @@ func TestByoAppProjectDeniesSecretSyncKinds(t *testing.T) {
 	} {
 		if argoResourceInList(gk.Group, gk.Kind, black) {
 			t.Errorf("the deny must not reach the ordinary workload kind %s/%s", gk.Group, gk.Kind)
+		}
+	}
+}
+
+// argoNamespacedPermitted is the namespaced branch of ArgoCD's AppProject.IsGroupKindNamePermitted
+// (pkg/apis/application/v1alpha1/app_project_types.go, v3.3.9), restated so the test below asks the
+// question ArgoCD asks of a namespaced resource in a sync:
+//
+//	isWhiteListed = namespaceWhitelist == nil || len(namespaceWhitelist) != 0 && isResourceInList(res, namespaceWhitelist)
+//	isBlackListed = len(namespaceBlacklist) != 0 && isResourceInList(res, namespaceBlacklist)
+//	return isWhiteListed && !isBlackListed
+//
+// The nil arm is the one that matters here: a project with NO namespaceResourceWhitelist admits every
+// namespaced kind, so a render that drops the field is caught as an open project, not passed as an
+// empty one. isResourceInList is argoResourceInList: filepath.Match on kind, then on group, which is
+// how "" matches only the core group and "*" matches any group.
+func argoNamespacedPermitted(group, kind string, white, black []byoGroupKind) bool {
+	isWhiteListed := white == nil || len(white) != 0 && argoResourceInList(group, kind, white)
+	isBlackListed := len(black) != 0 && argoResourceInList(group, kind, black)
+	return isWhiteListed && !isBlackListed
+}
+
+// TestByoAppProjectAdmitsOnlyWorkloadKinds pins the closed list of namespaced kinds a BYO chart may
+// create (#6485), in both directions, under ArgoCD's own matching applied to the RENDERED project:
+// every workload kind below is admitted, and a sample of kinds outside the list is refused.
+//
+// The admitted set is written out here rather than read from byoWorkloadKinds, so that widening the
+// list is a change to this test too: the rendered whitelist must equal it exactly.
+func TestByoAppProjectAdmitsOnlyWorkloadKinds(t *testing.T) {
+	out, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{"byo-e2e"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var proj byoAppProject
+	if err := yaml.Unmarshal([]byte(out), &proj); err != nil {
+		t.Fatalf("parse rendered AppProject: %v\n%s", err, out)
+	}
+	white, black := proj.Spec.NamespaceResourceWhitelist, proj.Spec.NamespaceResourceBlacklist
+	if len(white) == 0 {
+		t.Fatalf("namespaceResourceWhitelist must be present and non-empty: ArgoCD reads an absent one as "+
+			"\"every namespaced kind\" and an empty one as \"none\"; got %+v in\n%s", white, out)
+	}
+
+	admitted := []byoGroupKind{
+		{"apps", "Deployment"}, {"apps", "StatefulSet"}, {"apps", "DaemonSet"}, {"apps", "ReplicaSet"},
+		{"batch", "Job"}, {"batch", "CronJob"}, {"", "Pod"},
+		{"", "ConfigMap"}, {"", "Secret"}, {"", "PersistentVolumeClaim"},
+		{"", "Service"}, {"networking.k8s.io", "Ingress"},
+		{"autoscaling", "HorizontalPodAutoscaler"}, {"policy", "PodDisruptionBudget"},
+	}
+	for _, gk := range admitted {
+		if !argoNamespacedPermitted(gk.Group, gk.Kind, white, black) {
+			t.Errorf("a BYO chart must be able to create %q/%s; whitelist %+v, blacklist %+v", gk.Group, gk.Kind, white, black)
+		}
+	}
+	key := func(gk byoGroupKind) string { return gk.Group + "/" + gk.Kind }
+	var want, got []string
+	for _, gk := range admitted {
+		want = append(want, key(gk))
+	}
+	for _, gk := range white {
+		got = append(got, key(gk))
+	}
+	if w, g := sortedSet(want), sortedSet(got); !reflect.DeepEqual(w, g) || len(got) != len(want) {
+		t.Errorf("namespaceResourceWhitelist is %v, want exactly %v.\n"+
+			"Adding a kind is a decision: add it to byoWorkloadKinds with its reason, and here.", got, want)
+	}
+	for _, gk := range white {
+		if strings.ContainsAny(gk.Group+gk.Kind, "*?[") {
+			t.Errorf("whitelist entry %q/%s is a pattern; ArgoCD would match it with filepath.Match and admit more than one kind", gk.Group, gk.Kind)
+		}
+	}
+
+	// The protections #6479 and earlier added hold BY CONSTRUCTION: these kinds are refused by the
+	// whitelist on its own, before the blacklist is consulted. Asked with a nil blacklist on purpose.
+	identityAndSecretSync := []byoGroupKind{
+		{"rbac.authorization.k8s.io", "Role"},
+		{"rbac.authorization.k8s.io", "RoleBinding"},
+		{"", "ServiceAccount"},
+		{"external-secrets.io", "ExternalSecret"},
+		{"external-secrets.io", "SecretStore"},
+		{"external-secrets.io", "PushSecret"},
+		{"generators.external-secrets.io", "Password"},
+		{"future.external-secrets.io", "Anything"},
+	}
+	for _, gk := range identityAndSecretSync {
+		if argoNamespacedPermitted(gk.Group, gk.Kind, white, nil) {
+			t.Errorf("the whitelist alone must refuse %q/%s", gk.Group, gk.Kind)
+		}
+	}
+
+	refused := append([]byoGroupKind{
+		// Served by an operator's CRD: what such an object makes the operator do is its rule, not ours.
+		{"cert-manager.io", "Certificate"},
+		{"cert-manager.io", "Issuer"},
+		{"argoproj.io", "Application"},
+		{"monitoring.coreos.com", "ServiceMonitor"},
+		// Core and built-in kinds deliberately left out.
+		{"", "Endpoints"},
+		{"discovery.k8s.io", "EndpointSlice"},
+		{"", "ResourceQuota"},
+		{"", "LimitRange"},
+		// Refused as in the namespace-tenant and preview projects: a policy governs every pod its
+		// selector matches, and nothing guarantees the namespace holds only this chart.
+		{"networking.k8s.io", "NetworkPolicy"},
+		{"", "Event"},
+		{"coordination.k8s.io", "Lease"},
+		// The group is part of the match: a listed kind in another group is not the listed kind.
+		{"extensions", "Ingress"},
+		{"apps", "ConfigMap"},
+		{"apps.example.com", "Deployment"},
+		{"", "Deployment"},
+	}, identityAndSecretSync...)
+	for _, gk := range refused {
+		if argoNamespacedPermitted(gk.Group, gk.Kind, white, black) {
+			t.Errorf("the BYO AppProject must refuse %q/%s in a chart's namespace; whitelist %+v", gk.Group, gk.Kind, white)
 		}
 	}
 }

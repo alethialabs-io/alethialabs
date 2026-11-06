@@ -130,24 +130,63 @@ of these works:
 
 ## What your chart may create
 
-The AppProject Alethia applies is default-deny. Your chart may create **namespaced** resources in
-its **own destination namespace** and nothing else:
+The AppProject Alethia applies is default-deny. Your chart may create the **namespaced** kinds in
+the table below, in its **own destination namespace**, and nothing else. A chart that declares any
+other kind fails its sync, and the sync result names the resource.
+
+| Kind | API group | Why a chart may create it |
+|---|---|---|
+| `Deployment` | `apps` | The usual stateless workload. |
+| `StatefulSet` | `apps` | A workload with a stable identity and its own volumes. |
+| `DaemonSet` | `apps` | One pod on each node, for a node-local agent. |
+| `ReplicaSet` | `apps` | What a `Deployment` manages. A chart can also declare one directly. |
+| `Job` | `batch` | Work that runs to completion, Helm hook jobs included. |
+| `CronJob` | `batch` | A `Job` on a schedule. |
+| `Pod` | core | A single pod, as a Helm test hook declares. |
+| `ConfigMap` | core | Configuration that is not secret. |
+| `Secret` | core | Your chart's own secrets. The secrets a binding gives your chart are created by the runner. |
+| `PersistentVolumeClaim` | core | A claim on storage from the cluster's storage classes. |
+| `Service` | core | A stable address for your chart's pods. |
+| `Ingress` | `networking.k8s.io` | HTTP routing through the cluster's ingress controller. |
+| `HorizontalPodAutoscaler` | `autoscaling` | Scales a workload in the namespace as its load changes. |
+| `PodDisruptionBudget` | `policy` | Limits how many pods in the namespace a node drain can evict at once. |
+
+The API group is part of the match. An `Ingress` from the old `extensions` group, for example, is
+not on the list.
+
+Some kinds are left out on purpose:
 
 - **No cluster-scoped resources.** No `Namespace`, `ClusterRole`, `ClusterRoleBinding`,
-  `CustomResourceDefinition`, `StorageClass`, or any other cluster-scoped kind. A chart that
-  declares one fails its sync with a message naming the resource.
-- **No `Role`, `RoleBinding` or `ServiceAccount`,** even namespaced ones — a chart that could mint
+  `CustomResourceDefinition`, `StorageClass`, or any other cluster-scoped kind.
+- **No `Role`, `RoleBinding` or `ServiceAccount`,** even namespaced ones. A chart that could mint
   its own identity could grant itself more than this project allows.
 - **No secret-sync resources.** No `ExternalSecret`, `SecretStore`, `PushSecret`, or any other kind
   from the `external-secrets.io` API groups, generators included. A chart reads only the secrets
   its [bindings](/guides/design-project/bring-your-own-charts#binding-a-chart-to-your-infrastructure)
-  give it, and the runner creates those secrets for it. A chart that declares one of these kinds
-  fails its sync, and the sync result names the resource. Each deploy also deletes any such object
+  give it, and the runner creates those secrets for it. Each deploy also deletes any such object
   in the chart's namespace that no binding accounts for, and the Deploy tab names every object it
   deletes.
+- **No kinds that an operator serves,** such as a cert-manager `Certificate`, a Prometheus
+  `ServiceMonitor` or an ArgoCD `Application`. What such an object can make its operator do depends
+  on that operator, not on this project.
+- **No `Endpoints`, `EndpointSlice`, `ResourceQuota` or `LimitRange`.** A `Service` selects its own
+  backends, and the namespace's limits are the platform's to set.
+- **No `NetworkPolicy`.** A policy applies to every pod it selects in the namespace, and nothing
+  guarantees that the namespace holds only your chart.
+
+Two more rules apply to every sync:
+
 - **Only the repositories you declared.** The project is locked to your chart's repo, so an
   Application cannot be re-pointed at a source you did not configure.
 - **Only its own namespace.** The project's destinations list that namespace and no other.
+
+### Asking for another kind
+
+If your chart needs a namespaced kind that is not in the table, open a support case from
+**Support** in the console. Name the kind and its API group, the chart that uses it, and what the
+chart uses it for. A kind added to the list applies to every bring-your-own chart, so each
+addition is reviewed on its own. Until then, turn that part of the chart off, usually
+through a value, or apply it yourself outside the chart.
 
 <Callout type="warn">
   **If your chart needs a cluster-scoped resource, it cannot be a BYO chart as-is.** The usual
@@ -181,6 +220,13 @@ in your chart, usually through an `existingSecret`-style option, and it settles.
 most common causes are a resource the project forbids (see
 [What your chart may create](#what-your-chart-may-create)) and a chart path that does not exist at
 the configured revision.
+
+**The sync fails and names a kind that is not in the table.** Your chart declares a kind that
+bring-your-own charts can't create. Turn that part of the chart off, usually through a value, or
+[ask for the kind](#asking-for-another-kind). Charts often render a `ServiceAccount` by default;
+set the chart's `serviceAccount.create` value, or its equivalent, to `false`. If the chart was
+attached before its kind was refused, the objects of that kind it created earlier stay in place, and
+ArgoCD no longer manages them. Delete them yourself.
 
 **The sync fails and names an `ExternalSecret` or `SecretStore`.** Your chart ships its own
 secret-sync resource, which bring-your-own charts can't create. Turn that part of the chart off,
