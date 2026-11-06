@@ -85,10 +85,13 @@ For what an apps repository must contain, and what Alethia commits back into it,
 ## alethia-starter-chart
 
 A bring-your-own Helm chart. It renders a Deployment, a Service and a ConfigMap. Every one of them
-is namespaced and none of them is RBAC, which is the contract a bring-your-own chart must meet.
+is a namespaced workload kind that a bring-your-own chart may create. See
+[what your chart may create](/concepts/bring-your-own-charts#what-your-chart-may-create).
 
 The repository mechanises that contract in `hack/check-byo-contract.sh`. Run it against your own
-chart before you attach it, and the build fails if a change breaks the contract.
+chart before you attach it, and the build fails if a change breaks the contract. The script's list
+of kinds differs from the project's in two places: it accepts `Endpoints`, which the project
+refuses, and it does not accept `DaemonSet`, which the project admits.
 
 <Steps>
 <Step>Create your own repository from the template.</Step>
