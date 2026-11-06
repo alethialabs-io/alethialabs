@@ -746,6 +746,8 @@ That is 48 cases. C17 and C38 re-run an existing test, and each adds only what t
 | An org on a **legacy shared customer** whose customer also carries another org's live plan, or a live unlinked create-a-team subscription | (c) uses F3's classifier with no `organization_id` filter on purpose, so it refuses every purchase, Checkout and trial by O for as long as that subscription lives. That is the safe side: it never mints beside a subscription it cannot place. | The refusal names support. The operator's fix is the one F3's over-cap alert already describes: once nothing of O's is live on the shared customer, point O's `organization_billing.stripe_customer_id` at a new Stripe customer with no subscription history. New customers are no longer shared (ADR 0002 §4.2 (2)), so no new case arises. |
 | The org-plan sheet showing `notice` | A UI change. | O7, `class:ui`, a draft until the maintainer accepts it (CLAUDE.md §4). Until then the clause still rides the response. |
 
+*Superseded 2026-11-06: the `class:ui` draft gate cited here and in O7 below was dropped; such a PR now opens non-draft.*
+
 ---
 
 ## 9. Migration and rollout

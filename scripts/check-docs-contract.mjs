@@ -286,7 +286,7 @@ for (const rel of DOCS) {
 				if (/gh\s+pr\s+merge[^`]*--admin/.test(tok))
 					fail(rel, n, `recommends \`gh pr merge --admin\` (bypasses the Mergify queue): ${tok}`);
 				if (/git\s+push[^`]*\s(main|staging)\b/.test(tok))
-					fail(rel, n, `recommends pushing directly to a protected branch: ${tok}`, "promotions are the maintainer's; feature work targets dev");
+					fail(rel, n, `recommends pushing directly to a protected branch: ${tok}`, "feature work targets dev; promotions are PR merges through .claude/hooks/guard-merge.sh");
 			}
 		}
 	});

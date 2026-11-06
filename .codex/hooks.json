@@ -1,5 +1,5 @@
 {
-  "description": "Alethia worktree, runtime, IaC, merge, and migration guards for Codex.",
+  "description": "Alethia worktree, runtime, IaC, merge, spend, deletion, and migration guards for Codex.",
   "hooks": {
     "SessionStart": [
       {
