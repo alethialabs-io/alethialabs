@@ -14,6 +14,8 @@ import {
 } from "@/components/design-project/canvas/cards/card-param";
 import {
 	isRailOpen,
+	RAIL_GAP,
+	RAIL_W,
 	WorkspaceRail,
 } from "@/components/design-project/canvas/cards/workspace-rail";
 import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-store";
@@ -50,6 +52,20 @@ describe("WorkspaceRail", () => {
 		expect(screen.getByTestId("workspace-rail")).toHaveAttribute("data-open", "false");
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(document.querySelector("[data-slot=sheet-overlay]")).toBeNull();
+	});
+
+	// The rail's open/shut is a CSS width transition (`workspace-rail` in app/globals.css, which also
+	// carries its reduced-motion rule) driven by the inline width — so the width IS the state, and a
+	// card fades in through `workspace-card-in`.
+	it("drives its width transition from the inline width, and fades a card in", () => {
+		render(<WorkspaceRail projectId="p1" environmentId="e1" />);
+		const rail = screen.getByTestId("workspace-rail");
+		expect(rail).toHaveClass("workspace-rail");
+		expect(rail).toHaveStyle({ width: "0px" });
+
+		act(() => useCanvasStore.getState().openCard({ kind: "env-settings" }));
+		expect(rail).toHaveStyle({ width: `${RAIL_W + RAIL_GAP}px` });
+		expect(screen.getByText("env settings card").closest(".workspace-card-in")).not.toBeNull();
 	});
 
 	// Every store write goes through `act`. A zustand write from outside it does reach the store, but
