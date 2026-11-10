@@ -11,6 +11,7 @@ import type { Actor } from "@/lib/authz/types";
 import { resolveCliProjectAuthorized } from "@/lib/cli/project-access";
 import { resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
 import { cliEnvironmentError } from "@/lib/cli/respond";
+import { FieldRefusal } from "@/lib/actions/result";
 import { ProjectOrgRefusalError } from "@/lib/projects/refuse-other-org";
 
 /** A resolved (project, environment) pair, or the response that explains why it could not be. */
@@ -57,7 +58,9 @@ export async function resolveByoScope(
  *  - **409** when IaC attachment is refused because the environment already holds template state.
  *    That is a conflict with reality, not a bad request; the caller must destroy or choose another
  *    environment, and no retry of the same call will ever succeed.
- *  - **400** for a malformed URL, a git chart with no path, or invalid YAML — the caller's input.
+ *  - **400** for a malformed URL, a git chart with no path, or invalid YAML — the caller's input —
+ *    and for any typed field refusal (`FieldRefusal`), such as a namespace that is one of the
+ *    project's preview namespaces (#6494), whose sentence no pattern below would recognise.
  *  - **403** for an authorization refusal.
  *  - **500** for anything left, which is ours.
  */
@@ -66,6 +69,9 @@ export function byoWriteError(err: unknown): NextResponse {
 	// A typed refusal, asked before the database would refuse it (lib/projects/refuse-other-org.ts).
 	if (err instanceof ProjectOrgRefusalError) {
 		return NextResponse.json({ error: message }, { status: 409 });
+	}
+	if (err instanceof FieldRefusal) {
+		return NextResponse.json({ error: message }, { status: 400 });
 	}
 
 	if (/not enabled on this instance/i.test(message)) {

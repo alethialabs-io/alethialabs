@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1013,6 +1014,97 @@ func TestByoAppProjectAdmitsOnlyWorkloadKinds(t *testing.T) {
 	for _, gk := range refused {
 		if argoNamespacedPermitted(gk.Group, gk.Kind, white, black) {
 			t.Errorf("the BYO AppProject must refuse %q/%s in a chart's namespace; whitelist %+v", gk.Group, gk.Kind, white)
+		}
+	}
+}
+
+// byoPreviewCases is the table of namespaces checked against the preview prefix "pr" (#6494). The
+// console's mirror is run over THIS table: apps/console/tests/lib/validations/
+// byo-charts-preview-namespace.test.ts parses it out of this file, so keep each entry on one line in
+// the {"ns", bool} form that test reads.
+var byoPreviewCases = []struct {
+	ns       string
+	conflict bool
+}{
+	{"pr", true},       // the prefix itself: the vcluster arm's namespace
+	{"pr-7", true},     // a namespace-arm preview: <prefix>-<pr number>
+	{"pr-api", true},   // anything the `<prefix>-*` destination pattern admits
+	{"pre-7", false},   // shares the substring "pr", not the "pr-" boundary
+	{"prod", false},    // likewise
+	{"pr7", false},     // no "-" after the prefix
+	{"apr-7", false},   // the prefix is not at the start
+	{"my-pr-1", false}, // nor here
+}
+
+// TestByoPreviewNamespaceConflict_UsesThePreviewRenderersPrefixSemantics is the property: a BYO chart
+// conflicts with a project's previews exactly when one of the preview AppProjects the guardrails
+// renderer emits would admit its namespace. The patterns are READ from RenderPreviewGuardrails for both
+// placement modes, never restated here, so a change to how previews are named fails this test.
+func TestByoPreviewNamespaceConflict_UsesThePreviewRenderersPrefixSemantics(t *testing.T) {
+	var patterns []string
+	for _, mode := range []types.PlacementMode{types.PlacementModeNamespace, types.PlacementModeVcluster} {
+		in := basePreviewGuardrailsInput()
+		in.NamespacePrefix = "pr"
+		in.PlacementMode = mode
+		if mode == types.PlacementModeVcluster {
+			in.VClusterName = "vc"
+		}
+		out, err := RenderPreviewGuardrails(in)
+		if err != nil {
+			t.Fatalf("RenderPreviewGuardrails(%s): %v", mode, err)
+		}
+		for _, d := range decodeDocs(t, out) {
+			if d["kind"] != "AppProject" {
+				continue
+			}
+			spec, _ := d["spec"].(map[string]interface{})
+			dests, _ := spec["destinations"].([]interface{})
+			for _, raw := range dests {
+				dest, _ := raw.(map[string]interface{})
+				if ns, ok := dest["namespace"].(string); ok {
+					patterns = append(patterns, ns)
+				}
+			}
+		}
+	}
+	if len(patterns) == 0 {
+		t.Fatal("read no preview destination namespaces; the test would pass on any rule")
+	}
+	for _, c := range byoPreviewCases {
+		admitted := false
+		for _, p := range patterns {
+			if ok, _ := path.Match(p, c.ns); ok {
+				admitted = true
+			}
+		}
+		if admitted != c.conflict {
+			t.Errorf("case table says %q conflict=%v, but the preview projects (%v) admit it=%v", c.ns, c.conflict, patterns, admitted)
+		}
+		got := ByoPreviewNamespaceConflict(c.ns, "pr")
+		if (got != "") != c.conflict {
+			t.Errorf("ByoPreviewNamespaceConflict(%q, \"pr\") = %q, want conflict=%v", c.ns, got, c.conflict)
+		}
+	}
+}
+
+// TestByoPreviewNamespaceConflict_NamesThePrefixAndTheWayOut — the refusal is read by the person who
+// has to pick another namespace, so it names the namespace and the prefix, and says what to change.
+func TestByoPreviewNamespaceConflict_NamesThePrefixAndTheWayOut(t *testing.T) {
+	msg := ByoPreviewNamespaceConflict("preview-api", " preview ")
+	for _, want := range []string{`"preview-api"`, `"preview"`, `"preview-"`, "Choose a namespace", "preview namespace prefix"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message must contain %q, got: %s", want, msg)
+		}
+	}
+}
+
+// TestByoPreviewNamespaceConflict_NoPreviewConfigurationConflictsWithNothing — an empty prefix is a
+// project with no preview configuration, which has no preview namespaces. It is NOT the renderers'
+// default "preview": that would refuse "preview-api" in a project that never configured previews.
+func TestByoPreviewNamespaceConflict_NoPreviewConfigurationConflictsWithNothing(t *testing.T) {
+	for _, ns := range []string{"preview", "preview-1", "payments"} {
+		if got := ByoPreviewNamespaceConflict(ns, ""); got != "" {
+			t.Errorf("with no preview prefix, %q must not conflict, got: %s", ns, got)
 		}
 	}
 }
