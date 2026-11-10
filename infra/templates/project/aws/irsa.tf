@@ -6,20 +6,33 @@
 # Azure federated per-namespace parity is the documented #1013 follow-up.
 
 # The exact `namespace:serviceaccount` subjects each role below trusts — ONE list per role, and every
-# module in this file reads its subjects from here rather than inline (#6556). Each entry names the
-# ServiceAccount that carries the role's `eks.amazonaws.com/role-arn`, and where that SA is defined:
+# module in this file reads its subjects from here rather than inline (#6556). Each entry says how a
+# pod reaches the role, i.e. what puts the role's ARN in an `eks.amazonaws.com/role-arn` annotation:
 #
-#   rds_iam_auth          default:alethia-app            packages/core/manifests/keyless.go (keylessKSA*)
-#   fluentbit_cloudwatch  fluent-bit:fluent-bit          the fluent-bit chart's ServiceAccount (role ARN
-#                                                        exported as output `fluentbit_sa_role_arn`)
-#   karpenter             karpenter:karpenter            the Karpenter chart's ServiceAccount, namespace
-#                                                        local.karpenter_namespace (output `karpenter_sa_role`)
-#   ecr_build             alethia-build:kaniko-builder   apps/runner/internal/agent/build.go (defaultBuildServiceAccount)
+#   rds_iam_auth          default:alethia-app            the platform renders this SA AND its annotation:
+#                                                        packages/core/manifests/keyless.go (keylessKSA*),
+#                                                        keyless_aws.go (role ARN from `rds_iam_auth_irsa_arn`)
+#   ecr_build             alethia-build:kaniko-builder   the platform's BUILD Job runs AS this SA
+#                                                        (packages/core/imagebuild/kaniko.go serviceAccountName;
+#                                                        coordinates from output `ecr_build_service_account`,
+#                                                        defaults in apps/runner/internal/agent/build.go), but
+#                                                        nothing in the platform creates or annotates the SA:
+#                                                        the ARN is published as output `ecr_build_role_arn`
+#                                                        for the operator to annotate it (aws/README.md).
+#   fluentbit_cloudwatch  fluent-bit:fluent-bit          NOT rendered by the platform, which installs no
+#                                                        fluent-bit. Reached only through the output
+#                                                        `fluentbit_sa_role_arn`, for a customer-installed
+#                                                        chart whose SA is fluent-bit/fluent-bit.
+#   karpenter             karpenter:karpenter            NOT annotated by the platform. The Karpenter
+#                                                        Application (infra/templates/argocd/karpenter.yaml)
+#                                                        creates this SA without a role-arn annotation; the
+#                                                        role is reached only through the output
+#                                                        `karpenter_sa_role`, for whoever annotates that SA.
 #
 # Every role is matched with `StringEquals`, so a subject is a literal ServiceAccount, never a pattern.
 # checks_irsa_subjects.tftest.hcl pins this map exactly, refuses any `*` or `?` in it, and refuses an
 # IRSA module in this file that takes its subjects from anywhere else or matches with `StringLike`.
-# Adding a role means adding its entry here AND its consumer's location above.
+# Adding a role means adding its entry here AND saying above how a pod reaches it.
 locals {
   irsa_service_accounts = {
     rds_iam_auth         = ["default:alethia-app"]

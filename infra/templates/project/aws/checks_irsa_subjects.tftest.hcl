@@ -15,7 +15,13 @@
 #      from that map and match with `StringEquals`. Without this half an inline
 #      `namespace_service_accounts = [...]` would bypass the pinned map and pass (1) untouched.
 #
-# BOUNDARY, stated so nobody reads more into a green run: (2) reads irsa.tf only. The other IRSA
+# BOUNDARY, stated so nobody reads more into a green run: (2) counts `namespace_service_accounts`
+# arguments and iam-role-for-service-accounts-eks module calls. On its own it does not see a role that
+# uses NEITHER — a raw `resource "aws_iam_role"` with a hand-written trust, or a different OIDC module
+# such as iam-assumable-role-with-oidc. Its last assertion closes exactly that: irsa.tf may hold no
+# `aws_iam_role` resource and no module call whose source is anything but
+# iam-role-for-service-accounts-eks. A role built some other way belongs in another file, with its own
+# subject test. Also, (2) reads irsa.tf only. The other IRSA
 # roles in this template — registry-pull.tf, helm-repo-pull.tf, karpenter.tf's module inputs and
 # modules/eks/irsa.tf — are not routed through the map. Run (3) still refuses a wildcard in any of
 # their literal subject lists, but it reads source text, so a wildcard arriving through a variable
@@ -150,6 +156,18 @@ run "every_irsa_module_in_irsa_tf_reads_the_pinned_map" {
     )
     error_message = "Every IRSA role in irsa.tf must match its subjects with StringEquals; StringLike turns a subject into a pattern."
   }
+
+  # The roles (2) cannot count. The known set of both is EMPTY today: no raw aws_iam_role, and every
+  # module call in irsa.tf is the IRSA module. Widening either is a decision, not a drive-by.
+  assert {
+    condition = (
+      length(regexall("resource\\s+\"aws_iam_role\"", file("${path.module}/irsa.tf"))) == 0 &&
+      length(regexall("iam-assumable-role-with-oidc", file("${path.module}/irsa.tf"))) == 0 &&
+      length(regexall("(?m)^\\s*source\\s*=", file("${path.module}/irsa.tf"))) ==
+      length(regexall("(?m)^\\s*source\\s*=\\s*\"terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks\"", file("${path.module}/irsa.tf")))
+    )
+    error_message = "irsa.tf builds a role outside the pinned pattern (a raw aws_iam_role, iam-assumable-role-with-oidc, or another module source); its trust subjects would be untested."
+  }
 }
 
 # 3. No literal wildcard subject anywhere in the template's IRSA inputs, including the roles outside
@@ -168,14 +186,16 @@ run "no_irsa_subject_list_in_the_template_is_a_pattern" {
     error_message = "An IRSA subject list in the AWS template contains `*` or `?`; name the exact namespace:serviceaccount instead."
   }
 
-  # The scan above passes vacuously if its regex stops matching. Eight literal lists exist today
-  # (registry-pull, helm-repo-pull, karpenter.tf, and five in modules/eks/irsa.tf); fewer means the
-  # scan went blind, not that the template got cleaner.
+  # The scan above passes vacuously if its regex stops matching. EXACTLY eight literal lists exist
+  # today: registry-pull.tf, helm-repo-pull.tf, karpenter.tf, and five in modules/eks/irsa.tf. The
+  # count is exact, not a floor, so a list that turns non-literal (and drops out of the scan) cannot
+  # hide behind a newly added one. When you add, remove or route a list through a local, update the 8
+  # here AND the inventory in this comment, in the same change.
   assert {
     condition = length(flatten([
       for f in concat(tolist(fileset(path.module, "*.tf")), tolist(fileset(path.module, "modules/*/*.tf"))) :
       regexall("namespace_service_accounts\\s*=\\s*\\[([^\\]]*)\\]", file("${path.module}/${f}"))
-    ])) >= 8
-    error_message = "The wildcard scan matched fewer than the eight literal IRSA subject lists the template holds; the scan, not the template, changed."
+    ])) == 8
+    error_message = "The wildcard scan did not match exactly the eight literal IRSA subject lists this file inventories. Either the template's lists changed (update the count and the inventory) or the scan went blind."
   }
 }
