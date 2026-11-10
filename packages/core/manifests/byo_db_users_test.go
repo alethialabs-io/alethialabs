@@ -214,7 +214,7 @@ func TestByoDBUsersJob_RendersPerCloud(t *testing.T) {
 				}
 			}
 			if provider == "azure" {
-				if dig(pod, "serviceAccountName") != byoDBUsersAdminName("env-1") {
+				if dig(pod, "serviceAccountName") != ByoDBUsersAzureServiceAccount {
 					t.Errorf("Azure pod runs as %v", dig(pod, "serviceAccountName"))
 				}
 				sa := byoUsersDoc(t, job.Credentials[0].YAML)

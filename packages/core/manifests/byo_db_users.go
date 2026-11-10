@@ -63,6 +63,19 @@ const (
 	ByoDBUsersJobNamePrefix = byoDBUsersNamePrefix
 	// byoDBUsersEnvHashLen is how many hex characters of the environment hash a name carries.
 	byoDBUsersEnvHashLen = 10
+	// ByoDBUsersAzureServiceAccount is the ServiceAccount the Azure run's pod runs as. Its name is
+	// FIXED, not per environment, because the Azure template federates the dedicated admin identity
+	// to exactly system:serviceaccount:<ByoDBUsersNamespace>:<this> (app-db-identity.tf
+	// azure_byo_db_users_ksa_name), and an Azure federated credential matches its subject exactly,
+	// with no wildcard. One name per cluster is enough: the admin outputs and the credential exist
+	// only where the environment provisions its own AKS cluster (provision_aks), and the credential's
+	// issuer is that cluster's (module.aks[0].oidc_issuer_url). The credential trusts any pod running
+	// as this ServiceAccount in ByoDBUsersNamespace on that cluster. What keeps other workloads out of
+	// the namespace: BYO charts refuse it by exact name (argocd byo_reserved_namespaces.json), and
+	// the runner refuses to start a run while it holds a foreign object (provisioner
+	// foreignByoDBUsersObjects). A namespace-placed environment is not yet refused it (#6551).
+	// TestByoDBUsers_AzureServiceAccountMatchesTheTemplate pins the two spellings equal.
+	ByoDBUsersAzureServiceAccount = byoDBUsersNamePrefix + "admin"
 )
 
 // byoDBUsersRunIDRe bounds the run id folded into the Job's name: a Job name is also a pod label
@@ -137,7 +150,8 @@ func byoDBUsersUserSecretName(environment, user string) string {
 	return ByoDBUsersBaseName(environment) + "-u-" + strings.TrimPrefix(user, ByoDBUserPrefix)
 }
 
-// byoDBUsersAdminName is the admin ExternalSecret's (AWS/GCP) or ServiceAccount's (Azure) name.
+// byoDBUsersAdminName is the admin ExternalSecret's name (AWS/GCP). The Azure ServiceAccount is
+// ByoDBUsersAzureServiceAccount instead.
 func byoDBUsersAdminName(environment string) string {
 	return ByoDBUsersBaseName(environment) + "-admin"
 }
@@ -403,7 +417,7 @@ func byoDBUsersAdminConnection(p ByoDBUsersJobParams, store string) (byoDBUsersC
 		if err != nil {
 			return c, err
 		}
-		name := byoDBUsersAdminName(env)
+		name := ByoDBUsersAzureServiceAccount
 		saLabels := map[string]string{"azure.workload.identity/use": "true"}
 		for k, v := range labels {
 			saLabels[k] = v
