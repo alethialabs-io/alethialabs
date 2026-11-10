@@ -144,8 +144,9 @@ func TestDecideByoAdmissionModes(t *testing.T) {
 type renderedPolicy struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name   string            `yaml:"name"`
-		Labels map[string]string `yaml:"labels"`
+		Name        string            `yaml:"name"`
+		Labels      map[string]string `yaml:"labels"`
+		Annotations map[string]string `yaml:"annotations"`
 	} `yaml:"metadata"`
 	Spec struct {
 		FailurePolicy    string `yaml:"failurePolicy"`
@@ -305,6 +306,11 @@ func TestByoAdmissionPolicy_Shape(t *testing.T) {
 				t.Errorf("%s: rule %s reads %s, which the policy does not match (%v)", name, r.ID, r.Kind, reached)
 			}
 		}
+		for _, d := range []renderedPolicy{p, b} {
+			if d.Metadata.Labels["alethia.io/managed-by"] != "byo-charts" || d.Metadata.Annotations[ByoAdmissionSchemaAnnotation] != "1" {
+				t.Errorf("%s %s: labels %v annotations %v, want managed-by byo-charts and schema version 1", d.Kind, name, d.Metadata.Labels, d.Metadata.Annotations)
+			}
+		}
 		if len(p.Metadata.Labels) != 1 || len(b.Metadata.Labels) != 1 {
 			t.Errorf("%s carries labels %v / %v: a cluster-scoped object shared by every environment must carry no environment's labels", name, p.Metadata.Labels, b.Metadata.Labels)
 		}
@@ -459,13 +465,13 @@ func TestAdmissionPolicyServed(t *testing.T) {
 // wholeOutput matches a kubectl output flag that prints whole objects.
 var wholeOutput = regexp.MustCompile(`-o (json|yaml|wide)(\s|$)`)
 
-// TestReadByoAdmissionObjects reads Services and Ingresses as JSON and Secrets by name and type only,
-// so no Secret value is ever printed to the runner.
+// TestReadByoAdmissionObjects reads Services and Ingresses as JSON, and lists only the NAMES of the
+// Secrets of the refused type, selected by the API server, so no Secret value reaches the runner.
 func TestReadByoAdmissionObjects(t *testing.T) {
 	stub := newKubectlStub(t, 0,
 		stubRule{Match: "get services -n byo-a -o json", Stdout: `{"items":[{"metadata":{"name":"web"},"spec":{"type":"LoadBalancer","externalIPs":["203.0.113.7"]}}]}`},
 		stubRule{Match: "get ingresses.networking.k8s.io -n byo-a -o json", Stdout: `{"items":[{"metadata":{"name":"in","annotations":{"nginx.ingress.kubernetes.io/server-snippet":"x"}}}]}`},
-		stubRule{Match: "get secrets -n byo-a", Stdout: "tok\tkubernetes.io/service-account-token\nplain\tOpaque\n"},
+		stubRule{Match: "get secrets -n byo-a", Stdout: "secret/tok\n"},
 	)
 	objs, err := ReadByoAdmissionObjects("byo-a")
 	if err != nil {
@@ -480,8 +486,9 @@ func TestReadByoAdmissionObjects(t *testing.T) {
 		t.Errorf("rules = %v, want %v", rules, want)
 	}
 	for _, c := range stub.calls() {
-		if strings.Contains(c, "secrets") && (wholeOutput.MatchString(c) || !strings.Contains(c, "-o jsonpath=")) {
-			t.Errorf("secrets were read whole: %q", c)
+		if strings.Contains(c, "secrets") && (wholeOutput.MatchString(c) || !strings.HasSuffix(c, " -o name") ||
+			!strings.Contains(c, "--field-selector type=kubernetes.io/service-account-token")) {
+			t.Errorf("secrets were not listed by name under the token-type field selector: %q", c)
 		}
 	}
 	if _, err := ReadByoAdmissionObjects("bad name"); err == nil {
@@ -520,5 +527,67 @@ namespace/byo-a labeled (server dry run)
 	}
 	if _, err := PreviewByoPodSecurity("bad name"); err == nil {
 		t.Error("a malformed namespace name reached kubectl")
+	}
+}
+
+// TestParseSecretNames reads `-o name` output and ignores anything that is not a Secret line.
+func TestParseSecretNames(t *testing.T) {
+	got := parseSecretNames("secret/a\n\nsecret/\nconfigmap/x\n  secret/b  \n", "kubernetes.io/service-account-token")
+	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" || got[0].SecretType != "kubernetes.io/service-account-token" {
+		t.Errorf("parsed %+v, want secrets a and b of the selected type", got)
+	}
+}
+
+// TestServiceAccountTokenReasonIsTheTokensLifetime pins the stated reason. Pods already receive the
+// namespace ServiceAccount's projected token, so "a credential the chart was not given" is false;
+// what the rule prevents is a stored token that never expires. A wrong reason is the one someone
+// reads when deciding to loosen the rule.
+func TestServiceAccountTokenReasonIsTheTokensLifetime(t *testing.T) {
+	for _, r := range byoAdmissionRules {
+		if r.ID != "service-account-token-secret" {
+			continue
+		}
+		if !strings.Contains(r.Message, "never expires") || !strings.Contains(r.Message, "projected") || strings.Contains(r.Message, "not given") {
+			t.Errorf("service-account-token message states the wrong reason: %s", r.Message)
+		}
+		return
+	}
+	t.Fatal("no service-account-token rule")
+}
+
+// TestByoAdmissionNewerLive: a runner never replaces a policy an upgraded runner applied. An object
+// without the annotation, or at our version or below, may be replaced; a higher version, or one that
+// is not a whole number, may not; output that does not parse is an error, never "nothing newer".
+func TestByoAdmissionNewerLive(t *testing.T) {
+	item := func(ann string) string {
+		if ann == "" {
+			return `{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"p"}}`
+		}
+		return `{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"p","annotations":{"alethia.io/byo-admission-schema":"` + ann + `"}}}`
+	}
+	list := func(items ...string) string { return `{"kind":"List","items":[` + strings.Join(items, ",") + `]}` }
+	for _, tc := range []struct {
+		name, raw string
+		newer     bool
+	}{
+		{"nothing live", "", false},
+		{"empty list", list(), false},
+		{"no annotation", list(item("")), false},
+		{"same version", list(item("2")), false},
+		{"older version", list(item("1")), false},
+		{"newer version", list(item("1"), item("3")), true},
+		{"not a number", list(item("v2")), true},
+	} {
+		got, err := byoAdmissionNewerLive(tc.raw, 2)
+		if err != nil || (got != "") != tc.newer {
+			t.Errorf("%s: got %q, %v; want newer=%v", tc.name, got, err, tc.newer)
+		}
+	}
+	if _, err := byoAdmissionNewerLive("error: forbidden", 2); err == nil {
+		t.Error("unreadable output read as nothing newer")
+	}
+	newKubectlStub(t, 1)
+	if _, err := ByoAdmissionPolicyNewerLive(); err == nil {
+		t.Error("a failed read returned no error")
 	}
 }

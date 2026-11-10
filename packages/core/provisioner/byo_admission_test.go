@@ -38,6 +38,9 @@ type admissionClusterSpec struct {
 	Services map[string]string
 	// PodSecurity is what the PSA dry run prints, for every namespace.
 	PodSecurity string
+	// LivePolicy is the live BYO policy objects; LivePolicyFail makes that read fail.
+	LivePolicy     string
+	LivePolicyFail bool
 }
 
 // served is a discovery document that serves ValidatingAdmissionPolicy.
@@ -63,6 +66,10 @@ func newAdmissionCluster(t *testing.T, s admissionClusterSpec) *admissionCluster
 	if s.Discovery == "" {
 		discExit = "1"
 	}
+	liveExit := "0"
+	if s.LivePolicyFail {
+		liveExit = "1"
+	}
 	var svc strings.Builder
 	for ns, body := range s.Services {
 		svc.WriteString("  *'get services -n " + ns + " -o json'*) cat '" + write("svc-"+ns, body) + "'; exit 0;;\n")
@@ -73,6 +80,7 @@ func newAdmissionCluster(t *testing.T, s admissionClusterSpec) *admissionCluster
 		"  'apply -f '*) cat \"$3\" >> '" + c.applied + "'; printf '\\n---\\n' >> '" + c.applied + "'; exit 0;;\n" +
 		"  *'--ignore-not-found -o json'*) cat '" + write("ns.json", s.Namespaces) + "'; exit " + nsExit + ";;\n" +
 		"  *'get --raw /apis/admissionregistration.k8s.io/v1'*) cat '" + write("disc.json", s.Discovery) + "'; exit " + discExit + ";;\n" +
+		"  *'get validatingadmissionpolicies'*) cat '" + write("live-policy.json", s.LivePolicy) + "'; exit " + liveExit + ";;\n" +
 		svc.String() +
 		"  *'--dry-run=server'*) cat '" + write("psa.txt", s.PodSecurity) + "'; exit 0;;\n" +
 		"esac\ncat >/dev/null 2>&1\nexit 0\n"
@@ -310,5 +318,51 @@ func TestRunAddOnStage_CarriesTheAdmissionReport(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the admission report did not reach the Deploy tab: %v", stage.Warnings)
+	}
+}
+
+// newerLivePolicy is a live policy applied by a runner with a newer rule set.
+const newerLivePolicy = `{"kind":"List","items":[{"kind":"ValidatingAdmissionPolicy","metadata":{"name":"alethia-byo-admission-enforce","annotations":{"alethia.io/byo-admission-schema":"99"}}}]}`
+
+// TestConfigureByoCharts_ANewerLivePolicyIsNotReplaced: an older runner leaves a newer rule set in
+// place and says so, and treats it as in force (the enforce namespace is not scanned).
+func TestConfigureByoCharts_ANewerLivePolicyIsNotReplaced(t *testing.T) {
+	c := newAdmissionCluster(t, admissionClusterSpec{Namespaces: existingOld, Discovery: served, LivePolicy: newerLivePolicy})
+	var stderr bytes.Buffer
+	configureByoCharts(twoChartConfig(), "tok", nil, nil, io.Discard, &stderr)
+	for k := range c.docs(t) {
+		if strings.HasPrefix(k, "ValidatingAdmissionPolicy") {
+			t.Errorf("%s was applied over a newer rule set", k)
+		}
+	}
+	if !strings.Contains(stderr.String(), "not replacing the BYO admission policy") || !strings.Contains(stderr.String(), `"99"`) {
+		t.Errorf("the newer rule set was not reported:\n%s", stderr.String())
+	}
+	if strings.Contains(c.calls(), "-n byo-fresh") {
+		t.Error("the enforce namespace was scanned although a newer policy is in force there")
+	}
+}
+
+// TestConfigureByoCharts_AnUnreadableLivePolicyIsNotOverwritten: when the live policy cannot be read
+// the runner does not apply blind, and reports the enforce namespace as having no policy it knows of.
+func TestConfigureByoCharts_AnUnreadableLivePolicyIsNotOverwritten(t *testing.T) {
+	c := newAdmissionCluster(t, admissionClusterSpec{
+		Namespaces: existingOld, Discovery: served, LivePolicyFail: true,
+		Services: map[string]string{"byo-fresh": `{"items":[{"metadata":{"name":"edge"},"spec":{"type":"NodePort"}}]}`},
+	})
+	got := configureByoCharts(twoChartConfig(), "tok", nil, nil, io.Discard, io.Discard)
+	for k := range c.docs(t) {
+		if strings.HasPrefix(k, "ValidatingAdmissionPolicy") {
+			t.Errorf("%s was applied although the live policy could not be read", k)
+		}
+	}
+	reported := false
+	for _, r := range got.Admission {
+		if r.Namespace == "byo-fresh" && strings.Contains(r.warning(), "could not be read") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Errorf("the enforce namespace was not reported: %+v", got.Admission)
 	}
 }

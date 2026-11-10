@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -46,6 +47,13 @@ import (
 // policy bindings select on it, and RenderByoNamespaces renders the PSA labels from it. Namespace
 // is cluster-scoped, so a chart cannot change it: the hardened AppProject's clusterResourceWhitelist
 // is empty.
+//
+// A KNOWN TRANSIENT, accepted until every runner on a cluster is at least this version: namespaces
+// are applied with client-side `kubectl apply`, so a runner built before #6495 re-applying the same
+// Namespace (two environments sharing one, or a rollback) computes its three-way merge against the
+// last-applied annotation this runner wrote and REMOVES this label and the PSA labels. The namespace
+// then matches neither binding, and the next deploy by a current runner finds it existing with no
+// mode and sets "warn". That fails open, never into an outage; it stops once old runners are gone.
 const ByoAdmissionModeLabel = "alethia.io/byo-admission"
 
 // ByoAdmissionMode is one value of ByoAdmissionModeLabel.
@@ -221,10 +229,12 @@ const (
 // added before the setting exists.
 var byoForbiddenServiceTypes = []string{"LoadBalancer", "NodePort"}
 
-// byoServiceAccountTokenSecretType is the Secret type the token controller fills with a
-// non-expiring token for the ServiceAccount the Secret names. A chart may not create
-// ServiceAccounts (the AppProject refuses them), but the namespace's "default" one always exists,
-// so such a Secret would hand the chart a long-lived credential it was never given.
+// byoServiceAccountTokenSecretType is the Secret type the token controller fills with a token for
+// the ServiceAccount the Secret names. What the rule prevents is that token's LIFETIME, not access
+// to the identity: a pod in the namespace already receives the ServiceAccount's projected token
+// (unless automount is off), but that token is short-lived, bound to the pod and rotated by the
+// kubelet. The Secret's token never expires and is stored, so it outlives the pod and anything that
+// can read the Secret can use it indefinitely.
 const byoServiceAccountTokenSecretType = "kubernetes.io/service-account-token"
 
 // byoSnippetMarker is what an Ingress annotation key contains when it hands the ingress controller
@@ -301,7 +311,7 @@ var byoAdmissionRules = []byoAdmissionRule{
 		Expression: "request.kind.kind != 'Secret' || !has(object.type) || object.type != '" +
 			byoServiceAccountTokenSecretType + "'",
 		Message: "a bring-your-own chart may not declare a Secret of type " + byoServiceAccountTokenSecretType +
-			": it would mint a long-lived token for a ServiceAccount the chart was not given.",
+			": it stores a ServiceAccount token that never expires. Pods already receive short-lived projected tokens without it.",
 		Violates: func(o ByoAdmissionObject) string {
 			if o.Kind == "Secret" && o.SecretType == byoServiceAccountTokenSecretType {
 				return "type is " + byoServiceAccountTokenSecretType
@@ -337,9 +347,26 @@ var byoAdmissionRules = []byoAdmissionRule{
 
 // The policy's wire shape. Typed structs, marshalled, for the reasons byoAppProject gives.
 type byoAdmissionMeta struct {
-	Name   string            `yaml:"name"`
-	Labels map[string]string `yaml:"labels"`
+	Name        string            `yaml:"name"`
+	Labels      map[string]string `yaml:"labels"`
+	Annotations map[string]string `yaml:"annotations"`
 }
+
+// ByoAdmissionSchemaAnnotation carries the version of the rule set a runner applied, on each of the
+// four cluster-scoped policy objects.
+//
+// WHY. The objects are shared by every environment on the cluster, and every runner re-applies its
+// own copy on every deploy, so the last writer wins. While rules are only ever added that is
+// harmless. Once a rule is removed or loosened, an OLDER runner still deploying to the same cluster
+// (another environment not yet upgraded, or a rollback) would put it back on every one of its
+// deploys. So a runner reads the live version first and never replaces a newer one; it reports
+// instead (ByoAdmissionPolicyNewerLive).
+const ByoAdmissionSchemaAnnotation = "alethia.io/byo-admission-schema"
+
+// byoAdmissionSchemaVersion is this runner's rule-set version. Raise it with ANY change to the
+// rendered policies or bindings — a rule, a message, a selector, a failurePolicy — so that a runner
+// built before the change cannot undo it.
+const byoAdmissionSchemaVersion = 1
 
 type byoAdmissionPolicy struct {
 	APIVersion string                 `yaml:"apiVersion"`
@@ -420,7 +447,11 @@ func RenderByoAdmissionPolicy() (string, error) {
 		{APIGroups: []string{"networking.k8s.io"}, APIVersions: []string{"v1"}, Operations: []string{"CREATE", "UPDATE"}, Resources: []string{"ingresses"}},
 	}}
 	meta := func(name string) byoAdmissionMeta {
-		return byoAdmissionMeta{Name: name, Labels: map[string]string{byoNamespaceManagedByLabel: byoNamespaceManagedByValue}}
+		return byoAdmissionMeta{
+			Name:        name,
+			Labels:      map[string]string{byoNamespaceManagedByLabel: byoNamespaceManagedByValue},
+			Annotations: map[string]string{ByoAdmissionSchemaAnnotation: strconv.Itoa(byoAdmissionSchemaVersion)},
+		}
 	}
 	policy := func(name, failure string) byoAdmissionPolicy {
 		return byoAdmissionPolicy{
@@ -451,6 +482,53 @@ func RenderByoAdmissionPolicy() (string, error) {
 		policy(ByoAdmissionEnforcePolicy, "Fail"),
 		binding(ByoAdmissionEnforcePolicy, []string{"Deny"}, ByoAdmissionEnforce),
 	)
+}
+
+// ByoAdmissionPolicyNewerLive reads the live BYO policy objects (by their managed-by label) and
+// says whether any of them carries a NEWER rule-set version than this runner's, naming it. A runner
+// that finds one must not apply its own (see ByoAdmissionSchemaAnnotation). An error means the
+// live objects could not be read, and the caller must not apply blind either.
+func ByoAdmissionPolicyNewerLive() (string, error) {
+	out, err := utils.ExecuteCommandWithOutput(fmt.Sprintf(
+		"kubectl get validatingadmissionpolicies.admissionregistration.k8s.io,validatingadmissionpolicybindings.admissionregistration.k8s.io -l %s=%s -o json",
+		byoNamespaceManagedByLabel, byoNamespaceManagedByValue), ".", nil)
+	if err != nil {
+		return "", fmt.Errorf("read the live BYO admission policy: %w", err)
+	}
+	return byoAdmissionNewerLive(out, byoAdmissionSchemaVersion)
+}
+
+// byoAdmissionNewerLive reads a `kubectl get … -o json` List and returns a description of the first
+// object whose schema version is newer than ours, or "". An object with no annotation predates the
+// annotation, so it is older. An annotation that is not a whole number was not written by any runner
+// this code knows, so it is treated as newer: replacing what cannot be read is the unsafe direction.
+func byoAdmissionNewerLive(raw string, ours int) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	var list struct {
+		Items []struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name        string            `json:"name"`
+				Annotations map[string]string `json:"annotations"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return "", fmt.Errorf("parse the live BYO admission policy: %w", err)
+	}
+	for _, it := range list.Items {
+		v, ok := it.Metadata.Annotations[ByoAdmissionSchemaAnnotation]
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n > ours {
+			return fmt.Sprintf("%s %s carries rule-set version %q, newer than this runner's %d", it.Kind, it.Metadata.Name, v, ours), nil
+		}
+	}
+	return "", nil
 }
 
 // ByoAdmissionPolicyAvailability says whether the cluster serves ValidatingAdmissionPolicy at
@@ -490,7 +568,8 @@ func admissionPolicyServed(raw string) (bool, string) {
 // ---- Reporting what the rules refuse ----
 
 // ByoAdmissionObject is the slice of a live Service, Secret or Ingress the rules read. It never
-// carries a Secret's data: ReadByoAdmissionObjects reads only a Secret's name and type.
+// carries a Secret's data: ReadByoAdmissionObjects lists only the names of the Secrets the rule
+// refuses.
 type ByoAdmissionObject struct {
 	Kind        string
 	Name        string
@@ -528,8 +607,10 @@ func ByoAdmissionViolations(objs []ByoAdmissionObject) []ByoAdmissionViolation {
 }
 
 // ReadByoAdmissionObjects reads the live Services, Ingresses and Secrets in namespace ns, as much of
-// each as the rules need. Secrets are read with a jsonpath that prints only name and type, so no
-// secret value reaches the runner's memory beyond kubectl's own process, or its logs.
+// each as the rules need. Secrets are listed by NAME, with a field selector on the one type the
+// rule refuses (--field-selector type=… -o name): the API server does the selecting, so kubectl
+// never receives an ordinary Secret at all, and only names are printed — no secret value reaches
+// the runner's memory or its logs.
 //
 // Live objects, not the chart's rendered manifests: ArgoCD renders the chart, not the runner. What
 // is live is what a "warn" namespace runs today, and what the next sync of a changed chart would
@@ -551,11 +632,11 @@ func ReadByoAdmissionObjects(ns string) ([]ByoAdmissionObject, error) {
 		objs = append(objs, got...)
 	}
 	raw, err := utils.ExecuteCommandWithOutput(
-		fmt.Sprintf(`kubectl get secrets -n %s -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.type}{"\n"}{end}'`, ns), ".", nil)
+		fmt.Sprintf("kubectl get secrets -n %s --field-selector type=%s -o name", ns, byoServiceAccountTokenSecretType), ".", nil)
 	if err != nil {
 		return nil, fmt.Errorf("read secrets in %s: %w", ns, err)
 	}
-	objs = append(objs, parseSecretTypes(raw)...)
+	objs = append(objs, parseSecretNames(raw, byoServiceAccountTokenSecretType)...)
 	return objs, nil
 }
 
@@ -591,11 +672,13 @@ func parseAdmissionObjects(kind, raw string) ([]ByoAdmissionObject, error) {
 	return out, nil
 }
 
-// parseSecretTypes reads the name<TAB>type lines ReadByoAdmissionObjects prints for Secrets.
-func parseSecretTypes(raw string) []ByoAdmissionObject {
+// parseSecretNames reads the `secret/<name>` lines of `kubectl get secrets --field-selector
+// type=<typ> -o name`. Every listed Secret has type typ, because the API server selected it on that
+// field; the type is recorded so the rule's own predicate still decides what is reported.
+func parseSecretNames(raw, typ string) []ByoAdmissionObject {
 	var out []ByoAdmissionObject
 	for _, line := range strings.Split(raw, "\n") {
-		name, typ, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		name, ok := strings.CutPrefix(strings.TrimSpace(line), "secret/")
 		if !ok || name == "" {
 			continue
 		}

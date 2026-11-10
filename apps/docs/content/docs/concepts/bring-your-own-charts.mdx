@@ -229,7 +229,7 @@ A ValidatingAdmissionPolicy refuses four kinds of object in the namespace:
 |---|---|
 | A `Service` of type `LoadBalancer` or `NodePort` | It answers outside the namespace and outside the cluster, and a load balancer is billed to your cloud account. Use `ClusterIP` and an `Ingress`. |
 | A `Service` with `spec.externalIPs` | It captures traffic that the cluster's nodes receive for those addresses. |
-| A `Secret` of type `kubernetes.io/service-account-token` | It creates a long-lived token for a service account your chart was not given. |
+| A `Secret` of type `kubernetes.io/service-account-token` | It stores a service account token that never expires. Your pods already receive short-lived tokens without it. |
 | An `Ingress` annotation with `snippet` in its name | A snippet configures the ingress controller itself, which serves every namespace. |
 
 The policy needs Kubernetes 1.30 or later. Every Kubernetes version Alethia provisions supports it.
@@ -248,12 +248,21 @@ whether the rules refuse or only report:
   warns and records. A namespace that already existed starts here, and so does the new namespace
   of a chart that moved out of `default`.
 
+<Callout type="warn">
+  **On most clouds, a `warn` namespace has no pod-level enforcement.** "The cluster's own default"
+  is `privileged` on Amazon EKS, Google GKE Standard, Azure AKS and Alibaba ACK, and that level
+  refuses nothing. Only Talos clusters, which Alethia runs on Hetzner, enforce `baseline` in every
+  namespace by default. So a chart in a `warn` namespace on those four clouds runs with no Pod
+  Security refusal until its namespace is in `enforce`.
+</Callout>
+
 A deploy never changes a namespace's label once it is set. While a namespace is in `warn`, each
 deploy checks what runs there against both levels, and the **Deploy** tab names the chart, the
 object and the field that `enforce` would refuse. Pod Security can only check the pods that run at
 that moment, so a pod of a `CronJob` between runs is not checked. Change the chart until the
 warning goes away. When you set the label to `enforce`, the policy refuses from then on and Pod
-Security enforces from the next deploy.
+Security enforces from the next deploy. Setting the label needs `kubectl` access to the cluster:
+the console has no control for it yet.
 
 ## Removing a chart
 

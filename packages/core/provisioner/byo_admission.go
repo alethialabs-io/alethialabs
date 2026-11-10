@@ -47,6 +47,17 @@ func applyByoAdmissionPolicy(stdout, stderr io.Writer) (bool, string) {
 		fmt.Fprintf(stdout, "Skipping the BYO admission policy: %s\n", reason)
 		return false, reason
 	}
+	// Never replace a newer rule set an upgraded runner applied (argocd.ByoAdmissionSchemaAnnotation).
+	// That policy is in force, so the enforce namespaces are refused by it and need no report.
+	newer, err := argocd.ByoAdmissionPolicyNewerLive()
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: not applying the BYO admission policy: %v\n", err)
+		return false, "its live version could not be read"
+	}
+	if newer != "" {
+		fmt.Fprintf(stderr, "Warning: not replacing the BYO admission policy: %s. A newer runner applied it; this deploy leaves it in place.\n", newer)
+		return true, ""
+	}
 	policy, err := argocd.RenderByoAdmissionPolicy()
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: could not render the BYO admission policy: %v\n", err)
