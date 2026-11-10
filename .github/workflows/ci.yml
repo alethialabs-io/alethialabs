@@ -2897,6 +2897,125 @@ jobs:
             exit 1
           fi
 
+  byo-users-mysql:
+    name: BYO users SQL — real MySQL (${{ matrix.mysql }})
+    # The MySQL dialect of the per-binding BYO database users SQL
+    # (apps/runner/internal/agent/db_bootstrap_byo_mysql*.go, #6467), applied to a real server the way
+    # the BYO users Job applies it: the provision script without --force, then the sweep with --force,
+    # over TLS. The admin holds the static privilege set an RDS master user holds — no SUPER, no
+    # SET_USER_ID, no CONNECTION_ADMIN — on 8.0 and 8.4. Per-binding users need MySQL 8.0.21 or newer, so
+    # 8.0.20, the last release below that floor, proves the refusal. Same trigger as
+    # `byo-users-postgres`; `byo-users-mysql-required` below restates it.
+    needs: detect-changes
+    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql: ["8.4", "8.0", "8.0.20"]
+    services:
+      mysql:
+        image: mysql:${{ matrix.mysql }}
+        env:
+          MYSQL_ROOT_PASSWORD: root-ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot-ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: apps/runner/go.sum
+      - name: Pre-fetch Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh apps/runner
+      - name: Install the mysql client
+        run: |
+          if ! command -v mysql >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q mysql-client
+          fi
+          mysql --version
+      # The admin the tests act as, with an RDS master user's static privileges and nothing dynamic,
+      # and a database whose name carries a '-' so quoting is exercised for real.
+      - name: Create a non-root admin and its database
+        env:
+          MYSQL_PWD: root-ci
+        run: |
+          root() { mysql --protocol=TCP -h 127.0.0.1 -uroot --ssl-mode=REQUIRED -N -B -e "$1"; }
+          root "CREATE USER 'byo_admin'@'%' IDENTIFIED BY 'byo-admin-ci'"
+          root "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, REFERENCES, INDEX, ALTER, SHOW DATABASES, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER ON *.* TO 'byo_admin'@'%' WITH GRANT OPTION"
+          # shellcheck disable=SC2016 # the backticks quote a MySQL identifier, not a command
+          root 'CREATE DATABASE `byo-test`'
+          grants="$(root "SHOW GRANTS FOR 'byo_admin'@'%'")"
+          echo "$grants"
+          if echo "$grants" | grep -Eq 'SUPER|SET_USER_ID|CONNECTION_ADMIN|ALL PRIVILEGES'; then
+            echo "::error::the CI admin holds a privilege a managed admin does not"; exit 1
+          fi
+      # ALETHIA_TEST_MYSQL_REQUIRED turns the tests' skip into a failure, and the grep below asserts
+      # each real-MySQL test PASSED by name, so a renamed test, a -run matching nothing, or a skip
+      # cannot read green.
+      - name: go test -tags integration (BYO users, real MySQL)
+        working-directory: apps/runner
+        env:
+          ALETHIA_TEST_MYSQL_ADMIN_DSN: mysql://byo_admin:byo-admin-ci@127.0.0.1:3306/byo-test
+          ALETHIA_TEST_MYSQL_ROOT_DSN: mysql://root:root-ci@127.0.0.1:3306/byo-test
+          ALETHIA_TEST_MYSQL_REQUIRED: "1"
+        run: |
+          set -o pipefail
+          go test -tags integration -count=1 -v -run ByoUsersMySQLServer ./internal/agent/... | tee "$RUNNER_TEMP/byo.log"
+          if [ "${{ matrix.mysql }}" = 8.0.20 ]; then
+            want="TestByoUsersMySQLServer_RefusesBelowFloor"
+          else
+            want="TestByoUsersMySQLServer_Lifecycle TestByoUsersMySQLServer_RefusesForeignUser TestByoUsersMySQLServer_RevokeFailsSafe TestByoUsersMySQLServer_KillsSessions TestByoUsersMySQLServer_PartialRevokes TestByoUsersMySQLServer_SkipRevoke"
+          fi
+          for t in $want; do
+            grep -q -- "--- PASS: $t " "$RUNNER_TEMP/byo.log" || { echo "::error::$t did not PASS on mysql ${{ matrix.mysql }}"; exit 1; }
+          done
+
+  # The always-reporting aggregator of `byo-users-mysql`, built exactly as `byo-users-postgres-required`
+  # above (read its comment): a FIXED name with no `${{ }}`, run with `!cancelled()`, green only when
+  # the legs were expected and passed or were not expected and were skipped. It is NOT required yet —
+  # nothing in .mergify.yml or infra/github/variables.tf names it — so a fault in it cannot hold a PR;
+  # requiring it is a separate change that adds "BYO users SQL — real MySQL" to both, as #6484 did for
+  # Postgres.
+  byo-users-mysql-required:
+    name: BYO users SQL — real MySQL
+    needs: [detect-changes, byo-users-mysql]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every leg passed, or the runner did not change
+        env:
+          DETECT_RESULT: ${{ needs.detect-changes.result }}
+          RUNNER_CHANGED: ${{ needs.detect-changes.outputs.runner }}
+          LEGS_RESULT: ${{ needs.byo-users-mysql.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$DETECT_RESULT" != success ]; then
+            echo "::error::detect-changes concluded '$DETECT_RESULT', so whether the runner changed is unknown"
+            exit 1
+          fi
+          expected=false
+          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; }; then
+            expected=true
+          fi
+          echo "legs expected to run: $expected; matrix result: $LEGS_RESULT"
+          if [ "$expected" = true ] && [ "$LEGS_RESULT" = success ]; then
+            echo "every BYO users MySQL leg passed"
+          elif [ "$expected" = false ] && [ "$LEGS_RESULT" = skipped ]; then
+            echo "the runner did not change, so the legs were skipped by design"
+          else
+            echo "::error::BYO users MySQL legs concluded '$LEGS_RESULT' (expected to run: $expected)"
+            exit 1
+          fi
+
   coverage-determinism:
     name: Coverage determinism probe (manual)
     # MANUAL ONLY. This exists to answer one question before the ratchet is armed: are the numbers

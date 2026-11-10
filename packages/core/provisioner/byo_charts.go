@@ -61,7 +61,7 @@ func keylessDBAuthEnabled() bool {
 // and an ExternalSecret an earlier deploy pointed at the administrative credential is withdrawn.
 //
 // It stays dark until an end-to-end test proves a chart connects as its own user (#6466's last work
-// item), and on MySQL until that dialect ships (#6467): there every facet is unsatisfied.
+// item). Postgres and MySQL (#6467) are both provisioned with it on.
 func byoDBUsersEnabled() bool {
 	return os.Getenv("ALETHIA_BYO_DB_USERS_ENABLED") == "true"
 }

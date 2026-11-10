@@ -75,6 +75,10 @@ const FROM_FACETS: { value: BindingFrom; label: string; secret: boolean }[] = [
 	// pluggable SaaS store via ESO). Always a credential: delivered as a secretKeyRef, never
 	// templated into the manifest.
 	{ value: "value", label: "value", secret: true },
+	// database — the name of the database a `database` binding should use. Not a credential: it is
+	// templated into the values like endpoint/port. A per-binding MySQL user works in a database of its
+	// own, so a MySQL-backed chart needs this facet to find it.
+	{ value: "database", label: "database name", secret: false },
 ];
 
 const isSecretFacet = (from: BindingFrom): boolean =>

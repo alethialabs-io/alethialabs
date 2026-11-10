@@ -329,6 +329,8 @@ export const serviceBindingSchema = z.object({
 				"connection_string",
 				// value — a `secret`-kind binding's opaque value (project secret via a SaaS store).
 				"value",
+				// database — the database name a `database`-kind binding should use (non-secret).
+				"database",
 			]),
 		}),
 	),

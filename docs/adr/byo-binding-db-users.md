@@ -3,7 +3,7 @@
 
 # Each BYO database binding gets its own least-privilege database user
 
-**Status:** Proposed — slice 1 of 5 landed with this document · **Issue:** #6438 ·
+**Status:** Proposed — all five slices landed, behind a dark flag · **Issue:** #6438 ·
 **Follows:** #6436 (binding ExternalSecrets, owner labels, declared-set prune, keyless parity), #6454
 (the BYO marker and a namespace of its own per chart)
 
@@ -15,7 +15,7 @@ of its own, and nothing else that this design grants (the limits of that are sta
 own. The binding's ExternalSecret reads that key, and no BYO binding ever references the database's
 administrative credential. Removing the binding's declaration removes its ExternalSecret and revokes
 the user. The password never appears in a log, in a manifest or in SQL text sent to the server; only
-its SCRAM-SHA-256 verifier does (§3).
+its SCRAM-SHA-256 verifier (Postgres) or `caching_sha2_password` hash (MySQL) does (§3).
 
 A chart is code the user brought, so it gets the least privilege that works.
 
@@ -61,9 +61,9 @@ both engines. On GCP and Azure this design adds a capability, not a restriction.
 
 ## Decision
 
-Only what the slice table below marks **landed** exists in code: section 1's namer and section 4.
-Everything else — the environment tag in section 1, and sections 2, 3, 5 and 6 — is the design the
-later slices build to.
+Every slice in the table below has landed (#6464, #6465, #6466, #6467), behind the dark flag
+`ALETHIA_BYO_DB_USERS_ENABLED`. Turning it on by default is the step after them (see the end of the
+table).
 
 ### 1. One identity per binding ExternalSecret, per environment
 
@@ -285,25 +285,96 @@ AUTHORIZATION` and dropping the role's objects all require the administrator to 
 privileges. The grant runs in one direction only: the administrator can act as the per-binding role,
 and the per-binding role gains nothing from the administrator.
 
-**MySQL**
+**MySQL** (slice 5, #6467; `apps/runner/internal/agent/db_bootstrap_byo_mysql.go`)
 
 ```sql
+-- phase 0: refuse unless the server is 8.0.21 or newer (SET @f = 0 /*!80021 + 1 */, then a check)
+-- phase 1: ALTER USER <every candidate> ACCOUNT LOCK
 CREATE USER IF NOT EXISTS 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>'
-  REQUIRE SSL WITH MAX_USER_CONNECTIONS 20 ATTRIBUTE '{"alethia_env": "<environment-id>"}';
-ALTER USER 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>';
+  REQUIRE SSL WITH MAX_USER_CONNECTIONS 20 ACCOUNT LOCK ATTRIBUTE '{"alethia_env":"<environment-id>"}';
+-- refuse unless the user carries this environment's tag
+ALTER USER 'alethia_byo_<h>'@'%' IDENTIFIED WITH caching_sha2_password AS '<hash>' REQUIRE SSL WITH MAX_USER_CONNECTIONS 20;
 CREATE DATABASE IF NOT EXISTS `alethia_byo_<h>`;
-GRANT <mysqlAppPrivileges> ON `alethia_byo_<h>`.* TO 'alethia_byo_<h>'@'%';
+GRANT <mysqlAppPrivileges> ON `alethia\_byo\_<h>`.* TO 'alethia_byo_<h>'@'%';   -- unescaped with partial_revokes ON
+-- refuse if the user holds a global privilege, GRANT OPTION, another database's privilege, or a role
+ALTER USER 'alethia_byo_<h>'@'%' ACCOUNT UNLOCK;
 ```
 
-As on Postgres, the SQL carries a hash computed by `db-bootstrap`, not the password. If the MySQL slice
-finds a cloud's server will not accept a precomputed `caching_sha2_password` string, it must say so in
-its PR and turn statement logging's exposure into a stated limitation, not a silent one.
+MySQL has no anonymous blocks, so the script cannot branch or raise outside a stored program, and
+creating a stored program would leave an object behind. Each check is therefore a prepared statement
+that is either `DO 0` or a `SELECT` of a column named by the reason. That column cannot exist, so
+`PREPARE` fails with *Unknown column '<reason>'* and the run stops.
+
+**The password is sent as a `caching_sha2_password` hash, never as plaintext.** `db-bootstrap` computes
+the string the server stores: `$A$005$`, a 20-character salt, and the 43-character SHA-256-crypt digest
+of the password under 5000 rounds, which is the server's default and its minimum. The salt is drawn from
+letters and digits, so the string needs no escaping in a literal. `IDENTIFIED WITH caching_sha2_password
+AS '<hash>'` stores it unchanged. The renderer never emits `IDENTIFIED BY`, so a cloud that refused the
+precomputed form would fail the run; it would not fall back to plaintext. CI verifies the form on
+MySQL 8.0 and 8.4 by logging in with the password. It was not verified on RDS or Aurora, Cloud SQL or
+Azure Database for MySQL. **Limitation:** as with the Postgres verifier, the hash is in the SQL text. A
+server that logs statements (the general log, or an audit plugin) records it, and the client's error
+output can carry it into the Job's log. The hash does not authenticate. It does allow an offline guess,
+which is not practical against 32 random alphanumeric characters, but it is credential material.
+Operators should not enable statement logging on a server that hosts per-binding users, or should treat
+that log as sensitive.
+
+**MySQL 8.0.21 or newer.** User `ATTRIBUTE`, and `information_schema.USER_ATTRIBUTES` that reads it,
+arrived in 8.0.21, and the environment tag lives there. Without the tag no user can be revoked safely.
+The script checks the server's own version with a versioned comment before it changes anything. The
+runner does not run the Job when the configured version is older (5.7, or 8.0.20 and earlier). A version
+without a patch, such as `8.0`, passes the runner and is held to the floor by the script.
+
+**The environment tag is a user attribute.** MySQL has no role comments. `ATTRIBUTE '{"alethia_env":
+"<id>"}'` is JSON on the account, and changing it needs the `CREATE USER` privilege, which a per-binding
+user does not hold. `COMMENT` writes to the same object under its own key, so an operator's comment does
+not remove the tag. A pre-existing user with a declared name and no such tag is refused, and its password,
+grants and lock state are left as they were.
+
+**Quoting.** Every identifier is backtick-quoted. Account names and values are single-quoted literals, and
+a literal may not contain a backslash, so `sql_mode` cannot change its meaning. With `partial_revokes`
+OFF, the default, MySQL reads `_` and `%` in a `GRANT`'s database name as wildcards. The unescaped grant
+would also cover `alethiaXbyoX<h>`, and with `CREATE` the user could make such a database. The script
+therefore escapes the underscores. With `partial_revokes` ON the server reads them literally, so the
+script does not escape them.
+
+**Two scripts, because MySQL account statements are not transactional.** Phase 2 cannot apply "for every
+declared user or for none". Each statement is atomic, and the provision script runs without `--force`,
+so the first error stops it before the result is written. A failed Job provisions nothing in the
+runner's count, even if some users before the error now exist. Every statement is idempotent, so the
+next run converges. A user stays locked until every check on it has passed. The sweep is a second
+script, applied with `--force`, so a candidate that cannot be dropped does not stop the others. It ends
+each candidate's sessions and drops each candidate, and the database is kept. MySQL has no loop outside a
+stored program, so each step is rendered: 64 session kills and 32 drops per run. A candidate past the
+bound stays locked, is reported as pending, and is dropped by a later run. The result has the Postgres
+form, a header line and then one line per entry. It is the only statement in either script that returns
+rows. The Job sends the provision script's output to the termination message. The sweep's output
+replaces it only when it starts with the header; any other output fails the container.
+
+**Dropping a user that owns objects.** A MySQL user owns no table. It can be the `DEFINER` of a view,
+routine, trigger or event. Since 8.0.22, `DROP USER` refuses such a user unless the administrator holds
+`SET_USER_ID`. That candidate stays locked, the client reports the error, and the result carries
+`revocation-pending:<user>`. The declared users and the other candidates are unaffected. A per-binding
+user cannot create such an object itself, because the privilege set has no `CREATE VIEW`, `CREATE
+ROUTINE`, `TRIGGER` or `EVENT`. Only an administrator can create one with that user as `DEFINER`.
+
+**The limits.** Killing another user's session needs `CONNECTION_ADMIN`. Without it each `KILL` fails and
+is reported. A revoked user's open session then keeps running until it disconnects, but the user cannot
+open a new one, because it is locked and then dropped. The privilege check reads `information_schema`
+and `mysql.role_edges`, so an administrator that cannot read the grant tables fails the run. The check
+does not read table-level or column-level grants. Only an administrator can create those, because the
+user holds no `GRANT OPTION`. MySQL databases have no owner, so a database with the per-binding name that
+already exists is used as it is. The name is derived from this environment, and this environment's runs
+are its only expected producer.
 
 Scoped to a database of its own, with the DDL and DML set the keyless lane already grants
 (`mysqlAppPrivileges`), never `*.*` or `GRANT OPTION`. MySQL has no schema below a database, so the
-chart must be told which database to use, and no binding facet carries a database name today. **MySQL
-is therefore a separate slice that adds a non-secret `database` facet.** Until it lands, a MySQL
-binding in per-binding mode is unsatisfied with a stated reason, never bound to the administrator.
+chart must be told which database to use: the non-secret **`database` facet**. On a per-binding MySQL
+user it is that user's own database, `alethia_byo_<h>`, and it is unsatisfied, with the credential facets'
+reason, until the user is provisioned. In every other case it is the environment's database, read from
+the output the Jobs connect with (`rds_database_name`, `cloud_sql_database`, `azure_db_name`). These cases
+are the administrative path, a keyless target, and a per-binding Postgres user, which works in its own
+schema of that database.
 
 ### 4. The binding ExternalSecret reads the user's own key
 
@@ -403,7 +474,7 @@ moving them means reassigning ownership of existing data.
 | 2 (#6464) | The store half: the declared set → `custom_secrets` entries on AWS, GCP and Azure; the reserved prefix; an Azure `custom_secret_names` output | `packages/core/cloud/{aws,gcp,azure}_provider*.go`, `packages/core/cloud/byo_db_users*.go`, `infra/templates/project/azure/outputs.tf` | creates secrets nothing reads until slice 4 |
 | 3 (#6465) | The SQL half: `alethia db-bootstrap --byo-users` for Postgres (create with a SCRAM verifier, tag, scope, re-adopt, rotate, env-scoped revoke, the Postgres 15 floor) | `apps/runner/internal/agent/db_bootstrap_byo*.go` | pure, golden-tested |
 | 4 (#6466) | The Job half: render and run the BYO users Job per cloud in its own namespace with one Secret per user, read its result, feed `DBUsers.Provisioned`, its own cleanup and sweep | `packages/core/manifests/byo_db_users*.go`, `packages/core/provisioner/byo_db_users*.go`, `packages/core/provisioner/byo_charts.go` (`provisionedByoDBUsers`) | after 2 and 3; the flag becomes usable on Postgres |
-| 5 (#6467) | MySQL: a non-secret `database` facet, and the MySQL dialect of slice 3 | the facet enum, its migration and console form; `db_bootstrap_byo_mysql*.go`; `chart_bindings.go` | needs a migration |
+| 5 (#6467) | MySQL: a non-secret `database` facet, and the MySQL dialect of slices 3 and 4 | the facet enum, its migration (`0172_wooden_moon_knight`) and console form; `db_bootstrap_byo_mysql*.go`; `chart_bindings.go`; `byo_db_users*.go` | the flag becomes usable on MySQL |
 
 Turning the flag on by default, and removing the administrative path for BYO bindings, follows slice
 4 on Postgres and slice 5 on MySQL.

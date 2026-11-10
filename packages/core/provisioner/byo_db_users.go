@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// This file runs the BYO users Job (docs/adr/byo-binding-db-users.md §3, slice 4 of #6438) on each
-// deploy with ALETHIA_BYO_DB_USERS_ENABLED, and decides from its result which per-binding database
-// users a BYO chart may be bound to.
+// This file runs the BYO users Job (docs/adr/byo-binding-db-users.md §3, slices 4 and 5 of #6438) on
+// each deploy with ALETHIA_BYO_DB_USERS_ENABLED, and decides from its result which per-binding database
+// users a BYO chart may be bound to. The environment's database may be Postgres or MySQL; the Job and
+// db-bootstrap speak its dialect.
 //
 // # One run, in order
 //
 //  1. Decide whether a run can happen at all. No environment ID, a credential-based secrets provider
-//     (cloud.ByoDBUserSecretsUnavailableReason), no database, a MySQL database, or a Postgres older
-//     than 15 runs nothing. The last two of those, and the secrets provider, give every per-binding
-//     database credential facet a stated reason; none of them ever falls back to the administrative
-//     credential.
+//     (cloud.ByoDBUserSecretsUnavailableReason), no database, a database whose engine is named MySQL
+//     with no engine family set (the Job and the binding resolver could then disagree about its
+//     dialect), a Postgres older than 15, or a MySQL older than 8.0.21 runs nothing. Each of those
+//     but the first two gives every per-binding database credential facet a stated reason; none of
+//     them ever falls back to the administrative credential.
 //  2. Take the declared users from the refusal-aware binding set (declaredByoDBUsers), and decide
 //     whether that set is complete. It is not when a declared user has no stored password, or when a
 //     binding of the environment fails to render. An incomplete set runs with `--skip-revoke`, so a
@@ -64,6 +66,16 @@ const byoDBUsersFloorReason = "per-binding database users need PostgreSQL 15 or 
 
 // byoDBUsersMinPostgresMajor is that floor.
 const byoDBUsersMinPostgresMajor = 15
+
+// byoDBUsersMySQLFloorReason is the unsatisfied reason of every per-binding database credential facet
+// on a MySQL older than 8.0.21 (apps/runner db_bootstrap_byo_mysql.go mysqlByoFloorReason): user
+// ATTRIBUTE, which carries the environment tag revocation selects by, arrived in 8.0.21.
+const byoDBUsersMySQLFloorReason = "per-binding database users need MySQL 8.0.21 or newer"
+
+// byoDBUsersEngineUnknownReason is the unsatisfied reason when the database's engine names MySQL but
+// its engine family is unset: the binding resolver reads the family alone (manifests.dbEngineForName),
+// so it would treat the database as Postgres while the Job would speak MySQL.
+const byoDBUsersEngineUnknownReason = "the database's engine family is not set, so its per-binding users' dialect is unknown"
 
 // byoDBUsersPendingPrefix starts a result line naming a revocation the Job could not finish
 // (apps/runner db_bootstrap_byo.go byoPendingPrefix).
@@ -207,6 +219,39 @@ func byoTargetIsMySQL(dbs []types.ProjectDatabaseConfig, name string) bool {
 // byoMajorVersionRe takes the first run of digits of an engine version ("16.8", "15", "POSTGRES_14").
 var byoMajorVersionRe = regexp.MustCompile(`[0-9]+`)
 
+// byoMySQLVersionRe reads a MySQL version: major and minor, and the patch only when the version is
+// a plain x.y.z ("8.0.mysql_aurora.3.04.0" names Aurora's own release, not MySQL's patch).
+var byoMySQLVersionRe = regexp.MustCompile(`^(?:MYSQL_)?([0-9]+)[._]([0-9]+)(?:\.([0-9]+)$)?`)
+
+// byoMySQLVersionOK reports whether the environment's MySQL may get per-binding users: the configured
+// version, or the catalogue's default for the provider, is 8.0.21 or newer as far as it says. A version
+// without a patch ("8.0") passes here, and the Job's own floor, which reads the server's real version,
+// refuses a server below 8.0.21. No readable version fails closed.
+func byoMySQLVersionOK(provider string, db types.ProjectDatabaseConfig) bool {
+	v := strings.TrimSpace(db.EngineVersion)
+	if v == "" {
+		if e, ok := catalog.MustLoad().DBEngine(provider, "mysql"); ok {
+			v = e.DefaultVersion
+		}
+	}
+	m := byoMySQLVersionRe.FindStringSubmatch(strings.ToUpper(v))
+	if m == nil {
+		return false
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	switch {
+	case major != 8:
+		return major > 8
+	case minor > 0:
+		return true
+	case m[3] == "":
+		return true
+	}
+	patch, _ := strconv.Atoi(m[3])
+	return patch >= 21
+}
+
 // byoPostgresMajor is the Postgres major version the environment's database is created with: the
 // configured version, or the catalogue's default for the provider when none is set (the template
 // receives the same default), or on AWS cloud.DefaultAuroraPostgresVersion. ok=false when no version
@@ -231,9 +276,8 @@ func byoPostgresMajor(provider string, db types.ProjectDatabaseConfig) (int, boo
 
 // declaredByoDBUsers is the set of per-binding users this deploy declares, sorted by user: every
 // database binding with a credential facet in an add-on that is not a refused BYO chart, a keyless
-// target excluded while the keyless flag is on, and a MySQL target excluded (that dialect is a later
-// slice, and the resolver refuses it), and a target other than the environment's primary database
-// excluded (byoPrimaryDatabase says why). It is the refusal-aware counterpart of cloud.ByoDBUserSecrets,
+// target excluded while the keyless flag is on, and a target other than the environment's primary
+// database excluded (byoPrimaryDatabase says why). Postgres and MySQL targets are declared alike. It is the refusal-aware counterpart of cloud.ByoDBUserSecrets,
 // read from the configuration alone, so a binding that fails later on this run is still declared.
 // Namespaces are read as configureByoCharts left them (a moved chart is already in its own).
 func declaredByoDBUsers(vc *types.ProjectConfig, keylessOn bool, refused []byoRefusal) []byoDeclaredDBUser {
@@ -260,7 +304,7 @@ func declaredByoDBUsers(vc *types.ProjectConfig, keylessOn bool, refused []byoRe
 				if keylessOn && manifests.KeylessDBTarget(b.Target, vc.Databases) {
 					continue
 				}
-				if byoTargetIsMySQL(vc.Databases, b.Target.Name) || b.Target.Name != primary {
+				if b.Target.Name != primary {
 					continue
 				}
 				user := manifests.ByoBindingDBUser(env, a.Namespace, w.Name, b.Target)
@@ -305,13 +349,30 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 		return out
 	}
 	db, ok := byoEnvDatabase(vc)
-	if !ok || byoDatabaseIsMySQL(db) {
-		return out // no Postgres database: nothing this Job can provision (MySQL is a later slice)
+	if !ok {
+		return out // no database: nothing this Job can provision
 	}
-	if major, ok := byoPostgresMajor(in.Provider, db); !ok || major < byoDBUsersMinPostgresMajor {
-		fmt.Fprintf(stdout, "BYO users Job: not run: %s (database %q, version %q)\n", byoDBUsersFloorReason, db.Name, db.EngineVersion)
-		out.Refusal = byoDBUsersFloorReason
+	// The engine is read as the binding resolver reads it (the engine family), so the Job's dialect
+	// and the resolver's — which decides what a `database` facet names — are one decision.
+	engine := "postgres"
+	switch mysql := byoTargetIsMySQL(vc.Databases, db.Name); {
+	case !mysql && byoDatabaseIsMySQL(db):
+		fmt.Fprintf(stdout, "BYO users Job: not run: %s (database %q, engine %q)\n", byoDBUsersEngineUnknownReason, db.Name, db.Engine)
+		out.Refusal = byoDBUsersEngineUnknownReason
 		return out
+	case mysql:
+		engine = "mysql"
+		if !byoMySQLVersionOK(in.Provider, db) {
+			fmt.Fprintf(stdout, "BYO users Job: not run: %s (database %q, version %q)\n", byoDBUsersMySQLFloorReason, db.Name, db.EngineVersion)
+			out.Refusal = byoDBUsersMySQLFloorReason
+			return out
+		}
+	default:
+		if major, ok := byoPostgresMajor(in.Provider, db); !ok || major < byoDBUsersMinPostgresMajor {
+			fmt.Fprintf(stdout, "BYO users Job: not run: %s (database %q, version %q)\n", byoDBUsersFloorReason, db.Name, db.EngineVersion)
+			out.Refusal = byoDBUsersFloorReason
+			return out
+		}
 	}
 
 	// fail marks the run Failed. That provisions nothing, so on this deploy every BYO chart's
@@ -354,6 +415,7 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 
 	job, err := manifests.RenderByoDBUsersJob(manifests.ByoDBUsersJobParams{
 		Provider:        in.Provider,
+		Engine:          engine,
 		RunnerImage:     byoDBUsersRunnerImage(),
 		Environment:     owner,
 		Users:           users,
