@@ -134,6 +134,8 @@ func assertDBTLSOutcome(t *testing.T, tc dbTLSCase, code int, stderr, msg string
 		}
 		return
 	}
+	// Logged so the run records the clients' real TLS error texts the reason matcher relies on.
+	t.Logf("refusal, client stderr:\n%s", stderr)
 	if code == 0 || !strings.Contains(stderr, "DB_TLS_VERIFY_FAILED") || !strings.HasPrefix(msg, "alethia: DB_TLS_VERIFY_FAILED: ") {
 		t.Errorf("want a refusal with the named reason: exit %d, termination message %q\n%s", code, msg, stderr)
 	}

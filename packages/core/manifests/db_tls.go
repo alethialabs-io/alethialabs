@@ -166,10 +166,23 @@ func checkCAPEM(s string) error {
 
 // dbTLSShellPrelude is the shell both Jobs' apply containers start with. run_db_client runs a
 // database client with its stdout on fd 3 (which the caller opens) and its stderr captured; it
-// prints that stderr, and when the client failed with an SSL/TLS or certificate error it also prints
-// the TLS failure reason and writes it as the termination message. It returns the client's exit code
-// unchanged, so the classification only ever ADDS a reason to a failure: it can never turn one into
-// a success, and a failure it does not recognise still fails.
+// prints that stderr, and when the client failed with one of its TLS verification errors it also
+// prints the TLS failure reason and writes it as the termination message. It returns the client's
+// exit code unchanged, so the classification only ever ADDS a reason to a failure: it can never turn
+// one into a success, and a failure it does not recognise still fails.
+//
+// The match is on the clients' own TLS error texts, not on the words SSL, TLS or certificate, so a
+// failure that merely mentions them (an SQL error naming a role, require_secure_transport refusing a
+// plaintext connection) is not given the TLS reason:
+//
+//   - mysql: CR_SSL_CONNECTION_ERROR, "ERROR 2026 (HY000): SSL connection error: …" — an untrusted
+//     chain, a host-name mismatch under VERIFY_IDENTITY, or an unreadable CA file;
+//   - libpq: "SSL error: …" (e.g. certificate verify failed), `server certificate for "…" does not
+//     match host name "…"`, and `root certificate file "…" does not exist` / `could not read root
+//     certificate file`.
+//
+// db_tls_integration_test.go asserts the reason on every refusal against real servers, so a client
+// whose wording drifts from these turns that test red rather than losing the reason silently.
 const dbTLSShellPrelude = `set -eu
 run_db_client() {
   rc=0
@@ -177,7 +190,7 @@ run_db_client() {
   if [ -n "$err" ]; then printf '%s\n' "$err" >&2; fi
   if [ "$rc" -ne 0 ]; then
     case "$err" in
-      *SSL*|*TLS*|*certificate*)
+      *"SSL connection error"*|*"SSL error:"*|*"does not match host name"*|*"root certificate file"*)
         printf '%s\n' "$` + dbTLSReasonEnv + `" >&2
         printf '%s\n' "$` + dbTLSReasonEnv + `" > /dev/termination-log 2>/dev/null || true
         ;;

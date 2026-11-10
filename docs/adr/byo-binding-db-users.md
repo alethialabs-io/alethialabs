@@ -491,6 +491,40 @@ service is a binding with the same identity, and the namer and Job do not depend
 Moving them is a separate change, because their tables are owned by the administrator today and
 moving them means reassigning ownership of existing data.
 
+### 8. The admin connection verifies the server (#6521)
+
+The BYO users Job and the keyless bootstrap Job send an administrator credential to the database, so
+both verify the server's certificate first. Neither uses an encrypt-only mode. The per-cloud choice,
+its documentation, and the mechanics live in `packages/core/manifests/db_tls.go`:
+
+| Cloud | Dials | mysql | libpq | Trust anchor |
+|---|---|---|---|---|
+| AWS (Aurora) | cluster endpoint | `VERIFY_IDENTITY` | `verify-full` | RDS global bundle, checked in under `dbca/` |
+| Azure (flexible server) | server FQDN | `VERIFY_IDENTITY` | `verify-full` | DigiCert Global Root G2, Microsoft RSA Root CA 2017, DigiCert Global Root CA, checked in |
+| GCP (Cloud SQL) | private IP | `VERIFY_CA` | `verify-ca` | the instance's own server CA (`cloud_sql_server_ca_cert`); refused unless the CA mode is per-instance |
+
+The CA set reaches the pod as a ConfigMap rendered from those files or that output, and nothing is
+fetched at run time. A verification failure fails the Job with a named reason
+(`DB_TLS_VERIFY_FAILED`), and nothing retries without verification. For this Job, that means a
+Failed run.
+
+Known limits, each with its signal:
+
+- **A new AWS Region fails verification until the bundle is updated.** Its root CAs are not in the
+  pinned global bundle until `scripts/db-ca-bundles.sh update` lands them. The weekly `db-ca-bundles`
+  job in `ci.yml` goes red when the upstream bundle changes, which is the cue. That job runs from the
+  default branch, so it is a signal only once this is on `main`. The rendered ConfigMap is held under
+  a 200 KiB budget by a test, because each Region adds about 4.5 KB of roots.
+- **Azure Postgres `verify-full` behind private DNS is proven by documentation, not by a run.**
+  Microsoft's Postgres TLS page says `verify-full` "might not be possible" with VNet integration or
+  private endpoints, depending on DNS. The Job dials the server's own FQDN, which resolves through
+  the private zone by CNAME, so the name it checks is the name on the certificate. No real server has
+  confirmed this yet. **An Azure keyless T2 run has to pass before the keyless flag is turned on.**
+- The other per-cloud facts are also documentation-backed only: the Aurora cluster-endpoint SAN, and
+  the Cloud SQL per-instance CA default. The real-server test in `ci.yml` (`db-tls-verify`) proves the
+  verification mechanics against MySQL 8.4 and Postgres 16 behind a test CA, not the clouds' own
+  certificates.
+
 ## Slices
 
 | # | Slice | Files | Notes |

@@ -318,6 +318,15 @@ const (
 	authError     = "ERROR 1045 (28000): Access denied for user 'admin'"
 )
 
+// nonTLSErrors are failures that are not a TLS verification failure but mention SSL, TLS or a
+// certificate, so a matcher on those words alone would give them the TLS reason.
+var nonTLSErrors = []string{
+	authError,
+	"ERROR 3159 (HY000): Connections using insecure transport are prohibited while --require_secure_transport=ON.",
+	`psql:/sql/init.sql:3: ERROR:  role "tls_certificate_reader" does not exist`,
+	"ERROR 1064 (42000): You have an error in your SQL syntax near 'SSL certificate' at line 1",
+}
+
 // TestDBTLS_BootstrapScriptsNameATLSFailure runs each rendered bootstrap apply script with a fake
 // client. A TLS failure exits non-zero with the named reason in the log and the termination message;
 // a failure of another kind still exits non-zero, without the TLS reason; success exits 0 with the
@@ -368,9 +377,11 @@ func TestDBTLS_BootstrapScriptsNameATLSFailure(t *testing.T) {
 				t.Errorf("the client was not handed %q: %s", tc.wantArg, argv)
 			}
 
-			bin = fakeClient(t, tc.client, "", authError, 1)
-			if code, stderr, msg := runRenderedScript(t, script, bin, env); code == 0 || strings.Contains(stderr, "DB_TLS_VERIFY_FAILED") || msg != "" || !strings.Contains(stderr, authError) {
-				t.Errorf("non-TLS failure: exit %d, termination message %q, stderr:\n%s", code, msg, stderr)
+			for _, nonTLS := range nonTLSErrors {
+				bin = fakeClient(t, tc.client, "", nonTLS, 1)
+				if code, stderr, msg := runRenderedScript(t, script, bin, env); code == 0 || strings.Contains(stderr, "DB_TLS_VERIFY_FAILED") || msg != "" || !strings.Contains(stderr, nonTLS) {
+					t.Errorf("non-TLS failure %q: exit %d, termination message %q, stderr:\n%s", nonTLS, code, msg, stderr)
+				}
 			}
 
 			bin = fakeClient(t, tc.client, "GRANT\n", "", 0)
@@ -606,5 +617,46 @@ func TestDBTLS_GCPWithoutAServerCAGetsNoJob(t *testing.T) {
 	if _, err := RenderByoDBUsersJob(ByoDBUsersJobParams{Provider: "gcp", RunnerImage: "img", Environment: "env-1",
 		RunID: "r1", Outputs: byoOuts}); err == nil || !strings.Contains(err.Error(), "cloud_sql_server_ca_cert") {
 		t.Errorf("BYO users Job: %v", err)
+	}
+}
+
+// dbCAConfigMapBudget is the most a rendered CA ConfigMap may weigh. A client-side `kubectl apply`
+// (the BYO users runner) and ArgoCD's default apply copy the whole object into the
+// kubectl.kubernetes.io/last-applied-configuration annotation, and an object's annotations together
+// may not exceed 256 KiB. 200 KiB leaves room for the object's other annotations and labels, and turns
+// a growing bundle (about 4.5 KB of roots per new AWS Region) into this red test rather than a failed
+// sync.
+const dbCAConfigMapBudget = 200 * 1024
+
+// TestDBCAConfigMaps_StayWithinTheAnnotationBudget renders every cloud's CA ConfigMap, for both Jobs,
+// and holds its JSON encoding (what the annotation stores) under dbCAConfigMapBudget.
+func TestDBCAConfigMaps_StayWithinTheAnnotationBudget(t *testing.T) {
+	for provider := range wantTLS {
+		res, err := RenderBootstrapJob(Options{Provider: provider, RunnerImage: "runner:1", Outputs: bootstrapTLSOutputs[provider]}, dbTarget())
+		if err != nil {
+			t.Fatal(err)
+		}
+		byo, err := RenderByoDBUsersJob(ByoDBUsersJobParams{Provider: provider, RunnerImage: "img", Environment: "env-1",
+			Users: byoUsersTestUsers, RunID: "r1", Outputs: byoUsersTestOutputs[provider]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for what, doc := range map[string]map[string]any{
+			"bootstrap": parseYAMLDocs(t, res.JobYAML)[0],
+			"BYO users": byoUsersDoc(t, byo.CAConfigMap.YAML),
+		} {
+			if doc["kind"] != "ConfigMap" {
+				t.Fatalf("%s/%s: first document is %v", provider, what, doc["kind"])
+			}
+			b, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(b) > dbCAConfigMapBudget {
+				t.Errorf("%s %s CA ConfigMap is %d bytes, over the %d-byte budget: kubectl's last-applied annotation (256 KiB for all annotations) would soon refuse it. Shrink the bundle (a regional RDS bundle instead of the global one) before adding to it.",
+					provider, what, len(b), dbCAConfigMapBudget)
+			}
+			t.Logf("%s %s CA ConfigMap: %d bytes of %d", provider, what, len(b), dbCAConfigMapBudget)
+		}
 	}
 }

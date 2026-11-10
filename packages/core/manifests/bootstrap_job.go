@@ -580,6 +580,14 @@ func mysqlContainer(host, dbName, plainUser, adminSecretName string, fromToken b
 // The ConfigMap holds only public CA certificates, so unlike the admin credential it is not removed
 // when the phase ends: BeforeHookCreation replaces it on the next sync, and a failed Job kept for its
 // logs can still be read alongside the CA set it verified against.
+//
+// Left behind on purpose when its binding is removed. ArgoCD does not prune hook resources, so once
+// no service binds the database nothing re-renders the hook and the ConfigMap stays in the app
+// namespace. That is harmless, so it gets no reaper: it holds public CA certificates only (the same
+// files the vendors publish), it carries no credential and grants nothing, and nothing reads it but
+// a bootstrap Job that mounts it by name, which a re-added binding re-renders and replaces. The
+// stranded-hook reaper (BootstrapOnlyLabelKey) is for credential-bearing hooks; this one does not
+// carry that label, so it is never mistaken for one.
 func attachDBCA(spec *bootstrapJobSpec, tls dbTLS) {
 	cm := dbCAConfigMapName(spec.Name)
 	spec.CAConfigMapYAML = renderDBCAConfigMap(cm, spec.Namespace,

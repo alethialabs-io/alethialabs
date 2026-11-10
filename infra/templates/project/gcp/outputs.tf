@@ -35,9 +35,16 @@ output "cloud_sql_ip" {
 
 # The bootstrap Jobs' trust anchor for the Cloud SQL server (#6521), read into a ConfigMap the Job
 # mounts — no run-time download. See modules/cloud-sql/outputs.tf for why the mode is exported too.
+#
+# `sensitive = true` is REQUIRED, though a CA certificate is public: the google provider marks the
+# instance's server_ca_cert sensitive, and OpenTofu refuses, at apply, a root output that carries a
+# sensitive value without it — which would fail every GCP project with Cloud SQL. It only stops
+# OpenTofu printing the value; `tofu output -json`, which the runner reads, still carries it.
+# checks_cloud_sql_server_ca.tftest.hcl applies with a known CA so a plan-only suite cannot hide this.
 output "cloud_sql_server_ca_cert" {
   description = "PEM of the Cloud SQL instance's server CA certificate — what the database bootstrap Jobs verify the server against (#6521)"
   value       = try(module.cloud_sql[0].server_ca_cert, null) != null ? module.cloud_sql[0].server_ca_cert : null
+  sensitive   = true
 }
 
 output "cloud_sql_server_ca_mode" {
