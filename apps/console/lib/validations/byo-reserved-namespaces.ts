@@ -19,6 +19,10 @@ export interface ReservedNamespaceGroup {
 	id: string;
 	reason: string;
 	namespaces: readonly string[];
+	/** `"warn"` on the two groups #6551 added: the RUNNER reports a BYO chart already stored in one of
+	 *  their names and keeps deploying it, instead of refusing it. The console refuses every name in
+	 *  every group at attach and update regardless, so this changes nothing here. */
+	byoAttached?: "warn";
 }
 
 /** A reserved namespace prefix and the reason shown to the user. */
@@ -87,6 +91,7 @@ export const BYO_RESERVED_NAMESPACES: {
 		},
 		{
 			id: "platformDataServices",
+			byoAttached: "warn",
 			reason:
 				"the platform runs its in-cluster data services there (databases, caches, queues, operators), with their credentials",
 			namespaces: [
@@ -103,6 +108,7 @@ export const BYO_RESERVED_NAMESPACES: {
 		},
 		{
 			id: "platformCloudIdentities",
+			byoAttached: "warn",
 			reason: "a cloud identity the platform's templates create trusts a service account there",
 			namespaces: [
 				"agic",

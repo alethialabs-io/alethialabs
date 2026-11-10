@@ -37,6 +37,9 @@ func PlacementNamespaceReason(ns string, hostNamespaces []string) string {
 	if reason := byoReservedNamespaceReason(ns); reason != "" {
 		return reason
 	}
+	if reason := ByoNewlyReservedNamespaceReason(ns); reason != "" {
+		return reason
+	}
 	for _, p := range byoReserved.placementPrefixes {
 		if strings.HasPrefix(ns, p.prefix) {
 			return p.reason

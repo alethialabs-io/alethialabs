@@ -17,7 +17,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ADDON_CATALOG } from "@/lib/addons/catalog";
 import { HETZNER_SERVICE_NAMESPACES } from "@/lib/cloud-providers/hetzner-services";
-import { byoChartAttachSchema, byoChartFormSchema } from "@/lib/validations/byo-charts";
+import {
+	byoChartAttachSchema,
+	byoChartAttachSchemaFor,
+	byoChartFormSchema,
+} from "@/lib/validations/byo-charts";
 import {
 	BYO_RESERVED_NAMESPACES,
 	byoReservedNamespaceMessage,
@@ -38,7 +42,14 @@ function runnerList() {
 		.object({
 			$comment: z.string(),
 			groups: z.array(
-				z.object({ id: z.string(), reason: z.string(), namespaces: z.array(z.string()) }).strict(),
+				z
+					.object({
+						id: z.string(),
+						reason: z.string(),
+						namespaces: z.array(z.string()),
+						byoAttached: z.literal("warn").optional(),
+					})
+					.strict(),
 			),
 			prefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
 			placementPrefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
@@ -196,5 +207,24 @@ describe("the BYO chart schemas", () => {
 				chartPath: "charts/api",
 			}).success,
 		).toBe(true);
+	});
+});
+
+describe("the names #6551 newly reserved (byoAttached: warn)", () => {
+	const NEW = ["caches", "cnpg-system", "databases", "nosql", "scylla-operator", "topics", "fluent-bit"];
+
+	it("are refused for a BYO chart at attach and at update, even with the stored namespace unchanged", () => {
+		for (const ns of NEW) {
+			expect(byoChartAttachSchema.safeParse(attachValue(ns)).success).toBe(false);
+			expect(byoChartAttachSchemaFor(ns).safeParse(attachValue(ns)).success).toBe(false);
+			expect(byoChartFormSchema.safeParse(formValue(ns)).success).toBe(false);
+		}
+	});
+
+	it("are on exactly the two groups #6551 added", () => {
+		expect(BYO_RESERVED_NAMESPACES.groups.filter((g) => g.byoAttached === "warn").map((g) => g.id)).toEqual([
+			"platformDataServices",
+			"platformCloudIdentities",
+		]);
 	});
 });

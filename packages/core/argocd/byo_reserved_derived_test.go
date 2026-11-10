@@ -4,6 +4,7 @@
 package argocd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,7 +27,12 @@ var (
 	trustSubjectSA   = regexp.MustCompile(`system:serviceaccount:([^:"\s]+):`)
 	trustSubjectGKE  = regexp.MustCompile(`\.svc\.id\.goog\[([^/\]]+)/`)
 	trustSubjectIRSA = regexp.MustCompile(`namespace_service_accounts\s*=\s*\[([^\]]*)\]`)
-	irsaEntry        = regexp.MustCompile(`"([^":]+):[^"]*"`)
+	// Every assignment of an IRSA subject list, whatever its right-hand side. Each one must be either a
+	// list literal (trustSubjectIRSA) or a reference into a locals map (irsaLocalMapRef); anything
+	// else fails the scan rather than being skipped.
+	irsaAssignment  = regexp.MustCompile(`namespace_service_accounts\s*=\s*(\S[^\n]*)`)
+	irsaLocalMapRef = regexp.MustCompile(`^local\.([a-z0-9_]+)\.([a-z0-9_]+)\s*$`)
+	irsaEntry       = regexp.MustCompile(`"([^":]+):[^"]*"`)
 	// A `local.<name> = "<value>"` definition, to resolve a namespace written as ${local.<name>}.
 	tfLocalString = regexp.MustCompile(`(?m)^\s*([a-z0-9_]+)\s*=\s*"([^"$]*)"`)
 	tfLocalRef    = regexp.MustCompile(`^\$\{local\.([a-z0-9_]+)\}$`)
@@ -46,13 +52,63 @@ func stripTfComments(src string) string {
 	return strings.Join(out, "\n")
 }
 
+// tfLocalMapList returns the body of the list `key = [ ... ]` inside the `name = { ... }` map in src,
+// and whether it was found. Brace-matched, so a nested map does not end the block early.
+func tfLocalMapList(src, name, key string) (string, bool) {
+	start := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `\s*=\s*\{`).FindStringIndex(src)
+	if start == nil {
+		return "", false
+	}
+	depth, end := 0, -1
+	for i := start[1] - 1; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		if depth == 0 {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return "", false
+	}
+	m := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(src[start[1]:end])
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
 // templateTrustNamespaces returns every namespace named in a workload-identity trust subject under
 // infra/templates/project, resolving ${local.x} against the locals of the same directory. A
 // ${var.x} inside a module is skipped: the caller's value is a literal at the call site, which this
 // scan reads. A wildcard is not a namespace and is skipped.
 func templateTrustNamespaces(t *testing.T) map[string][]string {
 	t.Helper()
-	root := filepath.Join("..", "..", "..", "infra", "templates", "project")
+	return templateTrustNamespacesUnder(t, filepath.Join("..", "..", "..", "infra", "templates", "project"))
+}
+
+// templateTrustNamespacesUnder is templateTrustNamespaces over the template tree at root. Every subject
+// it cannot read is a test failure, never a skip.
+func templateTrustNamespacesUnder(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	found, problems, err := scanTrustNamespaces(root)
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+	return found
+}
+
+// scanTrustNamespaces reads every workload-identity trust subject under root: the namespaces they
+// name (namespace → directories), and a problem for each subject the scan cannot resolve.
+func scanTrustNamespaces(root string) (map[string][]string, []string, error) {
+	var problems []string
 	files := map[string][]string{} // dir → sources
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -69,7 +125,7 @@ func templateTrustNamespaces(t *testing.T) map[string][]string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walk %s: %v", root, err)
+		return nil, nil, err
 	}
 	found := map[string][]string{} // namespace → where
 	for dir, srcs := range files {
@@ -86,13 +142,13 @@ func templateTrustNamespaces(t *testing.T) map[string][]string {
 			if m := tfLocalRef.FindStringSubmatch(ns); m != nil {
 				v, ok := locals[m[1]]
 				if !ok {
-					t.Errorf("%s: trust subject namespace %s names a local this scan cannot resolve", dir, ns)
+					problems = append(problems, fmt.Sprintf("%s: trust subject namespace %s names a local this scan cannot resolve", dir, ns))
 					return
 				}
 				ns = v
 			}
 			if strings.Contains(ns, "${") {
-				t.Errorf("%s: trust subject namespace %q is an expression this scan cannot resolve — resolve it here rather than letting it pass unchecked", dir, ns)
+				problems = append(problems, fmt.Sprintf("%s: trust subject namespace %q is an expression this scan cannot resolve — resolve it here rather than letting it pass unchecked", dir, ns))
 				return
 			}
 			found[ns] = append(found[ns], dir)
@@ -108,8 +164,30 @@ func templateTrustNamespaces(t *testing.T) map[string][]string {
 				add(e[1])
 			}
 		}
+		// The subjects may instead live in a locals map of lists, read by reference
+		// (`namespace_service_accounts = local.<map>.<key>`, #6556): resolve each reference to the
+		// "<ns>:<sa>" entries of that key's list. An assignment of any other shape fails the scan.
+		for _, m := range irsaAssignment.FindAllStringSubmatch(all, -1) {
+			rhs := strings.TrimSpace(m[1])
+			if strings.HasPrefix(rhs, "[") {
+				continue // a list literal, read above
+			}
+			ref := irsaLocalMapRef.FindStringSubmatch(rhs)
+			if ref == nil {
+				problems = append(problems, fmt.Sprintf("%s: namespace_service_accounts = %s is neither a list literal nor local.<map>.<key>; the scan cannot read it", dir, rhs))
+				continue
+			}
+			entries, ok := tfLocalMapList(all, ref[1], ref[2])
+			if !ok {
+				problems = append(problems, fmt.Sprintf("%s: namespace_service_accounts = %s names a locals map entry this scan cannot find", dir, rhs))
+				continue
+			}
+			for _, e := range irsaEntry.FindAllStringSubmatch(entries, -1) {
+				add(e[1])
+			}
+		}
 	}
-	return found
+	return found, problems, nil
 }
 
 // TestByoReserved_EveryTemplateTrustSubjectNamespaceIsReserved is the guard: every namespace a template
@@ -125,7 +203,7 @@ func TestByoReserved_EveryTemplateTrustSubjectNamespaceIsReserved(t *testing.T) 
 		}
 	}
 	for ns, where := range found {
-		if byoReservedNamespaceReason(ns) == "" {
+		if byoReservedNamespaceReason(ns) == "" && ByoNewlyReservedNamespaceReason(ns) == "" {
 			t.Errorf("namespace %q is trusted by a workload-identity subject in %v but is on no reserved list — add it to the platformCloudIdentities group of byo_reserved_namespaces.json", ns, where)
 		}
 	}
@@ -154,5 +232,104 @@ func TestByoReserved_PlatformCloudIdentitiesAreAllTrustSubjects(t *testing.T) {
 		// Not a failure on its own: a trust namespace may be reserved by another group (the guard above
 		// is what must hold). Reported so a reader sees the two sets side by side.
 		t.Logf("platformCloudIdentities %v; template trust namespaces %v", got, want)
+	}
+}
+
+// writeTf writes files (relative path → source) under a fresh template root, for the scan tests.
+func writeTf(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, src := range files {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestTrustScan_ReadsIRSASubjectsFromALocalsMap (#6556): the AWS subjects may be written inline or moved
+// into `local.<map>.<key>` lists. Both shapes must derive the SAME namespaces, so the list does not go
+// red, or silently drop a namespace, depending on which form the template uses.
+func TestTrustScan_ReadsIRSASubjectsFromALocalsMap(t *testing.T) {
+	inline := writeTf(t, map[string]string{"aws/irsa.tf": `
+locals {
+  karpenter_namespace = "karpenter"
+  ecr_build_namespace = "alethia-build"
+}
+module "a" {
+  namespace_service_accounts = ["fluent-bit:fluent-bit"]
+}
+module "b" {
+  namespace_service_accounts = ["${local.karpenter_namespace}:karpenter"]
+}
+module "c" {
+  namespace_service_accounts = ["${local.ecr_build_namespace}:kaniko-builder", "default:alethia-app"]
+}
+`})
+	mapped := writeTf(t, map[string]string{"aws/irsa.tf": `
+locals {
+  karpenter_namespace = "karpenter"
+  ecr_build_namespace = "alethia-build"
+}
+locals {
+  irsa_service_accounts = {
+    fluentbit = ["fluent-bit:fluent-bit"]
+    karpenter = ["${local.karpenter_namespace}:karpenter"]
+    ecr_build = ["${local.ecr_build_namespace}:kaniko-builder", "default:alethia-app"]
+  }
+}
+module "a" {
+  namespace_service_accounts = local.irsa_service_accounts.fluentbit
+}
+module "b" {
+  namespace_service_accounts = local.irsa_service_accounts.karpenter
+}
+module "c" {
+  namespace_service_accounts = local.irsa_service_accounts.ecr_build
+}
+`})
+	keys := func(root string) string {
+		found, problems, err := scanTrustNamespaces(root)
+		if err != nil || len(problems) > 0 {
+			t.Fatalf("scan %s: err=%v problems=%v", root, err, problems)
+		}
+		var out []string
+		for ns := range found {
+			out = append(out, ns)
+		}
+		sort.Strings(out)
+		return strings.Join(out, ",")
+	}
+	want := "alethia-build,default,fluent-bit,karpenter"
+	if got := keys(inline); got != want {
+		t.Errorf("inline subjects derived %s, want %s", got, want)
+	}
+	if got := keys(mapped); got != want {
+		t.Errorf("locals-map subjects derived %s, want %s", got, want)
+	}
+}
+
+// TestTrustScan_FailsClosedOnAnUnreadableSubject: a subject list the scan cannot resolve — a var, an
+// unknown map key, an unknown local — is a problem, never a silent skip.
+func TestTrustScan_FailsClosedOnAnUnreadableSubject(t *testing.T) {
+	for name, src := range map[string]string{
+		"a var":            `module "a" { namespace_service_accounts = var.subjects }`,
+		"an unknown key":   "locals {\n  irsa_service_accounts = {\n    a = [\"x:y\"]\n  }\n}\nmodule \"a\" {\n  namespace_service_accounts = local.irsa_service_accounts.b\n}\n",
+		"an unknown local": `module "a" { namespace_service_accounts = ["${local.nowhere}:sa"] }`,
+		"a function call":  `module "a" { namespace_service_accounts = concat(["a:b"], ["c:d"]) }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, problems, err := scanTrustNamespaces(writeTf(t, map[string]string{"x/main.tf": src}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(problems) == 0 {
+				t.Errorf("an unreadable subject passed the scan silently")
+			}
+		})
 	}
 }

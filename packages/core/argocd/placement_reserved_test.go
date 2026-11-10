@@ -106,3 +106,65 @@ func TestPlacementNamespace_AcceptsOrdinaryNamespaces(t *testing.T) {
 		}
 	}
 }
+
+// TestByoNewlyReserved_IsExactlyTheNamesOnlyTheNewGroupsReserve (#6551): the warn-not-refuse rule for
+// an already-attached BYO chart covers exactly the names that ONLY the groups this issue added
+// reserve. Every name an older group reserves keeps its refusal — "warn" never loosens a rule.
+func TestByoNewlyReserved_IsExactlyTheNamesOnlyTheNewGroupsReserve(t *testing.T) {
+	var list byoReservedNamespaceList
+	if err := json.Unmarshal(byoReservedNamespacesJSON, &list); err != nil {
+		t.Fatal(err)
+	}
+	older := map[string]bool{}
+	var warnGroups []string
+	for _, g := range list.Groups {
+		if g.ByoAttached == "warn" {
+			warnGroups = append(warnGroups, g.ID)
+			continue
+		}
+		for _, n := range g.Namespaces {
+			older[n] = true
+		}
+	}
+	if strings.Join(warnGroups, ",") != "platformDataServices,platformCloudIdentities" {
+		t.Fatalf("byoAttached warn is on %v; it is for exactly the two groups #6551 added", warnGroups)
+	}
+	want := map[string]bool{}
+	for _, g := range list.Groups {
+		if g.ByoAttached != "warn" {
+			continue
+		}
+		for _, n := range g.Namespaces {
+			if !older[n] {
+				want[n] = true
+			}
+		}
+	}
+	for _, n := range []string{"caches", "cnpg-system", "databases", "nosql", "scylla-operator", "topics", "fluent-bit"} {
+		if !want[n] {
+			t.Errorf("%q should be newly reserved", n)
+		}
+	}
+	if len(want) != 7 {
+		t.Errorf("newly reserved = %v, want exactly the 7 names", want)
+	}
+	for n := range want {
+		if ByoNewlyReservedNamespaceReason(n) == "" {
+			t.Errorf("%q: no newly-reserved reason", n)
+		}
+		if err := validateByoNamespace(n); err != nil {
+			t.Errorf("%q: an attached BYO chart there must be kept, not refused: %v", n, err)
+		}
+		if PlacementNamespaceReason(n, nil) == "" {
+			t.Errorf("%q: a namespace placement must still be refused it", n)
+		}
+	}
+	for n := range older {
+		if ByoNewlyReservedNamespaceReason(n) != "" {
+			t.Errorf("%q is reserved by an older group, so it must keep its refusal, not become warn-only", n)
+		}
+		if validateByoNamespace(n) == nil {
+			t.Errorf("%q: previously refused for a BYO chart, must still be", n)
+		}
+	}
+}
