@@ -307,7 +307,7 @@ func mysqlByoDeclaredList(users []byoUser) string {
 // collation is not.
 func mysqlByoCandidatesSQL(env string, users []byoUser) string {
 	q := `SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
-    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c') AND CHAR_LENGTH(a.USER) = ` + strconv.Itoa(byoUserLen) + ` AND a.HOST = '%'
+    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c')` + strconv.Itoa(byoUserLen)[:0] + ` AND a.HOST = '%'
       AND ` + mysqlByoTagged(env)
 	if list := mysqlByoDeclaredList(users); list != "" {
 		q += `
