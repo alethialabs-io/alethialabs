@@ -15,7 +15,8 @@
 #
 # LEAST-PRIVILEGE (#722 R5): the app identity is NOT the server's Entra administrator. A SEPARATE
 # `db_admin` managed identity is registered as the sole Entra administrator; it is federated only to
-# the one-shot bootstrap Job's KSA (default/alethia-db-bootstrap). That Job (an ArgoCD PreSync hook)
+# the one-shot bootstrap Job's KSA (default/alethia-db-bootstrap) and to the BYO users Job's KSA
+# (alethia-byo-db-users/byo-db-users-admin). The bootstrap Job (an ArgoCD PreSync hook)
 # logs in as the admin, creates a SCOPED login for the app, and exits:
 #   - Postgres: a role bound to the app UAMI's OBJECT id via a pgaadauth SECURITY LABEL (--app-oid).
 #   - MySQL:    CREATE AADUSER '<alias>' IDENTIFIED BY '<app UAMI CLIENT id>' (--app-client-id).
@@ -23,8 +24,25 @@
 # role/user — never as a superuser/admin.
 #
 # The federated subjects (namespace/name of each KSA) MUST match `manifests`:
-#   app_db   → keylessKSANamespace/keylessKSAName          (the app pod)
-#   db_admin → keylessKSANamespace/keylessBootstrapKSAName (the bootstrap Job pod)
+#   app_db           → keylessKSANamespace/keylessKSAName                  (the app pod)
+#   db_admin         → keylessKSANamespace/keylessBootstrapKSAName         (the bootstrap Job pod)
+#   db_admin_byo_users → ByoDBUsersNamespace/ByoDBUsersAzureServiceAccount (the BYO users Job pod, #6504)
+#
+# The admin identity therefore carries TWO federated credentials (of Azure's 20 per identity). An
+# Azure federated credential matches its issuer and subject strings exactly and takes no wildcard, so
+# a token for the admin identity is issued only to a pod running as one of those two ServiceAccounts
+# on the cluster named by the issuer. What enforces each half, and what does not yet:
+#   - The issuer is this environment's OWN cluster: module.aks[0].oidc_issuer_url, and every
+#     credential here is counted on enable_app_db_identity, which requires var.provision_aks.
+#     checks_cluster.tftest.hcl pins the issuer.
+#   - BYO charts may not use the BYO users namespace: the chart path refuses it by exact name
+#     (argocd byo_reserved_namespaces.json, group platformByoDBUsers).
+#   - The runner refuses to start a BYO users run while that namespace holds any object that is not
+#     a run's (provisioner foreignByoDBUsersObjects). That refusal happens at run time, not at
+#     placement time.
+#   - OPEN GAP: a namespace-placed environment is not yet refused a platform namespace on the host
+#     cluster (#6551). Until it is, the reservation is not enforced on that path, for this subject or
+#     for the bootstrap subject above.
 
 locals {
   # Coupling point with packages/core/manifests (keylessKSAName / keylessBootstrapKSAName /
@@ -32,6 +50,12 @@ locals {
   azure_app_ksa_namespace  = "default"
   azure_app_ksa_name       = "alethia-app"
   azure_bootstrap_ksa_name = "alethia-db-bootstrap"
+  # Coupling point with packages/core/manifests (ByoDBUsersNamespace / ByoDBUsersAzureServiceAccount),
+  # pinned equal by TestByoDBUsers_AzureServiceAccountMatchesTheTemplate. The BYO users Job runs in a
+  # namespace of its own (#6503), under one fixed ServiceAccount name, so the subject below needs no
+  # per-environment input. Which paths keep other workloads out of that namespace is stated above.
+  azure_byo_db_users_ksa_namespace = "alethia-byo-db-users"
+  azure_byo_db_users_ksa_name      = "byo-db-users-admin"
   # PostgreSQL keyless: gates the Postgres-specific Entra-admin registration (a Flexible Server
   # `active_directory_administrator` keyed on server NAME). The app-side identity itself is no longer
   # gated on this — see enable_app_db_identity below — but the PG admin resource still keys off it.
@@ -79,7 +103,7 @@ resource "azurerm_federated_identity_credential" "app_db" {
 
 ########################################################################
 # Dedicated DB-admin identity — the ONLY Entra administrator. Federated #
-# solely to the bootstrap Job's KSA, so no app pod can assume it.       #
+# only to the bootstrap and BYO users Jobs' KSAs, never to an app KSA.  #
 ########################################################################
 
 resource "azurerm_user_assigned_identity" "db_admin" {
@@ -97,6 +121,20 @@ resource "azurerm_federated_identity_credential" "db_admin" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = try(module.aks[0].oidc_issuer_url, null) != null ? module.aks[0].oidc_issuer_url : ""
   subject             = "system:serviceaccount:${local.azure_app_ksa_namespace}:${local.azure_bootstrap_ksa_name}"
+}
+
+# The BYO users Job (packages/core/manifests/byo_db_users.go) connects as the same administrator to
+# create, scope, rotate and revoke the per-binding database users. It is applied by the runner, not
+# by ArgoCD, into its own platform-reserved namespace, and runs under its own ServiceAccount. Same
+# gate as the bootstrap credential: both exist exactly when the admin outputs do.
+resource "azurerm_federated_identity_credential" "db_admin_byo_users" {
+  count               = local.enable_app_db_identity ? 1 : 0
+  name                = "db-admin-byo-users"
+  resource_group_name = azurerm_resource_group.main.name
+  parent_id           = one(azurerm_user_assigned_identity.db_admin[*].id)
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = try(module.aks[0].oidc_issuer_url, null) != null ? module.aks[0].oidc_issuer_url : ""
+  subject             = "system:serviceaccount:${local.azure_byo_db_users_ksa_namespace}:${local.azure_byo_db_users_ksa_name}"
 }
 
 # Register the DEDICATED admin identity (not the app) as the server's Entra administrator, so the
