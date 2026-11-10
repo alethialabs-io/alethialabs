@@ -614,7 +614,8 @@ func TestByoUsersMySQLServer_NewlineLookalikeIsNoCandidate(t *testing.T) {
 		"PREPARE s FROM @s; EXECUTE s;")
 	row := "FROM information_schema.USER_ATTRIBUTES WHERE HEX(USER) = CONCAT(HEX('" + myLookalike + "'), '0A')"
 	if got := a.query(a.root, "SELECT COUNT(*) "+row+" AND JSON_UNQUOTE(JSON_EXTRACT(ATTRIBUTE, '$.alethia_env')) = 'env-a'"); got != "1" {
-		t.Fatalf("fixture: no tagged newline lookalike (count %s)", got)
+		t.Fatalf("fixture: no tagged newline lookalike (count %s); accounts like it: %s", got,
+			a.query(a.root, "SELECT GROUP_CONCAT(CONCAT(HEX(USER), ' ', IFNULL(ATTRIBUTE, 'NULL')) SEPARATOR '; ') FROM information_schema.USER_ATTRIBUTES WHERE USER LIKE '"+myLookalike+"%'"))
 	}
 	// Measured, not assumed: does the pattern alone select the lookalike on this server? Either answer
 	// is logged; the assertions below hold for both, because the candidates also bound the length.
