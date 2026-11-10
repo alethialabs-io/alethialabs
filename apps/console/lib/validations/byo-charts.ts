@@ -119,8 +119,9 @@ export function byoNamespacePrefixMessage(
 
 /**
  * Why a BYO chart may not use `namespace` in a project whose preview environments use
- * `previewPrefix`, or `null` when it may (#6494). Mirrors the Go `argocd.ByoPreviewNamespaceConflict`
- * (packages/core/argocd/byo.go), which pins the rule to the namespaces the preview AppProjects admit:
+ * `previewPrefix`, or `null` when it may (#6494). Kept equal to the Go rule in
+ * packages/core/argocd/byo.go (ByoPreviewNamespaceConflict) by one shared case table, described below.
+ * The Go test pins that rule to the namespaces the preview AppProjects admit:
  * the prefix itself (the vcluster arm) and every namespace starting with the prefix and `-` (the
  * namespace arm, `<prefix>-<pr number>`). A namespace boundary, not a substring test: with prefix
  * `pr`, `pr-7` conflicts and `pre-7` does not. The two are held together by one table of cases:

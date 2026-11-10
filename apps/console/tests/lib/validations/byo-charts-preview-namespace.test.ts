@@ -3,8 +3,9 @@
 
 // #6494 — a BYO chart may not target one of its project's preview namespaces.
 //
-// The rule mirrors the Go `argocd.ByoPreviewNamespaceConflict`, whose test pins it to the namespace
-// patterns the preview guardrails renderer emits. The case table is READ out of
+// The rule is kept equal to the Go rule in packages/core/argocd/byo.go (ByoPreviewNamespaceConflict)
+// by one shared case table. The Go test checks that table against the namespace patterns the preview
+// guardrails renderer emits, and this test checks the console rule against it. The table is READ out of
 // packages/core/argocd/byo_test.go (byoPreviewCases) rather than restated, so the two sides cannot
 // drift apart: a case added or changed in Go is checked here too.
 
