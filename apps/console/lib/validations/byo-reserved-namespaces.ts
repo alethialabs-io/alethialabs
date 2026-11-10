@@ -31,6 +31,9 @@ export interface ReservedNamespacePrefix {
 export const BYO_RESERVED_NAMESPACES: {
 	groups: readonly ReservedNamespaceGroup[];
 	prefixes: readonly ReservedNamespacePrefix[];
+	/** Refused for a NAMESPACE-PLACED environment only (lib/validations/placement-namespace.ts, #6551),
+	 *  never for a BYO chart: `byo-` is where a BYO chart deploys. */
+	placementPrefixes: readonly ReservedNamespacePrefix[];
 } = {
 	groups: [
 		{
@@ -113,6 +116,13 @@ export const BYO_RESERVED_NAMESPACES: {
 		{
 			prefix: "vcluster-",
 			reason: "the platform names every virtual cluster's host namespace vcluster-<name>",
+		},
+	],
+	placementPrefixes: [
+		{
+			prefix: "byo-",
+			reason:
+				"the environment that owns this cluster installs its bring-your-own charts into byo-<chart id>",
 		},
 	],
 };

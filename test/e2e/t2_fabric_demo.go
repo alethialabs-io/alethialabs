@@ -476,6 +476,9 @@ func buildFabricDemoSnapshot(p fabricDemoParams, t fabricDemoOverlayTier, repo s
 		"placement_mode":    "namespace",
 		"namespace":         t.Namespace,
 		"cluster":           map[string]any{"cluster_name": p.fabricClust},
+		// The host environment's own namespaces, as the console computes them (#6551). The runner
+		// refuses a namespace deploy without the key; the base deploy attaches no BYO chart, so none.
+		"placement_host_namespaces": []string{},
 		// apps_path is what makes this a KUSTOMIZE-OVERLAY proof rather than a repo-root sync.
 		"repositories": map[string]any{
 			"apps_destination_repo": repo,

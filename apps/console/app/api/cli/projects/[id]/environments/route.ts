@@ -29,6 +29,11 @@ import {
 	cliEnvironmentResponse,
 	cliEnvironmentsResponse,
 } from "@/lib/validations/cli-contract";
+import { placementHostNamespaces } from "@/lib/queries/placement-host-namespaces";
+import {
+	effectivePlacementNamespace,
+	placementNamespaceMessage,
+} from "@/lib/validations/placement-namespace";
 
 const ENVIRONMENTS_LIST = "project-environments";
 
@@ -249,6 +254,20 @@ export async function POST(
 					},
 					{ status: fabricName ? 404 : 400 },
 				);
+			}
+		}
+
+		// #6551: a namespace placement may not use a namespace the platform or the host environment
+		// uses on the shared cluster — the static list, plus the namespaces the host's own BYO charts
+		// chose. Checked against the namespace it would actually deploy into: its own, or its name's
+		// slug when it has none. The runner refuses the same at deploy; this refuses it up front.
+		if (mode === "namespace" && fabricId) {
+			const reserved = placementNamespaceMessage(
+				effectivePlacementNamespace({ name, namespace: parsed.data.namespace }),
+				await placementHostNamespaces(db, project.id, fabricId),
+			);
+			if (reserved) {
+				return NextResponse.json({ error: `namespace: ${reserved}` }, { status: 400 });
 			}
 		}
 

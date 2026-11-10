@@ -11,6 +11,10 @@ import { canSlugify } from "@/lib/utils/slugify";
 import { environmentNameSchema, namespaceSchema } from "@/lib/validations/names";
 import { appsPathSchema } from "@/lib/validations/apps-path";
 import {
+	effectivePlacementNamespace,
+	placementNamespaceMessage,
+} from "@/lib/validations/placement-namespace";
+import {
 	environmentLifecycle,
 	environmentStage,
 	placementMode,
@@ -412,7 +416,17 @@ export const environmentMatrixSchema = z
 		}),
 	)
 	// At most the four-env matrix; exactly one default is enforced in the core fan-out.
-	.max(8);
+	.max(8)
+	// #6551: a namespace placement may not use a namespace the platform uses on the host cluster —
+	// its own, or the slug of its name when it has none. A new project's host has no BYO charts yet,
+	// so the static list is the whole rule here; the fan-out (environmentSpecProblem) asks the same.
+	.superRefine((envs, ctx) => {
+		envs.forEach((env, i) => {
+			if (env.placement_mode !== "namespace") return;
+			const message = placementNamespaceMessage(effectivePlacementNamespace(env), []);
+			if (message) ctx.addIssue({ code: "custom", path: [i, "namespace"], message });
+		});
+	});
 
 const projectSchema = projectsInsert
 	.omit({

@@ -421,6 +421,13 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	if !isValidClusterName(clusterName) {
 		return nil, fmt.Errorf("namespace placement: serving cluster name %q contains invalid characters", clusterName)
 	}
+	// #6551: the namespace must be one the platform and the host environment do not use. Checked
+	// here — after the shape check, so a hostile value is reported as malformed rather than echoed —
+	// and BEFORE the provider is built, kube access is minted, or anything is applied, so a refused
+	// deploy writes nothing to the shared cluster. The plan (dry-run) path is refused too.
+	if err := placementNamespaceRefusal(vc, ns, "deploy"); err != nil {
+		return nil, err
+	}
 	// Same trust-boundary argument for the apps-repo subpath: it is project data that ends up in the
 	// tenant Application's source.path. Reject a traversal or a YAML-hostile value HERE — before
 	// minting kube access or touching the shared Fabric — rather than eleven steps later at render
@@ -541,6 +548,28 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 	result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
 	fmt.Fprintf(stdout, "Namespace deployment completed: app + isolation guardrails applied into namespace %q on cluster %q.\n", ns, clusterName)
 	return &result, nil
+}
+
+// placementNamespaceRefusal refuses a namespace placement whose namespace ns is reserved on the host
+// cluster (argocd.PlacementNamespaceReason, #6551), or whose snapshot does not say which namespaces
+// the host uses. It FAILS CLOSED on the second: a snapshot without PlacementHostNamespaces came from
+// a console that did not compute them, and "unknown" is not "none".
+//
+// It only ever REFUSES. A namespace placement already deployed into a namespace that is now reserved
+// is left exactly as it is — nothing is applied, moved or deleted — and the error says what the
+// operator does instead. op is "deploy" or "teardown", for the message.
+func placementNamespaceRefusal(vc *types.ProjectConfig, ns, op string) error {
+	if vc.PlacementHostNamespaces == nil {
+		return fmt.Errorf("namespace placement: the config snapshot does not list the namespaces the environment that owns this cluster uses (placement_host_namespaces), so namespace %q cannot be checked against them. Refusing the %s rather than running it unchecked; nothing was changed on the cluster. Queue it again from a console that sends the list", ns, op)
+	}
+	err := argocd.PlacementNamespaceError(ns, *vc.PlacementHostNamespaces)
+	if err == nil {
+		return nil
+	}
+	if op == "teardown" {
+		return fmt.Errorf("namespace placement: %w. Refusing the teardown, because it would delete that namespace and everything else in it; nothing was changed on the cluster. Remove this environment's own ArgoCD Application and AppProject from the namespace by hand, then delete the environment", err)
+	}
+	return fmt.Errorf("namespace placement: %w. Refusing the %s; nothing was changed on the cluster, and anything an earlier deploy put there is left as it is. Create a namespace-placed environment with a namespace of its own and deploy the app there, then remove this environment's own ArgoCD Application and AppProject from %q by hand — do not destroy this environment, which would delete the namespace", err, op, ns)
 }
 
 // kubectlApplyManifest writes a rendered manifest to an owner-only temp file and applies it. Hard

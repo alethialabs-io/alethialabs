@@ -1250,6 +1250,7 @@ describe("placement-aware dispatch (#837)", () => {
 			placement_mode: "dedicated",
 			namespace: null,
 		});
+		expect(snapshot).not.toHaveProperty("placement_host_namespaces");
 	});
 
 	it("a namespace-placed env routes onto its shared Fabric and derives the destination namespace from the env name", async () => {
@@ -1294,6 +1295,8 @@ describe("placement-aware dispatch (#837)", () => {
 			placement_mode: "namespace",
 			// The ArgoCD destination namespace, derived as an RFC-1123 slug of the env name.
 			namespace: "pr-123-preview",
+			// #6551: the host's own namespaces, computed (here: none) — the runner refuses without it.
+			placement_host_namespaces: [],
 		});
 	});
 
@@ -1336,6 +1339,8 @@ describe("placement-aware dispatch (#837)", () => {
 			placement_mode: "vcluster",
 			namespace: "team-a",
 		});
+		// #6551: only a `namespace` placement carries the host's namespaces.
+		expect(snapshot).not.toHaveProperty("placement_host_namespaces");
 	});
 
 	it("falls back to the env identity when the Fabric link is not backfilled yet (back-compat)", async () => {

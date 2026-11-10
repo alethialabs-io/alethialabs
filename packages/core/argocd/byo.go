@@ -468,6 +468,12 @@ type byoReservedNamespaceList struct {
 		Prefix string `json:"prefix"`
 		Reason string `json:"reason"`
 	} `json:"prefixes"`
+	// PlacementPrefixes are refused for a namespace-placed environment only, on top of everything
+	// above (PlacementNamespaceReason). Not for a BYO chart: byo- is where a BYO chart deploys.
+	PlacementPrefixes []struct {
+		Prefix string `json:"prefix"`
+		Reason string `json:"reason"`
+	} `json:"placementPrefixes"`
 }
 
 // byoReservedPrefix is one reserved namespace prefix and why it is reserved.
@@ -480,6 +486,8 @@ var byoReserved = mustParseByoReserved(byoReservedNamespacesJSON)
 type byoReservedIndex struct {
 	exact    map[string]string
 	prefixes []byoReservedPrefix
+	// placementPrefixes apply to namespace placements only (placement_reserved.go).
+	placementPrefixes []byoReservedPrefix
 }
 
 // mustParseByoReserved parses the embedded list, PANICKING on a malformed one. The file is compiled
@@ -510,6 +518,15 @@ func mustParseByoReserved(raw []byte) byoReservedIndex {
 			panic("byo_reserved_namespaces.json: every prefix needs a prefix and a reason")
 		}
 		idx.prefixes = append(idx.prefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
+	}
+	if len(list.PlacementPrefixes) == 0 {
+		panic("byo_reserved_namespaces.json: placementPrefixes is empty — a namespace placement would then be free to take a BYO chart's namespace")
+	}
+	for _, p := range list.PlacementPrefixes {
+		if p.Prefix == "" || p.Reason == "" {
+			panic("byo_reserved_namespaces.json: every placement prefix needs a prefix and a reason")
+		}
+		idx.placementPrefixes = append(idx.placementPrefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
 	}
 	return idx
 }

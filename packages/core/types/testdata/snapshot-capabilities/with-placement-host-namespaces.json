@@ -1,0 +1,6 @@
+{
+  "project_name": "acme",
+  "placement_mode": "namespace",
+  "namespace": "team-web",
+  "placement_host_namespaces": ["payments"]
+}

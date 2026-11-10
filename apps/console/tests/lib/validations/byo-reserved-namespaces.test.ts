@@ -40,6 +40,7 @@ function runnerList() {
 				z.object({ id: z.string(), reason: z.string(), namespaces: z.array(z.string()) }).strict(),
 			),
 			prefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
+			placementPrefixes: z.array(z.object({ prefix: z.string(), reason: z.string() }).strict()),
 		})
 		.strict()
 		.parse(raw);
@@ -79,7 +80,11 @@ function attachValue(namespace: string) {
 describe("BYO reserved namespaces — one list, two readers", () => {
 	it("the console mirror deep-equals the runner's byo_reserved_namespaces.json", () => {
 		const runner = runnerList();
-		expect(BYO_RESERVED_NAMESPACES).toEqual({ groups: runner.groups, prefixes: runner.prefixes });
+		expect(BYO_RESERVED_NAMESPACES).toEqual({
+			groups: runner.groups,
+			prefixes: runner.prefixes,
+			placementPrefixes: runner.placementPrefixes,
+		});
 	});
 
 	it("the marketplace group is exactly the namespaces ADDON_CATALOG installs into", () => {

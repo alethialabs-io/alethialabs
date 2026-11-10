@@ -25,6 +25,10 @@ import {
 	namespaceProblem,
 	normalizeEnvironmentName,
 } from "@/lib/validations/names";
+import {
+	effectivePlacementNamespace,
+	placementNamespaceMessage,
+} from "@/lib/validations/placement-namespace";
 
 /**
  * Why an environment spec cannot be fanned out, or `null` when it can.
@@ -46,6 +50,7 @@ import {
 export function environmentSpecProblem(spec: {
 	name: string;
 	namespace?: string | null;
+	placement_mode?: PlacementMode;
 }): string | null {
 	const nameProblem = environmentNameProblem(spec.name);
 	if (nameProblem) return `Invalid environment name "${spec.name}": ${nameProblem}`;
@@ -62,6 +67,12 @@ export function environmentSpecProblem(spec: {
 	if (spec.namespace != null) {
 		const nsProblem = namespaceProblem(spec.namespace);
 		if (nsProblem) return `Invalid namespace "${spec.namespace}": ${nsProblem}`;
+	}
+	// #6551: a namespace placement may not use a namespace the platform uses on the host cluster. A
+	// NEW project's host has no BYO charts yet, so the static list is the whole rule here.
+	if (spec.placement_mode === "namespace") {
+		const reserved = placementNamespaceMessage(effectivePlacementNamespace(spec), []);
+		if (reserved) return reserved;
 	}
 	return null;
 }
