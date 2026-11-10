@@ -539,13 +539,16 @@ func TestByoUsersMySQLServer_FailedCursorStepDropsNoOtherAccount(t *testing.T) {
 
 	failed := false
 	a.mutateSweep = func(sweep string) string {
-		i := strings.Index(sweep, "SELECT CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4), IFNULL(CONCAT('DROP USER '")
-		if i < 0 {
+		// The first statement that advances the drop cursor, whatever its shape, is replaced by one
+		// that fails and sets nothing: exactly what a lock wait or a KILL QUERY would leave.
+		c := strings.Index(sweep, "CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY)")
+		if c < 0 {
 			t.Fatal("fixture: no drop step to break")
 		}
-		end := strings.Index(sweep[i:], ";\n")
+		i := strings.LastIndex(sweep[:c], ";\n") + 2
+		end := c + strings.Index(sweep[c:], ";\n")
 		failed = true
-		return sweep[:i] + "SELECT alethia_byo_no_such_column INTO @alethia_byo_u, @alethia_byo_s" + sweep[i+end:]
+		return sweep[:i] + "DO alethia_byo_no_such_column" + sweep[end:]
 	}
 	t.Cleanup(func() { a.mutateSweep = nil })
 	_, out, err := a.applyErr("env-a")

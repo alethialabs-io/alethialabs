@@ -307,7 +307,7 @@ func mysqlByoDeclaredList(users []byoUser) string {
 // collation is not.
 func mysqlByoCandidatesSQL(env string, users []byoUser) string {
 	q := `SELECT a.USER, a.HOST FROM information_schema.USER_ATTRIBUTES a
-    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c')` + strconv.Itoa(byoUserLen)[:0] + ` AND a.HOST = '%'
+    WHERE REGEXP_LIKE(a.USER, ` + mustMySQLLiteral(byoUserSQLPattern) + `, 'c') AND CHAR_LENGTH(a.USER) = ` + strconv.Itoa(byoUserLen) + ` AND a.HOST = '%'
       AND ` + mysqlByoTagged(env)
 	if list := mysqlByoDeclaredList(users); list != "" {
 		q += `
@@ -472,7 +472,7 @@ func mysqlByoSweepSQL(env string, users []byoUser) []string {
 	)
 	next := "CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4)"
 	for i := 0; i < mysqlByoMaxDrops; i++ {
-		out = append(out, reset, `SELECT `+next+`, IF(@alethia_byo_u IS NULL, 'DO 0', CONCAT('DROP USER ', QUOTE(@alethia_byo_u), '@''%''')) FROM (`+cands+`) c
+		out = append(out, reset, `SELECT `+next+`, IFNULL(CONCAT('DROP USER ', QUOTE(`+next+`), '@''%'''), 'DO 0') FROM (`+cands+`) c
     WHERE CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY)
     INTO @alethia_byo_u, @`+mysqlByoStmt+`;`)
 		out = append(out, run...)
