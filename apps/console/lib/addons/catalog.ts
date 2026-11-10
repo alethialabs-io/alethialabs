@@ -986,7 +986,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		license: "Apache-2.0",
 		chartRepo: "https://kubernetes.github.io/ingress-nginx",
 		chart: "ingress-nginx",
-		version: "4.11.2",
+		version: "4.15.1",
 		namespace: "ingress-nginx",
 		configSchema: z.object({
 			/** Controller replicas (raise for HA). */
