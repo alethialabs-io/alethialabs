@@ -472,10 +472,11 @@ func mysqlByoSweepSQL(env string, users []byoUser) []string {
 	)
 	next := "CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4)"
 	for i := 0; i < mysqlByoMaxDrops; i++ {
-		out = append(out, reset, `SELECT `+next+`, IFNULL(CONCAT('DROP USER ', QUOTE(`+next+`), '@''%'''), 'DO 0') FROM (`+cands+`) c
-    WHERE CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY)
-    INTO @alethia_byo_u, @`+mysqlByoStmt+`;`)
-		out = append(out, run...)
+		// MUTATION PROBE: the pre-fix shape, a cursor SET then a DROP built from the variable.
+		_, _ = reset, next
+		out = append(out, `SET @alethia_byo_u = (SELECT CONVERT(MIN(CAST(c.USER AS BINARY)) USING utf8mb4) FROM (`+cands+`) c
+    WHERE CAST(c.USER AS BINARY) > CAST(@alethia_byo_u AS BINARY));`)
+		out = append(out, mysqlPrepared("IF(@alethia_byo_u IS NULL, 'DO 0', CONCAT('DROP USER ', QUOTE(@alethia_byo_u), '@''%'''))")...)
 	}
 	return out
 }
