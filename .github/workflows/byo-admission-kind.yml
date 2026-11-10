@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The BYO admission policy on a REAL API server (#6495).
+#
+# The enforce policy is `failurePolicy: Fail` and its binding selects every namespace the runner
+# creates for a new BYO chart. A CEL expression that errors at runtime there refuses every Service,
+# Secret and Ingress write in that namespace, the platform's own included. The unit tests cannot
+# catch that: no CEL evaluator is in packages/core's module graph, so they pin the expressions' text,
+# not their behaviour. This workflow applies the rendered policies to a kind cluster at the OLDEST
+# Kubernetes minor the platform supports (1.33, packages/core/compat/matrix.json) and checks them
+# with kubectl. See packages/core/argocd/byo_admission_kind_test.go for what it proves.
+#
+# NOT a required check, on purpose: it needs a docker-in-runner kind boot, and an image-pull hiccup
+# must not wedge the merge queue. It is still RED on failure, and it runs on every PR that touches
+# the policy's code.
+#
+# The second test step re-runs the test against a fresh cluster with one CEL expression mutated, and
+# fails if the test still passes. A real-cluster check that cannot go red is worth nothing, and this
+# proves on every run that this one can.
+name: BYO admission policy (kind)
+
+on:
+  pull_request:
+    paths:
+      - "packages/core/argocd/byo_admission*"
+      - ".github/workflows/byo-admission-kind.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "packages/core/argocd/byo_admission*"
+      - ".github/workflows/byo-admission-kind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: byo-admission-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # kind v0.30.0's published image for Kubernetes 1.33, pinned by digest (from the kind release notes).
+  KIND_NODE_IMAGE: kindest/node:v1.33.4@sha256:25a6018e48dfcaee478f4a59af81157a437f15e6e140bf103f85a2e7cd0cbbf2
+
+jobs:
+  kind:
+    name: BYO admission policy on a real API server (kind, Kubernetes 1.33)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+      - uses: azure/setup-kubectl@v5
+      - name: Install kind CLI
+        id: kind
+        run: |
+          bash scripts/ci/go-mod-download-retry.sh -- go install sigs.k8s.io/kind@v0.30.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Pre-fetch packages/core's Go modules (retrying a transient proxy error)
+        run: bash scripts/ci/go-mod-download-retry.sh packages/core
+      - name: Vet the build-tagged test
+        working-directory: packages/core
+        run: go vet -tags byo_admission_kind ./argocd
+      - name: Create the kind cluster
+        run: kind create cluster --name byo-admission --image "$KIND_NODE_IMAGE" --wait 180s
+      - name: The policy on a real API server
+        working-directory: packages/core
+        run: go test -tags byo_admission_kind -run TestByoAdmissionKind -count=1 -v ./argocd
+      - name: Mutation self-test (a mutated CEL expression must turn the test red)
+        working-directory: packages/core
+        run: |
+          set -eu
+          f=argocd/byo_admission.go
+          before=$(sha256sum "$f")
+          # The service-exposure rule's negation is dropped, so it admits only LoadBalancer/NodePort.
+          sed -i 's/|| !(object.spec.type in "/|| (object.spec.type in "/' "$f"
+          if [ "$(sha256sum "$f")" = "$before" ]; then
+            echo "::error::the mutation did not apply; the self-test would prove nothing"
+            exit 1
+          fi
+          # A fresh cluster: re-applying over the correct policy would race the API server's
+          # recompilation and could test the old expression.
+          kind delete cluster --name byo-admission
+          kind create cluster --name byo-admission --image "$KIND_NODE_IMAGE" --wait 180s
+          if go test -tags byo_admission_kind -run TestByoAdmissionKind -count=1 ./argocd; then
+            echo "::error::the real-cluster test PASSED with a mutated CEL expression"
+            exit 1
+          fi
+          echo "The mutated expression turned the real-cluster test red, as it must."
+          git checkout -- "$f"
+      - name: Delete the kind cluster
+        if: always() && steps.kind.outcome == 'success'
+        run: kind delete clusters --all || true
