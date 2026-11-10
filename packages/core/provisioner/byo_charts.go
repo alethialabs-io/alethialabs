@@ -622,6 +622,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	var moved []byoMove
 	var leftProject []byoProjectChange
 	var previewOverlaps []byoPreviewOverlap
+	var newlyReserved []byoNewlyReservedOverlap
 	chartsByNS := map[string][]string{}
 	hasByo := false
 	// Which charts already hold each namespace as stored, so a move can see whether its target is
@@ -694,6 +695,12 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: BYO chart %q: %s\n", a.ID, reason)
 			previewOverlaps = append(previewOverlaps, byoPreviewOverlap{ID: a.ID, Namespace: ns, Prefix: strings.TrimSpace(vc.PreviewNamespacePrefix)})
 		}
+		// A chart in a namespace #6551 newly reserved is REPORTED, not refused, for the same reason:
+		// it was attached before that name was reserved. See byoNewlyReservedOverlap.
+		if reason := argocd.ByoNewlyReservedNamespaceReason(ns); reason != "" {
+			fmt.Fprintf(stderr, "Warning: BYO chart %q: namespace %q is now reserved: %s\n", a.ID, ns, reason)
+			newlyReserved = append(newlyReserved, byoNewlyReservedOverlap{ID: a.ID, Namespace: ns, Reason: reason})
+		}
 		repos = append(repos, a.ChartRepo)
 		if a.IsGitSource() {
 			gitRepos = append(gitRepos, a.ChartRepo)
@@ -740,7 +747,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	}
 	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels, modes); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
-		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps}
+		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved}
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
@@ -814,7 +821,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, Admission: admission}
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, NewlyReserved: newlyReserved, Admission: admission}
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
@@ -843,6 +850,9 @@ type byoConfigured struct {
 	// PreviewOverlaps are the accepted charts whose namespace is one of the project's preview
 	// namespaces (#6494). They are still deployed.
 	PreviewOverlaps []byoPreviewOverlap
+	// NewlyReserved are the accepted charts whose namespace #6551 newly reserved. They are still
+	// deployed.
+	NewlyReserved []byoNewlyReservedOverlap
 	// Admission are the accepted charts' namespaces holding what the BYO admission rules refuse,
 	// reported because nothing refuses them there yet (#6495).
 	Admission []byoAdmissionReport
@@ -884,6 +894,30 @@ func (o byoPreviewOverlap) warning() string {
 		"moving it would change the in-cluster address of its Services. Until you act, preview environments may share that namespace with it. "+
 		"Attach the chart again with another namespace (leave it blank for its own, %q), or change the project's preview namespace prefix.",
 		o.ID, o.Namespace, o.Prefix, o.Prefix+"-", argocd.ByoChartNamespace(o.ID))
+}
+
+// byoNewlyReservedOverlap is one BYO chart stored in a namespace that only a group #6551 added reserves
+// (argocd.ByoNewlyReservedNamespaceReason). The console refuses the name at attach and update, so a
+// chart reaches this only when it was stored there before. It is reported and kept where it is, for the
+// reasons byoPreviewOverlap gives: refusing it would withdraw its binding secrets from running
+// workloads, and moving it would change its Services' addresses. Names any older group reserves are
+// not reported here; they keep their refusal.
+type byoNewlyReservedOverlap struct {
+	// ID is the add-on id.
+	ID string
+	// Namespace is the chart's namespace, which it keeps.
+	Namespace string
+	// Reason is why the namespace is now reserved.
+	Reason string
+}
+
+// warning is the Deploy-tab warning: where the chart was kept, why that namespace is now reserved, and
+// what to do. It carries no secret — an id, a namespace and a reason.
+func (o byoNewlyReservedOverlap) warning() string {
+	return fmt.Sprintf("BYO chart %q was deployed into namespace %q, which is now reserved for the platform: %s. "+
+		"The chart was attached there before that, so this deploy kept it where it is, with its workloads and binding secrets unchanged; "+
+		"moving it would change the in-cluster address of its Services. Attach the chart again with a namespace of its own (leave it blank for %q).",
+		o.ID, o.Namespace, o.Reason, argocd.ByoChartNamespace(o.ID))
 }
 
 // liveByoProject is the project of the chart's live Application, or "" when it has none or the read

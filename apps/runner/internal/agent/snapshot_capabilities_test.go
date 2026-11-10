@@ -125,7 +125,7 @@ func TestRunnerHeaders_AdvertiseTheSnapshotCapabilities(t *testing.T) {
 	if _, err := NewRunnerAPIClient(server.URL, "r1", "tok").ClaimJob(); err != nil {
 		t.Fatalf("ClaimJob: %v", err)
 	}
-	if want := "addon-byo-marker,preview-namespace-prefix"; got != want {
+	if want := "addon-byo-marker,preview-namespace-prefix,placement-host-namespaces"; got != want {
 		t.Errorf("%s = %q, want %q (the console matches these exact names)", types.RunnerCapabilitiesHeader, got, want)
 	}
 }
@@ -190,5 +190,75 @@ func TestSnapshotContract_ThisRunnerReadsThePreviewPrefix(t *testing.T) {
 	}
 	if with.PreviewNamespacePrefix != "pr" || without.PreviewNamespacePrefix != "" {
 		t.Errorf("PreviewNamespacePrefix with=%q without=%q, want \"pr\" and \"\"", with.PreviewNamespacePrefix, without.PreviewNamespacePrefix)
+	}
+}
+
+// projectConfigWithout is types.ProjectConfig as a runner built before the field named `field` was
+// added: every other field of the real struct, built by reflection so it follows them.
+func projectConfigWithout(t *testing.T, field string) reflect.Type {
+	t.Helper()
+	real := reflect.TypeOf(types.ProjectConfig{})
+	var fields []reflect.StructField
+	found := false
+	for i := 0; i < real.NumField(); i++ {
+		f := real.Field(i)
+		if f.Name == field {
+			found = true
+			continue
+		}
+		fields = append(fields, f)
+	}
+	if !found {
+		t.Fatalf("types.ProjectConfig has no %s field — this contract test no longer describes anything", field)
+	}
+	return reflect.StructOf(fields)
+}
+
+// TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutTheHostNamespaces (#6551): the snapshot the
+// console serves a runner without types.RunnerCapabilityPlacementHostNamespaces decodes under that
+// runner's strict decode; the one carrying the key would fail every job — which is why it is gated.
+func TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutTheHostNamespaces(t *testing.T) {
+	decode := func(name string) error {
+		data, err := json.Marshal(snapshotFixture(t, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		return dec.Decode(reflect.New(projectConfigWithout(t, "PlacementHostNamespaces")).Interface())
+	}
+	if err := decode("without-placement-host-namespaces.json"); err != nil {
+		t.Fatalf("an old runner must decode the snapshot served to it: %v", err)
+	}
+	if err := decode("with-placement-host-namespaces.json"); err == nil || !strings.Contains(err.Error(), `unknown field "placement_host_namespaces"`) {
+		t.Fatalf("an old runner must refuse the key (the reason it is gated), got %v", err)
+	}
+}
+
+// TestSnapshotContract_ThisRunnerTellsAbsentHostNamespacesFromNone: this build decodes both shapes, and
+// keeps "not sent" (nil — the provisioner refuses the deploy) apart from "sent" (a list, maybe empty).
+func TestSnapshotContract_ThisRunnerTellsAbsentHostNamespacesFromNone(t *testing.T) {
+	with, err := snapshotToProjectConfig(snapshotFixture(t, "with-placement-host-namespaces.json"))
+	if err != nil {
+		t.Fatalf("with the key: %v", err)
+	}
+	without, err := snapshotToProjectConfig(snapshotFixture(t, "without-placement-host-namespaces.json"))
+	if err != nil {
+		t.Fatalf("without the key: %v", err)
+	}
+	if with.PlacementHostNamespaces == nil || !reflect.DeepEqual(*with.PlacementHostNamespaces, []string{"payments"}) {
+		t.Errorf("PlacementHostNamespaces with the key = %v, want [payments]", with.PlacementHostNamespaces)
+	}
+	if without.PlacementHostNamespaces != nil {
+		t.Errorf("PlacementHostNamespaces without the key = %v, want nil (not sent is not the same as none)", *without.PlacementHostNamespaces)
+	}
+	empty := snapshotFixture(t, "without-placement-host-namespaces.json")
+	empty["placement_host_namespaces"] = []any{}
+	none, err := snapshotToProjectConfig(empty)
+	if err != nil {
+		t.Fatalf("with an empty list: %v", err)
+	}
+	if none.PlacementHostNamespaces == nil || len(*none.PlacementHostNamespaces) != 0 {
+		t.Errorf("an empty list must decode as an empty, NON-nil list, got %v", none.PlacementHostNamespaces)
 	}
 }

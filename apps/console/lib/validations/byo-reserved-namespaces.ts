@@ -19,6 +19,10 @@ export interface ReservedNamespaceGroup {
 	id: string;
 	reason: string;
 	namespaces: readonly string[];
+	/** `"warn"` on the two groups #6551 added: the RUNNER reports a BYO chart already stored in one of
+	 *  their names and keeps deploying it, instead of refusing it. The console refuses every name in
+	 *  every group at attach and update regardless, so this changes nothing here. */
+	byoAttached?: "warn";
 }
 
 /** A reserved namespace prefix and the reason shown to the user. */
@@ -31,6 +35,9 @@ export interface ReservedNamespacePrefix {
 export const BYO_RESERVED_NAMESPACES: {
 	groups: readonly ReservedNamespaceGroup[];
 	prefixes: readonly ReservedNamespacePrefix[];
+	/** Refused for a NAMESPACE-PLACED environment only (lib/validations/placement-namespace.ts, #6551),
+	 *  never for a BYO chart: `byo-` is where a BYO chart deploys. */
+	placementPrefixes: readonly ReservedNamespacePrefix[];
 } = {
 	groups: [
 		{
@@ -83,6 +90,40 @@ export const BYO_RESERVED_NAMESPACES: {
 			namespaces: ["default"],
 		},
 		{
+			id: "platformDataServices",
+			byoAttached: "warn",
+			reason:
+				"the platform runs its in-cluster data services there (databases, caches, queues, operators), with their credentials",
+			namespaces: [
+				"caches",
+				"cnpg-system",
+				"databases",
+				"nosql",
+				"queues",
+				"registries",
+				"scylla-operator",
+				"secrets",
+				"topics",
+			],
+		},
+		{
+			id: "platformCloudIdentities",
+			byoAttached: "warn",
+			reason: "a cloud identity the platform's templates create trusts a service account there",
+			namespaces: [
+				"agic",
+				"alethia-build",
+				"argocd",
+				"cert-manager",
+				"default",
+				"external-dns",
+				"external-secrets-operator",
+				"fluent-bit",
+				"karpenter",
+				"kube-system",
+			],
+		},
+		{
 			id: "marketplaceAddOns",
 			reason: "a platform-managed add-on from the marketplace installs there",
 			namespaces: [
@@ -113,6 +154,13 @@ export const BYO_RESERVED_NAMESPACES: {
 		{
 			prefix: "vcluster-",
 			reason: "the platform names every virtual cluster's host namespace vcluster-<name>",
+		},
+	],
+	placementPrefixes: [
+		{
+			prefix: "byo-",
+			reason:
+				"the environment that owns this cluster installs its bring-your-own charts into byo-<chart id>",
 		},
 	],
 };

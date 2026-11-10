@@ -82,6 +82,15 @@ type ProjectConfig struct {
 	// namespaces — it is NOT the preview renderers' "preview" default.
 	PreviewNamespacePrefix string `json:"preview_namespace_prefix,omitempty"`
 
+	// PlacementHostNamespaces are the namespaces the HOST environment (the `dedicated` environment
+	// that owns this Fabric's cluster) uses for its own bring-your-own charts, computed by the console
+	// from the host's rows (#6551). A namespace placement may not deploy into one of them
+	// (argocd.PlacementNamespaceReason). The console emits it for a `namespace` placement only, as a
+	// list that may be empty. NIL — the key absent — means the console did not compute it, and the
+	// runner then REFUSES a namespace deploy rather than assume the host uses nothing. A pointer so
+	// that "computed, and empty" and "not computed" stay two different values.
+	PlacementHostNamespaces *[]string `json:"placement_host_namespaces,omitempty"`
+
 	// IacSource, when set, marks this project as BRING-YOUR-OWN IaC: the runner
 	// provisions the customer's own OpenTofu root module (cloned at a pinned commit
 	// from git) instead of a bundled Alethia template. It is the fail-closed

@@ -1,5 +1,5 @@
 {
-  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test in tests/lib/validations/byo-reserved-namespaces.test.ts). Each group is checked against its source as follows. kubernetes: fixed by hand, each name asserted refused. platformTemplates: EQUALITY (go test, byo_test.go) with the namespaces rendered from infra/templates/argocd/*.yaml. platformCategories: EQUALITY (go test, byo_test.go) with the literal namespace of every helm_release / helm_template block in infra/templates/**/*.tf. platformRuntime: EQUALITY (go test, byo_test.go) with a HAND-KEPT list of the runner's namespace constants in that test - a new constant is not seen until it is added there. platformWorkloads: EQUALITY (go test, byo_oci_test.go) with ByoLegacyDefaultNamespace, and the provisioner's appNamespace - where the first-class workloads, their binding Secrets and service accounts live - is asserted refused for this group's reason (go test, provisioner/byo_move_test.go); a BYO chart with no namespace of its own deploys into byo-<chart id> instead. marketplaceAddOns: EQUALITY with ADDON_CATALOG (console vitest) and EQUALITY with the union of test/e2e/fixtures/addon_catalog.*.json (go test). platformByoDBUsers: EQUALITY (go test, provisioner/byo_db_users_test.go) with manifests.ByoDBUsersNamespace; the exact name only, not an alethia- prefix, so no namespace an existing chart is attached in becomes reserved. prefixes: hand-kept; vcluster- is pinned to the provisioner constant (go test). Kept sorted.",
+  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test in tests/lib/validations/byo-reserved-namespaces.test.ts). Each group is checked against its source as follows. kubernetes: fixed by hand, each name asserted refused. platformTemplates: EQUALITY (go test, byo_test.go) with the namespaces rendered from infra/templates/argocd/*.yaml. platformCategories: EQUALITY (go test, byo_test.go) with the literal namespace of every helm_release / helm_template block in infra/templates/**/*.tf. platformRuntime: EQUALITY (go test, byo_test.go) with a HAND-KEPT list of the runner's namespace constants in that test - a new constant is not seen until it is added there. platformWorkloads: EQUALITY (go test, byo_oci_test.go) with ByoLegacyDefaultNamespace, and the provisioner's appNamespace - where the first-class workloads, their binding Secrets and service accounts live - is asserted refused for this group's reason (go test, provisioner/byo_move_test.go); a BYO chart with no namespace of its own deploys into byo-<chart id> instead. marketplaceAddOns: EQUALITY with ADDON_CATALOG (console vitest) and EQUALITY with the union of test/e2e/fixtures/addon_catalog.*.json (go test). platformByoDBUsers: EQUALITY (go test, provisioner/byo_db_users_test.go) with manifests.ByoDBUsersNamespace; the exact name only, not an alethia- prefix, so no namespace an existing chart is attached in becomes reserved. platformDataServices: EQUALITY (console vitest, byo-reserved-namespaces.test.ts) with HETZNER_SERVICE_NAMESPACES in apps/console/lib/cloud-providers/hetzner-services.ts. platformCloudIdentities: every namespace named in a workload-identity trust subject in infra/templates/project/**/*.tf (IRSA namespace_service_accounts, GKE Workload Identity members, Azure federated credential and Alibaba RRSA subjects) is reserved by SOME group, and every name in this group is such a namespace (go test, byo_reserved_derived_test.go). byoAttached warn (only on the two groups #6551 added): a BYO chart ALREADY attached in a name that ONLY such a group reserves keeps deploying where it is, with a Deploy-tab warning (provisioner byoNewlyReservedOverlap), instead of being refused; the console still refuses the name at attach and update, and a namespace placement is refused it outright. prefixes: hand-kept; vcluster- is pinned to the provisioner constant (go test). placementPrefixes: hand-kept; refused for a namespace-placed environment ONLY (argocd.PlacementNamespaceReason, console placement-namespace.ts), on top of every group and prefix above - byo- is pinned to byoProjectPrefix (go test). Kept sorted.",
   "groups": [
     {
       "id": "kubernetes",
@@ -60,6 +60,39 @@
       ]
     },
     {
+      "id": "platformDataServices",
+      "byoAttached": "warn",
+      "reason": "the platform runs its in-cluster data services there (databases, caches, queues, operators), with their credentials",
+      "namespaces": [
+        "caches",
+        "cnpg-system",
+        "databases",
+        "nosql",
+        "queues",
+        "registries",
+        "scylla-operator",
+        "secrets",
+        "topics"
+      ]
+    },
+    {
+      "id": "platformCloudIdentities",
+      "byoAttached": "warn",
+      "reason": "a cloud identity the platform's templates create trusts a service account there",
+      "namespaces": [
+        "agic",
+        "alethia-build",
+        "argocd",
+        "cert-manager",
+        "default",
+        "external-dns",
+        "external-secrets-operator",
+        "fluent-bit",
+        "karpenter",
+        "kube-system"
+      ]
+    },
+    {
       "id": "marketplaceAddOns",
       "reason": "a platform-managed add-on from the marketplace installs there",
       "namespaces": [
@@ -90,6 +123,12 @@
     {
       "prefix": "vcluster-",
       "reason": "the platform names every virtual cluster's host namespace vcluster-<name>"
+    }
+  ],
+  "placementPrefixes": [
+    {
+      "prefix": "byo-",
+      "reason": "the environment that owns this cluster installs its bring-your-own charts into byo-<chart id>"
     }
   ]
 }

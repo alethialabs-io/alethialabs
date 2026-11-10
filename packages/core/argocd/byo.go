@@ -463,11 +463,20 @@ type byoReservedNamespaceList struct {
 		ID         string   `json:"id"`
 		Reason     string   `json:"reason"`
 		Namespaces []string `json:"namespaces"`
+		// ByoAttached is "warn" for a group whose names an ALREADY-attached BYO chart may keep (it is
+		// reported, not refused — see ByoNewlyReservedNamespaceReason), and empty for the refusing default.
+		ByoAttached string `json:"byoAttached,omitempty"`
 	} `json:"groups"`
 	Prefixes []struct {
 		Prefix string `json:"prefix"`
 		Reason string `json:"reason"`
 	} `json:"prefixes"`
+	// PlacementPrefixes are refused for a namespace-placed environment only, on top of everything
+	// above (PlacementNamespaceReason). Not for a BYO chart: byo- is where a BYO chart deploys.
+	PlacementPrefixes []struct {
+		Prefix string `json:"prefix"`
+		Reason string `json:"reason"`
+	} `json:"placementPrefixes"`
 }
 
 // byoReservedPrefix is one reserved namespace prefix and why it is reserved.
@@ -478,8 +487,14 @@ var byoReserved = mustParseByoReserved(byoReservedNamespacesJSON)
 
 // byoReservedIndex is byo_reserved_namespaces.json flattened for lookup.
 type byoReservedIndex struct {
-	exact    map[string]string
-	prefixes []byoReservedPrefix
+	// exact are the names a BYO chart is REFUSED (every group without byoAttached "warn").
+	exact map[string]string
+	// warnExact are the names ONLY a byoAttached "warn" group reserves (#6551): refused to a
+	// placement and at attach, reported — not refused — for a BYO chart already stored there.
+	warnExact map[string]string
+	prefixes  []byoReservedPrefix
+	// placementPrefixes apply to namespace placements only (placement_reserved.go).
+	placementPrefixes []byoReservedPrefix
 }
 
 // mustParseByoReserved parses the embedded list, PANICKING on a malformed one. The file is compiled
@@ -493,16 +508,29 @@ func mustParseByoReserved(raw []byte) byoReservedIndex {
 	if err := dec.Decode(&list); err != nil {
 		panic(fmt.Sprintf("byo_reserved_namespaces.json: %v", err))
 	}
-	idx := byoReservedIndex{exact: map[string]string{}}
+	idx := byoReservedIndex{exact: map[string]string{}, warnExact: map[string]string{}}
 	for _, g := range list.Groups {
 		if g.ID == "" || g.Reason == "" || len(g.Namespaces) == 0 {
 			panic(fmt.Sprintf("byo_reserved_namespaces.json: group %q needs an id, a reason and at least one namespace", g.ID))
 		}
+		if g.ByoAttached != "" && g.ByoAttached != "warn" {
+			panic(fmt.Sprintf("byo_reserved_namespaces.json: group %q has byoAttached %q; the only value is \"warn\"", g.ID, g.ByoAttached))
+		}
+		target := idx.exact
+		if g.ByoAttached == "warn" {
+			target = idx.warnExact
+		}
 		for _, n := range g.Namespaces {
 			// A name in two groups keeps the FIRST group's reason; the order is the file's.
-			if _, seen := idx.exact[n]; !seen {
-				idx.exact[n] = g.Reason
+			if _, seen := target[n]; !seen {
+				target[n] = g.Reason
 			}
+		}
+	}
+	// A name a refusing group also reserves keeps its refusal: "warn" never loosens an existing rule.
+	for n := range idx.warnExact {
+		if _, refused := idx.exact[n]; refused {
+			delete(idx.warnExact, n)
 		}
 	}
 	for _, p := range list.Prefixes {
@@ -510,6 +538,15 @@ func mustParseByoReserved(raw []byte) byoReservedIndex {
 			panic("byo_reserved_namespaces.json: every prefix needs a prefix and a reason")
 		}
 		idx.prefixes = append(idx.prefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
+	}
+	if len(list.PlacementPrefixes) == 0 {
+		panic("byo_reserved_namespaces.json: placementPrefixes is empty — a namespace placement would then be free to take a BYO chart's namespace")
+	}
+	for _, p := range list.PlacementPrefixes {
+		if p.Prefix == "" || p.Reason == "" {
+			panic("byo_reserved_namespaces.json: every placement prefix needs a prefix and a reason")
+		}
+		idx.placementPrefixes = append(idx.placementPrefixes, byoReservedPrefix{prefix: p.Prefix, reason: p.Reason})
 	}
 	return idx
 }
@@ -527,6 +564,13 @@ func byoReservedNamespaceReason(ns string) string {
 	}
 	return ""
 }
+
+// ByoNewlyReservedNamespaceReason says why ns is reserved by a group a BYO chart already stored there
+// may keep (#6551), or "". The runner REPORTS such a chart and keeps deploying it where it is
+// (provisioner byoNewlyReservedOverlap): refusing it would withdraw its binding secrets from running
+// workloads. The console refuses the name at attach and update, and a namespace placement is refused
+// it outright (PlacementNamespaceReason).
+func ByoNewlyReservedNamespaceReason(ns string) string { return byoReserved.warnExact[ns] }
 
 // RenderByoNamespaces renders the destination namespaces for a project's BYO charts, so the runner
 // can create them before the charts sync. Returns "" when there are none, which callers treat as
