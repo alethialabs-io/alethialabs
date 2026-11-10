@@ -621,6 +621,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	var refused []byoRefusal
 	var moved []byoMove
 	var leftProject []byoProjectChange
+	var previewOverlaps []byoPreviewOverlap
 	hasByo := false
 	// Which charts already hold each namespace as stored, so a move can see whether its target is
 	// taken (see the move below).
@@ -680,6 +681,14 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			refused = append(refused, byoRefusal{ID: a.ID, Namespace: ns, Reason: reason, Shared: true})
 			continue
 		}
+		// A chart in one of the project's preview namespaces (#6494) is REPORTED, not refused: it was
+		// attached before the console refused such a namespace, and refusing it now would drop its
+		// bindings from the prune's keep set and withdraw its secrets from running workloads. It keeps
+		// deploying where it is, and the warning tells a person what to change. See byoPreviewOverlap.
+		if reason := argocd.ByoPreviewNamespaceConflict(ns, vc.PreviewNamespacePrefix); reason != "" {
+			fmt.Fprintf(stderr, "Warning: BYO chart %q: %s\n", a.ID, reason)
+			previewOverlaps = append(previewOverlaps, byoPreviewOverlap{ID: a.ID, Namespace: ns, Prefix: strings.TrimSpace(vc.PreviewNamespacePrefix)})
+		}
 		repos = append(repos, a.ChartRepo)
 		if a.IsGitSource() {
 			gitRepos = append(gitRepos, a.ChartRepo)
@@ -717,7 +726,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	nsLabels := byoNamespaceLabels(commonLabels)
 	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
-		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject}
+		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps}
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
@@ -780,7 +789,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject}
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps}
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
@@ -806,6 +815,47 @@ type byoConfigured struct {
 	Moved []byoMove
 	// ProjectChanges are the OCI charts whose live Application was under another project (#6445).
 	ProjectChanges []byoProjectChange
+	// PreviewOverlaps are the accepted charts whose namespace is one of the project's preview
+	// namespaces (#6494). They are still deployed.
+	PreviewOverlaps []byoPreviewOverlap
+}
+
+// byoPreviewOverlap is one BYO chart stored in a namespace the project's preview environments use
+// (argocd.ByoPreviewNamespaceConflict, #6494). The console refuses a newly chosen namespace there and
+// a prefix change that would put an attached chart there, so a chart reaches this only when it was
+// stored there before those checks existed, or was re-attached with that stored namespace unchanged
+// (which the console allows, so that such a chart's values can still be edited).
+//
+// # Why it is reported and not refused or moved
+//
+// Refusing it (the #6439 path) drops it from the render and its bindings from the prune's keep set,
+// so the prune WITHDRAWS its binding secrets from workloads that are running — a live outage, caused
+// by a rule the chart never broke when it was attached. Moving it to its own byo-<chart id>
+// namespace (the #6446 path) changes the in-cluster DNS name of every Service it runs, so whatever
+// calls it breaks, and it leaves its old objects behind unmanaged. The move was right for "default",
+// which is the platform's own namespace; here the namespace is the customer's own, and either way
+// out — another namespace for the chart, or another preview prefix — is theirs to choose. So the
+// chart keeps deploying exactly where it is, and the Deploy tab says so on every deploy until a
+// person acts. Nothing about the chart's own trust boundary changes: it is still pinned to the
+// hardened AppProject.
+type byoPreviewOverlap struct {
+	// ID is the add-on id; the chart's Application name is argocd.AddOnAppName(ID).
+	ID string
+	// Namespace is the chart's namespace, which it keeps.
+	Namespace string
+	// Prefix is the project's preview namespace prefix the namespace matches.
+	Prefix string
+}
+
+// warning is the Deploy-tab warning for the overlap: that the chart was deployed where it is, why
+// that is a problem, and the two ways out. It carries no secret — an id, a namespace and a prefix.
+func (o byoPreviewOverlap) warning() string {
+	return fmt.Sprintf("BYO chart %q was deployed into namespace %q, which is one of this project's preview namespaces: "+
+		"preview environments use %q and every namespace starting with %q, and carry their own guardrails there. "+
+		"The chart was attached there before that was refused, so this deploy kept it where it is, with its workloads and binding secrets unchanged; "+
+		"moving it would change the in-cluster address of its Services. Until you act, preview environments may share that namespace with it. "+
+		"Attach the chart again with another namespace (leave it blank for its own, %q), or change the project's preview namespace prefix.",
+		o.ID, o.Namespace, o.Prefix, o.Prefix+"-", argocd.ByoChartNamespace(o.ID))
 }
 
 // liveByoProject is the project of the chart's live Application, or "" when it has none or the read

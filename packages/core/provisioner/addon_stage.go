@@ -94,6 +94,9 @@ func runAddOnStage(ctx context.Context, in addOnStageInput, stdout, stderr io.Wr
 	for _, r := range out.Refused {
 		out.Warnings = append(out.Warnings, r.warning())
 	}
+	for _, o := range byo.PreviewOverlaps {
+		out.Warnings = append(out.Warnings, o.warning())
+	}
 
 	// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs — managed or
 	// gitops mode. The values were fetched by the runner over the authenticated job channel and exist

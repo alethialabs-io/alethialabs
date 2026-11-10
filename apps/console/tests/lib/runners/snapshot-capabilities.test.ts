@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
 	RUNNER_CAPABILITY_ADDON_BYO_MARKER,
+	RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX,
 	ociByoAddOnIds,
 	parseRunnerCapabilities,
 	refusalForRunner,
@@ -55,6 +56,34 @@ describe("snapshotForRunner", () => {
 	it("matches the runner's capability name exactly", () => {
 		expect(RUNNER_CAPABILITY_ADDON_BYO_MARKER).toBe("addon-byo-marker");
 		expect(parseRunnerCapabilities("addon-byo-marker-v2").has(RUNNER_CAPABILITY_ADDON_BYO_MARKER)).toBe(false);
+	});
+});
+
+describe("snapshotForRunner — preview_namespace_prefix (#6494)", () => {
+	it("strips the key for a runner without the capability: the snapshot an old runner decodes", () => {
+		for (const header of [null, "", RUNNER_CAPABILITY_ADDON_BYO_MARKER]) {
+			expect(snapshotForRunner(fixture("with-preview-namespace-prefix.json"), parseRunnerCapabilities(header))).toEqual(
+				fixture("without-preview-namespace-prefix.json"),
+			);
+		}
+	});
+
+	it("serves it to a runner with the capability unchanged", () => {
+		const snapshot = fixture("with-preview-namespace-prefix.json");
+		expect(snapshotForRunner(snapshot, parseRunnerCapabilities(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX))).toBe(snapshot);
+	});
+
+	it("gates each key on its own capability", () => {
+		const both = { ...fixture("with-byo-marker.json"), preview_namespace_prefix: "pr" };
+		const prefixOnly = snapshotForRunner(both, parseRunnerCapabilities(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX));
+		expect(prefixOnly).toEqual({ ...fixture("without-byo-marker.json"), preview_namespace_prefix: "pr" });
+		const markerOnly = snapshotForRunner(both, parseRunnerCapabilities(RUNNER_CAPABILITY_ADDON_BYO_MARKER));
+		expect(markerOnly).toEqual(fixture("with-byo-marker.json"));
+		expect(both.preview_namespace_prefix).toBe("pr");
+	});
+
+	it("matches the runner's capability name exactly", () => {
+		expect(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX).toBe("preview-namespace-prefix");
 	});
 });
 

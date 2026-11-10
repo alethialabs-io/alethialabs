@@ -107,6 +107,8 @@ describe("previewConfigSchema — namespace_prefix", () => {
 		"contains a slash": "a/b",
 		"contains an underscore": "a_b",
 		"leaves no room for the PR number": "a".repeat(56),
+		"is byo, claiming every BYO chart's own namespace (#6494)": "byo",
+		"starts with byo- (#6494)": "byo-previews",
 	};
 	for (const [why, value] of Object.entries(refused)) {
 		it(`refuses a prefix that ${why}`, () => {
@@ -120,12 +122,18 @@ describe("previewConfigSchema — namespace_prefix", () => {
 		"an internal hyphen": "pr-preview",
 		"a single character": "p",
 		"the maximum length": "a".repeat(55),
+		"a word that only shares byo's letters": "byob",
 	};
 	for (const [why, value] of Object.entries(accepted)) {
 		it(`accepts ${why}`, () => {
 			expect(mustParse({ namespace_prefix: value }).namespace_prefix).toBe(value);
 		});
 	}
+
+	it("says why byo is refused", () => {
+		const res = parse({ namespace_prefix: "byo" });
+		expect(res.success ? "" : res.error.issues[0]?.message).toContain("“byo-”");
+	});
 
 	it("allows the prefix to be omitted, so the renderer's default applies", () => {
 		expect(parse({ namespace_prefix: undefined }).success).toBe(true);
