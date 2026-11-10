@@ -75,6 +75,13 @@ type ProjectConfig struct {
 	// switch's job.
 	WebhookCAConsumers []string `json:"webhook_ca_consumers,omitempty"`
 
+	// PreviewNamespacePrefix is the project's PR-preview namespace prefix
+	// (project_preview_config.namespace_prefix), so the runner can report a BYO chart stored in one of
+	// the project's preview namespaces (argocd.ByoPreviewNamespaceConflict, #6494). The console emits
+	// it only when the project has a preview configuration; empty means it has none, and so no preview
+	// namespaces — it is NOT the preview renderers' "preview" default.
+	PreviewNamespacePrefix string `json:"preview_namespace_prefix,omitempty"`
+
 	// IacSource, when set, marks this project as BRING-YOUR-OWN IaC: the runner
 	// provisions the customer's own OpenTofu root module (cloned at a pinned commit
 	// from git) instead of a bundled Alethia template. It is the fail-closed
