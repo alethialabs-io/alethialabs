@@ -210,6 +210,7 @@ run "a_keyless_mysql_without_a_cluster_plans" {
       length(azurerm_user_assigned_identity.app_db) == 0,
       length(azurerm_federated_identity_credential.app_db) == 0,
       length(azurerm_federated_identity_credential.db_admin) == 0,
+      length(azurerm_federated_identity_credential.db_admin_byo_users) == 0,
     ])
     error_message = "The app-side keyless identity federates to the AKS OIDC issuer; with no cluster it must not be created."
   }
@@ -275,8 +276,21 @@ run "a_cluster_creates_every_workload_identity" {
       length(azurerm_federated_identity_credential.app_db) == 1,
       length(azurerm_user_assigned_identity.db_admin) == 1,
       length(azurerm_federated_identity_credential.db_admin) == 1,
+      length(azurerm_federated_identity_credential.db_admin_byo_users) == 1,
     ])
     error_message = "Keyless MySQL on AKS must create BOTH the app UAMI and the dedicated db_admin UAMI, each with its federation."
+  }
+
+  # The admin identity's two subjects, spelled out (#6504). An Azure federated credential matches its
+  # subject exactly, so a drift here does not fail the plan or the apply: the Job's token exchange is
+  # refused at runtime. The Go side is pinned to the same locals by
+  # TestByoDBUsers_AzureServiceAccountMatchesTheTemplate (packages/core/manifests).
+  assert {
+    condition = alltrue([
+      azurerm_federated_identity_credential.db_admin[0].subject == "system:serviceaccount:default:alethia-db-bootstrap",
+      azurerm_federated_identity_credential.db_admin_byo_users[0].subject == "system:serviceaccount:alethia-byo-db-users:byo-db-users-admin",
+    ])
+    error_message = "The db_admin identity must be federated to exactly the bootstrap Job's and the BYO users Job's ServiceAccounts."
   }
 }
 
