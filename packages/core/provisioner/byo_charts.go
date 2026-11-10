@@ -622,6 +622,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	var moved []byoMove
 	var leftProject []byoProjectChange
 	var previewOverlaps []byoPreviewOverlap
+	chartsByNS := map[string][]string{}
 	hasByo := false
 	// Which charts already hold each namespace as stored, so a move can see whether its target is
 	// taken (see the move below).
@@ -642,6 +643,10 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 		// chart is pinned too: if anything ever did render it, it would land in the hardened project,
 		// never the wide-open default one.
 		a.Project = projName
+		// A BYO namespace's Pod Security level is the runner's to set (RenderByoNamespaces, #6495).
+		// A declared level would render as the Application's managedNamespaceMetadata and compete
+		// with it; only catalogue add-ons declare one (#2837), and a BYO chart never may.
+		a.PodSecurity = ""
 		if a.Namespace == "" || a.Namespace == argocd.ByoLegacyDefaultNamespace {
 			to := argocd.ByoChartNamespace(a.ID)
 			// The target is already another chart's — one that chose this name before the byo- rule.
@@ -699,6 +704,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			leftProject = append(leftProject, byoProjectChange{ID: a.ID, From: from, To: projName})
 		}
 		namespaces = append(namespaces, ns)
+		chartsByNS[ns] = append(chartsByNS[ns], a.ID)
 	}
 	if !hasByo {
 		return byoConfigured{}
@@ -723,14 +729,33 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 	// it. For the namespaces stamped here that changes nothing; it is a narrow label-level check, and
 	// the line a chart cannot cross is the hardened project's external-secrets deny (see
 	// argocd.secretStoreConditions).
+	//
+	// Each namespace also carries its admission mode and the Pod Security labels that follow from it
+	// (#6495): "enforce" for a namespace created here for a new chart, "warn" for one that already
+	// exists or receives a moved chart, and an existing mode is kept (byoAdmissionModes).
 	nsLabels := byoNamespaceLabels(commonLabels)
-	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels); err != nil {
+	var modes map[string]argocd.ByoAdmissionMode
+	if len(namespaces) > 0 {
+		modes = byoAdmissionModes(namespaces, moved, stderr)
+	}
+	if ns, err := argocd.RenderByoNamespaces(namespaces, nsLabels, modes); err != nil {
 		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
 		return byoConfigured{Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps}
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
 				strings.Join(namespaces, ", "), err)
+		}
+	}
+
+	// The admission policy, and what the namespaces it does not yet refuse in would have refused
+	// (#6495). After the namespaces, so their mode labels exist for the bindings to select.
+	var admission []byoAdmissionReport
+	if len(namespaces) > 0 {
+		_, unavailable := applyByoAdmissionPolicy(stdout, stderr)
+		admission = reportByoAdmission(chartsByNS, modes, unavailable, stderr)
+		for _, r := range admission {
+			fmt.Fprintf(stderr, "Warning: %s\n", r.warning())
 		}
 	}
 
@@ -789,7 +814,7 @@ func configureByoCharts(vc *types.ProjectConfig, token string, repoTokens map[st
 			fmt.Fprintf(stderr, "Warning: could not configure credentials for BYO repo %s: %s\n", repo, argocd.RedactTokens(err.Error(), allTokens...))
 		}
 	}
-	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps}
+	return byoConfigured{Configured: len(repos) > 0, Refused: refused, Moved: moved, ProjectChanges: leftProject, PreviewOverlaps: previewOverlaps, Admission: admission}
 }
 
 // byoNamespaceLabels are the labels the runner stamps on a BYO chart's namespace beyond the
@@ -818,6 +843,9 @@ type byoConfigured struct {
 	// PreviewOverlaps are the accepted charts whose namespace is one of the project's preview
 	// namespaces (#6494). They are still deployed.
 	PreviewOverlaps []byoPreviewOverlap
+	// Admission are the accepted charts' namespaces holding what the BYO admission rules refuse,
+	// reported because nothing refuses them there yet (#6495).
+	Admission []byoAdmissionReport
 }
 
 // byoPreviewOverlap is one BYO chart stored in a namespace the project's preview environments use

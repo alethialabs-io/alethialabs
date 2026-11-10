@@ -120,7 +120,7 @@ wf_class() {
 		merge-signal-health.yml | addon-render-determinism.yml | catalog-drift.yml | compat-drift.yml | \
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
 		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
-		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml)
+		branch-flow-guard.yml | capabilities-security.yml | cla.yml | close-on-dev-merge.yml | byo-admission-kind.yml)
 		echo free
 		;;
 	deploy-*.yml | release-cli.yml | release-runner.yml | release-please.yml | publish-cli-release-metadata.yml | \
