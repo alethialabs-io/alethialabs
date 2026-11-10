@@ -203,6 +203,7 @@ func TestTail_BootstrapSpecsFailClosedOnMissingOutputs(t *testing.T) {
 		"cloud_sql_database":           "appdb",
 		"cloud_sql_iam_user":           "app@p.iam",
 		"cloud_sql_credentials_secret": "alethia-cloudsql-master",
+		"cloud_sql_server_ca_cert":     testGCPServerCA,
 	}
 	azureFull := map[string]string{
 		endpointOutputKey(string(types.CloudProviderAzure), "database"): "db.postgres.database.azure.com",
@@ -226,6 +227,7 @@ func TestTail_BootstrapSpecsFailClosedOnMissingOutputs(t *testing.T) {
 		{"gcp no database", string(types.CloudProviderGcp), gcpFull, "cloud_sql_database", "cloud_sql_database"},
 		{"gcp no iam user", string(types.CloudProviderGcp), gcpFull, "cloud_sql_iam_user", "cloud_sql_iam_user"},
 		{"gcp no credentials secret", string(types.CloudProviderGcp), gcpFull, "cloud_sql_credentials_secret", "cloud_sql_credentials_secret"},
+		{"gcp no server CA", string(types.CloudProviderGcp), gcpFull, "cloud_sql_server_ca_cert", "cloud_sql_server_ca_cert"},
 		{"azure no fqdn", string(types.CloudProviderAzure), azureFull, endpointOutputKey(string(types.CloudProviderAzure), "database"), "azure_db_fqdn"},
 		{"azure no database name", string(types.CloudProviderAzure), azureFull, "azure_db_name", "azure_db_name"},
 		{"azure no admin user", string(types.CloudProviderAzure), azureFull, "azure_db_admin_user", "azure_db_admin_user"},

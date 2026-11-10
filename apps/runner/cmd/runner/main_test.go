@@ -21,6 +21,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// testGCPServerCA stands in for a Cloud SQL instance's server CA (the cloud_sql_server_ca_cert
+// output) — the GCP bootstrap Job refuses to render without one (#6521). Test-only.
+const testGCPServerCA = `-----BEGIN CERTIFICATE-----
+MIIB6DCCAY2gAwIBAgIUMMlIrMH+z0ynT4cc9zUoBm+67s0wCgYIKoZIzj0EAwIw
+SDEjMCEGA1UEAwwaR29vZ2xlIENsb3VkIFNRTCBTZXJ2ZXIgQ0ExFDASBgNVBAoM
+C0dvb2dsZSwgSW5jMQswCQYDVQQGEwJVUzAgFw0yNjExMTAxODA2MjFaGA8yMTI2
+MTAxNzE4MDYyMVowSDEjMCEGA1UEAwwaR29vZ2xlIENsb3VkIFNRTCBTZXJ2ZXIg
+Q0ExFDASBgNVBAoMC0dvb2dsZSwgSW5jMQswCQYDVQQGEwJVUzBZMBMGByqGSM49
+AgEGCCqGSM49AwEHA0IABIL0IoWSyUpjn9CKLac6aDy6onQav8hyvKVtpWuB1GNK
+Aajf0oM7q6ZpdWCcOLBhNW5cpFA8qoiY5kMmEBeSwvGjUzBRMB0GA1UdDgQWBBRr
+iQJcML026q0rpomfDJjPR2npGDAfBgNVHSMEGDAWgBRriQJcML026q0rpomfDJjP
+R2npGDAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQDo/JWJIdfq
+4kVbX9Ugp99R9mCjSZkJmlp+dc6vGN5dawIhAP+59ESCoOA4xjbyV+DjTsY499Eh
+tkDvuMhjlvbDtS5V
+-----END CERTIFICATE-----
+`
+
 func TestRunnerSlots(t *testing.T) {
 	cases := []struct {
 		val  string
@@ -228,6 +245,7 @@ func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
 					RunnerImage: image,
 					Outputs: map[string]string{
 						"cloud_sql_ip":                 "10.0.0.5",
+						"cloud_sql_server_ca_cert":     testGCPServerCA,
 						"cloud_sql_database":           "orders-prod",
 						"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
 						"cloud_sql_credentials_secret": "orders-prod-sql-credentials",

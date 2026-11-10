@@ -487,11 +487,13 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 				fmt.Fprintf(stderr, "Warning: BYO users Job: credential re-mint before cleanup failed: %v\n", err)
 			}
 		}
-		cleanupByoDBUsers(cctx, owner, job.Credentials, stdout, stderr)
+		cleanupByoDBUsers(cctx, owner, byoDBUsersRunObjects(job), stdout, stderr)
 	}()
 
-	docs := make([]string, 0, len(job.Credentials))
-	for _, c := range job.Credentials {
+	// The CA ConfigMap goes with the credentials: the Job mounts it, and the cleanup removes it.
+	objs := byoDBUsersRunObjects(job)
+	docs := make([]string, 0, len(objs))
+	for _, c := range objs {
 		docs = append(docs, c.YAML)
 	}
 	if len(docs) > 0 {
@@ -538,6 +540,16 @@ func runByoDBUsers(ctx context.Context, in byoDBUsersInput, stdout, stderr io.Wr
 	}
 	fmt.Fprintf(stdout, "BYO users Job %s: %d of %d user(s) provisioned\n", job.JobName, len(out.Provisioned), len(users))
 	return out
+}
+
+// byoDBUsersRunObjects are the objects a run applies before its Job and deletes after it: its
+// credentials and, when rendered, the CA ConfigMap the Job verifies the database server against.
+func byoDBUsersRunObjects(job manifests.ByoDBUsersJob) []manifests.ByoDBUsersObject {
+	objs := append([]manifests.ByoDBUsersObject(nil), job.Credentials...)
+	if job.CAConfigMap.YAML != "" {
+		objs = append(objs, job.CAConfigMap)
+	}
+	return objs
 }
 
 // byoDBUsersSelector selects the run objects of one environment.
@@ -607,7 +619,8 @@ func (o byoDBUsersObject) jobFinished() (done, complete bool) {
 	return false, false
 }
 
-// byoDBUsersCredentialKinds are the kinds a run's credentials take, and the sweep's only kinds.
+// byoDBUsersCredentialKinds are the kinds a run's credentials take, plus its CA ConfigMap: the
+// sweep's only kinds.
 var byoDBUsersCredentialKinds = []struct {
 	resource string
 	path     func(apiVersion, name string) string
@@ -620,6 +633,11 @@ var byoDBUsersCredentialKinds = []struct {
 	}},
 	{"serviceaccounts", func(_, name string) string {
 		return "/api/v1/namespaces/" + manifests.ByoDBUsersNamespace + "/serviceaccounts/" + name
+	}},
+	// Not a credential: the CA set the Job verifies the database server against. Listed so the
+	// sweep removes one an interrupted run left, as it removes that run's credentials.
+	{"configmaps", func(_, name string) string {
+		return "/api/v1/namespaces/" + manifests.ByoDBUsersNamespace + "/configmaps/" + name
 	}},
 }
 
@@ -951,7 +969,7 @@ func (o byoDBUsersForeignObject) labelled() bool {
 
 // isRunObject reports whether one listed object is a BYO users run's — of any environment the
 // cluster hosts, since the namespace is shared — or one the API server creates in every namespace.
-// A run object is a Job, ExternalSecret, Secret or ServiceAccount carrying the run label and an
+// A run object is a Job, ExternalSecret, Secret, ServiceAccount or ConfigMap carrying the run label and an
 // owner label, or a Pod carrying both whose owner reference is the uid of a run Job listed in the
 // same namespace (runJobs) — a name or kind alone proves nothing. Nothing else belongs there.
 func (o byoDBUsersForeignObject) isRunObject(runJobs map[string]bool) bool {
@@ -961,7 +979,7 @@ func (o byoDBUsersForeignObject) isRunObject(runJobs map[string]bool) bool {
 		return true
 	}
 	switch o.Kind {
-	case "Job", "ExternalSecret", "Secret", "ServiceAccount":
+	case "Job", "ExternalSecret", "Secret", "ServiceAccount", "ConfigMap":
 		return o.labelled()
 	case "Pod":
 		for _, ref := range m.OwnerReferences {

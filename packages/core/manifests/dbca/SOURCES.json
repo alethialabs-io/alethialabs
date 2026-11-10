@@ -1,0 +1,41 @@
+{
+  "note": "Pinned sources of the CA bundles the database bootstrap Jobs verify a server against (#6521). Rebuilt and re-pinned only by scripts/db-ca-bundles.sh update; TestDBCABundles_MatchTheirPins checks every bundle against its pin.",
+  "bundles": [
+    {
+      "file": "aws-rds-global-bundle.crt",
+      "doc": "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/UsingWithRDS.SSL.html",
+      "sha256": "90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b",
+      "certificates": 114,
+      "sources": [
+        {
+          "url": "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem",
+          "format": "pem",
+          "sha256": "90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b"
+        }
+      ]
+    },
+    {
+      "file": "azure-db-roots.crt",
+      "doc": "https://learn.microsoft.com/en-us/azure/mysql/security/security-tls-root-certificate-rotation",
+      "sha256": "c2e5301c6271ce70e1d657ac373871c8cac48038a319064439a642d4d9c94570",
+      "certificates": 3,
+      "sources": [
+        {
+          "url": "https://cacerts.digicert.com/DigiCertGlobalRootG2.crt.pem",
+          "format": "pem",
+          "sha256": "5d550643b6400d4341550a9b14aedd0b4fac33ae5deb7d8247b6b4f799c13306"
+        },
+        {
+          "url": "https://cacerts.digicert.com/DigiCertGlobalRootCA.crt.pem",
+          "format": "pem",
+          "sha256": "39fdcf28aeffe08d03251fccaf645e3c5de19fa4ebbafc89b4ede2a422148bab"
+        },
+        {
+          "url": "https://www.microsoft.com/pkiops/certs/Microsoft%20RSA%20Root%20Certificate%20Authority%202017.crt",
+          "format": "der",
+          "sha256": "c741f70f4b2a8d88bf2e71c14122ef53ef10eba0cfa5e64cfa20f418853073e0"
+        }
+      ]
+    }
+  ]
+}
