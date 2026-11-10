@@ -159,7 +159,7 @@ func TestConfigureByoCharts_ExistingNamespaceWarnsNewNamespaceEnforces(t *testin
 	if fresh[argocd.ByoAdmissionModeLabel] != "enforce" || fresh["pod-security.kubernetes.io/enforce"] != "baseline" {
 		t.Errorf("new namespace labels = %v, want mode enforce and PSA enforce baseline", fresh)
 	}
-	for _, name := range []string{argocd.ByoAdmissionReportPolicy, argocd.ByoAdmissionEnforcePolicy} {
+	for _, name := range argocd.ByoAdmissionPolicyNames() {
 		if _, ok := docs["ValidatingAdmissionPolicy/"+name]; !ok {
 			t.Errorf("policy %s was not applied", name)
 		}

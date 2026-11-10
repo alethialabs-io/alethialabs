@@ -230,11 +230,19 @@ func TestByoAdmission_ExistingNamespaceWarnsAndNewNamespaceDenies(t *testing.T) 
 	labels := renderedNamespaceLabels(t, []string{"byo-old", "byo-new"}, nil, modes)
 	docs := renderPolicyDocs(t)
 
-	if got := bindingsSelecting(docs, labels["byo-old"]); !reflect.DeepEqual(got, [][]string{{"Warn", "Audit"}}) {
-		t.Errorf("existing namespace is selected by %v, want only [Warn Audit]", got)
+	// One binding per kind, so each mode's namespace is reached by one binding per kind, all with
+	// the same actions.
+	perKind := len(byoAdmissionKinds)
+	warnOnly := make([][]string, perKind)
+	denyOnly := make([][]string, perKind)
+	for i := range warnOnly {
+		warnOnly[i], denyOnly[i] = []string{"Warn", "Audit"}, []string{"Deny"}
 	}
-	if got := bindingsSelecting(docs, labels["byo-new"]); !reflect.DeepEqual(got, [][]string{{"Deny"}}) {
-		t.Errorf("new namespace is selected by %v, want only [Deny]", got)
+	if got := bindingsSelecting(docs, labels["byo-old"]); !reflect.DeepEqual(got, warnOnly) {
+		t.Errorf("existing namespace is selected by %v, want only [Warn Audit] once per kind", got)
+	}
+	if got := bindingsSelecting(docs, labels["byo-new"]); !reflect.DeepEqual(got, denyOnly) {
+		t.Errorf("new namespace is selected by %v, want only [Deny] once per kind", got)
 	}
 	legacyDefault := map[string]string{"alethia.io/managed-by": "byo-charts", "kubernetes.io/metadata.name": "default"}
 	if got := bindingsSelecting(docs, legacyDefault); len(got) != 0 {
@@ -245,9 +253,11 @@ func TestByoAdmission_ExistingNamespaceWarnsAndNewNamespaceDenies(t *testing.T) 
 	}
 }
 
-// TestByoAdmissionPolicy_Shape: two policies, each bound once by name; the reporting one cannot
-// refuse even when it fails to evaluate, the refusing one cannot admit when it fails; every rule is
-// in both; and the policy reaches the three resources it reads, on CREATE and UPDATE.
+// TestByoAdmissionPolicy_Shape: one report and one enforce policy per kind, each bound once by its
+// own name. The reporting ones cannot refuse even when they fail to evaluate; the refusing ones
+// cannot admit when they fail. Each policy matches exactly ONE resource, on CREATE and UPDATE at v1,
+// and carries exactly the rules that read that kind — so the API server never type-checks an
+// expression against a kind it does not read — and every rule is in one policy of each mode.
 func TestByoAdmissionPolicy_Shape(t *testing.T) {
 	docs := renderPolicyDocs(t)
 	policies := map[string]renderedPolicy{}
@@ -262,57 +272,66 @@ func TestByoAdmissionPolicy_Shape(t *testing.T) {
 			t.Errorf("unexpected document kind %q", d.Kind)
 		}
 	}
-	want := map[string]struct {
-		failure string
-		actions []string
+	names := ByoAdmissionPolicyNames()
+	if len(names) != 6 || len(policies) != len(names) || len(bindings) != len(names) {
+		t.Fatalf("names %d, policies %d, bindings %d, want 6 of each", len(names), len(policies), len(bindings))
+	}
+	resourceOf := map[string]string{"Service": "/services", "Secret": "/secrets", "Ingress": "networking.k8s.io/ingresses"}
+	for _, prefix := range []struct {
+		name, failure string
+		actions       []string
 	}{
-		ByoAdmissionReportPolicy:  {"Ignore", []string{"Warn", "Audit"}},
-		ByoAdmissionEnforcePolicy: {"Fail", []string{"Deny"}},
-	}
-	if len(policies) != len(want) || len(bindings) != len(want) {
-		t.Fatalf("policies %d, bindings %d, want %d of each", len(policies), len(bindings), len(want))
-	}
-	for name, w := range want {
-		p, b := policies[name], bindings[name]
-		if p.Spec.FailurePolicy != w.failure {
-			t.Errorf("%s failurePolicy = %q, want %q", name, p.Spec.FailurePolicy, w.failure)
-		}
-		if b.Spec.PolicyName != name || !reflect.DeepEqual(b.Spec.ValidationActions, w.actions) {
-			t.Errorf("binding %s = policy %q actions %v, want policy %q actions %v", name, b.Spec.PolicyName, b.Spec.ValidationActions, name, w.actions)
-		}
-		if len(p.Spec.Validations) != len(byoAdmissionRules) {
-			t.Errorf("%s has %d validations, want one per rule (%d)", name, len(p.Spec.Validations), len(byoAdmissionRules))
-		}
-		for i, v := range p.Spec.Validations {
-			r := byoAdmissionRules[i]
-			if v.Expression != r.Expression || v.Message != r.Message || v.Reason != "Forbidden" {
-				t.Errorf("%s validation %d = %+v, want rule %s", name, i, v, r.ID)
+		{ByoAdmissionReportPolicy, "Ignore", []string{"Warn", "Audit"}},
+		{ByoAdmissionEnforcePolicy, "Fail", []string{"Deny"}},
+	} {
+		covered := map[string]bool{}
+		for _, name := range names {
+			if !strings.HasPrefix(name, prefix.name+"-") {
+				continue
 			}
-		}
-		reached := map[string]bool{}
-		for _, rr := range p.Spec.MatchConstraints.ResourceRules {
-			if !reflect.DeepEqual(rr.Operations, []string{"CREATE", "UPDATE"}) || !reflect.DeepEqual(rr.APIVersions, []string{"v1"}) {
-				t.Errorf("%s resource rule %+v: want CREATE, UPDATE at v1", name, rr)
+			p, b := policies[name], bindings[name]
+			if p.Spec.FailurePolicy != prefix.failure {
+				t.Errorf("%s failurePolicy = %q, want %q", name, p.Spec.FailurePolicy, prefix.failure)
 			}
-			for _, g := range rr.APIGroups {
-				for _, res := range rr.Resources {
-					reached[g+"/"+res] = true
+			if b.Spec.PolicyName != name || !reflect.DeepEqual(b.Spec.ValidationActions, prefix.actions) {
+				t.Errorf("binding %s = policy %q actions %v, want policy %q actions %v", name, b.Spec.PolicyName, b.Spec.ValidationActions, name, prefix.actions)
+			}
+			rr := p.Spec.MatchConstraints.ResourceRules
+			if len(rr) != 1 || len(rr[0].APIGroups) != 1 || len(rr[0].Resources) != 1 ||
+				!reflect.DeepEqual(rr[0].Operations, []string{"CREATE", "UPDATE"}) || !reflect.DeepEqual(rr[0].APIVersions, []string{"v1"}) {
+				t.Errorf("%s resource rules %+v: want exactly one resource, CREATE and UPDATE at v1", name, rr)
+				continue
+			}
+			matched := rr[0].APIGroups[0] + "/" + rr[0].Resources[0]
+			for _, v := range p.Spec.Validations {
+				var rule *byoAdmissionRule
+				for i := range byoAdmissionRules {
+					if byoAdmissionRules[i].Expression == v.Expression {
+						rule = &byoAdmissionRules[i]
+					}
+				}
+				if rule == nil || v.Message != rule.Message || v.Reason != "Forbidden" {
+					t.Errorf("%s validation %+v is not one of the rules", name, v)
+					continue
+				}
+				if resourceOf[rule.Kind] != matched {
+					t.Errorf("%s matches %s but carries rule %s, which reads %s", name, matched, rule.ID, rule.Kind)
+				}
+				covered[rule.ID] = true
+			}
+			for _, d := range []renderedPolicy{p, b} {
+				if d.Metadata.Labels["alethia.io/managed-by"] != "byo-charts" || d.Metadata.Annotations[ByoAdmissionSchemaAnnotation] != "1" {
+					t.Errorf("%s %s: labels %v annotations %v, want managed-by byo-charts and schema version 1", d.Kind, name, d.Metadata.Labels, d.Metadata.Annotations)
+				}
+				if len(d.Metadata.Labels) != 1 {
+					t.Errorf("%s %s carries labels %v: a cluster-scoped object shared by every environment must carry no environment's labels", d.Kind, name, d.Metadata.Labels)
 				}
 			}
 		}
 		for _, r := range byoAdmissionRules {
-			gr := map[string]string{"Service": "/services", "Secret": "/secrets", "Ingress": "networking.k8s.io/ingresses"}[r.Kind]
-			if gr == "" || !reached[gr] {
-				t.Errorf("%s: rule %s reads %s, which the policy does not match (%v)", name, r.ID, r.Kind, reached)
+			if !covered[r.ID] {
+				t.Errorf("%s policies omit rule %s", prefix.name, r.ID)
 			}
-		}
-		for _, d := range []renderedPolicy{p, b} {
-			if d.Metadata.Labels["alethia.io/managed-by"] != "byo-charts" || d.Metadata.Annotations[ByoAdmissionSchemaAnnotation] != "1" {
-				t.Errorf("%s %s: labels %v annotations %v, want managed-by byo-charts and schema version 1", d.Kind, name, d.Metadata.Labels, d.Metadata.Annotations)
-			}
-		}
-		if len(p.Metadata.Labels) != 1 || len(b.Metadata.Labels) != 1 {
-			t.Errorf("%s carries labels %v / %v: a cluster-scoped object shared by every environment must carry no environment's labels", name, p.Metadata.Labels, b.Metadata.Labels)
 		}
 	}
 }

@@ -163,7 +163,7 @@ func TestByoAdmissionKind(t *testing.T) {
 				t.Errorf("%s: admitted in an enforce namespace", v.rule)
 				continue
 			}
-			if !strings.Contains(errOut, "ValidatingAdmissionPolicy '"+ByoAdmissionEnforcePolicy+"'") || !strings.Contains(errOut, ruleMessage(t, v.rule)) {
+			if !strings.Contains(errOut, "ValidatingAdmissionPolicy '"+ByoAdmissionEnforcePolicy+"-") || !strings.Contains(errOut, ruleMessage(t, v.rule)) {
 				t.Errorf("%s: refused, but not by the policy naming the rule:\n%s", v.rule, errOut)
 			}
 		}
@@ -227,7 +227,7 @@ func TestByoAdmissionKind(t *testing.T) {
 
 	t.Run("5 status.typeChecking of each policy", func(t *testing.T) {
 		summary(t, "### BYO admission policy: status.typeChecking (Kubernetes %s)", serverVersion())
-		for _, name := range []string{ByoAdmissionReportPolicy, ByoAdmissionEnforcePolicy} {
+		for _, name := range ByoAdmissionPolicyNames() {
 			var st struct {
 				Metadata struct {
 					Generation int64 `json:"generation"`
@@ -253,6 +253,15 @@ func TestByoAdmissionKind(t *testing.T) {
 				tc = "(not reported)"
 			}
 			summary(t, "- `%s` (observedGeneration %d of %d): `%s`", name, st.Status.ObservedGeneration, st.Metadata.Generation, tc)
+			// Each policy matches one kind, so the type checker sees each expression only against the
+			// object it reads, and must report nothing. Any warning here is what an operator would read
+			// as a broken policy.
+			if st.Status.ObservedGeneration < st.Metadata.Generation {
+				t.Errorf("%s was not type-checked within a minute", name)
+			}
+			if strings.Contains(tc, "expressionWarnings") {
+				t.Errorf("%s reports type-checking warnings: %s", name, tc)
+			}
 		}
 	})
 

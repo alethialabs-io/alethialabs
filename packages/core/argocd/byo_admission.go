@@ -209,14 +209,43 @@ func parseNamespaceLabels(raw string) (map[string]map[string]string, error) {
 
 // ---- The ValidatingAdmissionPolicy ----
 
-// Names of the two policies and their bindings. Two POLICIES, not one with two bindings, because
-// failurePolicy belongs to the policy: the reporting one is "Ignore", so that a policy the API
-// server cannot evaluate never refuses an object in a namespace that is only meant to be warned;
-// the refusing one is "Fail", so that the same failure does not quietly admit everything.
+// Name PREFIXES of the policies and their bindings; each policy is named <prefix>-<resource>
+// (ByoAdmissionPolicyNames).
+//
+// Separate REPORT and ENFORCE policies, not one with two bindings, because failurePolicy belongs to
+// the policy: the reporting ones are "Ignore", so that a policy the API server cannot evaluate never
+// refuses an object in a namespace that is only meant to be warned; the refusing ones are "Fail", so
+// that the same failure does not quietly admit everything.
+//
+// And one policy PER KIND, because the API server type-checks every expression of a policy against
+// every kind the policy matches. With all three kinds in one policy, a Service expression was
+// checked against Secret and Ingress and status.typeChecking reported "ERROR: undefined field
+// 'spec'" for it (measured on Kubernetes 1.33.4 by byo-admission-kind.yml). The kind guard made that
+// harmless at runtime, but an operator reading the policy's status sees ERROR and concludes it is
+// broken. Matched to one kind, each expression is checked only against the object it reads.
 const (
 	ByoAdmissionEnforcePolicy = "alethia-byo-admission-enforce"
 	ByoAdmissionReportPolicy  = "alethia-byo-admission-report"
 )
+
+// byoAdmissionKinds are the kinds the rules read and the resource each is matched as.
+var byoAdmissionKinds = []struct{ Kind, Group, Resource string }{
+	{"Service", "", "services"},
+	{"Secret", "", "secrets"},
+	{"Ingress", "networking.k8s.io", "ingresses"},
+}
+
+// ByoAdmissionPolicyNames are the names of every policy (and of its binding, which shares it) that
+// RenderByoAdmissionPolicy renders: report first, then enforce, each in byoAdmissionKinds order.
+func ByoAdmissionPolicyNames() []string {
+	var out []string
+	for _, prefix := range []string{ByoAdmissionReportPolicy, ByoAdmissionEnforcePolicy} {
+		for _, k := range byoAdmissionKinds {
+			out = append(out, prefix+"-"+k.Resource)
+		}
+	}
+	return out
+}
 
 // byoForbiddenServiceTypes are the Service types a BYO chart may not declare. Each one opens a port
 // on the cluster's NODES (NodePort) or provisions a cloud load balancer (LoadBalancer, which also
@@ -353,7 +382,7 @@ type byoAdmissionMeta struct {
 }
 
 // ByoAdmissionSchemaAnnotation carries the version of the rule set a runner applied, on each of the
-// four cluster-scoped policy objects.
+// twelve cluster-scoped policy objects (six policies and their bindings).
 //
 // WHY. The objects are shared by every environment on the cluster, and every runner re-applies its
 // own copy on every deploy, so the last writer wins. While rules are only ever added that is
@@ -419,33 +448,26 @@ type byoLabelSelector struct {
 	MatchLabels map[string]string `yaml:"matchLabels"`
 }
 
-// RenderByoAdmissionPolicy renders the two ValidatingAdmissionPolicies and their bindings. Both
-// policies carry the same rules (byoAdmissionRules); they differ in failurePolicy and in the mode
-// their binding selects:
+// RenderByoAdmissionPolicy renders the BYO ValidatingAdmissionPolicies and their bindings: for each
+// of the two modes, one policy per kind (byoAdmissionKinds) carrying that kind's rules, each bound
+// once under its own name. The two modes' policies carry the same rules and differ in failurePolicy
+// and in the mode their binding selects:
 //
-//   - the report binding: validationActions [Warn, Audit], namespaces in mode "warn";
-//   - the enforce binding: validationActions [Deny], namespaces in mode "enforce".
+//   - the report bindings: validationActions [Warn, Audit], namespaces in mode "warn";
+//   - the enforce bindings: validationActions [Deny], namespaces in mode "enforce".
 //
 // Each binding selects BOTH the managed-by marker and an explicit mode value. A namespace with no
-// mode — "default" stamped by a runner before #6446, say — is selected by neither, so neither
-// binding reaches a namespace this runner did not decide.
+// mode — "default" stamped by a runner before #6446, say — is selected by none, so no binding
+// reaches a namespace this runner did not decide.
 //
-// The policy matches CREATE and UPDATE only. An object already in the cluster is untouched until
+// The policies match CREATE and UPDATE only. An object already in the cluster is untouched until
 // something changes it, which is when the next ArgoCD sync of a changed chart would be refused.
 //
-// It carries NO environment's classification labels, unlike the AppProject. The four objects are
+// They carry NO environment's classification labels, unlike the AppProject. The objects are
 // cluster-scoped and shared by every environment whose charts run on the cluster, so stamping one
 // environment's owner on them would let that environment's teardown sweep remove the policy from
 // under the others.
 func RenderByoAdmissionPolicy() (string, error) {
-	validations := make([]byoValidation, len(byoAdmissionRules))
-	for i, r := range byoAdmissionRules {
-		validations[i] = byoValidation{Expression: r.Expression, Message: r.Message, Reason: "Forbidden"}
-	}
-	match := byoMatchConstraints{ResourceRules: []byoResourceRule{
-		{APIGroups: []string{""}, APIVersions: []string{"v1"}, Operations: []string{"CREATE", "UPDATE"}, Resources: []string{"services", "secrets"}},
-		{APIGroups: []string{"networking.k8s.io"}, APIVersions: []string{"v1"}, Operations: []string{"CREATE", "UPDATE"}, Resources: []string{"ingresses"}},
-	}}
 	meta := func(name string) byoAdmissionMeta {
 		return byoAdmissionMeta{
 			Name:        name,
@@ -453,35 +475,50 @@ func RenderByoAdmissionPolicy() (string, error) {
 			Annotations: map[string]string{ByoAdmissionSchemaAnnotation: strconv.Itoa(byoAdmissionSchemaVersion)},
 		}
 	}
-	policy := func(name, failure string) byoAdmissionPolicy {
-		return byoAdmissionPolicy{
-			APIVersion: "admissionregistration.k8s.io/v1",
-			Kind:       "ValidatingAdmissionPolicy",
-			Metadata:   meta(name),
-			Spec:       byoAdmissionPolicySpec{FailurePolicy: failure, MatchConstraints: match, Validations: validations},
+	var docs []any
+	for _, mode := range []struct {
+		prefix, failure string
+		actions         []string
+		selects         ByoAdmissionMode
+	}{
+		{ByoAdmissionReportPolicy, "Ignore", []string{"Warn", "Audit"}, ByoAdmissionWarn},
+		{ByoAdmissionEnforcePolicy, "Fail", []string{"Deny"}, ByoAdmissionEnforce},
+	} {
+		for _, k := range byoAdmissionKinds {
+			var validations []byoValidation
+			for _, r := range byoAdmissionRules {
+				if r.Kind == k.Kind {
+					validations = append(validations, byoValidation{Expression: r.Expression, Message: r.Message, Reason: "Forbidden"})
+				}
+			}
+			name := mode.prefix + "-" + k.Resource
+			docs = append(docs, byoAdmissionPolicy{
+				APIVersion: "admissionregistration.k8s.io/v1",
+				Kind:       "ValidatingAdmissionPolicy",
+				Metadata:   meta(name),
+				Spec: byoAdmissionPolicySpec{
+					FailurePolicy: mode.failure,
+					MatchConstraints: byoMatchConstraints{ResourceRules: []byoResourceRule{{
+						APIGroups: []string{k.Group}, APIVersions: []string{"v1"}, Operations: []string{"CREATE", "UPDATE"}, Resources: []string{k.Resource},
+					}}},
+					Validations: validations,
+				},
+			}, byoAdmissionBinding{
+				APIVersion: "admissionregistration.k8s.io/v1",
+				Kind:       "ValidatingAdmissionPolicyBinding",
+				Metadata:   meta(name),
+				Spec: byoAdmissionBindingSpec{
+					PolicyName:        name,
+					ValidationActions: mode.actions,
+					MatchResources: byoMatchResources{NamespaceSelector: byoLabelSelector{MatchLabels: map[string]string{
+						byoNamespaceManagedByLabel: byoNamespaceManagedByValue,
+						ByoAdmissionModeLabel:      string(mode.selects),
+					}}},
+				},
+			})
 		}
 	}
-	binding := func(name string, actions []string, mode ByoAdmissionMode) byoAdmissionBinding {
-		return byoAdmissionBinding{
-			APIVersion: "admissionregistration.k8s.io/v1",
-			Kind:       "ValidatingAdmissionPolicyBinding",
-			Metadata:   meta(name),
-			Spec: byoAdmissionBindingSpec{
-				PolicyName:        name,
-				ValidationActions: actions,
-				MatchResources: byoMatchResources{NamespaceSelector: byoLabelSelector{MatchLabels: map[string]string{
-					byoNamespaceManagedByLabel: byoNamespaceManagedByValue,
-					ByoAdmissionModeLabel:      string(mode),
-				}}},
-			},
-		}
-	}
-	return encodeByoDocs("admission policy",
-		policy(ByoAdmissionReportPolicy, "Ignore"),
-		binding(ByoAdmissionReportPolicy, []string{"Warn", "Audit"}, ByoAdmissionWarn),
-		policy(ByoAdmissionEnforcePolicy, "Fail"),
-		binding(ByoAdmissionEnforcePolicy, []string{"Deny"}, ByoAdmissionEnforce),
-	)
+	return encodeByoDocs("admission policy", docs...)
 }
 
 // ByoAdmissionPolicyNewerLive reads the live BYO policy objects (by their managed-by label) and

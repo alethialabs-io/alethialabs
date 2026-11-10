@@ -304,7 +304,7 @@ chart's workload and point the chart at the secret the binding creates. Alethia 
 chart as not synced but does not yet say why: the runner reads each Application's health and sync
 status, not the sync result that names the resource. Check that result in ArgoCD.
 
-**The sync fails with `ValidatingAdmissionPolicy 'alethia-byo-admission-enforce' … denied request`.**
+**The sync fails with `ValidatingAdmissionPolicy 'alethia-byo-admission-enforce-…' … denied request`.**
 Your chart declares an object that the namespace refuses (see
 [Admission policy](#admission-policy)). The message names the rule. Change the value that renders
 the object, for example `service.type: ClusterIP`.
