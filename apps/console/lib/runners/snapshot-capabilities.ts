@@ -23,6 +23,16 @@ export const RUNNER_CAPABILITIES_HEADER = "X-Runner-Capabilities";
 /** The runner reads `addons[].byo` (#6445). Mirrors Go `types.RunnerCapabilityAddonByoMarker`. */
 export const RUNNER_CAPABILITY_ADDON_BYO_MARKER = "addon-byo-marker";
 
+/**
+ * The runner reads the top-level `preview_namespace_prefix` (#6494). Mirrors Go
+ * `types.RunnerCapabilityPreviewNamespacePrefix`. Stripped, never refused: the key only feeds a
+ * Deploy-tab warning, so an older runner deploys exactly as before, minus that warning.
+ */
+export const RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX = "preview-namespace-prefix";
+
+/** The top-level snapshot key {@link RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX} gates. */
+const PREVIEW_NAMESPACE_PREFIX_KEY = "preview_namespace_prefix";
+
 /** The capabilities a runner advertised, from its header value (`null` when it sent none). */
 export function parseRunnerCapabilities(header: string | null): ReadonlySet<string> {
 	if (!header) return new Set();
@@ -93,10 +103,28 @@ export function refusalForRunner(
 
 /**
  * The snapshot to serve a runner with `capabilities`: `snapshot` itself when it can read every key,
- * otherwise a copy without the keys it cannot. Today that is `addons[].byo` alone. Never mutates the
- * input.
+ * otherwise a copy without the keys it cannot — `addons[].byo` and the top-level
+ * `preview_namespace_prefix`, each gated by its own capability. Never mutates the input.
  */
 export function snapshotForRunner(
+	snapshot: Record<string, unknown>,
+	capabilities: ReadonlySet<string>,
+): Record<string, unknown> {
+	return withoutByoMarker(withoutPreviewNamespacePrefix(snapshot, capabilities), capabilities);
+}
+
+/** `snapshot` without the top-level `preview_namespace_prefix` unless the runner reads it (#6494). */
+function withoutPreviewNamespacePrefix(
+	snapshot: Record<string, unknown>,
+	capabilities: ReadonlySet<string>,
+): Record<string, unknown> {
+	if (capabilities.has(RUNNER_CAPABILITY_PREVIEW_NAMESPACE_PREFIX)) return snapshot;
+	if (!(PREVIEW_NAMESPACE_PREFIX_KEY in snapshot)) return snapshot;
+	return Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== PREVIEW_NAMESPACE_PREFIX_KEY));
+}
+
+/** `snapshot` without `addons[].byo` unless the runner reads it (#6445). */
+function withoutByoMarker(
 	snapshot: Record<string, unknown>,
 	capabilities: ReadonlySet<string>,
 ): Record<string, unknown> {

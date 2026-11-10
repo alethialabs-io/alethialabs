@@ -50,6 +50,8 @@ function setupDb(rows: unknown[] = []) {
 	}
 
 	const tx = {
+		// The attach takes the project's preview-namespace advisory lock (#6494).
+		execute: () => Promise.resolve([]),
 		select: () => chain("select"),
 		insert: (t: unknown) => chain("insert", t),
 		update: (t: unknown) => chain("update", t),
