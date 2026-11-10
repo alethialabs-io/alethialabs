@@ -26,7 +26,8 @@ scan it, and bind its workloads, follow [Bring your own Helm charts](/guides/des
 Each deploy, Alethia:
 
 1. creates the destination **namespace**, because your chart is not permitted to create one itself
-   (see [What your chart may create](#what-your-chart-may-create));
+   (see [What your chart may create](#what-your-chart-may-create)), and sets its admission rules
+   (see [What the namespace refuses](#what-the-namespace-refuses));
 2. registers a **repository credential** for your chart's repo, in a Secret scoped to that repo
    alone — no BYO chart can read another's token, or the apps repo's;
 3. applies a hardened **ArgoCD AppProject** that confines the chart; and
@@ -138,7 +139,7 @@ other kind fails its sync, and the sync result names the resource.
 |---|---|---|
 | `Deployment` | `apps` | The usual stateless workload. |
 | `StatefulSet` | `apps` | A workload with a stable identity and its own volumes. |
-| `DaemonSet` | `apps` | One pod on each node, for a node-local agent. |
+| `DaemonSet` | `apps` | One pod on each node. Pod Security refuses its pods access to the node (see [Pod Security](#pod-security)). |
 | `ReplicaSet` | `apps` | What a `Deployment` manages. A chart can also declare one directly. |
 | `Job` | `batch` | Work that runs to completion, Helm hook jobs included. |
 | `CronJob` | `batch` | A `Job` on a schedule. |
@@ -195,6 +196,65 @@ through a value, or apply it yourself outside the chart.
   every chart in the environment.
 </Callout>
 
+## What the namespace refuses
+
+The project above decides which **kinds** your chart may create. It cannot see the fields inside
+them. The namespace's admission rules do that, at two levels.
+
+### Pod Security
+
+Each namespace carries Kubernetes [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/)
+labels, pinned to the Kubernetes 1.33 version of the standard:
+
+| Mode | Level | Effect |
+|---|---|---|
+| `enforce` | `baseline` | A pod that breaks the level is refused. |
+| `warn` | `restricted` | A pod that breaks the level is created, with a warning. |
+| `audit` | `restricted` | A pod that breaks the level is created, and the cluster's audit log records it. |
+
+`baseline` refuses a pod that asks for access to its node: a privileged container, the node's
+network, process or IPC namespace, a `hostPath` volume, a host port, or added Linux capabilities.
+A pod that does not set any of these passes, also when it sets no security context at all. That
+is why the namespace enforces `baseline` and not `restricted`: `restricted` also requires settings
+such as `runAsNonRoot` and a seccomp profile, which many public charts leave to you.
+
+The warnings are for the `restricted` level, so your chart sees what it would have to change to
+pass it.
+
+### Admission policy
+
+A ValidatingAdmissionPolicy refuses four kinds of object in the namespace:
+
+| Refused | Why |
+|---|---|
+| A `Service` of type `LoadBalancer` or `NodePort` | It answers outside the namespace and outside the cluster, and a load balancer is billed to your cloud account. Use `ClusterIP` and an `Ingress`. |
+| A `Service` with `spec.externalIPs` | It captures traffic that the cluster's nodes receive for those addresses. |
+| A `Secret` of type `kubernetes.io/service-account-token` | It creates a long-lived token for a service account your chart was not given. |
+| An `Ingress` annotation with `snippet` in its name | A snippet configures the ingress controller itself, which serves every namespace. |
+
+The policy needs Kubernetes 1.30 or later. Every Kubernetes version Alethia provisions supports it.
+On a cluster that does not, the deploy skips the policy and says so in its log, and Pod Security
+still applies.
+
+### Charts that were attached before these rules
+
+Refusing in a namespace where a chart already runs would refuse that chart's next pod, for example
+after a restart or a node drain. So the namespace's `alethia.io/byo-admission` label decides
+whether the rules refuse or only report:
+
+- **`enforce`**: Pod Security enforces `baseline`, and the policy refuses. A namespace that Alethia
+  creates for a new chart starts here.
+- **`warn`**: Pod Security does not enforce beyond the cluster's own default, and the policy only
+  warns and records. A namespace that already existed starts here, and so does the new namespace
+  of a chart that moved out of `default`.
+
+A deploy never changes a namespace's label once it is set. While a namespace is in `warn`, each
+deploy checks what runs there against both levels, and the **Deploy** tab names the chart, the
+object and the field that `enforce` would refuse. Pod Security can only check the pods that run at
+that moment, so a pod of a `CronJob` between runs is not checked. Change the chart until the
+warning goes away. When you set the label to `enforce`, the policy refuses from then on and Pod
+Security enforces from the next deploy.
+
 ## Removing a chart
 
 Disabling the add-on deletes its Application, and the Application carries ArgoCD's
@@ -234,6 +294,15 @@ usually through a value such as `externalSecret.enabled: false`. Then declare a 
 chart's workload and point the chart at the secret the binding creates. Alethia reports such a
 chart as not synced but does not yet say why: the runner reads each Application's health and sync
 status, not the sync result that names the resource. Check that result in ArgoCD.
+
+**The sync fails with `ValidatingAdmissionPolicy 'alethia-byo-admission-enforce' … denied request`.**
+Your chart declares an object that the namespace refuses (see
+[Admission policy](#admission-policy)). The message names the rule. Change the value that renders
+the object, for example `service.type: ClusterIP`.
+
+**A pod is refused with `violates PodSecurity "baseline:v1.33"`.** The pod asks for access to its
+node (see [Pod Security](#pod-security)). The message names the field. Turn that part of the chart
+off, usually through a value.
 
 **The Application is `Progressing` and stays there.** ArgoCD is waiting for a workload to become
 ready. Check the pods: a pod stuck `Pending` with `Insufficient memory` or `Insufficient cpu` is

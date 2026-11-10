@@ -188,7 +188,7 @@ func TestRenderAddOnApplication_HelmDefault(t *testing.T) {
 // the hardened AppProject forbids cluster-scoped resources, so ArgoCD could never create it and
 // every BYO sync died with `namespaces "<ns>" not found`.
 func TestRenderByoNamespaces_RendersOneNamespacePerDestination(t *testing.T) {
-	out, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, nil)
+	out, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestRenderByoNamespaces_RendersOneNamespacePerDestination(t *testing.T) {
 // twice (a duplicate document makes the multi-doc apply non-idempotent), and a blank namespace must
 // not render a nameless Namespace, which the API server would reject and take the whole apply with it.
 func TestRenderByoNamespaces_DedupesAndDropsBlanks(t *testing.T) {
-	out, err := RenderByoNamespaces([]string{"shared", "", "shared", "other"}, nil)
+	out, err := RenderByoNamespaces([]string{"shared", "", "shared", "other"}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRenderByoNamespaces_DedupesAndDropsBlanks(t *testing.T) {
 // there would print a warning on every ordinary deploy.
 func TestRenderByoNamespaces_EmptyIsEmptyNotAnError(t *testing.T) {
 	for _, in := range [][]string{nil, {}, {""}, {"", ""}} {
-		out, err := RenderByoNamespaces(in, nil)
+		out, err := RenderByoNamespaces(in, nil, nil)
 		if err != nil {
 			t.Errorf("RenderByoNamespaces(%q) errored: %v", in, err)
 		}
@@ -237,7 +237,7 @@ func TestRenderByoNamespaces_EmptyIsEmptyNotAnError(t *testing.T) {
 // land on the namespace too. A namespace the runner created but the sweeper cannot recognise is an
 // orphan by construction, which is the leak shape this repo has already paid for twice.
 func TestRenderByoNamespaces_CarriesCommonLabels(t *testing.T) {
-	out, err := RenderByoNamespaces([]string{"byo-e2e"}, map[string]string{"alethia.io/project-id": "p-123"})
+	out, err := RenderByoNamespaces([]string{"byo-e2e"}, map[string]string{"alethia.io/project-id": "p-123"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestByoAppProjectStillForbidsClusterResources(t *testing.T) {
 func TestRenderByoNamespaces_RefusesYamlInjection(t *testing.T) {
 	payload := "byo-e2e\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: pwn"
 
-	out, err := RenderByoNamespaces([]string{payload}, nil)
+	out, err := RenderByoNamespaces([]string{payload}, nil, nil)
 	if err == nil {
 		t.Fatalf("an injected document was ACCEPTED — rendered:\n%s", out)
 	}
@@ -296,7 +296,7 @@ func TestRenderByoNamespaces_RefusesYamlInjection(t *testing.T) {
 	if len(short) > dns1123LabelMaxLen {
 		t.Fatalf("the short payload must be under the length limit or it proves nothing (%d chars)", len(short))
 	}
-	out, err = RenderByoNamespaces([]string{short}, nil)
+	out, err = RenderByoNamespaces([]string{short}, nil, nil)
 	if err == nil {
 		t.Fatalf("a SHORT injected document was ACCEPTED — rendered:\n%s", out)
 	}
@@ -334,12 +334,12 @@ func TestRenderByoNamespaces_RefusesNamesKubernetesWould(t *testing.T) {
 		`byo"e2e`,               // a quote — would break OUT of the AppProject's quoted form
 		strings.Repeat("a", 64), // one over the DNS-1123 label limit
 	} {
-		if _, err := RenderByoNamespaces([]string{bad}, nil); err == nil {
+		if _, err := RenderByoNamespaces([]string{bad}, nil, nil); err == nil {
 			t.Errorf("namespace %q was accepted; Kubernetes would refuse it", bad)
 		}
 	}
 	// …and the boundary case on the other side of the length rule is still fine.
-	if _, err := RenderByoNamespaces([]string{strings.Repeat("a", 63)}, nil); err != nil {
+	if _, err := RenderByoNamespaces([]string{strings.Repeat("a", 63)}, nil, nil); err != nil {
 		t.Errorf("a 63-character label is legal and must be accepted: %v", err)
 	}
 }
@@ -349,12 +349,12 @@ func TestRenderByoNamespaces_RefusesNamesKubernetesWould(t *testing.T) {
 // and any diff meaningless. Go randomises map iteration; this pins that the encoder does not.
 func TestRenderByoNamespaces_IsDeterministic(t *testing.T) {
 	labels := map[string]string{"z": "1", "a": "2", "m": "3", "alethia.io/project-id": "p-123"}
-	first, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels)
+	first, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for i := 0; i < 25; i++ {
-		got, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels)
+		got, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestValidateByoNamespace_RefusesEveryReservedNamespace(t *testing.T) {
 			if !strings.Contains(err.Error(), "reserved") || !strings.Contains(err.Error(), ns) {
 				t.Errorf("group %s: the refusal of %q must name it and say it is reserved, got: %v", g.ID, ns, err)
 			}
-			if _, err := RenderByoNamespaces([]string{"payments", ns}, nil); err == nil {
+			if _, err := RenderByoNamespaces([]string{"payments", ns}, nil, nil); err == nil {
 				t.Errorf("RenderByoNamespaces accepted reserved %q", ns)
 			}
 			if _, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{ns}, nil); err == nil {

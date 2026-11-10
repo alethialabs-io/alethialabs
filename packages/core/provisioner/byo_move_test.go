@@ -369,7 +369,8 @@ func TestConfigureByoCharts_ReleasesTheLegacyLabelsOnDefault(t *testing.T) {
 			configureByoCharts(vc, "tok", nil, nil, io.Discard, io.Discard)
 			var labelCalls []string
 			for _, line := range strings.Split(c.calls(), "\n") {
-				if strings.HasPrefix(line, "label ") {
+				// A server-side dry run (the Pod Security preview, #6495) changes no label.
+				if strings.HasPrefix(line, "label ") && !strings.Contains(line, "--dry-run=server") {
 					labelCalls = append(labelCalls, line)
 				}
 			}
@@ -550,7 +551,8 @@ func TestConfigureByoCharts_ReleasesTheEnvironmentsCommonLabelsOnDefault(t *test
 	want := "label namespace default alethia.io/environment-id- alethia.io/managed-by- alethia.io/project-id-"
 	var labelCalls []string
 	for _, line := range strings.Split(c.calls(), "\n") {
-		if strings.HasPrefix(line, "label ") {
+		// A server-side dry run (the Pod Security preview, #6495) changes no label.
+		if strings.HasPrefix(line, "label ") && !strings.Contains(line, "--dry-run=server") {
 			labelCalls = append(labelCalls, line)
 		}
 	}
