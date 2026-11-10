@@ -53,7 +53,7 @@ func TestPruneOrphanAddOnManifests(t *testing.T) {
 func TestWriteAddOnGitOpsNoRepo(t *testing.T) {
 	vc := &types.ProjectConfig{}
 	vc.AddOns = []types.AddOnInstall{{ID: "loki", Mode: "gitops"}}
-	if err := writeAddOnGitOps(context.Background(), vc, "", nil, io.Discard, io.Discard); err != nil {
+	if _, err := writeAddOnGitOps(context.Background(), vc, "", nil, io.Discard, io.Discard); err != nil {
 		t.Errorf("expected no-op without a repo, got %v", err)
 	}
 }

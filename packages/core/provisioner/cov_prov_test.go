@@ -1586,7 +1586,7 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 		provNoTempDir(t)
 
-		if err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
+		if _, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
 			t.Fatal("want the temp-dir failure to propagate")
 		}
 	})
@@ -1596,7 +1596,7 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{provGitopsAddOn("grafana")}}
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 
-		if err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
+		if _, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
 			t.Fatal("want the addons-directory failure to propagate")
 		}
 	})
@@ -1618,7 +1618,7 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 
 		labels := map[string]string{"alethia.io/environment-id": "env-1"}
-		if err := writeAddOnGitOps(context.Background(), vc, "tok", labels, io.Discard, io.Discard); err != nil {
+		if _, err := writeAddOnGitOps(context.Background(), vc, "tok", labels, io.Discard, io.Discard); err != nil {
 			t.Fatalf("a field value can no longer produce an unrenderable add-on: %v", err)
 		}
 	})
@@ -1630,7 +1630,7 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{provGitopsAddOn("nested/grafana")}}
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 
-		if err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
+		if _, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard); err == nil {
 			t.Fatal("want the manifest write failure to propagate")
 		}
 	})
@@ -1643,7 +1643,7 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		// cannot resolve an author. CI has no global identity either — this is that case.
 		t.Setenv("HOME", t.TempDir())
 
-		err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
+		_, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "commit add-on manifests") {
 			t.Fatalf("want the commit failure named, got: %v", err)
 		}
@@ -2397,7 +2397,7 @@ func TestProv_WriteAddOnGitOpsReportsAPushFailure(t *testing.T) {
 	vc.Repositories.AppsDestinationRepo = "file://" + bare
 	provFreezeTree(t, bare)
 
-	err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
+	_, err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "push add-on manifests") {
 		t.Fatalf("want the push failure named, got: %v", err)
 	}
