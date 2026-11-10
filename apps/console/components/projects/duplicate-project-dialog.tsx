@@ -27,7 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getProvider, isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
 import type { ActionResult } from "@/lib/actions/result";
@@ -108,6 +108,12 @@ const duplicateFormSchema = z.object({
 });
 
 type DuplicateFormValues = z.infer<typeof duplicateFormSchema>;
+
+/** The empty form every open starts from. */
+const BLANK_DUPLICATE: DuplicateFormValues = { projectName: "", cloudIdentityId: "", region: "" };
+
+/** The fields the dialog renders from. */
+const WATCHED = ["cloudIdentityId", "region"] as const;
 
 /** Maps a design category to its label + the provider-metadata field naming that cloud's service. */
 const CATEGORY_SERVICE: Record<
@@ -230,25 +236,25 @@ function OpenDuplicateProjectDialog({
 
 	const form = useForm<DuplicateFormValues>({
 		resolver: zodResolver(duplicateFormSchema),
-		defaultValues: { projectName: "", cloudIdentityId: "", region: "" },
+		defaultValues: BLANK_DUPLICATE,
 		mode: "onChange",
 	});
 	// Read during render so react-hook-form's proxy actually subscribes this component to them —
 	// `form.formState.x` inside a callback alone does not.
 	const { dirtyFields, isSubmitting } = form.formState;
-	const cloudIdentityId = form.watch("cloudIdentityId");
-	const region = form.watch("region");
+	const [cloudIdentityId, region] = useWatch({ control: form.control, name: WATCHED });
 
 	/** Resets every field to its initial state (on close + after a successful duplicate). */
 	const reset = useCallback(() => {
-		form.reset({ projectName: "", cloudIdentityId: "", region: "" });
+		form.reset(BLANK_DUPLICATE);
 		setResult(null);
 	}, [form]);
 
-	// Every open starts from a clean form.
+	// Every open starts from a clean form. This component mounts per open, so `result` starts null;
+	// the form (an external store) is reset in an effect.
 	useEffect(() => {
-		if (open) reset();
-	}, [open, reset]);
+		if (open) form.reset(BLANK_DUPLICATE);
+	}, [open, form]);
 
 	// A clone is a new project: every read of the org's projects moves with it — the shell's list
 	// (switcher, breadcrumbs, palette; F036), the setup guide, the usage counts, and the reads that

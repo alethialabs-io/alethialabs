@@ -61,7 +61,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	// is set does a service→database binding to an iam_auth database use the local auth-proxy sidecar
 	// (holding no password) instead of the ExternalSecret path. Off → every credential facet keeps
 	// the existing password path unchanged.
-	keylessOn := os.Getenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED") == "true"
+	keylessOn := keylessDBAuthEnabled()
 	// A private, non-native registry connector (dockerhub/ghcr/…) creates a dockerconfigjson pull
 	// secret; attach it to every generated app pod so the kubelet can actually authenticate the pull.
 	// "" (native/none) → no imagePullSecrets rendered (public image / own-account ECR-GAR-AR node auth).

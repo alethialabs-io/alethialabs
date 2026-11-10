@@ -1,0 +1,39 @@
+{
+  "project_name": "acme",
+  "addons": [
+    {
+      "id": "payments",
+      "mode": "managed",
+      "source": "helm",
+      "chartRepo": "oci://ghcr.io/acme",
+      "chart": "payments",
+      "path": "",
+      "version": "1.4.2",
+      "namespace": "byo-payments",
+      "values": {},
+      "syncWave": 10
+    },
+    {
+      "id": "api",
+      "mode": "managed",
+      "source": "git",
+      "chartRepo": "https://github.com/acme/charts",
+      "chart": "",
+      "path": "charts/api",
+      "version": "HEAD",
+      "namespace": "byo-api",
+      "values": {},
+      "syncWave": 10
+    },
+    {
+      "id": "reloader",
+      "mode": "managed",
+      "chartRepo": "https://stakater.github.io/stakater-charts",
+      "chart": "reloader",
+      "version": "1.0.0",
+      "namespace": "reloader",
+      "values": {},
+      "syncWave": 0
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "$comment": "The namespaces a bring-your-own chart may never target. ONE list, read by the runner (go:embed in byo.go) and mirrored by the console (apps/console/lib/validations/byo-reserved-namespaces.ts, deep-equal parity test in tests/lib/validations/byo-reserved-namespaces.test.ts). Each group is checked against its source as follows. kubernetes: fixed by hand, each name asserted refused. platformTemplates: EQUALITY (go test, byo_test.go) with the namespaces rendered from infra/templates/argocd/*.yaml. platformCategories: EQUALITY (go test, byo_test.go) with the literal namespace of every helm_release / helm_template block in infra/templates/**/*.tf. platformRuntime: EQUALITY (go test, byo_test.go) with a HAND-KEPT list of the runner's namespace constants in that test - a new constant is not seen until it is added there. platformWorkloads: EQUALITY (go test, byo_oci_test.go) with ByoLegacyDefaultNamespace, and the provisioner's appNamespace - where the first-class workloads, their binding Secrets and service accounts live - is asserted refused for this group's reason (go test, provisioner/byo_move_test.go); a BYO chart with no namespace of its own deploys into byo-<chart id> instead. marketplaceAddOns: EQUALITY with ADDON_CATALOG (console vitest) and EQUALITY with the union of test/e2e/fixtures/addon_catalog.*.json (go test). platformByoDBUsers: EQUALITY (go test, provisioner/byo_db_users_test.go) with manifests.ByoDBUsersNamespace; the exact name only, not an alethia- prefix, so no namespace an existing chart is attached in becomes reserved. prefixes: hand-kept; vcluster- is pinned to the provisioner constant (go test). Kept sorted.",
+  "groups": [
+    {
+      "id": "kubernetes",
+      "reason": "it is a Kubernetes system namespace",
+      "namespaces": [
+        "kube-node-lease",
+        "kube-public",
+        "kube-system"
+      ]
+    },
+    {
+      "id": "platformTemplates",
+      "reason": "the platform's own controllers (ArgoCD, cert-manager, External Secrets, ingress, DNS, autoscaling) install there",
+      "namespaces": [
+        "agic",
+        "argocd",
+        "cert-manager",
+        "external-dns",
+        "external-secrets-operator",
+        "karpenter",
+        "kube-system"
+      ]
+    },
+    {
+      "id": "platformCategories",
+      "reason": "the platform's own infrastructure modules (Datadog, Grafana, cluster networking and storage) install there",
+      "namespaces": [
+        "datadog",
+        "kube-system",
+        "monitoring"
+      ]
+    },
+    {
+      "id": "platformRuntime",
+      "reason": "the platform runs its own components there",
+      "namespaces": [
+        "alethia-build",
+        "alethia-system",
+        "argocd",
+        "external-secrets-operator",
+        "queues",
+        "registries",
+        "secrets"
+      ]
+    },
+    {
+      "id": "platformByoDBUsers",
+      "reason": "the platform's BYO database users Job runs there, with the credentials it needs",
+      "namespaces": [
+        "alethia-byo-db-users"
+      ]
+    },
+    {
+      "id": "platformWorkloads",
+      "reason": "the platform's own workloads, their Secrets and their service accounts run there",
+      "namespaces": [
+        "default"
+      ]
+    },
+    {
+      "id": "marketplaceAddOns",
+      "reason": "a platform-managed add-on from the marketplace installs there",
+      "namespaces": [
+        "argo-rollouts",
+        "external-dns",
+        "falco",
+        "goldilocks",
+        "harbor",
+        "ingress-nginx",
+        "keda",
+        "kube-system",
+        "kyverno",
+        "minio",
+        "monitoring",
+        "observability",
+        "reloader",
+        "trivy-system",
+        "vault",
+        "velero"
+      ]
+    }
+  ],
+  "prefixes": [
+    {
+      "prefix": "kube-",
+      "reason": "Kubernetes reserves the kube- prefix for its system namespaces"
+    },
+    {
+      "prefix": "vcluster-",
+      "reason": "the platform names every virtual cluster's host namespace vcluster-<name>"
+    }
+  ]
+}

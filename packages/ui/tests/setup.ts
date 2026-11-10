@@ -14,7 +14,7 @@ afterEach(() => cleanup());
 
 // RTL's async utilities (`waitFor` / `findBy*`) default to a 1000ms timeout that is INDEPENDENT of
 // vitest's per-test `testTimeout`. On a loaded CI runner the overlay-driven flows in these component
-// tests — a base-ui Popover portal mounting, cmdk's async list filtering, the PhoneInput onChange
+// tests — a base-ui Popover portal mounting, a command list re-rendering its matches, the PhoneInput onChange
 // settling a microtask after the last keystroke — routinely take longer than 1s to reach the settled
 // state, so an individual `findBy`/`waitFor` would time out and RED the required TypeScript job on
 // unrelated PRs (stalling the Mergify queue) even though the behaviour is correct.
@@ -37,6 +37,20 @@ if (typeof window !== "undefined") {
     observe() {}
     unobserve() {}
     disconnect() {}
+  };
+}
+
+// jsdom's `focus()` never reads its FocusOptions argument (jsdom@29 has no FocusOptions at all).
+// Base UI's focus manager feature-detects `preventScroll` by passing an object whose
+// `preventScroll` is a getter and checking whether it was read (verified in @base-ui/react@1.9.0,
+// `floating-ui-react/components/FloatingFocusManager.js`). Unread, it concludes restoring focus
+// would scroll the page, as on Chrome for Android, and skips returning focus to the trigger after
+// an outside press. Desktop browsers do read it. Copying the options with a spread reads every own
+// property, the getter included, so jsdom answers the probe as those browsers do. (#6144)
+if (typeof HTMLElement !== "undefined") {
+  const nativeFocus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function focusReadingOptions(options?: FocusOptions) {
+    nativeFocus.call(this, options && { ...options });
   };
 }
 

@@ -60,9 +60,11 @@ type GitopsStatus struct {
 	// service skipped (unbuilt image / unsupported workload type), a binding endpoint that
 	// couldn't be resolved (fail-closed, #710), or a credential facet with no materializable
 	// secret. They explain why a rendered service may boot misconfigured — surfaced so the
-	// operator sees them without digging through raw deploy logs. Contains NO secret values
-	// (env/kind/facet/provider names only). Empty ⇒ generation was clean (or was skipped for a
-	// bring-your-own manifests repo).
+	// operator sees them without digging through raw deploy logs. The add-on stage appends one more
+	// kind: a BYO chart the runner refused to deploy because its namespace is malformed or reserved
+	// for the platform (#6439). Contains NO secret values (env/kind/facet/provider names, add-on ids
+	// and namespaces only). Empty ⇒ generation was clean and no BYO chart was refused (generation is
+	// skipped for a bring-your-own manifests repo).
 	ManifestWarnings []string `json:"manifest_warnings,omitempty"`
 }
 

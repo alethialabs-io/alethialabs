@@ -7,9 +7,11 @@
 //
 // It is built from the form's own primitives (`SettingsColumns`, `SettingsSection`, `SettingsPanel`,
 // `SettingsField`, `SettingsCardFoot`, `SettingsDangerRow`) with the form's own copy
-// (`org-general-copy.ts`). A row's height is set by whichever column is taller: the label column,
-// where a hint wraps at 200px to two or three lines, or the control column, which is under 200px
-// wide in the two-column layout. The earlier skeleton drew every row as a one-line label beside one
+// (`org-general-copy.ts`), so its rows take the form's responsive geometry by construction: stacked
+// below the panel's 32rem container step, a 200px label column beside the control from it (#6135).
+// A side-by-side row's height is set by whichever column is taller: the label column, where a hint
+// wraps at 200px to two or three lines, or the control column, which can be under 200px wide in a
+// narrow panel; a stacked row's is the two added up. The earlier skeleton drew every row as a one-line label beside one
 // 38px bar: its Organization profile panel came out about 100px short of the form's 515px, and its
 // Danger zone, 131px, was scored against the profile panel the form had grown into (0.182 against
 // the 0.02 budget, release-gate run 40822681524).

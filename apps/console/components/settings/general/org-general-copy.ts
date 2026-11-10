@@ -3,10 +3,11 @@
 
 // The org General page's fixed copy: the section titles, each row's label and hint, the Save
 // bands' notes and the Danger zone's rows. The form (`org-general.tsx`) and its skeleton
-// (`org-general-skeleton.tsx`) both render from here (#6352). A row's height is set by its label
-// column, where a hint wraps at 200px to two or three lines, and a danger row's by its description,
-// which wraps at 52ch — so the skeleton has to carry the same words to be the same height. Two
-// copies of a hint would drift apart one edit at a time.
+// (`org-general-skeleton.tsx`) both render from here (#6352). A row's height depends on how its
+// hint wraps — at 200px beside the control from the panel's 32rem container step, at the panel's
+// full width stacked above the control below it (#6135) — and a danger row's on its description,
+// which wraps at 52ch. Either way the skeleton has to carry the same words to be the same height.
+// Two copies of a hint would drift apart one edit at a time.
 
 /** The section headings, top to bottom. */
 export const ORG_GENERAL_SECTIONS = {
@@ -40,8 +41,9 @@ export const ORG_PROFILE_ROWS = {
 } as const;
 
 /**
- * The fixed notes under two controls. The control column is under 200px wide in the two-column
- * layout, so a note can wrap to a second line, which makes the row taller than its label column.
+ * The fixed notes under two controls. Where the row is side by side in a narrow panel (just above
+ * the 32rem container step, in the two-column layout) the control column can be under 200px wide,
+ * so a note can wrap to a second line, which makes the row taller than its label column.
  */
 export const ORG_CONTROL_NOTES = {
 	slug: "Lowercase, numbers and hyphens.",

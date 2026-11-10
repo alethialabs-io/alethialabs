@@ -3,18 +3,18 @@ module github.com/alethialabs-io/alethialabs/apps/runner
 go 1.27.1
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.24.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.15.0
 	github.com/alethialabs-io/alethialabs/packages/core v0.0.0
 	github.com/aws/aws-sdk-go-v2 v1.47.5
-	github.com/aws/aws-sdk-go-v2/config v1.33.12
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.12
+	github.com/aws/aws-sdk-go-v2/config v1.33.13
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.7.8
-	github.com/aws/aws-sdk-go-v2/service/ecr v1.67.1
-	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.47.7
-	github.com/aws/aws-sdk-go-v2/service/eks v1.105.1
+	github.com/aws/aws-sdk-go-v2/service/ecr v1.67.2
+	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.47.8
+	github.com/aws/aws-sdk-go-v2/service/eks v1.105.2
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6
-	github.com/aws/smithy-go v1.28.7
+	github.com/aws/smithy-go v1.28.8
 	github.com/getsentry/sentry-go v0.50.0
 	github.com/siderolabs/talos/pkg/machinery v1.14.5
 	go.opentelemetry.io/otel v1.47.0
@@ -33,7 +33,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+	github.com/ProtonMail/go-crypto v1.5.2 // indirect
 	github.com/ProtonMail/gopenpgp/v3 v3.4.1 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/agext/levenshtein v1.2.1 // indirect
@@ -44,17 +44,17 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.8 // indirect
-	github.com/aws/aws-sdk-go-v2/service/accessanalyzer v1.57.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.342.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/accessanalyzer v1.57.8 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.343.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/iam v1.64.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.12.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.39.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.12.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.39.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -79,7 +79,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.25.0 // indirect
-	github.com/hashicorp/terraform-exec v0.25.3 // indirect
+	github.com/hashicorp/terraform-exec v0.26.0 // indirect
 	github.com/hashicorp/terraform-json v0.29.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
@@ -112,7 +112,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

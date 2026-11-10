@@ -95,6 +95,13 @@ export interface NewOrgSetupState {
 	 * (`endedSetupRead`, `endedSetupClause`). Null otherwise — an open hold is reported in `hold` instead.
 	 */
 	ended: { clause: string } | null;
+	/**
+	 * Set when this subscription is `incomplete` with its first payment failed or never made
+	 * (`action_needed`; not `processing`, `confirming` or `unconfirmed`), no open hold names it, and its team's billing row names ANOTHER
+	 * live plan (ADR 0002 §5.6, C120): the sentence saying it cannot be completed here.
+	 * `paymentUrl` is then null — a setup is never offered for payment beside another live plan.
+	 */
+	besideLivePlan?: { clause: string } | null;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */

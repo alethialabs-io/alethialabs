@@ -122,7 +122,8 @@ $$;
 -- UI's (components/jobs/columns.tsx + the job detail page), plus verify_override — a recorded
 -- verification waiver, which the Evidence page lists (#6126). Deliberately NOT listed: progress_at and
 -- updated_at (heartbeat-like), claimed_at and attempts (they move with status), usage_reported_at,
--- priority, provider, assigned_runner_id, traceparent, and org_id (a backfill-only write).
+-- priority, provider, assigned_runner_id, traceparent, required_capabilities (derived by a trigger,
+-- rendered nowhere), and org_id (a backfill-only write).
 DROP TRIGGER IF EXISTS jobs_notify_change_upd ON public.jobs;
 CREATE TRIGGER jobs_notify_change_upd
   AFTER UPDATE ON public.jobs
@@ -222,6 +223,8 @@ CREATE TRIGGER invoice_notify_change_insdel
 --     three leave a DRAINING runner DRAINING, so a draining runner's heartbeats are silent too;
 --     runner_heartbeat's COALESCEd version/release_id/supported_providers are unchanged unless the
 --     runner really reports something new — which is then exactly one notice;
+--   · capabilities and last_claim_at — stamped by claim_next_job (and capabilities by runner_heartbeat)
+--     on every request, and rendered nowhere (#6458);
 --   · token_hash (a credential, never rendered), mode (deprecated), created_at, user_id, org_id.
 -- tests/integration/realtime-notify-runners.test.ts drives the real RPCs: a heartbeat and a presence
 -- ping emit zero; an OFFLINE→ONLINE flip, a sweep to OFFLINE and a new reported version emit one.
@@ -488,8 +491,126 @@ CREATE OR REPLACE FUNCTION public.destroy_waits_on_tenants(
     END;
 $$;
 
+-- The runner capabilities a job needs before a runner may be handed it (#6458). The SQL half of
+-- apps/console/lib/runners/snapshot-capabilities.ts `refusalForRunner`: a DEPLOY whose snapshot holds an
+-- OCI bring-your-own chart — an add-on marked `byo: true` whose `source` is not "git" — needs
+-- `addon-byo-marker`; every other job needs nothing. The two are pinned to each other over the shared
+-- fixtures in packages/core/types/testdata/snapshot-capabilities by
+-- tests/integration/claim-capability-skip.test.ts, so a change to one without the other reds there.
+-- Nested CASE, not AND: SQL does not promise AND's evaluation order, and jsonb_array_elements raises
+-- on a non-array.
+CREATE OR REPLACE FUNCTION public.job_required_capabilities(
+    p_job_type public.provision_job_type, p_snapshot JSONB
+) RETURNS TEXT[] LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+      WHEN p_job_type IS DISTINCT FROM 'DEPLOY'::public.provision_job_type
+        OR jsonb_typeof(p_snapshot -> 'addons') IS DISTINCT FROM 'array'
+        THEN ARRAY[]::TEXT[]
+      ELSE CASE
+        WHEN EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p_snapshot -> 'addons') a
+           WHERE jsonb_typeof(a) = 'object'
+             AND a -> 'byo' = 'true'::jsonb
+             AND (a -> 'source') IS DISTINCT FROM '"git"'::jsonb
+        ) THEN ARRAY['addon-byo-marker']::TEXT[]
+        ELSE ARRAY[]::TEXT[]
+      END
+    END;
+$$;
+
+-- jobs.required_capabilities is DERIVED, here, from job_type + config_snapshot — no enqueue site
+-- writes it, so no enqueue site can forget it. Whatever an INSERT sets is overwritten, and so is a
+-- direct UPDATE of the column itself: it is in the trigger's column list, so the stored value can
+-- only ever be the derivation. Stored so
+-- claim_next_job compares two arrays per candidate instead of reading every candidate's snapshot.
+CREATE OR REPLACE FUNCTION public.jobs_set_required_capabilities()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.required_capabilities := public.job_required_capabilities(NEW.job_type, NEW.config_snapshot);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS jobs_set_required_capabilities ON public.jobs;
+CREATE TRIGGER jobs_set_required_capabilities
+  BEFORE INSERT OR UPDATE OF job_type, config_snapshot, required_capabilities ON public.jobs
+  FOR EACH ROW EXECUTE FUNCTION public.jobs_set_required_capabilities();
+
+-- Backfill every row that can still be claimed, or requeued and then claimed: the column arrived
+-- with its '{}' default on rows written before the trigger. Settled rows are never claimed again and
+-- keep '{}'. Idempotent: matches nothing once every such row agrees with its snapshot.
+UPDATE public.jobs
+   SET required_capabilities = public.job_required_capabilities(job_type, config_snapshot)
+ WHERE status IN ('QUEUED', 'CLAIMED', 'PROCESSING')
+   AND required_capabilities IS DISTINCT FROM public.job_required_capabilities(job_type, config_snapshot);
+
+-- How recently a runner must have been heard from to count as alive: the ONE definition of the
+-- liveness window. live_runner_has_capabilities (heartbeat and claim poll) and recover_stale_jobs
+-- (is a claimed job's runner still heartbeating?) both read it, so they cannot disagree about whether
+-- a runner is there. It is not sweep_offline_runners' 45 s: that flips a silent runner OFFLINE; this
+-- one decides whether to act on its absence.
+CREATE OR REPLACE FUNCTION public.runner_liveness_window()
+RETURNS INTERVAL LANGUAGE sql IMMUTABLE AS $$ SELECT INTERVAL '5 minutes' $$;
+
+-- TRUE iff a LIVE runner that could claim this unassigned job advertises every capability in
+-- p_required (#6458). This is what bounds claim_next_job's capability skip.
+--
+-- A runner without a capability a job needs skips the job — leaves it QUEUED — only while a runner
+-- that HAS it is live in the job's pool, so in a mixed pool during a rollout the newer runner takes it.
+-- Once none is, nobody else could run it either, so the incapable runner is handed it and the claim
+-- route's refusalForRunner fails it through recordJobFailed with the "update the runner" reason —
+-- rather than leaving it QUEUED forever, saying nothing. The question is about PRESENCE, not time: a
+-- job held by another gate (state_object_busy, destroy_waits_on_tenants, the managed concurrency cap)
+-- for any length of time is still skipped while a capable runner is live.
+--
+-- The pool is the set of runners claim_next_job would let take the job (an assignment aside):
+--   · a managed runner, unless the job requires a self runner;
+--   · a self runner of the job's org;
+-- either way passing the same cloud-identity and provider filters the claim applies, read off the
+-- runner row (the claim route passes runners.cloud_identity_id as p_cloud_identity_id). The legacy
+-- personal-org arm of the self branch admits runner-lifecycle jobs only, which never need a capability.
+-- LIVE = ONLINE (so not DRAINING, not OFFLINE) with a heartbeat inside runner_liveness_window (the
+-- window recover_stale_jobs uses), AND claiming: it called the claim inside the same window (an idle runner
+-- polls at least every 30 s) or it holds an in-flight job (a busy runner claims nothing until it is
+-- done). A runner that heartbeats while its claim loop is wedged therefore stops holding the job once
+-- the window passes — and so, while idle, does any runner whose claim poll is slower than the window. runners.capabilities is stamped on every claim and heartbeat, last_claim_at on every claim.
+--
+-- Not SECURITY DEFINER, and not executable by PUBLIC: it answers "does some org have a live runner
+-- matching this identity and provider", which no caller other than claim_next_job (itself a definer,
+-- so this runs with the owner's rights inside it) may ask.
+CREATE OR REPLACE FUNCTION public.live_runner_has_capabilities(
+    p_required TEXT[], p_org_id UUID, p_requires_self_runner BOOLEAN, p_cloud_identity_id UUID,
+    p_provider public.cloud_provider
+) RETURNS BOOLEAN LANGUAGE sql STABLE SET search_path = public AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.runners r
+         WHERE r.capabilities @> p_required
+           AND r.status = 'ONLINE'
+           AND r.last_heartbeat > now() - public.runner_liveness_window()
+           AND (
+             r.last_claim_at > now() - public.runner_liveness_window()
+             -- Served by the partial index idx_jobs_runner_inflight.
+             OR EXISTS (
+               SELECT 1 FROM public.jobs k
+                WHERE k.runner_id = r.id AND k.status IN ('CLAIMED', 'PROCESSING')
+             )
+           )
+           AND (r.cloud_identity_id IS NULL OR r.cloud_identity_id = p_cloud_identity_id)
+           AND (r.supported_providers IS NULL OR p_provider IS NULL OR p_provider = ANY(r.supported_providers))
+           AND (
+             (r.operator = 'managed' AND NOT p_requires_self_runner)
+             OR (r.operator = 'self' AND r.org_id = p_org_id)
+           )
+    );
+$$;
+REVOKE ALL ON FUNCTION public.live_runner_has_capabilities(TEXT[], UUID, BOOLEAN, UUID, public.cloud_provider) FROM PUBLIC;
+
+-- The 3-argument form is dropped first: adding p_capabilities with a DEFAULT next to the old
+-- signature would leave two overloads, and every 3-argument call would then be ambiguous.
+DROP FUNCTION IF EXISTS public.claim_next_job(UUID, TEXT, UUID);
 CREATE OR REPLACE FUNCTION public.claim_next_job(
-    p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL
+    p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL,
+    p_capabilities TEXT[] DEFAULT NULL
 ) RETURNS SETOF public.jobs
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -514,10 +635,19 @@ BEGIN
     IF v_status = 'DRAINING' THEN
         RETURN;
     END IF;
-    UPDATE public.runners SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status WHERE id = p_runner_id;
+    -- capabilities: what this runner advertised on this request (NULL — a caller that passes none —
+    -- keeps the last stamp). last_claim_at: this runner's claim loop is alive. Both are read by
+    -- live_runner_has_capabilities for every other runner's claim.
+    UPDATE public.runners
+       SET last_heartbeat = now(), status = 'ONLINE'::public.runner_status,
+           capabilities = COALESCE(p_capabilities, capabilities), last_claim_at = now()
+     WHERE id = p_runner_id;
     PERFORM public.open_runner_session(p_runner_id);
 
     -- Phase A: jobs explicitly assigned to this runner — highest precedence, priority-ordered.
+    -- NOT capability-filtered, deliberately: no other runner may claim an assigned job, so skipping it
+    -- here would only delay the same answer. The claim route's refusalForRunner fails it at once with
+    -- the "update the runner" reason.
     -- Even an EXPLICIT assignment must respect org boundaries for a self runner: assigned_runner_id
     -- is set from a caller-supplied value at enqueue (projects.ts / the DESTROY_RUNNER route) and is
     -- NOT validated to be same-org, so a user authorized on org X's project could queue an org-X job
@@ -590,6 +720,16 @@ BEGIN
                 AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                 -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                 AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
+                -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
+                -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
+                -- NULL p_capabilities is a caller that does not know about capabilities — a console pod on the
+                -- previous release, mid-rollout or after a rollback. It gets no capability gate at all, exactly as
+                -- before #6458, and its own post-claim refusalForRunner is the check. Treating NULL as "none" would
+                -- let a stamped capable runner, claiming through such a pod, skip the very job it should take.
+                AND CASE WHEN p_capabilities IS NULL OR j.required_capabilities <@ p_capabilities THEN true
+                         ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
+                                    j.requires_self_runner, j.cloud_identity_id, j.provider)
+                    END
                 AND (
                   public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
                   OR public.org_managed_inflight(j.org_id)
@@ -646,6 +786,16 @@ BEGIN
                   AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
                   -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
                   AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
+                  -- Leave a job this runner cannot run QUEUED while a live runner in its pool can (see
+                  -- live_runner_has_capabilities). CASE so the runner scan runs only for a job this runner lacks for.
+                  -- NULL p_capabilities is a caller that does not know about capabilities — a console pod on the
+                  -- previous release, mid-rollout or after a rollback. It gets no capability gate at all, exactly as
+                  -- before #6458, and its own post-claim refusalForRunner is the check. Treating NULL as "none" would
+                  -- let a stamped capable runner, claiming through such a pod, skip the very job it should take.
+                  AND CASE WHEN p_capabilities IS NULL OR j.required_capabilities <@ p_capabilities THEN true
+                           ELSE NOT public.live_runner_has_capabilities(j.required_capabilities, j.org_id,
+                                      j.requires_self_runner, j.cloud_identity_id, j.provider)
+                      END
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         END IF;
@@ -742,7 +892,7 @@ BEGIN
             ( j.claimed_at < now() - INTERVAL '15 minutes'
               AND (j.runner_id IS NULL OR NOT EXISTS (
                 SELECT 1 FROM public.runners r
-                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes')) )
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - public.runner_liveness_window())) )
             OR
             -- (B) stalled-but-alive: runner heartbeating, but no forward progress for the stall window
             ( j.runner_id IS NOT NULL
@@ -750,7 +900,7 @@ BEGIN
               AND j.progress_at < now() - INTERVAL '30 minutes'
               AND EXISTS (
                 SELECT 1 FROM public.runners r
-                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes') )
+                WHERE r.id = j.runner_id AND r.last_heartbeat > now() - public.runner_liveness_window()) )
           )
         -- RETURNING sees the NEW row, so the apply marker is still readable and status is the new one.
         RETURNING j.id, j.job_type, j.environment_id, j.org_id, j.project_id,
@@ -904,9 +1054,13 @@ BEGIN
 END;
 $$;
 
+-- p_capabilities (#6458): what the runner advertised in X-Runner-Capabilities on this heartbeat,
+-- stamped on runners.capabilities (NULL keeps the last stamp). The 4-argument form is dropped first so
+-- the defaulted fifth argument leaves no ambiguous overload behind.
+DROP FUNCTION IF EXISTS public.runner_heartbeat(UUID, TEXT, TEXT, public.cloud_provider[]);
 CREATE OR REPLACE FUNCTION public.runner_heartbeat(
     p_runner_id UUID, p_runner_token_hash TEXT, p_version TEXT DEFAULT NULL,
-    p_providers public.cloud_provider[] DEFAULT NULL
+    p_providers public.cloud_provider[] DEFAULT NULL, p_capabilities TEXT[] DEFAULT NULL
 ) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_release_id UUID;
 BEGIN
@@ -924,7 +1078,8 @@ BEGIN
     SET last_heartbeat = now(),
         status = CASE WHEN status = 'DRAINING' THEN status ELSE 'ONLINE'::public.runner_status END,
         version = COALESCE(p_version, version), release_id = COALESCE(v_release_id, release_id),
-        supported_providers = COALESCE(p_providers, supported_providers)
+        supported_providers = COALESCE(p_providers, supported_providers),
+        capabilities = COALESCE(p_capabilities, capabilities)
     WHERE id = p_runner_id AND token_hash = p_runner_token_hash;
     IF NOT FOUND THEN RAISE EXCEPTION 'Unauthorized runner'; END IF;
     PERFORM public.open_runner_session(p_runner_id);

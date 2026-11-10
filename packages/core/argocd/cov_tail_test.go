@@ -472,8 +472,9 @@ func tailListJSON(namespace, name string) string {
 }
 
 // TestTail_PruneWarnsWhenADeleteFails covers the delete-failure warning arm of every prune path
-// that shares this shape: the registry pull secret, the Helm repo credential, the BYO binding
-// ExternalSecret, and the vcluster cluster Secret. A best-effort prune must warn, not abort.
+// that shares this shape: the registry pull secret, the Helm repo credential, and the vcluster
+// cluster Secret. A best-effort prune must warn, not abort. (The BYO binding ExternalSecret prune is
+// owner-scoped and has its own delete-failure case in binding_secrets_test.go.)
 func TestTail_PruneWarnsWhenADeleteFails(t *testing.T) {
 	list := tailListJSON("argocd", "stale-one")
 	// Every `get … -o json` answers with the list; every `delete` fails.
@@ -482,13 +483,11 @@ func TestTail_PruneWarnsWhenADeleteFails(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	PruneRegistryPullSecrets(nil, &stdout, &stderr)
 	PruneHelmRepoCredentials(nil, &stdout, &stderr)
-	PruneChartBindingSecrets(nil, &stdout, &stderr)
 	PruneVClusterClusterSecrets(nil, &stdout, &stderr)
 
 	for _, want := range []string{
 		"failed to prune registry pull secret",
 		"failed to prune Helm repo credential",
-		"failed to prune BYO binding ExternalSecret",
 		"failed to prune vcluster cluster Secret",
 	} {
 		if !strings.Contains(stderr.String(), want) {

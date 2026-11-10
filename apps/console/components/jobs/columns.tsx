@@ -22,8 +22,8 @@ import { projectHref } from "@/lib/routing";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Layers, Server } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useEffect, useState } from "react";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { type ReactNode, useSyncExternalStore } from "react";
+import { useHydrated } from "@repo/ui/use-hydrated";
 
 export { JOB_TYPES };
 
@@ -46,17 +46,60 @@ const RUNNING = new Set(["QUEUED", "CLAIMED", "PROCESSING"]);
  * once hydration is over (`useHydrated`, #5786) — the row itself still paints on first load.
  */
 export function LiveDuration({ createdAt }: { createdAt: Date | string }) {
-  const hydrated = useHydrated();
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const now = useSecondsClock();
   return (
     <ClockSlot sizer={DURATION_SIZER} className="text-xs tabular-nums text-muted-foreground">
-      {hydrated ? formatDuration(Date.now() - new Date(createdAt).getTime()) : null}
+      {now === null ? null : formatDuration(now - new Date(createdAt).getTime())}
     </ClockSlot>
   );
+}
+
+// ── The seconds clock ────────────────────────────────────────────────────────────────────────────
+// One interval for every live duration on the page, read through `useSyncExternalStore`: "now" is a
+// value of an external store, not something a render reads off `Date.now()` (react-hooks/purity),
+// and its server snapshot is `null`, which is what keeps the server render and the hydrating render
+// in agreement (#418) — the job `useHydrated` did here before.
+const clockListeners = new Set<() => void>();
+let clockNow: number | null = null;
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Subscribes to the once-a-second tick; the first subscriber starts it, the last one stops it. */
+function subscribeClock(listener: () => void): () => void {
+  clockListeners.add(listener);
+  if (clockTimer === null) {
+    // A reading taken by a render that never subscribed may be old; React re-reads the snapshot
+    // straight after subscribing, so a fresh one here shows at once.
+    clockNow = Date.now();
+    clockTimer = setInterval(() => {
+      clockNow = Date.now();
+      for (const l of clockListeners) l();
+    }, 1000);
+  }
+  return () => {
+    clockListeners.delete(listener);
+    if (clockListeners.size === 0 && clockTimer !== null) {
+      clearInterval(clockTimer);
+      clockTimer = null;
+      // A stopped clock is not a reading: the next subscriber reads the time afresh.
+      clockNow = null;
+    }
+  };
+}
+
+/** The current second in the browser — read afresh when no tick has been taken yet. */
+function getClockSnapshot(): number {
+  if (clockNow === null) clockNow = Date.now();
+  return clockNow;
+}
+
+/** No clock on the server, nor in the render that hydrates its HTML. */
+function getServerClockSnapshot(): null {
+  return null;
+}
+
+/** "Now" to the second in the browser, `null` on the server and through hydration. */
+function useSecondsClock(): number | null {
+  return useSyncExternalStore(subscribeClock, getClockSnapshot, getServerClockSnapshot);
 }
 
 /**

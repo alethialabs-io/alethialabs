@@ -14,7 +14,7 @@
 
 import { format } from "date-fns";
 import { CalendarDays } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   type DateRange,
   formatInZone,
@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./select";
+import { useHydrated } from "./use-hydrated";
 
 interface DateRangeFilterProps {
   value: DateRange;
@@ -84,18 +85,21 @@ export function DateRangeFilter({
   // Gating on mount is the fix rather than `suppressHydrationWarning`, which suppresses the
   // REPORT and leaves the server's wrong wall-clock on screen. The committed range is unchanged
   // and the popover is closed during SSR, so nothing else here reaches the server's HTML.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // `useHydrated` answers "past hydration?" without a mount effect: false for the server render
+  // and the hydrating one, true for every render after and for a client-only mount.
+  const mounted = useHydrated();
 
   const tzOptions = useMemo(() => timeZoneOptions(), []);
 
-  // Reset the draft to the committed value whenever the popover (re)opens.
-  useEffect(() => {
-    if (open) {
+  /** Open or close the popover; opening resets the draft to the committed value, so an edit
+   * abandoned by closing without Apply is not what the next opening shows. */
+  function onOpenChange(next: boolean) {
+    if (next) {
       setFrom(value.from);
       setTo(value.to);
     }
-  }, [open, value.from, value.to]);
+    setOpen(next);
+  }
 
   // Derived display fields (all in the chosen tz).
   const fromDate = formatInZone(from, tz, "yyyy-MM-dd");
@@ -129,7 +133,7 @@ export function DateRangeFilter({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
         render={
           <Button variant="outline" size="sm" className="gap-1.5">

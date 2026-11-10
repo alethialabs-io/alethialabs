@@ -66,7 +66,7 @@ alethia chart attach api -p shop --repo https://github.com/acme/charts --chart-p
 | Repository | Where the chart lives — a git URL, or an oci:// reference to a chart registry | `--repo` |
 | Chart path | Where the chart sits inside a git repository; an OCI chart is named by its URL and needs none | `--chart-path` |
 | Git ref | The branch, tag or commit to deploy; empty tracks the repository's default branch | `--ref` |
-| Namespace | The destination namespace; empty lets the environment place it | `--namespace` |
+| Namespace | The destination namespace; empty gives the chart a namespace of its own (byo- followed by the chart id) | `--namespace` |
 | Values file | A path on this machine to a raw Helm values YAML override, sent as the file's content | `--values-file` |
 | Chart value | One key=value chart value, repeatable, JSON-typed when the value parses as JSON | `--set` |
 

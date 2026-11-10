@@ -189,8 +189,8 @@ cluster and a vcluster are not shared, so both are permissive inside their own b
 
 <Callout type="info">
   **This is why CRD-bearing infrastructure belongs in the apps repository rather than in a
-  bring-your-own chart.** A BYO chart runs under a default-deny project: namespaced resources in its
-  own namespace, and no `Role`, `RoleBinding` or `ServiceAccount`. See
+  bring-your-own chart.** A BYO chart runs under a default-deny project: a closed list of namespaced
+  workload kinds in its own namespace, and no `Role`, `RoleBinding` or `ServiceAccount`. See
   [what your chart may create](/concepts/bring-your-own-charts#what-your-chart-may-create). On a
   dedicated cluster the apps repository has no such limit, so a `CustomResourceDefinition`, a
   `ClusterRole` or a `StorageClass` syncs from here. On a namespace placement it does not, because

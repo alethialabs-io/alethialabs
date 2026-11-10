@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { Tooltip as TooltipPrimitive } from "@base-ui-components/react/tooltip";
+import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "./utils";
 
@@ -79,11 +79,14 @@ function TooltipContent({
         align={align}
         sideOffset={sideOffset}
         alignOffset={alignOffset}
+        // The layer is on the Positioner: its inline `transform` makes it a stacking context, so a
+        // z-index on the Popup alone would only order it inside that context (#6144, popover.tsx).
+        className="z-[var(--z-overlay)]"
       >
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"
           className={cn(
-            "bg-primary text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[var(--z-overlay)] w-fit origin-(--transform-origin) overflow-hidden rounded-md px-3 py-1.5 text-xs",
+            "bg-primary text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 w-fit origin-(--transform-origin) overflow-hidden rounded-md px-3 py-1.5 text-xs",
             className,
           )}
           {...props}

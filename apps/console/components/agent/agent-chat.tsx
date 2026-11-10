@@ -12,7 +12,6 @@ import {
 	ThumbsDown,
 	ThumbsUp,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import { ChatError } from "@/components/agent/chat-error";
@@ -43,7 +42,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
-import { Marker, MarkerContent } from "@/components/ai-elements/marker";
+import { Marker, MarkerContent } from "@repo/ui/marker";
 import {
 	AGENT_STEP_PART_TYPE,
 	agentStepDataSchema,
@@ -310,11 +309,7 @@ export function AgentChat({
 										messageId={m.id}
 										scrollAnchor={isUser}
 									>
-										<motion.div
-											initial={{ opacity: 0, y: 4 }}
-											animate={{ opacity: 1, y: 0 }}
-											transition={{ duration: 0.18, ease: "easeOut" }}
-										>
+										<div className="agent-message-in">
 											{/* `MessageContent` IS the user's bubble — the skin lives in the
 											    component (`group-[.is-user]:bg-secondary …`), which is why the
 											    separate `Bubble`/`BubbleContent` pair is gone. The two widths
@@ -423,20 +418,16 @@ export function AgentChat({
 														)}
 												</MessageContent>
 											</Message>
-										</motion.div>
+										</div>
 									</MessageScrollerItem>
 								);
 							})}
 
 							{status === "submitted" && (
-								<motion.div
-									initial={{ opacity: 0 }}
-									animate={{ opacity: 1 }}
-									className="flex items-center gap-2 text-xs text-muted-foreground"
-								>
+								<div className="agent-thinking-in flex items-center gap-2 text-xs text-muted-foreground">
 									<Loader2 className="h-3 w-3 animate-spin" />
 									Thinking…
-								</motion.div>
+								</div>
 							)}
 							{error &&
 								(errorMessage ? (

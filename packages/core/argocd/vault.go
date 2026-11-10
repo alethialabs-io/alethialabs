@@ -423,22 +423,17 @@ func EnsureHetznerSecretStore(facts *InfraFacts, stdout, stderr io.Writer) error
 
 // HetznerSecretStoreManifest renders the ClusterSecretStore over the in-cluster Vault.
 //
-// Same `conditions` scoping as every other store (#1306): a cluster-scoped store with no conditions
-// is referenceable from ANY namespace, so on a shared Fabric a placed tenant could read the owner's
-// secrets. `namespaceSelector NotIn alethia.io/placement=namespace` denies placed tenant namespaces
-// while still matching label-absent ones, so the dedicated path is unchanged.
+// Same `conditions` scoping as every other store (#1306, secretStoreConditions): a cluster-scoped
+// store with no conditions is referenceable from ANY namespace, so on a shared Fabric a placed tenant
+// could read the owner's secrets. `namespaceSelector NotIn alethia.io/placement=namespace` denies
+// placed tenant namespaces while still matching label-absent ones, so the dedicated path is unchanged.
 func HetznerSecretStoreManifest() string {
 	return fmt.Sprintf(`apiVersion: external-secrets.io/v1beta1
 kind: ClusterSecretStore
 metadata:
   name: %s
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+%s
   provider:
     vault:
       server: %q
@@ -450,6 +445,7 @@ spec:
           key: %s
           namespace: %s
 `, HetznerSecretStoreName,
+		secretStoreConditions(),
 		"http://"+hetznerVaultReleaseHost,
 		hetznerVaultKVMount,
 		HetznerSecretStoreCredSecret,

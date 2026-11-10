@@ -7,6 +7,8 @@
     "./countries": "./src/countries.ts",
     "./range": "./src/range.ts",
     "./copy-text": "./src/copy-text.ts",
+    "./command-search": "./src/command-search.ts",
+    "./use-hydrated": "./src/use-hydrated.ts",
     "./*": "./src/*.tsx"
   },
   "scripts": {
@@ -15,11 +17,10 @@
     "test": "vitest run --coverage"
   },
   "dependencies": {
-    "@base-ui-components/react": "1.0.0-rc.0",
+    "@base-ui/react": "1.9.0",
     "@date-fns/tz": "1.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cmdk": "^1.1.1",
     "date-fns": "^4.4.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^0.577.0",

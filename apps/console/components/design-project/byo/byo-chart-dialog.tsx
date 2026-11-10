@@ -17,7 +17,7 @@
 // speak both; this is the surface that could only ever produce the git one.
 
 import { useCallback, useMemo, useState } from "react";
-import { Controller, useForm, type FieldPath } from "react-hook-form";
+import { Controller, useForm, useWatch, type FieldPath } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
 	ArrowLeft,
@@ -57,9 +57,11 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { getProvidersForCategory } from "@/lib/connectors/registry.generated";
 import {
 	byoChartFormSchema,
+	byoChartNamespace,
 	type ByoChartFormValues,
 	type ChartSource,
 } from "@/lib/validations/byo-charts";
+import { chartSlug } from "@/lib/validations/names";
 
 interface ByoChartDialogProps {
 	open: boolean;
@@ -95,7 +97,8 @@ export const STARTER_CHART_PATH = "chart";
 /** The OCI example. It is NOT the starter chart: that repository publishes no OCI artifact today, so
  * naming `oci://ghcr.io/alethialabs-io/…` would re-commit #4114's defect under our own org. podinfo
  * is the reference public OCI Helm chart, pullable anonymously, and — checked, not assumed — renders
- * only namespaced, non-RBAC resources, so it also satisfies the default-deny BYO AppProject a user
+ * a Deployment, a Service and test-hook Pods by default, all on the BYO AppProject's closed list of
+ * workload kinds (byoWorkloadKinds in packages/core/argocd/byo.go), so it satisfies the project a user
  * would be pasting it into. Swap it for ours the day the starter chart ships an OCI release. */
 export const EXAMPLE_OCI_CHART_REF = "oci://ghcr.io/stefanprodan/charts/podinfo";
 
@@ -148,6 +151,9 @@ function isServerField(key: string): key is FieldPath<ByoChartFormValues> {
 	return SERVER_FIELDS.has(key);
 }
 
+/** The fields the dialog renders from. */
+const WATCHED = ["source", "repoUrl", "chartPath", "name", "namespace", "ref"] as const;
+
 /** The "attach a Helm chart" dialog. Self-contained: it owns the wizard state and resets on close. */
 export function ByoChartDialog({
 	open,
@@ -176,7 +182,6 @@ export function ByoChartDialog({
 		trigger,
 		reset,
 		setValue,
-		watch,
 		formState: { errors, isSubmitting },
 	} = form;
 
@@ -207,12 +212,7 @@ export function ByoChartDialog({
 
 	// Subscribing to `source` re-renders the dialog, so the step rail and the per-step bodies below
 	// (which differ per source) are rebuilt when it changes.
-	const source = watch("source");
-	const repoUrl = watch("repoUrl");
-	const chartPath = watch("chartPath");
-	const name = watch("name");
-	const namespace = watch("namespace");
-	const ref = watch("ref");
+	const [source, repoUrl, chartPath, name, namespace, ref] = useWatch({ control, name: WATCHED });
 
 	const isOci = source === "oci";
 	const steps = STEPS[source];
@@ -220,7 +220,10 @@ export function ByoChartDialog({
 
 	const effectiveUrl = (repoUrl ?? "").trim();
 	const effectiveName = (name ?? "").trim() || defaultNameFromRepo(effectiveUrl);
-	const effectiveNs = (namespace ?? "").trim() || "default";
+	// Its own namespace by default (#6446) — the same `byo-<id>` the attach action would choose, from
+	// the same id the action derives (`chartSlug` of the name).
+	const defaultNs = byoChartNamespace(chartSlug(effectiveName));
+	const effectiveNs = (namespace ?? "").trim() || defaultNs;
 	// A git ref defaults to HEAD; an OCI chart version defaults to `*` (ArgoCD for "latest").
 	const effectiveRef = (ref ?? "").trim() || (isOci ? "*" : "HEAD");
 
@@ -256,39 +259,28 @@ export function ByoChartDialog({
 		[setValue],
 	);
 
-	const onSubmit = useCallback(
-		async (values: ByoChartFormValues) => {
-			if (attach.isPending) return;
-			setRefusal(null);
-			try {
-				const res = await attach.mutateAsync({
-					projectId,
-					environmentId,
-					id: effectiveName,
-					repoUrl: values.repoUrl,
-					// An OCI chart has no path — the chart name is the URL's last segment.
-					...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
-					ref: effectiveRef,
-					namespace: effectiveNs,
-					valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
-				});
-				onAttached?.(res.id);
-				close(false);
-			} catch {
-				// Already said: in the dialog for a refusal or a field, in one toast for anything else.
-			}
-		},
-		[
-			attach,
-			projectId,
-			environmentId,
-			effectiveName,
-			effectiveRef,
-			effectiveNs,
-			onAttached,
-			close,
-		],
-	);
+	/** Attaches the chart with the effective name, ref and namespace, then closes the dialog. */
+	async function onSubmit(values: ByoChartFormValues) {
+		if (attach.isPending) return;
+		setRefusal(null);
+		try {
+			const res = await attach.mutateAsync({
+				projectId,
+				environmentId,
+				id: effectiveName,
+				repoUrl: values.repoUrl,
+				// An OCI chart has no path — the chart name is the URL's last segment.
+				...(values.source === "oci" ? {} : { chartPath: values.chartPath }),
+				ref: effectiveRef,
+				namespace: effectiveNs,
+				valuesYaml: values.valuesYaml?.trim() ? values.valuesYaml : null,
+			});
+			onAttached?.(res.id);
+			close(false);
+		} catch {
+			// Already said: in the dialog for a refusal or a field, in one toast for anything else.
+		}
+	}
 
 	return (
 		<Dialog open={open} onOpenChange={close}>
@@ -464,9 +456,13 @@ export function ByoChartDialog({
 									<Input
 										id="byo-chart-ns"
 										{...register("namespace")}
-										placeholder="default"
+										placeholder={defaultNs}
 										className="font-mono"
+										aria-invalid={errors.namespace ? true : undefined}
 									/>
+									{errors.namespace ? (
+										<p className="text-xs text-destructive">{errors.namespace.message}</p>
+									) : null}
 								</div>
 							</div>
 							<div className="flex flex-col gap-1.5">

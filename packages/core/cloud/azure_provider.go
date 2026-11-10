@@ -33,6 +33,9 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateServiceNames(config); err != nil {
 		return err
 	}
+	if err := validateByoDBReservedSecretNames(config); err != nil {
+		return err
+	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
@@ -84,7 +87,7 @@ var (
 		"azure_db_engine_version", "azure_db_iam_auth", "azure_db_port", "azure_db_sku_name",
 		"azure_dns_domain", "azure_dns_enabled", "azure_dns_zone_name", "azure_waf_enabled",
 		"classification_tags", "cosmos_db_collections", "create_azure_cache", "create_azure_db",
-		"create_cosmos_db", "create_service_bus", "create_storage_account", "custom_secrets",
+		"create_cosmos_db", "create_service_bus", "create_storage_account", "custom_secret_keepers", "custom_secrets",
 		"environment", "location", "project_name", "provision_acr", "provision_aks", "provision_vnet",
 		"service_bus_queues", "service_bus_topics", "single_nat_gateway", "storage_containers",
 		"subnet_ids", "subscription_id", "vnet_allowed_cidr_blocks", "vnet_cidr", "vnet_id",
@@ -327,6 +330,15 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, azureRootReserved...)
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, azureRootReserved...)
 	mergeProviderConfig(tfvars, config.Network.ProviderConfig, azureRootReserved...)
+
+	// Per-binding database user passwords (docs/adr/byo-binding-db-users.md §2): one generated entry
+	// per declared BYO database binding, while ALETHIA_BYO_DB_USERS_ENABLED is on. See byo_db_users.go.
+	tfvars["custom_secrets"] = withByoDBUserSecrets(config, tfvars["custom_secrets"], byoDBSecretsGCPAzure)
+	// Their rotation keepers, beside the user's own — reserved from the passthrough above and read
+	// from the cluster, DNS and network provider_config, in that order, instead.
+	if keepers, ok := customSecretKeepers(config, keepersPassthroughSources(config)); ok {
+		tfvars["custom_secret_keepers"] = keepers
+	}
 
 	return tfvars
 }

@@ -6,9 +6,10 @@
 // by the page's own pending branch, so there is no "use client" here.
 //
 // It is built from the form's own primitives (`SettingsSection`, `SettingsPanel`, `SettingsField`,
-// `SettingsCardFoot`) with the form's own copy (`preview-copy.ts`). A row's height is set by its
-// label column, where a two- or three-line hint wraps at 200px, and a hand-drawn bar of one line
-// cannot know that. The earlier skeleton was four one-control rows, 372px against a 736px form,
+// `SettingsCardFoot`) with the form's own copy (`preview-copy.ts`), so its rows take the form's
+// responsive geometry by construction: stacked below the panel's 32rem container step, a 200px label
+// column beside the control from it (#6135). A row's height depends on how its hint wraps at either
+// width, and a hand-drawn bar of one line cannot know that. The earlier skeleton was four one-control rows, 372px against a 736px form,
 // scored 0.028 against the 0.02 budget.
 //
 // The controls are bars, each in a LINE BOX at the rung the real control's text uses (`h-[1lh]`), or

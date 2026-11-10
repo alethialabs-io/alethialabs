@@ -25,6 +25,7 @@ export function makeJob(overrides: Partial<JobWithMeta> = {}): JobWithMeta {
 		priority: 0,
 		provider: null,
 		requires_self_runner: false,
+		required_capabilities: [],
 		runner_id: null,
 		assigned_runner_id: null,
 		plan_job_id: null,

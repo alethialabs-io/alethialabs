@@ -110,8 +110,10 @@ export function SaveArtifactButton({
         // An overlay opened from INSIDE another overlay: portaled to <body> it is a sibling of the
         // enclosing fullscreen Elench Dialog, so it has to out-rank that dialog's --z-overlay to
         // paint above the grid — at an equal z the later-painted grid swallows the Save click.
-        // That is exactly what --z-overlay-nested names (packages/brand/src/tokens.css).
-        className="z-[var(--z-overlay-nested)] w-[240px] rounded-none p-2"
+        // That is exactly what --z-overlay-nested names (packages/brand/src/tokens.css), which
+        // `nested` puts on the popover's Positioner.
+        nested
+        className="w-[240px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-ui-3xs">
           {kind === "widget"
@@ -159,9 +161,10 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
   const [items, setItems] = useState<AgentArtifact[] | null>(null);
   const hydrate = useWidgetGridStore((s) => s.hydrate);
 
+  // The list is cleared where the popover OPENS (`onOpenChange` below), so each open shows the
+  // loading state instead of the previous open's list; this effect only fetches.
   useEffect(() => {
     if (!open) return;
-    setItems(null);
     void listArtifacts()
       .then(setItems)
       .catch(() => setItems([]));
@@ -180,7 +183,13 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setItems(null);
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger
         render={
           <Button
@@ -199,7 +208,8 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
         container={bodyContainer()}
         // Same reason as SaveArtifactButton: a nested overlay that must sit above the enclosing
         // fullscreen dialog so the grid can't intercept clicks on artifact rows.
-        className="z-[var(--z-overlay-nested)] w-[260px] rounded-none p-2"
+        nested
+        className="w-[260px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-ui-3xs">Saved artifacts</div>
         {items === null ? (

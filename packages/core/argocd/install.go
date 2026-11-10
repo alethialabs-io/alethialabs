@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -286,6 +288,19 @@ var externalSecretsStoreMaxWait = 15 * time.Minute
 // ExternalSecret against these stores (vcluster syncs no ExternalSecret CRD to the host by default). If
 // vcluster ever syncs ExternalSecret CRDs host-ward, extend this selector to also exclude vcluster host
 // namespaces (deploy_vcluster.go).
+//
+// BYO CHART NAMESPACES ARE ADMITTED, ON PURPOSE. A condition selects the NAMESPACE an ExternalSecret
+// lives in and nothing about the object itself: ESO evaluates namespaceSelector, namespaces and
+// namespaceRegexes against the namespace alone (client_manager.go, v0.9.20). The runner's per-binding
+// ExternalSecrets for a BYO chart live in that chart's own namespace, because the Secret a chart's
+// existingSecret names must be there, so a condition cannot admit them and refuse a chart's own
+// ExternalSecret beside them. Excluding BYO namespaces here would withdraw every binding. The line a
+// chart cannot cross is drawn where the actor can be told apart: the hardened BYO AppProject denies
+// the whole external-secrets.io and generators.external-secrets.io groups (byoSecretSyncDenied) and
+// every ServiceAccount, Role and RoleBinding a chart might declare to grant its pods API access, while
+// the runner applies the binding ExternalSecrets with its own kubeconfig.
+// TestSecretStoreConditionsAdmitTheRunnersBindingPath pins this admission set for every store,
+// Hetzner's included.
 const externalSecretsStoreTemplate = `
 {{- if and (eq .Provider "aws") .IRSAExternalSecretsArn }}
 apiVersion: external-secrets.io/v1beta1
@@ -293,12 +308,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     aws:
       service: SecretsManager
@@ -315,12 +325,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     gcpsm:
       projectID: {{ .GCPProjectID }}
@@ -331,12 +336,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -348,12 +348,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     alibaba:
       regionID: {{ .Region }}
@@ -377,12 +372,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-aws-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     aws:
       service: SecretsManager
@@ -404,12 +394,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-gcp-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     gcpsm:
       projectID: {{ .SecretsXacctProjectID }}
@@ -421,12 +406,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-azure-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     azurekv:
       authType: WorkloadIdentity
@@ -443,12 +423,7 @@ kind: ClusterSecretStore
 metadata:
   name: secretstore-alibaba-xacct
 spec:
-  conditions:
-    - namespaceSelector:
-        matchExpressions:
-          - key: alethia.io/placement
-            operator: NotIn
-            values: ["namespace"]
+{{ storeConditions }}
   provider:
     alibaba:
       regionID: {{ .SecretsXacctRegion }}
@@ -540,7 +515,74 @@ spec:
 {{- end }}
 `
 
-var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").Parse(externalSecretsStoreTemplate))
+var externalSecretsStoreTmpl = template.Must(template.New("external-secrets-store").
+	Funcs(template.FuncMap{"storeConditions": secretStoreConditions}).
+	Parse(externalSecretsStoreTemplate))
+
+// SecretStoreAccessLabel is the runner's secret-store stamp: a label the runner puts on the
+// namespaces it creates for bring-your-own charts and for the BYO users Job, and which a chart
+// cannot write (a namespace is cluster-scoped, and the hardened BYO project admits no cluster-scoped
+// kind). SecretStoreAccessValue is its value. See secretStoreConditions.
+const (
+	SecretStoreAccessLabel = "alethia.io/secret-store-access"
+	SecretStoreAccessValue = "runner"
+)
+
+// secretStoreConditions renders the `conditions` every platform ClusterSecretStore that carries
+// conditions renders (the native and cross-account stores, and the in-cluster Vault store). The SaaS
+// stores render none, the pre-existing #1306 gap this does not change. ESO admits a namespace when
+// ANY condition selects it, and evaluates each against the namespace's labels alone. Every condition
+// first refuses a placed tenant namespace (#1306, see externalSecretsStoreTemplate). Beyond that a
+// namespace is admitted when:
+//
+//  1. it is not marked as a BYO chart's (alethia.io/managed-by=byo-charts) — every namespace the
+//     platform's own workloads, add-ons and customer workloads use, unchanged;
+//  2. it carries the runner's stamp (SecretStoreAccessLabel) — the BYO chart namespaces and the BYO
+//     users namespace the runner creates;
+//  3. it is one of the platform's reserved namespaces by exact name, matched on its API-server-set
+//     name label (kubernetes.io/metadata.name). A runner from before #6439/#6446 could mark one of
+//     those as a BYO chart's, and the platform's own ExternalSecrets live there ("default" holds
+//     every first-class service's), so the stamp rule must never withdraw them. The reserved
+//     PREFIXES (kube-, vcluster-) are not covered: a label selector cannot match a prefix,
+//     and ESO 0.9.20 evaluates a condition's namespaceRegexes on their own, without the placement
+//     requirement, so a regex condition would admit a placed tenant whose name matched. No platform
+//     ExternalSecret is known to live in a prefix-reserved namespace.
+//
+// What this is, narrowly: a label-level defence in depth. The runner stamps every BYO chart namespace
+// it configures, so for any namespace a current runner configures the stamp changes nothing; it only
+// refuses a namespace that is marked as a BYO chart's and that no current runner configures. It does
+// not tell the runner's binding ExternalSecret from one a chart wrote in the same namespace — a
+// condition sees only the namespace — and it does not close the #6479 residual. The boundary is the
+// hardened BYO project's deny of every external-secrets.io kind (byoSecretSyncDenied).
+//
+// A transient window, stated: a deploy applies the stores (EnsureExternalSecretsStore) before its
+// add-on stage stamps the BYO namespaces, so a BYO namespace an older runner created is unstamped
+// between the two, and stays so if the deploy stops in between. Its ExternalSecrets then stop
+// refreshing until the next deploy that reaches the add-on stage; ESO leaves an already materialised
+// Secret as it is, so nothing is withdrawn.
+func secretStoreConditions() string {
+	reserved := make([]string, 0, len(byoReserved.exact))
+	for n := range byoReserved.exact {
+		reserved = append(reserved, strconv.Quote(n))
+	}
+	sort.Strings(reserved)
+	sel := func(key, op string, values ...string) string {
+		return `    - namespaceSelector:
+        matchExpressions:
+          - key: alethia.io/placement
+            operator: NotIn
+            values: ["namespace"]
+          - key: ` + key + `
+            operator: ` + op + `
+            values: [` + strings.Join(values, ", ") + `]`
+	}
+	return strings.Join([]string{
+		"  conditions:",
+		sel(byoNamespaceManagedByLabel, "NotIn", strconv.Quote(byoNamespaceManagedByValue)),
+		sel(SecretStoreAccessLabel, "In", strconv.Quote(SecretStoreAccessValue)),
+		sel("kubernetes.io/metadata.name", "In", reserved...),
+	}, "\n")
+}
 
 // externalSecretsStoreManifest renders the per-cloud ClusterSecretStore for the given facts, or ""
 // when the provider/identity fact means there is no cloud secret store (e.g. hetzner).

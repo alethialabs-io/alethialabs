@@ -18,8 +18,11 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
   every session. One `git add -A` there once swept three features into one commit; a rebase is
   worse, because it moves the branch every other live session resolves against.
 - **Never work in a worktree another live instance holds.** Check with `pnpm wt:who`.
-- **Never target `staging` or `main` with a PR**, and never push to them. Feature work goes to
-  `dev`; the maintainer promotes `dev → staging → main`.
+- **Never push to `dev`, `staging` or `main`, and never open a feature PR into `staging` or
+  `main`.** Feature work goes to `dev`. **Promotions are agents' work when green**: the
+  `dev → staging` and `staging → main` PRs merge with
+  `gh pr merge <n> --merge --match-head-commit <head sha>`, which `.claude/hooks/guard-merge.sh`
+  admits only when every check and every release-gate leg passed for exactly that head.
 - **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy` on your own
   initiative.** The one exception is a specific named operation the maintainer has instructed,
   under a plan they have reviewed.
@@ -27,6 +30,28 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Never generate a migration on a stale branch, or in two worktrees at once.** See §5.
 - **Escape hatches are the maintainer's, not yours**: `--no-verify`,
   `ALETHIA_ALLOW_MAIN_COMMIT`, `ALETHIA_ALLOW_FOREIGN_WT`, `ALETHIA_LOCAL_DEV`.
+
+**Spend and deletion — the two things that stay the maintainer's.** Everything else is delegated.
+*Spend* is metered by `.claude/hooks/guard-spend.sh` against **EUR 30 per rolling 7 days**, shared
+by every instance, in the ledger `~/.alethia/spend-ledger.jsonl` (`pnpm spend:status` prints the
+window). Each priced action (a box bring-up, an e2e dispatch or rerun, a disposable hcloud create)
+is charged before it runs — even if it then never runs — and a ledger that cannot be read or
+written refuses the charge rather than skipping it. One that would cross the budget is refused,
+and production dispatches,
+non-disposable cloud writes, live Stripe and `vercel --prod` are refused at any price. The budget
+is a constant in the hook, so raising it is a reviewed PR. *Deletion* is
+`.claude/hooks/guard-destroy.sh`: what cannot be undone (pushes to or deletes of protected
+branches, repo/release/secret deletion, local tfstate, a non-local database reset, cloud deletes
+outside disposable targets, credential directories) is refused; local git destruction
+(`reset --hard`, `clean`, `checkout`/`restore`, `stash drop`, `worktree remove --force`, an `rm` in
+a work tree) is **snapshotted first, then allowed**, under `refs/safety/<worktree>/<UTC timestamp>`
+— restore steps are in `.claude/skills/dev/SKILL.md`, and a snapshot is restored as files, never
+checked out as a branch. Tracked changes are always captured. Untracked files are captured within a
+5000-file / 50 MB budget shared fairly across directories, and dependency caches never are.
+`.githooks/pre-push` refuses any pushed commit written by the snapshot identity. Neither hook has an escape hatch.
+Both parse gh's global flags before the subcommand, which the prefix `deny` rules in
+`.claude/settings.json` cannot see past. A hook that CRASHES allows (no hook sets `onFailure: "block"`, so a guard bug never bricks
+the shell); every refusal is an explicit exit.
 
 ## 2. One worktree per instance (enforced)
 
@@ -131,15 +156,6 @@ conflict-free dev PR **with no unresolved review threads**, and squash-merges it
 `dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
 it re-queues itself.
 
-**The one exception: a `class:ui` implementation PR opens as a DRAFT and stays one.** The
-maintainer marks it ready after accepting the design decision; you never run `gh pr ready`.
-`.claude/COORDINATION.md` is where that rule and its reason live — this line exists because the
-paragraph above is otherwise unconditional, and draft state is the *entire* mechanism. Mergify
-reads no class label (`.mergify.yml` conditions on `-draft` alone), so a `class:ui` PR opened
-non-draft queues and lands with the design decision still open — with no warning and no red check.
-`pnpm check:docs-contract` cannot catch this: it verifies that referenced paths and scripts exist,
-not that two documents agree.
-
 **An unresolved review finding keeps a PR out of the queue, and RESOLVING IS A SEPARATE STEP FROM
 FIXING.** A review is not a required check, so before #3498 the review and the merge raced by
 construction and the review kept losing — five PRs squash-merged with their findings unaddressed,
@@ -161,8 +177,14 @@ Until the gate has ridden `dev → staging → main` (Mergify reads its config o
 branch), the only thing that actually holds a PR back is opening it as a **draft**.
 
 Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
-yourself is permitted when you have a reason. Merging into `staging`/`main` is not, and neither
-is `--admin`, which bypasses the queue entirely. Never merge a red PR.
+yourself is permitted when you have a reason. **A promotion merge** (`dev → staging`,
+`staging → main`) **goes through `.claude/hooks/guard-merge.sh`**:
+`gh pr merge <n> --merge --match-head-commit <head sha>` (the guard refuses without it and prints the
+exact command), never `--squash`, `--rebase`, `--auto` or `--delete-branch`, one merge per command,
+and only once `gh pr checks <n>` shows nothing failed or pending and every `Release gate (<leg>)`
+named in `.github/workflows/release-gate.yml` passed. Any other
+merge into `staging`/`main` is the maintainer's, and `--admin`, which bypasses the queue entirely,
+is never yours. Never merge a red PR.
 
 **Claiming board work:** don't hand-pick. Read **`.claude/COORDINATION.md`** and run
 `scripts/claim-work.sh --class backend`, then `pnpm wt` the printed slug. Build only within the
@@ -315,21 +337,25 @@ the command or the page, never excused.
 
 ## 7. The harness itself
 
-Eight hooks run around every session (`.claude/settings.json`) — five of them gate a tool call,
-one reports after an edit, and two run at the session boundary:
+Ten hooks run around every session (`.claude/settings.json`) — seven of them gate a tool call,
+one reports after an edit, and two run at the session boundary. The two newest share their
+command-text parser, `.claude/hooks/lib/cmdline.sh`:
 
 | Hook | Event | What it does |
 |---|---|---|
 | `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits **or rebases** in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
-| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base branch: `dev` may merge, `staging`/`main` and `--admin` may not |
+| `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base and head: `dev` may merge; a green `dev → staging` / `staging → main` promotion may merge with `--merge`; anything else into `staging`/`main`, and `--admin`, may not |
 | `.claude/hooks/guard-iac.sh` | PreToolUse · Bash | Refuses `tofu`/`terraform` apply, destroy and `plan -destroy` — including the flag-first forms a permission rule cannot match |
+| `.claude/hooks/guard-spend.sh` | PreToolUse · Bash | Prices each spend action into `~/.alethia/spend-ledger.jsonl` and refuses one that crosses EUR 30 per rolling 7 days; refuses production dispatches and non-disposable cloud writes outright |
+| `.claude/hooks/guard-destroy.sh` | PreToolUse · Bash | Refuses irreversible deletion; snapshots local git destruction to `refs/safety/` first, then allows it |
 | `.claude/hooks/check-migration-chain.sh` | PostToolUse · edits | Reports a forked drizzle snapshot chain at edit time, not at commit time |
 | `.claude/hooks/session-runtime.sh` | SessionStart | Runtime banner, and warns when the harness you are running is stale |
 | `.claude/hooks/session-cleanup.sh` | SessionStart · SessionEnd | Fast-forwards the main checkout, then sweeps landed worktrees and branches |
 
-`session-cleanup.sh` is the hook that *acts* on what `session-runtime.sh` only warns about. It is
+`session-cleanup.sh` is the hook that *acts* on what `session-runtime.sh` only warns about. It also
+prunes `refs/safety/` snapshots older than 30 days. It is
 **async on both events** — the worktree sweep is ~65s and the branch sweep runs into minutes, and a
 session that will not start because a prune is walking 200 branches is worse than a tree swept one
 session later. It adds no opinion about what is safe to delete: `worktree.sh --prune` and

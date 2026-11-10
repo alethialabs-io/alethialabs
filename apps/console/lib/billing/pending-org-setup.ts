@@ -29,6 +29,7 @@ import { type FirstPayment, readFirstPayment } from "@/lib/billing/first-payment
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	NEW_ORG_CREATED_BY_KEY,
@@ -1028,7 +1029,9 @@ export type SetupCloserVerdict = "closed" | "linked" | "open";
  *     (the same idempotent call the webhook makes); a row that then names ANOTHER live plan is the S1
  *     refusal (closed with `org_has_plan`, alerted) — except when `linkRefuses` is set: the caller is
  *     the link, which refuses that X itself under a `needs_operator` hold (ADR 0002 §5.6), so the
- *     closer writes nothing and answers `open`. Metadata naming a different org or user is never
+ *     closer writes nothing and answers `open`. The refusal applies only while X reads LIVE: an
+ *     `incomplete` X beside the live plan writes nothing and answers `open`, and the setup waits for X
+ *     to end or be paid (amendment 2026-11-04, C120). Metadata naming a different org or user is never
  *     adopted.
  *
  * Everything else stays open. A subscription Stripe cannot find (`resource_missing`) is NEVER closed
@@ -1108,6 +1111,11 @@ export async function settleOpenSetup(
 	}
 	if (billing?.stripeSubscriptionId && LIVE_BILLING_STATUSES.has(billing.status)) {
 		if (opts.linkRefuses) return "open";
+		// ADR 0002 §5.7 "Adopt", amendment 2026-11-04 (S12, C120): the S1 refusal applies only to a LIVE X.
+		// An `incomplete` X can still be paid, so closing now would leave a paid X live and unlinked. The
+		// setup stays open, with nothing written, until X ends (the close branch above) or is paid (then
+		// it is an ordinary live X, and the next reader applies this refusal or the link's §5.6 rows).
+		if (!isLiveSubscriptionStatus(sub.status)) return "open";
 		const closed = await closePendingOrgSetup({
 			subscriptionId: row.subscription_id,
 			reason: "org_has_plan",

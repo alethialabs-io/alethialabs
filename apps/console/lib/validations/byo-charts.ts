@@ -13,6 +13,8 @@
 // mid-flow never validates the branch that is no longer on screen.
 
 import { z } from "zod";
+import { byoReservedNamespaceMessage } from "@/lib/validations/byo-reserved-namespaces";
+import { chartSlug } from "@/lib/validations/names";
 
 /** A git remote — an https:// or git@ address. */
 export function isPlausibleGitRepoUrl(url: string): boolean {
@@ -37,6 +39,84 @@ export function isPlausibleChartRepoUrl(url: string): boolean {
 	return isPlausibleGitRepoUrl(url) || isPlausibleOciChartUrl(url);
 }
 
+/**
+ * Adds a `namespace` issue when the chart targets a namespace reserved for the platform (#6439).
+ * Shared by the form and the attach action so the two refuse exactly the same names; the runner
+ * refuses them again at deploy time from the same list.
+ */
+function refuseReservedNamespace(namespace: string | undefined, ctx: z.RefinementCtx): void {
+	const message = namespace ? byoReservedNamespaceMessage(namespace) : null;
+	if (message) {
+		ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["namespace"], message });
+	}
+}
+
+/** Adds a `namespace` issue for a newly chosen `byo-` name (see {@link byoNamespacePrefixMessage}). */
+function refuseByoPrefix(
+	namespace: string | undefined,
+	ctx: z.RefinementCtx,
+	chartId?: string,
+	storedNamespace?: string | null,
+): void {
+	const message = namespace ? byoNamespacePrefixMessage(namespace, chartId, storedNamespace) : null;
+	if (message) {
+		ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["namespace"], message });
+	}
+}
+
+/** The prefix of a BYO chart's own namespace. Mirrors the Go `byoProjectPrefix`. */
+const BYO_CHART_NAMESPACE_PREFIX = "byo-";
+
+/** Kubernetes' cap on a namespace name. */
+const NAMESPACE_MAX_LENGTH = 63;
+
+/** FNV-1a 32 of `s`'s UTF-8 bytes, as 8 hex digits. Mirrors Go's `hash/fnv` New32a. */
+function fnv1a32Hex(s: string): string {
+	let h = 0x811c9dc5;
+	for (const byte of new TextEncoder().encode(s)) {
+		h ^= byte;
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * The namespace a BYO chart deploys into when none of its own is chosen: `byo-<chart id>` (#6446).
+ * Past 63 characters it is cut further and ends in `-` + an 8-hex hash of the WHOLE id, so two long
+ * ids that share a prefix still get two namespaces. The Go `argocd.ByoChartNamespace` derives the same
+ * name; the two are held together by the same table of literal cases on each side (tests/lib/validations/byo-charts-namespace.test.ts and
+ * packages/core/argocd/byo_oci_test.go). `chartId` is the add-on id — `chartSlug` of the name.
+ */
+export function byoChartNamespace(chartId: string): string {
+	const full = `${BYO_CHART_NAMESPACE_PREFIX}${chartId}`;
+	if (full.length <= NAMESPACE_MAX_LENGTH) return full;
+	const suffix = fnv1a32Hex(chartId);
+	const head = full.slice(0, NAMESPACE_MAX_LENGTH - suffix.length - 1).replace(/-+$/, "");
+	return `${head}-${suffix}`;
+}
+
+/**
+ * Why `namespace` may not be chosen for the chart `chartId` because of its `byo-` prefix, or `null`.
+ * `storedNamespace` is the chart's CURRENT namespace when it is being re-attached: keeping it
+ * unchanged is never refused, even a `byo-` name that is not the chart's own, so a chart attached
+ * before this rule can be re-attached as it is. Only a newly chosen `byo-` name is refused.
+ * The prefix is reserved for each chart's own derived namespace, so a chart cannot take another's;
+ * its own is accepted. An ATTACH-time rule only: the runner accepts a "byo-" namespace a chart stored before it, and refuses
+ * one side only of a real collision with another chart's derived name. With no
+ * `chartId` (the form, before the id is derived), any `byo-` name is refused: leaving the field
+ * blank is how a chart gets its own.
+ */
+export function byoNamespacePrefixMessage(
+	namespace: string,
+	chartId?: string,
+	storedNamespace?: string | null,
+): string | null {
+	if (!namespace.startsWith(BYO_CHART_NAMESPACE_PREFIX)) return null;
+	if (storedNamespace && namespace === storedNamespace) return null;
+	if (chartId !== undefined && namespace === byoChartNamespace(chartId)) return null;
+	return `Namespaces starting with “${BYO_CHART_NAMESPACE_PREFIX}” are reserved for the namespace each chart gets by default. Leave it blank to use this chart's, or choose one of your own.`;
+}
+
 export const CHART_SOURCES = ["git", "oci"] as const;
 export type ChartSource = (typeof CHART_SOURCES)[number];
 
@@ -46,8 +126,8 @@ export type ChartSource = (typeof CHART_SOURCES)[number];
 
 /**
  * The attach form. Optional fields carry their defaults at the EDGE (`ref` → `HEAD`/`*`,
- * `namespace` → `default`) rather than in the action, so what the review step shows is what gets
- * persisted.
+ * `namespace` → `byo-<chart id>`) rather than in the action, so what the review step shows is what
+ * gets persisted.
  */
 export const byoChartFormSchema = z
 	.object({
@@ -64,6 +144,10 @@ export const byoChartFormSchema = z
 		valuesYaml: z.string().optional(),
 	})
 	.superRefine((value, ctx) => {
+		refuseReservedNamespace(value.namespace, ctx);
+		// The form attaches a NEW chart, so any typed `byo-` name is refused: blank gives the chart
+		// its own.
+		refuseByoPrefix(value.namespace, ctx);
 		if (value.source === "oci") {
 			if (!isPlausibleOciChartUrl(value.repoUrl)) {
 				ctx.addIssue({
@@ -118,6 +202,10 @@ export const byoChartAttachSchema = z
 		values: z.record(z.string(), z.unknown()).optional(),
 	})
 	.superRefine((value, ctx) => {
+		// The action is a public entry point (the CLI route calls it too), so the form's refusal is
+		// not enough on its own. The `byo-` prefix rule needs the chart's STORED namespace, which only
+		// the action can read: see byoChartAttachSchemaFor.
+		refuseReservedNamespace(value.namespace, ctx);
 		// Re-checked server-side rather than trusted from the form: the action is a public entry
 		// point, and a git chart with no path silently renders an empty Application.
 		if (!value.repoUrl.startsWith("oci://") && !value.chartPath?.replace(/^\/+/, "")) {
@@ -130,3 +218,16 @@ export const byoChartAttachSchema = z
 	});
 
 export type ByoChartAttachInput = z.infer<typeof byoChartAttachSchema>;
+
+/**
+ * The attach input as the action checks it once it has read the chart's stored row:
+ * {@link byoChartAttachSchema} plus the `byo-` prefix rule. `storedNamespace` is the namespace the
+ * chart is stored with now (`null` for a new chart); keeping it unchanged is allowed. The id is the
+ * one the action stores (`chartSlug`), so a chart's own derived namespace — what the form sends for a
+ * blank field — is accepted too. It must come from the database, never from the request.
+ */
+export function byoChartAttachSchemaFor(storedNamespace: string | null) {
+	return byoChartAttachSchema.superRefine((value, ctx) => {
+		refuseByoPrefix(value.namespace, ctx, chartSlug(value.id), storedNamespace);
+	});
+}

@@ -37,7 +37,7 @@ import {
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { connectRoute } from "@/lib/connectors/helpers";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useHydrated } from "@/hooks/use-hydrated";
+import { useHydrated } from "@repo/ui/use-hydrated";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import {
@@ -214,9 +214,18 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	const bySlug = (slug: string | null | undefined) =>
 		slug ? integrations.find((i) => i.slug === slug) : undefined;
 
-	/** Initiates the connect flow (or adds another cloud account). */
-	const handleConnect = async (integration: ConnectorWithConnection) => {
-		setDetailOpen(false);
+	/**
+	 * The connect flow's own UI state: a git connector's row spins, an api-key connector's sheet
+	 * opens. Split from `runConnect` so the `?connect=` deep link can set it while rendering.
+	 */
+	const markConnecting = (integration: ConnectorWithConnection) => {
+		const route = connectRoute(integration);
+		if (route === "git") setConnectingSlug(integration.slug);
+		else if (route === "api_key") setApiKeySlug(integration.slug);
+	};
+
+	/** The connect flow's side effects, for a connector `markConnecting` has already marked. */
+	const runConnect = async (integration: ConnectorWithConnection) => {
 		const slug = integration.slug;
 		track("connector_connect_started", { provider: slug, category: integration.category });
 
@@ -224,7 +233,6 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 		// (category `cloud`, auth_method `api_key`) fall into the api_key branch and open a blank sheet.
 		switch (connectRoute(integration)) {
 			case "git": {
-				setConnectingSlug(slug);
 				try {
 					const provider = asGitProvider(slug);
 					// ABSOLUTE, not relative. Better Auth validates a callbackURL against trustedOrigins:
@@ -262,30 +270,44 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 				await cloudConnect.openConnect(integration);
 				return;
 			case "api_key":
-				setApiKeySlug(slug);
+				// Its sheet is the whole flow, and `markConnecting` opened it.
 				return;
 		}
+	};
+
+	/** Initiates the connect flow (or adds another cloud account). */
+	const handleConnect = async (integration: ConnectorWithConnection) => {
+		setDetailOpen(false);
+		markConnecting(integration);
+		await runConnect(integration);
 	};
 
 	// Deep-link: `?connect=<slug>` (e.g. from elench's connect action) auto-opens the connect sheet
 	// once, then clears the param so a refresh doesn't reopen it. Waits for the board, which says
 	// whether the viewer may connect and what the connector is.
-	const connectHandledRef = useRef(false);
-	useEffect(() => {
-		if (connectHandledRef.current || !board.data || !canManage) return;
-		const slug = searchParams.get("connect");
-		if (!slug) return;
-		connectHandledRef.current = true;
-		const integration = integrations.find((i) => i.slug === slug);
-		router.replace(`/${orgSlug}/~/connectors`, { scroll: false });
+	//
+	// The link is resolved WHILE RENDERING, once (React's "adjust state while rendering" form:
+	// `deepLink` leaves `undefined` the first time it is set), and its UI state is marked there; the
+	// effect then clears the param and runs the flow's side effects.
+	const connectParam = searchParams.get("connect");
+	const [deepLink, setDeepLink] = useState<ConnectorWithConnection | null | undefined>(undefined);
+	if (deepLink === undefined && board.data && canManage && connectParam) {
+		const integration = integrations.find((i) => i.slug === connectParam);
 		// Don't auto-open a connect sheet for a connector that can't be connected yet — a `coming_soon`
 		// cloud (DO/Civo) has no provisioning templates, so connecting it would be a dead end.
-		if (integration && integration.status !== "coming_soon") {
-			void handleConnect(integration);
-		}
-		// handleConnect is intentionally excluded — the ref makes this run once.
+		const target = integration && integration.status !== "coming_soon" ? integration : null;
+		setDeepLink(target);
+		if (target) markConnecting(target);
+	}
+	const connectHandledRef = useRef(false);
+	useEffect(() => {
+		if (connectHandledRef.current || deepLink === undefined) return;
+		connectHandledRef.current = true;
+		router.replace(`/${orgSlug}/~/connectors`, { scroll: false });
+		if (deepLink) void runConnect(deepLink);
+		// runConnect is intentionally excluded — the ref makes this run once.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [searchParams, integrations, board.data, canManage, orgSlug, router]);
+	}, [deepLink, orgSlug, router]);
 
 	const openManage = (integration: ConnectorWithConnection) => {
 		setSelectedSlug(integration.slug);

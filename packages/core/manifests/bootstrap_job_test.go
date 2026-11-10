@@ -60,7 +60,7 @@ func TestBootstrapJob_AWS(t *testing.T) {
 		t.Errorf("kind = %v, want Job", job["kind"])
 	}
 	ann := job["metadata"].(map[string]any)["annotations"].(map[string]any)
-	if ann["argocd.argoproj.io/hook"] != "PreSync" || ann["argocd.argoproj.io/hook-delete-policy"] != "HookSucceeded" {
+	if ann["argocd.argoproj.io/hook"] != "PreSync" || ann["argocd.argoproj.io/hook-delete-policy"] != "BeforeHookCreation,HookSucceeded" {
 		t.Errorf("missing ArgoCD PreSync hook annotations: %v", ann)
 	}
 	// db-bootstrap init container writes to the shared volume; psql reads PG creds from the admin ES.
@@ -398,5 +398,295 @@ func TestBootstrapJob_Postgres_RendersUnchanged_OnAWSAndGCP(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hookDeletePolicies returns the set of ArgoCD hook-delete-policy values on a parsed object, failing
+// the test when the object is not a PreSync hook or carries no policy at all.
+func hookDeletePolicies(t *testing.T, doc map[string]any) map[string]bool {
+	t.Helper()
+	meta, _ := doc["metadata"].(map[string]any)
+	ann, _ := meta["annotations"].(map[string]any)
+	if ann["argocd.argoproj.io/hook"] != "PreSync" {
+		t.Fatalf("%v %v is not a PreSync hook: %v", doc["kind"], meta["name"], ann)
+	}
+	raw, _ := ann["argocd.argoproj.io/hook-delete-policy"].(string)
+	if raw == "" {
+		t.Fatalf("%v %v carries no hook-delete-policy", doc["kind"], meta["name"])
+	}
+	set := map[string]bool{}
+	for _, p := range strings.Split(raw, ",") {
+		set[strings.TrimSpace(p)] = true
+	}
+	return set
+}
+
+// assertPolicyExactly fails unless the object's delete policy is exactly want — no member missing,
+// none extra.
+func assertPolicyExactly(t *testing.T, doc map[string]any, want ...string) {
+	t.Helper()
+	got := hookDeletePolicies(t, doc)
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("%v hook-delete-policy %v is missing %s", doc["kind"], got, w)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%v hook-delete-policy = %v, want exactly %v", doc["kind"], got, want)
+	}
+}
+
+// TestBootstrapJob_HookDeletePolicies pins the delete policy on every bootstrap hook. An object that
+// is or confers an admin credential (the AWS/GCP admin ExternalSecret, the Azure admin-federated
+// ServiceAccount) must be removed whatever the Job's outcome, and recreated fresh on a retry; the Job
+// itself keeps a failed run for its logs but must be replaced on the next sync.
+func TestBootstrapJob_HookDeletePolicies(t *testing.T) {
+	adminPolicy := []string{"BeforeHookCreation", "HookSucceeded", "HookFailed"}
+	jobPolicy := []string{"BeforeHookCreation", "HookSucceeded"}
+	for _, tc := range []struct {
+		provider string
+		outputs  map[string]string
+	}{
+		{"aws", map[string]string{
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		}},
+		{"gcp", map[string]string{
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		}},
+		{"azure", map[string]string{
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		}},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    tc.provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+				Outputs:     tc.outputs,
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			credentialHooks := 0
+			for _, doc := range parseYAMLDocs(t, res.JobYAML) {
+				switch doc["kind"] {
+				case "Job":
+					assertPolicyExactly(t, doc, jobPolicy...)
+				case "ServiceAccount":
+					credentialHooks++
+					assertPolicyExactly(t, doc, adminPolicy...)
+				default:
+					t.Errorf("unexpected object %v in the bootstrap Job YAML", doc["kind"])
+				}
+			}
+			if res.AdminSecretYAML != "" {
+				for _, doc := range parseYAMLDocs(t, res.AdminSecretYAML) {
+					credentialHooks++
+					assertPolicyExactly(t, doc, adminPolicy...)
+					// The materialized Secret is owned by the ExternalSecret, so it is
+					// garbage-collected when the hook is deleted.
+					spec, _ := doc["spec"].(map[string]any)
+					target, _ := spec["target"].(map[string]any)
+					if target["creationPolicy"] != "Owner" {
+						t.Errorf("admin ExternalSecret target.creationPolicy = %v, want Owner", target["creationPolicy"])
+					}
+				}
+			}
+			// Every provider has exactly one credential-bearing hook; zero means the loop above
+			// asserted nothing about it.
+			if credentialHooks != 1 {
+				t.Errorf("%s: %d credential-bearing hooks checked, want 1", tc.provider, credentialHooks)
+			}
+		})
+	}
+}
+
+// renderBootstrapJobDoc renders the bootstrap for a provider with the fixture outputs used above and
+// returns the parsed Job document.
+func renderBootstrapJobDoc(t *testing.T, provider string, outputs map[string]string) map[string]any {
+	t.Helper()
+	res, err := RenderBootstrapJob(Options{
+		Provider:    provider,
+		RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+		Outputs:     outputs,
+	}, dbTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range parseYAMLDocs(t, res.JobYAML) {
+		if doc["kind"] == "Job" {
+			return doc
+		}
+	}
+	t.Fatalf("no Job rendered for %s:\n%s", provider, res.JobYAML)
+	return nil
+}
+
+// TestBootstrapJob_TimeBounds pins the Job's activeDeadlineSeconds (bounding the PreSync phase, so the
+// hook delete policies always get to run) and ttlSecondsAfterFinished (bounding a kept failed Job's
+// lifetime) on every provider.
+func TestBootstrapJob_TimeBounds(t *testing.T) {
+	for provider, outputs := range map[string]map[string]string{
+		"aws": {
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		},
+		"gcp": {
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		},
+		"azure": {
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		},
+	} {
+		t.Run(provider, func(t *testing.T) {
+			spec, _ := renderBootstrapJobDoc(t, provider, outputs)["spec"].(map[string]any)
+			if got := spec["activeDeadlineSeconds"]; got != 900 {
+				t.Errorf("activeDeadlineSeconds = %v, want 900", got)
+			}
+			if got := spec["ttlSecondsAfterFinished"]; got != 3600 {
+				t.Errorf("ttlSecondsAfterFinished = %v, want 3600", got)
+			}
+		})
+	}
+}
+
+// TestBootstrapJob_Azure_TokenScratchIsMemoryBacked pins the Azure admin-token scratch volume to a
+// memory-backed emptyDir (scratch data stays off the node's disk), and the SQL scratch volume to a
+// plain one.
+func TestBootstrapJob_Azure_TokenScratchIsMemoryBacked(t *testing.T) {
+	job := renderBootstrapJobDoc(t, "azure", map[string]string{
+		"azure_db_fqdn":            "orders.postgres.database.azure.com",
+		"azure_db_name":            "orders_prod",
+		"azure_db_admin_user":      "aks-orders-dbadmin",
+		"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+		"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+	})
+	podSpec := job["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	vols, _ := podSpec["volumes"].([]any)
+	seen := map[string]bool{}
+	for _, v := range vols {
+		vol, _ := v.(map[string]any)
+		name, _ := vol["name"].(string)
+		seen[name] = true
+		ed, ok := vol["emptyDir"].(map[string]any)
+		if !ok {
+			t.Errorf("volume %s is not an emptyDir: %v", name, vol)
+			continue
+		}
+		switch name {
+		case "admin-token":
+			if ed["medium"] != "Memory" {
+				t.Errorf("admin-token emptyDir medium = %v, want Memory", ed["medium"])
+			}
+		case "sql":
+			if _, has := ed["medium"]; has {
+				t.Errorf("sql emptyDir should be a plain emptyDir, got %v", ed)
+			}
+		}
+	}
+	if !seen["admin-token"] || !seen["sql"] {
+		t.Errorf("Azure Job volumes = %v, want both admin-token and sql", vols)
+	}
+}
+
+// TestBootstrapJob_BootstrapOnlyLabel pins the label the runner's stranded-hook reconcile selects on:
+// it is on every credential-bearing hook (the admin ExternalSecret on AWS/GCP, the admin-federated
+// ServiceAccount on Azure) as the STRING "true", and NOT on the Job, which holds no credential and has
+// its own time bounds. The key and value are written out literally so a change to the constants fails
+// here as well as in the provisioner's selector test.
+func TestBootstrapJob_BootstrapOnlyLabel(t *testing.T) {
+	const key, value = "alethia.io/bootstrap-only", "true"
+	for provider, outputs := range map[string]map[string]string{
+		"aws": {
+			"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+			"rds_database_name":                  "ordersdb",
+			"rds_master_credentials_secret_name": "alethia/rds/orders",
+		},
+		"gcp": {
+			"cloud_sql_ip":                 "10.0.0.5",
+			"cloud_sql_database":           "orders-prod",
+			"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+			"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+		},
+		"azure": {
+			"azure_db_fqdn":            "orders.postgres.database.azure.com",
+			"azure_db_name":            "orders_prod",
+			"azure_db_admin_user":      "aks-orders-dbadmin",
+			"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+			"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+		},
+	} {
+		t.Run(provider, func(t *testing.T) {
+			res, err := RenderBootstrapJob(Options{
+				Provider:    provider,
+				RunnerImage: "ghcr.io/alethialabs-io/runner:1.2.3",
+				Outputs:     outputs,
+			}, dbTarget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			labelled := 0
+			for _, doc := range append(parseYAMLDocs(t, res.JobYAML), parseYAMLDocs(t, res.AdminSecretYAML)...) {
+				meta, _ := doc["metadata"].(map[string]any)
+				labels, _ := meta["labels"].(map[string]any)
+				got, present := labels[key]
+				switch doc["kind"] {
+				case "Job":
+					if present {
+						t.Errorf("the Job carries %s=%v; it holds no credential and must not be reaped", key, got)
+					}
+				case "ExternalSecret", "ServiceAccount":
+					if s, ok := got.(string); !ok || s != value {
+						t.Errorf("%v label %s = %#v, want the string %q", doc["kind"], key, got, value)
+					}
+					labelled++
+				default:
+					t.Errorf("unexpected object %v", doc["kind"])
+				}
+			}
+			if labelled != 1 {
+				t.Errorf("%s: %d credential-bearing hooks checked, want 1", provider, labelled)
+			}
+		})
+	}
+}
+
+// TestBootstrapLabelQuoting_BindingExternalSecretRendersItsLabelAsAString pins the BYO-chart binding
+// ExternalSecret byte for byte. Its marker label value is the double-quoted string "true": the shared
+// template quotes every caller-supplied label value, so the bootstrap-only label (which passes its
+// rows pre-quoted) and the binding lane's marker both reach the API server as strings. An unquoted
+// `true` is a YAML boolean, and an object carrying one as a label value is rejected at apply.
+func TestBootstrapLabelQuoting_BindingExternalSecretRendersItsLabelAsAString(t *testing.T) {
+	got, skipped, err := RenderExternalSecret(ExternalSecretParams{
+		ServiceName: "web",
+		Namespace:   "ns",
+		Target:      types.ServiceBindingTarget{Kind: "database", Name: "orders"},
+		Provider:    "aws",
+		RemoteKey:   "arn:secret",
+		Facets:      []string{"username", "password"},
+		Labels:      map[string]string{"alethia.io/byo-binding": "true"},
+	})
+	if err != nil || len(skipped) != 0 {
+		t.Fatalf("render err=%v skipped=%v", err, skipped)
+	}
+	const want = "apiVersion: external-secrets.io/v1beta1\nkind: ExternalSecret\nmetadata:\n  name: web-database-orders\n  namespace: ns\n  labels:\n    app.kubernetes.io/name: web-database-orders\n    app.kubernetes.io/managed-by: alethia\n    alethia.io/byo-binding: \"true\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    name: secretstore-aws\n    kind: ClusterSecretStore\n  target:\n    name: web-database-orders\n    creationPolicy: Owner\n  data:\n    - secretKey: username\n      remoteRef:\n        key: arn:secret\n        property: username\n    - secretKey: password\n      remoteRef:\n        key: arn:secret\n        property: password\n"
+	if got != want {
+		t.Errorf("BYO-chart binding ExternalSecret rendering changed:\n got %q\nwant %q", got, want)
 	}
 }

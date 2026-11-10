@@ -36,9 +36,10 @@ import { useAiTier } from "./use-ai-tier";
  *
  * NOT `role="menuitemradio"` + `aria-checked`, which #4618 prescribes. That role's required
  * context is a `menu` (or a `group` owned by one), and this popover cannot provide it: it is
- * base-ui's, whose `PopoverRoot` calls floating-ui's `useRole(floatingRootContext)` with no
- * options, and that hook defaults to `role = 'dialog'` — verified in
- * `@base-ui-components/react@1.0.0-rc.0` and `@floating-ui/react@0.27.20`. A `menuitemradio`
+ * base-ui's, whose popup is a `dialog`: on `@base-ui-components/react@1.0.0-rc.0` through
+ * `PopoverRoot` calling floating-ui's `useRole(floatingRootContext)` with no options (that hook
+ * defaults to `role = 'dialog'`, `@floating-ui/react@0.27.20`), and on `@base-ui/react@1.9.0`
+ * because `PopoverPopup` sets `role: 'dialog'` itself (`popover/popup/PopoverPopup.js`). A `menuitemradio`
  * inside a dialog is in an invalid context, where assistive tech forms no radio set and the
  * `aria-checked` the issue asks for may not be exposed at all — a fix that tests green and
  * announces nothing. Overriding the popup to `role="menu"` instead would trade this defect for

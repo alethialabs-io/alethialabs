@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// GUARD (#5824): every cmdk root in `packages/ui/src` and `apps/console` names its search.
+// GUARD (#5824): every command-list root in `packages/ui/src` and `apps/console` names its search.
 //
-// cmdk names its search input through `aria-labelledby` → its own hidden `<label cmdk-label>`, whose
-// text is the root's `label` prop. A root without one renders an input whose name computes to "" —
-// and an empty `aria-labelledby` target still beats the placeholder, so the search is an unnamed
-// combobox with its placeholder visible inside it. Every root in the repo shipped that way until
-// #5803 and #5824.
+// It was written against cmdk, which named its search input through `aria-labelledby` → its own
+// hidden `<label cmdk-label>`, whose text was the root's `label` prop. A root without one rendered an
+// input whose name computed to "" — and an empty `aria-labelledby` target still beats the
+// placeholder, so the search was an unnamed combobox with its placeholder visible inside it. Every
+// root in the repo shipped that way until #5803 and #5824. Since #6145 the root is Base UI's
+// Autocomplete, which `@repo/ui/command` wraps and whose input it names with the root's `label` (as
+// `aria-label`). An unnamed Base UI input falls back to its placeholder rather than to "", so the
+// original defect cannot recur in that form; the rule stays as "every search has an explicit name".
 //
 // WHAT THIS READS: every `.ts` / `.tsx` file under `packages/ui/src` and `apps/console`, except
 // `node_modules`, `.next` and `coverage` (build output), the `tests`, `e2e` and `__tests__` trees,
@@ -15,9 +18,9 @@
 //
 // WHAT A ROOT IS: derived from each file's IMPORTS, not from a tag name. A local binding imported
 // from `@repo/ui/command` (or `./command` inside packages/ui) as `Command` or `CommandDialog`, or
-// from `cmdk` as `Command`, `CommandRoot` or `CommandDialog` — under any alias, and through a
-// namespace import (`<ui.Command>`) — plus cmdk's `<X.Dialog>` member. So `import { Command as Cmd }`
-// followed by an unnamed `<Cmd>` is caught.
+// Base UI's `Autocomplete` imported from `@base-ui/react/autocomplete` or `@base-ui/react`, whose
+// `<X.Root>` is the root — under any alias, and through a namespace import (`<ui.Command>`,
+// `<X.Autocomplete.Root>`). So `import { Command as Cmd }` followed by an unnamed `<Cmd>` is caught.
 //
 // WHAT NAMED MEANS:
 //  - A `Command` root needs `label=` with a value that is not blank: absent, `""`, `{""}`, `{null}`
@@ -27,13 +30,15 @@
 //    and packages/ui/tests/command.test.tsx.
 //  - `@repo/ui`'s `CommandDialog` forwards its `title` (default "Command Palette") as the label, so
 //    it fails only on a blank `title`.
-//  - `cmdk` may be imported only by `packages/ui/src/command.tsx`; anything else bypasses the wrapper.
+//  - Base UI's `Autocomplete.Root` takes no `label` at all, so every one of them is a finding: it may
+//    be rendered only by `packages/ui/src/command.tsx`, which names the input from its caller's
+//    `label`, and is imported only there; anything else bypasses the wrapper. `cmdk` is gone and may
+//    not come back.
 //
 // WHERE IT STOPS: it does not follow a component that re-wraps a root under a NEW component and is
-// then used without a label. `PromptInputCommand` is such a wrapper and makes `label` a required
-// prop for that reason. The one exempt site is the `Command` wrapper itself in
-// `packages/ui/src/command.tsx`, which forwards `label` from its callers through `{...props}`; the
-// exemption is checked in both directions below.
+// then used without a label. The one exempt site is the `Autocomplete.Root` inside the `Command`
+// wrapper in `packages/ui/src/command.tsx`, which names the input through `CommandInput` instead;
+// the exemption is checked in both directions below.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -96,9 +101,12 @@ function isUiCommandModule(spec: string): boolean {
 	);
 }
 
+/** The Base UI modules `Autocomplete` can be imported from. */
+const BASE_UI_AUTOCOMPLETE = new Set(["@base-ui/react/autocomplete", "@base-ui/react"]);
+
 /**
- * The JSX tag names in `source` that render a cmdk root, mapped to the prop that names it. Derived
- * from the file's import declarations, so an alias or a namespace import is followed.
+ * The JSX tag names in `source` that render a command-list root, mapped to the prop that names it.
+ * Derived from the file's import declarations, so an alias or a namespace import is followed.
  */
 function rootTags(source: string): Map<string, NameProp> {
 	const tags = new Map<string, NameProp>();
@@ -109,17 +117,18 @@ function rootTags(source: string): Map<string, NameProp> {
 		const clause = m[2];
 		const spec = m[3];
 		const fromUi = isUiCommandModule(spec);
-		const fromCmdk = spec === "cmdk";
-		if (!fromUi && !fromCmdk) continue;
-		/** Exported name → the prop that names it, for this module. */
-		const roots: Record<string, NameProp> = fromUi
-			? { Command: "label", CommandDialog: "title" }
-			: { Command: "label", CommandRoot: "label", CommandDialog: "label" };
+		const fromBaseUi = BASE_UI_AUTOCOMPLETE.has(spec);
+		if (!fromUi && !fromBaseUi) continue;
+		/** Exported name → the tag suffix that is the root, and the prop that names it. */
+		const roots: Record<string, [string, NameProp]> = fromUi
+			? { Command: ["", "label"], CommandDialog: ["", "title"] }
+			: { Autocomplete: [".Root", "label"] };
 		const ns = /\*\s+as\s+([\w$]+)/u.exec(clause);
 		if (ns) {
-			for (const [name, prop] of Object.entries(roots))
-				tags.set(`${ns[1]}.${name}`, prop);
-			if (fromCmdk) tags.set(`${ns[1]}.Command.Dialog`, "label");
+			if (spec === "@base-ui/react/autocomplete") tags.set(`${ns[1]}.Root`, "label");
+			else
+				for (const [name, [suffix, prop]] of Object.entries(roots))
+					tags.set(`${ns[1]}.${name}${suffix}`, prop);
 		}
 		const named = /\{([^}]*)\}/u.exec(clause);
 		for (const part of named ? named[1].split(",") : []) {
@@ -128,12 +137,9 @@ function rootTags(source: string): Map<string, NameProp> {
 				.replace(/^type\s+/u, "")
 				.split(/\s+as\s+/u);
 			if (!imported || part.trim().startsWith("type ")) continue;
-			const prop = roots[imported];
-			if (!prop) continue;
-			const binding = local ?? imported;
-			tags.set(binding, prop);
-			if (fromCmdk && imported === "Command")
-				tags.set(`${binding}.Dialog`, "label");
+			const root = roots[imported];
+			if (!root) continue;
+			tags.set(`${local ?? imported}${root[0]}`, root[1]);
 		}
 	}
 	return tags;
@@ -141,25 +147,46 @@ function rootTags(source: string): Map<string, NameProp> {
 
 /**
  * The attribute text of the JSX opening tag that starts at `start` (just past the tag name), up to
- * the `>` that closes it. Braces are depth-counted and string literals skipped, so an arrow
- * function or a `>` inside an attribute expression does not end the tag early.
+ * the `>` that closes it, with comments blanked out. Braces are depth-counted; string literals are
+ * skipped; `//` line comments and slash-star block comments are skipped too, so neither a `>` nor an
+ * apostrophe inside a comment ("Base UI's own filtering…") can end the tag early or open a string
+ * that runs on to a later tag's `label=`. A quote opens a string only where one can start: inside
+ * `{…}` (a JS string or template), or straight after `=` (a JSX attribute string).
  */
 function openingTagAttributes(source: string, start: number): string {
 	let depth = 0;
-	let quote: string | null = null;
-	for (let i = start; i < source.length; i += 1) {
+	let out = "";
+	let i = start;
+	while (i < source.length) {
 		const ch = source[i];
-		if (quote) {
-			if (ch === "\\") i += 1;
-			else if (ch === quote) quote = null;
+		const next = source[i + 1];
+		if (ch === "/" && next === "/") {
+			const end = source.indexOf("\n", i);
+			i = end === -1 ? source.length : end;
 			continue;
 		}
-		if (ch === '"' || ch === "'" || ch === "`") quote = ch;
-		else if (ch === "{") depth += 1;
+		if (ch === "/" && next === "*") {
+			const end = source.indexOf("*/", i + 2);
+			i = end === -1 ? source.length : end + 2;
+			continue;
+		}
+		const opensString =
+			(ch === '"' || ch === "'" || ch === "`") &&
+			(depth > 0 || /=\s*$/u.test(out));
+		if (opensString) {
+			let j = i + 1;
+			while (j < source.length && source[j] !== ch) j += source[j] === "\\" ? 2 : 1;
+			out += source.slice(i, j + 1);
+			i = j + 1;
+			continue;
+		}
+		if (ch === "{") depth += 1;
 		else if (ch === "}") depth -= 1;
-		else if (ch === ">" && depth === 0) return source.slice(start, i);
+		else if (ch === ">" && depth === 0) return out;
+		out += ch;
+		i += 1;
 	}
-	return source.slice(start);
+	return out;
 }
 
 /**
@@ -180,7 +207,7 @@ function isSet(attributes: string, name: string): boolean {
 /** Escapes a tag name (which may contain `.`) for use in a RegExp. */
 const escapeTag = (tag: string) => tag.replace(/[.$]/gu, "\\$&");
 
-/** `file:line <Tag` for every cmdk root in `source` that does not name its search. */
+/** `file:line <Tag` for every command-list root in `source` that does not name its search. */
 function unnamedRoots(source: string, file: string): string[] {
 	const found: string[] = [];
 	for (const [tag, prop] of rootTags(source)) {
@@ -201,8 +228,11 @@ function unnamedRoots(source: string, file: string): string[] {
 	return found.sort();
 }
 
-/** The one site allowed to render an unnamed root: the wrapper that forwards `label` from callers. */
-const EXEMPT = ["packages/ui/src/command.tsx:25 <CommandPrimitive"];
+/**
+ * The one site allowed to render an unnamed root: the wrapper's own `Autocomplete.Root`, whose input
+ * `CommandInput` names from the `label` its callers pass to `Command`.
+ */
+const EXEMPT = ["packages/ui/src/command.tsx:80 <Autocomplete.Root"];
 
 const FILES = [...sourceFiles(UI_SRC), ...sourceFiles(CONSOLE_ROOT)];
 
@@ -213,7 +243,7 @@ const FINDINGS = FILES.flatMap((f) =>
 	unnamedRoots(readFileSync(f, "utf8"), rel(f)),
 );
 
-describe("cmdk root labels (#5824)", () => {
+describe("command-list root labels (#5824)", () => {
 	it("reads all of apps/console and packages/ui/src, .ts and .tsx", () => {
 		const read = FILES.map(rel);
 		expect(read.length).toBeGreaterThan(1000);
@@ -224,7 +254,7 @@ describe("cmdk root labels (#5824)", () => {
 		expect(read.some((f) => f.endsWith(".ts"))).toBe(true);
 	});
 
-	it("finds cmdk roots to check (a scan that matches nothing proves nothing)", () => {
+	it("finds command-list roots to check (a scan that matches nothing proves nothing)", () => {
 		const roots = FILES.flatMap((f) => {
 			const source = readFileSync(f, "utf8");
 			return [...rootTags(source).keys()].flatMap((tag) => [
@@ -234,7 +264,7 @@ describe("cmdk root labels (#5824)", () => {
 		expect(roots.length).toBeGreaterThanOrEqual(10);
 	});
 
-	it("names every cmdk root's search", () => {
+	it("names every command-list root's search", () => {
 		expect(FINDINGS.filter((f) => !EXEMPT.includes(f))).toEqual([]);
 	});
 
@@ -242,11 +272,24 @@ describe("cmdk root labels (#5824)", () => {
 		expect(EXEMPT.filter((e) => !FINDINGS.includes(e))).toEqual([]);
 	});
 
-	it("imports cmdk only through @repo/ui/command", () => {
+	it("imports Base UI's Autocomplete only through @repo/ui/command", () => {
+		const importers = FILES.filter((f) => {
+			const source = readFileSync(f, "utf8");
+			return (
+				/from\s+["']@base-ui\/react\/autocomplete["']/u.test(source) ||
+				/import\s+(?:\*\s+as\s+[\w$]+|\{[^}]*\bAutocomplete\b[^}]*\})\s+from\s+["']@base-ui\/react["']/u.test(
+					source,
+				)
+			);
+		}).map(rel);
+		expect(importers).toEqual(["packages/ui/src/command.tsx"]);
+	});
+
+	it("imports cmdk nowhere (#6145 removed it)", () => {
 		const importers = FILES.filter((f) =>
 			/from\s+["']cmdk["']/u.test(readFileSync(f, "utf8")),
 		).map(rel);
-		expect(importers).toEqual(["packages/ui/src/command.tsx"]);
+		expect(importers).toEqual([]);
 	});
 
 	it("flags the shapes it is meant to flag, and only those", () => {
@@ -270,6 +313,12 @@ describe("cmdk root labels (#5824)", () => {
 			[`${UI}<Command label={title} className={cn(a)}>`, 0],
 			[`${UI}<Command onKeyDown={(e) => e.key === ">"} label="Search">`, 0],
 			[`${UI}<Command onKeyDown={() => a > b} label={purpose}>`, 0],
+			// A comment inside the tag is not attribute text: its apostrophe opens no string, so the
+			// scan cannot run on to the NEXT root's label and read this unnamed one as named.
+			[`${UI}<Command\n  // it's unnamed\n  className="a"\n>\n<Command label="Find">`, 1],
+			[`${UI}<Command\n  /* it's unnamed > still */\n  className="a"\n>\n<Command label="Find">`, 1],
+			[`${UI}<Command\n  // a comment's label="x" is not a label\n>`, 1],
+			[`${UI}<Command title="it's" label="Find">`, 0],
 			[`${UI}<Command label={undefinedFallback}>`, 0],
 			[`${UI}<CommandInput placeholder="x" />`, 0],
 			// Aliases and namespaces are followed.
@@ -287,12 +336,22 @@ describe("cmdk root labels (#5824)", () => {
 				1,
 			],
 			['import * as ui from "@repo/ui/command";\n<ui.Command label="Find">', 0],
-			['import { Command as Primitive } from "cmdk";\n<Primitive>', 1],
 			[
-				'import { Command as Primitive } from "cmdk";\n<Primitive.Dialog open>',
+				'import { Autocomplete } from "@base-ui/react/autocomplete";\n<Autocomplete.Root open>',
 				1,
 			],
-			['import { CommandRoot } from "cmdk";\n<CommandRoot label="Find">', 0],
+			[
+				'import { Autocomplete as AC } from "@base-ui/react";\n<AC.Root items={x}>',
+				1,
+			],
+			['import * as AC from "@base-ui/react/autocomplete";\n<AC.Root>', 1],
+			['import * as B from "@base-ui/react";\n<B.Autocomplete.Root>', 1],
+			[
+				'import { Autocomplete } from "@base-ui/react/autocomplete";\n<Autocomplete.Input />',
+				0,
+			],
+			// A cmdk import is no longer a root here; the "imports cmdk nowhere" test owns it.
+			['import { Command as Primitive } from "cmdk";\n<Primitive>', 0],
 			['import { Command } from "./command";\n<Command>', 1],
 			// Without an import there is no root, whatever the tag is called.
 			["<Command>", 0],

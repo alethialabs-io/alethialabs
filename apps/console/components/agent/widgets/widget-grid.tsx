@@ -178,6 +178,9 @@ export function WidgetGrid({ className }: { className?: string }) {
 	const dragStartClient = useRef<{ x: number; y: number } | null>(null);
 	const dragGrab = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 	const dragOcc = useRef<Occupancy>(new Set<string>());
+	// The grid's cell width in px, measured when a drag starts (an event, so the DOM may be read
+	// there) and used to size the floating overlay. Never read off the container during render.
+	const [overlayCellW, setOverlayCellW] = useState(160);
 
 	const onDndStart = useCallback(
 		(e: DragStartEvent) => {
@@ -192,6 +195,8 @@ export function WidgetGrid({ className }: { className?: string }) {
 			const cell = cellAt({ clientX, clientY });
 			dragGrab.current = { dx: cell.x - w.pos_x, dy: cell.y - w.pos_y };
 			dragOcc.current = occupancyExcluding(rectsOf(), w.id);
+			const el = containerRef.current;
+			if (el) setOverlayCellW((el.getBoundingClientRect().width - GAP * (GRID_COLS - 1)) / GRID_COLS);
 			const rect: GridRect = {
 				x: w.pos_x,
 				y: w.pos_y,
@@ -240,12 +245,8 @@ export function WidgetGrid({ className }: { className?: string }) {
 	// The widget being dragged (rendered in the overlay) sized to its pixel footprint.
 	const activeWidget = drag ? widgets.find((w) => w.id === drag.id) : null;
 	const overlaySize = (cols: number, rows: number) => {
-		const el = containerRef.current;
-		const cellW = el
-			? (el.getBoundingClientRect().width - GAP * (GRID_COLS - 1)) / GRID_COLS
-			: 160;
 		return {
-			width: cols * cellW + (cols - 1) * GAP,
+			width: cols * overlayCellW + (cols - 1) * GAP,
 			height: rows * ROW_H + (rows - 1) * GAP,
 		};
 	};

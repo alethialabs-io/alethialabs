@@ -493,6 +493,9 @@ async function runSteps(
 			throw new SetupRefused(server.hold.notice);
 		}
 		if (server.ended) throw new SetupRefused(server.ended.clause);
+		// An unpaid X beside another live plan on the team (C120): the link could only refuse it under a hold,
+		// so the run stops here with the lookup's sentence, and offers no payment.
+		if (server.besideLivePlan) throw new SetupRefused(server.besideLivePlan.clause);
 
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
 		// restores them. The checkout already saved them before the charge; this run re-saves because the

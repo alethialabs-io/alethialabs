@@ -15,7 +15,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { KeyRound } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
+import { FormProvider, useForm, useWatch } from "react-hook-form";
 import { type SsoProviderRow, updateSsoProvider } from "@/app/server/actions/sso";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import {
@@ -176,7 +176,7 @@ export function ProviderSheet({
 
 	// Subscribing to `type` here re-renders the sheet, so the sections below (whose `fields` swap
 	// per protocol) are rebuilt on a protocol switch.
-	const type = form.watch("type");
+	const type = useWatch({ control: form.control, name: "type" });
 	const errors = form.formState.errors;
 	/** The IdP plugin's refusal of the last save or registration, shown above the footer. */
 	const serverError = errors.root?.server?.message;

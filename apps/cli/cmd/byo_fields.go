@@ -176,7 +176,7 @@ var byoFields = []byoField{
 		Command:     "alethia chart attach",
 		Key:         byoKeyNamespace,
 		Title:       "Namespace",
-		Description: "The destination namespace; empty lets the environment place it",
+		Description: "The destination namespace; empty gives the chart a namespace of its own (byo- followed by the chart id)",
 		Flag:        "namespace",
 		Page:        docsChartsPage,
 	},

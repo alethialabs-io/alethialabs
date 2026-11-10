@@ -27,6 +27,9 @@ export function mergeLogLines(head: readonly JobLogEntry[], streamed: readonly J
 	return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
+/** No streamed lines — one stable empty list, so the merge's memo holds. */
+const NO_LINES: JobLogEntry[] = [];
+
 /** The stream's address: the job's SSE endpoint, resuming after `after` when it is past zero. */
 export function jobLogStreamUrl(jobId: string, after: number): string {
 	return after > 0 ? `/api/stream/jobs/${jobId}?after=${after}` : `/api/stream/jobs/${jobId}`;
@@ -48,21 +51,29 @@ export function useJobLogStream(
 	head?: JobLogHead,
 	headSettled = true,
 ): { logs: JobLogEntry[] } {
-	const [streamed, setStreamed] = useState<JobLogEntry[]>([]);
+	// The streamed lines belong to the stream that sent them (`jobId@after`): a new stream starts
+	// from none, read off the key rather than cleared by an effect.
+	const [streamed, setStreamed] = useState<{ key: string | null; lines: JobLogEntry[] }>({
+		key: null,
+		lines: [],
+	});
 	// Where the stream resumes, fixed the first time the head settles FOR THIS JOB: keyed by the job,
 	// so moving to another job without a remount starts from that job's head, not this one's.
 	const [resume, setResume] = useState<{ jobId: string; after: number } | null>(null);
 	const headLastId = head?.lastId ?? 0;
 
-	useEffect(() => {
-		if (!jobId || !headSettled) return;
-		setResume((fixed) => (fixed?.jobId === jobId ? fixed : { jobId, after: headLastId }));
-	}, [jobId, headSettled, headLastId]);
+	// Fixed while rendering (React's "adjust state while rendering" form: once set for this job the
+	// condition is false), so the render in which the head settles already knows where to resume.
+	if (jobId && headSettled && resume?.jobId !== jobId) {
+		setResume({ jobId, after: headLastId });
+	}
 	const after = resume !== null && resume.jobId === jobId ? resume.after : null;
+	const streamKey = jobId && after !== null ? `${jobId}@${after}` : null;
+	const streamedLines = streamed.key === streamKey ? streamed.lines : NO_LINES;
 
 	useEffect(() => {
-		setStreamed([]);
 		if (!jobId || after === null) return;
+		const key = `${jobId}@${after}`;
 
 		const es = new EventSource(jobLogStreamUrl(jobId, after));
 		es.onmessage = (e) => {
@@ -72,7 +83,10 @@ export function useJobLogStream(
 			} catch {
 				return;
 			}
-			setStreamed((prev) => (prev.some((l) => l.id === row.id) ? prev : [...prev, row]));
+			setStreamed((prev) => {
+				const lines = prev.key === key ? prev.lines : [];
+				return lines.some((l) => l.id === row.id) ? prev : { key, lines: [...lines, row] };
+			});
 		};
 		// On error EventSource auto-reconnects and resumes via Last-Event-ID.
 		es.onerror = () => {};
@@ -80,6 +94,6 @@ export function useJobLogStream(
 		return () => es.close();
 	}, [jobId, after]);
 
-	const logs = useMemo(() => mergeLogLines(head?.lines ?? [], streamed), [head, streamed]);
+	const logs = useMemo(() => mergeLogLines(head?.lines ?? [], streamedLines), [head, streamedLines]);
 	return { logs };
 }

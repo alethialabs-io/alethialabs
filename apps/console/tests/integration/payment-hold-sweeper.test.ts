@@ -1466,6 +1466,52 @@ describeIfDb("payment-holds reconcile --backfill — §8: the S1-era org_has_pla
 		const held = await getServiceDb().select().from(paymentHolds).where(inArray(paymentHolds.subscription_id, [live, ended]));
 		expect(held).toEqual([]);
 	});
+
+	// C121 (amendment 2026-11-04, slice S12): a setup closed beside a live Y while its X was still
+	// `incomplete` is printed and counted — X can still be paid until it ends — with guidance that does
+	// not call it paid. On dev at aed8b609b the listing skipped it, so the count read 1 and no line named it.
+	it("C121: prints an incomplete X's closure and counts it, prints a failed read as such, and skips both ended ones", async () => {
+		const stripe = new FakeStripe();
+		const payer = await newUser();
+		const incomplete = newSub();
+		const active = newSub();
+		const canceled = newSub();
+		const expired = newSub();
+		const unreadable = newSub(); // never added: the fake's retrieve throws for it
+		stripe.add({ id: incomplete, status: "incomplete" });
+		stripe.add({ id: active, status: "active" });
+		stripe.add({ id: canceled, status: "canceled" });
+		stripe.add({ id: expired, status: "incomplete_expired" });
+		const all = [incomplete, active, canceled, expired, unreadable];
+		for (const sub of all) {
+			await recordSetup(payer, sub);
+			await getServiceDb()
+				.update(pendingOrgSetups)
+				.set({ closed_at: new Date(), closed_reason: "org_has_plan", refused_reason: "org_has_plan" })
+				.where(eq(pendingOrgSetups.subscription_id, sub));
+		}
+		const printed: string[] = [];
+
+		// Other files' org_has_plan closures name subscriptions this fake has never seen, so they print as
+		// failed reads and are not counted: the count is exactly this test's two.
+		const listed = await listLiveOrgHasPlanClosures(stripe, (line) => printed.push(line));
+
+		expect(listed).toBe(2);
+		const incompleteLine = printed.find((l) => l.startsWith(`S1-ERA ${incomplete}: reads incomplete`));
+		expect(incompleteLine).toContain(`user ${payer}`);
+		expect(incompleteLine).toContain("can still be paid until it ends");
+		expect(incompleteLine).toContain("If it ends unpaid, nothing is needed");
+		expect(incompleteLine).toContain("cancel it in Stripe now");
+		expect(incompleteLine).toContain("If a later run shows it live, refund it or move it");
+		expect(incompleteLine).not.toContain("Paid, live and unlinked");
+		expect(printed.find((l) => l.startsWith(`S1-ERA ${active}: reads active`))).toContain("Paid, live and unlinked");
+		expect(printed.some((l) => l.startsWith(`S1-ERA ${unreadable}: could not read it`))).toBe(true);
+		expect(printed.some((l) => l.includes(canceled))).toBe(false);
+		expect(printed.some((l) => l.includes(expired))).toBe(false);
+		expect(stripe.log).toEqual([]);
+		const held = await getServiceDb().select().from(paymentHolds).where(inArray(paymentHolds.subscription_id, all));
+		expect(held).toEqual([]);
+	});
 });
 
 // ── C58: the backfill ───────────────────────────────────────────────────────────────────────────────

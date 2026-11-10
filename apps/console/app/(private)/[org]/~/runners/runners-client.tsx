@@ -35,7 +35,7 @@ import { ANY_CLOUD } from "@/lib/queries/runners";
 import { useRunnersPageQuery } from "@/lib/query/use-runners-page-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { Server } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 const PAGE_SIZE = 9;
 
@@ -65,7 +65,13 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 		isPlaceholderData,
 		refetch,
 	} = useRunnersPageQuery(query);
-	const [page, setPage] = useState(1);
+	// The page belongs to the query it was picked under: a different result set starts at page 1.
+	// Keyed by the query rather than reset by an effect, so the render that shows a new result set
+	// is already on page 1 — the effect showed it on the OLD page for a commit first.
+	const [paged, setPaged] = useState({ query, page: 1 });
+	const page = paged.query === query ? paged.page : 1;
+	/** Picks a page of the result set on screen. */
+	const setPage = (next: number) => setPaged({ query, page: next });
 	// The grid is BUSY while what it shows may not answer the URL and the bar: before the link
 	// has been read into the store, before the first answer, while the rows are the previous
 	// query's placeholder, and while a typed search is still inside its debounce. Exposed as
@@ -74,11 +80,6 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// the placeholder half only: dimming the first paint of every visit would flash a page that
 	// is correct.
 	const busy = !urlRead || isLoading || isPlaceholderData || filters.search !== search;
-
-	// Reset to the first page whenever the result set changes shape.
-	useEffect(() => {
-		setPage(1);
-	}, [query]);
 
 	// The SERVER's rows, each with the job in flight on it (joined on the server, #6123).
 	const filtered = useMemo(() => runnersPage?.rows ?? [], [runnersPage]);

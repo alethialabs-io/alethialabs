@@ -104,6 +104,7 @@ import {
 	linkSetupToOrg,
 	liveSweepDeps,
 	machineDepsFor,
+	namesOtherLivePlan,
 	relinkAdoptedHold,
 } from "@/lib/billing/payment-holds/sweeper";
 import {
@@ -177,6 +178,7 @@ import {
 	aiSpendLimitsInput,
 } from "@/components/settings/usage/spend-limits";
 import { forgetSubscription } from "@/lib/billing/subscription-cache";
+import { isLiveSubscriptionStatus } from "@/lib/billing/subscription-status";
 import {
 	type BillingSummary,
 	getBillingSummary as readBillingSummary,
@@ -517,6 +519,15 @@ const TOO_MANY_EARLIER_CHECKOUTS = `This account has more unfinished checkouts t
 const LIVE_PLAN_REFUSAL = "This organization already has an active subscription — change the plan instead.";
 
 /**
+ * What the resume lookup tells the creator about an unpaid create-a-team checkout whose team already has
+ * another live plan (ADR 0002 §5.5 style, C120): it is not payable here, and left unpaid it closes itself.
+ */
+const NOT_PAYABLE_BESIDE_LIVE_PLAN = `This team already has an active plan, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Contact support at ${SUPPORT_EMAIL} if you meant to buy this plan for another team.`;
+
+/** The same, when the team's plan is `past_due`: the path that charges once is fixing that plan's card (ADR 0004 D7). */
+const NOT_PAYABLE_BESIDE_UNPAID_PLAN = `This team's plan has an unpaid invoice, so this checkout cannot be completed here. Do not pay it: an unpaid checkout closes on its own. Update the payment method in Billing, or contact support at ${SUPPORT_EMAIL}.`;
+
+/**
  * What the org-plan flows tell the customer when the org's plan is `past_due` (ADR 0004 D7): the row names
  * a Stripe subscription and reads `past_due`, or the live check finds a `past_due` or `unpaid` one. The
  * path that charges once is fixing the card on that plan, so the copy names it.
@@ -651,18 +662,43 @@ const OPEN_SETUP_UNCHECKED =
  * Create a team or support, anyone else is told who started it. Only the creator's display name, from
  * the org's own member list, leaves the creator's row. A closer that THROWS refuses the purchase with
  * the try-again clause: a failed read never passes it (fail closed).
+ *
+ * Guard order (ADR 0002 §5.7): the guard's copy appears only where a purchase could otherwise proceed.
+ * An `incomplete` X the closer leaves open beside ANOTHER live plan on the org's row (C120), with no open
+ * hold on X, refuses with the row predicate's copy instead — Checkout runs this guard before the row
+ * predicate, so without this it read "the paid setup has not finished". Any other open setup keeps the
+ * guard's copy, and an open hold on X keeps its clause (§5.5).
  */
 async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
 	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
 	for (const row of rows) {
+		// The closer answers a closed or linked row without reading X (`settleOpenSetup`'s first lines), so
+		// the guard does not read X for one either. `openPendingOrgSetupsForOrg` selects open rows only, so
+		// in production this is the closer's contract kept, not a branch that fires; the C81 "refuses
+		// nothing" case hands the guard such rows and pins that no Stripe read is made for them.
+		if (row.closed_at || row.linked_at) continue;
 		let verdict: Awaited<ReturnType<typeof settleOpenSetup>>;
+		let besideLivePlanCopy: string | null = null;
 		try {
-			verdict = await settleOpenSetup(row, { orgId: actor.orgId });
+			let sub: Stripe.Subscription | null = null;
+			try {
+				sub = await getStripe().subscriptions.retrieve(row.subscription_id);
+			} catch (e) {
+				// A missing X is the closer's to judge (it answers open, C97); any other failure fails closed.
+				if (!isStripeResourceMissing(e)) throw e;
+			}
+			verdict = await settleOpenSetup(row, sub ? { sub, orgId: actor.orgId } : { orgId: actor.orgId });
+			// Inside the try, so a hold read or a row read that throws fails closed with the try-again copy.
+			if (verdict === "open" && sub?.status === "incomplete" && !(await openPaymentHoldOn(row.subscription_id))) {
+				const billing = await getOrgBilling(actor.orgId);
+				if (namesOtherLivePlan(billing, row.subscription_id)) besideLivePlanCopy = orgRowBlocksNewPlan(billing) ?? LIVE_PLAN_REFUSAL;
+			}
 		} catch (e) {
 			console.error(`[billing] open-setup guard could not check ${row.subscription_id}:`, e);
 			return OPEN_SETUP_UNCHECKED;
 		}
 		if (verdict !== "open") continue;
+		if (besideLivePlanCopy) return besideLivePlanCopy;
 		// Message selection, not access control: the purchase is refused either way, and `actor` was
 		// authorized by the PDP for this org upstream. This only picks which sentence the refusal reads.
 		if (row.user_id === actor.userId) return creatorRefusal(row.subscription_id); // authz-scope-ok: picks the refusal's wording (creator vs co-owner); the refusal itself is unconditional and the caller is PDP-authorized upstream
@@ -1127,7 +1163,7 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
 		return TOO_MANY_SUBSCRIPTIONS_TO_CHECK;
 	}
 	const live = new Set(
-		listed.subs.filter((s) => LIVE_SUBSCRIPTION_STATUSES.has(s.status) && isOrgPlanSubscription(s)).map((s) => s.status),
+		listed.subs.filter((s) => isLiveSubscriptionStatus(s.status) && isOrgPlanSubscription(s)).map((s) => s.status),
 	);
 	if (live.has("active") || live.has("trialing")) return LIVE_PLAN_REFUSAL;
 	if (live.has("past_due") || live.has("unpaid")) return UNPAID_PLAN_REFUSAL;
@@ -2235,15 +2271,6 @@ async function closeOrKeep(
 	return null;
 }
 
-/** Statuses under which a subscription still exists and may bill (ADR 0002 §2, "Live subscription"). */
-const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
-	"active",
-	"trialing",
-	"past_due",
-	"unpaid",
-	"paused",
-]);
-
 /**
  * I1 (c), THE LIVE CHECK (ADR 0002 §4.3, C24, C94): every subscription, of every status, on each of
  * `customers` — the customers of the user's unlinked records (`liveCheckSetupCustomers`, whether or not
@@ -2272,7 +2299,7 @@ async function liveCreateATeamSubscription(
 		}
 		if (listed.kind === "over_cap") return { kind: "refused", message: TOO_MANY_EARLIER_CHECKOUTS };
 		const live = listed.subs.find(
-			(s) => isCreateATeamSubscriptionOf(s, userId) && LIVE_SUBSCRIPTION_STATUSES.has(s.status),
+			(s) => isCreateATeamSubscriptionOf(s, userId) && isLiveSubscriptionStatus(s.status),
 		);
 		if (live) return { kind: "live", sub: live };
 	}
@@ -3103,13 +3130,26 @@ async function newOrgSetupStateFor(
 	const heldBefore = await openPaymentHoldOn(sub.id);
 	const report = await readNewOrgPlanState(sub);
 	const hold = heldBefore ?? (await openPaymentHoldOn(sub.id));
+	// A setup is never offered for payment beside another live plan (ADR 0002 §5.6, C120): an X whose
+	// first payment failed or was never made (`action_needed`, the only state with a payment link), and
+	// whose team's row names another live plan Y (`namesOtherLivePlan`, the link's own predicate), could
+	// only be linked into a refusal under a `needs_operator` hold. So the lookup reports it as not payable
+	// here, with no payment link; left unpaid, Stripe ends it. `processing` (the payment succeeded),
+	// `confirming` (in flight) and `unconfirmed` (the read failed) are not: in none of them is "it closes
+	// on its own" known to be true. Those, and a paid X, are left to the link, whose refusal opens that
+	// hold and alerts (C80).
+	const teamRow = !hold && org && sub.status === "incomplete" && report.planState === "action_needed" ? await getOrgBilling(org.id) : null;
+	const besideLivePlan = namesOtherLivePlan(teamRow, sub.id)
+		? { clause: teamRow?.status === "past_due" ? NOT_PAYABLE_BESIDE_UNPAID_PLAN : NOT_PAYABLE_BESIDE_LIVE_PLAN }
+		: null;
 	return {
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
 		...report,
-		...(hold ? { paymentUrl: null } : {}),
+		...(hold || besideLivePlan ? { paymentUrl: null } : {}),
 		hold: hold && hold.state !== "released" ? { state: hold.state, notice: await heldNotice(hold, userId) } : null,
+		besideLivePlan,
 		ended:
 			hold && hold.state !== "released"
 				? null

@@ -348,7 +348,8 @@ describe("repository selector — accessible names", () => {
 		//    (`utils/popups/store.js:27-28`) and are only filled by `PopoverRoot` through
 		//    `store.useSyncedValues({ activeTriggerProps, inactiveTriggerProps, … })`
 		//    (`popover/root/PopoverRoot.js:99-115`) — which is a LAYOUT EFFECT
-		//    (`@base-ui-components/utils/store/ReactStore.js:81-95`, `useIsoLayoutEffect`). It
+		//    (`@base-ui-components/utils/store/ReactStore.js:81-95`, `useIsoLayoutEffect`; every path and
+		//    line here was read on 1.0.0-rc.0, before #6144 moved to `@base-ui/react`). It
 		//    therefore reaches the DOM on render N+1.
 		//
 		// So waiting for the NAME and then asserting the ATTRIBUTE waits for the earlier of the two

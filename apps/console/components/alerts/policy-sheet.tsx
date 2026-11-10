@@ -18,7 +18,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Bell } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { createPolicy } from "@/app/server/actions/alerts";
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
@@ -107,6 +107,19 @@ interface PolicySheetProps {
 	onGoChannels: () => void;
 }
 
+/** The fields the sheet renders from. */
+const WATCHED = [
+	"enabled",
+	"event_patterns",
+	"channels",
+	"min_severity",
+	"project_ids",
+	"job_types",
+	"resource_types",
+	"actions",
+	"throttle_seconds",
+] as const;
+
 /** Guided, single-form create flow for an alert policy. */
 export function PolicySheet({
 	open,
@@ -129,7 +142,17 @@ export function PolicySheet({
 		defaultValues: DEFAULTS,
 		mode: "onChange",
 	});
-	const v = form.watch();
+	const [
+		enabled,
+		eventPatterns,
+		boundChannels,
+		minSeverity,
+		projectIds,
+		jobTypes,
+		resourceTypes,
+		actions,
+		throttleSeconds,
+	] = useWatch({ control: form.control, name: WATCHED });
 
 	useEffect(() => {
 		if (open && !wasOpen.current) form.reset(DEFAULTS);
@@ -250,7 +273,7 @@ export function PolicySheet({
 							<Switch
 								aria-labelledby={enableLabelId}
 								aria-describedby={enableDescId}
-								checked={v.enabled}
+								checked={enabled}
 								onCheckedChange={(c) => form.setValue("enabled", c, EDIT)}
 							/>
 						</div>
@@ -271,12 +294,12 @@ export function PolicySheet({
 								an Enterprise plan.
 							</FieldHelp>
 							<span className="ml-auto font-mono text-ui-2xs text-muted-foreground">
-								{v.event_patterns.length} selected
+								{eventPatterns.length} selected
 							</span>
 						</div>
 						<EventMatrix
 							categories={categories}
-							selected={v.event_patterns}
+							selected={eventPatterns}
 							onToggle={(key) => {
 								const cur = form.getValues("event_patterns");
 								form.setValue(
@@ -312,7 +335,7 @@ export function PolicySheet({
 						</div>
 						<ChannelRouting
 							channels={channels}
-							value={v.channels}
+							value={boundChannels}
 							onChange={(next) =>
 								form.setValue("channels", next, EDIT)
 							}
@@ -335,11 +358,11 @@ export function PolicySheet({
 							options={conditionOptions}
 							editable
 							value={{
-								min_severity: toMinSeverity(v.min_severity),
-								project_ids: v.project_ids,
-								job_types: v.job_types,
-								resource_types: v.resource_types,
-								actions: v.actions,
+								min_severity: toMinSeverity(minSeverity),
+								project_ids: projectIds,
+								job_types: jobTypes,
+								resource_types: resourceTypes,
+								actions,
 							}}
 							onChange={(c) => {
 								form.setValue("min_severity", c.min_severity, EDIT);
@@ -364,7 +387,7 @@ export function PolicySheet({
 							</FieldHelp>
 						</div>
 						<ThrottleField
-							value={v.throttle_seconds}
+							value={throttleSeconds}
 							onChange={(s) => form.setValue("throttle_seconds", s, EDIT)}
 						/>
 					</section>

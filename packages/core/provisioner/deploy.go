@@ -1347,9 +1347,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// customer's apps repo (they own + edit them). Then prune disabled managed add-ons and
 		// read health back for the console. Non-fatal (like app-manifest generation): a bad
 		// add-on must not fail an otherwise-healthy cluster; status surfaces on the add-ons page.
-		// The BYO binding ExternalSecrets this deploy (re)applies — the desired set for the prune
-		// below (declared out here so a fully-detached chart, vc.AddOns empty, still sweeps them).
-		var appliedBindingSecrets []string
+		// The BYO binding state for the prune below — declared out here, with its owner, so a
+		// fully-detached chart (vc.AddOns empty) still sweeps this environment's bindings.
+		bindingState := byoBindingState{Owner: byoBindingOwner(vc)}
+		// The add-ons this deploy applied — vc.AddOns without the BYO charts it refused (#6439). The
+		// health wait below reads this, after the prunes; the prunes read the full vc.AddOns.
+		var deployable []types.AddOnInstall
 		if len(vc.AddOns) > 0 {
 			// Operator wave FIRST (the manifest rail): Kubernetes operators ship as a plain
 			// `kubectl apply` release manifest, which an ArgoCD Application cannot source. The
@@ -1361,73 +1364,36 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				fmt.Fprintf(stderr, "Warning: operator manifest add-ons failed: %v\n", mErr)
 			}
 
-			// Bring-your-own (git-source) charts: pin them to a hardened per-project AppProject
-			// and register their per-repo credentials BEFORE rendering the Applications, so the
-			// renderer places them in "byo-<slug>" (not the wide-open "infra" project).
-			prepareByoCharts(vc, params.GitAccessToken, params.GitRepoTokens, facts.Labels, stdout, stderr)
-
-			// Seed each add-on's secret-knob Secret (W4.5 #640) BEFORE any Application syncs —
-			// managed or gitops mode. The values were fetched by the runner over the
-			// authenticated job channel and exist nowhere else: not in the snapshot, not in the
-			// rendered manifest, not in the customer's repo. The chart consumes them via the
-			// SecretKeyRef wiring the console resolved into helm.values.
-			argocd.EnsureAddOnSecrets(vc.AddOns, params.AddOnSecretValues, stdout, stderr)
-
-			// W5 Lane 2b: resolve each BYO chart workload's W3 bindings into its chart Values now
-			// (runtime, against the tofu outputs) + seed their keyless binding ExternalSecrets —
-			// BEFORE the Applications render, so the write-back rides the same helm.values block.
-			appliedBindingSecrets = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
-
-			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
-			// Applications render — the same seam, and the same reason, as applyByoChartBindings
-			// above: the value exists only in this run's tofu outputs, and the console that stored
-			// the knob could not have known it. Mutating vc.AddOns rather than the rendered output
-			// also means writeAddOnGitOps below writes the resolved value into the customer's repo,
-			// which is correct and free.
-			if err := argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr); err != nil {
-				return nil, fmt.Errorf("external-dns identity resolution failed: %w", err)
+			// The rest of the add-on stage — BYO charts, secrets, bindings, render, wave apply,
+			// bootstraps and the health wait — is ONE function, so a test drives the real sequence
+			// (#6439: a refused BYO chart must be left out of every step, and one unfiltered call
+			// site reopens the defect). See runAddOnStage.
+			stage, stageErr := runAddOnStage(ctx, addOnStageInput{
+				VC:                vc,
+				Facts:             facts,
+				Outputs:           result.Outputs,
+				Provider:          params.Provider,
+				GitAccessToken:    params.GitAccessToken,
+				GitRepoTokens:     params.GitRepoTokens,
+				AddOnSecretValues: params.AddOnSecretValues,
+				Refresh:           kube.refresh,
+			}, stdout, stderr)
+			if stageErr != nil {
+				return nil, stageErr
 			}
-
-			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
-			if addonErr != nil {
-				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
-			} else {
-				defer os.RemoveAll(addonDir)
-				// Apply the Applications in ascending sync-wave order, waiting after each wave for
-				// the CRDs it establishes. ArgoCD's sync-wave annotation does NOT order separate
-				// top-level Applications, so a Helm operator (CloudNativePG) and an Application
-				// carrying a CR that needs its schema (a CNPG Cluster) would otherwise race — the
-				// CR's first sync failing with `no matches for kind`.
-				if err := kube.refresh(ctx, "the add-on Applications"); err != nil {
-					return nil, err
-				}
-				if applyErr := argocd.ApplyAddOnsInWaves(vc.AddOns, addonDir, stdout, stderr); applyErr != nil {
-					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
-				}
-			}
-			// GitOps-mode add-ons → seed/prune into the customer's apps repo.
-			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
-				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
-			}
-			// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising
-			// and unsealing a marketplace Vault (#2717).
-			//
-			// HERE, and the position is load-bearing in both directions. AFTER the Applications are
-			// applied, because the Job talks to a Service that does not exist until then. BEFORE
-			// WaitAddOnsHealthy below, because a sealed Vault never becomes Healthy — waiting first
-			// would burn the whole add-on budget and then unseal it too late to be observed. The
-			// apply does not block on the Job finishing; the wait that follows is what sees the
-			// result.
-			argocd.EnsureAddOnBootstraps(vc.AddOns, selfimage.Ref(), stdout, stderr)
+			bindingState = stage.Bindings
+			manifestWarnings = append(manifestWarnings, stage.Warnings...)
+			deployable = stage.Deployable
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
 		if pruneErr := argocd.PruneManagedAddOns(argocd.ManagedAddOnNames(vc.AddOns), stdout, stderr); pruneErr != nil {
 			fmt.Fprintf(stderr, "Warning: add-on prune failed: %v\n", pruneErr)
 		}
-		// W5 Lane 2b: sweep any BYO binding ExternalSecret no longer desired (a removed binding or a
-		// detached chart) — they are runner-applied outside ArgoCD, so this is their only GC.
-		argocd.PruneChartBindingSecrets(appliedBindingSecrets, stdout, stderr)
+		// W5 Lane 2b: sweep this environment's BYO binding ExternalSecrets that its configuration no
+		// longer declares (a removed binding or a detached chart) — they are runner-applied outside
+		// ArgoCD, so this is their only GC. Skipped when any binding failed on this deploy.
+		pruneByoChartBindings(bindingState, stdout, stderr)
 		// And the runner-seeded secret of any disabled add-on (W4.5) — no Application owns
 		// those Secrets (deliberately: no ArgoCD tracking metadata), so ArgoCD will never
 		// prune them; this is their only GC.
@@ -1457,14 +1423,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// perfectly was persisted as "Creating"… and nothing ever refreshed it (the day-2 refresh
 		// only updates project_addons rows, and the synthesized Hetzner data-service specs have
 		// none). The wait is bounded and best-effort: an add-on that never converges is reported
-		// honestly rather than failing an otherwise-healthy cluster.
+		// honestly rather than failing an otherwise-healthy cluster. It reads `deployable`, so a
+		// refused BYO chart (#6439), which this deploy did not apply, is not waited on.
 		if len(vc.AddOns) > 0 {
 			if err := kube.refresh(ctx, "the add-on health wait"); err != nil {
 				return nil, err
 			}
 			result.AddOnStatus = argocd.WaitAddOnsHealthy(
 				ctx,
-				argocd.AllAddOnNames(vc.AddOns),
+				argocd.AllAddOnNames(deployable),
 				addonConvergeTimeout(),
 				stdout,
 				stderr,
@@ -1512,6 +1479,12 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// never a fabricated pass. Always non-nil after a real apply so the console can
 		// tell "direct mode" from "pre-#574 job with no data".
 		result.GitopsStatus = readGitopsSnapshot(gitopsRequested, vc.Repositories.AppsDestinationRepo, stdout, stderr)
+		// Bootstrap-only hooks whose operation ended without running a delete policy (#6413). Only
+		// on this dedicated path: it is the only one that renders the keyless bootstrap into the apps
+		// Application, in appNamespace. Best-effort; see bootstrap_reaper.go.
+		if gitopsRequested {
+			reapStrandedBootstrapHooks(ctx, argocd.UserAppsApplicationName, appNamespace, stdout, stderr)
+		}
 		// Attach the manifest-generation warnings (skipped services, unresolved bindings,
 		// unsatisfiable credential facets) so the console's Deploy tab can surface WHY a service
 		// may be misconfigured, instead of the operator digging through raw deploy logs (#717).

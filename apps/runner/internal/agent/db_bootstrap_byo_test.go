@@ -1,0 +1,770 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package agent
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// byoTestUser / byoTestPassword are a declared user and its (alphanumeric, 32-character) password.
+const (
+	byoTestUser     = "alethia_byo_0123456789ab"
+	byoTestPassword = "Abcdefghijklmnop0123456789ABCDEF"
+)
+
+// fixedSalt returns a salt source that yields the byte b forever, so a rendered script is reproducible.
+func fixedSalt(b byte) io.Reader { return bytes.NewReader(bytes.Repeat([]byte{b}, 1024)) }
+
+// oneUserInput is the golden case: one declared user, a database name with a '-'.
+func oneUserInput() byoUsersInput {
+	return byoUsersInput{
+		EnvironmentID: "env-1",
+		DBName:        "app-db",
+		ResultPath:    "/dev/termination-log",
+		Salt:          fixedSalt(1),
+		Users:         []byoUser{{Name: byoTestUser, Password: byoTestPassword}},
+	}
+}
+
+// TestByoUsersSQL_GoldenCreate pins the whole script for one declared user, statement by statement.
+func TestByoUsersSQL_GoldenCreate(t *testing.T) {
+	got, err := renderByoUsersSQL(oneUserInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != goldenOneUser {
+		t.Errorf("rendered script differs from the golden.\n--- got ---\n%s", got)
+	}
+}
+
+// TestByoUsersSQL_GoldenEmptyDeclaredSet: with nothing declared, no user is provisioned, the sweep
+// excludes nobody, and the result line selects nobody — but the sweep is still env-tag scoped.
+func TestByoUsersSQL_GoldenEmptyDeclaredSet(t *testing.T) {
+	in := oneUserInput()
+	in.Users = nil
+	got, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "CREATE ROLE \"alethia_byo_") || strings.Contains(got, "PASSWORD") {
+		t.Errorf("an empty declared set must provision nobody:\n%s", got)
+	}
+	for _, want := range []string{
+		"AND a.rolname <> ALL (ARRAY[]::name[])",
+		"AND a.rolname = ANY (ARRAY[]::name[])",
+		"AND d.description = 'alethia-env:env-1'",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestByoUsersSQL_OrderIndependent: users are rendered sorted, so argument order changes nothing.
+func TestByoUsersSQL_OrderIndependent(t *testing.T) {
+	a := byoUser{Name: "alethia_byo_aaaaaaaaaaaa", Password: byoTestPassword}
+	b := byoUser{Name: "alethia_byo_bbbbbbbbbbbb", Password: byoTestPassword}
+	in := oneUserInput()
+	in.Users = []byoUser{b, a}
+	s1, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Users, in.Salt = []byoUser{a, b}, fixedSalt(1)
+	s2, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s1 != s2 {
+		t.Error("the script depends on the order users were passed in")
+	}
+	if !strings.Contains(s1, "ARRAY['alethia_byo_aaaaaaaaaaaa', 'alethia_byo_bbbbbbbbbbbb']::name[]") {
+		t.Errorf("declared set not rendered sorted:\n%s", s1)
+	}
+}
+
+// TestByoUsersSQL_RerunIsIdentical: a re-run renders the same script; only a fresh salt changes the
+// verifier line, and nothing else.
+func TestByoUsersSQL_RerunIsIdentical(t *testing.T) {
+	s1, _ := renderByoUsersSQL(oneUserInput())
+	s2, _ := renderByoUsersSQL(oneUserInput())
+	if s1 != s2 {
+		t.Fatal("same input, same salt: scripts differ")
+	}
+	in := oneUserInput()
+	in.Salt = fixedSalt(2)
+	s3, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOnlyPasswordLineDiffers(t, s1, s3)
+}
+
+// TestByoUsersSQL_Rotation: a new password changes only the verifier, never another statement.
+func TestByoUsersSQL_Rotation(t *testing.T) {
+	s1, _ := renderByoUsersSQL(oneUserInput())
+	in := oneUserInput()
+	in.Users[0].Password = "Zyxwvutsrqponmlk9876543210ZYXWVU"
+	s2, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s1 == s2 {
+		t.Fatal("a rotated password rendered the same verifier")
+	}
+	assertOnlyPasswordLineDiffers(t, s1, s2)
+}
+
+// assertOnlyPasswordLineDiffers fails unless a and b differ in exactly the ALTER ROLE … PASSWORD line.
+func assertOnlyPasswordLineDiffers(t *testing.T, a, b string) {
+	t.Helper()
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	if len(la) != len(lb) {
+		t.Fatalf("line counts differ: %d vs %d", len(la), len(lb))
+	}
+	diffs := 0
+	for i := range la {
+		if la[i] == lb[i] {
+			continue
+		}
+		diffs++
+		if !strings.HasPrefix(la[i], `ALTER ROLE "`+byoTestUser+`" WITH LOGIN CONNECTION LIMIT 20 PASSWORD 'SCRAM-SHA-256$`) {
+			t.Errorf("line %d differs and is not the verifier line:\n%s\n%s", i, la[i], lb[i])
+		}
+	}
+	if diffs != 1 {
+		t.Errorf("want exactly one differing line, got %d", diffs)
+	}
+}
+
+// verifierPattern is the SCRAM-SHA-256 verifier Postgres stores: 16-byte salt, 32-byte keys.
+var verifierPattern = regexp.MustCompile(`^SCRAM-SHA-256\$4096:[A-Za-z0-9+/]{22}==\$[A-Za-z0-9+/]{43}=:[A-Za-z0-9+/]{43}=$`)
+
+// TestScramVerifier_Format: the verifier has Postgres's stored shape, and a random salt differs per run.
+func TestScramVerifier_Format(t *testing.T) {
+	salt := make([]byte, scramSaltLen)
+	v, err := scramSHA256Verifier(byoTestPassword, salt, scramIterations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verifierPattern.MatchString(v) {
+		t.Errorf("verifier %q does not have the SCRAM-SHA-256$4096:<salt>$<stored>:<server> shape", v)
+	}
+	r1, _ := renderByoUsersSQL(byoUsersInput{EnvironmentID: "e", DBName: "d", ResultPath: "/r", Users: []byoUser{{byoTestUser, byoTestPassword}}})
+	r2, _ := renderByoUsersSQL(byoUsersInput{EnvironmentID: "e", DBName: "d", ResultPath: "/r", Users: []byoUser{{byoTestUser, byoTestPassword}}})
+	if r1 == r2 {
+		t.Error("two runs with crypto/rand salts rendered the same verifier")
+	}
+}
+
+// TestScramVerifier_RFC7677Vector checks the verifier against RFC 7677 §3's exchange, independently of
+// this implementation: from the StoredKey and ServerKey it produced, the RFC's client proof must
+// recover a ClientKey hashing to StoredKey, and the RFC's server signature must verify.
+func TestScramVerifier_RFC7677Vector(t *testing.T) {
+	salt, _ := base64.StdEncoding.DecodeString("W22ZaJ0SNY7soEsUEjb6gQ==")
+	v, err := scramSHA256Verifier("pencil", salt, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`^SCRAM-SHA-256\$4096:W22ZaJ0SNY7soEsUEjb6gQ==\$([^:]+):(.+)$`).FindStringSubmatch(v)
+	if m == nil {
+		t.Fatalf("verifier %q does not carry the vector's salt", v)
+	}
+	storedKey, _ := base64.StdEncoding.DecodeString(m[1])
+	serverKey, _ := base64.StdEncoding.DecodeString(m[2])
+	const nonce = "rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0"
+	authMessage := "n=user,r=rOprNGfwEbeRWgbNEkqO," +
+		"r=" + nonce + ",s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096," +
+		"c=biws,r=" + nonce
+	proof, _ := base64.StdEncoding.DecodeString("dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=")
+	clientSig := hmacSHA256(storedKey, authMessage)
+	clientKey := make([]byte, len(proof))
+	for i := range proof {
+		clientKey[i] = proof[i] ^ clientSig[i]
+	}
+	if got := sha256.Sum256(clientKey); !bytes.Equal(got[:], storedKey) {
+		t.Error("RFC 7677 client proof does not verify against the StoredKey")
+	}
+	wantServerSig, _ := base64.StdEncoding.DecodeString("6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=")
+	if !bytes.Equal(hmacSHA256(serverKey, authMessage), wantServerSig) {
+		t.Error("RFC 7677 server signature does not verify against the ServerKey")
+	}
+}
+
+// TestByoUsers_PlaintextNowhere runs the CLI entry point: the password reaches it only through its
+// environment variable, and appears in neither the argv it was given nor anything it writes. The
+// script goes only to the owner-only --out file, never to stdout (which in a pod is its log).
+func TestByoUsers_PlaintextNowhere(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	args := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser, "--out", path}
+	env := map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword}
+	stdout := captureStdout(t, func() {
+		if err := runDBBootstrapByoUsers(context.Background(), args, mapEnv(env)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("the entry point wrote to stdout:\n%s", stdout)
+	}
+	if strings.Contains(strings.Join(args, " "), byoTestPassword) {
+		t.Fatal("password in argv")
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("--out mode = %v, want 0600", fi.Mode().Perm())
+	}
+	b, _ := os.ReadFile(path)
+	if bytes.Contains(b, []byte(byoTestPassword)) {
+		t.Fatal("password in the --out file")
+	}
+	if !bytes.Contains(b, []byte("PASSWORD 'SCRAM-SHA-256$4096:")) {
+		t.Fatalf("no verifier in the --out file:\n%s", b)
+	}
+}
+
+// captureStdout returns what fn writes to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	_ = w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
+}
+
+// mapEnv adapts a map to the getenv the entry point takes.
+func mapEnv(m map[string]string) func(string) (string, bool) {
+	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
+}
+
+// TestByoUsers_DBNameQuoted: the database name is always a quoted identifier, an embedded quote is
+// doubled, and names Postgres would truncate or that hold control characters are refused.
+func TestByoUsers_DBNameQuoted(t *testing.T) {
+	in := oneUserInput()
+	in.DBName = `my-"db"`
+	got, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`GRANT CONNECT ON DATABASE "my-""db""" TO "` + byoTestUser + `";`,
+		`ALTER ROLE "` + byoTestUser + `" IN DATABASE "my-""db""" SET search_path = "` + byoTestUser + `";`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"", strings.Repeat("a", 64), "db\nname", "db\x00", "db\x7f"} {
+		in.DBName = bad
+		if _, err := renderByoUsersSQL(in); err == nil {
+			t.Errorf("database name %q accepted", bad)
+		}
+	}
+	in.DBName = strings.Repeat("a", 63)
+	if _, err := renderByoUsersSQL(in); err != nil {
+		t.Errorf("a 63-byte name is valid: %v", err)
+	}
+}
+
+// TestByoUsers_Refusals: every input the script would be unsafe or wrong with is refused, and no
+// refusal quotes a password.
+func TestByoUsers_Refusals(t *testing.T) {
+	badNames := []string{
+		"alethia_app",                         // first-class role
+		"alethia_byo_0123456789ab_r",          // a holder
+		"alethia_byo_0123456789AB",            // upper-case hex
+		"alethia_byo_0123456789a",             // 11 hex
+		"alethia_byo_0123456789abc",           // 13 hex
+		`alethia_byo_0123456789ab";DROP ROLE`, // injection
+		" alethia_byo_0123456789ab",
+	}
+	for _, n := range badNames {
+		in := oneUserInput()
+		in.Users = []byoUser{{Name: n, Password: byoTestPassword}}
+		if _, err := renderByoUsersSQL(in); err == nil {
+			t.Errorf("user %q accepted", n)
+		}
+	}
+	cases := map[string]func(*byoUsersInput){
+		"duplicate user":    func(in *byoUsersInput) { in.Users = append(in.Users, in.Users[0]) },
+		"non-alnum":         func(in *byoUsersInput) { in.Users[0].Password = "Abcdefghijklmnop0123456789ABCD'E" },
+		"short":             func(in *byoUsersInput) { in.Users[0].Password = "Abc123" },
+		"empty password":    func(in *byoUsersInput) { in.Users[0].Password = "" },
+		"no env id":         func(in *byoUsersInput) { in.EnvironmentID = "" },
+		"quote in env id":   func(in *byoUsersInput) { in.EnvironmentID = "env'1" },
+		"dollar in env id":  func(in *byoUsersInput) { in.EnvironmentID = "env$alethia_byo$" },
+		"no result path":    func(in *byoUsersInput) { in.ResultPath = "" },
+		"result path space": func(in *byoUsersInput) { in.ResultPath = "/tmp/a b" },
+		"result path pipe":  func(in *byoUsersInput) { in.ResultPath = "|sh" },
+		"result path rel":   func(in *byoUsersInput) { in.ResultPath = "result" },
+	}
+	for name, mut := range cases {
+		in := oneUserInput()
+		mut(&in)
+		_, err := renderByoUsersSQL(in)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if len(in.Users) > 0 && in.Users[0].Password != "" && strings.Contains(err.Error(), in.Users[0].Password) {
+			t.Errorf("%s: refusal quotes the password: %v", name, err)
+		}
+	}
+}
+
+// TestByoUsers_CLIRefusals: the entry point refuses a missing declared set, a missing password, a bad
+// name before reading any password, and an engine other than Postgres.
+func TestByoUsers_CLIRefusals(t *testing.T) {
+	env := mapEnv(map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword})
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	base := []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--out", path}
+	for name, args := range map[string][]string{
+		"no --out":        {"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser},
+		"no --users":      base,
+		"no password env": append(append([]string{}, base...), "--users", "alethia_byo_ffffffffffff"),
+		"bad name":        append(append([]string{}, base...), "--users", "alethia_app"),
+		"mysql":           append(append([]string{}, base...), "--users", byoTestUser, "--engine", "mysql"),
+		"unknown flag":    append(append([]string{}, base...), "--users", byoTestUser, "--password", "x"),
+	} {
+		if err := runDBBootstrapByoUsers(context.Background(), args, env); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("a refused invocation still wrote --out")
+	}
+	// An explicitly empty declared set is a known set: it renders the sweep.
+	if err := runDBBootstrapByoUsers(context.Background(), append(base, "--users="), env); err != nil {
+		t.Fatalf("--users= refused: %v", err)
+	}
+	if b, _ := os.ReadFile(path); !bytes.Contains(b, []byte("ARRAY[]::name[]")) {
+		t.Errorf("empty declared set not rendered:\n%s", b)
+	}
+}
+
+// TestByoUsers_Dispatch: db-bootstrap routes --byo-users here and leaves the keyless path alone.
+func TestByoUsers_Dispatch(t *testing.T) {
+	for _, a := range [][]string{{"--byo-users"}, {"-byo-users"}, {"--db", "x", "--byo-users=true"}} {
+		if !isByoUsersInvocation(a) {
+			t.Errorf("%v not routed to --byo-users", a)
+		}
+	}
+	if isByoUsersInvocation([]string{"--provider", "aws", "--db", "byo-users"}) {
+		t.Error("a flag VALUE named byo-users was routed")
+	}
+	if err := RunDBBootstrap(context.Background(), []string{"--byo-users", "--env-id", "e", "--db", "d"}); err == nil ||
+		!strings.Contains(err.Error(), "--out is required") {
+		t.Errorf("RunDBBootstrap did not reach the byo-users path: %v", err)
+	}
+}
+
+// TestByoUsers_SweepPatternScope: the sweep's name pattern (the same text in Go and in SQL) selects
+// per-binding users only — never a holder, never a first-class role.
+func TestByoUsers_SweepPatternScope(t *testing.T) {
+	if byoUserPattern.String() != byoUserSQLPattern {
+		t.Fatalf("Go pattern %q and SQL pattern %q differ", byoUserPattern.String(), byoUserSQLPattern)
+	}
+	for _, n := range []string{"alethia_byo_0123456789ab_r", "alethia_app", "postgres", "rdsadmin", "alethia_byo_", "xalethia_byo_0123456789ab"} {
+		if byoUserPattern.MatchString(n) {
+			t.Errorf("sweep pattern selects %q", n)
+		}
+	}
+	got, _ := renderByoUsersSQL(oneUserInput())
+	sweep := got[strings.Index(got, "-- phase 3: revoke every undeclared"):]
+	for _, want := range []string{
+		"WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'",
+		"AND d.description = 'alethia-env:env-1'",
+		"AND a.rolname <> ALL (ARRAY['" + byoTestUser + "']::name[])",
+		"EXECUTE format('REASSIGN OWNED BY %I TO %I', r.rolname, holder);",
+	} {
+		if !strings.Contains(sweep, want) {
+			t.Errorf("sweep missing %q", want)
+		}
+	}
+	// The objects go to the user's own holder, never to the administrator.
+	if strings.Contains(sweep, "REASSIGN OWNED BY %I TO CURRENT_USER") || strings.Contains(got, "ALTER SCHEMA") {
+		t.Error("revocation hands objects to the administrator or re-owns only the schema")
+	}
+}
+
+// TestByoUsers_VersionFloor: the first thing the script does is refuse a server older than Postgres
+// 15, with the reason the binding lane also reports, before the lockout or any user. The old pre-15
+// preflight, which rewrote public's ACL, is gone; what remains in phase 2 is a CHECK that PUBLIC holds
+// no CREATE on public (a database upgraded from before 15 keeps that grant), and nothing in the script
+// grants or revokes on schema public.
+func TestByoUsers_VersionFloor(t *testing.T) {
+	got, _ := renderByoUsersSQL(oneUserInput())
+	floor := strings.Index(got, "IF current_setting('server_version_num')::int < 150000 THEN\n    RAISE EXCEPTION 'alethia byo-users: "+byoPGFloorReason)
+	if floor < 0 {
+		t.Fatalf("no version floor raising %q:\n%s", byoPGFloorReason, got)
+	}
+	for _, later := range []string{"\nBEGIN;\n", "ALTER ROLE %I NOLOGIN", `CREATE ROLE "` + byoTestUser + `"`} {
+		if i := strings.Index(got, later); i < floor {
+			t.Errorf("%q comes before the version floor", later)
+		}
+	}
+	check := strings.Index(got, "a.grantee = 0 AND a.privilege_type = 'CREATE') THEN\n    RAISE EXCEPTION 'alethia byo-users: PUBLIC holds CREATE on schema public")
+	phase2 := strings.Index(got, "-- phase 2:")
+	if check < phase2 || check > strings.Index(got, `CREATE ROLE "`+byoTestUser+`"`) {
+		t.Error("the PUBLIC CREATE check is not in phase 2 ahead of every user")
+	}
+	for _, bad := range []string{"ON SCHEMA public FROM", "ON SCHEMA public TO", "alethia_app"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("the script still contains %q: it must not rewrite public's ACL", bad)
+		}
+	}
+}
+
+// TestByoUsers_SkipRevoke: with an incomplete declared set the runner passes --skip-revoke, and the
+// script provisions the declared users but renders no lockout, no sweep and no pending list, so an
+// undeclared-by-accident binding is never revoked.
+func TestByoUsers_SkipRevoke(t *testing.T) {
+	in := oneUserInput()
+	in.SkipRevoke = true
+	got, err := renderByoUsersSQL(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"NOLOGIN', r.rolname", "pg_terminate_backend", "REASSIGN OWNED BY %I", "DROP ROLE %I", byoPendingPrefix, "<> ALL"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("--skip-revoke still renders %q", bad)
+		}
+	}
+	for _, want := range []string{byoPGFloorReason, `CREATE ROLE "` + byoTestUser + `" NOLOGIN;`, "\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("--skip-revoke dropped %q", want)
+		}
+	}
+	if strings.Count(got, "\\o /dev/termination-log") != 1 {
+		t.Error("--skip-revoke should write the result once")
+	}
+	// The CLI flag reaches it.
+	path := filepath.Join(t.TempDir(), "byo.sql")
+	env := mapEnv(map[string]string{byoPasswordEnv(byoTestUser): byoTestPassword})
+	if err := runDBBootstrapByoUsers(context.Background(), []string{"--byo-users", "--env-id", "env-1", "--db", "app-db", "--users", byoTestUser, "--out", path, "--skip-revoke"}, env); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); bytes.Contains(b, []byte("pg_terminate_backend")) {
+		t.Error("--skip-revoke on the command line did not reach the renderer")
+	}
+}
+
+// TestByoUsers_LeastPrivilege: nothing in the script gives a per-binding user an elevated attribute, a
+// membership, or a grant on any schema but its own.
+func TestByoUsers_LeastPrivilege(t *testing.T) {
+	got, _ := renderByoUsersSQL(oneUserInput())
+	for _, bad := range []string{
+		" SUPERUSER", " CREATEDB", " CREATEROLE", " REPLICATION", " BYPASSRLS",
+		`TO "` + byoTestUser + `" WITH`, "ON SCHEMA public TO \"" + byoTestUser,
+		"GRANT CURRENT_USER", `IN ROLE`,
+	} {
+		if strings.Contains(got, bad) {
+			t.Errorf("script contains %q", bad)
+		}
+	}
+	grants := regexp.MustCompile(`(?m)^GRANT .*$`).FindAllString(got, -1)
+	want := []string{
+		`GRANT "` + byoTestUser + `" TO CURRENT_USER;`,
+		`GRANT CONNECT ON DATABASE "app-db" TO "` + byoTestUser + `";`,
+	}
+	if strings.Join(grants, "\n") != strings.Join(want, "\n") {
+		t.Errorf("top-level grants = %q, want %q", grants, want)
+	}
+}
+
+// goldenOneUser is the reviewed script for oneUserInput (salt bytes all 0x01).
+const goldenOneUser = `-- alethia db-bootstrap --byo-users (postgres). Apply with psql -X -v ON_ERROR_STOP=1 -f (not --single-transaction).
+-- Passwords are carried as SCRAM-SHA-256 verifiers only.
+-- phase 0: refuse a server older than Postgres 15, before anything changes
+DO $alethia_byo$
+BEGIN
+  IF current_setting('server_version_num')::int < 150000 THEN
+    RAISE EXCEPTION 'alethia byo-users: per-binding database users need PostgreSQL 15 or newer (this server is %)', current_setting('server_version');
+  END IF;
+END
+$alethia_byo$;
+-- phase 1: lock out every revocation candidate, committed on its own
+BEGIN;
+DO $alethia_byo$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname
+  LOOP
+    EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
+  END LOOP;
+END
+$alethia_byo$;
+COMMIT;
+DO $alethia_byo$
+BEGIN
+  PERFORM pg_terminate_backend(s.pid) FROM pg_stat_activity s
+    WHERE s.usename IN (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname);
+END
+$alethia_byo$;
+-- phase 2: every declared user, in one transaction
+BEGIN;
+DO $alethia_byo$
+BEGIN
+  IF EXISTS (SELECT FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a
+             WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE') THEN
+    RAISE EXCEPTION 'alethia byo-users: PUBLIC holds CREATE on schema public in this database (kept from a Postgres older than 15); revoke it before per-binding users can be provisioned';
+  END IF;
+END
+$alethia_byo$;
+-- alethia_byo_0123456789ab
+DO $alethia_byo$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'alethia_byo_0123456789ab') THEN
+    IF shobj_description((SELECT oid FROM pg_roles WHERE rolname = 'alethia_byo_0123456789ab'), 'pg_authid') IS DISTINCT FROM 'alethia-env:env-1' THEN
+      RAISE EXCEPTION 'alethia byo-users: role % exists and is not tagged with this environment', 'alethia_byo_0123456789ab';
+    END IF;
+  ELSE
+    CREATE ROLE "alethia_byo_0123456789ab" NOLOGIN;
+  END IF;
+END
+$alethia_byo$;
+COMMENT ON ROLE "alethia_byo_0123456789ab" IS 'alethia-env:env-1';
+ALTER ROLE "alethia_byo_0123456789ab" WITH LOGIN CONNECTION LIMIT 20 PASSWORD 'SCRAM-SHA-256$4096:AQEBAQEBAQEBAQEBAQEBAQ==$XrsZsemzz6NMa1vC+1hnxzMsYneNJQsAZffGF2K6shI=:64GU0XzGp85ScGnPWli/NVH54w/fpAric5YD+h/SC7w=';
+GRANT "alethia_byo_0123456789ab" TO CURRENT_USER;
+DO $alethia_byo$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'alethia_byo_0123456789ab'
+             AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)) THEN
+    RAISE EXCEPTION 'alethia byo-users: role % holds an elevated attribute', 'alethia_byo_0123456789ab';
+  END IF;
+  IF EXISTS (SELECT FROM pg_auth_members WHERE member = 'alethia_byo_0123456789ab'::regrole) THEN
+    RAISE EXCEPTION 'alethia byo-users: role % is a member of another role', 'alethia_byo_0123456789ab';
+  END IF;
+END
+$alethia_byo$;
+DO $alethia_byo$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'alethia_byo_0123456789ab_r') THEN
+    IF shobj_description((SELECT oid FROM pg_roles WHERE rolname = 'alethia_byo_0123456789ab_r'), 'pg_authid') IS DISTINCT FROM 'alethia-env:env-1' THEN
+      RAISE EXCEPTION 'alethia byo-users: holder % is not tagged with this environment', 'alethia_byo_0123456789ab_r';
+    END IF;
+    REASSIGN OWNED BY "alethia_byo_0123456789ab_r" TO "alethia_byo_0123456789ab";
+    DROP OWNED BY "alethia_byo_0123456789ab_r";
+    DROP ROLE "alethia_byo_0123456789ab_r";
+  END IF;
+END
+$alethia_byo$;
+GRANT CONNECT ON DATABASE "app-db" TO "alethia_byo_0123456789ab";
+CREATE SCHEMA IF NOT EXISTS "alethia_byo_0123456789ab" AUTHORIZATION "alethia_byo_0123456789ab";
+DO $alethia_byo$
+BEGIN
+  IF (SELECT nspowner FROM pg_namespace WHERE nspname = 'alethia_byo_0123456789ab') IS DISTINCT FROM 'alethia_byo_0123456789ab'::regrole::oid THEN
+    RAISE EXCEPTION 'alethia byo-users: schema % is not owned by its user', 'alethia_byo_0123456789ab';
+  END IF;
+END
+$alethia_byo$;
+ALTER ROLE "alethia_byo_0123456789ab" IN DATABASE "app-db" SET search_path = "alethia_byo_0123456789ab";
+COMMIT;
+\pset tuples_only on
+\pset format unaligned
+\o /dev/termination-log
+WITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolcanlogin
+      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])) q(x))
+SELECT s.line FROM (
+  SELECT 0 AS o, 'alethia-byo-users v1 count=' || count(*) AS line FROM r
+  UNION ALL
+  SELECT 1, r.line FROM r) s
+    ORDER BY s.o, s.line;
+\o
+-- phase 3: revoke every undeclared per-binding user of this environment, one transaction each
+DO $alethia_byo$
+DECLARE
+  r record;
+  holder name;
+BEGIN
+  FOR r IN SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname
+  LOOP
+    holder := r.rolname || '_r';
+    BEGIN
+    EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = holder) THEN
+      IF shobj_description((SELECT oid FROM pg_roles WHERE rolname = holder), 'pg_authid') IS DISTINCT FROM 'alethia-env:env-1' THEN
+        RAISE EXCEPTION 'alethia byo-users: holder % is not tagged with this environment', holder;
+      END IF;
+    ELSE
+      EXECUTE format('CREATE ROLE %I NOLOGIN', holder);
+    END IF;
+    EXECUTE format('COMMENT ON ROLE %I IS %L', holder, 'alethia-env:env-1');
+    EXECUTE format('GRANT %I TO CURRENT_USER', holder);
+    EXECUTE format('REASSIGN OWNED BY %I TO %I', r.rolname, holder);
+    EXECUTE format('DROP OWNED BY %I', r.rolname);
+    EXECUTE format('DROP ROLE %I', r.rolname);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'alethia byo-users: revocation pending: % (it stays NOLOGIN; the next run retries): %', r.rolname, SQLERRM;
+    END;
+    COMMIT;
+  END LOOP;
+END
+$alethia_byo$;
+\pset tuples_only on
+\pset format unaligned
+\o /dev/termination-log
+WITH r(line) AS (SELECT q.x::text FROM (SELECT p.rolname::text FROM (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolcanlogin
+      AND a.rolname = ANY (ARRAY['alethia_byo_0123456789ab']::name[])) p
+UNION ALL
+SELECT 'revocation-pending:' || c.rolname FROM (SELECT a.rolname FROM pg_roles a
+    JOIN pg_shdescription d ON d.objoid = a.oid AND d.classoid = 'pg_authid'::regclass
+    WHERE a.rolname ~ '^alethia_byo_[0-9a-f]{12}$'
+      AND d.description = 'alethia-env:env-1'
+      AND a.rolname <> ALL (ARRAY['alethia_byo_0123456789ab']::name[])
+    ORDER BY a.rolname) c) q(x))
+SELECT s.line FROM (
+  SELECT 0 AS o, 'alethia-byo-users v1 count=' || count(*) AS line FROM r
+  UNION ALL
+  SELECT 1, r.line FROM r) s
+    ORDER BY s.o, s.line;
+\o
+`
+
+// TestByoUsers_ThreePhases: revocation fails SAFE and never blocks provisioning (ADR §3).
+//   - phase 1, the lockout of every candidate, is its own committed transaction, and sessions are
+//     terminated only after it commits;
+//   - phase 2 provisions the declared users and commits, and the result line follows at once;
+//   - phase 3 sweeps the candidates at top level, one transaction each: a failure is a WARNING naming
+//     the role, not an exception, and each candidate is committed before the next. The result is then
+//     rewritten with the pending revocations.
+func TestByoUsers_ThreePhases(t *testing.T) {
+	got, _ := renderByoUsersSQL(oneUserInput())
+	var tx []string
+	for _, l := range strings.Split(got, "\n") {
+		if l == "BEGIN;" || l == "COMMIT;" {
+			tx = append(tx, l)
+		}
+	}
+	if strings.Join(tx, " ") != "BEGIN; COMMIT; BEGIN; COMMIT;" {
+		t.Fatalf("top-level transaction statements = %v, want phase 1 and phase 2 each in one BEGIN/COMMIT, and phase 3 in none", tx)
+	}
+	first := strings.Index(got, "\nCOMMIT;\n")
+	phase1 := got[:first]
+	if !strings.Contains(phase1, "EXECUTE format('ALTER ROLE %I NOLOGIN', r.rolname);") {
+		t.Error("phase 1 does not lock the candidates out")
+	}
+	for _, bad := range []string{"REASSIGN", "DROP ", "pg_terminate_backend", "CREATE ROLE", "PASSWORD"} {
+		if strings.Contains(phase1, bad) {
+			t.Errorf("phase 1 contains %q: it must hold only what cannot be blocked", bad)
+		}
+	}
+	p3 := strings.Index(got, "-- phase 3:")
+	if p3 < 0 {
+		t.Fatal("no phase 3")
+	}
+	phase2, phase3 := got[first:p3], got[p3:]
+	for _, bad := range []string{"REASSIGN OWNED BY %I", "DROP ROLE %I"} {
+		if strings.Contains(phase2, bad) {
+			t.Errorf("phase 2 contains the sweep's %q: a stuck candidate would block every declared user", bad)
+		}
+	}
+	if strings.Contains(phase3, "RAISE EXCEPTION 'alethia byo-users: revocation") || strings.Contains(phase3, "\nBEGIN;\n") {
+		t.Error("phase 3 raises an exception or runs inside a transaction block")
+	}
+	order := []string{
+		"\nCOMMIT;\n",
+		"PERFORM pg_terminate_backend(s.pid)",
+		"\nBEGIN;\n",
+		"PUBLIC holds CREATE on schema public",
+		`CREATE ROLE "` + byoTestUser + `" NOLOGIN;`,
+		"\nCOMMIT;\n",
+		"\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT a.rolname",
+		"-- phase 3:",
+		"EXECUTE format('DROP ROLE %I', r.rolname);\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'alethia byo-users: revocation pending: %",
+		"    END;\n    COMMIT;\n  END LOOP;",
+		"\\o /dev/termination-log\nWITH r(line) AS (SELECT q.x::text FROM (SELECT p.rolname::text",
+		"SELECT 'revocation-pending:' || c.rolname",
+	}
+	at := 0
+	for _, s := range order {
+		i := strings.Index(got[at:], s)
+		if i < 0 {
+			t.Fatalf("missing, or out of order after offset %d: %q", at, s)
+		}
+		at += i + len(s)
+	}
+	// The lockout, the termination, the sweep and the pending list share one candidate predicate.
+	if strings.Count(got, "AND a.rolname <> ALL (ARRAY['"+byoTestUser+"']::name[])") != 4 {
+		t.Error("the phases do not share one candidate predicate")
+	}
+}
+
+// TestByoUsers_ResultStartsWithACountedHeader: every result write puts the header line, with the count
+// of the entries after it, before every entry, with and without --skip-revoke. The runner requires
+// it, so an empty result is an explicit count=0 and a truncated one (the kubelet keeps the LAST 4096
+// bytes) is detected by its missing header.
+func TestByoUsers_ResultStartsWithACountedHeader(t *testing.T) {
+	// Every combination, including NOTHING declared with --skip-revoke: the runner treats an absent
+	// message as a lost result, so even an empty run must write its header (count=0).
+	for _, c := range []struct{ skip, empty bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		skip := c.skip
+		in := oneUserInput()
+		in.SkipRevoke = skip
+		if c.empty {
+			in.Users = nil
+		}
+		got, err := renderByoUsersSQL(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writes := strings.Split(got, "\\o /dev/termination-log\n")[1:]
+		if len(writes) == 0 {
+			t.Fatalf("skip=%v empty=%v: no result write", skip, c.empty)
+		}
+		for i, w := range writes {
+			w = w[:strings.Index(w, "\\o\n")]
+			for _, want := range []string{"SELECT 0 AS o, '" + byoResultHeaderPrefix + "' || count(*) AS line FROM r", "SELECT 1, r.line FROM r", "ORDER BY s.o, s.line;"} {
+				if !strings.Contains(w, want) {
+					t.Errorf("skip=%v write %d lacks %q:\n%s", skip, i, want, w)
+				}
+			}
+		}
+	}
+	if byoResultHeaderPrefix != "alethia-byo-users v1 count=" {
+		t.Errorf("the header changed to %q; the runner's parser (provisioner parseByoDBUsersResult) reads that exact text", byoResultHeaderPrefix)
+	}
+}

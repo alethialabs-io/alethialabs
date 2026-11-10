@@ -154,6 +154,21 @@ describe("the policy sheet never loses a server validation message", () => {
 	});
 });
 
+describe("the policy sheet renders from its watched fields (#6459)", () => {
+	it("counts the picked events, and flips the enable switch with the form", async () => {
+		const user = userEvent.setup();
+		renderPolicySheet();
+		expect(screen.getByText("0 selected")).toBeInTheDocument();
+		await pickEvent(user);
+		expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+		const enable = screen.getByRole("switch", { name: "Enable on create" });
+		expect(enable).toBeChecked();
+		await user.click(enable);
+		expect(enable).not.toBeChecked();
+	});
+});
+
 describe("the channel sheet", () => {
 	it("closing it with something typed asks before discarding", async () => {
 		const user = userEvent.setup();
