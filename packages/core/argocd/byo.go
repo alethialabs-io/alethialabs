@@ -50,8 +50,8 @@ import (
 // absorbs every remaining line of the AppProject. The result is two VALID documents, the second a
 // ClusterRoleBinding to cluster-admin, applied by the runner with the cluster's admin kubeconfig.
 // That is precisely the cluster-scoped power the empty clusterResourceWhitelist below exists to
-// deny an untrusted chart. Not flag-gated: prepareByoCharts runs on every deploy carrying any
-// git-source add-on (provisioner/deploy.go, byo_charts.go).
+// deny an untrusted chart. Not flag-gated: configureByoCharts runs on every deploy carrying any BYO
+// chart (provisioner/deploy.go → runAddOnStage → configureByoCharts in byo_charts.go).
 //
 // TYPED STRUCTS, not map[string]any: field ORDER is preserved (yaml.v3 sorts map keys, which would
 // reshuffle the manifest on every render for no reason), and the shape is checked by the compiler

@@ -125,7 +125,70 @@ func TestRunnerHeaders_AdvertiseTheSnapshotCapabilities(t *testing.T) {
 	if _, err := NewRunnerAPIClient(server.URL, "r1", "tok").ClaimJob(); err != nil {
 		t.Fatalf("ClaimJob: %v", err)
 	}
-	if got != "addon-byo-marker" {
-		t.Errorf("%s = %q, want %q (the console matches this exact name)", types.RunnerCapabilitiesHeader, got, "addon-byo-marker")
+	if want := "addon-byo-marker,preview-namespace-prefix"; got != want {
+		t.Errorf("%s = %q, want %q (the console matches these exact names)", types.RunnerCapabilitiesHeader, got, want)
+	}
+}
+
+// oldRunnerProjectConfig is types.ProjectConfig as a runner built before #6494 has it: every field but
+// PreviewNamespacePrefix. Built by reflection so it follows every other field of the real struct.
+func oldRunnerProjectConfig(t *testing.T) reflect.Type {
+	t.Helper()
+	real := reflect.TypeOf(types.ProjectConfig{})
+	var fields []reflect.StructField
+	found := false
+	for i := 0; i < real.NumField(); i++ {
+		f := real.Field(i)
+		if f.Name == "PreviewNamespacePrefix" {
+			found = true
+			continue
+		}
+		fields = append(fields, f)
+	}
+	if !found {
+		t.Fatal("types.ProjectConfig has no PreviewNamespacePrefix field — this contract test no longer describes anything")
+	}
+	return reflect.StructOf(fields)
+}
+
+// decodeTopLevelAsOldRunner strict-decodes snapshot's top level the way a runner built before #6494
+// does (assertNoUnknownSnapshotKeys: DisallowUnknownFields into types.ProjectConfig).
+func decodeTopLevelAsOldRunner(t *testing.T, snapshot map[string]any) error {
+	t.Helper()
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	return dec.Decode(reflect.New(oldRunnerProjectConfig(t)).Interface())
+}
+
+// TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutThePreviewPrefix (#6494): the snapshot the
+// console serves a runner without types.RunnerCapabilityPreviewNamespacePrefix decodes under an old
+// runner's strict decode; the one carrying the key would fail every job — which is why it is gated.
+func TestSnapshotContract_AnOldRunnerDecodesTheSnapshotWithoutThePreviewPrefix(t *testing.T) {
+	if err := decodeTopLevelAsOldRunner(t, snapshotFixture(t, "without-preview-namespace-prefix.json")); err != nil {
+		t.Fatalf("an old runner must decode the snapshot served to it: %v", err)
+	}
+	err := decodeTopLevelAsOldRunner(t, snapshotFixture(t, "with-preview-namespace-prefix.json"))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "preview_namespace_prefix"`) {
+		t.Fatalf("an old runner must refuse the key (the reason it is gated), got %v", err)
+	}
+}
+
+// TestSnapshotContract_ThisRunnerReadsThePreviewPrefix: this build decodes both shapes, and reads the
+// prefix when it is served.
+func TestSnapshotContract_ThisRunnerReadsThePreviewPrefix(t *testing.T) {
+	with, err := snapshotToProjectConfig(snapshotFixture(t, "with-preview-namespace-prefix.json"))
+	if err != nil {
+		t.Fatalf("with the prefix: %v", err)
+	}
+	without, err := snapshotToProjectConfig(snapshotFixture(t, "without-preview-namespace-prefix.json"))
+	if err != nil {
+		t.Fatalf("without the prefix: %v", err)
+	}
+	if with.PreviewNamespacePrefix != "pr" || without.PreviewNamespacePrefix != "" {
+		t.Errorf("PreviewNamespacePrefix with=%q without=%q, want \"pr\" and \"\"", with.PreviewNamespacePrefix, without.PreviewNamespacePrefix)
 	}
 }

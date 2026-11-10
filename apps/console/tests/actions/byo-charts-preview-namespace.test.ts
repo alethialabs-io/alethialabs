@@ -33,6 +33,7 @@ type Rows = Record<string, unknown>[];
 /** A drizzle-ish tx whose SELECTs resolve to the rows given for their table; writes are recorded. */
 function setupDb(rows: Map<unknown, Rows>) {
 	const written: { table: unknown; payload: unknown }[] = [];
+	const order: string[] = [];
 	function chain(table?: unknown): Record<string, unknown> {
 		const self: Record<string, unknown> = {
 			from: (t: unknown) => chain(t),
@@ -51,15 +52,22 @@ function setupDb(rows: Map<unknown, Rows>) {
 		return self;
 	}
 	const tx = {
+		execute: () => {
+			order.push("lock");
+			return Promise.resolve([]);
+		},
 		select: () => chain(),
-		insert: (t: unknown) => chain(t),
+		insert: (t: unknown) => {
+			order.push("write");
+			return chain(t);
+		},
 		update: (t: unknown) => chain(t),
 		delete: (t: unknown) => chain(t),
 	};
 	vi.mocked(withActorScope).mockImplementation(
 		((_actor: unknown, cb: (tx: unknown) => unknown) => cb(tx)) as never,
 	);
-	return { written };
+	return { written, order };
 }
 
 const PROJECT = "11111111-1111-4111-8111-111111111111";
@@ -75,9 +83,9 @@ function attach(namespace: string | undefined, prefix: string | null, storedName
 	const rows = new Map<unknown, Rows>();
 	if (prefix !== null) rows.set(projectPreviewConfig, [{ namespace_prefix: prefix }]);
 	if (storedNamespace !== undefined) rows.set(projectAddons, [{ namespace: storedNamespace }]);
-	const { written } = setupDb(rows);
+	const { written, order } = setupDb(rows);
 	const run = attachByoChart({ projectId: PROJECT, id: "api", repoUrl: "oci://ghcr.io/acme/api", namespace });
-	return { run, written: () => written.filter((w) => w.table === projectAddons) };
+	return { run, order, written: () => written.filter((w) => w.table === projectAddons) };
 }
 
 describe("attachByoChart — the project's preview namespaces (#6494)", () => {
@@ -110,6 +118,13 @@ describe("attachByoChart — the project's preview namespaces (#6494)", () => {
 		await expect(run).resolves.toEqual({ ok: true, id: "api" });
 	});
 
+	it("takes the project's preview-namespace lock before it writes the chart", async () => {
+		const { run, order } = attach("pre-7", "pr");
+		await run;
+		expect(order.indexOf("lock")).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf("lock")).toBeLessThan(order.indexOf("write"));
+	});
+
 	it("keeps a re-attach that leaves the stored namespace unchanged, and refuses moving it to another preview namespace", async () => {
 		const kept = attach("pr-7", "pr", "pr-7");
 		await expect(kept.run).resolves.toEqual({ ok: true, id: "api" });
@@ -125,7 +140,7 @@ async function savePrefix(prefix: string | undefined, stored: string | null, cha
 		[projectAddons, charts],
 	]);
 	if (stored !== null) rows.set(projectPreviewConfig, [{ namespace_prefix: stored }]);
-	const { written } = setupDb(rows);
+	const { written, order } = setupDb(rows);
 	const res = await savePreviewConfig({
 		projectId: PROJECT,
 		config: {
@@ -136,7 +151,7 @@ async function savePrefix(prefix: string | undefined, stored: string | null, cha
 			...(prefix === undefined ? {} : { namespace_prefix: prefix }),
 		},
 	});
-	return { res, written: written.filter((w) => w.table === projectPreviewConfig) };
+	return { res, order, written: written.filter((w) => w.table === projectPreviewConfig) };
 }
 
 describe("savePreviewConfig — a prefix an attached chart would match (#6494)", () => {
@@ -155,16 +170,26 @@ describe("savePreviewConfig — a prefix an attached chart would match (#6494)",
 		expect(written).toHaveLength(1);
 	});
 
-	it("reads a blank or legacy `default` namespace as the chart's own byo-<chart id>", async () => {
+	it("refuses a byo prefix outright, so a blank chart's byo-<chart id> can never become a preview namespace", async () => {
 		for (const namespace of [null, "default"]) {
-			const { res } = await savePrefix("byo", "preview", [{ addon_id: "api", namespace }]);
+			const { res, written } = await savePrefix("byo", "preview", [{ addon_id: "api", namespace }]);
 			expect(res).toMatchObject({ ok: false, error: { kind: "validation" } });
+			const fields = !res.ok && res.error.kind === "validation" ? res.error.fields : {};
+			expect(fields["config.namespace_prefix"]?.[0]).toContain("reserved");
+			expect(written).toHaveLength(0);
 		}
 	});
 
 	it("checks a NEW configuration's default prefix too", async () => {
 		const { res } = await savePrefix(undefined, null, [{ addon_id: "api", namespace: "preview-api" }]);
 		expect(res).toMatchObject({ ok: false, error: { kind: "validation" } });
+	});
+
+	it("takes the project's preview-namespace lock before it writes the prefix", async () => {
+		const { res, order } = await savePrefix("pr", "preview", []);
+		expect(res.ok).toBe(true);
+		expect(order.indexOf("lock")).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf("lock")).toBeLessThan(order.indexOf("write"));
 	});
 
 	it("leaves an UNCHANGED prefix alone, even when a chart attached before the rule matches it", async () => {

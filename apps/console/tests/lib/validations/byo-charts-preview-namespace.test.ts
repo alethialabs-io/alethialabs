@@ -18,12 +18,24 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // apps/console/tests/lib/validations → repo root is five levels up.
 const GO_TEST = join(__dirname, "../../../../../packages/core/argocd/byo_test.go");
 
-/** The `byoPreviewCases` table from the Go test, as [namespace, conflicts] pairs. */
+/**
+ * The `byoPreviewCases` table from the Go test, as [namespace, conflicts] pairs. EVERY line of the
+ * table body must parse: a case written another way (keyed fields, split across lines) throws here
+ * rather than silently shrinking the table this test runs.
+ */
 function goCases(): [string, boolean][] {
 	const src = readFileSync(GO_TEST, "utf8");
-	const block = src.match(/var byoPreviewCases = \[\]struct \{[\s\S]*?\n\}\{([\s\S]*?)\n\}/);
+	const block = src.match(/var byoPreviewCases = \[\]struct \{[\s\S]*?\n\}\{\n([\s\S]*?)\n\}\n/);
 	if (!block) throw new Error("byoPreviewCases not found in byo_test.go");
-	return [...block[1].matchAll(/\{"([^"]+)",\s*(true|false)\}/g)].map((m) => [m[1], m[2] === "true"]);
+	const cases: [string, boolean][] = [];
+	for (const raw of block[1].split("\n")) {
+		const line = raw.replace(/\/\/.*$/, "").trim();
+		if (line === "") continue;
+		const m = line.match(/^\{"([^"]+)", (true|false)\},$/);
+		if (!m) throw new Error(`byoPreviewCases: cannot read the line ${JSON.stringify(raw)}; keep each case as {"ns", bool},`);
+		cases.push([m[1], m[2] === "true"]);
+	}
+	return cases;
 }
 
 describe("byoPreviewNamespaceMessage", () => {

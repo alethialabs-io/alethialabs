@@ -1108,3 +1108,24 @@ func TestByoPreviewNamespaceConflict_NoPreviewConfigurationConflictsWithNothing(
 		}
 	}
 }
+
+// TestPreviewNamespacePrefix_RefusesTheByoPrefix (#6494): a preview prefix of "byo", or one starting
+// with "byo-", would make BYO charts' own namespaces preview namespaces, so every blank-namespace
+// attach would conflict. A prefix that only shares the letters is still a valid prefix.
+func TestPreviewNamespacePrefix_RefusesTheByoPrefix(t *testing.T) {
+	for _, p := range []string{"byo", "byo-previews"} {
+		err := validatePreviewNamespacePrefix("t", p)
+		if err == nil || !strings.Contains(err.Error(), "reserved") || !strings.Contains(err.Error(), `"byo-"`) {
+			t.Errorf("prefix %q must be refused as reserved for BYO namespaces, got %v", p, err)
+		}
+	}
+	// The reason for the rule: under prefix "byo", a chart's own namespace is a preview namespace.
+	if ByoPreviewNamespaceConflict(ByoChartNamespace("api"), "byo") == "" {
+		t.Error("prefix byo must put byo-api in the previews — the rule above would be pointless otherwise")
+	}
+	for _, p := range []string{"byob", "by", "preview", "mybyo"} {
+		if err := validatePreviewNamespacePrefix("t", p); err != nil {
+			t.Errorf("prefix %q must be accepted, got %v", p, err)
+		}
+	}
+}

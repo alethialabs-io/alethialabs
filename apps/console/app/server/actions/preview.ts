@@ -15,6 +15,7 @@ import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult, FieldRefusal } from "@/lib/actions/result";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
+import { lockProjectPreviewNamespaces } from "@/lib/projects/preview-namespace-lock";
 import { projectAddons, projectPreviewConfig, projects } from "@/lib/db/schema";
 import { byoChartNamespace, byoPreviewNamespaceMessage } from "@/lib/validations/byo-charts";
 import {
@@ -53,7 +54,9 @@ async function writePreviewConfig(projectId: string, parsed: PreviewConfigParsed
 		if (!project) throw new ActionRefusal("not-found", "This project no longer exists.");
 
 		// The prefix this save leaves the project with: the one sent, else the stored one, else the
-		// column's default for a new row. Only a CHANGE is checked against the attached charts (#6494).
+		// column's default for a new row. Only a CHANGE is checked against the attached charts (#6494),
+		// under the project's lock so a concurrent attach cannot slip a chart in between.
+		await lockProjectPreviewNamespaces(tx, projectId);
 		const [existing] = await tx
 			.select({ namespace_prefix: projectPreviewConfig.namespace_prefix })
 			.from(projectPreviewConfig)
